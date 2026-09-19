@@ -212,6 +212,13 @@ def _local_env(
     conf = JarvisConfig(brain=BrainConfig(providers=providers))
     monkeypatch.setattr(cfg, "load_config", lambda: conf)
     monkeypatch.setattr(cfg, "get_provider_secret", lambda pid: None)
+    # The endpoint route is cached off the real jarvis.toml; route from the
+    # fixture config, or a live install's base_url leaks in.
+    monkeypatch.setattr(
+        cfg,
+        "_cached_endpoint_route",
+        lambda provider_id, vendor_default: cfg._endpoint_route(conf, provider_id, vendor_default),
+    )
     monkeypatch.setattr(
         cfg,
         "get_secret",

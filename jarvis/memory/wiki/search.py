@@ -149,7 +149,15 @@ class VaultSearch:
         if not query or not query.strip():
             return []
 
-        tokens = [t for t in query.split() if t.strip()]
+        from jarvis.memory.wiki.cjk import has_cjk, query_terms, strip_cjk
+
+        # Japanese/Chinese has no spaces: its part of the query becomes the
+        # CJK terms the index stores (see ``jarvis.memory.wiki.cjk``).
+        if has_cjk(query):
+            tokens = [t for t in strip_cjk(query).split() if t.strip()]
+            tokens.extend(query_terms(query))
+        else:
+            tokens = [t for t in query.split() if t.strip()]
         if not tokens:
             return []
 
@@ -226,19 +234,20 @@ class VaultSearch:
     ) -> list[SearchHit]:
         # BM25 weights are positional over EVERY column, including the
         # UNINDEXED ones. ``wiki_fts`` is
-        # ``(path UNINDEXED, title, frontmatter, body, mtime UNINDEXED)`` —
-        # five columns — so the weight list must have five entries. The
+        # ``(path UNINDEXED, title, frontmatter, body, mtime UNINDEXED, cjk)``
+        # — six columns — so the weight list must have six entries. The
         # leading 0.0 belongs to ``path`` (UNINDEXED, never matches); the
-        # trailing 0.0 to ``mtime``. Passing only four weights silently
-        # shifted everything left, giving ``path`` the top weight and
-        # leaving ``body`` at 0.0 (body invisible to ranking).
+        # 0.0 after ``body`` to ``mtime``, and ``cjk`` ranks like ``body``.
+        # Passing too few weights silently shifted everything left, giving
+        # ``path`` the top weight and leaving ``body`` at 0.0 (body invisible
+        # to ranking).
         sql = """
             SELECT
                 path,
                 title,
                 snippet(wiki_fts, 3, '', '', '…', 32) AS snippet,
                 body,
-                bm25(wiki_fts, 0.0, 3.0, 2.0, 1.0, 0.0) AS bm25_score,
+                bm25(wiki_fts, 0.0, 3.0, 2.0, 1.0, 0.0, 1.0) AS bm25_score,
                 frontmatter
             FROM wiki_fts
             WHERE wiki_fts MATCH ?

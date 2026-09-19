@@ -125,7 +125,8 @@
     "voice": "{name} Voice",
     "voice_shortcuts": "Shortcuts",
     "voice_language": "Language",
-    "voice_api_keys": "API Keys"
+    "voice_api_keys": "API Keys",
+    "copilot": "Copilot"
   },
   "agent_instructions": {
     "subtitle": "Your personal preferences for how the assistant works with you — tone, language, defaults, standing facts. Separate from the System Prompt, and it never overrides safety or confirmations.",
@@ -494,11 +495,9 @@
     "recent": "Recent",
     "pin_chat": "Pin chat",
     "unpin_chat": "Unpin chat",
-
     "jarvis_tools": "Jarvis Tools",
     "scheduled": "Scheduled",
     "more": "More",
-
     "instance_dev_hint": "Dev instance — a second, freely restartable copy of the app with its own data, ports and icon. The regular app keeps running beside it.",
     "surface_voice": "Voice",
     "surface_chat": "Chat",
@@ -2597,6 +2596,17 @@
       "system": "System",
       "system_now_dark": "Following your system, which is currently dark.",
       "system_now_light": "Following your system, which is currently light."
+    },
+    "phone_access": {
+      "title": "Phone access",
+      "description": "Open Jarvis from a phone on the same Wi-Fi. Only devices on your home network can reach it, over an encrypted connection.",
+      "switch_title": "Allow phones on this network",
+      "switch_description": "Reachable at https://{ip} on your home network. Every phone signs in once with a QR code from this PC.",
+      "no_network": "This PC has no home-network address right now.",
+      "restart_hint": "Saved. Restart Jarvis (top bar) to apply it.",
+      "pair_button": "Pair a phone",
+      "pair_hint": "Scan with the phone's camera. The code works once; make a new one for each phone.",
+      "certificate_hint": "The phone warns that the connection is not private the first time: this PC made its own certificate. Choose Details, then Visit this website."
     }
   },
   "telephony_view": {
@@ -3140,13 +3150,18 @@
       "es": {
         "label": "Español (Spanish)",
         "description": "Use Spanish for every label and button."
+      },
+      "ja": {
+        "label": "日本語 (Japanese)",
+        "description": "Use Japanese for every label and button."
       }
     },
     "reply_options": {
       "auto": "{name} mirrors whichever language you speak or type.",
       "en": "{name} answers in English.",
       "de": "{name} antwortet auf Deutsch.",
-      "es": "{name} responde en español."
+      "es": "{name} responde en español.",
+      "ja": "{name} replies in Japanese."
     },
     "stt_options": {
       "auto": "Detect the language you speak automatically.",
@@ -5701,5 +5716,48 @@
     "build_active": "Build mode",
     "control_turn": "Agent work",
     "verifying": "Execution finished; verifying the result."
+  },
+  "copilot_view": {
+    "title": "Copilot",
+    "subtitle": "Slide decks from an order, lessons from plan to report, and your PC workflow turned into automation ideas. Every button does what the same spoken request does.",
+    "tab_material": "Material",
+    "tab_teacher": "Teacher",
+    "tab_workflow": "Workflow",
+    "order_label": "Order",
+    "order_placeholder": "e.g. 5 slides on light reflection for 8th-grade science",
+    "order_hint": "Makes a PPTX and a PDF with a quality check. Nothing is sent; you review and deliver.",
+    "make": "Make the deck",
+    "revise_label": "Revise one page of the latest deck",
+    "page": "Page",
+    "revise_placeholder": "e.g. make it shorter",
+    "revise": "Revise",
+    "slides": "{n} slides",
+    "quality": "Quality",
+    "folder": "Folder",
+    "no_materials": "No decks yet.",
+    "open_failed": "The file could not be opened.",
+    "plan_label": "Lesson plan",
+    "plan_placeholder": "Subject, grade and topic",
+    "minutes": "Minutes",
+    "plan": "Write the plan",
+    "plan_ready": "Plan ready: {topic}",
+    "live_label": "Live lesson",
+    "live_on": "Recording text",
+    "live_hint": "While a lesson runs, Jarvis only listens and keeps a text log (no audio). Ask for a summary any time.",
+    "live_status": "{elapsed} min in, {remaining} min left, {n} remarks recorded.",
+    "start": "Start the lesson",
+    "summary": "Summarize now",
+    "end": "End and write the report",
+    "lesson_files": "Lesson files",
+    "no_lessons": "No lesson files yet.",
+    "observe_label": "Work observation",
+    "observing": "Observing",
+    "observe_hint": "Records only which app is in front, every few seconds. No keystrokes, no screenshots.",
+    "observe_start": "Start observing",
+    "observe_stop": "Stop and analyse",
+    "candidates": "Automation candidates",
+    "draft": "Draft a script",
+    "draft_hint": "A draft is saved for you to review; Jarvis never runs it. Sending, deleting and similar lines are commented out.",
+    "drafts": "Script drafts"
   }
 }

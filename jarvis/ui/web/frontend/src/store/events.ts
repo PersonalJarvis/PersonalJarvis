@@ -105,7 +105,9 @@ export type SectionId =
   // The Jarvis Marketplace, in the app: everything the community published —
   // plugins, skills and wallpapers — browsable and installable in one place
   // instead of scattered across three unrelated sections.
-  | "marketplace";
+  | "marketplace"
+  // Copilot: Material decks, Teacher lessons and Workflow observation.
+  | "copilot";
 
 export const SECTION_IDS = [
   "chats",
@@ -148,6 +150,7 @@ export const SECTION_IDS = [
   "chat-workspace",
   "agentic-ide-classic",
   "marketplace",
+  "copilot",
 ] as const satisfies readonly SectionId[];
 
 export function isSectionId(value: unknown): value is SectionId {
@@ -237,6 +240,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   "chat-workspace": "Chat",
   "agentic-ide-classic": "Terminal grid",
   marketplace: "Marketplace",
+  copilot: "Copilot",
 };
 
 export interface EventItem {

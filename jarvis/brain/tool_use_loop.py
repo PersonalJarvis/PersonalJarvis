@@ -623,6 +623,39 @@ def _is_stt_hallucinated(tool_name: str, args: Any) -> tuple[bool, str]:
     return False, ""
 
 
+#: How often a project-chat turn may be told to act on an announced step.
+_MAX_CONTINUATION_NUDGES = 2
+
+_CONTINUE_DIRECTIVE = (
+    "Continue: do the step you just announced now, using your tools. Keep "
+    "going until the task is finished, then report the result."
+)
+
+# The LAST sentence announces a next step instead of reporting one: Japanese
+# "... shimasu" intent endings and English "let me / I'll / next I".
+_NEXT_STEP_JA_RE = re.compile(
+    "(\u3057\u307e\u3059|\u3057\u307e\u3057\u3087\u3046|\u3066\u3044\u304d\u307e\u3059"
+    "|\u898b\u3066\u307f\u307e\u3059|\u307f\u307e\u3059)"
+    "(?:\u306d|\u3088)?"
+    "[\u3002\uff0e.!\uff01]?"
+    r"\s*$"
+)
+_NEXT_STEP_EN_RE = re.compile(
+    r"\b(let me(?! know)|i'll|i will|next,? i|now i'll|first,? i'll)\b[^.!?]*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _announces_next_step(text: str) -> bool:
+    """Whether ``text`` ends by announcing an action rather than a result."""
+    tail = (text or "").strip()
+    if not tail:
+        return False
+    parts = re.split(r"(?<=[.!?\u3002\uff01\uff1f])\s*", tail)
+    sentence = next((part for part in reversed(parts) if part.strip()), tail)
+    return bool(_NEXT_STEP_JA_RE.search(sentence) or _NEXT_STEP_EN_RE.search(sentence))
+
+
 class ToolUseLoop:
     """Loop until no more tool calls are pending or the budget is exhausted."""
 
@@ -639,10 +672,16 @@ class ToolUseLoop:
         reasoning_effort: ReasoningEffort | None = None,
         tool_context: dict[str, Any] | None = None,
         loop_control: LoopControl | None = None,
+        advertised_tools: dict[str, Tool] | None = None,
     ) -> None:
         self._brain = brain
         self._tools = tools
         self._executor = executor
+        # Tool DEFINITIONS sent to the model, when they differ from what may
+        # run this turn. A small local brain gets one stable surface every
+        # turn so its prompt prefix stays cached (templates render tools
+        # first); the per-turn gates still decide what executes.
+        self._advertised = advertised_tools
         # Caller-supplied keys for every tool's ``ExecutionContext.config``
         # (see BrainDispatcher.tool_context). Per-turn keys set below win.
         self._tool_context = dict(tool_context or {})
@@ -801,13 +840,14 @@ class ToolUseLoop:
 
     def _tool_schemas(self) -> list[dict[str, Any]]:
         """Schemas in Anthropic-compatible format (providers normalise)."""
+        source = self._advertised if self._advertised is not None else self._tools
         return [
             {
                 "name": tool.name,
                 "description": getattr(tool, "description", ""),
                 "input_schema": tool.schema,
             }
-            for tool in self._tools.values()
+            for tool in source.values()
         ]
 
     async def _phase(self, phase: str, detail: str = "") -> None:
@@ -953,6 +993,7 @@ class ToolUseLoop:
         tool_log: list[ToolRecord] = []
         verify_rounds = 0
         round_no = 0
+        continuation_nudges = 0
 
         def _progress() -> None:
             # Stall-timeout heartbeat (see ``on_progress`` in the docstring).
@@ -977,6 +1018,16 @@ class ToolUseLoop:
             round_no += 1
             await self._phase(PHASE_GATHER, f"round {round_no}")
 
+            # A small local model answered a mandated write ("remember that
+            # ...") with "Noted." and no call at all (live 2026-09-18), even
+            # with the mandate directive in its prompt. For such brains the
+            # FIRST round of a mandated turn must be a tool call.
+            force_call = (
+                round_no == 1
+                and bool(evidence_required_tool)
+                and bool(tools_payload)
+                and bool(getattr(self._brain, "compact_prompt", False))
+            )
             req = BrainRequest(
                 messages=tuple(current_messages),
                 tools=tuple(tools_payload),
@@ -984,6 +1035,7 @@ class ToolUseLoop:
                 max_tokens=self._max_tokens,
                 stream=True,
                 reasoning_effort=self._reasoning_effort,
+                tool_choice="required" if force_call else None,
             )
             stream = self._brain.complete(req)
             if text_consumer is not None:
@@ -1079,6 +1131,29 @@ class ToolUseLoop:
                 late = self._drain_steer()
                 if late:
                     self._append_steer(current_messages, late)
+                    continue
+                if (
+                    continuation_nudges < _MAX_CONTINUATION_NUDGES
+                    and not deadline_forced
+                    and tools_payload
+                    and self._tool_context.get("cwd")
+                    and getattr(self._brain, "compact_prompt", False)
+                    and _announces_next_step(agg.text)
+                ):
+                    # A small local model in a project chat says what it will
+                    # do next ("I'll check the files first.") and stops. There
+                    # is no one to press "go on": ask it to do it now.
+                    continuation_nudges += 1
+                    log.info(
+                        "tool_use_loop: model announced a step without acting — "
+                        "continuation nudge %d/%d",
+                        continuation_nudges,
+                        _MAX_CONTINUATION_NUDGES,
+                    )
+                    current_messages.append(BrainMessage(role="assistant", content=agg.text))
+                    current_messages.append(
+                        BrainMessage(role="user", content=_CONTINUE_DIRECTIVE)
+                    )
                     continue
                 outcome = await self._run_verify(
                     user_utterance or _last_user_text(current_messages),
@@ -1268,6 +1343,19 @@ class ToolUseLoop:
                             "automatically in the background and persists them "
                             "to USER.md — you must NOT manually edit USER.md, "
                             "spawn a worker, or invoke a shell."
+                        ),
+                    }
+                elif tool is None and self._advertised and tool_name in self._advertised:
+                    # Advertised for prompt-cache stability but gated off this
+                    # turn: not a missing tool. Say so and let the model answer
+                    # in words — no refusal phrase, nothing executed.
+                    await self._publish_guard_denied(
+                        tool_name, "advertised but gated off this turn", tid
+                    )
+                    tool_result_payload = {
+                        "error": (
+                            f"Tool '{tool_name}' is not used for this request. "
+                            "Do not call tools for it; answer the user directly."
                         ),
                     }
                 elif tool is None:

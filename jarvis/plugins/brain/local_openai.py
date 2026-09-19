@@ -29,6 +29,9 @@ looked at is the failure mode worth being conservative about.
 from __future__ import annotations
 
 import asyncio
+import base64
+import dataclasses
+import io
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
@@ -36,7 +39,7 @@ from typing import Any
 import httpx
 
 from jarvis.core import config as cfg
-from jarvis.core.protocols import BrainDelta, BrainRequest
+from jarvis.core.protocols import BrainDelta, BrainRequest, ImageBlock
 
 from ._openai_base import stream_complete
 from .ollama import normalize_server_root
@@ -70,10 +73,56 @@ def _declared_vision_support(model: str) -> bool:
     try:
         from jarvis.brain.model_catalog import model_capabilities  # noqa: PLC0415 — lazy (AP-26)
 
-        return model_capabilities("local-openai", model)["vision"] is True
+        declared = model_capabilities("local-openai", model)["vision"]
+        if declared is not None:
+            return declared is True
+        # The managed llama-server serves a model with its vision projector
+        # when one is installed next to it; the file is the declaration.
+        from jarvis.local_models.llama_server import mmproj_for  # noqa: PLC0415
+
+        return mmproj_for(model) is not None
     except Exception:  # noqa: BLE001 — a probe must never break construction
         log.debug("local-openai: vision capability probe failed — staying blind")
         return False
+
+
+#: Longest image side sent to a local vision model. Measured on a 4 GB laptop
+#: GPU with the projector on the CPU: 1280 px took 56 s per screenshot, 768 px
+#: 17 s and still read the screen correctly, 512 px was fast but misread it.
+LOCAL_IMAGE_MAX_SIDE = 768
+
+
+def _shrink_image(img: ImageBlock) -> ImageBlock:
+    """``img`` with its longest side capped at ``LOCAL_IMAGE_MAX_SIDE`` (JPEG)."""
+    try:
+        from PIL import Image  # noqa: PLC0415 - lazy; only image turns pay it
+
+        pic = Image.open(io.BytesIO(base64.b64decode(img.data_b64)))
+        if max(pic.size) <= LOCAL_IMAGE_MAX_SIDE:
+            return img
+        pic = pic.convert("RGB")
+        pic.thumbnail((LOCAL_IMAGE_MAX_SIDE, LOCAL_IMAGE_MAX_SIDE), Image.Resampling.LANCZOS)
+        buf = io.BytesIO()
+        pic.save(buf, "JPEG", quality=85)
+    except Exception:  # noqa: BLE001 - an undecodable image is sent unchanged
+        log.debug("local-openai: image downscale failed; sending original", exc_info=True)
+        return img
+    return ImageBlock(
+        mime="image/jpeg",
+        data_b64=base64.b64encode(buf.getvalue()).decode("ascii"),
+        source_hash=img.source_hash,
+    )
+
+
+def _shrink_images(req: BrainRequest) -> BrainRequest:
+    """Downscale every image so an image turn stays usable on local hardware."""
+    if not any(m.images for m in req.messages):
+        return req
+    messages = tuple(
+        dataclasses.replace(m, images=tuple(_shrink_image(i) for i in m.images)) if m.images else m
+        for m in req.messages
+    )
+    return dataclasses.replace(req, messages=messages)
 
 
 class LocalOpenAIBrain:
@@ -83,6 +132,25 @@ class LocalOpenAIBrain:
     context_window: int = 32_768
     supports_tools: bool = True
     supports_vision: bool = False
+    # A local model prefills every schema on every turn; the full surface
+    # (~15k tokens) cost over a minute per turn on a 4 GB laptop GPU. The
+    # manager trims to this budget and keeps ``core_tools`` first.
+    tool_budget_tokens: int = 4000
+    # Leave the static skill catalogue and society card out of the prompt.
+    compact_prompt: bool = True
+    core_tools: frozenset[str] = frozenset(
+        {
+            "run_shell",
+            "open_app",
+            "switch_window",
+            "type_text",
+            "hotkey",
+            "read_visible_ui_state",
+            "remember",
+            "wiki-recall",
+            "search_web",
+        }
+    )
 
     def __init__(self, model: str | None = None) -> None:
         self._model = (model or "").strip()
@@ -90,6 +158,9 @@ class LocalOpenAIBrain:
         self._server_root: str | None = None
         self._credential: str | None = None
         self.supports_vision = _declared_vision_support(self._model)
+        if self.supports_vision:
+            # A model that can see keeps the screen tool through the trim.
+            self.core_tools = type(self).core_tools | {"screenshot"}
 
     def can_call_tools(self) -> bool:
         return self.supports_tools
@@ -158,6 +229,8 @@ class LocalOpenAIBrain:
             # the event loop (BUG-189; see claude_api.py for the measurement).
             client = await asyncio.to_thread(self._ensure_client)
         model = await self._resolve_model()
+        if self.supports_vision:
+            req = await asyncio.to_thread(_shrink_images, req)
         async for delta in stream_complete(
             client, model, req, supports_vision=self.supports_vision
         ):

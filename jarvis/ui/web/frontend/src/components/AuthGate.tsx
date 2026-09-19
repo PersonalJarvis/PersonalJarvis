@@ -25,8 +25,20 @@ async function createSession(body: { control_key: string } | { session_token: st
   });
 }
 
+/** One-time phone pairing token from a `#pair=<token>` link (Settings QR).
+ *  Read once and removed from the address bar so it never lingers in
+ *  history or a shared screenshot. */
+function takePairingToken(): string {
+  const match = /(?:^#|&)pair=([A-Za-z0-9._~-]+)/.exec(window.location.hash);
+  if (!match) return "";
+  window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  return match[1];
+}
+
+const pairingToken = typeof window !== "undefined" ? takePairingToken() : "";
+
 function readInjectedToken(): string {
-  return window.__JARVIS_TOKEN?.trim() ?? "";
+  return window.__JARVIS_TOKEN?.trim() || pairingToken;
 }
 
 function waitForInjectedToken(): Promise<string> {

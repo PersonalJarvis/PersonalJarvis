@@ -343,6 +343,58 @@ def check_macos_spotlight() -> list[DoctorFinding]:
     return [DoctorFinding("macos-spotlight", "ok", f"Spotlight finds {bundle.name}")]
 
 
+def check_local_stack() -> list[DoctorFinding]:
+    """The keyless local stack: llama.cpp brain, local voice, local STT.
+
+    Everything here is optional for a cloud-key user, so a missing piece is
+    ``info``/``warn``, never ``fail``. Each hint is the one command that repairs it.
+    """
+    import shutil as _shutil  # noqa: PLC0415
+
+    from jarvis.local_models import llama_server  # noqa: PLC0415
+    from jarvis.plugins.tts import voicevox_engine  # noqa: PLC0415
+
+    out: list[DoctorFinding] = []
+    binary = llama_server.find_binary()
+    models = llama_server.list_models()
+    if binary is None:
+        out.append(DoctorFinding(
+            "local-stack", "info", "local brain (llama.cpp) not installed",
+            hint="python scripts/install_local_brain.py",
+        ))
+    elif not models:
+        out.append(DoctorFinding(
+            "local-stack", "warn", f"llama-server found ({binary.name}) but no GGUF model",
+            hint="python scripts/install_local_brain.py",
+        ))
+    else:
+        names = ", ".join(m.stem for m in models)
+        out.append(DoctorFinding("local-stack", "ok", f"local brain ready: {names}"))
+    if voicevox_engine.installed():
+        state = "running" if voicevox_engine.is_up() else "installed (starts on demand)"
+        out.append(DoctorFinding("local-stack", "ok", f"VOICEVOX {state}"))
+    else:
+        out.append(DoctorFinding(
+            "local-stack", "info", "VOICEVOX not installed (Japanese voice falls back)",
+            hint="python scripts/install_voicevox.py",
+        ))
+    try:
+        import faster_whisper  # noqa: F401, PLC0415
+
+        out.append(DoctorFinding("local-stack", "ok", "local speech recognition available"))
+    except ImportError:
+        out.append(DoctorFinding(
+            "local-stack", "info", "faster-whisper not installed (local STT unavailable)",
+        ))
+    free_gb = _shutil.disk_usage(llama_server.llama_home().anchor or "/").free / 1e9
+    if free_gb < 5:
+        out.append(DoctorFinding(
+            "local-stack", "warn", f"only {free_gb:.1f} GB free disk",
+            hint="models and caches need several GB; free some space",
+        ))
+    return out
+
+
 def run_doctor(config: Any) -> list[DoctorFinding]:
     """Run every completeness check and return a flat, ordered finding list.
 
@@ -357,6 +409,7 @@ def run_doctor(config: Any) -> list[DoctorFinding]:
         ("brain-provider", lambda: check_brain_provider(config)),
         ("computer-use", lambda: check_computer_use_prereqs(config)),
         ("macos-spotlight", lambda: check_macos_spotlight()),
+        ("local-stack", lambda: check_local_stack()),
     )
     for category, fn in checks:
         try:

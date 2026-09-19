@@ -378,6 +378,14 @@ class WakeWordConfig(BaseModel):
 
 class TriggerConfig(BaseModel):
     wake_word_enabled: bool = False
+    # Double hand clap as a second, keyless activation next to the wake word
+    # (``jarvis.speech.clap_detector``). Off by default: a clap is not a word
+    # the user chose, so it is opt-in per install.
+    clap_enabled: bool = False
+    # Show an open palm to the webcam for about a second = emergency stop
+    # (``jarvis.vision.hand_gesture``). Off by default: it keeps the camera
+    # on. Frames are analysed in memory and never stored.
+    palm_stop_enabled: bool = False
     # Deprecated compatibility field. Older installs may still carry this
     # push-to-talk key in jarvis.toml, so the config model continues to accept
     # it, but the desktop no longer registers or exposes it.
@@ -2090,7 +2098,7 @@ class UIConfig(BaseModel):
     # value, so a voice command or the Control API can change it and the open UI
     # switches live (a ConfigReloaded / UiLanguageChanged event reaches the
     # frontend over /ws). Distinct from brain.reply_language (what Jarvis SPEAKS).
-    language: Literal["en", "de", "es"] = "en"
+    language: Literal["en", "de", "es", "ja"] = "en"
     # Colour theme of the whole desktop app: "dark" (the product default —
     # matte black + signal yellow), "light" (warm paper + dark gold), or
     # "system" (follow the OS appearance, re-evaluated live when the OS flips).
@@ -2119,6 +2127,13 @@ class UIConfig(BaseModel):
     # (see surface_security.open_access_granted). Toggled live from
     # Settings → API Keys → Control Key.
     require_browser_login: bool = False
+    # Phone access on the home network: a second, HTTPS-only listener on the
+    # machine's private LAN address (self-signed certificate) so a phone's
+    # browser can open the app. Off by default. A LAN device never gets open
+    # access: it signs in with a one-time pairing link (QR in Settings) or the
+    # Control Key. Read by jarvis.ui.web.lan_access.
+    lan_access: bool = False
+    lan_port: int = 47843
     # On-screen overlay style: "jarvis_bar" (slim default), "mascot" (the ghost
     # mascot), "voice_orb" (the procedural weather sphere — the desktop twin of
     # the in-app orb), or "none". One list: jarvis.ui.overlay_styles.
@@ -3005,6 +3020,10 @@ class VoiceConfig(BaseModel):
     # Master switch for the completion classifier + waiting state. When false
     # the pipeline behaves exactly as before this feature landed.
     completion_detection_enabled: bool = True
+    # Short phrase spoken after the wake chime (wake word or double clap), in
+    # the user's language — e.g. "Yes?". Empty keeps the chime alone, which is
+    # the shipped default: canned persona phrases were removed on request.
+    wake_ack_phrase: str = ""
     # Voice engine selector. "realtime" (default) = the full-duplex
     # speech-to-speech engine — the recommended mode. "pipeline" = the classic
     # STT->brain->TTS chain. Read once per voice session; a live change lands

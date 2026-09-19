@@ -39,7 +39,7 @@ def test_read_commands(command: str) -> None:
         "mv a.txt b.txt",
         "mkdir new-folder",
         "New-Item -ItemType File probe.md",
-        "npm install",
+        "npm run lint",
         "git push origin main",
         "sed -i s/a/b/ file.txt",
         "echo data > out.txt",          # redirect escalates a read
@@ -125,3 +125,26 @@ def test_run_shell_describe_args_dedupes_command_words() -> None:
 
 def test_run_shell_describe_args_empty_command_is_none() -> None:
     assert RunShellTool().describe_args({"command": "  "}) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pip install pytest",
+        "python -m pip install requests",
+        "npm install left-pad",
+        "npm ci",
+        "winget install Some.App",
+        "choco install foo",
+        "Install-Module PSReadLine",
+        "go get example.com/x",
+    ],
+)
+def test_package_installs_are_escalated_like_a_delete(command: str) -> None:
+    # An install downloads and runs code from the internet: ask first.
+    assert classify_command(command).level == DESTRUCTIVE
+
+
+@pytest.mark.parametrize("command", ["npm run build", "python -m pytest -q", "go build ./..."])
+def test_running_a_project_is_not_an_install(command: str) -> None:
+    assert classify_command(command).level == MODIFY

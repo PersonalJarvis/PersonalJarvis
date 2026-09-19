@@ -8,6 +8,8 @@ mandates the real tool on a contact-write turn so the read-style evidence gate's
 backstop can catch a fake confirmation. Pure regex, no LLM (AP-9/AP-11).
 """
 
+import pytest
+
 from jarvis.brain.contact_intent import (
     CONTACT_WRITE_DIRECTIVE,
     WIKI_INGEST_DIRECTIVE,
@@ -148,3 +150,28 @@ def test_wiki_ingest_directive_forces_the_real_tool():
     assert "wiki-ingest" in d
     assert "MANDATORY" in d
     assert "never" in d.lower() or "not" in d.lower()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Japanese: remember that my favourite colour is blue
+        "私の好きな色は青だ"
+        "と覚えておいて",
+        "青が好きと覚えて",  # short Japanese remember request
+        "このことは忘れないでね",  # "don't forget this"
+    ],
+)
+def test_japanese_remember_requests_mandate_a_memory_write(text: str) -> None:
+    assert detect_memory_save_intent(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "覚えて",  # a bare "remember" with no fact
+        "メモ帳を開いて",  # "open Notepad" is not a memory note
+    ],
+)
+def test_japanese_non_memory_turns_do_not_fire(text: str) -> None:
+    assert not detect_memory_save_intent(text)

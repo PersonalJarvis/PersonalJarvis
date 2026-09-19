@@ -145,3 +145,19 @@ def test_skill_section_failure_doesnt_crash_prompt(
     assert isinstance(prompt, str)
     assert len(prompt) > 0
     assert "## AVAILABLE SKILLS" not in prompt
+
+
+def test_compact_prompt_leaves_the_skill_catalogue_out(tmp_path: Path) -> None:
+    """A small local brain's compact prompt omits the static skill list."""
+    _write_skill(tmp_path, "memory-save", "Speichert einen Fakt im Long-Term-Memory.")
+    registry = SkillRegistry(root=tmp_path)
+    registry.reload_sync()
+    set_skill_context(SkillContext(registry=registry, runner=_StubRunner()))  # type: ignore[arg-type]
+
+    brain = _make_brain_manager()
+    full = brain._build_system_prompt()
+    compact = brain._build_system_prompt(compact=True)
+
+    assert "## AVAILABLE SKILLS" in full
+    assert "## AVAILABLE SKILLS" not in compact
+    assert len(compact) < len(full)

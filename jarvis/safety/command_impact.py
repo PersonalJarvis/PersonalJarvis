@@ -84,6 +84,19 @@ _GIT_READ = frozenset({
 })
 _GIT_DESTRUCTIVE = frozenset({"reset", "clean"})
 
+# Package managers: an install downloads code from the internet and runs it
+# (build hooks, post-install scripts) — the "unknown executable" case the
+# user asked to be confirmed. Escalated to the ask tier like a delete, never
+# silently run (live 2026-09-18: a local brain "fixing" a test pip-installed
+# two packages into the system Python without asking).
+_PACKAGE_MANAGERS = frozenset({
+    "pip", "pip3", "pipx", "uv", "npm", "pnpm", "yarn", "bun", "winget",
+    "choco", "scoop", "apt", "apt-get", "dnf", "yum", "brew", "gem", "cargo",
+    "conda", "mamba", "go",
+})
+_INSTALL_SUBCOMMANDS = frozenset({"install", "i", "ci", "add", "upgrade", "update", "get"})
+_INSTALL_VERBS = frozenset({"install"})  # PowerShell Install-Module / Install-Package
+
 
 @dataclass(frozen=True, slots=True)
 class CommandImpact:
@@ -124,6 +137,12 @@ def _classify_segment(segment: str) -> tuple[str, str]:
         if sub in _GIT_READ:
             return READ, f"git {sub}"
         return MODIFY, f"git {sub}".strip()
+    if word in {"python", "python3", "py"} and re.search(
+        r"-m\s+pip\s+install\b", segment, re.IGNORECASE
+    ):
+        return DESTRUCTIVE, "pip install"
+    if word in _PACKAGE_MANAGERS and sub in _INSTALL_SUBCOMMANDS:
+        return DESTRUCTIVE, f"{word} {sub}"
     if word == "reg":
         return (DESTRUCTIVE if sub == "delete" else MODIFY), f"reg {sub}".strip()
 
@@ -139,7 +158,7 @@ def _classify_segment(segment: str) -> tuple[str, str]:
     # above; "format-table" reaches this branch and reads).
     if "-" in word:
         verb = word.split("-", 1)[0]
-        if verb in _DESTRUCTIVE_VERBS:
+        if verb in _DESTRUCTIVE_VERBS or verb in _INSTALL_VERBS:
             return DESTRUCTIVE, word
         if verb in _READ_VERBS:
             return READ, word

@@ -65,6 +65,8 @@ from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.core.turn_language import (
     DEFAULT_LOCALE,
     detect_text_language,
+    is_japanese_text,
+    localized,
     validate_output_language,
 )
 
@@ -250,6 +252,23 @@ _FALLBACK_SPAWN: dict[str, tuple[str, ...]] = {
         "He puesto un {agent} con este tema más grande; volverá con algo sólido.",
         "Un {agent} ya trabaja en ello. Hay más detrás, así que tardará un momentito.",
     ),
+    "ja": (
+        (
+            "\u4e86\u89e3\u3067\u3059\u3002\u5927\u304d\u3081\u306e\u4f5c\u696d\u306a\u306e\u3067{a"
+            "gent}\u306b\u4efb\u305b\u307e\u3057\u305f\u3002\u7d42\u308f\u3063\u305f\u3089\u5831"
+            "\u544a\u3057\u307e\u3059\u3002"
+        ),
+        (
+            "\u627f\u77e5\u3057\u307e\u3057\u305f\u3002{agent}\u304c\u3058\u3063\u304f\u308a\u53d6"
+            "\u308a\u7d44\u3080\u306e\u3067\u3001\u5c11\u3057\u6642\u9593\u304c\u304b\u304b\u308a"
+            "\u307e\u3059\u3002"
+        ),
+        (
+            "{agent}\u304c\u30d0\u30c3\u30af\u30b0\u30e9\u30a6\u30f3\u30c9\u3067\u4f5c\u696d\u3092"
+            "\u59cb\u3081\u307e\u3057\u305f\u3002\u5c11\u3005\u304a\u5f85\u3061\u304f\u3060\u3055"
+            "\u3044\u3002"
+        ),
+    ),
 }
 
 _FALLBACK_ALREADY_RUNNING: dict[str, tuple[str, ...]] = {
@@ -270,6 +289,17 @@ _FALLBACK_ALREADY_RUNNING: dict[str, tuple[str, ...]] = {
         "El {agent} ya tiene esa tarea, un momento.",
         "Un {agent} sigue trabajando en ello, casi está.",
         "Paciencia, esa tarea ya está con un {agent}.",
+    ),
+    "ja": (
+        (
+            "\u305d\u306e\u4f5c\u696d\u306f{agent}\u304c\u307e\u3060\u9032\u3081\u3066\u3044\u307e"
+            "\u3059\u3002"
+        ),
+        (
+            "{agent}\u304c\u3059\u3067\u306b\u53d6\u308a\u304b\u304b\u3063\u3066\u3044\u307e\u3059"
+            "\u3002\u3082\u3046\u5c11\u3057\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002"
+        ),
+        "\u305d\u306e\u4ef6\u306f{agent}\u304c\u4f5c\u696d\u4e2d\u3067\u3059\u3002",
     ),
 }
 
@@ -379,6 +409,10 @@ def _resolve_language(explicit: str | None, utterance: str) -> str:
             return "es"
         if low.startswith("de"):
             return "de"
+        if low.startswith("ja"):
+            return "ja"
+    if is_japanese_text(utterance or ""):
+        return "ja"
     detected = detect_text_language(utterance or "")
     return detected if detected in ("de", "en", "es") else DEFAULT_LOCALE
 
@@ -494,7 +528,7 @@ class SpawnAnnouncementComposer:
         if kind == "already_running":
             # Cooldown suppress is a fast-path duplicate rejection; an LLM
             # round-trip would delay exactly the turns that are already noisy.
-            return self._pick_fallback(_FALLBACK_ALREADY_RUNNING[lang], brand, lang)
+            return self._pick_fallback(localized(_FALLBACK_ALREADY_RUNNING, lang), brand, lang)
 
         validated = self._validate(candidate or "", lang, brand)
         if validated:
@@ -514,7 +548,7 @@ class SpawnAnnouncementComposer:
                 return composed
 
         _emit_counter("spawn_ack_fallback_total")
-        return self._pick_fallback(_FALLBACK_SPAWN[lang], brand, lang)
+        return self._pick_fallback(localized(_FALLBACK_SPAWN, lang), brand, lang)
 
     # ------------------------------------------------------------------
     # internals

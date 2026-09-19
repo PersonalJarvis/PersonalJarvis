@@ -21,6 +21,7 @@ from jarvis.core.turn_language import (
     DEFAULT_LOCALE,
     detect_language_request,
     detect_text_language,
+    is_japanese_text,
     normalize_language_tag,
     resolve_output_language,
     resolve_transcript_language,
@@ -488,3 +489,50 @@ def test_output_language_validator_keeps_unknown_target_non_blocking() -> None:
     assert result.status == "indeterminate"
     assert result.resolved_language == "unknown"
     assert result.should_block is False
+
+
+# ---------------------------------------------------------------------------
+# Japanese (script-based; steers the brain's reply directive only)
+# ---------------------------------------------------------------------------
+
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "おはよう。今日もよろしく。",  # i18n-allow: Japanese user input under test
+        "メモ帳開いて",  # i18n-allow: Japanese user input under test
+        "日本語",  # i18n-allow: kanji-only Japanese
+        "はい",  # i18n-allow: thin Japanese turn
+        "VS Codeを開いて",  # i18n-allow: kana wins over a Latin brand name
+    ],
+)
+def test_japanese_text_is_detected(text: str) -> None:
+    assert is_japanese_text(text)
+
+
+@pytest.mark.parametrize("text", ["Guten Morgen", "Hello there", "Hola", "", "OK 123"])
+def test_non_japanese_text_is_not_japanese(text: str) -> None:
+    assert not is_japanese_text(text)
+
+
+def test_japanese_text_speaks_japanese() -> None:
+    # "ohayou": Japanese is decided by script, even against an established
+    # conversation language (a Japanese sentence has no Latin "words", so the
+    # thin-turn stickiness must not claim it).
+    assert resolve_output_language("auto", None, "\u304a\u306f\u3088\u3046", default="en") == "ja"
+    assert (
+        resolve_output_language("auto", None, "\u304a\u306f\u3088\u3046", conversation_language="de") == "ja"
+    )
+
+
+def test_an_explicit_pin_still_wins_over_japanese_text() -> None:
+    assert resolve_output_language("de", None, "\u304a\u306f\u3088\u3046") == "de"
+
+
+def test_localized_falls_back_to_english_for_a_missing_locale() -> None:
+    from jarvis.core.turn_language import localized
+
+    table = {"de": "Moment", "en": "One moment", "es": "Un momento"}
+    assert localized(table, "ja") == "One moment"
+    assert localized(table, "de") == "Moment"

@@ -19,7 +19,7 @@ import re
 from jarvis.core.turn_language import resolve_turn_language
 
 _DEFAULT = "de"
-_SUPPORTED = ("de", "en", "es")
+_SUPPORTED = ("de", "en", "es", "ja")
 
 #: ``HarnessTask.env`` key carrying the turn's resolved output language (de/en/es)
 #: into the computer-use harness, so the in-harness verifier writes its spoken
@@ -46,6 +46,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Erledigt.",  # i18n-allow
         "en": "Done.",
         "es": "Listo.",
+        "ja": "\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002",
     },
     # The lookup ran, its answer never got spoken, and nothing could be built
     # from what it returned. The floor under ``_wordless_success_line`` — and
@@ -66,6 +67,11 @@ _PHRASES: dict[str, dict[str, str]] = {
             "Tengo la información, pero no pude leerla en voz alta. "
             "¿Lo intento otra vez?"
         ),
+        "ja": (
+            "\u60c5\u5831\u306f\u53d6\u308c\u307e\u3057\u305f\u304c\u3001\u4eca\u3046\u307e\u304f"
+            "\u8aad\u307f\u4e0a\u3052\u3089\u308c\u307e\u305b\u3093\u3067\u3057\u305f\u3002\u3082"
+            "\u3046\u4e00\u5ea6\u8a66\u3057\u307e\u3057\u3087\u3046\u304b\uff1f"
+        ),
     },
     # The lookup ran and came back empty. The honest answer to a question with
     # no hit — never ``cu_done``, which would report a finished job instead.
@@ -73,6 +79,10 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Dazu habe ich nichts gefunden.",  # i18n-allow
         "en": "I didn't find anything on that.",
         "es": "No encontré nada sobre eso.",  # i18n-allow
+        "ja": (
+            "\u305d\u308c\u306b\u3064\u3044\u3066\u306f\u4f55\u3082\u898b\u3064\u304b\u308a\u307e"
+            "\u305b\u3093\u3067\u3057\u305f\u3002"
+        ),
     },
     # Success WITH the verifier's on-screen observation forwarded (the SUCCESS
     # sibling of cu_failed_reason). Lets an informational request actually be
@@ -84,21 +94,34 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Erledigt. {detail}",  # i18n-allow
         "en": "Done. {detail}",
         "es": "Listo. {detail}",
+        "ja": "\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002{detail}",
     },
     "cu_failed": {
         "de": "Das am Bildschirm hat nicht geklappt.",  # i18n-allow
         "en": "That didn't work on screen.",
         "es": "Eso no funcionó en la pantalla.",
+        "ja": (
+            "\u753b\u9762\u3067\u306e\u64cd\u4f5c\u304c\u3046\u307e\u304f\u3044\u304d\u307e\u305b"
+            "\u3093\u3067\u3057\u305f\u3002"
+        ),
     },
     "cu_failed_reason": {
         "de": "Das am Bildschirm hat nicht geklappt: {error}",  # i18n-allow
         "en": "That didn't work on screen: {error}",
         "es": "Eso no funcionó en la pantalla: {error}",
+        "ja": (
+            "\u753b\u9762\u3067\u306e\u64cd\u4f5c\u304c\u3046\u307e\u304f\u3044\u304d\u307e\u305b"
+            "\u3093\u3067\u3057\u305f\uff1a{error}"
+        ),
     },
     "cu_crashed": {
         "de": "Beim Erledigen am Bildschirm ist leider etwas schiefgegangen.",  # i18n-allow
         "en": "Something went wrong while doing it on screen.",
         "es": "Algo salió mal al hacerlo en la pantalla.",
+        "ja": (
+            "\u753b\u9762\u3067\u64cd\u4f5c\u3057\u3066\u3044\u308b\u9014\u4e2d\u3067\u554f\u984c"
+            "\u304c\u8d77\u304d\u307e\u3057\u305f\u3002"
+        ),
     },
     # Computer-use failure readbacks keyed off the harness EXIT CODE. These are
     # plain-language sentences for the case where the underlying layer gives us
@@ -113,16 +136,28 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich habe es am Bildschirm versucht, aber nicht hinbekommen.",  # i18n-allow
         "en": "I tried it on screen but couldn't get it done.",
         "es": "Lo intenté en la pantalla, pero no pude completarlo.",
+        "ja": (
+            "\u753b\u9762\u3067\u8a66\u3057\u307e\u3057\u305f\u304c\u3001\u3046\u307e\u304f\u3067"
+            "\u304d\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
+        ),
     },
     "cu_exit_no_view": {  # exit 1 — observe failure (no usable screenshot)
         "de": "Ich konnte den Bildschirm nicht richtig sehen und habe abgebrochen.",  # i18n-allow
         "en": "I couldn't see the screen properly, so I stopped.",
         "es": "No pude ver bien la pantalla, así que lo detuve.",
+        "ja": (
+            "\u753b\u9762\u304c\u3046\u307e\u304f\u898b\u3048\u306a\u304b\u3063\u305f\u306e\u3067"
+            "\u3001\u4e2d\u6b62\u3057\u307e\u3057\u305f\u3002"
+        ),
     },
     "cu_exit_confused": {  # exit 2 — invalid model / parse response
         "de": "Ich konnte keine gueltige Bildschirm-Antwort bekommen und habe gestoppt.",  # i18n-allow
         "en": "I couldn't get a valid screen-control response, so I stopped.",
         "es": "No pude obtener una respuesta valida para controlar la pantalla, asi que me detuve.",
+        "ja": (
+            "\u753b\u9762\u64cd\u4f5c\u306e\u6b63\u3057\u3044\u5fdc\u7b54\u304c\u5f97\u3089\u308c"
+            "\u306a\u304b\u3063\u305f\u306e\u3067\u3001\u4e2d\u6b62\u3057\u307e\u3057\u305f\u3002"
+        ),
     },
     # exit 3 — the vision-provider chain was EXHAUSTED: no screen-capable AI model
     # was reachable (every candidate keyless / out-of-credit / rate-limited /
@@ -140,34 +175,61 @@ _PHRASES: dict[str, dict[str, str]] = {
               "Please check your API keys or your credit in settings.",
         "es": "Ahora mismo no tengo un modelo de IA que pueda ver la pantalla. "
               "Revisa tus claves de API o tu saldo en los ajustes.",
+        "ja": (
+            "\u4eca\u306f\u753b\u9762\u3092\u898b\u3089\u308c\u308bAI\u30e2\u30c7\u30eb\u304c\u3042"
+            "\u308a\u307e\u305b\u3093\u3002\u8a2d\u5b9a\u3067API\u30ad\u30fc\u304b\u6b8b\u9ad8"
+            "\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+        ),
     },
     "cu_exit_too_many_steps": {  # exit 4 — step budget exhausted
         "de": "Es hat am Bildschirm zu viele Schritte gebraucht, ich habe "  # i18n-allow
               "aufgehoert.",  # i18n-allow
         "en": "It took too many steps on screen, so I stopped.",
         "es": "Hicieron falta demasiados pasos en la pantalla, así que lo detuve.",
+        "ja": (
+            "\u753b\u9762\u3067\u306e\u624b\u9806\u304c\u591a\u304f\u306a\u308a\u3059\u304e\u305f"
+            "\u306e\u3067\u3001\u4e2d\u6b62\u3057\u307e\u3057\u305f\u3002"
+        ),
     },
     "cu_exit_action_failed": {  # exit 8 — tool/action failure
         "de": "Eine Aktion am Bildschirm ist fehlgeschlagen, ich habe abgebrochen.",  # i18n-allow
         "en": "An action on screen failed, so I stopped.",
         "es": "Una acción en la pantalla falló, así que lo detuve.",
+        "ja": (
+            "\u753b\u9762\u3067\u306e\u64cd\u4f5c\u304c\u5931\u6557\u3057\u305f\u306e\u3067\u3001"
+            "\u4e2d\u6b62\u3057\u307e\u3057\u305f\u3002"
+        ),
     },
     "cu_exit_cancelled": {  # exit 130 — cancel token (e.g. voice hangup)
         "de": "Die Aktion am Bildschirm wurde abgebrochen.",  # i18n-allow
         "en": "The action on screen was cancelled.",
         "es": "La acción en la pantalla se canceló.",
+        "ja": (
+            "\u753b\u9762\u3067\u306e\u64cd\u4f5c\u306f\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c"
+            "\u307e\u3057\u305f\u3002"
+        ),
     },
     "cu_exit_needs_elevation": {  # exit 9 — waited for admin confirmation, none came
         "de": "Ich habe auf die Administrator-Bestaetigung gewartet, aber es kam "  # i18n-allow
               "keine, also habe ich gestoppt.",  # i18n-allow
         "en": "I waited for the administrator confirmation, but none came, so I stopped.",
         "es": "Esperé la confirmación de administrador, pero no llegó, así que me detuve.",
+        "ja": (
+            "\u7ba1\u7406\u8005\u306e\u78ba\u8a8d\u3092\u5f85\u3061\u307e\u3057\u305f\u304c\u3001"
+            "\u5fdc\u7b54\u304c\u306a\u304b\u3063\u305f\u306e\u3067\u4e2d\u6b62\u3057\u307e\u3057"
+            "\u305f\u3002"
+        ),
     },
     "cu_timeout": {
         "de": "Das am Bildschirm hat zu lange gedauert "  # i18n-allow
               "(ueber {secs} Sekunden) und wurde abgebrochen.",  # i18n-allow
         "en": "That took too long on screen (over {secs} seconds) and was cancelled.",
         "es": "Eso tardó demasiado en la pantalla (más de {secs} segundos) y se canceló.",
+        "ja": (
+            "\u753b\u9762\u3067\u306e\u64cd\u4f5c\u306b\u6642\u9593\u304c\u304b\u304b\u308a\u3059"
+            "\u304e\u305f\u306e\u3067\uff08{secs}\u79d2\u4ee5\u4e0a\uff09\u3001\u30ad\u30e3\u30f3"
+            "\u30bb\u30eb\u3057\u307e\u3057\u305f\u3002"
+        ),
     },
     # open_app launch readbacks (deterministic local-action path). The German
     # column keeps the exact historical wording.
@@ -175,16 +237,25 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Gestartet: {app}",  # i18n-allow
         "en": "Launched: {app}",
         "es": "Iniciado: {app}",
+        "ja": "{app}\u3092\u8d77\u52d5\u3057\u307e\u3057\u305f\u3002",
     },
     "open_app_launched_raised": {
         "de": "Gestartet und nach vorn geholt: {app}",  # i18n-allow
         "en": "Launched and brought to the front: {app}",
         "es": "Iniciado y traído al frente: {app}",
+        "ja": (
+            "{app}\u3092\u8d77\u52d5\u3057\u3066\u3001\u524d\u9762\u306b\u51fa\u3057\u307e\u3057"
+            "\u305f\u3002"
+        ),
     },
     "open_app_not_found": {
         "de": "Anwendung '{app}' nicht gefunden.",  # i18n-allow
         "en": "Application '{app}' was not found.",
         "es": "No se encontró la aplicación '{app}'.",
+        "ja": (
+            "\u30a2\u30d7\u30ea\u300c{app}\u300d\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093"
+            "\u3067\u3057\u305f\u3002"
+        ),
     },
     # Computer-use is NOT wired on this machine — the honest counterpart of
     # ``cu_dispatch_ack`` below, spoken INSTEAD of it. The harness only works
@@ -204,6 +275,12 @@ _PHRASES: dict[str, dict[str, str]] = {
         "es": "El control de pantalla está desactivado en este equipo. "
               "Actívalo en la configuración con computer_use.enabled y "
               "reiníciame una vez.",
+        "ja": (
+            "\u3053\u306ePC\u3067\u306f\u753b\u9762\u64cd\u4f5c\u304c\u30aa\u30d5\u306b\u306a\u3063"
+            "\u3066\u3044\u307e\u3059\u3002\u8a2d\u5b9a\u306e computer_use.enabled \u3092\u30aa"
+            "\u30f3\u306b\u3057\u3066\u3001\u4e00\u5ea6\u518d\u8d77\u52d5\u3057\u3066\u304f\u3060"
+            "\u3055\u3044\u3002"
+        ),
     },
     # Computer-use dispatch — the immediate optimistic ACK.
     "cu_dispatch_ack": {
@@ -211,6 +288,10 @@ _PHRASES: dict[str, dict[str, str]] = {
               "und sage Bescheid, sobald es fertig ist.",  # i18n-allow
         "en": "On it. I'll handle that on screen and let you know when it's done.",
         "es": "Voy. Lo hago directamente en la pantalla y te aviso cuando termine.",
+        "ja": (
+            "\u4e86\u89e3\u3067\u3059\u3002\u753b\u9762\u3067\u64cd\u4f5c\u3057\u3066\u3001\u7d42"
+            "\u308f\u3063\u305f\u3089\u304a\u77e5\u3089\u305b\u3057\u307e\u3059\u3002"
+        ),
     },
     # Computer-use pause: an OS elevation prompt (Windows Secure Desktop & co.)
     # is up. A non-elevated process can neither see nor click it (UIPI), so we
@@ -224,6 +305,12 @@ _PHRASES: dict[str, dict[str, str]] = {
               "prompt once, then I'll keep going.",
         "es": "Esto requiere permisos de administrador. Confirma el aviso de "
               "seguridad una vez y continúo.",
+        "ja": (
+            "\u7ba1\u7406\u8005\u306e\u6a29\u9650\u304c\u5fc5\u8981\u3067\u3059\u3002\u30bb\u30ad"
+            "\u30e5\u30ea\u30c6\u30a3\u306e\u78ba\u8a8d\u306b\u4e00\u5ea6\u3060\u3051\u8a31\u53ef"
+            "\u3057\u3066\u304f\u3060\u3055\u3044\u3002\u305d\u306e\u3042\u3068\u7d9a\u3051\u307e"
+            "\u3059\u3002"
+        ),
     },
     # Computer-use human handoff: a screen only the USER may complete is up — a
     # login / password entry, a 2FA / one-time-code prompt, or a CAPTCHA. The
@@ -237,6 +324,12 @@ _PHRASES: dict[str, dict[str, str]] = {
               "verification, then I'll keep going.",
         "es": "Este paso te necesita, inicia sesión o completa la "
               "verificación y continúo.",
+        "ja": (
+            "\u3053\u306e\u624b\u9806\u306f\u3042\u306a\u305f\u306e\u64cd\u4f5c\u304c\u5fc5\u8981"
+            "\u3067\u3059\u3002\u30b5\u30a4\u30f3\u30a4\u30f3\u304b\u78ba\u8a8d\u3092\u6e08\u307e"
+            "\u305b\u3066\u304f\u3060\u3055\u3044\u3002\u305d\u306e\u3042\u3068\u7d9a\u3051\u307e"
+            "\u3059\u3002"
+        ),
     },
     # Cost / budget guards on the computer-use branch.
     "cost_cooldown": {
@@ -246,22 +339,33 @@ _PHRASES: dict[str, dict[str, str]] = {
               "New requests resume once the cooldown ends.",
         "es": "Enfriamiento de costes activo, el presupuesto diario se agotó. "
               "Las nuevas solicitudes se reanudan al terminar el enfriamiento.",
+        "ja": (
+            "\u4eca\u65e5\u306e\u4e88\u7b97\u3092\u4f7f\u3044\u5207\u3063\u305f\u306e\u3067\u3001"
+            "\u5229\u7528\u3092\u4e00\u6642\u505c\u6b62\u3057\u3066\u3044\u307e\u3059\u3002\u505c"
+            "\u6b62\u671f\u9593\u304c\u7d42\u308f\u308b\u3068\u518d\u958b\u3057\u307e\u3059\u3002"
+        ),
     },
     "task_budget": {
         "de": "Task-Budget fuer diese Konversation ueberschritten.",  # i18n-allow
         "en": "The task budget for this conversation is exceeded.",
         "es": "Se superó el presupuesto de tareas de esta conversación.",
+        "ja": (
+            "\u3053\u306e\u4f1a\u8a71\u306e\u4f5c\u696d\u4e88\u7b97\u3092\u8d85\u3048\u307e\u3057"
+            "\u305f\u3002"
+        ),
     },
     "daily_budget": {
         "de": "Tagesbudget ueberschritten.",  # i18n-allow
         "en": "The daily budget is exceeded.",
         "es": "Se superó el presupuesto diario.",
+        "ja": "\u4eca\u65e5\u306e\u4e88\u7b97\u3092\u8d85\u3048\u307e\u3057\u305f\u3002",
     },
     # Direct local-action tool failure fallback.
     "tool_failed": {
         "de": "{tool} fehlgeschlagen.",  # i18n-allow
         "en": "{tool} failed.",
         "es": "{tool} falló.",
+        "ja": "{tool}\u304c\u5931\u6557\u3057\u307e\u3057\u305f\u3002",
     },
     # Generic action-failure fallback — the deterministic line behind the
     # context-aware composer for ANY failed action (local tool, recovered tool).
@@ -274,6 +378,9 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Das hat gerade nicht geklappt.",  # i18n-allow
         "en": "That didn't work just now.",
         "es": "Eso no funcionó ahora mismo.",
+        "ja": (
+            "\u4eca\u306f\u3046\u307e\u304f\u3044\u304d\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
+        ),
     },
     # A stale re-render of an already-delivered answer was suppressed: the
     # live model executed the leftover rendering order of an earlier delegate
@@ -285,6 +392,10 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Das hatte ich gerade schon beantwortet. Was genau möchtest du wissen?",  # i18n-allow
         "en": "I already answered that just now. What exactly would you like to know?",
         "es": "Eso ya lo acabo de responder. ¿Qué querías saber exactamente?",
+        "ja": (
+            "\u305d\u308c\u306f\u3055\u3063\u304d\u304a\u7b54\u3048\u3057\u307e\u3057\u305f\u3002"
+            "\u5177\u4f53\u7684\u306b\u4f55\u3092\u77e5\u308a\u305f\u3044\u3067\u3059\u304b\uff1f"
+        ),
     },
     # Action failure WITH a human reason forwarded (the speakable cause pulled
     # from the tool's stderr/error — never a bare exit code).
@@ -292,6 +403,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Das hat nicht geklappt: {reason}",  # i18n-allow
         "en": "That didn't work: {reason}",
         "es": "Eso no funcionó: {reason}",
+        "ja": "\u3046\u307e\u304f\u3044\u304d\u307e\u305b\u3093\u3067\u3057\u305f\uff1a{reason}",
     },
     # Delegated-turn failures with a KNOWN internal cause. The raw internal
     # strings ("No configured Tool Model completed the delegated turn.") are
@@ -303,16 +415,28 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Keins meiner Modelle hat auf diese Anfrage geantwortet.",  # i18n-allow
         "en": "None of my models answered this request.",
         "es": "Ninguno de mis modelos respondió a esta petición.",
+        "ja": (
+            "\u3069\u306e\u30e2\u30c7\u30eb\u3082\u3053\u306e\u4f9d\u983c\u306b\u7b54\u3048\u3089"
+            "\u308c\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
+        ),
     },
     "delegate_no_result": {
         "de": "Ich habe dazu kein belastbares Ergebnis zurückbekommen.",  # i18n-allow
         "en": "I got no grounded result back for that.",
         "es": "No recibí ningún resultado sólido para eso.",
+        "ja": (
+            "\u6839\u62e0\u306e\u3042\u308b\u7d50\u679c\u304c\u8fd4\u3063\u3066\u304d\u307e\u305b"
+            "\u3093\u3067\u3057\u305f\u3002"
+        ),
     },
     "delegate_failed_internal": {
         "de": "Dabei ist intern etwas schiefgelaufen, ich habe sicher abgebrochen.",  # i18n-allow
         "en": "Something went wrong internally, so I stopped safely.",
         "es": "Algo falló internamente, así que me detuve de forma segura.",
+        "ja": (
+            "\u5185\u90e8\u3067\u554f\u984c\u304c\u8d77\u304d\u305f\u306e\u3067\u3001\u5b89\u5168"
+            "\u306e\u305f\u3081\u306b\u6b62\u3081\u307e\u3057\u305f\u3002"
+        ),
     },
     # The realtime provider yielded control for an action, but this session has
     # no executor to hand it to (no callable supervisor brain, or the request
@@ -324,6 +448,10 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Aktionen gehen gerade nicht, aber wir können weiter reden.",  # i18n-allow
         "en": "I can't run actions right now, but we can keep talking.",
         "es": "Ahora mismo no puedo ejecutar acciones, pero podemos seguir hablando.",
+        "ja": (
+            "\u4eca\u306f\u64cd\u4f5c\u3092\u5b9f\u884c\u3067\u304d\u307e\u305b\u3093\u304c\u3001"
+            "\u304a\u8a71\u306f\u7d9a\u3051\u3089\u308c\u307e\u3059\u3002"
+        ),
     },
     # Every tool the model reached for was GATED — the user's words did not ask
     # for it. Distinct from ``actions_unavailable`` above, which claims a
@@ -337,6 +465,11 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich habe dafür nichts ausgeführt. Sag mir, was ich tun soll.",  # i18n-allow
         "en": "I didn't run anything for that. Tell me what you want done.",
         "es": "No ejecuté nada para eso. Dime qué quieres que haga.",
+        "ja": (
+            "\u305d\u308c\u306b\u3064\u3044\u3066\u306f\u4f55\u3082\u5b9f\u884c\u3057\u3066\u3044"
+            "\u307e\u305b\u3093\u3002\u4f55\u3092\u3057\u3066\u307b\u3057\u3044\u304b\u6559\u3048"
+            "\u3066\u304f\u3060\u3055\u3044\u3002"
+        ),
     },
     # The only thing that ran was a ``run-skill`` instruction load: the model
     # read HOW to do it and then stopped, the tool that does the work was never
@@ -348,6 +481,10 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich habe die Anleitung dafür geladen, aber noch nichts ausgeführt.",  # i18n-allow
         "en": "I loaded the instructions for that, but I haven't carried them out yet.",
         "es": "Cargué las instrucciones para eso, pero todavía no las ejecuté.",
+        "ja": (
+            "\u624b\u9806\u306f\u8aad\u307f\u8fbc\u307f\u307e\u3057\u305f\u304c\u3001\u307e\u3060"
+            "\u5b9f\u884c\u306f\u3057\u3066\u3044\u307e\u305b\u3093\u3002"
+        ),
     },
     # A local action that ran past its short deadline. Replaces the old
     # tool-name-prefixed "X timeout after 3s" machine string (which leaked the
@@ -356,6 +493,10 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Das hat zu lange gedauert, also habe ich abgebrochen.",  # i18n-allow
         "en": "That took too long, so I stopped.",
         "es": "Eso tardó demasiado, así que lo detuve.",
+        "ja": (
+            "\u6642\u9593\u304c\u304b\u304b\u308a\u3059\u304e\u305f\u306e\u3067\u3001\u6b62\u3081"
+            "\u307e\u3057\u305f\u3002"
+        ),
     },
     # Background sub-agent / worker could not be started. The spoken sibling of
     # action_failed_* for the spawn paths — the opaque ``exit N`` / a hardcoded
@@ -364,11 +505,19 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich konnte den Hintergrund-Helfer gerade nicht starten.",  # i18n-allow
         "en": "I couldn't start the background helper just now.",
         "es": "No pude iniciar el ayudante en segundo plano ahora mismo.",
+        "ja": (
+            "\u4eca\u306f\u30d0\u30c3\u30af\u30b0\u30e9\u30a6\u30f3\u30c9\u306e\u4f5c\u696d\u3092"
+            "\u59cb\u3081\u3089\u308c\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
+        ),
     },
     "spawn_failed_reason": {
         "de": "Ich konnte den Hintergrund-Helfer nicht starten: {reason}",  # i18n-allow
         "en": "I couldn't start the background helper: {reason}",
         "es": "No pude iniciar el ayudante en segundo plano: {reason}",
+        "ja": (
+            "\u30d0\u30c3\u30af\u30b0\u30e9\u30a6\u30f3\u30c9\u306e\u4f5c\u696d\u3092\u59cb\u3081"
+            "\u3089\u308c\u307e\u305b\u3093\u3067\u3057\u305f\uff1a{reason}"
+        ),
     },
     # The mission was accepted but NOTHING will ever pick it up: the spoken ack
     # already promised an answer, and the mission would sit PENDING until the
@@ -381,6 +530,10 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich kann die Aufgabe gerade nicht starten. Starte mich bitte neu.",  # i18n-allow
         "en": "I can't start the task right now. Please restart me.",
         "es": "No puedo iniciar la tarea ahora. Reiníciame, por favor.",
+        "ja": (
+            "\u4eca\u306f\u4f5c\u696d\u3092\u59cb\u3081\u3089\u308c\u307e\u305b\u3093\u3002\u4e00"
+            "\u5ea6\u518d\u8d77\u52d5\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+        ),
     },
     # ``create_artifact`` handed the page to a background agent. The promise
     # names the artifact and says the result will be announced — the tool's
@@ -391,6 +544,11 @@ _PHRASES: dict[str, dict[str, str]] = {
         ),
         "en": "I'm building “{title}” in the background and will tell you when it's ready.",
         "es": "Estoy creando «{title}» en segundo plano y te aviso cuando esté listo.",
+        "ja": (
+            "\u300c{title}\u300d\u3092\u30d0\u30c3\u30af\u30b0\u30e9\u30a6\u30f3\u30c9\u3067\u4f5c"
+            "\u3063\u3066\u3044\u307e\u3059\u3002\u3067\u304d\u305f\u3089\u304a\u77e5\u3089\u305b"
+            "\u3057\u307e\u3059\u3002"
+        ),
     },
     "artifact_revising": {
         "de": (  # i18n-allow
@@ -398,6 +556,11 @@ _PHRASES: dict[str, dict[str, str]] = {
         ),
         "en": "I'm revising “{title}” in the background and will tell you when it's ready.",
         "es": "Estoy revisando «{title}» en segundo plano y te aviso cuando esté listo.",
+        "ja": (
+            "\u300c{title}\u300d\u3092\u30d0\u30c3\u30af\u30b0\u30e9\u30a6\u30f3\u30c9\u3067\u76f4"
+            "\u3057\u3066\u3044\u307e\u3059\u3002\u3067\u304d\u305f\u3089\u304a\u77e5\u3089\u305b"
+            "\u3057\u307e\u3059\u3002"
+        ),
     },
     # Scheduled-routine failures (jarvis/workflows). A broken routine used to
     # vanish into a log line, which is the maintainer's exact complaint: "you
@@ -410,6 +573,11 @@ _PHRASES: dict[str, dict[str, str]] = {
               "I'll try again at the next scheduled time.",
         "es": "La rutina {name} no pudo iniciarse. "
               "Lo intentaré en el próximo momento programado.",
+        "ja": (
+            "\u30eb\u30fc\u30c6\u30a3\u30f3\u300c{name}\u300d\u3092\u958b\u59cb\u3067\u304d\u307e"
+            "\u305b\u3093\u3067\u3057\u305f\u3002\u6b21\u306e\u4e88\u5b9a\u6642\u523b\u306b\u3082"
+            "\u3046\u4e00\u5ea6\u8a66\u3057\u307e\u3059\u3002"
+        ),
     },
     # The scheduler's own poll loop threw — EVERY scheduled routine is stalled,
     # not just one, so this names no routine. It retries by itself, hence the
@@ -421,6 +589,11 @@ _PHRASES: dict[str, dict[str, str]] = {
               "I'll keep trying.",
         "es": "Tus rutinas programadas no se están ejecutando ahora. "
               "Seguiré intentándolo.",
+        "ja": (
+            "\u4e88\u5b9a\u3057\u305f\u30eb\u30fc\u30c6\u30a3\u30f3\u304c\u4eca\u306f\u52d5\u3044"
+            "\u3066\u3044\u307e\u305b\u3093\u3002\u5f15\u304d\u7d9a\u304d\u8a66\u3057\u307e\u3059"
+            "\u3002"
+        ),
     },
     # A routine stopped mid-way. ``{step}`` is the author's own step label or the
     # plain ordinal below — NEVER ``step_display_label``'s engineering fallback
@@ -432,6 +605,10 @@ _PHRASES: dict[str, dict[str, str]] = {
               "also habe ich sie angehalten.",  # i18n-allow
         "en": "The routine {name} got stuck at {step}, so I stopped it.",
         "es": "La rutina {name} se atascó en {step}, así que la detuve.",
+        "ja": (
+            "\u30eb\u30fc\u30c6\u30a3\u30f3\u300c{name}\u300d\u304c{step}\u3067\u6b62\u307e\u3063"
+            "\u305f\u306e\u3067\u3001\u4e2d\u6b62\u3057\u307e\u3057\u305f\u3002"
+        ),
     },
     # The reason trails in its own sentence rather than after a colon: it is
     # forwarded text and may well end in a full stop of its own.
@@ -442,11 +619,17 @@ _PHRASES: dict[str, dict[str, str]] = {
               "The reason: {reason}",
         "es": "La rutina {name} se atascó en {step}, así que la detuve. "
               "El motivo: {reason}",
+        "ja": (
+            "\u30eb\u30fc\u30c6\u30a3\u30f3\u300c{name}\u300d\u304c{step}\u3067\u6b62\u307e\u3063"
+            "\u305f\u306e\u3067\u3001\u4e2d\u6b62\u3057\u307e\u3057\u305f\u3002\u7406\u7531\uff1a{r"
+            "eason}"
+        ),
     },
     "workflow_step_ordinal": {
         "de": "Schritt {n}",  # i18n-allow
         "en": "step {n}",
         "es": "el paso {n}",
+        "ja": "{n}\u756a\u76ee\u306e\u624b\u9806",
     },
     # Fills the ``{name}`` slot when a routine row carries no name. Worded to
     # stay grammatical inside the sentences above ("Die Routine ohne Namen
@@ -456,6 +639,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "ohne Namen",  # i18n-allow
         "en": "without a name",
         "es": "sin nombre",
+        "ja": "\u540d\u524d\u306a\u3057",
     },
     # Deterministic wiki-write fast path (spec A1-A3). The saving line is a
     # PROGRESS ack — it must never claim the write already happened; the
@@ -464,32 +648,48 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich schreibe das jetzt ins Wiki.",  # i18n-allow
         "en": "Writing that to the wiki now.",
         "es": "Lo estoy escribiendo en la wiki.",
+        "ja": "\u4eca\u3001Wiki\u306b\u66f8\u304d\u8fbc\u3093\u3067\u3044\u307e\u3059\u3002",
     },
     "wiki_saved": {
         "de": "Im Wiki gespeichert.",  # i18n-allow
         "en": "Saved to the wiki.",
         "es": "Guardado en la wiki.",
+        "ja": "Wiki\u306b\u4fdd\u5b58\u3057\u307e\u3057\u305f\u3002",
     },
     "wiki_saved_detail": {
         "de": "Im Wiki gespeichert: {detail}.",  # i18n-allow
         "en": "Saved to the wiki: {detail}.",
         "es": "Guardado en la wiki: {detail}.",
+        "ja": "Wiki\u306b\u4fdd\u5b58\u3057\u307e\u3057\u305f\uff1a{detail}\u3002",
     },
     "wiki_save_failed": {
         "de": "Das Speichern im Wiki hat nicht geklappt.",  # i18n-allow
         "en": "Saving to the wiki did not work.",
         "es": "No se pudo guardar en la wiki.",
+        "ja": (
+            "Wiki\u3078\u306e\u4fdd\u5b58\u304c\u3046\u307e\u304f\u3044\u304d\u307e\u305b\u3093"
+            "\u3067\u3057\u305f\u3002"
+        ),
     },
     "wiki_save_failed_reason": {
         "de": "Das Speichern im Wiki hat nicht geklappt: {reason}",  # i18n-allow
         "en": "Saving to the wiki did not work: {reason}",
         "es": "No se pudo guardar en la wiki: {reason}",
+        "ja": (
+            "Wiki\u3078\u306e\u4fdd\u5b58\u304c\u3046\u307e\u304f\u3044\u304d\u307e\u305b\u3093"
+            "\u3067\u3057\u305f\uff1a{reason}"
+        ),
     },
     "wiki_nothing_to_save": {
         "de": "Mir ist nicht klar, was ich ins Wiki schreiben soll. Sag es mir "  # i18n-allow
               "bitte noch einmal mit Inhalt.",  # i18n-allow
         "en": "I am not sure what to write to the wiki. Please say it again with the content.",
         "es": "No tengo claro qué escribir en la wiki; dímelo otra vez con el contenido.",
+        "ja": (
+            "Wiki\u306b\u4f55\u3092\u66f8\u3051\u3070\u3044\u3044\u304b\u308f\u304b\u308a\u307e"
+            "\u305b\u3093\u3067\u3057\u305f\u3002\u5185\u5bb9\u3092\u3064\u3051\u3066\u3082\u3046"
+            "\u4e00\u5ea6\u8a00\u3063\u3066\u304f\u3060\u3055\u3044\u3002"
+        ),
     },
     # No "I am writing the task now" phrase belongs here. One existed for a few
     # hours on 2026-07-27 to fill the prompt writer's 10-21 s, and the realtime
@@ -504,21 +704,31 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ist bei {terminal}.",  # i18n-allow
         "en": "Sent to {terminal}.",
         "es": "Enviado a {terminal}.",
+        "ja": "{terminal}\u306b\u9001\u308a\u307e\u3057\u305f\u3002",
     },
     "ide_prompt_sent_files": {
         "de": "Ist bei {terminal}, mit {count} Dateien dazu.",  # i18n-allow
         "en": "Sent to {terminal}, with {count} files attached.",
         "es": "Enviado a {terminal}, con {count} archivos adjuntos.",
+        "ja": (
+            "{terminal}\u306b\u9001\u308a\u307e\u3057\u305f\u3002\u30d5\u30a1\u30a4\u30eb\u3092{cou"
+            "nt}\u4ef6\u6dfb\u4ed8\u3057\u3066\u3044\u307e\u3059\u3002"
+        ),
     },
     "ide_prompt_sent_one_file": {
         "de": "Ist bei {terminal}, samt {file}.",  # i18n-allow
         "en": "Sent to {terminal}, along with {file}.",
         "es": "Enviado a {terminal}, junto con {file}.",
+        "ja": "{terminal}\u306b{file}\u3068\u4e00\u7dd2\u306b\u9001\u308a\u307e\u3057\u305f\u3002",
     },
     "ide_terminal_not_running": {
         "de": "{terminal} läuft gerade nicht ({status}). Ich habe nichts geschickt.",  # i18n-allow
         "en": "{terminal} is not running right now ({status}). I sent nothing.",
         "es": "{terminal} no está en marcha ahora ({status}). No envié nada.",
+        "ja": (
+            "{terminal}\u306f\u4eca\u52d5\u3044\u3066\u3044\u307e\u305b\u3093\uff08{status}\uff09"
+            "\u3002\u4f55\u3082\u9001\u3063\u3066\u3044\u307e\u305b\u3093\u3002"
+        ),
     },
     # Fan-out: ONE order handed to SEVERAL panes. The partial and the
     # nobody-reached cases are separate keys on purpose — the live 2026-07-26
@@ -528,16 +738,25 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ist bei {names}.",  # i18n-allow
         "en": "Sent to {names}.",
         "es": "Enviado a {names}.",
+        "ja": "{names}\u306b\u9001\u308a\u307e\u3057\u305f\u3002",
     },
     "ide_prompt_sent_partial": {
         "de": "Ist bei {names}. Zu {failed} bin ich nicht durchgekommen.",  # i18n-allow
         "en": "Sent to {names}. I could not reach {failed}.",
         "es": "Enviado a {names}. No pude llegar a {failed}.",
+        "ja": (
+            "{names}\u306b\u9001\u308a\u307e\u3057\u305f\u3002{failed}\u306b\u306f\u5c4a\u304d"
+            "\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
+        ),
     },
     "ide_prompt_sent_nobody": {
         "de": "Ich bin zu {failed} nicht durchgekommen, es läuft nichts.",  # i18n-allow
         "en": "I could not reach {failed}, so nothing is running.",
         "es": "No pude llegar a {failed}, así que no hay nada en marcha.",
+        "ja": (
+            "{failed}\u306b\u5c4a\u304b\u306a\u304b\u3063\u305f\u306e\u3067\u3001\u4f55\u3082\u52d5"
+            "\u3044\u3066\u3044\u307e\u305b\u3093\u3002"
+        ),
     },
     # Typed into the input box but never submitted — looks identical to a
     # running agent until you ask it something (the 2026-07-25 popup trap).
@@ -545,6 +764,10 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Bei {names} steht der Text nur im Eingabefeld.",  # i18n-allow
         "en": "On {names} the text is only sitting in the input box.",
         "es": "En {names} el texto solo está en el cuadro de entrada.",
+        "ja": (
+            "{names}\u3067\u306f\u3001\u5165\u529b\u6b04\u306b\u6587\u5b57\u304c\u5165\u3063\u3066"
+            "\u3044\u308b\u3060\u3051\u3067\u3059\u3002"
+        ),
     },
     # Joining call-signs for speech. A comma-separated list read aloud sounds
     # like an enumeration that never ends; the last pair needs the conjunction.
@@ -552,6 +775,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "{head} und {last}",  # i18n-allow
         "en": "{head} and {last}",
         "es": "{head} y {last}",
+        "ja": "{head}\u3068{last}",
     },
     # Opening more panes by voice ("spawn five more Claude Code terminals").
     # The names are always read back: they are how the user addresses the new
@@ -561,26 +785,43 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "{names} ist offen.",  # i18n-allow
         "en": "{names} is open.",
         "es": "{names} está abierta.",
+        "ja": "{names}\u3092\u958b\u304d\u307e\u3057\u305f\u3002",
     },
     "ide_terminals_spawned": {
         "de": "{count} neue Terminals: {names}.",  # i18n-allow
         "en": "{count} new terminals: {names}.",
         "es": "{count} terminales nuevas: {names}.",
+        "ja": (
+            "\u65b0\u3057\u3044\u30bf\u30fc\u30df\u30ca\u30eb\u3092{count}\u500b\u958b\u304d\u307e"
+            "\u3057\u305f\uff1a{names}\u3002"
+        ),
     },
     "ide_terminals_briefing_queued": {
         "de": "Ich übergebe ihnen die Aufgabe, sobald die Terminals bereit sind.",  # i18n-allow
         "en": "I will hand them the task as soon as the terminals are ready.",
         "es": "Les entregaré la tarea en cuanto las terminales estén listas.",
+        "ja": (
+            "\u30bf\u30fc\u30df\u30ca\u30eb\u306e\u6e96\u5099\u304c\u3067\u304d\u3057\u3060\u3044"
+            "\u3001\u4f5c\u696d\u3092\u6e21\u3057\u307e\u3059\u3002"
+        ),
     },
     "ide_terminals_closed": {
         "de": "{count} Terminals geschlossen: {names}.",  # i18n-allow
         "en": "Closed {count} terminals: {names}.",
         "es": "Cerré {count} terminales: {names}.",
+        "ja": (
+            "\u30bf\u30fc\u30df\u30ca\u30eb\u3092{count}\u500b\u9589\u3058\u307e\u3057\u305f\uff1a{"
+            "names}\u3002"
+        ),
     },
     "ide_terminals_none_to_close": {
         "de": "Es sind keine passenden Terminals offen.",  # i18n-allow
         "en": "There are no matching open terminals.",
         "es": "No hay terminales abiertas que coincidan.",
+        "ja": (
+            "\u8a72\u5f53\u3059\u308b\u958b\u3044\u3066\u3044\u308b\u30bf\u30fc\u30df\u30ca\u30eb"
+            "\u306f\u3042\u308a\u307e\u305b\u3093\u3002"
+        ),
     },
     # Fewer than asked for, because the workspace cap cut the batch short. Named
     # separately from the plain success so the shortfall is impossible to miss.
@@ -588,11 +829,20 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Platz war nur für {count}: {names}.",  # i18n-allow
         "en": "There was only room for {count}: {names}.",
         "es": "Solo había espacio para {count}: {names}.",
+        "ja": (
+            "{count}\u500b\u5206\u3057\u304b\u7a7a\u304d\u304c\u3042\u308a\u307e\u305b\u3093\u3067"
+            "\u3057\u305f\uff1a{names}\u3002"
+        ),
     },
     "ide_terminals_full": {
         "de": "Der Workspace ist voll, {max} Terminals laufen schon.",  # i18n-allow
         "en": "The workspace is full, {max} terminals are already running.",
         "es": "El espacio de trabajo está lleno, ya hay {max} terminales.",
+        "ja": (
+            "\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u304c\u3044\u3063\u3071\u3044\u3067\u3059"
+            "\u3002\u3059\u3067\u306b{max}\u500b\u306e\u30bf\u30fc\u30df\u30ca\u30eb\u304c\u52d5"
+            "\u3044\u3066\u3044\u307e\u3059\u3002"
+        ),
     },
     # The name came through garbled and lands between two coding CLIs. Asked
     # rather than guessed (maintainer directive 2026-07-28): a needless question
@@ -601,11 +851,19 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich habe {spoken} verstanden. Meintest du {first} oder {second}?",  # i18n-allow
         "en": "I heard {spoken}. Did you mean {first} or {second}?",
         "es": "Escuché {spoken}: ¿te refieres a {first} o a {second}?",
+        "ja": (
+            "\u300c{spoken}\u300d\u3068\u805e\u3053\u3048\u307e\u3057\u305f\u3002{first}\u3067"
+            "\u3059\u304b\u3001\u305d\u308c\u3068\u3082{second}\u3067\u3059\u304b\uff1f"
+        ),
     },
     "ide_terminal_kind_unclear_one": {
         "de": "Ich habe {spoken} verstanden. Meintest du {first}?",  # i18n-allow
         "en": "I heard {spoken}. Did you mean {first}?",
         "es": "Escuché {spoken}: ¿te refieres a {first}?",
+        "ja": (
+            "\u300c{spoken}\u300d\u3068\u805e\u3053\u3048\u307e\u3057\u305f\u3002{first}\u306e"
+            "\u3053\u3068\u3067\u3059\u304b\uff1f"
+        ),
     },
     # A coding CLI this workspace does not offer was named in a fleet request.
     # Said out loud rather than dropped: a name nobody recognises used to fall
@@ -615,6 +873,10 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Für {name} gibt es keine Terminal-Art. Verfügbar: {available}.",  # i18n-allow
         "en": "There is no {name} terminal kind. Available: {available}.",
         "es": "No hay un tipo de terminal {name}. Disponibles: {available}.",
+        "ja": (
+            "{name}\u3068\u3044\u3046\u30bf\u30fc\u30df\u30ca\u30eb\u306e\u7a2e\u985e\u306f\u3042"
+            "\u308a\u307e\u305b\u3093\u3002\u4f7f\u3048\u308b\u3082\u306e\uff1a{available}\u3002"
+        ),
     },
     # No workspace was open, so one was opened in the most recent folder. The
     # folder is named on purpose: it is an assumption, and hearing it is how the
@@ -623,6 +885,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich habe {folder} geöffnet: {names}.",  # i18n-allow
         "en": "I opened {folder}: {names}.",
         "es": "Abrí {folder}: {names}.",
+        "ja": "{folder}\u3092\u958b\u304d\u307e\u3057\u305f\uff1a{names}\u3002",
     },
     # A call-sign the transcript almost matched. Both variants REPEAT what was
     # heard: the user's own word is the only thing that lets them tell a
@@ -632,11 +895,19 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich habe {spoken} verstanden. Meinst du {name}?",  # i18n-allow
         "en": "I heard {spoken}. Did you mean {name}?",
         "es": "Entendí {spoken}: ¿te refieres a {name}?",
+        "ja": (
+            "\u300c{spoken}\u300d\u3068\u805e\u3053\u3048\u307e\u3057\u305f\u3002{name}\u306e\u3053"
+            "\u3068\u3067\u3059\u304b\uff1f"
+        ),
     },
     "ide_terminal_clarify_many": {
         "de": "Ich habe {spoken} verstanden. Meinst du {names}?",  # i18n-allow
         "en": "I heard {spoken}. Did you mean {names}?",
         "es": "Entendí {spoken}: ¿te refieres a {names}?",
+        "ja": (
+            "\u300c{spoken}\u300d\u3068\u805e\u3053\u3048\u307e\u3057\u305f\u3002{names}\u306e"
+            "\u3053\u3068\u3067\u3059\u304b\uff1f"
+        ),
     },
     # The user says a briefing never arrived, but the pane's own receipt says it
     # did. Answering with the CLOCK TIME is the point: it is the one thing that
@@ -650,6 +921,10 @@ _PHRASES: dict[str, dict[str, str]] = {
         ),
         "en": "{name} got the task at {time}. I am not sending it twice.",
         "es": "{name} recibió la tarea a las {time}: no la envío dos veces.",
+        "ja": (
+            "{name}\u306f{time}\u306b\u305d\u306e\u4f5c\u696d\u3092\u53d7\u3051\u53d6\u3063\u3066"
+            "\u3044\u307e\u3059\u3002\u4e8c\u91cd\u306b\u306f\u9001\u308a\u307e\u305b\u3093\u3002"
+        ),
     },
     # The separator for the final pair of an alternative list ("Maggie or Max").
     # A phrase entry rather than a literal, so the choice is offered in the
@@ -658,6 +933,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": " oder ",  # i18n-allow
         "en": " or ",
         "es": " o ",
+        "ja": "\u307e\u305f\u306f",
     },
     # The separator for the final pair of a LIST ("Alex and Blake"). Distinct
     # from ``join_or`` because the two questions mean opposite things: "Max or
@@ -666,6 +942,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": " und ",  # i18n-allow
         "en": " and ",
         "es": " y ",
+        "ja": "\u3068",
     },
     # Panes were briefed AND one call-sign of the same breath stayed unclear.
     # The two halves are said in one sentence on purpose: the user has to hear
@@ -674,6 +951,10 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich habe außerdem {spoken} verstanden. Meinst du {names}?",  # i18n-allow
         "en": "I also heard {spoken}. Did you mean {names}?",
         "es": "También entendí {spoken}: ¿te refieres a {names}?",
+        "ja": (
+            "\u300c{spoken}\u300d\u3068\u3082\u805e\u3053\u3048\u307e\u3057\u305f\u3002{names}"
+            "\u306e\u3053\u3068\u3067\u3059\u304b\uff1f"
+        ),
     },
     # The user addressed several panes and only one call-sign survived speech
     # recognition. Saying which one was placed is the load-bearing half: it is
@@ -682,6 +963,10 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich konnte nur {names} zuordnen. Wer sollte noch ran?",  # i18n-allow
         "en": "I could only place {names}. Who else did you mean?",
         "es": "Solo pude identificar a {names}: ¿quién más?",
+        "ja": (
+            "{names}\u3057\u304b\u5272\u308a\u5f53\u3066\u3089\u308c\u307e\u305b\u3093\u3067\u3057"
+            "\u305f\u3002\u307b\u304b\u306b\u8ab0\u306e\u3053\u3068\u3067\u3057\u305f\u304b\uff1f"
+        ),
     },
     "ide_terminals_nowhere": {
         "de": (  # i18n-allow
@@ -695,6 +980,12 @@ _PHRASES: dict[str, dict[str, str]] = {
         "es": (
             "No hay ningún espacio de trabajo abierto ni uno reciente. "
             "Elige una carpeta en el IDE agéntico."
+        ),
+        "ja": (
+            "\u958b\u3044\u3066\u3044\u308b\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u3082\u3001"
+            "\u6700\u8fd1\u4f7f\u3063\u305f\u3082\u306e\u3082\u3042\u308a\u307e\u305b\u3093\u3002Ag"
+            "entic IDE\u3067\u30d5\u30a9\u30eb\u30c0\u3092\u9078\u3093\u3067\u304f\u3060\u3055"
+            "\u3044\u3002"
         ),
     },
 }
@@ -957,6 +1248,11 @@ _REASON_FAMILIES: tuple[tuple[re.Pattern[str], dict[str, str]], ...] = (
                   "Verbinde es in der Plugins-Ansicht.",  # i18n-allow
             "en": "{subject} is not connected. Connect it in the Plugins view.",
             "es": "{subject} no está conectado. Conéctalo en la vista de Plugins.",
+            "ja": (
+                "{subject}\u306f\u63a5\u7d9a\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u3002\u30d7"
+                "\u30e9\u30b0\u30a4\u30f3\u753b\u9762\u3067\u63a5\u7d9a\u3057\u3066\u304f\u3060"
+                "\u3055\u3044\u3002"
+            ),
         },
     ),
     (
@@ -969,6 +1265,11 @@ _REASON_FAMILIES: tuple[tuple[re.Pattern[str], dict[str, str]], ...] = (
                   "Verbinde es in der Plugins-Ansicht neu.",  # i18n-allow
             "en": "The sign-in for {subject} expired. Reconnect it in the Plugins view.",
             "es": "La sesión de {subject} caducó. Vuelve a conectarlo en la vista de Plugins.",
+            "ja": (
+                "{subject}\u306e\u30b5\u30a4\u30f3\u30a4\u30f3\u306e\u671f\u9650\u304c\u5207\u308c"
+                "\u307e\u3057\u305f\u3002\u30d7\u30e9\u30b0\u30a4\u30f3\u753b\u9762\u3067\u63a5"
+                "\u7d9a\u3057\u76f4\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+            ),
         },
     ),
     (
@@ -977,6 +1278,10 @@ _REASON_FAMILIES: tuple[tuple[re.Pattern[str], dict[str, str]], ...] = (
             "de": "Ich kenne keinen Skill namens {subject}.",  # i18n-allow
             "en": "I don't know a skill called {subject}.",
             "es": "No conozco ninguna skill llamada {subject}.",
+            "ja": (
+                "{subject}\u3068\u3044\u3046\u30b9\u30ad\u30eb\u306f\u77e5\u308a\u307e\u305b\u3093"
+                "\u3002"
+            ),
         },
     ),
     (
@@ -987,6 +1292,10 @@ _REASON_FAMILIES: tuple[tuple[re.Pattern[str], dict[str, str]], ...] = (
             "de": "Der Skill {subject} ist noch ein Entwurf. Gib ihn erst frei.",  # i18n-allow
             "en": "The skill {subject} is still a draft. Promote it first.",
             "es": "La skill {subject} sigue siendo un borrador. Actívala primero.",
+            "ja": (
+                "\u30b9\u30ad\u30eb{subject}\u306f\u307e\u3060\u4e0b\u66f8\u304d\u3067\u3059\u3002"
+                "\u5148\u306b\u516c\u958b\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+            ),
         },
     ),
     (
@@ -998,6 +1307,11 @@ _REASON_FAMILIES: tuple[tuple[re.Pattern[str], dict[str, str]], ...] = (
                   "Schalte ihn erst wieder ein.",  # i18n-allow
             "en": "The skill {subject} is switched off. Switch it back on first.",
             "es": "La skill {subject} está desactivada. Vuelve a activarla primero.",
+            "ja": (
+                "\u30b9\u30ad\u30eb{subject}\u306f\u30aa\u30d5\u306b\u306a\u3063\u3066\u3044\u307e"
+                "\u3059\u3002\u5148\u306b\u30aa\u30f3\u306b\u3057\u3066\u304f\u3060\u3055\u3044"
+                "\u3002"
+            ),
         },
     ),
 )

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from jarvis.core.turn_language import localized
+
 from .echo_confirmation import is_sensitive_path
 
 _SUPPORTED = ("de", "en", "es")
@@ -118,14 +120,14 @@ def config_readback(
         else:
             value = _value_for_speech(output.get("new_value"), lang)
         key = "applied_restart" if output.get("requires_restart") else "applied"
-        return _PHRASES[key][lang].format(label=_label(str(output.get("description", ""))),
+        return localized(_PHRASES[key], lang).format(label=_label(str(output.get("description", ""))),
                                           value=value)
 
     # Failure: ``output`` carries ``error_kind``.
     outcome = _ERROR_KIND_TO_OUTCOME.get(str(output.get("error_kind", "")))
     if outcome is None:
         return None
-    return _PHRASES[outcome][lang]
+    return localized(_PHRASES[outcome], lang)
 
 
 __all__ = ["config_readback"]

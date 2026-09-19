@@ -164,3 +164,28 @@ async def test_posix_missing_command_is_readable_failure() -> None:
     assert result.success is False
     assert result.output["exit_code"] == 127
     assert "definitely-missing-cmd-xyz" in result.output["stderr"]
+
+
+@pytest.mark.asyncio
+async def test_a_folder_chat_runs_commands_in_its_working_directory(tmp_path) -> None:
+    from types import SimpleNamespace
+
+    (tmp_path / "marker_for_cwd_test.txt").write_text("x", encoding="utf-8")
+    ctx = SimpleNamespace(config={"cwd": str(tmp_path)})
+    command = "Get-ChildItem -Name" if sys.platform == "win32" else "ls"
+    result = await RunShellTool().execute({"command": command}, ctx)
+    assert result.success is True
+    assert "marker_for_cwd_test.txt" in str(result.output)
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_cwd_argument_wins(tmp_path) -> None:
+    from types import SimpleNamespace
+
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "only_here.txt").write_text("x", encoding="utf-8")
+    ctx = SimpleNamespace(config={"cwd": str(tmp_path)})
+    command = "Get-ChildItem -Name" if sys.platform == "win32" else "ls"
+    result = await RunShellTool().execute({"command": command, "cwd": str(other)}, ctx)
+    assert "only_here.txt" in str(result.output)

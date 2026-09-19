@@ -1451,6 +1451,15 @@ def set_require_browser_login(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE
     _patch_table(path, "ui", "require_browser_login", bool(enabled))
 
 
+def set_lan_access(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[ui] lan_access`` (phone access on the home network).
+
+    Takes effect on the next start: the LAN listener and its trusted origin
+    are set up while the server boots.
+    """
+    _patch_table(path, "ui", "lan_access", bool(enabled))
+
+
 def set_team_proxy(
     enabled: bool,
     url: str,
@@ -1869,6 +1878,15 @@ _TTS_DEFAULTS: dict[str, dict[str, str]] = {
         "voice_de": "vits-piper-de_DE-thorsten-medium",
         "voice_en": "vits-piper-en_US-ryan-medium",
         "language_code": "auto",
+    },
+    "voicevox": {
+        # VOICEVOX speaks Japanese only; the speaker is "<character>/<style>" in
+        # [tts].model and "" means the plugin default. The de/en voices are not
+        # consumed; blanking them keeps a cloud voice name out of the block.
+        "model": "",
+        "voice_de": "",
+        "voice_en": "",
+        "language_code": "ja-JP",
     },
 }
 

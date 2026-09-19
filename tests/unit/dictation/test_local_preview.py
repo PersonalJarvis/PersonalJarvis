@@ -437,3 +437,10 @@ async def test_a_late_but_successful_preview_ends_the_failure_streak():
         assert engine.ready is True
     finally:
         mod.PREVIEW_TIMEOUT_S = original
+
+
+def test_the_device_probe_yields_the_gpu_to_a_managed_local_brain(monkeypatch) -> None:
+    from jarvis.dictation import local_preview
+
+    monkeypatch.setattr(local_preview, "_local_brain_owns_accelerator", lambda: True)
+    assert local_preview.LocalPreviewTranscriber._pick_device() == ("cpu", "int8")

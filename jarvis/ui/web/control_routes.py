@@ -148,7 +148,7 @@ class PendingIdBody(BaseModel):
 class LanguageBody(BaseModel):
     # Constrained so a bad value (e.g. "zh") is rejected with 422 at the boundary
     # instead of being written to jarvis.toml and silently normalised to "auto".
-    reply_language: Literal["auto", "de", "en", "es"]
+    reply_language: Literal["auto", "de", "en", "es", "ja"]
 
 
 class SecretBody(BaseModel):
@@ -293,7 +293,7 @@ def put_language(body: LanguageBody, request: Request) -> dict[str, Any]:
     result = _apply_config_write(
         store, "brain.reply_language", body.reply_language, "control-api language switch"
     )
-    if body.reply_language in ("de", "en", "es"):
+    if body.reply_language in ("de", "en", "es", "ja"):
         ui = _apply_config_write(
             store, "ui.language", body.reply_language, "control-api language switch"
         )
@@ -372,6 +372,28 @@ async def delete_secret_value(key: str, request: Request) -> dict[str, Any]:
 
     await _emit(request, SecretConfigured(key=key, action="delete"))
     return {"ok": True, "key": key}
+
+
+# ----------------------------------------------------------------------
+# Phone pairing (LAN access)
+# ----------------------------------------------------------------------
+
+
+@router.get("/lan/pair", dependencies=[Depends(require_control_key_or_session)])
+def lan_pair(request: Request) -> dict[str, Any]:
+    """One-time sign-in URL for a phone on the home network.
+
+    Minted only for a request made ON this machine: a paired phone must not be
+    able to hand out further devices' sessions.
+    """
+    from jarvis.ui.web.lan_access import lan_origin, mint_pairing_url
+    from jarvis.ui.web.surface_security import is_loopback_request
+
+    if not is_loopback_request(request.scope):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Pairing is only available on this PC.")
+    cfg = cfg_mod.load_config()
+    url = mint_pairing_url(cfg)
+    return {"enabled": url is not None, "url": url, "origin": lan_origin(cfg)}
 
 
 # ----------------------------------------------------------------------

@@ -323,6 +323,37 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
             ]
         ),
     ),
+    # VOICEVOX (on-device, Japanese). The pick is "<character>/<style>" in the
+    # engine's own (Japanese) names, parsed by the TTS factory; all are the
+    # engine's fictional characters. Kept in sync with voicevox_tts defaults.
+    "voicevox": (
+        "voice",
+        _curated(
+            [
+                (
+                    "\u9752\u5c71\u9f8d\u661f/\u30ce\u30fc\u30de\u30eb",
+                    "Aoyama Ryusei — calm, masculine (default)",
+                ),
+                (
+                    "\u7384\u91ce\u6b66\u5b8f/\u30ce\u30fc\u30de\u30eb",
+                    "Kurono Takehiro — masculine",
+                ),
+                (
+                    "\u767d\u4e0a\u864e\u592a\u90ce/\u3075\u3064\u3046",
+                    "Shirakami Kotarou — young, masculine",
+                ),
+                (
+                    "\u56db\u56fd\u3081\u305f\u3093/\u30ce\u30fc\u30de\u30eb",
+                    "Shikoku Metan — feminine",
+                ),
+                ("\u305a\u3093\u3060\u3082\u3093/\u30ce\u30fc\u30de\u30eb", "Zundamon — bright"),
+                (
+                    "\u51a5\u9cf4\u3072\u307e\u308a/\u30ce\u30fc\u30de\u30eb",
+                    "Meimei Himari — calm, feminine",
+                ),
+            ]
+        ),
+    ),
     # ElevenLabs picks a VOICE ID (opaque hashes), so the curated list carries
     # human names as labels while the value stays the id. The picker's
     # "use custom" row lets a user paste their OWN voice id (e.g. a cloned

@@ -1,5 +1,21 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Keyless local brain and Japanese voice (2026-09-18, T3; acceptance open)
+
+A managed llama.cpp `llama-server` (`jarvis/local_models/llama_server.py`)
+starts in the background when a binary and a GGUF are installed under the app
+data dir (`scripts/install_local_brain.py` picks the release asset per OS: CUDA
+or CPU on Windows, Ubuntu build on Linux, arm64/x64 on macOS). Offload is sized
+from `nvidia-smi` free memory; with no NVIDIA probe the server runs CPU-only.
+VOICEVOX Engine (`scripts/install_voicevox.py`, Windows/Linux/macOS builds) is
+the Japanese voice; `sapi5` is its Windows-only local fallback and raises on
+other hosts so a fallback chain moves on (Piper remains the local voice for
+de/en/es everywhere). Japanese STT runs on faster-whisper on every OS.
+
+Verified live on Windows only (RTX 3050 Laptop 4 GB). macOS and Linux have the
+code paths and installers but no live evidence yet; a headless box without the
+binaries simply has no local brain/voice (capability probe, boot unaffected).
+
 ## Prepaid search hop (2026-09-17, T2)
 
 `search_web` may use an optional Apifare HTTP hop
@@ -635,3 +651,15 @@ provider authorization may remain at the provider because revoking it could also
 invalidate a shared existing grant. Users can revoke it in the provider's app
 settings. The release audit separately requires a real safe action, disconnect,
 reconnect and persistence after restart.
+
+## Phone access on the home network (`[ui].lan_access`)
+
+Opt-in, off by default. A second uvicorn listener serves the same app over
+HTTPS on the machine's private IPv4 address (never `0.0.0.0`, never a public
+address) with a self-signed certificate made by `cryptography`. Pure Python:
+identical on Windows, macOS and Linux; a headless box without a private
+address simply does not start it. A LAN device never gets open access: it
+signs in with a one-time pairing token minted only from the machine itself
+(Settings, Jarvis Key tab, QR code) or with the Control Key. Verified live on
+Windows with curl against the LAN address; macOS/Linux follow the same code
+path and are not device-verified.

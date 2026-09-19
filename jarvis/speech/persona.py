@@ -16,6 +16,8 @@ import random
 from collections import deque
 from typing import Literal
 
+from jarvis.core.turn_language import localized
+
 Category = Literal["start_ack", "working", "completion", "pushback", "wake"]
 Lang = Literal["de", "en"]
 
@@ -65,5 +67,5 @@ def iter_all_start_ack() -> list[tuple[str, str]]:
     return [
         (lang, phrase)
         for lang in ("de", "en")
-        for phrase in PHRASES["start_ack"][lang]
+        for phrase in localized(PHRASES["start_ack"], lang)
     ]

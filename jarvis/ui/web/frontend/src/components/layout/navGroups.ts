@@ -23,6 +23,7 @@ import {
   ScrollText,
   Settings,
   Shapes,
+  Briefcase,
   Share2,
   Sparkles,
   Store,
@@ -144,6 +145,8 @@ export const NAV_GROUPS: NavItem[][] = [
     // Automations — the recurring agent tasks and their catalogue. The id stays
     // "tasks" (navigate parity, deep links); only the label and glyph changed.
     { id: "tasks", labelKey: "nav.tasks", icon: Workflow, fallbackLabel: "Automations" },
+    // Copilot: slide decks, lessons and workflow observation in one place.
+    { id: "copilot", labelKey: "nav.copilot", icon: Briefcase, fallbackLabel: "Copilot" },
     // Artifacts — everything a run produced. The id stays "visualization"
     // because it crosses the navigate parity test, the detachable-view
     // registry and deep links.

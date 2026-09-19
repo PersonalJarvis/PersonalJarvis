@@ -69,6 +69,7 @@ from jarvis.core.events import (
     DictationTranscript,
     JarvisAgentAnnouncement,
     JarvisAgentBackgroundCompleted,
+    KillRequested,
     LatencyTurnComplete,
     ListeningStarted,
     MessageSent,
@@ -88,6 +89,7 @@ from jarvis.core.events import (
 from jarvis.core.protocols import AudioChunk, Transcript
 from jarvis.core.turn_language import (
     DEFAULT_LOCALE,
+    localized,
     normalize_language_tag,
     resolve_output_language,
 )
@@ -140,6 +142,7 @@ from jarvis.speech.hangup import (
     matched_hangup_pattern,
     supports_semantic_hangup,
 )
+from jarvis.speech.interrupt_intent import INTERRUPT_STOP, classify_interrupt
 from jarvis.speech.pending_buffer import PendingPromptBuffer
 from jarvis.speech.persona import PhrasePicker, iter_all_start_ack
 from jarvis.speech.rolling_whisper_wake import RollingWhisperWake
@@ -593,6 +596,9 @@ _STT_TRANSIENT_STATUS: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 # probe stops the instant the VAD endpoint fires, so the shared rate window
 # frees within ~1 s — two retries with capped backoff almost always recover.
 _STT_FINAL_RETRIES: int = 2
+#: How long a final transcription waits for a local engine that is still busy
+#: with a cancelled preview decode before counting it as a failed attempt.
+_STT_FINAL_BUSY_WAIT_S: float = 6.0
 _STT_RETRY_BASE_S: float = 0.4
 _STT_RETRY_CAP_S: float = 2.0
 
@@ -1654,7 +1660,12 @@ _MIC_HOLD_RELEASE_S = 0.15
 # something. Every rule that can decide from the text BEFORE the gap decides
 # immediately; the following character only refines a candidate when it
 # already happens to be in the buffer.
-_STREAM_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+#
+# CJK full-width terminators close a sentence with NO following space —
+# Japanese never puts one there — so they split on the spot. Without this a
+# Japanese answer never split at all and waited for the whole reply before the
+# first word was spoken (live 2026-09-18: ~8 s of silence).
+_STREAM_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+|(?<=[\u3002\uff01\uff1f])\s*")
 
 # Tokens whose trailing period is practically NEVER a sentence end. One shared
 # set for every locale: the turn language is a hint, not a guarantee, and
@@ -1748,6 +1759,39 @@ def _is_whole_text_fallback(original: str, scrubbed: ScrubResult) -> bool:
     if not cleaned or cleaned not in set(FALLBACK_PHRASES.values()):
         return False
     return cleaned not in original
+
+
+def _own_probe_engine(config: Any, utterance_stt: Any = None) -> Any:
+    """A SEPARATE on-device recognizer for the live preview, or ``None``.
+
+    With no wake Whisper, the preview used to share the utterance provider's
+    engine. A local engine runs one decode at a time (AP-24), so a slow preview
+    held it while the final transcription of the same turn waited — 10 s on a
+    CPU-only box right after boot (live 2026-09-18). An on-device recognizer
+    gets its own instance; a cloud one keeps sharing (no engine to contend).
+    """
+    stt_cfg = getattr(config, "stt", None)
+    if stt_cfg is None:
+        return None
+    # Only when the utterance engine really is a shipped STT plugin (seen
+    # through its wrappers); an injected engine is the caller's to share.
+    inner = utterance_stt
+    for _ in range(4):
+        nxt = getattr(inner, "_inner", None) or getattr(inner, "_primary", None)
+        if nxt is None:
+            break
+        inner = nxt
+    if utterance_stt is not None and not type(inner).__module__.startswith("jarvis.plugins.stt."):
+        return None
+    try:
+        from jarvis.plugins.stt import build_stt_from_config, provider_runs_on_device
+
+        if not provider_runs_on_device(str(getattr(stt_cfg, "provider", "") or "")):
+            return None
+        return build_stt_from_config(stt_cfg)
+    except Exception as exc:  # noqa: BLE001 - the shared engine still previews
+        log.info("Separate preview recognizer unavailable (%s); sharing the utterance one.", exc)
+        return None
 
 
 def _next_stream_sentence_break(buffer: str) -> int | None:
@@ -2504,7 +2548,9 @@ class SpeechPipeline:
         # In lightweight mode there is no local Whisper, but the post-wake
         # utterance STT may still exist (cloud provider). Keep that path alive
         # so the Listening bubble does not stay stuck on "...".
-        self._probe_stt: Any = self._stt or self._utterance_stt
+        self._probe_stt: Any = (
+            self._stt or _own_probe_engine(config, self._utterance_stt) or self._utterance_stt
+        )
         # User STT dictionary (dictation-tool-style custom vocabulary): wrap the
         # utterance + preview handles so EVERY provider's transcript gets the
         # user's corrections — brain turns, chat dictation, and the live
@@ -2542,6 +2588,11 @@ class SpeechPipeline:
             enable_openwakeword = False
             enable_whisper_wake = False
         self._openwakeword_enabled = enable_openwakeword
+        # Double-clap activation rides the same wake microphone; it follows the
+        # ambient-duty gate above (only the owning app listens).
+        self._clap_enabled = bool(
+            getattr(getattr(config, "trigger", None), "clap_enabled", False)
+        ) and _owns_ambient_duties()
         # Custom-wake-word plan (jarvis.speech.wake_phrase.WakeWordPlan) or None.
         # When None, the wake path is byte-identical to the legacy "Hey Jarvis"
         # behaviour (every existing test + call site). When set, the plan drives
@@ -6665,6 +6716,7 @@ class SpeechPipeline:
             async for c in self._tts.synthesize(self._ack_phrase):
                 chunks.append(c)
             self._ack_pcm = b"".join(c.pcm for c in chunks)
+            self._ack_rate = getattr(chunks[0], "sample_rate", 24_000) if chunks else 24_000
             log.info("ACK phrase cached (%d KB).", len(self._ack_pcm) // 1024)
         except Exception as exc:  # noqa: BLE001
             log.warning("ACK pre-render failed (%s) — chime only as feedback.", exc)
@@ -8118,9 +8170,12 @@ class SpeechPipeline:
         whisper_queue: asyncio.Queue = asyncio.Queue(
             maxsize=REALTIME_QUEUE_CHUNKS * 2
         )
+        clap_queue: asyncio.Queue = asyncio.Queue(maxsize=REALTIME_QUEUE_CHUNKS * 2)
         detector_queues = [oww_queue] if self._openwakeword_enabled else []
         if self._whisper_wake_enabled and self._whisper_wake is not None:
             detector_queues.append(whisper_queue)
+        if getattr(self, "_clap_enabled", False):
+            detector_queues.append(clap_queue)
         if not detector_queues:
             await asyncio.sleep(1.0)
             return
@@ -8243,6 +8298,13 @@ class SpeechPipeline:
                 return f"oww:{kw}"
             return ""
 
+        async def _run_clap() -> str:
+            from jarvis.speech.clap_detector import detect_double_clap
+
+            async for kw in detect_double_clap(_queue_iter(clap_queue)):
+                return f"clap:{kw}"
+            return ""
+
         async def _run_whisper() -> str:
             if self._whisper_wake is None:
                 await asyncio.Event().wait()  # never completes
@@ -8280,6 +8342,8 @@ class SpeechPipeline:
                 tasks.append(whisper_task)
             else:
                 whisper_task = None  # type: ignore[assignment]
+            if getattr(self, "_clap_enabled", False):
+                tasks.append(asyncio.create_task(_run_clap(), name="clap-wake"))
 
             async def _detector_heartbeat() -> None:
                 """Log every ten seconds while all detector tasks remain alive.
@@ -8700,6 +8764,8 @@ class SpeechPipeline:
                             self._active_voice_mode,
                         )
                         await self._set_turn_state(TurnTakingState.LISTENING)
+                        if self._ack_pcm and not self._ptt_mode:
+                            await self._play_opt_in_wake_ack()
                         # Activation feedback is now visual-only. Playing a
                         # chime or spoken ACK while a portable desktop mic is
                         # live forces an impossible choice: discard simultaneous
@@ -8834,6 +8900,22 @@ class SpeechPipeline:
         except Exception as exc:  # noqa: BLE001
             log.debug("Earcon playback skipped (%s).", exc)
 
+    async def _play_opt_in_wake_ack(self) -> None:
+        """Chime + the configured ``[voice].wake_ack_phrase`` ("Yes?"), echo-safe.
+
+        Opt-in only (the phrase is empty by default, and then feedback stays
+        visual-only, see below). The session microphone is already live, so
+        every input frame captured while the acknowledgement plays is dropped
+        through the same suppression window the TTS echo lock uses: the user
+        answers AFTER hearing it, and its sound never reaches the recognizer.
+        """
+        rate = getattr(self, "_ack_rate", 24_000) or 24_000
+        seconds = len(CHIME_PCM) / 2 / CHIME_SAMPLE_RATE + len(self._ack_pcm) / 2 / rate + 0.3
+        until_ns = time.time_ns() + int(seconds * 1_000_000_000)
+        previous = getattr(self, "_input_suppressed_until_ns", 0)
+        self._input_suppressed_until_ns = max(previous, until_ns)
+        await self._play_ack()
+
     async def _play_ack(self, *, ptt: bool = False) -> None:
         """Play the legacy chime and optional pre-rendered acknowledgement.
 
@@ -8853,7 +8935,9 @@ class SpeechPipeline:
                 # the key is released).
                 return
             if self._ack_pcm:
-                await self._player.play_pcm(self._ack_pcm, sample_rate=24_000)
+                await self._player.play_pcm(
+                    self._ack_pcm, sample_rate=getattr(self, "_ack_rate", 24_000)
+                )
             # Brief echo suppression keeps a pre-rendered acknowledgement from
             # leaking through open-back headphones and retriggering VAD.
             await asyncio.sleep(0.4)
@@ -8933,7 +9017,7 @@ class SpeechPipeline:
                             source_layer="speech.pipeline",
                             thread_id="voice",
                             role="system",
-                            text=_REALTIME_UNAVAILABLE_PHRASE[lang],
+                            text=localized(_REALTIME_UNAVAILABLE_PHRASE, lang),
                         )
                     )
                     log.warning(
@@ -8968,9 +9052,14 @@ class SpeechPipeline:
                     if next_task is None:
                         next_task = asyncio.create_task(vad_iter.__anext__())
                     hangup_task = asyncio.create_task(self._hangup_event.wait())
+                    # A running lesson (teacher mode) keeps the session open
+                    # through quiet stretches: the teacher pausing must not
+                    # end the recording.
+                    idle_hangup = getattr(
+                        self, "_idle_hangup_enabled", True
+                    ) and not self._lesson_running()
                     self._idle_deadline_monotonic = (
-                        time.monotonic() + self._idle_timeout_s
-                        if getattr(self, "_idle_hangup_enabled", True) else None
+                        time.monotonic() + self._idle_timeout_s if idle_hangup else None
                     )
                     try:
                         done, _pending = await asyncio.wait(
@@ -8981,11 +9070,7 @@ class SpeechPipeline:
                             # never reached, so the session stays active until the
                             # user hangs up. Otherwise bound the LISTENING window
                             # so a silent session hangs up after the timeout.
-                            timeout=(
-                                self._idle_timeout_s
-                                if getattr(self, "_idle_hangup_enabled", True)
-                                else None
-                            ),
+                            timeout=(self._idle_timeout_s if idle_hangup else None),
                             return_when=asyncio.FIRST_COMPLETED,
                         )
                     except asyncio.CancelledError:
@@ -11472,6 +11557,14 @@ class SpeechPipeline:
                 return None
             model = str(getattr(dictation_cfg, "local_model", "") or "").strip()
             min_free = getattr(dictation_cfg, "local_min_free_gb", DEFAULT_MIN_FREE_GB)
+            from jarvis.dictation.local_preview import _local_brain_owns_accelerator
+
+            if _local_brain_owns_accelerator():
+                # The managed local LLM owns the GPU; the final pass runs on
+                # the CPU instead of being declined there.
+                return LocalFinalSTT(
+                    model or DEFAULT_FINAL_MODEL, min_free_gb=0.0, compute="cpu", allow_cpu=True
+                )
             return LocalFinalSTT(
                 model or DEFAULT_FINAL_MODEL,
                 min_free_gb=float(min_free if min_free is not None else 0.0),
@@ -14306,6 +14399,25 @@ class SpeechPipeline:
             self._latency_first_audio_marked = True
             tracker.mark(LatencyPhase.TURN_TO_FIRST_AUDIO)
 
+    async def _transcribe_waiting_out_busy(self, pcm: bytes) -> Transcript:
+        """One final transcription that waits out a busy local engine.
+
+        A local engine answers ``TranscribeBusy`` while a cancelled preview's
+        decode still runs in its worker thread — cancelling the task cannot
+        stop it. On a CPU-only machine that decode outlived the whole retry
+        ladder (0.4 s + 0.8 s) and the turn was dropped. Busy is not a failure:
+        poll for the engine, bounded; a wedged engine still ends in the
+        caller's timeout and the provider's own recover().
+        """
+        deadline = time.monotonic() + _STT_FINAL_BUSY_WAIT_S
+        while True:
+            try:
+                return await self._utterance_stt.transcribe_pcm(pcm)
+            except Exception as exc:
+                if type(exc).__name__ != "TranscribeBusy" or time.monotonic() >= deadline:
+                    raise
+            await asyncio.sleep(0.1)
+
     async def _transcribe_final(self, pcm: bytes) -> Transcript | None:
         """Final utterance transcription with transient-error retry (AD-OE6).
 
@@ -14338,7 +14450,7 @@ class SpeechPipeline:
         last_exc: BaseException | None = None
         for attempt in range(_STT_FINAL_RETRIES + 1):
             stt_task = asyncio.create_task(
-                self._utterance_stt.transcribe_pcm(pcm), name="stt-final"
+                self._transcribe_waiting_out_busy(pcm), name="stt-final"
             )
             try:
                 return await asyncio.wait_for(
@@ -14770,6 +14882,16 @@ class SpeechPipeline:
         # eigentlichen Command nachreichen.
         if _is_wake_only(text):
             log.info("🤫 Wake-only-Turn (%r) — skip Brain, weiter zuhören.", text)
+            await self._set_turn_state(TurnTakingState.LISTENING)
+            return True
+
+        # A bare stop request ("Jarvis, stop", "teishi") is the voice emergency
+        # stop: barge-in already silenced the reply; fire the kill switch for
+        # anything still running and do NOT hand the word to the brain, which
+        # would only answer it.
+        if classify_interrupt(text) == INTERRUPT_STOP:
+            log.info("Voice stop (%r): KillRequested, skip brain.", text[:40])
+            await self._publish_event(KillRequested(source="voice"))
             await self._set_turn_state(TurnTakingState.LISTENING)
             return True
 
@@ -16517,6 +16639,10 @@ class SpeechPipeline:
             getattr(getattr(self, "_brain", None), "_last_turn_all_failed", False)
         )
 
+    def _lesson_running(self) -> bool:
+        """True while the brain runs a teacher-mode lesson (jarvis/teacher)."""
+        return getattr(getattr(self, "_brain", None), "_lesson", None) is not None
+
     def _brain_turn_suppressed(self) -> bool:
         """True when the just-finished brain turn was a fire-and-forget
         ``suppress_response`` spawn (background ``spawn_worker`` mission).
@@ -16674,7 +16800,7 @@ class SpeechPipeline:
     async def _speak_realtime_unavailable(self) -> None:
         """Explain a duplex failure before continuing on the classic path."""
         lang = _phrase_lang(self._output_language(None, ""))
-        phrase = _REALTIME_UNAVAILABLE_PHRASE[lang]
+        phrase = localized(_REALTIME_UNAVAILABLE_PHRASE, lang)
         try:
             await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
             await self._speak(

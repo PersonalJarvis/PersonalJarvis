@@ -16,7 +16,7 @@ const LOCAL = new Set<ChatCommandName>(["help", "clear", "history", "model", "ro
 export function useChatCommands({ value, setValue, onModel, onClear, agentId = "jarvis", attachments = [], attachmentsBusy = false, onAttachmentsSent }: Options) {
   const t = useT();
   const localeValue = t("slash.locale");
-  const locale = ["en", "de", "es"].includes(localeValue) ? localeValue : "en";
+  const locale = ["en", "de", "es", "ja"].includes(localeValue) ? localeValue : "en";
   const store = useAgentChatApi();
   const sid = useAgentChat((s) => s.activeSessionId);
   const surface = useAgentChat((s) => s.surface);

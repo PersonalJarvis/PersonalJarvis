@@ -25,6 +25,7 @@ from jarvis.core.capabilities import _normalize
 from jarvis.core.turn_language import (
     DEFAULT_LOCALE,
     detect_text_language,
+    localized,
     normalize_language_tag,
 )
 
@@ -360,7 +361,7 @@ def check_evidence_domain(
         return _PASS
 
     lang = _refusal_language(language, t)
-    table, table_fallback = _REFUSALS[lang]
+    table, table_fallback = localized(_REFUSALS, lang)
     base = table.get(matched_domain, table_fallback)
     hint = ""
     if refusal_hint_fn is not None:

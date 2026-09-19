@@ -872,7 +872,12 @@ def _sapi5_synthesize(text: str, language_code: str = "de-DE") -> bytes:
         voice = win32com.client.Dispatch("SAPI.SpVoice")
         voices = voice.GetVoices()
         # Pick a voice per language
-        pick_substring = "German" if language_code.lower().startswith("de") else "English"
+        lang = language_code.lower()
+        pick_substring = (
+            "German" if lang.startswith("de")
+            else "Japanese" if lang.startswith("ja")
+            else "English"
+        )
         picked = None
         for i in range(voices.Count):
             desc = voices.Item(i).GetDescription()

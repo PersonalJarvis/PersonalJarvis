@@ -46,6 +46,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from jarvis.core.turn_language import localized
+
 # i18n-allow: the tables below are speech-recognition vocabulary — the literal
 # German/Spanish tokens a matcher must contain to recognise a German or Spanish
 # hesitation sound. Matching data, not prose (CLAUDE.md §1, category 3).
@@ -200,7 +202,7 @@ def _compile_patterns(language: str) -> list[re.Pattern[str]]:
     Longest-first matters for multi-word entries: a short rule must never
     shadow a longer phrase that contains it.
     """
-    words = sorted(FILLER_WORDS[language], key=len, reverse=True)
+    words = sorted(localized(FILLER_WORDS, language), key=len, reverse=True)
     patterns: list[re.Pattern[str]] = []
     for word in words:
         escaped = r"\s+".join(re.escape(part) for part in word.split())
@@ -285,7 +287,7 @@ def clean_transcript(
     total = count_words(raw)
     cleaned = raw
     try:
-        for pattern in _PATTERN_CACHE[lang]:
+        for pattern in localized(_PATTERN_CACHE, lang):
             cleaned = pattern.sub(" ", cleaned)
         cleaned = _tidy(cleaned, raw=raw)
     except Exception:  # noqa: BLE001 — a broken rule must never eat the dictation

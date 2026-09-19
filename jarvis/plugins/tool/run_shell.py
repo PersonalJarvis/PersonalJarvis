@@ -202,7 +202,12 @@ class RunShellTool:
     async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
         command = (args.get("command") or "").strip()
         timeout_s = float(args.get("timeout_s", 30))
-        cwd = args.get("cwd") or None
+        # A folder chat passes its working directory in the tool context; an
+        # explicit ``cwd`` argument still wins. Without this the command ran in
+        # the app's own directory: "python -m pytest" in a project chat ran the
+        # wrong tree (live 2026-09-18).
+        ctx_config = getattr(ctx, "config", None) or {}
+        cwd = args.get("cwd") or ctx_config.get("cwd") or None
         if not command:
             return ToolResult(success=False, output=None, error="command is missing")
 

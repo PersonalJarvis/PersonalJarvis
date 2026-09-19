@@ -184,6 +184,38 @@ def _pricing_feed_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
 
 
 @pytest.fixture(autouse=True)
+def _user_environment_and_config_soll_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
+    """Never let a test write the developer's registry or scripts/config-soll.json.
+
+    Provider-switch writers persist three layers: jarvis.toml (tests pass a
+    tmp path), config-soll.json and the User-scope JARVIS__* registry values.
+    A writer test that forgot to patch the last two rewrote the real ones: a
+    full run left JARVIS__STT__MODEL=whisper-large-v3 and
+    JARVIS__BRAIN__PRIMARY=openrouter in HKCU\\Environment, which env-over-toml
+    then applied to the running app on its next start. Tests that exercise
+    these layers still patch them explicitly; this is the floor under them.
+    """
+    import os
+    import shutil
+
+    from jarvis.core import config_writer
+
+    root = tmp_path_factory.mktemp("config_soll")
+    soll = root / "config-soll.json"
+    real = config_writer.PROJECT_ROOT / "scripts" / "config-soll.json"
+    if real.is_file():
+        shutil.copyfile(real, soll)
+    monkeypatch.setattr(config_writer, "_config_soll_path", lambda: soll)
+    monkeypatch.setattr(config_writer, "_set_user_env_var_winreg", lambda name, value: None)
+    before = {k: v for k, v in os.environ.items() if k.startswith("JARVIS__")}
+    yield
+    for key in [k for k in os.environ if k.startswith("JARVIS__")]:
+        if key not in before:
+            del os.environ[key]
+    os.environ.update(before)
+
+
+@pytest.fixture(autouse=True)
 def _reset_bus():
     """Reset the global default bus before and after each test."""
     reset_default_bus()

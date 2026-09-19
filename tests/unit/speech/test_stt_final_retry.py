@@ -138,3 +138,39 @@ async def test_final_retries_timeout_then_succeeds(monkeypatch: pytest.MonkeyPat
 
     assert transcript is _OK
     assert stt.calls == 2, "first call timed out, second succeeded"
+
+
+class TranscribeBusy(Exception):
+    """Same class name the local faster-whisper provider raises."""
+
+
+@pytest.mark.asyncio
+async def test_final_waits_out_a_busy_local_engine_without_spending_retries() -> None:
+    # A cancelled preview decode keeps the local engine busy for longer than
+    # the whole retry ladder on a CPU-only box; the final must wait for it.
+    stt = _ScriptedSTT([TranscribeBusy("busy")] * 12 + [_OK])
+    pipe = _make_pipe(stt)
+    pipe._drain_stale_probe = _no_probe  # type: ignore[method-assign]
+
+    transcript = await pipe._transcribe_final(b"\x00\x00" * 256)
+
+    assert transcript is _OK
+    assert stt.calls == 13
+
+
+async def _no_probe() -> None:
+    return None
+
+
+def test_preview_gets_its_own_engine_only_for_an_on_device_recognizer(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    import jarvis.plugins.stt as stt_pkg
+
+    built: list[str] = []
+    monkeypatch.setattr(stt_pkg, "provider_runs_on_device", lambda name: name == "local-x")
+    monkeypatch.setattr(stt_pkg, "build_stt_from_config", lambda cfg: built.append(cfg.provider) or object())
+
+    assert pipeline_mod._own_probe_engine(SimpleNamespace(stt=SimpleNamespace(provider="cloud-y"))) is None
+    assert pipeline_mod._own_probe_engine(SimpleNamespace(stt=SimpleNamespace(provider="local-x"))) is not None
+    assert built == ["local-x"]

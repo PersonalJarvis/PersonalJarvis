@@ -23,6 +23,7 @@ Architecture:
 """
 from __future__ import annotations
 
+from jarvis.core.turn_language import localized
 import ast
 import asyncio
 import base64
@@ -80,6 +81,7 @@ from jarvis.core.response_style import CONVERSATIONAL_RESPONSE_STYLE
 from jarvis.core.turn_language import (
     DEFAULT_LOCALE,
     detect_text_language,
+    is_japanese_text,
     resolve_output_language,
     resolve_turn_language,
 )
@@ -1859,8 +1861,8 @@ def _evidence_unfulfilled_answer(*, lang: str, domain: str = "") -> str:
         lang = DEFAULT_LOCALE
     label = _EVIDENCE_DOMAIN_LABELS.get(lang, {}).get(domain, "")
     if label:
-        return _EVIDENCE_UNFULFILLED_DOMAIN_PHRASES[lang].format(label=label)
-    return _EVIDENCE_UNFULFILLED_PHRASES[lang]
+        return localized(_EVIDENCE_UNFULFILLED_DOMAIN_PHRASES, lang).format(label=label)
+    return localized(_EVIDENCE_UNFULFILLED_PHRASES, lang)
 
 
 # Honest spoken fallback for a mandated WRITE (e.g. contact-upsert) that never
@@ -2094,9 +2096,9 @@ def _extract_leaked_tool_call(text: str) -> tuple[str, dict[str, Any]] | None:
 
 # Single source of truth for the reply-language vocabulary (Python ↔ REST ↔ TS).
 # "auto" = mirror the user's input language; the rest hard-pin that language.
-SUPPORTED_REPLY_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es")
+SUPPORTED_REPLY_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es", "ja")
 _REPLY_LANGS: frozenset[str] = frozenset(SUPPORTED_REPLY_LANGUAGES)
-_REPLY_LANG_NAMES: dict[str, str] = {"de": "German", "en": "English", "es": "Spanish"}
+_REPLY_LANG_NAMES: dict[str, str] = {"de": "German", "en": "English", "es": "Spanish", "ja": "Japanese"}
 
 # Spoken confirmation for a deterministic reply-language switch (the
 # voice_command_gate "language_switch" path). Keyed by target code and phrased
@@ -2108,6 +2110,10 @@ _LANG_SWITCH_CONFIRM: dict[str, str] = {
     "en": "Done — I'll reply in English from now on.",
     "es": "Listo — a partir de ahora respondo en español.",
     "auto": "Erledigt — ich passe meine Sprache ab jetzt automatisch deiner an.",
+    "ja": (
+        "\u308f\u304b\u308a\u307e\u3057\u305f\u3002\u3053\u308c\u304b\u3089\u306f\u65e5\u672c\u8a9e"
+        "\u3067\u304a\u7b54\u3048\u3057\u307e\u3059\u3002"
+    ),
 }
 
 # Spoken when the live reply-language switch applied but PERSIST failed (read-only
@@ -2117,6 +2123,38 @@ _LANG_SWITCH_CONFIRM_SESSION: dict[str, str] = {
     "de": "Für diese Sitzung antworte ich auf Deutsch — dauerhaft speichern hat nicht geklappt.",
     "en": "For this session I'll reply in English — saving it permanently didn't work.",
     "es": "Por esta sesión responderé en español — no pude guardarlo de forma permanente.",
+    "ja": (
+        "\u3053\u306e\u30bb\u30c3\u30b7\u30e7\u30f3\u3067\u306f\u65e5\u672c\u8a9e\u3067\u304a\u7b54"
+        "\u3048\u3057\u307e\u3059\u3002\u305f\u3060\u3001\u8a2d\u5b9a\u306e\u4fdd\u5b58\u306f\u3046"
+        "\u307e\u304f\u3044\u304d\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
+    ),
+}
+
+# Local-model mode switch confirmations (jarvis/brain/local_mode_gate.py).
+# Japanese is here because the switch is spoken on the keyless Japanese setup
+# the mode exists for; the other locales are the usual peers.
+_LOCAL_MODE_DONE: dict[str, dict[str, str]] = {
+    "developer": {
+        "ja": "開発モードに切り替えました。"
+        "モデルは {model} です。",
+        "en": "Developer mode is on. The model is {model}.",
+        "de": "Entwicklermodus ist an. Das Modell ist {model}.",  # i18n-allow
+        "es": "Modo desarrollador activado. El modelo es {model}.",
+    },
+    "normal": {
+        "ja": "通常モードに戻しました。"
+        "モデルは {model} です。",
+        "en": "Back to normal mode. The model is {model}.",
+        "de": "Zurueck im Normalmodus. Das Modell ist {model}.",  # i18n-allow
+        "es": "De vuelta al modo normal. El modelo es {model}.",
+    },
+}
+_LOCAL_MODE_FAILED: dict[str, str] = {
+    "ja": "モードを切り替えられませんでした。"
+    "必要なローカルモデルがありません。",
+    "en": "I could not switch the mode: the local model it needs is not installed.",
+    "de": "Ich konnte den Modus nicht wechseln: das lokale Modell fehlt.",  # i18n-allow
+    "es": "No pude cambiar el modo: falta el modelo local necesario.",
 }
 
 # Sub-agent (Heavy-Task worker) provider switch — the voice_command_gate
@@ -2788,6 +2826,11 @@ class BrainManager:
         # in auto mode to hard-pin the turn's language so a tool-synthesis turn
         # cannot drift back to German (live bug 2026-06-14).
         self._turn_detected_lang: str = ""
+        self._turn_japanese: bool = False
+        # Teacher mode: the running lesson (text transcript only) and the last
+        # lesson plan made in this session (its topic/length seed the lesson).
+        self._lesson: Any = None
+        self._lesson_plan: Any = None
         # Sticky conversation language (de/en/es, "" until established). Updated
         # only on a SUBSTANTIVE turn so a thin interjection ("Now", "Stop") never
         # flips an established conversation; consumed by _update_turn_language and
@@ -3620,6 +3663,38 @@ class BrainManager:
     # Dispatcher builder
     # ------------------------------------------------------------------
 
+    async def prewarm_prompt_cache(self) -> bool:
+        """Prefill the active brain's prompt cache with this install's real turn prefix.
+
+        Only for brains that declare ``compact_prompt`` (small local servers):
+        their first turn after boot otherwise pays a full prefill of system
+        prompt + tool schemas — measured 70-100 s on a 4 GB laptop GPU while
+        the rest of the app was still booting. One request with the exact
+        system prompt and tool surface a turn uses, ``max_tokens=1``, leaves
+        that prefix cached so the user's first turn only prefills its own
+        words. Returns whether a prefill was sent; never raises.
+        """
+        try:
+            name = self._active_name
+            brain = self._get_brain(name, self._fast_model(name))
+            if not getattr(brain, "compact_prompt", False):
+                return False
+            dispatcher = self._build_dispatcher(brain)
+            req = BrainRequest(
+                messages=(BrainMessage(role="user", content="."),),
+                tools=tuple(dispatcher.tools_payload()),
+                system=dispatcher._system_prompt,
+                max_tokens=1,
+                stream=True,
+            )
+            async for _delta in brain.complete(req):
+                pass
+            log.info("Prompt cache prefilled for %s.", name)
+            return True
+        except Exception as exc:  # noqa: BLE001 - a warm-up is an optimisation, never an error
+            log.info("Prompt cache prefill skipped: %s", exc)
+            return False
+
     def _build_dispatcher(
         self,
         brain: Brain,
@@ -3665,19 +3740,67 @@ class BrainManager:
         ``_cu_context_lines`` reads).
         """
         tools = tools_override if tools_override is not None else self._tools
-        system_prompt = self._build_system_prompt()
+        if getattr(brain, "compact_prompt", False):
+            # Freeze the stable surface first: the prompt's tool-name list
+            # reads it, and the two must agree from the very first turn.
+            self._stable_compact_tools(brain)
+            system_prompt = self._build_system_prompt(compact=True)
+        else:
+            system_prompt = self._build_system_prompt()
         history = _TURN_HISTORY_OVERRIDE.get()
         if history is None:
             history = tuple(getattr(self, "_history", None) or ())
         tools = self._fit_tools_to_brain(
             tools, brain, system_prompt=system_prompt, history=history
         )
+        # A compact-prompt brain (small local server) sees ONE stable tool
+        # surface every turn: its chat template renders tool definitions before
+        # the system prompt, so a per-turn change (a smalltalk turn with no
+        # tools, a gate hiding action tools, chat build-mode extras) threw away
+        # the whole cached prefix — 70+ s of prefill on a 4 GB GPU. What may
+        # EXECUTE is still this turn's gated set; the stable surface only
+        # changes what the model reads (a chat's plan-mode filter still binds
+        # execution). A society agent's turn, with its own briefing, keeps its own.
+        # Turn-specific extras (chat build-mode file tools) stay out: each one
+        # moves the point where the prompt diverges to the front. Only a tool
+        # a gate MANDATED this turn is appended — without it the turn fails.
+        advertised: dict[str, Tool] | None = None
+        _override = _TURN_OVERRIDE.get()
+        if getattr(brain, "compact_prompt", False) and (
+            _override is None or not _override.system_extra
+        ):
+            advertised = self._stable_compact_tools(brain)
+            # A folder chat's own hands (read/edit/run in its project) are
+            # stable for the whole chat, so they join the surface after the
+            # frozen part — a coding chat on a local model can edit files.
+            # Only those this turn may actually run (plan mode filters them).
+            extra_names = getattr(_override, "tools_extra", None) or {}
+            folder_tools = {n: tools[n] for n in extra_names if n in tools}
+            if folder_tools:
+                advertised = {**advertised, **folder_tools}
+            mandated = str(getattr(self, "_evidence_required_tool", "") or "")
+            if mandated and mandated in tools and mandated not in advertised:
+                advertised = {**advertised, mandated: tools[mandated]}
         # Per-plugin usage guidance for whichever plugins are active this turn
         # (the "MCP + thin skill" reliability layer). Appended last so it sits
         # closest to the turn; only present when a plugin tool is in scope.
         cards = self._plugin_usage_cards_block(tools)
         if cards:
             system_prompt = f"{system_prompt}\n\n{cards}"
+        if getattr(brain, "tool_budget_tokens", 0):
+            # Small local brains pay prefill for every token; say where they go.
+            log.info(
+                "Local turn size: system %d chars, history %d msgs / ~%d tokens, "
+                "tools %d (~%d tokens)",
+                len(system_prompt),
+                len(history),
+                _approx_history_tokens(history),
+                len(advertised if advertised is not None else tools),
+                sum(
+                    _tool_surface_tokens(n, t)
+                    for n, t in (advertised if advertised is not None else tools).items()
+                ),
+            )
         if delegated_voice:
             system_prompt = f"{system_prompt}\n\n{_DELEGATE_VOICE_DIRECTIVE}"
         kwargs: dict[str, Any] = {}
@@ -3693,8 +3816,33 @@ class BrainManager:
             reasoning_effort=reasoning_effort,
             tool_context=tool_context,
             loop_control=loop_control,
+            advertised_tools=advertised,
             **kwargs,
         )
+
+    def _stable_compact_tools(self, brain: Any) -> dict[str, Tool]:
+        """The fixed tool surface for a compact-prompt brain: its core tools,
+        then the registry filled up to its declared budget. Depends only on
+        the registry, never on the turn, so it is byte-identical turn to turn."""
+        tools = self._tools if isinstance(self._tools, dict) else {}
+        frozen: tuple[str, ...] | None = getattr(self, "_compact_surface_names", None)
+        if frozen:
+            # Frozen at first use: ``refresh_tools()`` swaps the registry as
+            # CLIs and MCP servers attach, and a surface recomputed from it
+            # would differ turn to turn. A tool that went away drops out.
+            return {n: tools[n] for n in frozen if n in tools}
+        try:
+            budget = int(getattr(brain, "tool_budget_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            budget = 0
+        if budget <= 0 or not tools:
+            return dict(tools)
+        core = {n for n in getattr(brain, "core_tools", ()) if n in tools}
+        fitted, _dropped = _fit_tools_to_context_window(
+            tools, context_window=budget, used_tokens=0, keep=core
+        )
+        self._compact_surface_names = tuple(sorted(fitted))
+        return {n: fitted[n] for n in self._compact_surface_names}
 
     def _apply_turn_override_tools(
         self, tools: dict[str, Tool] | None, override: TurnOverride
@@ -3946,6 +4094,9 @@ class BrainManager:
         uses the pin; genuinely ambiguous text stays ``"unknown"`` so the
         directive keeps its soft "mirror the user" form.
         """
+        # Japanese has no canned-phrase tables yet, so it is tracked apart from
+        # the de/en/es output locale and only steers the reply directive.
+        self._turn_japanese = is_japanese_text(user_text)
         if self._reply_language in _REPLY_LANG_NAMES:
             self._turn_detected_lang = ""
             return
@@ -4067,6 +4218,8 @@ class BrainManager:
         name = _REPLY_LANG_NAMES.get(self._reply_language)
         if name is not None:
             return self._mandatory_lang_directive(name)
+        if getattr(self, "_turn_japanese", False):
+            return self._mandatory_lang_directive("Japanese")
         # auto mode: when THIS turn's language is confidently detected, pin it
         # HARD with the same MANDATORY wording as an explicit pin. A soft
         # "please mirror" line let the model anchor to German on clean English
@@ -4145,8 +4298,14 @@ class BrainManager:
             return target_prefix + raw_output[len(de_prefix):]
         return raw_output
 
-    def _build_system_prompt(self) -> str:
+    def _build_system_prompt(self, *, compact: bool = False) -> str:
         """Builds the system prompt with Jarvis-Agent-style workspace injection.
+
+        ``compact`` (2026-09-18) is for small local brains that declare
+        ``compact_prompt``: they prefill every token on every turn, so the two
+        static catalogues that only a lead-grade model uses are left out — the
+        full skill list (the per-turn skill hint still names a matching skill)
+        and the agent-society lead card.
 
         Layer order (Jarvis-Agent priority map):
         1. SOUL.md           — Jarvis' own persona (who I am, tone rules)
@@ -4332,12 +4491,12 @@ class BrainManager:
             )
             from jarvis.skills.skill_context import try_get_skill_context
 
-            _skill_ctx = try_get_skill_context()
+            _skill_ctx = None if compact else try_get_skill_context()
             if _skill_ctx is not None:
                 _skills_section = render_available_skills_section(_skill_ctx.registry)
                 if _skills_section:
                     parts.append(_skills_section)
-            elif not self._skills_omit_warned:
+            elif not compact and not self._skills_omit_warned:
                 # AD-S6: silently omitting the section was RC2 of "Jarvis
                 # never calls a skill" — warn once per manager lifetime.
                 self._skills_omit_warned = True
@@ -4377,7 +4536,7 @@ class BrainManager:
         # briefing (TurnOverride.system_extra), and a specialist must not be
         # told it is the lead.
         _turn_override = _TURN_OVERRIDE.get()
-        if _turn_override is None or not _turn_override.system_extra:
+        if not compact and (_turn_override is None or not _turn_override.system_extra):
             try:
                 from jarvis.society.lead_card import lead_card_section
 
@@ -4453,7 +4612,7 @@ class BrainManager:
         #       about exactly this drift.
         # The live surface is the only honest source, and it is the same one
         # ``_check_unsupported_intent`` already trusts.
-        tool_list_block = self._render_live_tool_block()
+        tool_list_block = self._render_live_tool_block(compact=compact)
         if tool_list_block:
             parts.append(tool_list_block)
 
@@ -4881,6 +5040,170 @@ class BrainManager:
             return _LANG_SWITCH_CONFIRM.get(lang, _LANG_SWITCH_CONFIRM["de"])
         return _LANG_SWITCH_CONFIRM_SESSION.get(lang, _LANG_SWITCH_CONFIRM_SESSION["de"])
 
+    async def _teacher_complete(self, system: str, prompt: str) -> str:
+        """One tool-less completion on the active brain (lesson plan/summary/report)."""
+        name = self._active_name
+        brain = self._get_brain(name, self._fast_model(name))
+        req = BrainRequest(
+            messages=(BrainMessage(role="user", content=prompt),),
+            system=system,
+            max_tokens=3000,
+            stream=True,
+        )
+        agg = await aggregate(brain.complete(req))
+        return (agg.text or "").strip()
+
+    async def _handle_teacher_command(self, cmd: Any, lang: str | None = None) -> str:
+        """Run one teacher-mode command and return what to say/show."""
+        from jarvis.teacher import lesson as lessons
+        from jarvis.teacher.replies import reply
+
+        if lang is None:
+            lang = "ja" if getattr(self, "_turn_japanese", False) else self._resolve_turn_lang()
+        language = lessons._language_name(lang)
+        current = getattr(self, "_lesson", None)
+        try:
+            if cmd.kind == "plan":
+                minutes = cmd.minutes or lessons.DEFAULT_MINUTES
+                text = await self._teacher_complete(
+                    lessons.PLAN_SYSTEM.format(language=language),
+                    lessons.plan_prompt(cmd.topic, minutes),
+                )
+                stamp_holder = lessons.LessonSession(topic=cmd.topic, minutes=minutes)
+                path = lessons.save(stamp_holder.stamp, "plan", text)
+                self._lesson_plan = stamp_holder
+                return reply("plan_done", lang, minutes=minutes, path=path) + "\n\n" + text
+            if cmd.kind == "start":
+                plan = getattr(self, "_lesson_plan", None)
+                self._lesson = lessons.LessonSession(
+                    topic=plan.topic if plan else "",
+                    minutes=cmd.minutes or (plan.minutes if plan else lessons.DEFAULT_MINUTES),
+                    language=lang,
+                )
+                if plan is not None:
+                    self._lesson.stamp = plan.stamp
+                return reply("started", lang, minutes=self._lesson.minutes)
+            if cmd.kind == "summary" and current is not None:
+                text = await self._teacher_complete(
+                    lessons.SUMMARY_SYSTEM.format(
+                        language=language, music=lessons.music_clause(current)
+                    ),
+                    lessons.summary_prompt(current),
+                )
+                current.summaries += 1
+                lessons.save(current.stamp, f"summary-{current.summaries}", text)
+                remaining = reply("remaining", lang, minutes=round(current.remaining_min()))
+                return f"{text}\n\n{remaining}"
+            if cmd.kind == "end" and current is not None:
+                text = await self._teacher_complete(
+                    lessons.REPORT_SYSTEM.format(
+                        language=language, music=lessons.music_clause(current)
+                    ),
+                    lessons.report_prompt(current),
+                )
+                path = lessons.save(current.stamp, "report", text)
+                lessons.save(current.stamp, "transcript", current.transcript(limit=10**7))
+                self._lesson = None
+                return reply("ended", lang, path=path)
+        except Exception as exc:  # noqa: BLE001 - reported to the teacher, never a crash
+            log.warning("teacher mode %s failed: %s", cmd.kind, exc)
+            return reply("failed", lang, error=str(exc)[:200])
+        return ""
+
+    async def _handle_copilot_command(self, cmd: Any, lang: str | None = None) -> str:
+        """Material deck / workflow observation (jarvis/copilot). Never raises."""
+        import asyncio as _asyncio
+        import sys as _sys
+
+        from jarvis.copilot import material, workflow
+        from jarvis.copilot.replies import reply
+        from jarvis.teacher.lesson import _language_name
+
+        if lang is None:
+            lang = "ja" if getattr(self, "_turn_japanese", False) else self._resolve_turn_lang()
+        try:
+            if cmd.kind == "material":
+                text = await self._teacher_complete(
+                    material.outline_system(cmd.text, _language_name(lang)), cmd.text
+                )
+                deck = material.parse_outline(text)
+                folder = material.output_dir()
+                checks, summary = await _asyncio.to_thread(material.build, deck, cmd.text, folder)
+                head = reply(
+                    "material_done", lang, slides=len(deck.slides),
+                    passed=sum(c.ok for c in checks), total=len(checks), folder=folder,
+                )
+                return f"{head}\n\n{summary}"
+            if cmd.kind == "material_revise":
+                latest = material.load_latest()
+                if latest is None:
+                    return reply("material_none", lang)
+                deck, order, folder = latest
+                if not 1 <= cmd.number <= len(deck.slides) + 1:
+                    return reply("material_no_page", lang, page=cmd.number, pages=len(deck.slides) + 1)
+                text = await self._teacher_complete(
+                    material.REVISE_SYSTEM.format(language=_language_name(lang)),
+                    material.revise_prompt(deck, cmd.number, cmd.text),
+                )
+                deck = material.apply_revision(deck, cmd.number, text)
+                checks, summary = await _asyncio.to_thread(material.build, deck, order, folder)
+                head = reply(
+                    "material_revised", lang, page=cmd.number,
+                    passed=sum(c.ok for c in checks), total=len(checks), folder=folder,
+                )
+                return f"{head}\n\n{summary}"
+            if cmd.kind == "workflow_start":
+                if getattr(self, "_wf_observer", None) is not None:
+                    return reply("wf_already", lang)
+                if _sys.platform != "win32":
+                    return reply("wf_unavailable", lang)
+                privacy = None
+                try:
+                    from jarvis.awareness.privacy import PrivacyFilter
+
+                    privacy = PrivacyFilter(self._config.awareness)
+                except Exception:  # noqa: BLE001 - without it titles are still local-only
+                    log.debug("workflow: privacy filter unavailable", exc_info=True)
+                self._wf_observer = workflow.Observer(privacy)
+                self._wf_observer.start()
+                return reply("wf_started", lang)
+            if cmd.kind == "workflow_stop":
+                observer = getattr(self, "_wf_observer", None)
+                if observer is None:
+                    return reply("wf_not_running", lang)
+                self._wf_observer = None
+                segments = await _asyncio.to_thread(observer.stop)
+                analysis = workflow.analyse(segments)
+                workflow.save_candidates(analysis)
+                text = workflow.report(analysis, lang)
+                path = workflow.save_report(text)
+                return reply("wf_done", lang, path=path, report=text)
+            if cmd.kind == "workflow_draft":
+                candidates = workflow.load_candidates()
+                if not 1 <= cmd.number <= len(candidates):
+                    return reply("wf_no_candidate", lang, n=cmd.number, count=len(candidates))
+                text = await self._teacher_complete(
+                    workflow.DRAFT_SYSTEM, workflow.draft_prompt(candidates[cmd.number - 1])
+                )
+                path = workflow.save_draft(cmd.number, text)
+                return reply("wf_drafted", lang, n=cmd.number, path=path)
+        except Exception as exc:  # noqa: BLE001 - reported to the user, never a crash
+            log.warning("copilot %s failed: %s", cmd.kind, exc)
+            return reply("material_failed", lang, error=str(exc)[:200])
+        return ""
+
+    async def _apply_local_mode(self, mode: str) -> str:
+        """Switch the local model mode and say what happened, in the turn's language."""
+        from jarvis.local_models.modes import switch_mode
+
+        result = await switch_mode(mode, brain=self)
+        lang = "ja" if getattr(self, "_turn_japanese", False) else self._resolve_turn_lang()
+        if not result.get("ok"):
+            table = _LOCAL_MODE_FAILED
+            return table.get(lang, table["en"])
+        table = _LOCAL_MODE_DONE[result["mode"]]
+        return table.get(lang, table["en"]).format(model=result.get("model", ""))
+
     def _is_self_control_turn(self, text: str) -> bool:
         """Broad (class-level, NOT per-command) detector for a request to change
         or control Jarvis's OWN configuration.
@@ -5143,7 +5466,7 @@ class BrainManager:
             tools = self._apply_turn_override_tools(tools, override)
         return tuple(sorted(tools))
 
-    def _render_live_tool_block(self) -> str:
+    def _render_live_tool_block(self, *, compact: bool = False) -> str:
         """Render the attached tool surface for the system prompt (PR-05).
 
         NAMES ONLY, on purpose. Every attached tool already reaches the model
@@ -5177,6 +5500,13 @@ class BrainManager:
         # five tool names no provider request carries.
         hidden = set(getattr(self, "_local_action_tools", None) or {})
         names = [n for n in self._live_tool_names() if n not in hidden]
+        frozen = getattr(self, "_compact_surface_names", None)
+        if compact and frozen:
+            # A compact-prompt brain is sent only its frozen surface; naming
+            # the rest would list tools it can never call, and the list
+            # changing as CLIs/MCP servers attach would break its cached prefix.
+            live = set(names)
+            names = [n for n in frozen if n in live]
         if not names:
             return ""
 
@@ -6727,6 +7057,17 @@ class BrainManager:
             keep.add(str(mandated))
         if getattr(self, "_skill_turn_match", None) is not None:
             keep.add("run-skill")
+        # A brain may declare a tool budget below its window: a small local
+        # model reads every token of every schema on each turn, and on a
+        # consumer GPU a 15k-token tool surface costs a minute of prefill.
+        # Its declared core tools survive the cut first.
+        try:
+            budget = int(getattr(brain, "tool_budget_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            budget = 0
+        if budget > 0:
+            window = min(window, used + budget)
+            keep |= {name for name in getattr(brain, "core_tools", ()) if name in tools}
         fitted, dropped = _fit_tools_to_context_window(
             tools, context_window=window, used_tokens=used, keep=keep
         )
@@ -10608,6 +10949,17 @@ class BrainManager:
                 chain.insert(0, helper)
         return chain
 
+    def _local_floor(self, level: str) -> tuple[str, str | None] | None:
+        """The keyless local stage, or None when no local server is configured."""
+        name = "local-openai"
+        if name not in set(self._registry.available()):
+            return None
+        block = (self._config.brain.providers or {}).get(name)
+        if block is None or not str(getattr(block, "base_url", "") or "").strip():
+            return None
+        model = self._deep_model(name) if level in ("deep", "code") else self._fast_model(name)
+        return (name, model or self._fast_model(name) or None)
+
     def _build_fallback_chain(self, level: str) -> list[tuple[str, str | None]]:
         """Returns a prioritised list of (provider, model) attempts."""
         active = self._active_name
@@ -10698,6 +11050,12 @@ class BrainManager:
         else:
             if fast:
                 chain.append((active, fast))
+        if not fast and not deep:
+            # A provider whose model is resolved at call time (a local server
+            # serving whatever it loaded) has no configured model at all. It
+            # is still the brain the user picked: without this, a keyless
+            # install's voice turn built an EMPTY chain and spoke "no API key".
+            chain.append((active, None))
 
         # 2. Explicit tier fallbacks from jarvis.toml. These must run before
         # generic cross-provider probing so runtime matches healthcheck order.
@@ -10730,6 +11088,14 @@ class BrainManager:
             m_deep = self._deep_model(name)
             preferred = m_deep if level in ("deep", "code") else m_fast
             chain.append((name, preferred or m_fast or m_deep))
+
+        # 4. Keyless local floor: a local OpenAI-compatible server (the managed
+        #    llama-server) answers when every hosted stage is rate-limited,
+        #    over quota, down or offline. Gated on capability — a configured
+        #    server URL — never on this box's choice of provider.
+        local = self._local_floor(level)
+        if local is not None and local[0] != active:
+            chain.append(local)
 
         # Deduplicate (first instance wins) + filter dead providers.
         # Dead = provider already failed with "no API key" in this session.
@@ -11015,6 +11381,65 @@ class BrainManager:
                     trace_id=turn_trace_id,
                 )
                 return confirmation
+
+        # Deterministic local-model mode switch ("developer mode" / "normal
+        # mode") — plain configuration, handled without the LLM like the
+        # language switch above; a small local model does not reliably pick a
+        # tool for it. See jarvis/brain/local_mode_gate.py.
+        from jarvis.brain.local_mode_gate import match_local_mode
+
+        local_mode = None if ide_owns_turn else match_local_mode(user_text)
+        if local_mode:
+            confirmation = await self._apply_local_mode(local_mode)
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=confirmation,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return confirmation
+
+        # Teacher mode (jarvis/teacher): explicit lesson commands, and while a
+        # lesson runs every other utterance is recorded as text and NOT
+        # answered — the co-teacher listens; it speaks when asked.
+        if not ide_owns_turn:
+            from jarvis.teacher.gate import match_teacher_command
+
+            lesson = getattr(self, "_lesson", None)
+            teacher_cmd = match_teacher_command(user_text, lesson_active=lesson is not None)
+            if teacher_cmd is not None:
+                reply_text = await self._handle_teacher_command(teacher_cmd)
+                await self._record_response_side_effects(
+                    user_text=user_text,
+                    response_text=reply_text,
+                    use_history=use_history,
+                    trace_id=turn_trace_id,
+                )
+                return reply_text
+            if lesson is None:
+                # Material decks and workflow observation (jarvis/copilot).
+                try:
+                    from jarvis.copilot.gate import match_copilot_command
+
+                    copilot_cmd = match_copilot_command(user_text)
+                except Exception:  # noqa: BLE001 - a broken feature never blocks a turn
+                    log.warning("copilot gate unavailable", exc_info=True)
+                    copilot_cmd = None
+                if copilot_cmd is not None:
+                    reply_text = await self._handle_copilot_command(copilot_cmd)
+                    await self._record_response_side_effects(
+                        user_text=user_text,
+                        response_text=reply_text,
+                        use_history=use_history,
+                        trace_id=turn_trace_id,
+                    )
+                    return reply_text
+            if lesson is not None:
+                lesson.add(user_text)
+                # Deliberately silent: the pipeline treats a suppressed turn
+                # like a background spawn and asks no clarifying question.
+                self._last_turn_suppressed = True
+                return ""
 
         # Deterministic sub-agent (Heavy-Task worker) provider switch — same
         # reasoning as the language switch: runs BEFORE the force-spawn/LLM path
@@ -11521,6 +11946,26 @@ class BrainManager:
                     "Say-do guard: save intent — mandating %s this turn",
                     _save_mandate[0],
                 )
+
+        # "Look at my screen" on a brain that can see: mandate the screenshot
+        # (see jarvis/brain/screen_intent.py for the live failure).
+        if not self._evidence_required_tool:
+            from jarvis.brain.screen_intent import (
+                SCREEN_DIRECTIVE,
+                SCREEN_TOOL,
+                wants_screen_look,
+            )
+
+            if (
+                wants_screen_look(user_text)
+                and SCREEN_TOOL in (getattr(self, "_tools", None) or {})
+                and self._provider_advertises_vision(
+                    self._active_name, self._vision_look_model(self._active_name)
+                )
+            ):
+                self._evidence_directive = SCREEN_DIRECTIVE
+                self._evidence_required_tool = SCREEN_TOOL
+                log.info("Screen guard: mandating %s this turn", SCREEN_TOOL)
 
         # Say-do guard for LOCAL OUTCOMES (shell-consistency rework 2026-08-08).
         # A natural file/folder/system request ("erstell einen Ordner auf dem

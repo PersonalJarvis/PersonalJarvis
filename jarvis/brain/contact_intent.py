@@ -133,6 +133,23 @@ _MEMORY_VERB_RE = re.compile(
     r")"
 )
 
+# Japanese remember cues ("oboete" / "kioku shite" / "memo shite" /
+# "wasurenaide"). Separate from ``_MEMORY_VERB_RE``: Japanese has no spaces, so
+# a leading word boundary never matches inside a sentence. Japanese also packs
+# a fact into far fewer characters, hence its own minimum.
+_MEMORY_VERB_JA_RE = re.compile(
+    r"("
+    r"\u899a\u3048\u3066"
+    r"|\u899a\u3048\u3068"
+    r"|\u8a18\u61b6\u3057\u3066"
+    r"|\u8a18\u61b6\u3057\u3066\u304a\u3044\u3066"
+    r"|\u30e1\u30e2\u3057\u3066"
+    r"|\u30e1\u30e2\u3063\u3068\u3044\u3066"
+    r"|\u5fd8\u308c\u306a\u3044\u3067"
+    r")"
+)
+_MIN_MEMORY_CHARS_JA: int = 6
+
 # Per-turn directive for a general wiki memory note (English — LLM-facing).
 WIKI_INGEST_DIRECTIVE = (
     "MANDATORY THIS TURN: the user explicitly asked you to remember a fact "
@@ -153,6 +170,8 @@ def detect_memory_save_intent(utterance: str) -> bool:
     a bare "merk dir" or a plain question never fires.
     """
     t = _normalize(utterance or "")
+    if _MEMORY_VERB_JA_RE.search(t):
+        return len(t.strip()) >= _MIN_MEMORY_CHARS_JA
     if len(t.strip()) < _MIN_MEMORY_CHARS:
         return False
     return bool(_MEMORY_VERB_RE.search(t))

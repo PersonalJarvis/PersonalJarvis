@@ -765,6 +765,21 @@ def _build_provider(tts_cfg: Any, provider: str) -> Any:
             speed=tts_cfg.speed,
         )
 
+    if provider == "voicevox":
+        from jarvis.plugins.tts.voicevox_tts import VoicevoxTTS
+
+        # ``[tts].model`` carries "<character>/<style>" for this provider; the
+        # engine resolves the name to its own numeric id at first use.
+        pick = str(getattr(tts_cfg, "model", "") or "").strip()
+        # A value without "/" is a previous provider's model id, not a pick.
+        speaker, _, style = pick.partition("/") if "/" in pick else ("", "", "")
+        return VoicevoxTTS(speaker=speaker or None, style=style or None, speed=tts_cfg.speed)
+
+    if provider == "sapi5":
+        from jarvis.plugins.tts.sapi5_tts import Sapi5TTS
+
+        return Sapi5TTS(language_code=getattr(tts_cfg, "language_code", None))
+
     if provider in ("piper-local", "piper"):
         try:
             from jarvis.plugins.tts.piper_local import PiperLocalTTS

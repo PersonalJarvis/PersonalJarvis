@@ -68,6 +68,8 @@ KNOWN: frozenset[str] = frozenset(
         # The marketplace, in the app: community plugins, skills and wallpapers
         # in one storefront.
         "marketplace",
+        # Copilot: slide decks, lessons and workflow observation.
+        "copilot",
     }
 )
 

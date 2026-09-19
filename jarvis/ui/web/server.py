@@ -142,6 +142,8 @@ class WebServer:
         # Local server autostart: one task a few seconds after the serving
         # path returned; starts nothing unless local models are in use.
         self._local_models_autostart_task: asyncio.Task[None] | None = None
+        self._llama_server_task: asyncio.Task[None] | None = None
+        self._voicevox_task: asyncio.Task[bool] | None = None
         self._refresh_registry_tasks: set[asyncio.Task[Any]] = set()
         self._refresh_scheduler_stopping = False
         # Realtime transport pre-warm — scheduled at the end of start() so the
@@ -263,6 +265,11 @@ class WebServer:
             )
             if value
         )
+        from jarvis.ui.web.lan_access import lan_origin
+
+        _lan = lan_origin(self.cfg)
+        if _lan:
+            public_urls = (*public_urls, _lan)
         # The security boundary must wrap every router and both HTTP and WS.
         # It is added after CORS so Starlette places it outside the CORS layer:
         # hostile Host/Origin values never reach route code or preflight logic.
@@ -350,6 +357,7 @@ class WebServer:
         from .computer_use_routes import router as computer_use_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
+        from .copilot_routes import router as copilot_router
         from .costs_routes import router as costs_router
         from .deck_routes import router as deck_router
         from .desktop_routes import router as desktop_router
@@ -459,6 +467,7 @@ class WebServer:
         # Several subscriptions per coding CLI, switchable without a logout.
         app.include_router(agent_accounts_router)
         app.include_router(control_router)
+        app.include_router(copilot_router)
         # Detachable views: the desktop shell (when attached) spawns/closes
         # solo windows; headless hosts answer honestly with a fallback URL.
         app.include_router(desktop_router)
@@ -2301,8 +2310,53 @@ class WebServer:
             self._local_models_autostart_task = schedule(lambda: self.cfg)
         except Exception as exc:  # noqa: BLE001 -- a convenience must never block boot
             logger.opt(exception=exc).warning("Local models autostart did not schedule.")
+        try:
+            from jarvis.local_models.llama_server import schedule_boot
+
+            async def _prewarm() -> None:
+                brain = getattr(self.app.state, "brain", None)
+                prewarm = getattr(brain, "prewarm_prompt_cache", None)
+                if callable(prewarm):
+                    await prewarm()
+
+            self._llama_server_task = schedule_boot(lambda: self.cfg, on_ready=_prewarm)
+        except Exception as exc:  # noqa: BLE001 -- the local brain must never block boot
+            logger.opt(exception=exc).warning("Managed llama-server did not schedule.")
+        try:
+            tts_names = {
+                str(getattr(self.cfg.tts, "provider", "") or "").lower(),
+                str(getattr(self.cfg.tts, "fallback", "") or "").lower(),
+            }
+            if "voicevox" in tts_names:
+                from jarvis.plugins.tts import _build_provider
+
+                # Warm start off the boot path: the first spoken reply must not
+                # wait ~10 s for the engine and the voice model. A missing
+                # install is a log line.
+                voice = _build_provider(self.cfg.tts, "voicevox")
+                self._voicevox_task = asyncio.create_task(
+                    asyncio.to_thread(voice.warm),
+                    name="voicevox-engine-boot",
+                )
+        except Exception as exc:  # noqa: BLE001 -- the local voice must never block boot
+            logger.opt(exception=exc).warning("VOICEVOX engine did not schedule.")
 
     async def _stop_local_models_autostart(self) -> None:
+        llama_task, self._llama_server_task = self._llama_server_task, None
+        if llama_task is not None and not llama_task.done():
+            llama_task.cancel()
+        try:
+            from jarvis.local_models.llama_server import shutdown as llama_shutdown
+
+            await asyncio.to_thread(llama_shutdown)
+        except Exception as exc:  # noqa: BLE001 -- shutdown stays best-effort
+            logger.opt(exception=exc).debug("Managed llama-server stop failed.")
+        try:
+            from jarvis.plugins.tts import voicevox_engine
+
+            await asyncio.to_thread(voicevox_engine.shutdown)
+        except Exception as exc:  # noqa: BLE001 -- shutdown stays best-effort
+            logger.opt(exception=exc).debug("VOICEVOX engine stop failed.")
         task = self._local_models_autostart_task
         self._local_models_autostart_task = None
         if task is None or task.done():
@@ -2553,6 +2607,19 @@ class WebServer:
             self._serve_task = None
 
         _boot_mark("uvicorn_serve")
+
+        # Opt-in phone access: the same app over HTTPS on the LAN address.
+        self._lan_server = None
+        if getattr(self.cfg.ui, "lan_access", False):
+            try:
+                from jarvis.ui.web.lan_access import start_lan_listener
+
+                self._lan_server = await start_lan_listener(
+                    self.app, self.cfg, log_level=self.cfg.telemetry.log_level.lower()
+                )
+                self.app.state.lan_access_running = self._lan_server is not None
+            except Exception:  # noqa: BLE001 - the desktop app must boot without it
+                logger.opt(exception=True).warning("LAN access listener failed to start")
 
         # Voice-ready UI backstop (permanent "starting up" bug): the frontend's
         # startup banner + top-left "STARTING…" status clear ONLY on a
@@ -4048,6 +4115,9 @@ class WebServer:
             self.app.state.channel_manager = None
             self.app.state.friend_registry = None
 
+        _lan_server = getattr(self, "_lan_server", None)
+        if _lan_server is not None:
+            _lan_server.should_exit = True
         if self._server is not None:
             self._server.should_exit = True
             if self._serve_task is not None:

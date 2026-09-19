@@ -16,26 +16,65 @@ wrapped.
 
 from __future__ import annotations
 
+import logging
+import queue
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
 
-# One worker that does nothing but let recognizers die. ``vosk_recognizer_free``
-# (KaldiRecognizer.__del__) is a native call measured at 15 s on a cold, paging
-# box (2026-08-30 "Event loop STALLED" stack) — and it runs on WHICHEVER thread
-# drops the last reference, which was the asyncio loop during wake teardown.
-_RELEASE_POOL: ThreadPoolExecutor | None = None
-_RELEASE_POOL_LOCK = threading.Lock()
+# One worker thread that does nothing but let recognizers die.
+# ``vosk_recognizer_free`` (KaldiRecognizer.__del__) is a native call measured
+# at 15 s on a cold, paging box (2026-08-30 "Event loop STALLED" stack) — and
+# it runs on WHICHEVER thread drops the last reference, which was the asyncio
+# loop during wake teardown.
+#
+# The hand-off is a ``queue.SimpleQueue``, NOT a ThreadPoolExecutor: the
+# release runs from ``__del__``, i.e. from inside a garbage collection that can
+# start anywhere — including inside ``ThreadPoolExecutor.submit`` on the loop
+# thread, which holds the non-reentrant ``_global_shutdown_lock``. A second
+# ``submit`` from that ``__del__`` waited on the lock its own thread held and
+# froze the event loop for good (live 2026-09-18: 75 s+ stall right after a
+# wake). ``SimpleQueue.put`` is documented as reentrant and safe from
+# ``__del__``; it takes no Python-level lock.
+_RELEASE_QUEUE: queue.SimpleQueue[list[Any]] = queue.SimpleQueue()
+_RELEASE_THREAD: threading.Thread | None = None
+_RELEASE_THREAD_LOCK = threading.Lock()
 
 
-def _release_pool() -> ThreadPoolExecutor:
-    global _RELEASE_POOL
-    with _RELEASE_POOL_LOCK:
-        if _RELEASE_POOL is None:
-            _RELEASE_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vosk-release")
-        return _RELEASE_POOL
+def _release_worker() -> None:
+    while True:
+        box = _RELEASE_QUEUE.get()
+        try:
+            with _LOCK:
+                box.clear()
+        except Exception:  # noqa: BLE001 - a failed free must not end the worker
+            log.debug("vosk recognizer release failed", exc_info=True)
+
+
+def _ensure_release_thread() -> bool:
+    """Start the release worker once. Returns False when it cannot be started."""
+    global _RELEASE_THREAD
+    thread = _RELEASE_THREAD
+    if thread is not None and thread.is_alive():
+        return True
+    # Non-blocking: this runs from __del__ too, and must never wait on a lock
+    # the collecting thread might already hold.
+    if not _RELEASE_THREAD_LOCK.acquire(blocking=False):
+        return _RELEASE_THREAD is not None
+    try:
+        if _RELEASE_THREAD is None or not _RELEASE_THREAD.is_alive():
+            _RELEASE_THREAD = threading.Thread(
+                target=_release_worker, name="vosk-release", daemon=True
+            )
+            _RELEASE_THREAD.start()
+        return True
+    except RuntimeError:  # interpreter shutdown: no new threads
+        return False
+    finally:
+        _RELEASE_THREAD_LOCK.release()
 
 
 def release_recognizer(rec: Any) -> None:
@@ -43,24 +82,19 @@ def release_recognizer(rec: Any) -> None:
 
     The last reference is moved into a box and cleared on the worker under the
     same process-wide lock every other native call holds (BUG-151 — the free is
-    a native call too). Never raises: during interpreter shutdown the executor
-    refuses new work, and the box is then cleared inline — exactly the pre-fix
-    behaviour, which is acceptable on the one path where no loop is left to
-    stall.
+    a native call too). Never raises and never blocks: when no worker can run
+    (interpreter shutdown) the box is cleared inline — the pre-fix behaviour,
+    acceptable on the one path where no loop is left to stall.
     """
     if rec is None:
         return
     box = [rec]
     del rec
-
-    def _drop() -> None:
-        with _LOCK:
-            box.clear()
-
-    try:
-        _release_pool().submit(_drop)
-    except Exception:  # noqa: BLE001 — shutdown fallback, see docstring
-        _drop()
+    if _ensure_release_thread():
+        _RELEASE_QUEUE.put(box)
+        return
+    with _LOCK:
+        box.clear()
 
 
 def native_call(fn: Any, *args: Any, **kwargs: Any) -> Any:

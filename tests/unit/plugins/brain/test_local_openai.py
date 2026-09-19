@@ -32,6 +32,13 @@ def _with_base_url(url: str | None, monkeypatch, stored_key: str | None = None) 
         providers["local-openai"] = BrainProviderConfig(base_url=url)
     conf = JarvisConfig(brain=BrainConfig(providers=providers))
     monkeypatch.setattr(cfg, "load_config", lambda: conf)
+    # The endpoint route is cached off the real jarvis.toml; route from the
+    # fixture config instead, or a live install's base_url leaks in.
+    monkeypatch.setattr(
+        cfg,
+        "_cached_endpoint_route",
+        lambda provider_id, vendor_default: cfg._endpoint_route(conf, provider_id, vendor_default),
+    )
     monkeypatch.setattr(
         cfg,
         "get_secret",

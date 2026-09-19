@@ -3975,6 +3975,7 @@ class DesktopApp:
             _t_stt = time.perf_counter()
             _call_hk, _ptt_hk = self.cfg.trigger.resolve_hotkeys()
             pipeline = SpeechPipeline(
+                ack_phrase=str(getattr(self.cfg.voice, "wake_ack_phrase", "") or ""),
                 call_hotkeys=_call_hk,
                 ptt_hotkeys=_ptt_hk,
                 # Dictation. Both keys ship bound to a curated combo (see
@@ -5515,6 +5516,15 @@ class DesktopApp:
                     return
 
         threading.Thread(target=_bridge_loop, name="jarvis-tray-bridge", daemon=True).start()
+        # Holding ESC is the keyboard twin of the tray's emergency-stop item.
+        from jarvis.control.esc_hold import start_esc_hold_watcher  # noqa: PLC0415
+
+        start_esc_hold_watcher(self._publish_kill_requested_threadsafe)
+        if getattr(self.cfg.trigger, "palm_stop_enabled", False):
+            # Opt-in: an open palm to the webcam is the third emergency stop.
+            from jarvis.vision.hand_gesture import start_palm_watcher  # noqa: PLC0415
+
+            start_palm_watcher(self._publish_kill_requested_threadsafe)
 
     def _publish_kill_requested_threadsafe(self) -> None:
         """Publish ``KillRequested(source="tray")`` from a non-async thread.

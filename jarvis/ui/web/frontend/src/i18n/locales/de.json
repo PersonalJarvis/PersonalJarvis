@@ -494,11 +494,9 @@
     "recent": "Letzte",
     "pin_chat": "Chat anheften",
     "unpin_chat": "Chat lösen",
-
     "jarvis_tools": "Jarvis Tools",
     "scheduled": "Geplant",
     "more": "Mehr",
-
     "instance_dev_hint": "Dev-Instanz — eine zweite, frei neustartbare Kopie der App mit eigenen Daten, Ports und eigenem Icon. Die normale App läuft daneben weiter.",
     "surface_voice": "Voice",
     "surface_chat": "Chat",
@@ -2564,6 +2562,17 @@
       "system": "System",
       "system_now_dark": "Folgt Ihrem System, das derzeit dunkel ist.",
       "system_now_light": "Folgt Ihrem System, das derzeit hell ist."
+    },
+    "phone_access": {
+      "title": "Zugriff vom Handy",
+      "description": "Jarvis vom Handy im selben WLAN öffnen. Nur Geräte in deinem Heimnetz erreichen es, über eine verschlüsselte Verbindung.",
+      "switch_title": "Handys in diesem Netz erlauben",
+      "switch_description": "Erreichbar unter https://{ip} in deinem Heimnetz. Jedes Handy meldet sich einmal per QR-Code von diesem PC an.",
+      "no_network": "Dieser PC hat gerade keine Adresse im Heimnetz.",
+      "restart_hint": "Gespeichert. Starte Jarvis neu (obere Leiste), damit es gilt.",
+      "pair_button": "Handy koppeln",
+      "pair_hint": "Mit der Handykamera scannen. Der Code gilt einmal; für jedes Handy einen neuen erzeugen.",
+      "certificate_hint": "Beim ersten Mal warnt das Handy, die Verbindung sei nicht privat: Dieser PC hat sein eigenes Zertifikat erstellt. Details wählen, dann Website besuchen."
     }
   },
   "telephony_view": {
@@ -3107,13 +3116,18 @@
       "es": {
         "label": "Español (Spanisch)",
         "description": "Spanisch für jede Beschriftung und Schaltfläche."
+      },
+      "ja": {
+        "label": "日本語 (Japanisch)",
+        "description": "Japanisch für jede Beschriftung und Schaltfläche."
       }
     },
     "reply_options": {
       "auto": "{name} spiegelt die Sprache, die du sprichst oder schreibst.",
       "en": "{name} antwortet auf Englisch.",
       "de": "{name} antwortet auf Deutsch.",
-      "es": "{name} antwortet auf Spanisch."
+      "es": "{name} antwortet auf Spanisch.",
+      "ja": "{name} antwortet auf Japanisch."
     },
     "stt_options": {
       "auto": "Erkennt automatisch, welche Sprache du sprichst.",
