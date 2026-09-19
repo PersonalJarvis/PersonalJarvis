@@ -56,6 +56,16 @@ async def revoke_tokens(
     ``unsupported`` - no endpoint is known for this plugin
     ``failed``      - we tried and the provider refused or was unreachable
     """
+    if tokens.extra.get("broker_url") and tokens.refresh:
+        from jarvis.marketplace.auth.oauth_broker import OAuthBrokerHandler
+
+        try:
+            handler = OAuthBrokerHandler(spec.id, tokens.extra["broker_url"], transport=transport)
+            await handler.request("/disconnect", {"provider": spec.id, "handle": tokens.refresh})
+            return "revoked"
+        except (RuntimeError, ValueError):
+            log.info("plugin %s broker disconnect unavailable", spec.id)
+            return "failed"
     endpoint = revocation_url(spec) or tokens.extra.get("revocation_endpoint")
     if not endpoint:
         return "unsupported"
@@ -64,7 +74,9 @@ async def revoke_tokens(
     # that follows RFC 7009 §2.1; revoking only the access token would leave the
     # grant renewable. Fall back to the access token when no refresh exists
     # (a PAT-style or non-refreshable grant).
-    token = tokens.refresh or tokens.access
+    # Slack auth.revoke explicitly accepts an access token, not RFC 7009's
+    # refresh-token endpoint contract.
+    token = tokens.access if spec.id == "slack" else tokens.refresh or tokens.access
     if not token:
         return "unsupported"
 
@@ -72,6 +84,8 @@ async def revoke_tokens(
         "token": token,
         "token_type_hint": "refresh_token" if tokens.refresh else "access_token",
     }
+    if spec.id == "slack":
+        body.pop("token_type_hint")
     client_id = tokens.extra.get("client_id")
     if client_id:
         body["client_id"] = client_id
@@ -109,6 +123,17 @@ async def revoke_tokens(
     # token it does not recognize — an already-dead grant is the outcome we
     # wanted anyway. Some providers answer 204.
     if response.status_code in (200, 204):
+        if spec.id == "slack":
+            try:
+                payload = response.json()
+                if (
+                    not isinstance(payload, dict)
+                    or payload.get("ok") is not True
+                    or payload.get("revoked") is not True
+                ):
+                    return "failed"
+            except ValueError:
+                return "failed"  # An invalid payload cannot attest revocation.
         return "revoked"
     log.info(
         "plugin %s revocation refused: HTTP %s",

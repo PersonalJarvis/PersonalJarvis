@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "issue": "RUB-94",
-  "observed_on": "2026-09-12",
-  "scope": "Real UI connection attempts on Windows; incomplete provider authorization and lifecycle verification.",
+  "observed_on": "2026-09-19",
+  "scope": "RUB-94 inventory with RUB-99 observed updates. One complete Windows GitLab journey; all other full-plugin results remain blocked. Regression tests do not count as provider evidence.",
   "plugins": [
     {
       "plugin_id": "github",
@@ -204,51 +204,54 @@
     {
       "plugin_id": "slack",
       "result": "BLOCKED",
-      "config_fingerprint": "b63622e53686a82209b37ee568201a59eab8feb3334371c770a17939d4e622ff",
+      "config_fingerprint": "759db79aa5996a26bd98a7690964a0b1281b72ebe1bcd4c6e91c887619c2a836",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Repeated live Plugins UI inspection showed the four channel enumeration scopes and two Canvas scopes in plugin.json; Connect still displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "The actual Plugins UI Connect entry was exercised in this run. Subsequent stages are attested individually.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "browser": {
-          "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The real Plugins UI opened the official provider authorization flow and completed consent or existing-session authorization using the configured client.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
-          "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The actual provider callback completed and the newly issued grant was persisted by Personal Jarvis.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
-          "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The actual Plugins UI showed Connected after authorization; capability failures are displayed separately.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "real_action": true,
+          "detail": "Clicked Check access in the actual plugin detail view; it displayed Read-only check passed. Operation: Slack conversations.list, limit one public channel.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official Slack distribution remains disabled because its console requires HTTPS redirect URLs; the development-workspace PKCE login and real UI read passed, but full reconnect and unrestricted distribution are not complete.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "restart": {
-          "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "After restarting the isolated Jarvis backend, the existing grant remained connected in the real Plugins UI; the subsequent explicit read-only probe succeeded.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect Slack\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
-      }
+        "reason": "Official Slack distribution remains disabled because its console requires HTTPS redirect URLs; the development-workspace PKCE login and real UI read passed, but full reconnect and unrestricted distribution are not complete.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "linear",
@@ -402,55 +405,57 @@
     {
       "plugin_id": "discord",
       "result": "BLOCKED",
-      "config_fingerprint": "60c55d3c28c3e0d894bf8e74bd516de64c36e2099923e4179f83c765a60604ff",
+      "config_fingerprint": "e3634cd5b08bd8d7fafa148d76270c910c6111e4da4974deada8a2109ce3554e",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect Discord now opens browser sign-in first (Continue in browser via /connect/start, scopes identify guilds guilds.members.read connections). The previous bot-token dialog survives as a collapsed fallback and gained two browser helpers: Fill in my Discord ID (GET /plugins/discord/identity) and Add the bot to my server (GET /plugins/discord/invite). Dialog rendering is covered by PatConnectDialog tests; live provider consent is still pending (see blocker).",
+          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. The catalog is browser-primary now, but no publisher-shared Discord OAuth client is provisioned, so /connect/start honestly reports 409 and the live consent journey is unverified.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Loopback wiring (fixed port 3129) is implemented, but no live code exchange against a registered Discord app has been observed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. The native verification probe (GET /users/@me expecting id) is implemented, but no live grant has passed it yet.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. No live read-only Discord action has been attested with a real grant; discovery alone does not count.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Refresh plumbing (PKCE handler) and revocation (official token/revoke endpoint declared) are implemented but unobserved live.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. No live grant has been persisted and reloaded across a restart yet.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "No publisher-shared Discord OAuth client is provisioned (client_id/secret, registered redirect http://127.0.0.1:3129/oauth/callback, Message Content Intent). The browser flow therefore reports 409 by design.",
-        "owner": "Project publisher",
-        "next_action": "Register the official shared Discord app (redirect URI + minimal OAuth2 install params), provision publisher_discord_oauth_client_id/secret, then repeat the full clean browser journey including guild install, real read-only action, reconnect and restart.",
-        "evidence": "Catalog discord entry is oauth_pkce_loopback-primary with pat_paste fallback; /connect/start returns the documented 409 until the publisher client lands. Gateway messaging still needs the bot token via the fallback (documented provider exception)."
+        "reason": "Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
       },
       "provider_exception": {
         "reason": "This local channel uses a bot credential. OAuth bot installation does not replace that runtime credential; this is not a claim that Discord lacks OAuth.",
         "source": "https://docs.discord.com/developers/platform/oauth2-and-permissions"
-      }
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "telegram",
@@ -508,51 +513,53 @@
     {
       "plugin_id": "asana",
       "result": "BLOCKED",
-      "config_fingerprint": "23b3527159b69f3c77d7dc5e84834650bbeff85e908a37026c1bde2920a65408",
+      "config_fingerprint": "c12cb20cb208ca2f4049e159074b0cf9235f84e7e25c9b73af414ec3913a8cb4",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect Asana\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect Asana\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
-      }
+        "reason": "A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "google_drive",
@@ -1055,46 +1062,48 @@
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect Spotify\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect Spotify\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
-      }
+        "reason": "Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "youtube_music",
@@ -1197,296 +1206,308 @@
     {
       "plugin_id": "outlook",
       "result": "BLOCKED",
-      "config_fingerprint": "f62f6f02ef99ee1e84486d9d82b055261bcd643be79600f3429a04f9130d33b5",
+      "config_fingerprint": "44cd0e648efd2b12098f30f74c3cbf485d84ea409651a96db4cb34adfb296450",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect Outlook Mail & Calendar\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "The actual Plugins UI Connect entry was exercised in this run. Subsequent stages are attested individually.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "browser": {
-          "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The real Plugins UI opened the official provider authorization flow and completed consent or existing-session authorization using the configured client.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
-          "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The actual provider callback completed and the newly issued grant was persisted by Personal Jarvis.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
-          "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The actual Plugins UI showed Connected after authorization; capability failures are displayed separately.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Real browser authorization and the connect-time resource read succeeded. Independent post-login read, disconnect/reconnect and remaining lifecycle acceptance were not completed before Chrome control became unreliable.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Real browser authorization and the connect-time resource read succeeded. Independent post-login read, disconnect/reconnect and remaining lifecycle acceptance were not completed before Chrome control became unreliable.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Real browser authorization and the connect-time resource read succeeded. Independent post-login read, disconnect/reconnect and remaining lifecycle acceptance were not completed before Chrome control became unreliable.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect Outlook Mail & Calendar\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
-      }
+        "reason": "Real browser authorization and the connect-time resource read succeeded. Independent post-login read, disconnect/reconnect and remaining lifecycle acceptance were not completed before Chrome control became unreliable.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "onedrive",
       "result": "BLOCKED",
-      "config_fingerprint": "13cc3681f3ae2f8c0bc91ecd2dd8dd871a31bbf818d5c47b16b4e6aecc360d3c",
+      "config_fingerprint": "b1e99cad520e98c4012bdbe82e2211d40296df8da7687f847f9b19dc4e651551",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect OneDrive\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "The actual Plugins UI Connect entry was exercised in this run. Subsequent stages are attested individually.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "browser": {
-          "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The real Plugins UI opened the official provider authorization flow and completed consent or existing-session authorization using the configured client.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
-          "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The actual provider callback completed and the newly issued grant was persisted by Personal Jarvis.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
-          "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The actual Plugins UI showed Connected after authorization; capability failures are displayed separately.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Real browser authorization and the connect-time resource read succeeded. Independent post-login read, disconnect/reconnect and remaining lifecycle acceptance were not completed before Chrome control became unreliable.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Real browser authorization and the connect-time resource read succeeded. Independent post-login read, disconnect/reconnect and remaining lifecycle acceptance were not completed before Chrome control became unreliable.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Real browser authorization and the connect-time resource read succeeded. Independent post-login read, disconnect/reconnect and remaining lifecycle acceptance were not completed before Chrome control became unreliable.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect OneDrive\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
-      }
+        "reason": "Real browser authorization and the connect-time resource read succeeded. Independent post-login read, disconnect/reconnect and remaining lifecycle acceptance were not completed before Chrome control became unreliable.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "teams",
       "result": "BLOCKED",
-      "config_fingerprint": "9b0445f0926d2acf31ef022954f6408ea32d297ae261a9150716b5e75f6f48c1",
+      "config_fingerprint": "95721bfb06f8cb750fd86dc9b7e01844c8b346625b81c3b97432525f29e75bf3",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect Microsoft Teams\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "The actual Plugins UI Connect entry was exercised in this run. Subsequent stages are attested individually.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "browser": {
-          "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The real Plugins UI opened the official provider authorization flow and completed consent or existing-session authorization using the configured client.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
-          "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The actual provider callback completed and the newly issued grant was persisted by Personal Jarvis.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. A real OAuth grant was persisted, but the Teams resource probe returned 401. Usable Teams account access and full lifecycle remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. A real OAuth grant was persisted, but the Teams resource probe returned 401. Usable Teams account access and full lifecycle remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. A real OAuth grant was persisted, but the Teams resource probe returned 401. Usable Teams account access and full lifecycle remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. A real OAuth grant was persisted, but the Teams resource probe returned 401. Usable Teams account access and full lifecycle remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect Microsoft Teams\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
-      }
+        "reason": "A real OAuth grant was persisted, but the Teams resource probe returned 401. Usable Teams account access and full lifecycle remain unverified.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "sharepoint",
       "result": "BLOCKED",
-      "config_fingerprint": "a83bb0ba5fec52fd8b4ba8a7c89457bb30710d21ec3590f26721cf2a9ae9f05d",
+      "config_fingerprint": "af389159adaff579e88748e41f2abb21d8ee7830aae1b8fa4b20980698ffe054",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect SharePoint\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "The actual Plugins UI Connect entry was exercised in this run. Subsequent stages are attested individually.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "browser": {
-          "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The real Plugins UI opened the official provider authorization flow and completed consent or existing-session authorization using the configured client.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
-          "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The actual provider callback completed and the newly issued grant was persisted by Personal Jarvis.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
-          "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The actual Plugins UI showed Connected after authorization; capability failures are displayed separately.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. A real OAuth grant was persisted, but the SharePoint resource capability was unavailable. Usable SharePoint account access and full lifecycle remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. A real OAuth grant was persisted, but the SharePoint resource capability was unavailable. Usable SharePoint account access and full lifecycle remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. A real OAuth grant was persisted, but the SharePoint resource capability was unavailable. Usable SharePoint account access and full lifecycle remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect SharePoint\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
-      }
+        "reason": "A real OAuth grant was persisted, but the SharePoint resource capability was unavailable. Usable SharePoint account access and full lifecycle remain unverified.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "onenote",
       "result": "BLOCKED",
-      "config_fingerprint": "97b21f67f9bd6dc96d264bdcd09a6150b0ecee95984ed35806bde0d7189cce67",
+      "config_fingerprint": "855ddb6704fd4c66d638aadfe74f5e5af59b7482e0c5c4e5742a570ba79cfc45",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect OneNote\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "The actual Plugins UI Connect entry was exercised in this run. Subsequent stages are attested individually.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "browser": {
-          "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The real Plugins UI opened the official provider authorization flow and completed consent or existing-session authorization using the configured client.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
-          "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The actual provider callback completed and the newly issued grant was persisted by Personal Jarvis.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
-          "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The actual Plugins UI showed Connected after authorization; capability failures are displayed separately.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Real browser authorization and the connect-time resource read succeeded. Independent post-login read, disconnect/reconnect and remaining lifecycle acceptance were not completed before Chrome control became unreliable.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Real browser authorization and the connect-time resource read succeeded. Independent post-login read, disconnect/reconnect and remaining lifecycle acceptance were not completed before Chrome control became unreliable.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Real browser authorization and the connect-time resource read succeeded. Independent post-login read, disconnect/reconnect and remaining lifecycle acceptance were not completed before Chrome control became unreliable.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect OneNote\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
-      }
+        "reason": "Real browser authorization and the connect-time resource read succeeded. Independent post-login read, disconnect/reconnect and remaining lifecycle acceptance were not completed before Chrome control became unreliable.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "microsoft_todo",
       "result": "BLOCKED",
-      "config_fingerprint": "0816c3d151b264735d95dbd1058dac3a0c7b661c15ba8626fc57424dfb3cb370",
+      "config_fingerprint": "15b9737b30de0c548ac5cd54eac86d05663a46a4cd0b5f85fd57b2899e90335c",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect Microsoft To Do\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "The actual Plugins UI Connect entry was exercised in this run. Subsequent stages are attested individually.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "browser": {
-          "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The real Plugins UI opened the official provider authorization flow and completed consent or existing-session authorization using the configured client.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
-          "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The actual provider callback completed and the newly issued grant was persisted by Personal Jarvis.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
-          "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The actual Plugins UI showed Connected after authorization; capability failures are displayed separately.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Real browser authorization and the connect-time resource read succeeded. Independent post-login read, disconnect/reconnect and remaining lifecycle acceptance were not completed before Chrome control became unreliable.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Real browser authorization and the connect-time resource read succeeded. Independent post-login read, disconnect/reconnect and remaining lifecycle acceptance were not completed before Chrome control became unreliable.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Real browser authorization and the connect-time resource read succeeded. Independent post-login read, disconnect/reconnect and remaining lifecycle acceptance were not completed before Chrome control became unreliable.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect Microsoft To Do\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
-      }
+        "reason": "Real browser authorization and the connect-time resource read succeeded. Independent post-login read, disconnect/reconnect and remaining lifecycle acceptance were not completed before Chrome control became unreliable.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "aws",
@@ -1540,51 +1561,53 @@
     {
       "plugin_id": "azure",
       "result": "BLOCKED",
-      "config_fingerprint": "d57da86f7c38045a1c9c1da35ace5678d53a6aa9ed1d3c9affe4c67e36858cb1",
+      "config_fingerprint": "72eca54c11aae50f6069be63ee41913cff130461da7d6e6eb41bedb4d31895a3",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect Microsoft Azure\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "The actual Plugins UI Connect entry was exercised in this run. Subsequent stages are attested individually.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. The original organizations login rejected the test personal account. The authority now matches the common publisher audience; current-authority live retry and Azure resource permissions remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. The original organizations login rejected the test personal account. The authority now matches the common publisher audience; current-authority live retry and Azure resource permissions remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. The original organizations login rejected the test personal account. The authority now matches the common publisher audience; current-authority live retry and Azure resource permissions remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. The original organizations login rejected the test personal account. The authority now matches the common publisher audience; current-authority live retry and Azure resource permissions remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. The original organizations login rejected the test personal account. The authority now matches the common publisher audience; current-authority live retry and Azure resource permissions remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. The original organizations login rejected the test personal account. The authority now matches the common publisher audience; current-authority live retry and Azure resource permissions remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect Microsoft Azure\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
-      }
+        "reason": "The original organizations login rejected the test personal account. The authority now matches the common publisher audience; current-authority live retry and Azure resource permissions remain unverified.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "google_cloud",
@@ -1594,95 +1617,95 @@
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Configured Google client launched accounts.google.com account chooser; consent/resource access not completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "The actual Plugins UI Connect entry was exercised in this run. Subsequent stages are attested individually.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "browser": {
           "status": "PASS",
-          "detail": "Configured Google client launched accounts.google.com account chooser; consent/resource access not completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "The real Plugins UI opened the official provider authorization flow and completed consent or existing-session authorization using the configured client.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
-          "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The actual provider callback completed and the newly issued grant was persisted by Personal Jarvis.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
-          "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The actual Plugins UI showed Connected after authorization; capability failures are displayed separately.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "real_action": true,
+          "detail": "Clicked Check access in the actual plugin detail view; it displayed Read-only check passed. Operation: Google Cloud Resource Manager projects:search after enabling the free API in the official console.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
-          "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The actual UI Remove action returned Google Cloud to Connect. A new Connect, official Google consent and callback restored Connected.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md#google-cloud"
         },
         "restart": {
-          "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "After restarting the isolated Jarvis backend, the existing grant remained connected in the real Plugins UI; the subsequent explicit read-only probe succeeded.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "Provider account sign-in has not been completed.",
-        "owner": "Provider account holder",
-        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
-        "evidence": "Configured Google client launched accounts.google.com account chooser; consent/resource access not completed."
-      }
+        "reason": "The state-machine repair, real UI resource read, reconnect and persistence checks passed using the existing Google family client. Fresh publisher Google client distribution is not provisioned or attested.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "gitlab",
-      "result": "BLOCKED",
-      "config_fingerprint": "d42fd973539c25d088bee4c547360719577a0a614ad8335ea21c1b4837a8c265",
-      "initial_state": "connect_attempt",
+      "result": "PASS",
+      "config_fingerprint": "8dc62026cd446d8e0f8e3d7d38a7dcb58a003becce11679187e1289382abce10",
+      "initial_state": "clean_unconnected",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect GitLab\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "A clean, unconnected GitLab entry started OAuth from the real Plugins UI.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md#gitlab"
         },
         "browser": {
-          "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The official GitLab Personal Jarvis consent page was displayed and Authorize completed.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md#gitlab"
         },
         "callback": {
-          "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "GitLab returned to the registered loopback callback; Jarvis exchanged and persisted the new grant.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md#gitlab"
         },
         "connected": {
-          "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The real Plugins UI showed Connected / Live with Publisher public client.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md#gitlab"
         },
         "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "After the real backend restart, the UI Check access action displayed Read-only check passed for the real GitLab list_projects operation, limited to one entry.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md#gitlab",
+          "real_action": true
         },
         "reconnect": {
-          "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The real Remove dialog completed and the entry returned to Connect. A second Connect, official consent and callback restored Connected.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md#gitlab"
         },
         "restart": {
-          "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "The isolated backend was restarted after reconnect; GitLab remained Connected / Live and a subsequent real UI resource read succeeded.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md#gitlab"
         }
       },
-      "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect GitLab\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue"
-      }
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "agentmail",
@@ -1789,51 +1812,53 @@
     {
       "plugin_id": "linkedin",
       "result": "BLOCKED",
-      "config_fingerprint": "264038d8498cb624f42a53ff148ff7a33e88d55456daa1f715f39e1d69648a53",
+      "config_fingerprint": "682fa6c38f3db533a0bb89a8c384d0fc9c21886d7c63c1582923135fc299bb87",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect LinkedIn\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect LinkedIn\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
-      }
+        "reason": "Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "meta",
@@ -1936,51 +1961,53 @@
     {
       "plugin_id": "hubspot",
       "result": "BLOCKED",
-      "config_fingerprint": "7a9f9067b33b02a86ee94e53def88d6f8c7a1102c28f83177fa81912fc0669b4",
+      "config_fingerprint": "c05922a0962a3b8c992719c554c2e4bd3d65adf467eade6eafe6ebe72277794a",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect HubSpot\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "The actual Plugins UI Connect entry was exercised in this run. Subsequent stages are attested individually.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official account lookup failed; free signup reached Google account selection. Account/app provisioning and the publisher HTTPS broker deployment remain incomplete.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official account lookup failed; free signup reached Google account selection. Account/app provisioning and the publisher HTTPS broker deployment remain incomplete.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official account lookup failed; free signup reached Google account selection. Account/app provisioning and the publisher HTTPS broker deployment remain incomplete.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official account lookup failed; free signup reached Google account selection. Account/app provisioning and the publisher HTTPS broker deployment remain incomplete.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official account lookup failed; free signup reached Google account selection. Account/app provisioning and the publisher HTTPS broker deployment remain incomplete.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official account lookup failed; free signup reached Google account selection. Account/app provisioning and the publisher HTTPS broker deployment remain incomplete.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect HubSpot\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue"
-      }
+        "reason": "Official account lookup failed; free signup reached Google account selection. Account/app provisioning and the publisher HTTPS broker deployment remain incomplete.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "apollo",
@@ -2039,46 +2066,48 @@
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect Salesforce\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official login and email-identification pages were reached; an authenticated Salesforce org, its public PKCE registration and MCP access remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official login and email-identification pages were reached; an authenticated Salesforce org, its public PKCE registration and MCP access remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official login and email-identification pages were reached; an authenticated Salesforce org, its public PKCE registration and MCP access remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official login and email-identification pages were reached; an authenticated Salesforce org, its public PKCE registration and MCP access remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official login and email-identification pages were reached; an authenticated Salesforce org, its public PKCE registration and MCP access remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official login and email-identification pages were reached; an authenticated Salesforce org, its public PKCE registration and MCP access remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect Salesforce\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
-      }
+        "reason": "Official login and email-identification pages were reached; an authenticated Salesforce org, its public PKCE registration and MCP access remain unverified.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "granola",
@@ -2137,95 +2166,99 @@
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect Zoom\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. The official Zoom Google sign-in returned provider error 300. Public-client registration and the complete plugin journey remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. The official Zoom Google sign-in returned provider error 300. Public-client registration and the complete plugin journey remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. The official Zoom Google sign-in returned provider error 300. Public-client registration and the complete plugin journey remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. The official Zoom Google sign-in returned provider error 300. Public-client registration and the complete plugin journey remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. The official Zoom Google sign-in returned provider error 300. Public-client registration and the complete plugin journey remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. The official Zoom Google sign-in returned provider error 300. Public-client registration and the complete plugin journey remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect Zoom\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
-      }
+        "reason": "The official Zoom Google sign-in returned provider error 300. Public-client registration and the complete plugin journey remain unverified.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "figma",
       "result": "BLOCKED",
-      "config_fingerprint": "b644ba3d27855621fda403804c65157d0a46496e5eaa232d8f241ad6110a96cb",
+      "config_fingerprint": "8375db93f0b6e7a927fb66100299b58a867c4cb49830d21f12ad4ff03094fe5e",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect Figma\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue",
+          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official developer login reached Google account selection, where Chrome repeatedly failed to dispatch the click. Publisher app and broker provisioning and the complete journey remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official developer login reached Google account selection, where Chrome repeatedly failed to dispatch the click. Publisher app and broker provisioning and the complete journey remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official developer login reached Google account selection, where Chrome repeatedly failed to dispatch the click. Publisher app and broker provisioning and the complete journey remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official developer login reached Google account selection, where Chrome repeatedly failed to dispatch the click. Publisher app and broker provisioning and the complete journey remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official developer login reached Google account selection, where Chrome repeatedly failed to dispatch the click. Publisher app and broker provisioning and the complete journey remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "detail": "Current full-journey stage is not attested. Official developer login reached Google account selection, where Chrome repeatedly failed to dispatch the click. Publisher app and broker provisioning and the complete journey remain unverified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect Figma\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue"
-      }
+        "reason": "Official developer login reached Google account selection, where Chrome repeatedly failed to dispatch the click. Publisher app and broker provisioning and the complete journey remain unverified.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "amd_gpu",

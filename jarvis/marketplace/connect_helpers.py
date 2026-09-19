@@ -154,7 +154,7 @@ def build_handler_from_catalog(plugin_id: str) -> AuthHandler | None:
         client_id, client_secret = resolve_pkce_client(
             plugin_id, auth.client_id, auth.client_secret
         )
-        return PkceLoopbackHandler(
+        local_handler = PkceLoopbackHandler(
             PkceLoopbackConfig(
                 plugin_id=plugin_id,
                 authorization_url=auth.authorization_url,
@@ -166,11 +166,21 @@ def build_handler_from_catalog(plugin_id: str) -> AuthHandler | None:
                 scope_separator=auth.scope_separator,
                 scope_param_name="user_scope" if auth.user_scopes_only else "scope",
                 callback_path=auth.callback_path,
+                redirect_host=auth.redirect_host,
                 resource=auth.resource,
                 offline_access=auth.offline_access,
                 client_auth_method=auth.client_auth_method,
             )
         )
+        if auth.client_kind == "broker":
+            from jarvis.core.config import get_secret
+            from jarvis.marketplace.auth.oauth_broker import OAuthBrokerHandler
+
+            broker_url = auth.broker_url or get_secret(
+                "publisher_oauth_broker_url", "PUBLISHER_OAUTH_BROKER_URL"
+            )
+            return OAuthBrokerHandler(plugin_id, broker_url or "", legacy_handler=local_handler)
+        return local_handler
     return None  # pat_paste / allowlist — no refreshable OAuth handler
 
 

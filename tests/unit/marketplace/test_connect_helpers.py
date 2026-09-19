@@ -212,7 +212,7 @@ def test_resolve_pkce_client_unmapped_passthrough(
     )
     cid, csec = resolve_pkce_client("some_future_pkce", "cat.id", "cat.secret")
     assert cid == "cat.id"
-    assert csec == "cat.secret"
+    assert csec is None
 
 
 def test_resolve_pkce_client_slack_prefers_secret(
@@ -257,4 +257,4 @@ def test_resolve_pkce_client_slack_falls_back_to_catalog_when_no_secret(
     )
     cid, csec = resolve_pkce_client("slack", "slack.real.id", "slack.real.secret")
     assert cid == "slack.real.id"
-    assert csec == "slack.real.secret"
+    assert csec is None

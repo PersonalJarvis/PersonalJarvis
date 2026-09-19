@@ -79,6 +79,7 @@ class OAuthCallbackServer:
         timeout_seconds: float = 300.0,
         callback_path: str = "/callback",
         port: int | None = None,
+        redirect_host: str = "127.0.0.1",
     ) -> None:
         """`port=None` picks a random free ephemeral port at start() time.
         `port=N` binds a specific port — required for plugins like Slack
@@ -88,6 +89,9 @@ class OAuthCallbackServer:
             raise ValueError("expected_state must be non-empty")
         if callback_path and not callback_path.startswith("/"):
             raise ValueError("callback_path must be empty or start with '/'")
+        if redirect_host not in {"127.0.0.1", "localhost"}:
+            raise ValueError("redirect host must be loopback")
+        self._redirect_host = redirect_host
         self._expected_state = expected_state
         self._timeout = timeout_seconds
         self._path = callback_path
@@ -105,7 +109,7 @@ class OAuthCallbackServer:
 
     @property
     def redirect_uri(self) -> str:
-        return f"http://127.0.0.1:{self.port}{self._path}"
+        return f"http://{self._redirect_host}:{self.port}{self._path}"
 
     async def start(self) -> None:
         if self._server is not None:
@@ -194,7 +198,10 @@ class OAuthCallbackServer:
 
             future = self._future
             if future is None or future.done():
-                return HTMLResponse(_SUCCESS_HTML)
+                return HTMLResponse(
+                    _ERROR_HTML.format(reason="Authorization is already completed or cancelled."),
+                    status_code=400,
+                )
 
             if state != self._expected_state:
                 future.set_exception(RuntimeError("state mismatch — possible CSRF; aborted"))

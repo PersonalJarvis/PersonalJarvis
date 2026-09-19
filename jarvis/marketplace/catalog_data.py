@@ -139,6 +139,15 @@ _OVERRIDE_OWNED_FIELDS: tuple[str, ...] = ("auth", "mcp_server")
 # Fingerprints of the complete PAT auth blocks shipped before browser login.
 # Exact matching (including help text and endpoints) deliberately refuses to
 # reinterpret custom credentials or self-hosted configurations as package data.
+_LEGACY_PUBLISHER_AUTH_DIGESTS = {
+    "gitlab": "149fcc1d805b63c414ce32b6ef5202efb5b226795ad1bf060609cc526b3d6774",
+    "discord": "8d4e240eb5cc0865f7b074963b779baa7343a682b5e571439c244938af0944ab",
+    "asana": "1ceac3beb408092f714ad5937bf5552a959ad6de47ed6bc597c9301175a3c82d",
+    "linkedin": "29459bda8b9bbda691c7b2df06163a0716ec982c74ff629dad67ad1e27ffc6e1",
+    "hubspot": "b1f7529f4a661e295b91dce5232994ca6e20e623497d27154e01f847a441e22e",
+    "figma": "4eb9e6181f85d5534002126a77dbcfd7d95d28f41449fb140d31164b394a7051",
+}
+
 _LEGACY_PAT_AUTH_DIGESTS = {
     "home_assistant": "9167ac7a5c4d39b87e2a863cb2c71e2e4b4541b24b83626bbe86d393fa99d4b2",
     "github": "f7111c4bba8d16205ac3b2ff41f255b0cee0f3a3c86e4138e9b56b60054465fc",
@@ -146,6 +155,19 @@ _LEGACY_PAT_AUTH_DIGESTS = {
     "supabase": "6ef753e23618090c7ff4e388d86a1fe91e5a4c78ce5a522963a248c3d4ee19d6",
     "stripe": "e19610b1b59a59ffe1e231e8d5adda082437eebb59cec1c2df215470c742dde4",
 }
+_LEGACY_PUBLISHER_AUTH_DIGESTS.update(
+    {
+        "slack": "48825f1d1cbee11f6d8d45e524325cbea053b26fb74a253267ec9d8c590aec15",
+        "outlook": "a8d1e271f90dada555bc4b13ae570ed1471017dfc1419c9022efbc93156ac63f",
+        "onedrive": "f729dd992e9ff96ae1dc46e94074f7ae83349f80abe8f86392bc62d61821f3b5",
+        "teams": "14d10d34775fca3e3e40b1691362c830c7c3b79098594488dff70bff9c6e8c3e",
+        "sharepoint": "05d0fb139cf7b967c9af09cc01220d8651aa278730c267e01dced8f8e11f726a",
+        "onenote": "512430074094f49c7ed68434ffef03f0ce0c0bb272f0b3be96db03e1973e7fca",
+        "microsoft_todo": "a739c5fa96e19c60f2ba8ac10fe30f04e58c7b1869a7f672ccb89db4a6b4bb5c",
+        "azure": "08e4c7b3de36083920c536b0901175d95e8f1de22725546a7062b2690165d27a",
+    }
+)
+
 
 # Full shipped Slack auth block before channel listing and Canvas permissions.
 # Never widen a user's custom scopes, client, redirect, or server configuration.
@@ -162,6 +184,18 @@ def _has_obsolete_slack_scopes(plugin: dict, seed_plugin: dict) -> bool:
     return digest == _LEGACY_SLACK_AUTH_DIGEST and plugin.get("mcp_server") == seed_plugin.get(
         "mcp_server"
     )
+
+
+def _has_obsolete_publisher_auth(plugin: dict, seed_plugin: dict) -> bool:
+    auth = plugin.get("auth")
+    if not isinstance(auth, dict):
+        return False
+    digest = hashlib.sha256(
+        json.dumps(auth, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return digest == _LEGACY_PUBLISHER_AUTH_DIGESTS.get(plugin.get("id")) and plugin.get(
+        "mcp_server"
+    ) == seed_plugin.get("mcp_server")
 
 
 def _has_obsolete_builtin_auth(plugin: dict, seed_plugin: dict) -> bool:
@@ -226,7 +260,8 @@ def _merge_with_seed(override: object, seed: object) -> object:
             continue
         reconciled = dict(seed_plugin)
         if not (
-            _has_obsolete_builtin_auth(plugin, seed_plugin)
+            _has_obsolete_publisher_auth(plugin, seed_plugin)
+            or _has_obsolete_builtin_auth(plugin, seed_plugin)
             or _has_obsolete_slack_scopes(plugin, seed_plugin)
         ):
             for field in _OVERRIDE_OWNED_FIELDS:

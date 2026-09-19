@@ -411,7 +411,7 @@ async def refresh_plugin_token(
         )
         if current.needs_reauth:
             log.info(
-                "plugin %s: self-heal succeeded, connection is live again (was flagged %s)",
+                "plugin %s: token refresh succeeded (previously flagged %s)",
                 plugin_id,
                 current.reauth_reason or "for an unrecorded reason",
             )
@@ -430,9 +430,20 @@ async def refresh_plugin_token(
                 )
                 return RefreshAttempt(FAILED)
             return _handle_lost_rotation(plugin_id, store, current, exc)
+        if "capability_state" in saved.extra:
+            from jarvis.marketplace.connection_verification import refresh_capability_state
+
+            try:
+                saved = await refresh_capability_state(plugin_id, store, saved)
+            except Exception as exc:
+                # The rotated credentials are already durable; health I/O must
+                # never discard them or expose provider payloads.
+                log.warning(
+                    "plugin %s refreshed health update failed (%s)", plugin_id, type(exc).__name__
+                )
         return RefreshAttempt(
             REFRESHED,
-            usable=True,
+            usable=not saved.needs_reauth,
             access_changed=saved.access != current.access,
         )
 

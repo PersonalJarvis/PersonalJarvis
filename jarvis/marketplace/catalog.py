@@ -106,6 +106,9 @@ class OAuthPkceLoopbackAuth(_BaseAuth):
     revocation_url: str | None = None
     client_id: str
     client_secret: str | None = Field(default=None, exclude=True)
+    client_kind: Literal["public", "broker"] = "public"
+    broker_url: str | None = None
+    redirect_host: Literal["127.0.0.1", "localhost"] = "127.0.0.1"
     callback_port: int = 0
     callback_path: str = "/oauth/callback"
     scopes: list[str]

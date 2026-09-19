@@ -25,7 +25,8 @@
           "w_member_social"
         ],
         "scope_separator": "space",
-        "refresh_supported": false
+        "refresh_supported": false,
+        "client_kind": "broker"
       },
       "mcp_server": {
         "transport": "stdio",
@@ -40,9 +41,10 @@
         },
         "risk_tier": "ask"
       },
-      "post_install_hint_md": "Create a LinkedIn developer app and enable Sign In with LinkedIn using OpenID Connect and Share on LinkedIn. Register the callback shown here. Personal messages, contact lists and general post reading are not available through the self-service API and are not exposed by this plugin.",
+      "post_install_hint_md": "Connect opens the official provider in your browser. Sign in and allow access, then return to Personal Jarvis. Publisher service setup is handled by the project; no developer account or copied credentials are required from you.",
       "oauth_client_family": "linkedin",
-      "longevity_note": "Standard LinkedIn access tokens expire; refresh tokens are restricted to approved partners. Reconnect when requested."
+      "longevity_note": "Standard LinkedIn access tokens expire; refresh tokens are restricted to approved partners. Reconnect when requested.",
+      "browser_flow": "hosted"
     }
   }
 }

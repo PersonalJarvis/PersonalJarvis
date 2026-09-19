@@ -59,6 +59,7 @@ class PkceLoopbackConfig:
     client_id: str
     callback_port: int
     scopes: list[str]
+    redirect_host: Literal["127.0.0.1", "localhost"] = "127.0.0.1"
     client_secret: str | None = None
     scope_separator: Literal["comma", "space"] = "comma"
     # Slack: scope is split into `scope=` (bot) and `user_scope=` (user).
@@ -142,6 +143,11 @@ class PkceLoopbackHandler:
             timeout_seconds=300,
             fixed_port=self._config.callback_port,
             callback_path=self._config.callback_path,
+            **(
+                {"redirect_host": self._config.redirect_host}
+                if self._config.redirect_host != "127.0.0.1"
+                else {}
+            ),
         )
         try:
             await callback_server.start()

@@ -361,8 +361,9 @@ def test_discord_is_bot_pat_channel_no_mcp() -> None:
     spec = _seed().by_id("discord")
     assert spec is not None
     assert spec.display_name == "Discord"
-    assert spec.auth.mode == "pat_paste"
-    assert spec.auth.auth_scheme == "bot"
+    assert spec.auth.mode == "oauth_pkce_loopback"
+    assert spec.auth.client_kind == "broker"
+    assert spec.fallback_auth.auth_scheme == "bot"
     assert spec.mcp_server is None
 
 

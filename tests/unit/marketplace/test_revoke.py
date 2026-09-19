@@ -20,6 +20,27 @@ from jarvis.marketplace.revoke import revoke_tokens
 from jarvis.marketplace.token_store import Tokens
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ok", [True, False])
+async def test_slack_revokes_access_and_checks_json_success(ok):
+    from jarvis.marketplace.catalog_data import load_catalog
+
+    def provider(request):
+        from urllib.parse import parse_qs
+
+        body = parse_qs(request.content.decode())
+        assert body["token"] == ["test-access"]
+        assert "test-refresh" not in request.content.decode()
+        return httpx.Response(200, json={"ok": ok, "revoked": ok})
+
+    outcome = await revoke_tokens(
+        load_catalog().by_id("slack"),
+        Tokens(access="test-access", refresh="test-refresh"),
+        transport=httpx.MockTransport(provider),
+    )
+    assert outcome == ("revoked" if ok else "failed")
+
+
 def _pkce_spec(revocation_url: str | None) -> PluginSpec:
     return PluginSpec.model_validate(
         {

@@ -1,4 +1,4 @@
-"""Bounded, read-only resource checks before a new grant becomes connected.
+"""Bounded, read-only capability checks after an OAuth grant is safely persisted.
 
 These checks validate access, not a completed plugin smoke-test audit. No token
 is stored here, and provider payloads never become diagnostic messages.
@@ -7,12 +7,14 @@ is stored here, and provider payloads never become diagnostic messages.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
 from jarvis.marketplace.catalog import PluginSpec
-from jarvis.marketplace.token_store import Tokens
+from jarvis.marketplace.token_store import Tokens, TokenStore
 
 VERIFY_TIMEOUT_SECONDS = 30.0
 CLOSE_TIMEOUT_SECONDS = 5.0
@@ -20,6 +22,10 @@ CLOSE_TIMEOUT_SECONDS = 5.0
 
 class ConnectionVerificationError(RuntimeError):
     """A fixed, safe explanation suitable for the connection dialog."""
+
+    def __init__(self, message: str, *, capability: str = "unavailable") -> None:
+        super().__init__(message)
+        self.capability = capability
 
 
 # Explicit operations avoid accidentally verifying through a future write tool.
@@ -43,6 +49,11 @@ _REST_PROBES: dict[str, tuple[str, dict[str, Any]]] = {
 }
 
 _NATIVE_PROBES: dict[str, tuple[str, dict[str, str], str]] = {
+    "slack": (
+        "https://slack.com/api/conversations.list",
+        {"limit": "1", "types": "public_channel", "exclude_archived": "true"},
+        "channels",
+    ),
     "discord": ("https://discord.com/api/v10/users/@me", {}, "id"),
     "gmail": ("https://gmail.googleapis.com/gmail/v1/users/me/profile", {}, "emailAddress"),
     "google_drive": (
@@ -79,6 +90,17 @@ async def _verify_native(spec: PluginSpec, tokens: Tokens) -> None:
         )
         response.raise_for_status()
         payload = response.json()
+        if spec.id == "slack" and isinstance(payload, dict) and payload.get("ok") is False:
+            capability = {
+                "invalid_auth": "unauthorized",
+                "token_revoked": "unauthorized",
+                "token_expired": "unauthorized",
+                "missing_scope": "limited",
+                "ratelimited": "rate_limited",
+            }.get(str(payload.get("error", "")), "unavailable")
+            raise ConnectionVerificationError(
+                "Slack resource access is unavailable.", capability=capability
+            )
         if not isinstance(payload, dict) or expected not in payload or payload.get("error"):
             raise ConnectionVerificationError(
                 "The provider returned an unusable resource response."
@@ -130,10 +152,12 @@ async def _verify_mcp(spec: PluginSpec, tokens: Tokens) -> None:
 
 
 async def verify_connection(spec: PluginSpec, tokens: Tokens) -> None:
-    """Raise safely on failed access; leave persistence to the successful caller."""
+    """Raise a sanitized capability failure; authentication persistence is independent."""
     try:
         if not tokens.access or tokens.needs_reauth:
-            raise ConnectionVerificationError("Authorization is missing or expired. Connect again.")
+            raise ConnectionVerificationError(
+                "Authorization is missing or expired. Connect again.", capability="unauthorized"
+            )
         if spec.verification_hook is not None:
             if spec.verification_hook != "home_assistant_api" or spec.id != "home_assistant":
                 raise ConnectionVerificationError(
@@ -157,10 +181,51 @@ async def verify_connection(spec: PluginSpec, tokens: Tokens) -> None:
         raise ConnectionVerificationError(
             "The provider connection closed during verification. Try again."
         ) from None
+
     except TimeoutError:
         raise ConnectionVerificationError("The connection check timed out. Try again.") from None
-    except Exception:
+    except Exception as exc:
         # Exception text can contain tokens, response bodies or account data.
+        status = (
+            exc.response.status_code
+            if isinstance(exc, httpx.HTTPStatusError)
+            else getattr(exc, "status_code", None)
+        )
+        capability = {401: "unauthorized", 403: "limited", 429: "rate_limited"}.get(
+            status or 0, "unavailable"
+        )
         raise ConnectionVerificationError(
-            "The provider connection check failed. Check account access and try again."
+            "The provider connection check failed. Check account access and try again.",
+            capability=capability,
         ) from None
+
+
+async def refresh_capability_state(plugin_id: str, store: TokenStore, saved: Tokens) -> Tokens:
+    """Check newly persisted credentials without losing rotated refresh tokens."""
+    from jarvis.marketplace.catalog_data import load_catalog
+
+    spec = load_catalog().by_id(plugin_id)
+    if spec is None:
+        return saved
+    capability = "live"
+    try:
+        await verify_connection(spec, saved)
+    except ConnectionVerificationError as exc:
+        capability = exc.capability
+    checked = replace(
+        saved,
+        extra={**saved.extra, "capability_state": capability},
+        needs_reauth=capability == "unauthorized",
+        reauth_reason="provider_rejected" if capability == "unauthorized" else None,
+        reauth_at=datetime.now(UTC) if capability == "unauthorized" else None,
+    )
+    current = store.load(plugin_id)
+    if current != saved:
+        return current if current is not None else replace(saved, needs_reauth=True)
+    store.save(plugin_id, checked)
+    return checked
+
+
+def has_resource_probe(plugin_id: str) -> bool:
+    """Distinguish a real read from MCP tool discovery in UI evidence."""
+    return plugin_id in _REST_PROBES or plugin_id in _NATIVE_PROBES or plugin_id == "home_assistant"

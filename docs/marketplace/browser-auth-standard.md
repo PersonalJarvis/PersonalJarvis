@@ -52,9 +52,12 @@ Rules:
   (use the `ERROR_*` codes + `sanitize_provider_error`).
 - Cancel, timeout, retry, reconnect, disconnect. Understandable errors for
   denied consent, missing admin approval, and provider outages.
-- "Connected" is shown only after authorization completed AND a
-  side-effect-free functional check passed. An opened browser tab or a
-  merely stored token is not enough.
+- Persist a completed OAuth exchange before testing resource capabilities.
+  "Connected" describes authentication; show "Live" only after a successful
+  side-effect-free capability check. A 403 means limited access, a 429 means
+  rate limited, and outages mean temporarily unavailable. A 401 requires
+  reauthentication. Keep the grant on capability failures. An opened browser
+  tab alone never establishes authentication or a complete E2E PASS.
 - Existing working connections migrate cleanly. Required re-logins go
   through the new browser flow. Own OAuth clients stay, at most, a clearly
   separated expert option — never the default prerequisite.

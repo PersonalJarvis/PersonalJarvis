@@ -39,6 +39,7 @@ field in the ``SECRETS`` list defined in this module (e.g. ``GEMINI_API_KEY``,
 ``ANTHROPIC_API_KEY``, ``GROQ_API_KEY``, etc.).  See ``.env.example`` for the
 complete reference.
 """
+
 from __future__ import annotations
 
 import os
@@ -75,6 +76,7 @@ _console = Console(theme=_THEME, highlight=False)
 # Non-interactive detection
 # ---------------------------------------------------------------------------
 
+
 def _is_noninteractive() -> bool:
     """Return True when the wizard should skip all interactive prompts.
 
@@ -95,11 +97,11 @@ def _is_noninteractive() -> bool:
 
 @dataclass(slots=True, frozen=True)
 class SecretSpec:
-    key: str              # Name in the Credential Manager
-    env_fallback: str     # ENV variable as an alternative
-    label: str            # Display name
-    help_url: str         # Where to get the key
-    required_for: str     # Human-readable: "Brain (Claude)" etc.
+    key: str  # Name in the Credential Manager
+    env_fallback: str  # ENV variable as an alternative
+    label: str  # Display name
+    help_url: str  # Where to get the key
+    required_for: str  # Human-readable: "Brain (Claude)" etc.
     optional: bool = True
     # When False, the slot is whitelisted for the API (so it CAN be stored from
     # the app) but is NOT asked in the interactive first-run wizard. Used for
@@ -542,7 +544,7 @@ SECRETS: list[SecretSpec] = [
     # `marketplace.publisher_clients.resolve_publisher_client` between the
     # expert BYO override above and the catalog value. prompt=False: never
     # asked in the wizard or the Plugins dialog; end users must never see
-    # these. Client secrets stay in the backend secret store only.
+    # these. Client secrets stay on the remote publisher broker only.
     *[
         SecretSpec(
             key=f"publisher_{family}_oauth_client_{suffix}",
@@ -564,7 +566,7 @@ SECRETS: list[SecretSpec] = [
             ("zoom", "Zoom", "https://marketplace.zoom.us/develop/create"),
             ("salesforce", "Salesforce", "https://login.salesforce.com/"),
         )
-        for suffix in ("id", "secret")
+        for suffix in ("id",)
     ],
     # === Browser-primary plugins migrated from PAT (dual-mode) ===
     # BYO expert override (first half) + publisher shared client (second
@@ -591,7 +593,7 @@ SECRETS: list[SecretSpec] = [
             ("", "", "your own"),
             ("publisher_", "PUBLISHER_", "publisher-provisioned shared"),
         )
-        for suffix in ("id", "secret")
+        for suffix in (("id",) if prefix else ("id", "secret"))
     ],
     SecretSpec(
         key="cohere_api_key",
@@ -639,7 +641,7 @@ class _Section:
 
     id: str
     title: str
-    blurb: str        # one plain-English line: what this bucket is for
+    blurb: str  # one plain-English line: what this bucket is for
     pick_one: bool = True
     essential: bool = False
 
@@ -724,6 +726,7 @@ def _ask_yesno(prompt: str, default: bool = True) -> bool:
 # ----------------------------------------------------------------------
 # Steps
 # ----------------------------------------------------------------------
+
 
 def step_hardware_check() -> detection.HardwareReport:
     _println()
@@ -829,8 +832,10 @@ def _offer_local_brain() -> bool:
         _console.print("  [ok]→ Brain set to Ollama (local). No key needed.[/]")
         return True
     except Exception as exc:  # noqa: BLE001 — a config hiccup must not kill setup
-        _console.print(f"  [bad]⚠ Could not persist the choice ({exc}) — "
-                       "you can switch to Ollama any time under Settings → API Keys.[/]")
+        _console.print(
+            f"  [bad]⚠ Could not persist the choice ({exc}) — "
+            "you can switch to Ollama any time under Settings → API Keys.[/]"
+        )
         return False
 
 
@@ -852,9 +857,7 @@ def step_api_keys() -> dict[str, str]:
         _console.print(f"[brand.bold]▸ {escape(section.title)}[/]  ({tag})")
         _console.print(Padding(f"[muted]{escape(section.blurb)}[/]", (0, 0, 0, 2)))
         if section.pick_one and len(specs) > 1:
-            _console.print(
-                Padding("[muted]You only need ONE of the following.[/]", (0, 0, 0, 2))
-            )
+            _console.print(Padding("[muted]You only need ONE of the following.[/]", (0, 0, 0, 2)))
         _console.print()
 
         for spec in specs:
@@ -876,11 +879,15 @@ def step_api_keys() -> dict[str, str]:
 
     # Closing reassurance — the single most important line for a nervous first-timer.
     if stored:
-        _console.print(f"  [ok]Saved {len(stored)} key(s).[/] "
-                       "[muted]Change or add more any time in Settings → API Keys.[/]")
+        _console.print(
+            f"  [ok]Saved {len(stored)} key(s).[/] "
+            "[muted]Change or add more any time in Settings → API Keys.[/]"
+        )
     else:
-        _console.print("  [muted]No keys entered — that's fine. You can add them "
-                       "any time in the app under Settings → API Keys.[/]")
+        _console.print(
+            "  [muted]No keys entered — that's fine. You can add them "
+            "any time in the app under Settings → API Keys.[/]"
+        )
     _console.print()
     return stored
 
@@ -958,10 +965,10 @@ def step_wake_word_setup() -> str:
     _println(" Step 5 / 8 — Wake word")
     _println("=" * 60)
     _println("Choose the spoken phrase that wakes your assistant. There is no")
-    _println("preset — you type your own (e.g. \"Jonas\"). It fires only on your")
+    _println('preset — you type your own (e.g. "Jonas"). It fires only on your')
     _println("full phrase; no branded or bundled name ships with the product.")
     _println()
-    _println("Engine \"auto\" picks the best path available on this machine, in")
+    _println('Engine "auto" picks the best path available on this machine, in')
     _println("this order:")
     _println("  1. Offline any-word engine (Vosk) — works for ANY phrase, CPU-only,")
     _println("     no extra to install (vosk ships in the base install). It")
@@ -969,7 +976,7 @@ def step_wake_word_setup() -> str:
     _println("     offline. This is the default and works out of the box.")
     _println("  2. Higher-accuracy local-Whisper phrase matching — optional. It")
     _println("     needs the local-voice models: install the advertised full")
-    _println("     profile with `pip install -e \".[full]\"` (or the smaller")
+    _println('     profile with `pip install -e ".[full]"` (or the smaller')
     _println("     `.[local-voice]` extra). Plain `.[desktop]` does NOT include it.")
     _println("  3. If no local model can be provisioned at all, the wake word stays")
     _println("     off and you start a voice turn with the hotkey / Call shortcut.")
@@ -983,7 +990,7 @@ def step_wake_word_setup() -> str:
         from jarvis.core import config_writer
 
         config_writer.set_wake_word(phrase, engine="auto")
-        _println(f"→ Wake word saved: \"{phrase}\" (engine: auto).")
+        _println(f'→ Wake word saved: "{phrase}" (engine: auto).')
     except Exception as exc:  # noqa: BLE001
         _println(f"⚠  Could not persist the wake word: {exc}")
         _println("   You can set it later in the desktop Settings UI or in")
@@ -1012,9 +1019,7 @@ def step_wake_word_setup() -> str:
                     "   Setting up the offline any-word wake model so your wake "
                     "word works without any extra install:"
                 )
-                landed = wmf.ensure_vosk_model(
-                    language, echo=lambda m: _println(f"     {m}")
-                )
+                landed = wmf.ensure_vosk_model(language, echo=lambda m: _println(f"     {m}"))
                 if landed is None:
                     _println(
                         "   Could not fetch it right now — until it downloads, "
@@ -1163,18 +1168,11 @@ def step_jarvis_agent_harness_check() -> None:
         "gemini": "gemini_api_key",
     }
     for mapping in MAPPINGS:
-        secret_key = secret_key_overrides.get(
-            mapping.jarvis, f"{mapping.jarvis}_api_key"
-        )
+        secret_key = secret_key_overrides.get(mapping.jarvis, f"{mapping.jarvis}_api_key")
         has_key = bool(cfg.get_secret(secret_key))
         marker = "✓" if has_key else "–"
-        envs = " / ".join(
-            v for v in (mapping.env_var, mapping.env_fallback) if v
-        )
-        _println(
-            f"   {marker} {mapping.jarvis:<11} → {mapping.worker_slug:<10} "
-            f"(ENV: {envs})"
-        )
+        envs = " / ".join(v for v in (mapping.env_var, mapping.env_fallback) if v)
+        _println(f"   {marker} {mapping.jarvis:<11} → {mapping.worker_slug:<10} (ENV: {envs})")
 
     _println()
     _println("To activate: set 'enabled = true' in jarvis.toml [harness.jarvis_agent]")
@@ -1274,6 +1272,7 @@ def _apply_autostart_choice(enabled: bool) -> None:
 # ----------------------------------------------------------------------
 # Orchestrator
 # ----------------------------------------------------------------------
+
 
 def run() -> int:
     _println()
