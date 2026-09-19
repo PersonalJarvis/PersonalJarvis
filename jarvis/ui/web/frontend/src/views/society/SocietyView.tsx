@@ -16,6 +16,7 @@ import { useSocietyRoster } from "@/components/society/data";
 import { RosterRail } from "@/components/society/roster/RosterRail";
 import { useModelMenuData } from "@/components/society/chat/useModelMenuData";
 import { CanvasActivity } from "@/hooks/useCanvasAwake";
+import { forgetLastAgentId, rememberLastAgentId, storedLastAgentId } from "./lastAgent";
 
 const JarvisAgentsBoard = lazy(() =>
   import("@/views/JarvisAgentsView").then((m) => ({ default: m.JarvisAgentsView })),
@@ -29,7 +30,7 @@ export function SocietyView() {
   const roster = useSocietyRoster();
   const agents = useMemo(() => roster.data?.agents ?? [], [roster.data]);
   const sample = roster.data?.sample ?? true;
-  const [openAgentId, setOpenAgentId] = useState<string | null>(null);
+  const [openAgentId, setOpenAgentId] = useState<string | null>(storedLastAgentId);
   const [creating, setCreating] = useState(false);
   const [openPlace, setOpenPlace] = useState<BuildingPlace | null>(null);
 
@@ -37,6 +38,18 @@ export function SocietyView() {
     () => agents.find((a) => a.agentId === openAgentId) ?? agents.find((a) => a.tier === "lead") ?? agents[0] ?? null,
     [agents, openAgentId],
   );
+
+  const selectAgent = useCallback((agentId: string | null) => {
+    setOpenAgentId(agentId);
+    if (agentId) rememberLastAgentId(agentId);
+  }, []);
+
+  useEffect(() => {
+    if (openAgentId && agents.length > 0 && !agents.some((agent) => agent.agentId === openAgentId)) {
+      setOpenAgentId(null);
+      forgetLastAgentId();
+    }
+  }, [agents, openAgentId]);
 
   const onCreated = useCallback(() => {
     setCreating(false);
@@ -79,10 +92,10 @@ export function SocietyView() {
 
   const onIslandSelect = useCallback((agentId: string | null) => {
     if (agentId) {
-      setOpenAgentId(agentId);
+      selectAgent(agentId);
       switchMode("agents");
     }
-  }, [switchMode]);
+  }, [selectAgent, switchMode]);
 
   // A building clicked on the island opens its own card: the building
   // rendered as it stands on the map, and beside it what it does.
@@ -138,11 +151,11 @@ export function SocietyView() {
         <div className={mode === "agents" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
         {openAgent ? (
           <AgentCardOverlay embedded agent={openAgent} roster={agents} rosterLoading={roster.isLoading}
-            sample={sample} onSelectAgent={setOpenAgentId} onCreate={() => setCreating(true)}
+            sample={sample} onSelectAgent={selectAgent} onCreate={() => setCreating(true)}
             onClose={() => setOpenAgentId(null)} />
         ) : (
           <RosterRail agents={agents} loading={roster.isLoading} sample={sample}
-            activeAgentId={null} onOpen={setOpenAgentId} onCreate={() => setCreating(true)} side="left" />
+            activeAgentId={null} onOpen={selectAgent} onCreate={() => setCreating(true)} side="left" />
         )}
         </div>
       </div>
