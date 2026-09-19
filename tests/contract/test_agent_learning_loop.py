@@ -154,6 +154,13 @@ def test_exact_quote_must_come_from_correct_single_source(tmp_path):
     assert not book.context("email drafts")
 
 
+def test_bad_extraction_does_not_poison_retry_receipt(tmp_path):
+    book = ExperienceNotebook(tmp_path, "mail")
+    assert book.learn("retry", [proposal()], sources={}) == []
+    assert teach(book, "retry")
+    assert "plain-text" in book.context("email drafts")
+
+
 def test_feedback_supersedes_and_negative_evaluation_stops_reuse(tmp_path):
     book = ExperienceNotebook(tmp_path, "mail")
     old = teach(book)[0]

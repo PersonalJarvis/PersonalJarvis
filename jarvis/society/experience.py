@@ -158,6 +158,8 @@ class ExperienceNotebook:
             turn = state["turns"].setdefault(receipt, {})
             if "learned" in turn:
                 return list(turn["learned"])
+            if proposals and not accepted:
+                return []  # Invalid extraction is retryable, not a completed learning receipt.
             ids = []
             for kind, quote, trigger, advice, supersedes in accepted:
                 identity = hashlib.sha256(

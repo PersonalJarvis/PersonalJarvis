@@ -218,12 +218,15 @@ async def review_turn(runtime: Any, pending: dict[str, Any]) -> bool:
     assessments = result.get("assessments") or []
     if not isinstance(proposals, list) or not isinstance(assessments, list):
         raise ValueError("review lessons and assessments must be lists")
-    await asyncio.to_thread(
+    learned_ids = await asyncio.to_thread(
         notebook.learn,
         receipt,
         proposals,
         sources={"feedback": users, "success": successful, "failure": failed},
     )
+    if proposals and not learned_ids:
+        log.info("society review: all proposed lessons failed grounding; retaining receipt")
+        return False
     await asyncio.to_thread(notebook.assess, receipt, assessments, users)
     memories = result.get("memories") or []
     if not isinstance(memories, list):

@@ -91,6 +91,16 @@ async def verify(provider_name: str, model: str | None) -> dict:
 
             before = await answer("")
             rt = SocietyRuntime(root, cfg=lambda: cfg)
+            review_result = None
+
+            async def observed_review(runtime, agent, prompt):
+                from jarvis.society.review import _ask
+
+                nonlocal review_result
+                review_result = await _ask(runtime, agent, prompt)
+                return review_result
+
+            rt.turn_reviewer = observed_review
             await rt.ensure_started()
             try:
                 await rt.roster.create(
@@ -122,7 +132,7 @@ async def verify(provider_name: str, model: str | None) -> dict:
                     and after == "validate_larch_manifest"
                     and isolated == "UNKNOWN"
                 )
-                return {
+                report = {
                     "passed": passed,
                     "provider": provider_name,
                     "model": model or "default",
@@ -132,6 +142,9 @@ async def verify(provider_name: str, model: str | None) -> dict:
                     "lessons": len(rt.experience_for("larch").read()["lessons"]),
                     "pending_reviews": len(rt.conversations.pending_reviews()),
                 }
+                if not passed:
+                    report["synthetic_review"] = review_result
+                return report
             finally:
                 await rt.close()
     finally:
