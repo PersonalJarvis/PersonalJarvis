@@ -220,7 +220,7 @@ def build_server() -> Any:
         return tools
 
     @server.call_tool()  # type: ignore[misc, no-untyped-call]
-    async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[Any]:
+    async def _call_tool(name: str, arguments: dict[str, Any] | None) -> Any:
         from jarvis.core.protocols import SupervisorToolRequest, current_chat_turn
 
         gateway = _gateway()
@@ -267,6 +267,26 @@ def build_server() -> Any:
             return [
                 types.TextContent(type="text", text=f"Tool failed: {type(exc).__name__}: {exc}")
             ]
+        if name == "society_browser":
+            success = bool(getattr(result, "success", False))
+            text = _render(result)
+            if not success:
+                # A partial browser run may already have submitted a form.
+                # Preserve its observed outcome so a planner can inspect the
+                # current page instead of blindly repeating a side effect.
+                text = json.dumps(
+                    {
+                        "ok": False,
+                        "error": getattr(result, "error", None),
+                        "result": getattr(result, "output", None),
+                        "retry": "Inspect current state before repeating any action.",
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                )
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text=text)], isError=not success
+            )
         return [types.TextContent(type="text", text=_render(result))]
 
     return server

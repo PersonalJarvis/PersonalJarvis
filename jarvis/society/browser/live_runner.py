@@ -11,6 +11,7 @@ import ipaddress
 import json
 import logging
 import os
+import random
 import socket
 import sys
 import time
@@ -73,6 +74,8 @@ class Worker:
         self.pending: dict[str, asyncio.Future] = {}
         self.context: Any = None
         self.browser: Any = None
+        self.browser_lock = asyncio.Lock()
+        self.browser_args: dict[str, Any] = {}
         self.page: Any = None
         self.playwright: Any = None
         self.agent: Any = None
@@ -123,7 +126,6 @@ class Worker:
                 "Chrome needs an unlocked Windows desktop and the managed capture runtime"
             )
 
-        from browser_use import Browser  # type: ignore[import-not-found]
         from playwright.async_api import async_playwright
 
         profile = Path(args["profile_dir"])
@@ -137,7 +139,7 @@ class Worker:
             connection = await self.playwright.chromium.connect_over_cdp(cdp_url)
             self.context = connection.contexts[0]
         else:
-            self.context = await self.playwright.chromium.launch_persistent_context(
+            self.context = await self.launch_context(
                 str(profile),
                 executable_path=args["executable"],
                 headless=not native_enabled,
@@ -190,24 +192,7 @@ class Worker:
                         # A missing or partially written file is normal during launch.
                         await asyncio.sleep(0.05)
             cdp_url = f"http://127.0.0.1:{port}"
-        self.browser = Browser(
-            cdp_url=cdp_url,
-            keep_alive=True,
-            enable_default_extensions=False,
-            use_cloud=False,
-            downloads_path=str(self.workspace / "downloads"),
-            allowed_domains=args.get("allowed_domains") or None,
-        )
-        await self.browser.start()
-        from pointer import PointerTracker  # type: ignore[import-not-found]
-
-        self.pointer = PointerTracker(
-            self.generation,
-            emit,
-            lambda: self.visual_action and not self.manual,
-            lambda x, y: self.native.viewport_point(x, y) if self.native else (x, y, 1280, 800),
-        )
-        self.browser.cdp_client.send_raw = self.pointer.wrap(self.browser.cdp_client.send_raw)
+        self.browser_args = {"cdp_url": cdp_url, "allowed_domains": args.get("allowed_domains")}
         self.context.on("page", self.page_opened)
         for page in self.context.pages:
             self.page_opened(page)
@@ -249,6 +234,54 @@ class Worker:
             "full_window": bool(self.native),
         }
 
+    async def launch_context(self, profile: str, **options: Any) -> Any:
+        """Chrome may release its profile mutex just after its parent exits."""
+        for attempt in range(4):
+            try:
+                return await self.playwright.chromium.launch_persistent_context(profile, **options)
+            except Exception as exc:
+                if "ProcessSingleton" not in str(exc) or attempt == 3:
+                    raise
+                logging.getLogger(__name__).debug("Waiting for the managed Chrome profile to close")
+                await asyncio.sleep(random.SystemRandom().uniform(0.05, 0.15) * (2**attempt))
+        raise RuntimeError("Managed browser profile is still in use")
+
+    async def ensure_browser(self) -> None:
+        """Connect the agent engine on demand; idle pixels need only Chromium."""
+        async with self.browser_lock:
+            if self.browser is not None:
+                return
+
+            def load_browser() -> Any:
+                from browser_use import Browser  # type: ignore[import-not-found]
+
+                return Browser
+
+            browser_class = await asyncio.to_thread(load_browser)
+            browser = browser_class(
+                cdp_url=self.browser_args["cdp_url"],
+                keep_alive=True,
+                enable_default_extensions=False,
+                use_cloud=False,
+                downloads_path=str(self.workspace / "downloads"),
+                allowed_domains=self.browser_args.get("allowed_domains") or None,
+            )
+            try:
+                await browser.start()
+            except BaseException:
+                await browser.stop()
+                raise
+            from pointer import PointerTracker  # type: ignore[import-not-found]
+
+            self.pointer = PointerTracker(
+                self.generation,
+                emit,
+                lambda: self.visual_action and not self.manual,
+                lambda x, y: self.native.viewport_point(x, y) if self.native else (x, y, 1280, 800),
+            )
+            browser.cdp_client.send_raw = self.pointer.wrap(browser.cdp_client.send_raw)
+            self.browser = browser
+
     def page_opened(self, page: Any) -> None:
         page.on("dialog", self.on_dialog)
 
@@ -267,7 +300,7 @@ class Worker:
                 self.tabs[info["targetInfo"]["targetId"]] = page
             finally:
                 await session.detach()
-        focused = self.browser.get_focused_target()
+        focused = self.browser.get_focused_target() if self.browser is not None else None
         if self.native and self.manual:
             window_title = self.native.title()
             candidates = []
@@ -423,6 +456,7 @@ class Worker:
             await asyncio.sleep(1 / 15)
 
     async def run(self, args: dict) -> dict:
+        await self.ensure_browser()
         self.step_idle.clear()
         previous_downloads = set(self.browser.downloaded_files)
         from browser_use import Agent, Tools  # type: ignore[import-not-found]
@@ -582,6 +616,7 @@ class Worker:
                     self.pointer.clear()
             else:
                 if self.native and self.manual:
+                    await self.ensure_browser()
                     from browser_use.browser import events  # type: ignore[import-not-found]
 
                     await self.focused()
@@ -625,6 +660,7 @@ class Worker:
         elif op == "reload":
             await page.reload()
         elif op == "tab":
+            await self.ensure_browser()
             from browser_use.browser.events import SwitchTabEvent  # type: ignore[import-not-found]
 
             if args.get("target") == "new":

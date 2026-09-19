@@ -205,3 +205,36 @@ def test_jarvis_codex_seat_uses_owned_browser_not_inherited_plugins(
     coding = runner_cli.plan_codex(**args)
     assert "--ignore-user-config" not in coding.argv
     assert "browser_use" not in coding.argv
+
+
+async def test_failed_browser_mcp_preserves_partial_outcome_and_error_flag(monkeypatch):
+    import json
+
+    import mcp.types as types
+
+    from jarvis.mcp import jarvis_tools_server as server
+
+    tool = SimpleNamespace(
+        name="society_browser",
+        description="Browser",
+        risk_tier="monitor",
+        is_action_tool=True,
+        input_schema={"type": "object"},
+    )
+    partial = {"ok": False, "urls": ["https://example.org/receipt"], "steps": 3}
+
+    async def execute(name, args, request):
+        return ToolResult(False, partial, "Model timed out after navigation")
+
+    gateway = SimpleNamespace(catalog=lambda: [tool], execute=execute)
+    monkeypatch.setattr(server, "_gateway", lambda: gateway)
+    instance = server.build_server()
+    request = types.CallToolRequest(
+        params=types.CallToolRequestParams(name="society_browser", arguments={"task": "Read"})
+    )
+    response = await instance.request_handlers[types.CallToolRequest](request)
+    assert response.root.isError
+    body = json.loads(response.root.content[0].text)
+    assert body["result"] == partial
+    assert body["error"] == "Model timed out after navigation"
+    assert "Inspect current state" in body["retry"]

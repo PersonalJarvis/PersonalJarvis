@@ -65,7 +65,23 @@ def test_actual_browser_click_emits_pointer_telemetry(tmp_path):
 
 
 class PageHandler(BaseHTTPRequestHandler):
+    profile_requests = []
+
     def do_GET(self):
+        if self.path.startswith(("/login", "/account")):
+            signed_in = "fixture_session=verified" in self.headers.get("Cookie", "")
+            self.profile_requests.append((self.path, signed_in))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            if self.path == "/login":
+                self.send_header(
+                    "Set-Cookie",
+                    "fixture_session=verified; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax",
+                )
+                signed_in = True
+            self.end_headers()
+            self.wfile.write(b"<h1>Signed in</h1>" if signed_in else b"<h1>Sign in required</h1>")
+            return
         if self.path == "/download":
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")
@@ -100,6 +116,7 @@ class PageHandler(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def site():
+    PageHandler.profile_requests = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), PageHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -144,17 +161,25 @@ async def test_live_pixels_change_between_tasks_and_sessions_stay_open(live, sit
         await live.close()
 
 
-async def test_second_viewer_receives_static_page_without_new_browser(live):
+async def test_second_viewer_receives_static_page_without_new_browser(live, record_property):
+    import time
+
     agent = SimpleNamespace(agent_id="static", model="", browser_allowed_domains=[])
     try:
+        started = time.monotonic()
         session, first = await live.subscribe(agent)
         while (await asyncio.wait_for(first.get(), 5))["kind"] != "frame":
             pass  # Drain initial state before attaching the second viewer.
+        record_property("cold_first_frame_ms", round((time.monotonic() - started) * 1000, 2))
         await asyncio.sleep(1)
+        started = time.monotonic()
         same, second = await live.subscribe(agent)
         assert same is session
         while (await asyncio.wait_for(second.get(), 5))["kind"] != "frame":
             pass  # State can precede the first image for a new viewer.
+        warm_ms = (time.monotonic() - started) * 1000
+        record_property("warm_first_frame_ms", round(warm_ms, 2))
+        assert warm_ms <= 2000
         assert len(live.sessions) == 1
         assert len(session.subscribers) == 2
     finally:
@@ -607,4 +632,31 @@ async def test_finished_chat_releases_real_browser_for_the_next_task(live, monke
         release.set()
         job.cancel()
         await asyncio.gather(job, return_exceptions=True)
+        await live.close()
+
+
+async def test_login_profile_survives_restart_and_stays_with_its_agent(live, site):
+    first = SimpleNamespace(
+        agent_id="signed-in", model="", browser_allowed_domains=["http*://127.0.0.1"]
+    )
+    other = SimpleNamespace(
+        agent_id="isolated", model="", browser_allowed_domains=["http*://127.0.0.1"]
+    )
+
+    async def visit(agent, path):
+        session, _ = await live.subscribe(agent)
+        await live.control(session, "viewer", "takeover", {"enabled": True})
+        await live.control(session, "viewer", "navigate", {"url": site + path})
+        await live.control(session, "viewer", "takeover", {"enabled": False})
+        return session
+
+    try:
+        await visit(first, "/login")
+        await live.close()
+        restored = await visit(first, "/account?restored")
+        isolated = await visit(other, "/account?other")
+        assert restored is not isolated
+        assert ("/account?restored", True) in PageHandler.profile_requests
+        assert ("/account?other", False) in PageHandler.profile_requests
+    finally:
         await live.close()

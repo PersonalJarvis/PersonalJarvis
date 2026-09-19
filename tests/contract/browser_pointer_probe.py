@@ -5,10 +5,11 @@ import json
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]
+
 
 async def main():
-    root = Path(__file__).resolve().parents[2]
-    sys.path.insert(0, str(root / "jarvis/society/browser"))
+    sys.path.insert(0, str(ROOT / "jarvis/society/browser"))
     output = sys.stdout
     import live_runner
 
@@ -17,10 +18,21 @@ async def main():
     worker = live_runner.Worker()
     try:
         profile = Path(sys.argv[2])
-        await worker.start({"profile_dir": str(profile), "workspace": str(profile / "workspace"),
-                            "executable": sys.argv[1], "allowed_domains": []})
+        await worker.start(
+            {
+                "profile_dir": str(profile),
+                "workspace": str(profile / "workspace"),
+                "executable": sys.argv[1],
+                "allowed_domains": [],
+            }
+        )
+        assert worker.browser is None  # First pixels need no agent engine.
+        await worker.ensure_browser()
         await worker.page.goto("about:blank")
-        await worker.page.set_content('<button style="width:200px;height:100px" onclick="window.clicked=true">Click probe</button>')
+        await worker.page.set_content(
+            '<button style="width:200px;height:100px" '
+            'onclick="window.clicked=true">Click probe</button>'
+        )
         await worker.focused()
         target = next(t for t, p in worker.tabs.items() if p is worker.page)
         client = worker.browser.cdp_client
