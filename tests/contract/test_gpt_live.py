@@ -386,3 +386,153 @@ def test_disabled_computer_use_does_not_expose_its_primitives(monkeypatch):
     assert "click" not in {d.name for d in gateway.voice_catalog()}
     setting.enabled = True
     assert "click" in {d.name for d in gateway.voice_catalog()}
+
+
+def test_recovery_history_is_bounded_and_keeps_user_text_as_data():
+    from jarvis.live.recovery import seed_messages
+
+    fragments = [
+        {"role": "user" if i % 2 else "assistant", "delta": "x" * 1000} for i in range(200)
+    ]
+    history = seed_messages(fragments, [])
+    assert len(history) <= 32
+    assert sum(len(m["content"][0]["text"].encode()) for m in history) <= 5000
+    assert all(m["role"] in {"user", "assistant"} for m in history)
+
+
+@pytest.mark.asyncio
+async def test_recovery_preserves_context_and_waits_for_new_input(ledger, monkeypatch):
+    import jarvis.live.session as module
+    from jarvis.live import recovery
+
+    async def permit():
+        return None
+
+    monkeypatch.setattr(recovery, "connection_permit", permit)
+    monkeypatch.setattr(module.random, "uniform", lambda *args: 0)
+    sent, opened = [], []
+
+    async def send(event):
+        sent.append(event)
+
+    class Connection:
+        answer_sdp = ""
+        session_id = "wire"
+
+        async def close(self):
+            return None
+
+        async def receive(self):
+            return {"type": "session.started", "session": {"id": "replacement"}}
+
+        async def send(self, event):
+            sent.append(event)
+
+    class Provider:
+        name = "test"
+
+        async def open_session(self, cfg):
+            opened.append(cfg)
+            return Connection()
+
+    cfg = SimpleNamespace(brain=SimpleNamespace(reply_language="en"))
+    session = LiveVoiceSession(
+        session_id="s", send_json=send, send_binary=send, config=cfg, providers=[Provider()]
+    )
+    session._connection = Connection()
+    session._ledger = ledger
+    session._tools = LiveTools(Gateway(), ledger, "s", language="en", backend_model="chosen")
+    session._base_session_config = {"model": "gpt-live-1", "instructions": "Be helpful"}
+    ledger.append(TranscriptFragment("s", "a", "user", "Remember the blue folder", 0, 10))
+    session._last_end["user"] = 10
+    assert await session._recover()
+    assert opened[0].session["input"][0]["content"][0]["text"] == "Remember the blue folder"
+    assert not session._tools.accepting
+    assert not session._tools.gateway.calls
+    await session._event(
+        {
+            "type": "session.input_transcript.delta",
+            "event_id": "new",
+            "delta": "continue",
+            "start_ms": 0,
+            "end_ms": 10,
+        }
+    )
+    assert session._tools.accepting
+    assert session._reconnect_attempts == 0
+    assert sent[-1]["start_ms"] == 11
+    await session.end()
+
+
+@pytest.mark.asyncio
+async def test_uncertain_action_blocks_automatic_recovery(ledger):
+    async def send(event):
+        raise AssertionError("Recovery must not start a connection")
+
+    cfg = SimpleNamespace(brain=SimpleNamespace(reply_language="en"))
+    session = LiveVoiceSession(
+        session_id="s",
+        send_json=send,
+        send_binary=send,
+        config=cfg,
+        providers=[SimpleNamespace(name="test")],
+    )
+    session._ledger = ledger
+    session._tools = LiveTools(Gateway(), ledger, "s", language="en", backend_model="chosen")
+    ledger.claim("s", "pending", "write-file", {"text": "x"}, 0)
+    assert not await session._recover()
+    ledger.finish("s", "pending", {"success": True, "verified": False})
+    assert not await session._recover()
+
+
+@pytest.mark.asyncio
+async def test_recovery_usage_accumulates_but_unconfirmed_segments_stay_unconfirmed(ledger):
+    async def send(event):
+        return None
+
+    cfg = SimpleNamespace(brain=SimpleNamespace(reply_language="en"))
+    session = LiveVoiceSession(
+        session_id="s",
+        send_json=send,
+        send_binary=send,
+        config=cfg,
+        providers=[SimpleNamespace(name="test")],
+    )
+    session._ledger = ledger
+    session._tools = LiveTools(Gateway(), ledger, "s", language="en", backend_model="chosen")
+    session._past_voice_seconds = 12
+    session._had_unconfirmed_wire = True
+    await session._event({"type": "session.usage.updated", "usage": {"seconds": 5}})
+    await session._event(
+        {"type": "session.closed", "reason": "close_requested", "usage": {"seconds": 6}}
+    )
+    assert ledger._db.execute("SELECT seconds, finalized FROM live_usage").fetchone() == (18, 0)
+
+
+@pytest.mark.asyncio
+async def test_late_transcript_cannot_reopen_tool_execution_after_close(ledger):
+    async def send(event):
+        return None
+
+    cfg = SimpleNamespace(brain=SimpleNamespace(reply_language="en"))
+    session = LiveVoiceSession(
+        session_id="s",
+        send_json=send,
+        send_binary=send,
+        config=cfg,
+        providers=[SimpleNamespace(name="test")],
+    )
+    session._ledger = ledger
+    session._tools = LiveTools(Gateway(), ledger, "s", language="en", backend_model="chosen")
+    session._closing = True
+    await session._tools.close()
+    await session._event(
+        {
+            "type": "session.input_transcript.delta",
+            "delta": "yes",
+            "event_id": "late",
+            "start_ms": 1,
+            "end_ms": 2,
+        }
+    )
+    assert not session._tools.accepting

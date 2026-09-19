@@ -1,0 +1,1 @@
+const n=new Set(["hey","hi","ok","okay","hello","hallo","yo","hej"]);function s(l){const t=(l||"").toLowerCase().replace(/[^0-9a-zäöüß]+/g," ").trim().split(/\s+/).filter(Boolean);if(t.length===0)return"";let e=[...t];for(;e.length>0&&n.has(e[0]);)e.shift();return e.length===0&&(e=t),e.map(o=>o.charAt(0).toUpperCase()+o.slice(1)).join(" ")}export{s as d};

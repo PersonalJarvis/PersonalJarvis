@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+import random
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -55,6 +56,7 @@ class LiveVoiceSession:
         self._responses: dict[str, list[dict]] = {}
         self._completed: set[str] = set()
         self._response_id = ""
+        self._response_revisions: dict[str, int] = {}
         self._closed = asyncio.Event()
         self._ended = False
         self._closing = False
@@ -73,6 +75,19 @@ class LiveVoiceSession:
         self._active_model = ""
         self._archive_turn_id = str(uuid4())
         self._parent_owned = False
+        self._recovering = False
+        self._reconnect_attempts = 0
+        self._resume_needs_input = False
+        self._base_session_config: dict = {}
+        self._using_webrtc = False
+        self._offer_request = ""
+        self._offer_future: asyncio.Future | None = None
+        self._past_voice_seconds = 0.0
+        self._wire_seconds = 0.0
+        self._wire_epoch = 0
+        self._timeline_offset = 0
+        self._had_unconfirmed_wire = False
+        self._initial_seed: list[dict] = []
         self._language = resolve_output_language(
             getattr(config.brain, "reply_language", "auto"),
             "auto",
@@ -107,7 +122,15 @@ class LiveVoiceSession:
         return None
 
     async def handle_control(self, message: dict) -> None:
+        if self._closing:
+            return
         kind = message.get("type")
+        if kind == "reconnect_offer" and self._offer_future is not None:
+            if message.get("request_id") == self._offer_request and not self._offer_future.done():
+                from jarvis.realtime.offer_broker import validate_webrtc_offer_sdp
+
+                self._offer_future.set_result(validate_webrtc_offer_sdp(message.get("sdp")))
+            return
         if kind == "playback_state":
             self.playback_active = bool(message.get("active", False))
             return
@@ -122,6 +145,20 @@ class LiveVoiceSession:
             if self._tools is not None:
                 self._tools.user_text = text
                 self._tools.revision += 1
+                if not self._recovering:
+                    self._resume_needs_input = False
+                    self._tools.accepting = True
+            preview = text.encode("utf-8")[:192].decode("utf-8", errors="ignore")
+            await self._connection.send(
+                {
+                    "type": "session.thinking.append",
+                    "delegation_id": None,
+                    "content": "Typed user input (quoted data): "
+                    + json.dumps(preview, ensure_ascii=False)
+                    + ". The application is submitting the full request to your backend. "
+                    "Wait for its result; do not duplicate the work.",
+                }
+            )
             await self._connection.send(
                 {
                     "type": "response.item.create",
@@ -158,13 +195,22 @@ class LiveVoiceSession:
         )
         prompt_language = getattr(self._config.brain, "reply_language", "auto")
         config = profile.session_config(language=prompt_language, tools=self._tools.declarations())
+        self._base_session_config = config
         offer = str(message.get("webrtc_offer_sdp", ""))
+        self._using_webrtc = bool(offer)
         self._resampler = StreamingPcm16Resampler(int(message.get("sample_rate", 48000)), 24000)
         await self._send_json({"type": "audio_starting", "provider": self.active_provider})
         try:
             from jarvis.live.runtime import claim
 
             claim(self.session_id)
+            from jarvis.live.recovery import connection_permit, seed_messages
+
+            self._initial_seed = self._take_initial_context()
+            if self._initial_seed:
+                config["input"] = seed_messages(self._initial_seed, [])
+
+            await connection_permit()
             self._connection = await self._provider.open_session(
                 ContinuousVoiceStart(session=config, offer_sdp=offer)
             )
@@ -231,6 +277,19 @@ class LiveVoiceSession:
             await self.end(reason="error")
             raise
 
+    def _take_initial_context(self) -> list[dict]:
+        from jarvis.core.runtime_refs import get_brain_manager
+
+        brain = self._brain or get_brain_manager()
+        take = getattr(brain, "take_voice_history_seed", None)
+        if not callable(take):
+            return []
+        return [
+            {"role": message.role, "delta": str(message.content)}
+            for message in take()
+            if message.role in {"user", "assistant"} and message.content
+        ]
+
     def _adopt_desktop_session(self) -> None:
         from jarvis.core.runtime_refs import get_speech_pipeline
 
@@ -241,21 +300,38 @@ class LiveVoiceSession:
             self._parent_owned = True
 
     async def handle_audio_frame(self, pcm: bytes) -> None:
-        if self._connection is None or self._closing or self._connection.answer_sdp:
+        if (
+            self._connection is None
+            or self._closing
+            or self._recovering
+            or self._connection.answer_sdp
+        ):
             return
         audio = self._resampler.process(pcm)
         if audio:
-            await self._connection.send(
-                {
-                    "type": "session.input_audio.append",
-                    "audio": base64.b64encode(audio).decode("ascii"),
-                }
-            )
+            try:
+                await self._connection.send(
+                    {
+                        "type": "session.input_audio.append",
+                        "audio": base64.b64encode(audio).decode("ascii"),
+                    }
+                )
+            except Exception:
+                log.debug("Audio send failed; closing the affected transport", exc_info=True)
+                await self._connection.close()
 
     async def _pump(self) -> None:
         try:
             while not self._closed.is_set():
-                event = await self._connection.receive()
+                try:
+                    event = await self._connection.receive()
+                except Exception:
+                    if self._closing:
+                        return
+                    self._had_unconfirmed_wire = True
+                    if await self._recover():
+                        continue
+                    raise
                 await self._event(event)
         except asyncio.CancelledError:
             raise
@@ -283,8 +359,8 @@ class LiveVoiceSession:
                 event.get("event_id") or str(uuid4()),
                 role,
                 delta,
-                int(event.get("start_ms", 0)),
-                int(event.get("end_ms", 0)),
+                self._timeline_offset + int(event.get("start_ms", 0)),
+                self._timeline_offset + int(event.get("end_ms", 0)),
             )
             if not await asyncio.to_thread(self._ledger.append, fragment):
                 return
@@ -296,6 +372,10 @@ class LiveVoiceSession:
             if role == "user" and current:
                 self._tools.user_text = self._captions[role]
                 self._tools.revision += 1
+                if not self._closing and not self._recovering:
+                    self._resume_needs_input = False
+                    self._tools.accepting = True
+                    self._reconnect_attempts = 0
             await self._send_json(
                 {
                     "type": "transcript",
@@ -311,16 +391,28 @@ class LiveVoiceSession:
         elif kind == "session.output_audio.delta" and not self._connection.answer_sdp:
             await self._send_binary(base64.b64decode(event["delta"]))
         elif kind in {"session.usage.updated", "session.closed"}:
-            seconds = float(event.get("usage", {}).get("seconds", self._voice_seconds))
+            self._wire_seconds = max(
+                self._wire_seconds, float(event.get("usage", {}).get("seconds", self._wire_seconds))
+            )
+            seconds = self._past_voice_seconds + self._wire_seconds
             self._voice_seconds = max(seconds, self._voice_seconds)
+            if (
+                kind == "session.closed"
+                and not self._closing
+                and event.get("reason") in {"expired", "connection_lost"}
+                and await self._recover()
+            ):
+                await asyncio.to_thread(self._ledger.usage, self.session_id, seconds)
+                return
+            finalized = kind == "session.closed" and not self._had_unconfirmed_wire
             await asyncio.to_thread(
-                self._ledger.usage, self.session_id, seconds, finalized=kind == "session.closed"
+                self._ledger.usage, self.session_id, seconds, finalized=finalized
             )
             await self._send_json(
                 {
                     "type": "live_usage",
                     "seconds": self._voice_seconds,
-                    "finalized": kind == "session.closed",
+                    "finalized": finalized,
                 }
             )
             if kind == "session.closed":
@@ -355,6 +447,7 @@ class LiveVoiceSession:
             )
             self._tools.language = self._language
             self._response_id = str(event["response"]["id"])
+            self._response_revisions[self._response_id] = self._tools.revision
             self._delegation_responses[delegation] = self._response_id
             self._responses.setdefault(self._response_id, [])
         elif kind == "response.output_item.done":
@@ -406,10 +499,9 @@ class LiveVoiceSession:
                 }
             )
             calls = self._responses.pop(rid, [])
+            revision = self._response_revisions.pop(rid, self._tools.revision)
             if calls and kind == "response.completed" and not self._closing:
-                task = asyncio.create_task(
-                    self._run_calls(calls, self._tools.revision), name="live-tools"
-                )
+                task = asyncio.create_task(self._run_calls(calls, revision), name="live-tools")
                 self._jobs.add(task)
                 task.add_done_callback(self._jobs.discard)
 
@@ -423,7 +515,7 @@ class LiveVoiceSession:
                     if not isinstance(arguments, dict):
                         raise ValueError("Expected object arguments")
                     result = await self._tools.execute(
-                        item["call_id"], item["name"], arguments, revision
+                        f"{self._wire_epoch}:{item['call_id']}", item["name"], arguments, revision
                     )
                 except (ValueError, TypeError):
                     result = {"success": False, "error": "Invalid function arguments."}
@@ -440,7 +532,7 @@ class LiveVoiceSession:
                         },
                     }
                 )
-            if not self._closing:
+            if not self._closing and not self._resume_needs_input:
                 for image in image_inputs:
                     await self._connection.send(
                         {
@@ -464,6 +556,93 @@ class LiveVoiceSession:
             raise
         except Exception:
             log.exception("Live tool-result delivery failed; receipt retained")
+
+    async def _recover(self) -> bool:
+        from jarvis.live.recovery import connection_permit, seed_messages
+
+        if (
+            self._closing
+            or self._reconnect_attempts >= 2
+            or self._jobs
+            or self._responses
+            or self._tools is None
+            or self._ledger is None
+            or self._tools._pending
+        ):
+            return False
+        safe, receipts = await asyncio.to_thread(self._ledger.recovery_state, self.session_id)
+        if not safe:
+            return False
+        self._recovering = True
+        self._resume_needs_input = True
+        self._tools.accepting = False
+        self._reconnect_attempts += 1
+        try:
+            for task in tuple(self._control_tasks):
+                task.cancel()
+            await asyncio.gather(*self._control_tasks, return_exceptions=True)
+            await self._send_json({"type": "reconnecting", "attempt": self._reconnect_attempts})
+            await self._connection.close()
+            delay = random.uniform(0.1, min(4.0, 2**self._reconnect_attempts))  # noqa: S311
+            await asyncio.sleep(delay)
+            await connection_permit()
+            fragments = await asyncio.to_thread(self._ledger.transcript, self.session_id)
+            history = seed_messages(self._initial_seed + fragments, receipts)
+            self._timeline_offset = max(self._last_end.values()) + 1
+            self._past_voice_seconds = self._voice_seconds
+            self._wire_seconds = 0.0
+            self._wire_epoch += 1
+            self._captions = {"user": "", "assistant": ""}
+            self._resampler.reset()
+            await self._open_replacement(history)
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("Voice reconnection failed; no actions were replayed", exc_info=True)
+            return False
+        finally:
+            self._recovering = False
+
+    async def _open_replacement(self, history: list[dict]) -> None:
+        config = {**self._base_session_config, "input": history}
+        config["instructions"] += (
+            " Connection restored. Previous tool receipts remain valid. "
+            "Wait for the user to continue before starting any task."
+        )
+        offer = ""
+        if self._using_webrtc:
+            self._offer_request = str(uuid4())
+            self._offer_future = asyncio.get_running_loop().create_future()
+            await self._send_json({"type": "reconnect_offer", "request_id": self._offer_request})
+            try:
+                offer = await asyncio.wait_for(self._offer_future, 15)
+            finally:
+                self._offer_future = None
+        self._connection = await self._provider.open_session(ContinuousVoiceStart(config, offer))
+        if not offer:
+            async with asyncio.timeout(25):
+                while True:
+                    event = await self._connection.receive()
+                    if event.get("type") == "session.started":
+                        self._connection.session_id = event["session"]["id"]
+                        break
+                    if event.get("type") == "error":
+                        raise RuntimeError("The provider rejected the replacement session.")
+        await self._send_json(
+            {
+                "type": "audio_ready",
+                "provider": self.active_provider,
+                "model": self._active_model,
+                "language": self._language,
+                "input_sample_rate": 24000,
+                "output_sample_rate": 24000,
+                "requires_webrtc_answer": bool(offer),
+                "webrtc_answer_sdp": self._connection.answer_sdp,
+                "continuous": True,
+                "reconnected": True,
+            }
+        )
 
     async def deliver_announcement(self, text: str, **_kwargs: Any) -> bool:
         if not self.is_active:

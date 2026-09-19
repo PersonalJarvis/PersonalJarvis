@@ -191,8 +191,9 @@ tomlkit>=0.12
 # F-FRIENDS [F0+F1] — async SQLite + Telegram channel
 aiosqlite>=0.21
 # Document text extraction + Agentic IDE drop analysis (pure-Python, lazy-imported)
-# >=6.15: PYSEC-2026-3655/-3656 are fixed there (pip-audit gate).
-pypdf>=6.15
+# >=6.16.1: PYSEC-2026-3910/-3911/-3913 are fixed there (pip-audit gate);
+# 6.15 closed PYSEC-2026-3655/-3656 before it.
+pypdf>=6.16.1
 python-telegram-bot>=22,<23
 
 # Portable IANA timezone data for calendar routines.

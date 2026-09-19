@@ -116,6 +116,40 @@ def _agentic_ide_history_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
 
 
 @pytest.fixture(autouse=True)
+def _macos_shell_registration_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
+    """Keep every suite away from the developer's real macOS shell databases.
+
+    On a Mac the bundle suites build real ``Personal Jarvis.app`` bundles under
+    pytest's temp directory, and ``ensure_macos_app_bundle`` then registered
+    each one with the REAL LaunchServices database: one developer machine had
+    collected some eighty temp bundles under the product's bundle id, every one
+    a candidate for "Open With" and ``open -b``. The same call now also keeps
+    the login item aimed at the bundle, which would point the developer's real
+    LaunchAgent at a temp directory. Root conftest for the same reason as the
+    history redirect above: the leak comes in through whichever suite nobody
+    thought of. Suites that test these calls themselves patch on top of this.
+    """
+    import jarvis.autostart.macos as autostart_macos
+    import jarvis.setup.macos_app_bundle as mab
+    import jarvis.setup.macos_search_index as search_index
+
+    agents = tmp_path_factory.mktemp("launch-agents")
+    monkeypatch.setattr(autostart_macos, "_agents_dir", lambda: agents)
+    # The label is the product's own, so a real ``launchctl load`` of a test
+    # plist collides with — or, through RunAtLoad, starts — the installed app.
+    monkeypatch.setattr(autostart_macos, "_launchctl", lambda *_argv: True)
+    monkeypatch.setattr(mab, "_LSREGISTER", str(agents / "no-lsregister"))
+    monkeypatch.setattr(search_index, "_MDIMPORT", str(agents / "no-mdimport"))
+    # ``defaults write com.apple.dock`` + ``killall Dock`` on a developer's Mac.
+    import jarvis.setup.macos_dock as macos_dock
+
+    monkeypatch.setattr(macos_dock, "_DEFAULTS", str(agents / "no-defaults"))
+    monkeypatch.setattr(macos_dock, "_KILLALL", str(agents / "no-killall"))
+    monkeypatch.setattr(macos_dock, "_marker_path", lambda: agents / "macos-dock-pinned")
+    yield agents
+
+
+@pytest.fixture(autouse=True)
 def _pricing_feed_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
     """Keep cost tracking's provider-feed refresh off the network and off the
     developer's real ``data/model_catalog_cache.json``.

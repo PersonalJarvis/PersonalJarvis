@@ -76,6 +76,7 @@ class LiveSession:
     generation: str = ""
     closed: bool = False
     stderr_tail: str = ""
+    window_upgrade_pending: bool = False
 
     async def send(self, value: dict[str, Any]) -> None:
         data = (json.dumps(value, ensure_ascii=True) + "\n").encode()
@@ -166,7 +167,7 @@ class LiveSession:
                 elif kind == "state":
                     self.state = event
                     self.publish(event)
-                elif kind in {"frame", "dialog", "download", "warning", "step"}:
+                elif kind in {"frame", "pointer", "dialog", "download", "warning", "step"}:
                     self.publish(event)
                 elif kind == "fatal":
                     raise RuntimeError(event.get("error", "Browser worker failed"))
@@ -259,7 +260,7 @@ class LiveSessions:
 
         self.idle_tasks[session.agent_id] = asyncio.create_task(expire())
 
-    async def ensure(self, agent: Any) -> LiveSession:
+    async def ensure(self, agent: Any, *, window_view: bool = False) -> LiveSession:
         agent_id = agent.agent_id
         idle = self.idle_tasks.pop(agent_id, None)
         if idle:
@@ -267,7 +268,17 @@ class LiveSessions:
         async with self.locks.setdefault(agent_id, asyncio.Lock()):
             old = self.sessions.get(agent_id)
             if old and not old.closed:
-                return old
+                upgrade = (
+                    window_view
+                    and os.name == "nt"
+                    and getattr(agent, "browser_mode", "own") == "own"
+                    and not old.state.get("full_window", False)
+                )
+                if not upgrade:
+                    return old
+                if old.run_lock.locked() or old.control_owner:
+                    old.window_upgrade_pending = True
+                    return old
             if old:
                 await old.close()
             if not install.is_installed(self.data_dir):
@@ -297,6 +308,7 @@ class LiveSessions:
                     "ensure",
                     {
                         "profile_dir": str(folder / "browser-profile"),
+                        "window_view": window_view,
                         "workspace": str(folder / "workspace"),
                         "executable": str(install.browser_executable(self.data_dir)),
                         "icon_path": str(
@@ -310,6 +322,16 @@ class LiveSessions:
                     timeout=90,
                 )
                 session.generation = result["generation"]
+                session.state = {
+                    "kind": "state",
+                    "manual": False,
+                    "running": False,
+                    "url": "",
+                    "target": "",
+                    "tabs": [],
+                    **session.state,
+                    "full_window": bool(result.get("full_window")),
+                }
                 self.sessions[agent_id] = session
                 self.release_when_idle(session)
                 return session
@@ -318,7 +340,7 @@ class LiveSessions:
                 raise
 
     async def subscribe(self, agent: Any) -> tuple[LiveSession, LiveUpdates]:
-        session = await self.ensure(agent)
+        session = await self.ensure(agent, window_view=True)
         queue = LiveUpdates()
         session.subscribers.add(queue)
         try:
@@ -338,6 +360,8 @@ class LiveSessions:
             if session.control_owner == owner:
                 await session.command("takeover", {"enabled": False})
                 session.control_owner = None
+                if session.window_upgrade_pending:
+                    session.publish({"kind": "disconnected"})
             if not session.subscribers:
                 await session.command("subscribe", {"enabled": False})
                 self.release_when_idle(session)
@@ -361,6 +385,8 @@ class LiveSessions:
                         session.publish({"kind": "control", "ok": True, "manual": False})
                     raise
                 session.control_owner = owner if args.get("enabled") else None
+                if not session.control_owner and session.window_upgrade_pending:
+                    session.publish({"kind": "disconnected"})
                 session.publish({"kind": "control", "ok": True, **result})
                 return result
         if op != "cancel" and session.control_owner != owner:
@@ -417,6 +443,8 @@ class LiveSessions:
                 session.rpc_context = None
                 session.active_trace = ""
                 session.active_chat = ""
+                if session.window_upgrade_pending:
+                    session.publish({"kind": "disconnected"})
                 if not session.subscribers:
                     self.release_when_idle(session)
 

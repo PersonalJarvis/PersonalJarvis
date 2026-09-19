@@ -12,7 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
-async def verify(model: str, provider_name: str = "openai") -> dict:
+async def verify(model: str, provider_name: str = "openai", reconnect: bool = False) -> dict:
     from jarvis.core.config import get_secret_any
     from jarvis.core.protocols import SupervisorToolDescriptor, ToolResult
     from jarvis.core.runtime_refs import set_supervisor_tool_gateway
@@ -53,8 +53,11 @@ async def verify(model: str, provider_name: str = "openai") -> dict:
     audio_bytes = 0
     transcripts = []
     heard = asyncio.Event()
+    recovered = asyncio.Event()
     ready_at = 0.0
     first_audio = None
+    timed_out = False
+    statuses = []
 
     async def audio(data):
         nonlocal audio_bytes, first_audio
@@ -64,15 +67,25 @@ async def verify(model: str, provider_name: str = "openai") -> dict:
         if (
             gateway.calls
             and (provider_name != "openai" or len(session._completed) >= 2)
-            and re.search(r"test.{0,30}succeed", "".join(transcripts), re.IGNORECASE)
+            and re.search(
+                r"(?:test|probe).{0,40}(?:succeed|success)", "".join(transcripts), re.IGNORECASE
+            )
         ):
             heard.set()
 
     async def control(event):
+        if event.get("type") not in {"transcript", "live_usage"}:
+            statuses.append(event.get("type"))
+        if event.get("type") == "audio_ready" and event.get("reconnected"):
+            recovered.set()
         if event.get("type") == "transcript" and event.get("role") == "assistant":
             transcripts.append(event.get("fragment", event.get("text", "")))
-            if gateway.calls and audio_bytes and re.search(
-                r"test.{0,30}succeed", "".join(transcripts), re.IGNORECASE
+            if (
+                gateway.calls
+                and audio_bytes
+                and re.search(
+                    r"(?:test|probe).{0,40}(?:succeed|success)", "".join(transcripts), re.IGNORECASE
+                )
             ):
                 heard.set()
 
@@ -119,6 +132,25 @@ async def verify(model: str, provider_name: str = "openai") -> dict:
             )
             await asyncio.wait_for(heard.wait(), timeout=45)
             await asyncio.sleep(1)
+            if reconnect:
+                # Fault only this synthetic connection, never the user's running call.
+                socket = getattr(session._connection, "socket", None)
+                if socket is None:
+                    socket = session._connection._session._ws
+                transcripts.clear()
+                heard.clear()
+                socket.transport.abort()
+                await asyncio.wait_for(recovered.wait(), 35)
+                await session.handle_control(
+                    {
+                        "type": "text_input",
+                        "text": "Repeat the last tool result without calling tools.",
+                    }
+                )
+                await asyncio.wait_for(heard.wait(), 45)
+                await asyncio.sleep(1)
+        except TimeoutError:
+            timed_out = True
         finally:
             if pump is not None:
                 pump.cancel()
@@ -132,6 +164,10 @@ async def verify(model: str, provider_name: str = "openai") -> dict:
             "voice_seconds": session._voice_seconds,
             "transcript": "".join(transcripts),
             "verified_result_spoken": heard.is_set(),
+            "reconnected": recovered.is_set(),
+            "timed_out": timed_out,
+            "completion_events": len(session._completed),
+            "statuses": statuses,
             "failed": session.failed,
         }
 
@@ -144,10 +180,13 @@ def main() -> None:
     )
     parser.add_argument("--report", type=Path)
     parser.add_argument("--provider", choices=("openai", "gemini"), default="openai")
+    parser.add_argument(
+        "--reconnect", action="store_true", help="Also fault and restore the synthetic connection"
+    )
     args = parser.parse_args()
     if not args.run_live:
         parser.error("Pass --run-live to run this billed, synthetic API test.")
-    result = asyncio.run(verify(args.model, args.provider))
+    result = asyncio.run(verify(args.model, args.provider, args.reconnect))
     encoded = json.dumps(result, indent=2)
     print(encoded)
     if args.report:

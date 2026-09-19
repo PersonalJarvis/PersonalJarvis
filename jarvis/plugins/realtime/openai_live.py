@@ -37,6 +37,7 @@ class OpenAILiveProvider:
     continuous_conversation = True
     browser_audio = True
     requires_webrtc_offer = True
+    handshake_budget_s = 60.0
     implicit_usage_fallback_allowed = False
     input_sample_rate = 24000
     output_sample_rate = 24000

@@ -10,6 +10,7 @@ import { BrandedSelect } from "@/components/ui/select";
 import type { SocietyAgent } from "../data";
 import { useBrowserInstallStatus } from "../cardData";
 import { useBrowserView } from "./useBrowserView";
+import { BrowserPointer } from "./BrowserPointer";
 import "./agentCard.css";
 
 export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
@@ -91,6 +92,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
               control("key", { key: [...modifiers, e.key].join("+") });
             }
           }} />
+        <BrowserPointer pointer={state.ready && state.connected && !state.manual ? state.pointer : undefined} />
         {!state.ready && <div className="absolute inset-0 grid place-items-center bg-muted p-3 text-center text-xs text-muted-foreground">
           {install.data?.detail || status}
           {install.data?.running && <span>{install.data.percent}%</span>}

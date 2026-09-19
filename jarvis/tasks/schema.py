@@ -378,8 +378,8 @@ class TaskSpec(BaseModel):
     created_by: str = "user"  # "user" | "skill" | "brain"
     tags: tuple[str, ...] = Field(default_factory=tuple)
     # When-Then notify: a spoken confirmation emitted after the action's
-    # terminal outcome, action-agnostic (the `harness_dispatch`/CU path does not
-    # self-announce, unlike `agent`). Published as AnnouncementRequested(
+    # terminal outcome, action-agnostic (no action self-announces; RUB-95).
+    # Published as AnnouncementRequested(
     # kind="subagent"), which punches through the voice hangup gate and is
     # mirrored to browser tabs — so "let me know" works post-hangup and headless.
     # Both support {field} placeholders interpolated from the triggering event

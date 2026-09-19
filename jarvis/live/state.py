@@ -129,3 +129,37 @@ class LiveLedger:
         return [
             dict(zip(("role", "delta", "start_ms", "end_ms"), row, strict=True)) for row in rows
         ]
+
+    def recovery_state(self, session: str) -> tuple[bool, list[dict]]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT tool, result, status FROM live_operations WHERE session_id=? "
+                "ORDER BY updated",
+                (session,),
+            ).fetchall()
+        receipts = []
+        for tool, raw, status in rows:
+            if status != "finished" or not raw:
+                return False, []
+            result = json.loads(raw)
+            if result.get("confirmation_required") or result.get("blocked"):
+                continue
+            if result.get("status") in {
+                "superseded",
+                "voice_closed_before_execution",
+                "voice_closed_before_confirmation",
+                "cancelled",
+            }:
+                continue
+            if result.get("success") is False or result.get("verified") is False:
+                return False, []
+            if result.get("success") is True:
+                receipts.append(
+                    {
+                        "tool": tool,
+                        "success": True,
+                        "output": str(result.get("output", ""))[:200],
+                        "superseded": bool(result.get("superseded", False)),
+                    }
+                )
+        return True, receipts[-8:]

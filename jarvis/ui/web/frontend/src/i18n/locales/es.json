@@ -2207,6 +2207,10 @@
         "title": "Control de entrada",
         "description": "Necesario para que Computer-Use envíe eventos de ratón y teclado."
       },
+      "automation": {
+        "title": "Automatización (Música y Spotify)",
+        "description": "Permite a Jarvis bajar el volumen de Música y Spotify mientras dictas y subirlo después. Se pregunta una vez por reproductor; un reproductor cerrado se abre brevemente en segundo plano para el diálogo."
+      },
       "credential_store": {
         "title": "Llavero (claves API)",
         "description": "Guarda tus claves API cifradas en el Llavero de macOS en lugar de un archivo de texto plano — ese es el aviso del Llavero que ves al iniciar la app. Tus claves se quedan en tu Mac y nunca se envían a ningún sitio."
@@ -2224,12 +2228,28 @@
       "computer_use": "Computer-Use",
       "global_hotkeys": "Atajos globales",
       "window_control": "Control de ventanas",
+      "audio_ducking": "Bajar la música al dictar",
       "api_keys": "Almacenamiento seguro de claves API"
     },
     "restart_deferred": "Los permisos recién concedidos se activan con el reinicio automático al final de la configuración; no hay nada que hacer ahora.",
+    "setup_all": "Configurar todo",
+    "setup_all_hint": "Un clic te guía por todos los permisos que faltan y los aplica al final.",
+    "setup_running": "Paso {0} de {1}: {2}",
+    "setup_wait_prompt": "Responde al diálogo de macOS — continúa solo.",
+    "setup_wait_settings": "Activa Personal Jarvis en el panel de Ajustes del Sistema que se acaba de abrir y vuelve — continúa solo.",
+    "setup_cancel": "Detener",
+    "setup_restarting": "Listo — Personal Jarvis se reinicia una vez para aplicar el nuevo acceso.",
+    "setup_timeout": "Configuración en pausa: un permiso no se concedió a tiempo. Usa «Configurar todo» de nuevo cuando quieras.",
     "ask_again": "Preguntar de nuevo",
     "stale_grant_hint": "macOS ya no volverá a preguntar por este acceso. Si Ajustes del Sistema ya lo muestra activado, ese registro pertenece a una versión anterior de la app: pulsa «Preguntar de nuevo» y concede el acceso otra vez.",
     "identity_reset": "Desde la última reconstrucción, macOS considera Personal Jarvis una app nueva y descartó todos los accesos concedidos. Vuelve a concederlos una vez; a partir de ahí se mantendrán."
+  },
+  "settings_hub": {
+    "subtitle": "Todo sobre ti, tus claves y esta aplicación, en un lugar.",
+    "search_placeholder": "Buscar ajustes...",
+    "group_general": "General",
+    "group_system": "Sistema",
+    "group_activity": "Actividad"
   },
   "settings_view": {
     "silence_window": {

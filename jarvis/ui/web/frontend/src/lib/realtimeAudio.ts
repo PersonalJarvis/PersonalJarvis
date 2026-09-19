@@ -385,6 +385,7 @@ export class RealtimeAudioClient {
   private startupPrerollBytes = 0;
   private finalized: (() => void) | null = null;
   private serverClosed = false;
+  private reconnecting = false;
 
   constructor(
     private cb: RealtimeCallbacks = {},
@@ -394,13 +395,17 @@ export class RealtimeAudioClient {
   }
 
   private mediaFrame = 0;
+  private remoteSource: MediaStreamAudioSourceNode | null = null;
   private lastPlaybackActive = false;
 
   private observeRemoteAudio(stream: MediaStream): void {
     if (!this.ctx) return;
+    cancelAnimationFrame(this.mediaFrame);
+    this.remoteSource?.disconnect();
     const analyser = this.ctx.createAnalyser();
     analyser.fftSize = 256;
-    this.ctx.createMediaStreamSource(stream).connect(analyser);
+    this.remoteSource = this.ctx.createMediaStreamSource(stream);
+    this.remoteSource.connect(analyser);
     const samples = new Float32Array(analyser.fftSize);
     const measure = () => {
       analyser.getFloatTimeDomainData(samples);
@@ -430,6 +435,7 @@ export class RealtimeAudioClient {
   private async open(): Promise<void> {
     this.intentionalClose = false;
     this.serverClosed = false;
+    this.reconnecting = false;
     try {
       const supportIssue = browserRealtimeSupportIssue();
       if (supportIssue) throw new RealtimeAudioSupportError(supportIssue);
@@ -518,7 +524,7 @@ export class RealtimeAudioClient {
           if (this.options.browserAudio && this.options.requiresWebRtcOffer) return;
           if (this.ready && this.ws?.readyState === WebSocket.OPEN) {
             this.ws.send(data);
-          } else if (!this.ready) {
+          } else if (!this.ready && !this.reconnecting) {
             this.retainStartupFrame(data);
           }
           return;
@@ -598,6 +604,21 @@ export class RealtimeAudioClient {
             Boolean(message.is_final),
             typeof message.role === "string" ? message.role : "user",
           );
+        } else if (type === "reconnecting") {
+          this.reconnecting = true;
+          this.ready = false;
+          this.startupPreroll = [];
+          this.startupPrerollBytes = 0;
+          this.playbackNode?.port.postMessage({ type: "flush" });
+        } else if (type === "reconnect_offer") {
+          void this.webRtcTransport.createOffer(this.stream ?? undefined).then(sdp => {
+            if (sdp && socket.readyState === WebSocket.OPEN && !this.intentionalClose) {
+              socket.send(JSON.stringify({ type: "reconnect_offer", request_id: message.request_id, sdp }));
+            }
+          }).catch(error => {
+            console.warn("Voice reconnection offer failed", error);
+            this.cb.onStatus?.("provider_error", { error: "Voice reconnection failed." });
+          });
         } else if (type === "audio_stopping") {
           this.webRtcTransport.muteOutput();
           this.stream?.getAudioTracks().forEach(track => { track.enabled = false; });
@@ -613,6 +634,7 @@ export class RealtimeAudioClient {
           void this.finishAudioReady(message)
             .then(() => {
               this.ready = true;
+              this.reconnecting = false;
               this.flushStartupPreroll();
               if (!settled) {
                 settled = true;
@@ -771,6 +793,8 @@ export class RealtimeAudioClient {
 
   private async teardown(sendStop: boolean): Promise<void> {
     cancelAnimationFrame(this.mediaFrame);
+    this.remoteSource?.disconnect();
+    this.remoteSource = null;
     const socket = this.ws;
     this.ws = null;
     this.ready = false;

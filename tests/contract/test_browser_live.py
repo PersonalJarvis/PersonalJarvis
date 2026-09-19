@@ -33,6 +33,21 @@ def test_native_mouse_routes_text_to_the_webpage_widget(tmp_path):
     assert '"badge": true' in result.stdout
 
 
+def test_actual_browser_click_emits_pointer_telemetry(tmp_path):
+    import subprocess
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+
+    result = subprocess.run(
+        [os.environ["JARVIS_BROWSER_TEST_PYTHON"],
+         str(Path(__file__).with_name("browser_pointer_probe.py")),
+         os.environ["JARVIS_BROWSER_TEST_EXECUTABLE"], str(tmp_path / "profile")],
+        env=install.worker_env(tmp_path), capture_output=True, encoding="utf-8",
+        timeout=40, creationflags=NO_WINDOW_CREATIONFLAGS,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '"clicked": true' in result.stdout
+
+
 class PageHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/download":
@@ -125,6 +140,21 @@ async def test_second_viewer_receives_static_page_without_new_browser(live):
             pass  # State can precede the first image for a new viewer.
         assert len(live.sessions) == 1
         assert len(session.subscribers) == 2
+    finally:
+        await live.close()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native window upgrade is Windows-only")
+async def test_viewer_replaces_idle_legacy_page_session(live):
+    agent = SimpleNamespace(agent_id="upgrade", model="", browser_allowed_domains=[])
+    try:
+        old = await live.ensure(agent)
+        old.state["full_window"] = False  # Model a pre-native/locked-desktop session.
+        current, _ = await live.subscribe(agent)
+        assert current is not old
+        assert old.closed
+        assert current.state["full_window"] is True
+        assert len(live.sessions) == 1
     finally:
         await live.close()
 

@@ -40,6 +40,15 @@ from jarvis.browser_voice.audio import (
     EnergyEndpointer,
     Resampler,
 )
+from jarvis.core.events import (
+    ResponseGenerated,
+    SpeechSpoken,
+    TranscriptionUpdate,
+    VoiceSessionEnded,
+    VoiceSessionStarted,
+    VoiceTurnCompleted,
+    VoiceTurnStarted,
+)
 from jarvis.sessions.constants import HANGUP_CLIENT_STOP
 
 log = logging.getLogger("jarvis.browser_voice")
@@ -105,6 +114,14 @@ class BrowserVoiceSession:
 
         self._started_at = time.time()
         self._turns = 0
+        # Bus mirror so a browser-mic turn shows up where every other spoken
+        # turn does: the voice transcript (home store), the session record
+        # and — via VoiceChatMirror — the Jarvis agent chat. The socket's own
+        # control frames stay the transport; these events are the record.
+        # Best-effort throughout: a missing bus or a failed publish must never
+        # break the audio path.
+        self._bus_session_started = False
+        self._turn_seq = 0
         # Master-volume limiter for this socket, built on first use so importing
         # browser_voice still costs no numpy. Stateful across chunks, so an
         # utterance streamed as many frames is limited as one continuous signal
@@ -194,12 +211,41 @@ class BrowserVoiceSession:
         if exc is not None:
             log.warning("browser_voice[%s] turn task raised", self.session_id, exc_info=exc)
 
+    # -- bus mirror ------------------------------------------------------
+
+    async def _publish(self, event: Any) -> None:
+        """Publish one record event, never raising into the audio path."""
+        bus = self._bus
+        if bus is None:
+            return
+        try:
+            await bus.publish(event)
+        except Exception:  # noqa: BLE001 — record-keeping must not break audio
+            log.debug("browser_voice[%s] bus publish failed", self.session_id, exc_info=True)
+
+    async def _ensure_bus_session(self) -> None:
+        """Open the record session once per connection (idempotent)."""
+        if self._bus_session_started or self._bus is None:
+            return
+        self._bus_session_started = True
+        await self._publish(
+            VoiceSessionStarted(
+                session_id=self.session_id,
+                wake_keyword="browser",
+                language=self._lang_short(),
+                source_layer="browser_voice",
+            )
+        )
+
     # -- turn loop ---------------------------------------------------------
 
     async def _run_turn(self, utterance_pcm16: bytes) -> None:
         if self._ended:
             return
         self._processing = True
+        turn_id: str | None = None
+        user_text = ""
+        full_reply = ""
         try:
             transcript = await self._transcribe(utterance_pcm16)
             text = (transcript or "").strip()
@@ -210,8 +256,24 @@ class BrowserVoiceSession:
                 return
             log.info("browser_voice[%s] user: %s", self.session_id, text)
             await self._send_json({"type": "transcript", "text": text, "is_final": True})
+            user_text = text
+            await self._ensure_bus_session()
+            self._turn_seq += 1
+            turn_id = uuid4().hex
+            await self._publish(
+                VoiceTurnStarted(
+                    session_id=self.session_id,
+                    turn_id=turn_id,
+                    turn_index=self._turn_seq,
+                    source_layer="browser_voice",
+                )
+            )
+            await self._publish(
+                TranscriptionUpdate(text=text, is_final=True, source_layer="browser_voice")
+            )
 
             response = await self._think(text)
+            full_reply = response or ""
             scrubbed = scrub_for_voice(response, language=self._lang_short())
             if is_harmless_scrub_residue(scrubbed):
                 # The whole reply was filler / an honorific, so the residue
@@ -224,10 +286,27 @@ class BrowserVoiceSession:
                     scrubbed.actions,
                     response[:80],
                 )
+                await self._complete_bus_turn(turn_id, user_text, "")
                 return
             spoken = scrubbed.cleaned
             if not spoken.strip():
+                await self._complete_bus_turn(turn_id, user_text, "")
                 return
+            await self._publish(
+                ResponseGenerated(
+                    text=full_reply,
+                    language=self._lang_short(),
+                    source_layer="browser_voice",
+                )
+            )
+            await self._publish(
+                SpeechSpoken(
+                    text=spoken,
+                    language=self._lang_short(),
+                    spoken_kind="reply",
+                    source_layer="browser_voice",
+                )
+            )
             self._tts_task = asyncio.create_task(self._speak(spoken))
             try:
                 await self._tts_task
@@ -236,10 +315,31 @@ class BrowserVoiceSession:
             # A turn is "complete" once the response was (at least partly) spoken,
             # mirroring the telephony session's count semantics.
             self._turns += 1
+            await self._complete_bus_turn(turn_id, user_text, full_reply)
         except Exception:  # noqa: BLE001 — a turn failure must never kill the session
             log.warning("browser_voice[%s] turn failed", self.session_id, exc_info=True)
+            if turn_id is not None:
+                await self._complete_bus_turn(turn_id, user_text, "")
         finally:
             self._processing = False
+
+    async def _complete_bus_turn(
+        self, turn_id: str | None, user_text: str, jarvis_text: str
+    ) -> None:
+        """Close the record turn so the transcript and the chat see it."""
+        if turn_id is None or self._bus is None:
+            return
+        await self._publish(
+            VoiceTurnCompleted(
+                session_id=self.session_id,
+                turn_id=turn_id,
+                user_text=user_text,
+                user_lang=self._lang_short(),
+                jarvis_text=jarvis_text,
+                jarvis_lang=self._lang_short(),
+                source_layer="browser_voice",
+            )
+        )
 
     async def _transcribe(self, pcm16: bytes) -> str:
         result = await self._stt.transcribe_pcm(pcm16, sample_rate=STT_SAMPLE_RATE)
@@ -403,6 +503,16 @@ class BrowserVoiceSession:
             self._turns,
             self.duration_s,
         )
+        if self._bus_session_started:
+            await self._publish(
+                VoiceSessionEnded(
+                    session_id=self.session_id,
+                    hangup_reason=reason,
+                    turn_count=self._turns,
+                    duration_s=self.duration_s,
+                    source_layer="browser_voice",
+                )
+            )
 
     def _lang_short(self) -> str:
         # scrub_for_voice only knows the runtime locales de/en/es (AP-11, regex

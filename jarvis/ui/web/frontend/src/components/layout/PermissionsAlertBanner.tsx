@@ -9,7 +9,9 @@ import {
   Mic,
   Monitor,
   MousePointer2,
+  Music,
   ShieldAlert,
+  Wand2,
 } from "lucide-react";
 import { clsx } from "clsx";
 
@@ -21,6 +23,7 @@ import {
   type PermissionId,
   type PermissionItem,
 } from "@/hooks/usePermissions";
+import { SetupAllControl } from "@/views/settings/PermissionsPanel";
 
 const ICONS = {
   microphone: Mic,
@@ -28,6 +31,7 @@ const ICONS = {
   accessibility: Accessibility,
   input_monitoring: Keyboard,
   event_posting: MousePointer2,
+  automation: Music,
   credential_store: KeyRound,
 } satisfies Record<PermissionId, typeof Mic>;
 
@@ -60,7 +64,17 @@ export function PermissionsAlertBanner() {
   const pushToast = useEventStore((state) => state.pushToast);
   const [collapsed, setCollapsed] = useState(false);
   const [restarting, setRestarting] = useState(false);
-  const { snapshot, pendingId, request, openSettings, reset } = usePermissions();
+  const {
+    snapshot,
+    pendingId,
+    request,
+    openSettings,
+    reset,
+    setupAll,
+    cancelSetup,
+    setupProgress,
+    setupNeeded,
+  } = usePermissions();
 
   if (!snapshot || snapshot.platform !== "darwin" || snapshot.headless) return null;
 
@@ -80,6 +94,25 @@ export function PermissionsAlertBanner() {
       await action();
     } catch (exc) {
       pushToast("error", exc instanceof Error ? exc.message : String(exc));
+    }
+  }
+
+  async function runSetup() {
+    try {
+      const outcome = await setupAll({ autoRestart: true });
+      if (outcome === "restart") {
+        pushToast("info", t("permissions.setup_restarting"));
+      } else if (outcome === "timeout") {
+        pushToast("warning", t("permissions.setup_timeout"));
+      }
+    } catch (exc) {
+      const message = exc instanceof Error ? exc.message : String(exc);
+      pushToast(
+        "error",
+        message === "restart-missions-running"
+          ? t("topbar.restart_missions_running")
+          : message,
+      );
     }
   }
 
@@ -131,21 +164,38 @@ export function PermissionsAlertBanner() {
             {t(restarting ? "permissions.restarting" : "permissions.restart_now")}
           </Button>
         ) : (
-          <Button
-            size="sm"
-            variant="outline"
-            aria-expanded={!collapsed}
-            onClick={() => setCollapsed((value) => !value)}
-          >
-            {collapsed ? (
-              <ChevronDown className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-            ) : (
-              <ChevronUp className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+          <>
+            {/* The whole list in one click; the per-row buttons below stay
+                for anyone who wants to pick. Hidden while the app runs
+                outside its bundle — a grant would land on the wrong identity. */}
+            {setupNeeded && snapshot.app_identity.stable !== false && !setupProgress && (
+              <Button size="sm" data-testid="permissions-setup-all" onClick={() => void runSetup()}>
+                <Wand2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                {t("permissions.setup_all")}
+              </Button>
             )}
-            {t(collapsed ? "permissions.banner.expand" : "permissions.banner.collapse")}
-          </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              aria-expanded={!collapsed}
+              onClick={() => setCollapsed((value) => !value)}
+            >
+              {collapsed ? (
+                <ChevronDown className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              ) : (
+                <ChevronUp className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              )}
+              {t(collapsed ? "permissions.banner.expand" : "permissions.banner.collapse")}
+            </Button>
+          </>
         )}
       </div>
+
+      {!restartOnly && setupProgress && (
+        <div className="px-4 pb-3">
+          <SetupAllControl progress={setupProgress} onStart={() => undefined} onCancel={cancelSetup} />
+        </div>
+      )}
 
       {!restartOnly && !collapsed && (
         <div className="space-y-stack px-4 pb-3">

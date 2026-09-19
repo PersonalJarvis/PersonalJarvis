@@ -57,7 +57,7 @@ async def close_all(reason: str = "hotkey") -> None:
     await asyncio.gather(*(session.end(reason=reason) for session in active()))
 
 
-async def run_browser_call(bus: Any, hangup: asyncio.Event) -> str:
+async def run_browser_call(bus: Any, hangup: asyncio.Event, *, timeout_s: float = 45.0) -> str:
     """Wake hands media to the WebView; the desktop never feeds speaker echo back."""
     from jarvis.core.events import BrowserVoiceRequested
 
@@ -78,7 +78,7 @@ async def run_browser_call(bus: Any, hangup: asyncio.Event) -> str:
     await bus.publish(BrowserVoiceRequested(action="start"))
     # UI permission and device setup can take time. No background billed connection.
     try:
-        async with asyncio.timeout(45):
+        async with asyncio.timeout(timeout_s):
             while not active() and not hangup.is_set():
                 await wait_change()
         while active() and not hangup.is_set():

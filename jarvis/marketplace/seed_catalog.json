@@ -259,14 +259,32 @@
     {
       "id": "discord",
       "display_name": "Discord",
-      "description": "Chat with Jarvis from Discord (your bot)",
+      "description": "Chat with Jarvis from Discord — browser sign-in, your bot",
       "category": "Messaging",
       "logo_slug": "discord",
       "logo_color": "5865F2",
       "featured": false,
-      "longevity": "permanent",
-      "longevity_note": "A bot token stays valid until you reset it in the Discord developer portal.",
+      "longevity": "self_renewing",
+      "longevity_note": "OAuth tokens refresh automatically. A pasted bot token stays valid until you reset it in the Discord developer portal.",
+      "oauth_client_family": "discord",
+      "browser_flow": "publisher_pkce",
       "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://discord.com/oauth2/authorize",
+        "token_url": "https://discord.com/api/oauth2/token",
+        "revocation_url": "https://discord.com/api/oauth2/token/revoke",
+        "client_id": "REPLACE_WITH_JARVIS_DISCORD_APP_CLIENT_ID",
+        "callback_port": 3129,
+        "scopes": [
+          "identify",
+          "guilds",
+          "guilds.members.read",
+          "connections"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "fallback_auth": {
         "mode": "pat_paste",
         "auth_scheme": "bot",
         "token_creation_url": "https://discord.com/developers/applications",
@@ -274,7 +292,7 @@
         "validation_endpoint": "https://discord.com/api/v10/users/@me",
         "instruction_md": "1. Open https://discord.com/developers/applications and click 'New Application'.\n2. Go to the 'Bot' page, click 'Reset Token', and copy it (shown once).\n3. Under 'Privileged Gateway Intents', enable 'Message Content Intent' so the bot can read message text.\n4. Invite the bot to your server: OAuth2 -> URL Generator -> scope 'bot' + the permissions you want (View Channels, Read Message History, Send Messages), open the link, pick your server, Authorize.\n5. Paste the bot token below, plus your numeric Discord user id (Developer Mode -> right-click yourself -> Copy User ID) so only you can command the bot."
       },
-      "post_install_hint_md": "This enables the Discord channel — message your bot to talk to Jarvis. Outbound replies pass through the voice scrubber and your allowlist."
+      "post_install_hint_md": "Sign in with Discord in the browser to link your identity. To let the bot receive and answer messages, also paste a bot token via the token fallback — the gateway still runs on a bot credential, which OAuth alone cannot replace."
     },
     {
       "id": "telegram",

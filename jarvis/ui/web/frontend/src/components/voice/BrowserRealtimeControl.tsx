@@ -201,6 +201,7 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
             (typeof payload.error === "string" ? payload.error.trim() : "") ||
             (typeof payload.reason === "string" ? payload.reason.trim() : "");
           if (status === "audio_ready") {
+            setState("connected");
             const provider =
               typeof payload.provider === "string" ? payload.provider : "";
             if (provider) setEffectiveProvider(provider);
@@ -247,6 +248,9 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
             // The session ended through a voice hang-up command or end_call.
             // Release the microphone and return to idle.
             void stop();
+          } else if (status === "reconnecting") {
+            setState("connecting");
+            setVoice("connecting");
           } else if (status === "thinking") {
             setVoice("thinking");
           } else if (status === "speaking" || status === "listening") {

@@ -297,6 +297,52 @@ def check_computer_use_prereqs(config: Any) -> list[DoctorFinding]:
     return findings
 
 
+def check_macos_spotlight() -> list[DoctorFinding]:
+    """Whether Spotlight can actually find the installed macOS app.
+
+    LaunchServices registration does not put an app into Spotlight's search
+    (BUG-216): the search field answers from the metadata store, which can be
+    switched off or stalled machine-wide. Judged only on what macOS shows — the
+    volume's indexing switch, and whether a requested import ever appears.
+    """
+    import sys as _sys
+
+    if _sys.platform != "darwin":
+        return []
+    from jarvis.setup.macos_app_bundle import macos_app_bundle_path
+    from jarvis.setup.macos_search_index import (
+        STALLED_INDEX_REPAIR_COMMAND,
+        spotlight_volume_issue,
+        wait_until_indexed,
+    )
+
+    bundle = macos_app_bundle_path()
+    if not bundle.exists():
+        return []
+    issue = spotlight_volume_issue(bundle)
+    if issue is not None:
+        return [DoctorFinding(
+            "macos-spotlight", "warn",
+            f"Spotlight cannot find {bundle.name}: {issue.reason} on {issue.volume}",
+            hint=f"{issue.repair_command}  (admin password; reindexing takes a while)",
+        )]
+    indexed = wait_until_indexed(bundle)
+    if indexed is None:
+        return [DoctorFinding(
+            "macos-spotlight", "info", "Spotlight could not be queried for the app bundle",
+        )]
+    if not indexed:
+        return [DoctorFinding(
+            "macos-spotlight", "warn",
+            f"{bundle.name} is installed, but Spotlight did not index it after an "
+            "import request — the Spotlight index looks stalled, so other newly "
+            "installed apps are missing from search too",
+            hint=f"{STALLED_INDEX_REPAIR_COMMAND}  (admin password; rebuilds the whole "
+                 "index, which can take hours)",
+        )]
+    return [DoctorFinding("macos-spotlight", "ok", f"Spotlight finds {bundle.name}")]
+
+
 def run_doctor(config: Any) -> list[DoctorFinding]:
     """Run every completeness check and return a flat, ordered finding list.
 
@@ -310,6 +356,7 @@ def run_doctor(config: Any) -> list[DoctorFinding]:
         ("subagent-backend", lambda: check_subagent_backend()),
         ("brain-provider", lambda: check_brain_provider(config)),
         ("computer-use", lambda: check_computer_use_prereqs(config)),
+        ("macos-spotlight", lambda: check_macos_spotlight()),
     )
     for category, fn in checks:
         try:

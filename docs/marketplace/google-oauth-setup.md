@@ -1,5 +1,12 @@
 # OAuth app setup for the Asana, Gmail, Drive, Calendar and YouTube Music plugins
 
+> Standard notice (see `browser-auth-standard.md`): the product standard is
+> that the PROJECT provisions the shared OAuth client and the user only
+> clicks Connect. That publisher registration is still open (tracked in
+> `plugin-auth-audit.md`, family `google`/`asana`), so until it lands, the
+> expert path below is the only working route. It is documented honestly as
+> an expert option — not as the standard.
+
 These marketplace plugins use browser-login OAuth against an app **you** register
 once. This is the providers' security model — no one can do it for you, and there
 is no shared Jarvis-owned client: every user connects their *own* Google account
@@ -48,6 +55,17 @@ still set it as an env var / credential-manager secret or edit
    The Desktop client's "secret" is usually not needed (PKCE protects the flow),
    but if Google rejects the token exchange/refresh with `invalid_client` you can
    also supply it (see below) — it is optional.
+6b. **Authorized redirect URIs** → add ALL of these (one client serves six
+    plugins, each with its own loopback port — a missing entry ends the
+    second plugin's Connect with `redirect_uri_mismatch`):
+
+    ```
+    http://127.0.0.1:3120/oauth/callback   (Drive)
+    http://127.0.0.1:3121/oauth/callback   (Gmail)
+    http://127.0.0.1:3122/oauth/callback   (Calendar)
+    http://127.0.0.1:3123/oauth/callback   (YouTube Music)
+    http://127.0.0.1:43891/oauth/callback  (Google Cloud, YouTube Studio)
+    ```
 7. Give the Client ID to Jarvis. **Preferred: store it as a secret** so it
    survives a catalog re-sync (a plain edit of `data/plugin_catalog.json` is
    overwritten the next time the seed catalog is synced — this is how a working

@@ -9,12 +9,114 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [2.2.1] — 2026-09-16
+
+### Fixed
+
+- **Signed installer assets are back.** `pypdf` moved to 6.19.0
+  (PYSEC-2026-3910/-3911/-3913); `pip-audit --strict` had blocked the
+  Sigstore-signed `install.sh` / `install-verify.sh` release assets on every
+  tag since 6.15.0 picked up the advisories.
+- **Quiet failure paths of the macOS signing identity and Automation probe
+  now log** what did not answer (silent-exception ratchet).
+- **Spotlight health is judged by behaviour,** not by the data volume's
+  `mdutil` state alone.
+
+---
+
+## [2.2.0] — 2026-09-16
+
+macOS permissions stop churning: the installed app carries one signing
+identity for the life of the install, the Music/Spotify consent becomes a real
+permission row, and one button sets everything up with a single restart. Around
+it, the chat gains slash commands and durable goals, routines gain event hooks
+and new trigger sources, Jarvis agents get managed live browsers, and the
+Society world, model menus and agent memory mature.
+
+### Added
+
+- **Set up everything (macOS).** One button in onboarding, the Settings card
+  and the app-wide banner walks through every missing permission — native
+  dialogs first, the System Settings switches last — waits for each grant and
+  restarts the app once at the end.
+- **Automation (Music & Spotify) permission row.** The Apple Events consent the
+  ducking scripts need is asked up front (a closed player is opened hidden for
+  the dialog and closed again), recorded, shown, and resettable like every
+  other row — no more prompt in the middle of a dictation.
+- **Chat slash menus, durable commands and goal supervision.** Slash commands
+  with suggestions above the composer, persistent goal controls, native goal
+  supervision, and plugin chips in the typing line.
+- **Routines: human, stream, provider and workflow trigger sources; durable
+  event hooks and authenticated webhooks;** timezone-aware schedules configured
+  through chat; routine details with schedules and execution history on the
+  agent card.
+- **Managed live browsers for Jarvis agents.** The original Chrome window is
+  streamed into agent views, real agent clicks are visualised, Codex browser
+  approvals route through Jarvis, and cold starts stay connected.
+- **Society world.** Authored city and metro workstations, an isolated
+  future-city transit reference, a modern pixel diorama with safe locomotion,
+  a searchable subscription model menu, model switching from chat, read-only
+  conversations between agent pairs, and supervised coding agents inside the
+  current chat.
+- **Agent Mode launch film** rebuilt with native 60 fps motion.
+- **Chat work trace** rebuilt chronologically (RUB-51), tool receipts shown
+  clearly, provider-neutral image/video/audio outputs, native generated images
+  kept as chat artifacts.
+- **Reference-first game art pipeline** for world and character assets.
+- `python -m jarvis --doctor` gains `macos-spotlight`.
+
 ### Changed
 
-- **README: Jarvis Agents instead of Automations, screenshots from the current UI.**
-  The home view, Local models, Skills and the wallpaper gallery were re-shot on
-  the current sidebar. Automations is gone; Jarvis Agents takes that slot with
-  the island. Agentic IDE sits next to it.
+- **macOS app bundle signing.** The source installer creates a per-user
+  code-signing certificate once (macOS asks for the login password that one
+  time) and signs the app with it. Privacy grants are pinned to
+  `identifier + certificate` instead of the per-build hash, so updates and
+  rebuilds keep every grant; the previous ad-hoc path remains the fallback.
+- **Sidebar** simplified with tools and profile navigation; chat history
+  flattened; compact chat titles; Jarvis Voice promoted.
+- **Agent conversations** simplified: completed activity collapses, agent-to-
+  agent messages fold to one line, pair messages align on opposite sides,
+  outbound bubbles lifted, professional written style without emojis.
+- **Plugin catalog** opens compactly with original logos, one row per
+  connected plugin, skills and MCP tabs in the plugin dialog; Slack scopes
+  completed.
+- **Provider status discovery** runs in parallel and is shared; model menus
+  prepare their DOM before opening and persist their data.
+- **README:** Jarvis Agents instead of Automations, screenshots from the
+  current UI.
+
+### Fixed
+
+- **macOS permissions asked again after every rebuild (BUG-217).** The
+  ad-hoc signature made every rebuilt bundle a stranger to TCC; the installer
+  then had to reset every grant. Closed together with the still-open notes of
+  BUG-159/161.
+- **The installed macOS app missing from Spotlight (BUG-216).** The bundle is
+  now imported with `mdimport`; a broken Spotlight store is reported with the
+  repair command, judged by behaviour rather than `mdutil` state alone.
+- **Voice:** cold-start freezes, abandoned native dictation workers, failed
+  dictation warmups, listening after long tool responses, explicit language
+  corrections, archive context in realtime sessions, agent replies retained
+  until playback completes.
+- **Browser agents:** preserved scopes, initialised CLI model catalogs,
+  direct preview input, Jarvis windows marked.
+- **Marketplace:** hardened browser auth, blocked-plugin audit recorded,
+  AMD hardware detected before enabling connect, credential-free public
+  manifests recognised, explicit marketplace tool requests honoured.
+- **Society:** internal query replies stay inside the society channel,
+  specialist mentions route through internal messaging, voice history stays
+  on the voice surface, ordinary agent memory stays personal, routine tool
+  approval delegated to the app, agent cards stay open when dismissing the
+  model menu.
+- **Subscriptions:** accurate Codex and Grok usage, Google login, scoped Grok
+  subscription logins, subscription seats preserved without model catalogs.
+- **Desktop:** startup recovery follows the replacement instance, no freezes
+  during agent review fallback, macOS modifiers recorded even when the
+  WebView swallows keyup, X logo contrast follows the theme.
+- **Costs:** coding costs filtered from trend charts; short tool durations
+  kept in milliseconds.
 
 ---
 

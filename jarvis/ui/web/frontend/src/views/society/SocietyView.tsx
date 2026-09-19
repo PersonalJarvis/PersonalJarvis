@@ -5,6 +5,8 @@ import { useSocietyShell } from "@/store/societyShell";
 import { setMapFullscreen } from "@/lib/mapFullscreen";
 import { inDesktopShell } from "@/lib/nativeDrop";
 import { useLocaleChunk, useT } from "@/i18n";
+import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
+import { TopBarActions } from "@/components/layout/TopBar";
 import { AgentCardOverlay } from "@/components/society/card/AgentCardOverlay";
 import { BuildingCardOverlay } from "@/components/society/card/BuildingCardOverlay";
 import { isBuildingPlace, type BuildingPlace } from "@/components/society/card/buildingCards";
@@ -35,7 +37,6 @@ export function SocietyView() {
     () => agents.find((a) => a.agentId === openAgentId) ?? agents.find((a) => a.tier === "lead") ?? agents[0] ?? null,
     [agents, openAgentId],
   );
-  const activeCount = agents.filter((a) => a.state === "working" || a.state === "waiting").length;
 
   const onCreated = useCallback(() => {
     setCreating(false);
@@ -104,17 +105,23 @@ export function SocietyView() {
   return (
     <div className={mode === "world" ? "fixed inset-0 z-30 flex flex-col bg-background" : "flex h-full min-h-0 w-full flex-col"} data-testid="society-view">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="grid h-9 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-border px-3">
-          <div className="flex items-center">
+        <header className="jarvis-shell-surface flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
           {mode === "agents" && <button type="button" onClick={toggleNavigation} aria-expanded={navigationOpen}
             aria-label={t("society.world.toggle_sections")} title={t("society.world.toggle_sections")}
             className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
             <PanelLeft className="h-4 w-4" aria-hidden />
           </button>}
+            <span data-testid="topbar-view-title" className="truncate text-base font-medium text-foreground">
+              {t("nav.agents")}
+            </span>
           </div>
           {modeSwitch}
-          <span className="justify-self-end text-xs text-muted-foreground" aria-live="polite">{t("society.strip.active").replace("{0}", String(activeCount))}</span>
-        </div>
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+            <CodingModeBadge />
+            <TopBarActions />
+          </div>
+        </header>
         {fullscreenError && <p role="alert" className="bg-card px-4 py-2 text-sm text-destructive">{t("society.world.fullscreen_failed")}</p>}
         {mode === "world" ? (
         <div className="relative flex min-h-0 flex-1">

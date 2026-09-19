@@ -38,11 +38,12 @@ import { useComposerDictation } from "@/components/agentchat/useComposerDictatio
 import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { startNewVoiceRun } from "@/lib/chatsApi";
-import type {
-  NoticeItem,
-  TimelineItem,
-  TurnItem,
-  UserItem,
+import {
+  runningTurn,
+  type NoticeItem,
+  type TimelineItem,
+  type TurnItem,
+  type UserItem,
 } from "@/components/agentchat/reduce";
 import { TurnTrace } from "@/components/agentchat/WorkTrace";
 import { VoiceStage } from "@/components/home/VoiceStage";
@@ -617,7 +618,11 @@ export function Transcript({
   // watches the content's own size too, so growth follows; scrolled up, the
   // reader keeps their place and gets a button back.
   const { rootRef, contentRef, atEnd, jumpToEnd, follow } = useStickToBottom();
-  useLayoutEffect(follow, [follow, items.length]);
+  // `items` itself, not its length: a reasoning trace or tool row grows
+  // the same turn in place, so the length does not change. Pin in this
+  // layout pass — waiting for ResizeObserver is one frame too late, and
+  // that frame is when overflow anchoring would unstick the view.
+  useLayoutEffect(follow, [follow, items]);
 
   if (items.length === 0) {
     return (
@@ -979,6 +984,11 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     setValue(text);
     fieldRef.current?.setText(text);
   });
+  const timeline = useAgentChat((s) => s.timeline);
+  const sending = useAgentChat((s) => s.busy);
+  // `busy` on this composer also covers "session not open yet". Stop is only
+  // for a live turn: the HTTP send, or the stream after it (reasoning, tools).
+  const live = runningTurn(timeline) !== null || sending;
 
   // "@" completes teammates AND the capability catalog — plugins, MCP
   // servers, CLIs, skills, Jarvis tools — on every agent card, including
@@ -1051,7 +1061,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     const selected = selectedTools;
     const text = draftText;
     if (await commands.execute(text)) return;
-    if (!text || busy && !commands.canSteer || modelSaving) return;
+    if (!text || (busy || live) && !commands.canSteer || modelSaving) return;
     const chosenIds = new Set((draft?.choices ?? []).map((row) => row.id));
     const chosen = [...chosenIds].map((id) => catalog.find((item) => item.key === id));
     if (chosen.some((item) => !item || !item.connected)) {
@@ -1120,6 +1130,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
         activeIndex={activeIndex}
         onHover={setActiveIndex}
         onPick={insertMention}
+        grouped={!mention?.query.trim()}
       />
       <div
         ref={composerRef}
@@ -1250,12 +1261,14 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
         >
           {dictation.dictating ? <Square className="h-4 w-4" aria-hidden /> : <Mic className="h-4 w-4" aria-hidden />}
         </button>
-        {busy && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
+        {live && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
           <button
             type="button"
             onClick={() => void onCancel()}
             aria-label={t("society.chat.stop")}
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-foreground hover:bg-popover"
+            title={t("society.chat.stop")}
+            data-testid="composer-stop"
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background transition-colors hover:bg-foreground/90"
           >
             <Square className="h-3.5 w-3.5" aria-hidden />
           </button>
@@ -1265,6 +1278,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
             onClick={() => void submit()}
             disabled={modelSaving || (!value.trim() && selectedTools.length === 0)}
             aria-label={t("society.chat.send")}
+            data-testid="composer-send"
             className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-40"
           >
             <Send className="h-3.5 w-3.5" aria-hidden />

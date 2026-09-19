@@ -101,6 +101,8 @@ class Worker:
         self.native_frame_at = 0.0
         self.native_replay = False
         self.branding: asyncio.Task | None = None
+        self.pointer: Any = None
+        self.visual_action = False
 
     async def rpc(self, kind: str, payload: dict) -> dict:
         key = uuid.uuid4().hex
@@ -116,6 +118,10 @@ class Worker:
         from native_window import NativeWindow, available  # type: ignore[import-not-found]
 
         native_enabled = available()
+        if args.get("window_view") and sys.platform == "win32" and not native_enabled:
+            raise RuntimeError(
+                "Chrome needs an unlocked Windows desktop and the managed capture runtime"
+            )
 
         from browser_use import Browser  # type: ignore[import-not-found]
         from playwright.async_api import async_playwright
@@ -193,6 +199,15 @@ class Worker:
             allowed_domains=args.get("allowed_domains") or None,
         )
         await self.browser.start()
+        from pointer import PointerTracker  # type: ignore[import-not-found]
+
+        self.pointer = PointerTracker(
+            self.generation,
+            emit,
+            lambda: self.visual_action and not self.manual,
+            lambda x, y: self.native.viewport_point(x, y) if self.native else (x, y, 1280, 800),
+        )
+        self.browser.cdp_client.send_raw = self.pointer.wrap(self.browser.cdp_client.send_raw)
         self.context.on("page", self.page_opened)
         for page in self.context.pages:
             self.page_opened(page)
@@ -228,7 +243,11 @@ class Worker:
             )
         self.state_task = asyncio.create_task(self.watch_state())
         self.stream = asyncio.create_task(self.watch())
-        return {"generation": self.generation, "protocol": PROTOCOL_VERSION}
+        return {
+            "generation": self.generation,
+            "protocol": PROTOCOL_VERSION,
+            "full_window": bool(self.native),
+        }
 
     def page_opened(self, page: Any) -> None:
         page.on("dialog", self.on_dialog)
@@ -458,11 +477,14 @@ class Worker:
                 )
                 if not answer.get("ok"):
                     raise asyncio.CancelledError(answer.get("error", "Browser action denied"))
+                worker.visual_action = True
                 try:
                     result = await super().act(action, browser_session, *pos, **kw)
                 except Exception as exc:
                     # The result is emitted below and becomes the executor's visible failure.
                     result = ActionResult(error=f"{type(exc).__name__}: browser action failed")
+                finally:
+                    worker.visual_action = False
                 emit("action_result", id=answer["permit"], result=result.model_dump(mode="json"))
                 return result
 
@@ -513,6 +535,8 @@ class Worker:
             }
         finally:
             self.agent = None
+            if self.pointer:
+                self.pointer.clear()
             self.step_idle.set()
 
     async def command(self, op: str, args: dict) -> dict:
@@ -554,6 +578,8 @@ class Worker:
                 if generation != self.takeover_generation:
                     return {"manual": self.manual}
                 self.manual = True
+                if self.pointer:
+                    self.pointer.clear()
             else:
                 if self.native and self.manual:
                     from browser_use.browser import events  # type: ignore[import-not-found]

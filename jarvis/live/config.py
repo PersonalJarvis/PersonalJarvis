@@ -29,6 +29,8 @@ class LiveConfig(BaseModel):
                 "results for external facts. Follow the latest correction. Never claim success "
                 "without a successful, verified result. A pending approval or started job is "
                 "not completion. Use discover_tools and call_tool for additional capabilities. "
+                "A superseded result describes earlier work, not the latest request; reconcile "
+                "the actual outcome with the latest correction without blindly repeating actions. "
                 "Read tool schemas before calling. Do not bypass denied actions. "
                 "Computer-use tasks use the selected thinking model and the same credential. "
                 + self.backend_instructions

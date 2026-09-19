@@ -1,5 +1,14 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Prepaid search hop (2026-09-17, T2)
+
+`search_web` may use an optional Apifare HTTP hop
+(`POST https://apifare.com/v1/call/dataforseo`) when a token is stored.
+Windows, macOS and Linux share the same `httpx` path; a missing token or a
+402/error degrades to the existing key-free DuckDuckGo chain. No OS-specific
+code. Tests: `tests/unit/plugins/tool/test_search_backends.py` (MockTransport).
+Live Apifare account consent is not part of this change.
+
 ## GPT-Live migration (acceptance pending)
 
 The new continuous voice core uses portable Python, SQLite and WebRTC/WebSocket
@@ -325,6 +334,40 @@ installed everywhere and `lsregister` can be absent from a stripped system —
 so no platform silently claims an entry the shell cannot see. Announcement is
 re-run for an unchanged entry too, which heals an install whose earlier write
 succeeded while its announcement did not.
+
+**Fix pass 2026-09-16 (macOS: registered is not searchable, BUG-216).**
+LaunchServices and Spotlight are separate indexes; `lsregister` alone left the
+bundle out of Spotlight search. macOS now also imports the bundle with
+`mdimport` and checks the indexing switch of the volume that controls it (`/`
+for the APFS data volume), logging the admin repair command when indexing is
+off; `--doctor` (`macos-spotlight`) additionally detects a stalled index by an
+import that never appears. The bundle is also installed into `/Applications`
+(Finder's Applications folder, Launchpad) whenever the account may write there,
+falling back to `~/Applications` for standard accounts; an existing per-user
+install is moved over by rename, keeping its signature and TCC grants, and the
+LaunchAgent is pointed at the new path in the same step (BUG-218). A same-named
+app with another bundle id (the DMG build) is never replaced or removed, and a
+certificate-signed bundle's `Info.plist` version follows source updates. The
+installer adds the app to the Dock once per install (the macOS counterpart of
+the Windows Desktop/Start-menu launcher) and names a stalled Spotlight index
+with its admin repair command. Windows
+and Linux are
+unchanged — their index announcements already feed the search the user types
+into.
+
+**Fix pass 2026-09-16 (macOS: one TCC identity for the life of the install,
+BUG-217).** The source installer creates a per-user code-signing certificate
+("Personal Jarvis Local Signing", login keychain, trusted for code signing in
+the user domain — the one password dialog of the install) and signs the bundle
+with it, so macOS pins privacy grants to `identifier + certificate` instead of
+the per-build CDHash: rebuilds and updates keep every grant. Without a GUI
+session, or if the dialog is declined, signing stays ad-hoc and the previous
+"reset on identity change" behaviour applies. The Music/Spotify Automation
+consent is a permission row of its own (`automation`), asked up front through
+`AEDeterminePermissionToAutomateTarget` with a hidden launch of a closed
+player, and **Set up everything** walks all rows and ends in a single restart.
+Windows and Linux: no TCC, no signing identity, the rows read "not required"
+as before.
 
 ## Audit verdict summary
 

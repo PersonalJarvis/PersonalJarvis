@@ -213,3 +213,40 @@ def test_update_summary_promises_no_reonboarding(monkeypatch, capsys, tmp_path) 
     out = capsys.readouterr().out
     assert rc == 0
     assert "no re-onboarding" in out
+
+
+class _ProbeResult:
+    def __init__(self, stdout: str) -> None:
+        self.stdout = stdout
+
+
+@pytest.mark.parametrize(
+    ("probe_output", "expect_note"),
+    [("False\n", True), ("True\n", False), ("None\n", False), ("", False)],
+)
+def test_a_stalled_spotlight_index_is_named_with_its_repair_command(
+    monkeypatch: pytest.MonkeyPatch, probe_output: str, expect_note: bool
+) -> None:
+    """Reported 2026-09-17: installed, in Launchpad, and Spotlight found nothing
+    — the Mac's index had stopped absorbing new apps. Only a proven stall
+    (import accepted, app never listed) may speak; "unknown" stays silent."""
+    notes: list[str] = []
+    monkeypatch.setattr(installer, "note", notes.append)
+    monkeypatch.setattr(
+        installer.subprocess, "run", lambda *_a, **_kw: _ProbeResult(probe_output)
+    )
+
+    installer._note_stalled_spotlight()
+
+    assert any("sudo mdutil -E /" in line for line in notes) is expect_note
+
+
+def test_a_spotlight_probe_that_cannot_run_never_fails_the_install(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom(*_a, **_kw):
+        raise OSError("no interpreter")
+
+    monkeypatch.setattr(installer.subprocess, "run", _boom)
+
+    installer._note_stalled_spotlight()

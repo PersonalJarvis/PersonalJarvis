@@ -2240,6 +2240,10 @@
         "title": "Input control",
         "description": "Required for Computer-Use to send mouse and keyboard events."
       },
+      "automation": {
+        "title": "Automation (Music & Spotify)",
+        "description": "Lets Jarvis turn Music and Spotify down while you dictate and back up afterwards. Asked once per player — a closed player is opened briefly in the background for the dialog."
+      },
       "credential_store": {
         "title": "Keychain (API keys)",
         "description": "Stores your API keys encrypted in the macOS Keychain instead of a plain file — that is the Keychain prompt you see when the app starts. Your keys stay on your Mac and are never sent anywhere."
@@ -2257,12 +2261,28 @@
       "computer_use": "Computer-Use",
       "global_hotkeys": "Global shortcuts",
       "window_control": "Window control",
+      "audio_ducking": "Music ducking while dictating",
       "api_keys": "Secure API-key storage"
     },
     "restart_deferred": "Newly granted access turns on with the automatic restart at the end of setup - nothing to do now.",
+    "setup_all": "Set up everything",
+    "setup_all_hint": "One click walks you through every remaining permission and applies them at the end.",
+    "setup_running": "Step {0} of {1}: {2}",
+    "setup_wait_prompt": "Answer the macOS dialog — this continues on its own.",
+    "setup_wait_settings": "Turn on Personal Jarvis in the System Settings pane that just opened, then come back — this continues on its own.",
+    "setup_cancel": "Stop",
+    "setup_restarting": "All set — Personal Jarvis restarts once to apply the new access.",
+    "setup_timeout": "Setup paused: a permission was not granted in time. Use “Set up everything” again whenever you like.",
     "ask_again": "Ask again",
     "stale_grant_hint": "macOS will not ask for this access again. If System Settings already shows it as enabled, that record belongs to an older version of the app — tap “Ask again” and allow access once more.",
     "identity_reset": "Since the app was last rebuilt, macOS treats Personal Jarvis as a new app and discarded every access you had granted. Please allow them once more — they will stick from then on."
+  },
+  "settings_hub": {
+    "subtitle": "Everything about you, your keys and this app — in one place.",
+    "search_placeholder": "Search settings...",
+    "group_general": "General",
+    "group_system": "System",
+    "group_activity": "Activity"
   },
   "settings_view": {
     "silence_window": {

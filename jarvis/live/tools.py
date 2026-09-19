@@ -144,6 +144,13 @@ class LiveTools:
                     "success": False,
                     "error": "Tool execution failed; inspect its state before retrying.",
                 }
+            if revision != self.revision:
+                result = {
+                    **result,
+                    "superseded": True,
+                    "task_revision": revision,
+                    "current_revision": self.revision,
+                }
             receipt = dict(result)
             if isinstance(receipt.get("output"), dict):
                 receipt["output"] = {k: v for k, v in receipt["output"].items() if k != "_image"}

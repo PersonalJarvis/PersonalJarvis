@@ -129,6 +129,50 @@ describe("realtime audio client", () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
+  it("does not replay microphone frames captured during a reconnect", async () => {
+    installVoiceBrowserFakes();
+    let readyCount = 0;
+    const client = new RealtimeAudioClient({ onStatus: status => {
+      if (status === "audio_ready") readyCount += 1;
+    } });
+    const connecting = client.connect();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    socket.receive({ type: "audio_ready", output_sample_rate: 24000 });
+    await connecting;
+    const capture = FakeAudioNode.instances.find(node => node.port.onmessage)!;
+    const frame = (value: number) => capture.port.onmessage!({ data: new Uint8Array([value]).buffer } as MessageEvent);
+    frame(1);
+    socket.receive({ type: "reconnecting" });
+    frame(2);
+    socket.receive({ type: "audio_ready", output_sample_rate: 24000 });
+    await vi.waitFor(() => expect(readyCount).toBe(2));
+    frame(3);
+    expect(socket.sent.filter(x => x instanceof ArrayBuffer).map(x => new Uint8Array(x as ArrayBuffer)[0])).toEqual([1, 3]);
+    await client.disconnect();
+  });
+
+  it("correlates a replacement WebRTC offer with the server request", async () => {
+    installVoiceBrowserFakes();
+    const client = new RealtimeAudioClient();
+    const transport = { createOffer: vi.fn(async () => "v=0\r\nreplacement"),
+      applyAnswer: vi.fn(async () => undefined), close: vi.fn(), muteOutput: vi.fn() };
+    Object.assign(client, { webRtcTransport: transport });
+    const connecting = client.connect();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    socket.receive({ type: "audio_ready", output_sample_rate: 24000 });
+    await connecting;
+    socket.receive({ type: "reconnecting" });
+    socket.receive({ type: "reconnect_offer", request_id: "resume-1" });
+    await vi.waitFor(() => expect(socket.sent.some(x => typeof x === "string" && x.includes("resume-1"))).toBe(true));
+    const response = socket.sent.filter(x => typeof x === "string").map(x => JSON.parse(x as string)).find(x => x.type === "reconnect_offer");
+    expect(response).toEqual({ type: "reconnect_offer", request_id: "resume-1", sdp: "v=0\r\nreplacement" });
+    await client.disconnect();
+  });
+
   it("builds a token-free wss /ws/audio URL", () => {
     expect(buildAudioSocketUrl()).toBe("wss://app.example/ws/audio");
   });

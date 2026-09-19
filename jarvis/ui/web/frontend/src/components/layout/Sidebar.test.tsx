@@ -8,8 +8,8 @@ import {
   SIDEBAR_RAIL_AT_WIDTH,
   SIDEBAR_RAIL_WIDTH,
 } from "@/components/layout/Sidebar";
-import { NAV_GROUPS, NAV_FOOTER_ITEMS } from "@/components/layout/navGroups";
-import { useEventStore } from "@/store/events";
+import { NAV_GROUPS, NAV_FOOTER_ITEMS, SETTINGS_HUB_IDS } from "@/components/layout/navGroups";
+import { isSectionId, useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { useIdeChatStore } from "@/store/ideChat";
 
@@ -58,19 +58,6 @@ const voiceModeMock = vi.hoisted(() => ({
 vi.mock("@/hooks/useVoiceMode", () => ({
   useVoiceMode: () => voiceModeMock.value,
 }));
-
-function resetVoiceModeMock() {
-  voiceModeMock.value = {
-    mode: "pipeline",
-    activeProvider: null,
-    activeProviderLabel: null,
-    activeModel: null,
-    sessionActive: false,
-    activeSessionMode: null,
-    activeSessionProvider: "",
-    activeSessionModel: "",
-  };
-}
 
 function renderSidebar(width?: number) {
   const client = new QueryClient({
@@ -140,11 +127,8 @@ describe("Sidebar voice header", () => {
   });
 });
 
-/*
- * "+ New" starts a conversation of the KIND on screen. Standing on the voice
- * stage and being thrown onto the chat page was the reported bug: the button
- * looked like it did nothing you asked for.
- */
+// New chat must let users choose either surface without changing the current
+// conversation until they make a choice.
 describe("Sidebar new-conversation button", () => {
   beforeEach(() => {
     vi.stubGlobal(
@@ -175,12 +159,16 @@ describe("Sidebar new-conversation button", () => {
     useEventStore.setState({ conversations: [], messages: [], activeThreadId: null });
   });
 
-  test("New chat opens typed chat even from the voice stage", async () => {
+  test("offers both kinds and opens typed chat from the voice stage", async () => {
     useHomeStore.setState({ surface: "voice", transcript: [] });
     renderSidebar();
     const button = screen.getByTestId("sidebar-new-chat");
     expect(button.textContent).toContain("New chat");
     await act(async () => { button.click(); await Promise.resolve(); });
+    expect(useHomeStore.getState().surface).toBe("voice");
+    expect(useEventStore.getState().activeThreadId).toBe("old-voice-thread");
+    expect(screen.getByTestId("new-voice-chat")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("new-text-chat"));
     expect(useHomeStore.getState().surface).toBe("chat");
     expect(useEventStore.getState().activeSection).toBe("chats");
   });
@@ -197,10 +185,40 @@ describe("Sidebar new-conversation button", () => {
       button.click();
       await Promise.resolve();
     });
+    fireEvent.click(screen.getByTestId("new-text-chat"));
 
     expect(useHomeStore.getState().surface).toBe("chat");
     const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
     expect(calls.some((c) => String(c[0]) === "/api/chats/voice/new")).toBe(false);
+  });
+
+  test("opens a fresh voice chat from the chat surface", async () => {
+    useHomeStore.setState({ surface: "chat", transcript: [], liveReply: "Previous reply" });
+    renderSidebar();
+    fireEvent.click(screen.getByTestId("sidebar-new-chat"));
+    await act(async () => { fireEvent.click(screen.getByTestId("new-voice-chat")); });
+    expect(fetch).toHaveBeenCalledWith("/api/chats/voice/new", { method: "POST" });
+    expect(useHomeStore.getState().surface).toBe("voice");
+    expect(useHomeStore.getState().liveReply).toBe("");
+    expect(useEventStore.getState().activeSection).toBe("chats");
+    expect(useEventStore.getState().activeKind).toBe("voice");
+    expect(useEventStore.getState().activeThreadId).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  test("keeps the current conversation if creating a voice chat fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+      String(url) === "/api/chats/voice/new"
+        ? new Response("", { status: 503 })
+        : new Response(JSON.stringify([]), { status: 200 }),
+    ));
+    useHomeStore.setState({ surface: "chat", transcript: [] });
+    renderSidebar();
+    fireEvent.click(screen.getByTestId("sidebar-new-chat"));
+    await act(async () => { fireEvent.click(screen.getByTestId("new-voice-chat")); });
+    expect(useHomeStore.getState().surface).toBe("chat");
+    expect(useEventStore.getState().activeThreadId).toBe("old-voice-thread");
+    expect(screen.getByRole("dialog")).toBeTruthy();
   });
 });
 
@@ -236,7 +254,7 @@ describe("Sidebar header avatar", () => {
   });
 });
 
-describe("Sidebar brain footer", () => {
+describe("Sidebar settings-hub entry", () => {
   beforeEach(() => {
     useEventStore.setState({
       voiceState: "idle",
@@ -244,8 +262,7 @@ describe("Sidebar brain footer", () => {
       transcriptionFinal: true,
       connected: true,
       voiceReady: true,
-      brainProvider: "unknown",
-      brainModel: "",
+      activeSection: "chats",
     });
   });
 
@@ -253,146 +270,41 @@ describe("Sidebar brain footer", () => {
     cleanup();
   });
 
-  test("renders the active provider and its model id", () => {
-    // The footer must show WHICH model is in use, not just the provider — a
-    // user who configured e.g. opus-4-8 wants that surfaced, not a bare "—".
-    useEventStore.setState({ brainProvider: "claude-api", brainModel: "claude-opus-4-8" });
-
+  test("the profile button opens the hub on the Profile tab", () => {
+    // The popup is gone: one click lands in the Settings hub, on Profile.
     renderSidebar();
+
     fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
 
-    expect(screen.getByText("Claude (API)")).toBeTruthy();
-    const modelLine = screen.getByTestId("sidebar-brain-model");
-    expect(modelLine.textContent).toBe("claude-opus-4-8");
+    expect(useEventStore.getState().activeSection).toBe("profile");
   });
 
-  test("hides the model line when no model is known (shows provider only)", () => {
-    useEventStore.setState({ brainProvider: "gemini", brainModel: "" });
-
+  test("the profile button stays lit while any hub section is on screen", () => {
+    // It IS the hub's entry point, so it carries "you are here" for all of
+    // the hub's sections — including ones only reachable from inside the hub.
+    useEventStore.setState({ activeSection: "wallpaper" });
     renderSidebar();
-    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
 
-    expect(screen.getByText("Gemini")).toBeTruthy();
-    expect(screen.queryByTestId("sidebar-brain-model")).toBeNull();
-  });
-
-  test("follows a live model change", () => {
-    useEventStore.setState({ brainProvider: "claude-api", brainModel: "claude-opus-4-8" });
-    renderSidebar();
-    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
-    expect(screen.getByTestId("sidebar-brain-model").textContent).toBe("claude-opus-4-8");
-
-    act(() => {
-      useEventStore.setState({ brainProvider: "gemini", brainModel: "gemini-3.1-flash" });
-    });
-
-    expect(screen.getByTestId("sidebar-brain-model").textContent).toBe("gemini-3.1-flash");
-    expect(screen.getByText("Gemini")).toBeTruthy();
-  });
-});
-
-describe("Sidebar footer in realtime voice mode", () => {
-  beforeEach(() => {
-    useEventStore.setState({
-      voiceState: "idle",
-      transcription: "",
-      transcriptionFinal: true,
-      connected: true,
-      voiceReady: true,
-      // The pipeline brain stays configured — it must NOT be what the footer
-      // shows while the realtime engine owns the voice path.
-      brainProvider: "openrouter",
-      brainModel: "google/gemini-3.5-flash",
-    });
-  });
-
-  afterEach(() => {
-    cleanup();
-    resetVoiceModeMock();
-  });
-
-  test("shows the realtime provider + model instead of the dormant pipeline brain", () => {
-    // The bug: the footer said "OpenRouter / google/gemini-3.5-flash" while
-    // Gemini Live was doing all the talking. In realtime mode the card must
-    // follow the realtime engine.
-    voiceModeMock.value = {
-      ...voiceModeMock.value,
-      mode: "realtime",
-      activeProvider: "gemini-live",
-      activeProviderLabel: "Gemini Live",
-      activeModel: "gemini-3.1-flash-live-preview",
-    };
-
-    renderSidebar();
-    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
-
-    expect(screen.getByTestId("sidebar-footer-tier").textContent).toBe("Realtime");
-    expect(screen.getByText("Gemini Live")).toBeTruthy();
-    expect(screen.getByTestId("sidebar-brain-model").textContent).toBe(
-      "gemini-3.1-flash-live-preview",
-    );
-    expect(screen.queryByText("OpenRouter")).toBeNull();
-    expect(screen.queryByText("google/gemini-3.5-flash")).toBeNull();
-  });
-
-  test("a RUNNING realtime session's live provider/model outrank the configured pick", () => {
-    // Mid-call cross-family fallback (AP-22) must be visible: the session
-    // crossed from Gemini to OpenAI, so the card shows the live engine.
-    voiceModeMock.value = {
-      ...voiceModeMock.value,
-      mode: "realtime",
-      activeProvider: "gemini-live",
-      activeProviderLabel: "Gemini Live",
-      activeModel: "gemini-3.1-flash-live-preview",
-      sessionActive: true,
-      activeSessionMode: "realtime",
-      activeSessionProvider: "openai-realtime",
-      activeSessionModel: "gpt-realtime-2.1",
-    };
-
-    renderSidebar();
-    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
-
-    expect(screen.getByText("OpenAI Realtime")).toBeTruthy();
-    expect(screen.getByTestId("sidebar-brain-model").textContent).toBe("gpt-realtime-2.1");
-  });
-
-  test("pipeline mode keeps the classic brain footer", () => {
-    // Guard the split itself: mode "pipeline" must still show the brain card
-    // even when a realtime provider is fully configured.
-    voiceModeMock.value = {
-      ...voiceModeMock.value,
-      mode: "pipeline",
-      activeProvider: "gemini-live",
-      activeProviderLabel: "Gemini Live",
-      activeModel: "gemini-3.1-flash-live-preview",
-    };
-
-    renderSidebar();
-    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
-
-    expect(screen.getByTestId("sidebar-footer-tier").textContent).toBe("Brain");
-    expect(screen.getByText("OpenRouter")).toBeTruthy();
-    expect(screen.getByTestId("sidebar-brain-model").textContent).toBe(
-      "google/gemini-3.5-flash",
+    expect(screen.getByTestId("sidebar-profile-toggle").className).toMatch(
+      /jarvis-nav-active/,
     );
   });
 
-  test("Vertex AI Live is named as such, not as the pipeline brain", () => {
-    voiceModeMock.value = {
-      ...voiceModeMock.value,
-      mode: "realtime",
-      activeProvider: "vertex-live",
-      activeProviderLabel: "Vertex AI Live",
-      activeModel: "gemini-live-2.5-flash-preview-native-audio-dialog",
-    };
+  test("the profile button is calm on non-hub sections", () => {
+    useEventStore.setState({ activeSection: "board" });
+    renderSidebar();
 
+    expect(screen.getByTestId("sidebar-profile-toggle").className).not.toMatch(
+      /jarvis-nav-active/,
+    );
+  });
+
+  test("opens no popup — the hub is the only destination", () => {
     renderSidebar();
     fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
 
-    expect(screen.getByTestId("sidebar-footer-tier").textContent).toBe("Realtime");
-    expect(screen.getByText("Vertex AI Live")).toBeTruthy();
-    expect(screen.queryByText("OpenRouter")).toBeNull();
+    expect(screen.queryByTestId("sidebar-profile-panel")).toBeNull();
+    expect(screen.queryByTestId("sidebar-brain-card")).toBeNull();
   });
 });
 
@@ -562,7 +474,7 @@ describe("Sidebar icon rail", () => {
     renderSidebar(SIDEBAR_DEFAULT_WIDTH);
 
     expect(screen.getByTestId("sidebar").dataset.railed).toBe("false");
-    fireEvent.click(screen.getByTestId("sidebar-tools-toggle"));
+    fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
     // The label is ON the row, and names the workspace rather than carrying
     // the retired generic "Chat" label shown in the product screenshot.
     expect(screen.getByTestId("nav-row-agentic-ide").textContent).toContain(
@@ -722,7 +634,7 @@ describe("compact sidebar navigation", () => {
 
   test("keeps core destinations above visible recent chats", () => {
     renderSidebar();
-    for (const id of ["agents", "chats", "tasks", "plugins", "marketplace"]) {
+    for (const id of ["agents", "dictation", "visualization", "tasks", "plugins", "marketplace"]) {
       expect(screen.getByTestId(`nav-row-${id}`)).toBeTruthy();
     }
     expect(screen.getByTestId("recent-chats")).toBeTruthy();
@@ -730,24 +642,24 @@ describe("compact sidebar navigation", () => {
     expect(screen.queryByTestId("nav-row-memory")).toBeNull();
   });
 
-  test("opens Jarvis Voice directly and keeps artifacts under More", () => {
+  test("opens Jarvis Voice directly with artifacts in the main list", () => {
     useHomeStore.setState({ surface: "chat" });
     renderSidebar();
-    expect(screen.queryByTestId("nav-row-visualization")).toBeNull();
-    fireEvent.click(screen.getByTestId("nav-row-chats"));
-    expect(useHomeStore.getState().surface).toBe("voice");
-    expect(useEventStore.getState().activeSection).toBe("chats");
-    fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
+    // Artifacts sits directly in the main list (where the retired "Jarvis
+    // Tools" folder used to be) — no "Show more" needed to reach it.
+    expect(screen.getByTestId("nav-row-visualization")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("nav-row-dictation"));
+    expect(useHomeStore.getState().surface).toBe("chat");
+    expect(useEventStore.getState().activeSection).toBe("dictation");
+    expect(screen.getAllByTestId("nav-row-dictation")).toHaveLength(1);
     fireEvent.click(screen.getByTestId("nav-row-visualization"));
     expect(useEventStore.getState().activeSection).toBe("visualization");
   });
 
   test("expands tools through More without duplicating rows", () => {
     renderSidebar();
-    fireEvent.click(screen.getByTestId("sidebar-tools-toggle"));
-    expect(screen.getByTestId("nav-row-memory")).toBeTruthy();
     fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
-    expect(screen.getAllByTestId("nav-row-memory")).toHaveLength(1);
+    expect(screen.getByTestId("nav-row-memory")).toBeTruthy();
     fireEvent.click(screen.getByTestId("nav-row-memory"));
     expect(useEventStore.getState().activeSection).toBe("memory");
     fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
@@ -755,32 +667,29 @@ describe("compact sidebar navigation", () => {
     expect(screen.getByTestId("recent-chats")).toBeTruthy();
   });
 
-  test("opens settings from the profile and closes after navigation", () => {
+  test("the profile button opens the hub — hub tabs are the hub's own tests", () => {
+    // No popup anymore: entries like Wallpaper live in the hub's left nav
+    // (see SettingsHubView.test), so one click on the profile button is the
+    // whole interaction and it lands on the Profile tab.
     renderSidebar();
     fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
-    fireEvent.click(screen.getByTestId("nav-row-wallpaper"));
-    expect(useEventStore.getState().activeSection).toBe("wallpaper");
-    expect(screen.queryByTestId("sidebar-profile-panel")).toBeNull();
-  });
-
-  test("dismisses the profile with Escape and restores focus", () => {
-    renderSidebar();
-    const trigger = screen.getByTestId("sidebar-profile-toggle");
-    fireEvent.click(trigger);
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByTestId("sidebar-profile-panel")).toBeNull();
-    expect(document.activeElement).toBe(trigger);
-    fireEvent.click(trigger);
-    fireEvent.pointerDown(document.body);
+    expect(useEventStore.getState().activeSection).toBe("profile");
     expect(screen.queryByTestId("sidebar-profile-panel")).toBeNull();
   });
 
   test("every registered destination remains reachable", () => {
     renderSidebar();
     fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
-    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
     for (const item of [...NAV_GROUPS.flat(), ...NAV_FOOTER_ITEMS]) {
+      // Hub entries are one profile-button click away (covered above); the
+      // hub selects their tab itself (see SettingsHubView.test).
+      if ((SETTINGS_HUB_IDS as readonly string[]).includes(item.id)) continue;
       expect(screen.getByTestId(item.id === "chats" ? "sidebar-new-chat" : `nav-row-${item.id}`)).toBeTruthy();
+    }
+    // And every hub id is still a valid section id — an id the hub lists
+    // that stops resolving strands deep links, the deck and voice commands.
+    for (const id of SETTINGS_HUB_IDS) {
+      expect(isSectionId(id)).toBe(true);
     }
   });
 });

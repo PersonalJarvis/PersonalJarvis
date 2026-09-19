@@ -318,11 +318,17 @@ def ensure_desktop_integration(
     windows_aumid: str = WINDOWS_APP_USER_MODEL_ID,
     macos_applications_dir: Path | None = None,
     linux_applications_dir: Path | None = None,
+    macos_create_signing_identity: bool = False,
+    macos_pin_to_dock: bool = False,
 ) -> DesktopIntegrationReport:
     """Install or repair the current platform's desktop-shell artifacts.
 
     Returns an ``attempted=False`` report on a frozen build: the native
     installer already registered the app and nothing here may touch it.
+    ``macos_create_signing_identity`` permits the one-time trust dialog for
+    the per-user signing certificate — the installer's call only, never the
+    app's background repair. ``macos_pin_to_dock`` is the installer's too: it
+    adds the app to the Dock once per install (``macos_dock``).
     """
 
     plat = _platform(platform)
@@ -410,9 +416,15 @@ def ensure_desktop_integration(
             bundle = macos_app_bundle.ensure_macos_app_bundle(
                 install_dir=root,
                 applications_dir=macos_applications_dir,
+                create_signing_identity=macos_create_signing_identity,
             )
             if bundle is not None:
                 artifacts.append("applications_bundle")
+                if macos_pin_to_dock:
+                    from jarvis.setup.macos_dock import pin_to_dock_once
+
+                    if pin_to_dock_once(bundle):
+                        artifacts.append("dock_tile")
             else:
                 reason = macos_app_bundle.last_error() or "unknown error"
                 warnings.append(
@@ -516,6 +528,11 @@ def remove_desktop_integration(
         try:
             from jarvis.setup.macos_app_bundle import remove_macos_app_bundle
 
+            if macos_applications_dir is None:
+                from jarvis.setup.macos_dock import remove_from_dock
+
+                if remove_from_dock():
+                    artifacts.append("dock_tile")
             if remove_macos_app_bundle(applications_dir=macos_applications_dir):
                 artifacts.append("applications_bundle")
             else:
@@ -556,6 +573,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--remove", action="store_true")
     parser.add_argument("--allow-unmanaged", action="store_true")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--create-signing-identity",
+        action="store_true",
+        help="macOS: create and trust the per-user signing certificate (one password dialog)",
+    )
+    parser.add_argument(
+        "--pin-to-dock",
+        action="store_true",
+        help="macOS: add the app to the Dock, once per install",
+    )
     args = parser.parse_args(argv)
 
     report = (
@@ -564,6 +591,8 @@ def main(argv: list[str] | None = None) -> int:
         else ensure_desktop_integration(
             install_dir=args.install_dir,
             require_managed=not args.allow_unmanaged,
+            macos_create_signing_identity=args.create_signing_identity,
+            macos_pin_to_dock=args.pin_to_dock,
         )
     )
     if args.json:

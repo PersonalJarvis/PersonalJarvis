@@ -44,15 +44,19 @@ export function AgentCardOverlay({
 }: AgentCardOverlayProps) {
   const t = useT();
   useLocaleChunk("society");
+  // The modal keeps a real dialog title plus its close control. The embedded
+  // workspace hides this row entirely: the left rail already marks the active
+  // agent and the right rail names it, so the row was a second, boring band.
   const Title = embedded ? "h2" : Dialog.Title;
   const Description = embedded ? "p" : Dialog.Description;
   const content = (
     <>
       {agent ? (
         <>
-          <header className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-3">
-            <div data-testid="agent-card-identity" className="flex min-w-0 flex-1 items-center gap-3">
-              <AgentSwatch agent={agent} size={40} />
+          {!embedded && (
+          <header className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-1.5">
+            <div data-testid="agent-card-identity" className="flex min-w-0 flex-1 items-center gap-2">
+              <AgentSwatch agent={agent} size={32} />
               <div className="min-w-0 flex-1">
                 <Title className="truncate font-display text-base font-semibold tracking-tight text-foreground">
                   {agent.name}
@@ -63,13 +67,12 @@ export function AgentCardOverlay({
               </div>
             </div>
             <Badge variant="outline">{t(`society.state.${agent.state}`)}</Badge>
-            {!embedded && (
-              <button type="button" onClick={onClose} aria-label={t("society.card.close")}
-                className="rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground">
-                <X className="h-4 w-4" aria-hidden />
-              </button>
-            )}
+            <button type="button" onClick={onClose} aria-label={t("society.card.close")}
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground">
+              <X className="h-4 w-4" aria-hidden />
+            </button>
           </header>
+          )}
           <div className="grid min-h-0 flex-1 grid-cols-[minmax(220px,1fr)_minmax(0,5fr)_minmax(300px,320px)]">
             <RosterRail
               agents={roster}

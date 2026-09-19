@@ -148,6 +148,11 @@ class AgentChatService:
         # no word for "auto" and flipping to bypass would silence every later
         # card, a mail send included.
         self._always_allowed: dict[str, set[str]] = {}
+        # Voice turn ids already mirrored into a chat timeline (see
+        # import_voice_turn): the bus may deliver a turn twice across
+        # reconnects, and a second copy in the chat would read as if the
+        # person said everything twice. Bounded below in import_voice_turn.
+        self._mirrored_voice_turns: set[str] = set()
         self._retire_cli_seats()
 
     def _retire_cli_seats(self) -> None:
@@ -673,6 +678,92 @@ class AgentChatService:
                     )
 
         run.task = asyncio.create_task(_body(), name=f"agent-chat-{turn_id[:8]}")
+        return turn_id
+
+    async def import_voice_turn(
+        self,
+        session_id: str,
+        user_text: str,
+        assistant_text: str,
+        *,
+        provider: str = "",
+        model: str = "",
+        voice_turn_id: str = "",
+    ) -> str | None:
+        """File one SPOKEN turn into a session's timeline, without answering it.
+
+        The voice paths (desktop pipeline, realtime, browser microphone) talk
+        to the same assistant as this typed chat but keep their own history —
+        so a spoken question and its spoken answer never appeared here, and
+        reopening the chat after talking showed nothing of it. This writes the
+        turn's two texts as ordinary timeline events (``user_message`` plus a
+        finished voice turn), so the chat reads the same whether a turn was
+        spoken or typed, and the next typed turn sees the spoken words in its
+        history.
+
+        Deliberately NOT a turn: no runner starts, nothing streams, and a
+        session that is busy typing keeps running — the imported turn simply
+        lands after it. ``runner`` is ``"voice"`` so a later reader can tell
+        how the turn was said. Returns the imported turn id, or ``None`` when
+        there was nothing worth keeping (both texts empty) or this voice turn
+        was already imported.
+        """
+        user = (user_text or "").strip()
+        reply = (assistant_text or "").strip()
+        if not user and not reply:
+            return None
+        session = self.store.get_session(session_id)
+        if session is None:
+            raise NoSuchSession(session_id)
+        if voice_turn_id:
+            if voice_turn_id in self._mirrored_voice_turns:
+                return None
+            self._mirrored_voice_turns.add(voice_turn_id)
+            if len(self._mirrored_voice_turns) > 2000:
+                self._mirrored_voice_turns.clear()
+        if user:
+            await self._emit(session_id, make_event("user_message", {"text": user}))
+        if not reply:
+            return None
+        turn_id = uuid.uuid4().hex
+        message_id = uuid.uuid4().hex
+        pick = (provider or session.provider or "").strip()
+        if not offers(session.surface, pick):
+            pick = session.provider
+        await self._emit(
+            session_id,
+            make_event(
+                "turn_started",
+                {
+                    "turn_id": turn_id,
+                    "provider": pick,
+                    "model": model or session.model,
+                    "effort": normalize_effort(session.provider, session.effort),
+                    "runner": "voice",
+                    "surface": session.surface,
+                },
+            ),
+        )
+        await self._emit(
+            session_id,
+            make_event(
+                "assistant_text",
+                {"turn_id": turn_id, "message_id": message_id, "text": reply},
+            ),
+        )
+        await self._emit(
+            session_id,
+            make_event(
+                "turn_finished",
+                {
+                    "turn_id": turn_id,
+                    "status": "done",
+                    "duration_ms": 0,
+                    "usage": {},
+                    "error": None,
+                },
+            ),
+        )
         return turn_id
 
     async def cancel(self, session_id: str) -> bool:

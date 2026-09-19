@@ -7,6 +7,7 @@ spawned CLI is actually told.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -141,6 +142,7 @@ def test_the_config_is_withheld_until_the_app_can_actually_serve_it(monkeypatch)
     assert jarvis_harness.mcp_config_json() is None  # no base URL yet
     assert jarvis_harness.codex_config_args() == []
     assert jarvis_harness.agy_mcp_server_entry() is None
+    assert jarvis_harness.grok_mcp_server_entry() is None
 
     monkeypatch.setattr(
         jarvis_harness, "endpoint", lambda: "http://127.0.0.1:47821/api/control/mcp/"
@@ -149,6 +151,7 @@ def test_the_config_is_withheld_until_the_app_can_actually_serve_it(monkeypatch)
     assert jarvis_harness.mcp_config_json() is None  # no key
     assert jarvis_harness.codex_config_args() == []
     assert jarvis_harness.agy_mcp_server_entry() is None
+    assert jarvis_harness.grok_mcp_server_entry() is None
 
 
 def test_the_key_travels_in_the_environment_never_in_argv(monkeypatch):
@@ -158,10 +161,13 @@ def test_the_key_travels_in_the_environment_never_in_argv(monkeypatch):
 
     config = jarvis_harness.mcp_config_json() or ""
     codex_args = " ".join(jarvis_harness.codex_config_args())
+    grok = jarvis_harness.grok_mcp_server_entry("sess-g") or {}
     assert "super-secret-key" not in config
     assert "super-secret-key" not in codex_args
+    assert "super-secret-key" not in json.dumps(grok)
     assert "${JARVIS_CONTROL_API_KEY}" in config
     assert "bearer_token_env_var" in codex_args
+    assert grok["bearer_token_env_var"] == jarvis_harness.KEY_ENV_VAR
 
     env = jarvis_harness.apply_env({})
     assert env["JARVIS_CONTROL_API_KEY"] == "super-secret-key"
@@ -177,18 +183,25 @@ def test_both_cli_shapes_point_at_the_same_endpoint(monkeypatch):
     assert agy is not None
     assert url in agy["serverUrl"]
     assert agy["headers"][jarvis_harness.HEADER_NAME] == "sess-9"
+    grok = jarvis_harness.grok_mcp_server_entry("sess-9")
+    assert grok is not None
+    assert url in grok["url"]
+    assert grok["headers"][jarvis_harness.HEADER_NAME] == "sess-9"
+
+
+def test_the_preamble_names_the_prefix_the_tools_actually_get():
+    """If the prefix drifts, the model is told to use tools it cannot see."""
+    assert "`mcp__jarvis__<tool>`" in jarvis_harness.SYSTEM_PREAMBLE
+    assert "`jarvis__<tool>`" in jarvis_harness.SYSTEM_PREAMBLE
+    assert jarvis_harness._SERVER_NAME == "jarvis"
 
 
 def test_agy_plugin_is_skipped_when_the_app_is_not_ready(tmp_path, monkeypatch):
     monkeypatch.setattr(jarvis_harness, "control_key", lambda: None)
     assert jarvis_harness.install_agy_jarvis_plugin(tmp_path, "sess") is None
     assert not (tmp_path / ".agents").exists()
-
-
-def test_the_preamble_names_the_prefix_the_tools_actually_get():
-    """If the prefix drifts, the model is told to use tools it cannot see."""
-    assert "mcp__jarvis__" in jarvis_harness.SYSTEM_PREAMBLE
-    assert jarvis_harness._SERVER_NAME == "jarvis"
+    assert jarvis_harness.install_grok_jarvis_mcp(tmp_path, "sess") is None
+    assert not (tmp_path / ".grok").exists()
 
 
 def test_claude_argv_carries_the_tools_and_the_identity(monkeypatch):

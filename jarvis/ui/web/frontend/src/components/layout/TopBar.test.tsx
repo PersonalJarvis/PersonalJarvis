@@ -164,6 +164,12 @@ describe("TopBar on the front page", () => {
     expect(container.firstChild).not.toBeNull();
     expect(screen.getByRole("button", { name: /^restart$/i })).toBeTruthy();
   });
+
+  it("renders no bar on agents — the society header carries the actions", () => {
+    useEventStore.setState({ activeSection: "agents" });
+    const { container } = render(<TopBar />);
+    expect(container.firstChild).toBeNull();
+  });
 });
 
 describe("TopBar in the classic terminal grid", () => {
