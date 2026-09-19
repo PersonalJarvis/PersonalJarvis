@@ -3723,13 +3723,9 @@ class WebServer:
             ),
         )
         def browser_brain(agent: Any) -> Any:
-            from jarvis.brain.resolver import resolve_browser_brain
-            provider = agent.provider
-            if not provider:
-                from jarvis.local_models.assistant_session import agents_tier
-                tier = agents_tier(self.cfg)
-                provider = tier.provider
-            return resolve_browser_brain(self.cfg, provider, agent.model)
+            from jarvis.agent_chat.browser_model import browser_model_for_agent
+
+            return browser_model_for_agent(self.cfg, agent)
 
         state.society.browser.live.model_resolver = browser_brain
         state.society.browser.live.executor = lambda: getattr(

@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import pytest
 
-from jarvis.brain.resolver import resolve_browser_brain
+from jarvis.agent_chat.browser_model import browser_model_for
 from jarvis.core.bus import EventBus
 from jarvis.core.config import SafetyConfig, load_config
 from jarvis.core.protocols import ExecutionContext
@@ -83,7 +83,7 @@ async def test_actual_model_submits_fixture_form(tmp_path, widgets):
         approval_rules={"always_allow": ["core:browser"]},
     )
     cfg = load_config()
-    runtime.browser.live.model_resolver = lambda a: resolve_browser_brain(cfg, a.provider, a.model)
+    runtime.browser.live.model_resolver = lambda a: browser_model_for(cfg, a.provider, a.model)
     bus = EventBus()
     runtime.browser.live.executor = ToolExecutor(
         bus, RiskTierEvaluator(SafetyConfig()), ApprovalWorkflow(bus)
