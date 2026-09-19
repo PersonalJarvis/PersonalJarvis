@@ -13,7 +13,6 @@
  */
 import type { SocietyAgent } from "./data";
 import type { FigureRecipe } from "./figures/figureRecipe";
-import { illustratedPortraitForAgent } from "./illustratedPortrait";
 
 /** 2026-08-20 12:00 UTC — a stable "recently active" anchor for sample rows. */
 const SAMPLE_LAST_ACTIVE_MS = Date.UTC(2026, 7, 20, 12, 0, 0);
@@ -41,7 +40,6 @@ const SCOUT_FIGURE: FigureRecipe = {
     accent: "#8fd0a0",
     shoes: "#2b2b2b",
   },
-  portrait: illustratedPortraitForAgent("scout"),
 };
 
 const ARCHIVIST_FIGURE: FigureRecipe = {
@@ -58,7 +56,6 @@ const ARCHIVIST_FIGURE: FigureRecipe = {
     shoes: "#3a2a1e",
   },
   heightM: 1.7,
-  portrait: illustratedPortraitForAgent("archivist"),
 };
 
 export const SAMPLE_ROSTER: SocietyAgent[] = [

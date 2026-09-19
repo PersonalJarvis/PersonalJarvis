@@ -60,8 +60,6 @@ import {
 } from "./brainPicker";
 import { modelSeats } from "../chat/modelChoices";
 import { useCreateAgent, type PermissionCeiling } from "../data";
-import { PortraitEditor } from "../PortraitEditor";
-import { newIllustratedPortrait } from "../illustratedPortrait";
 import { AgentFigureViewer } from "../figures/AgentFigureViewer";
 import {
   EDITABLE_CELLS,
@@ -121,9 +119,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [recipe, setRecipe] = useState<FigureRecipe>(() => ({
-    ...defaultRecipe(DEFAULT_STYLE), portrait: newIllustratedPortrait(),
-  }));
+  const [recipe, setRecipe] = useState<FigureRecipe>(() => defaultRecipe(DEFAULT_STYLE));
   const [style, setStyle] = useState<string>(DEFAULT_STYLE);
   const [providerId, setProviderId] = useState("");
   const [model, setModel] = useState("");
@@ -141,7 +137,6 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const [importedName, setImportedName] = useState<string | null>(null);
   const [advanced, setAdvanced] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [portraitBusy, setPortraitBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // The seats: the same catalog the typed chat offers — API families, CLI
@@ -240,7 +235,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     setName("");
     setTitle("");
     setDescription("");
-    setRecipe({ ...defaultRecipe(DEFAULT_STYLE), portrait: newIllustratedPortrait() });
+    setRecipe(defaultRecipe(DEFAULT_STYLE));
     setProviderId("");
     setModel("");
     setEffort("");
@@ -249,7 +244,6 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     setImportedName(null);
     setError(null);
     setSubmitting(false);
-    setPortraitBusy(false);
   }, [open]);
 
   const palette = useMemo(() => resolvePalette(recipe), [recipe]);
@@ -351,7 +345,6 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   };
 
   const submit = async () => {
-    if (portraitBusy) return;
     if (!name.trim()) {
       setError(t("society.create.name_required"));
       return;
@@ -473,20 +466,6 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                   />
                   <p className="mt-1 text-xs text-muted-foreground">{t("society.create.description_hint")}</p>
                 </div>
-
-                <PortraitEditor
-                  figure={recipe}
-                  palette={{ primary: palette.primary, secondary: palette.secondary, accent: palette.accent }}
-                  name={name}
-                  portrait={recipe.portrait}
-                  onBusyChange={setPortraitBusy}
-                  onChange={(portrait) => setRecipe((current) => {
-                    const next = { ...current };
-                    if (portrait) next.portrait = portrait;
-                    else delete next.portrait;
-                    return next;
-                  })}
-                />
 
                 {/* ---- Runs on: only what is connected on this machine ---- */}
                 <div data-testid="society-create-brain">
@@ -655,7 +634,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                   <Button type="button" variant="ghost" size="sm" onClick={onClose}>
                     {t("society.create.cancel")}
                   </Button>
-                  <Button type="submit" size="sm" disabled={submitting || portraitBusy} data-testid="society-create-submit">
+                  <Button type="submit" size="sm" disabled={submitting} data-testid="society-create-submit">
                     {t("society.create.submit")}
                   </Button>
                 </div>

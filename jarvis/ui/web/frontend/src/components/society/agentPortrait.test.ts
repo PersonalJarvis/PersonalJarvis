@@ -4,7 +4,6 @@ import type { SocietyAgentRow } from "@/lib/societyApi";
 
 import { agentPortraitUrl } from "./agentPortrait";
 import { defaultFigureFor, rowToAgent } from "./data";
-import { illustratedPortraitForAgent, parseIllustratedPortrait } from "./illustratedPortrait";
 
 describe("agent portraits", () => {
   test("resolves the three compact built-in faces", () => {
@@ -32,15 +31,5 @@ describe("agent portraits", () => {
     expect(agent.figure?.base).toBe(defaultFigureFor(id, "specialist").base);
     expect(agent.figure?.palette).toEqual(defaultFigureFor(id, "specialist").palette);
     expect(agent.figure?.portrait).toBe("morning-briefing");
-  });
-
-  test("an API-created agent without an image gets a stable local portrait", () => {
-    const row = {
-      agent_id: "new-agent", name: "New Agent", tier: "specialist", state: "active", avatar: {},
-    } as unknown as SocietyAgentRow;
-    const agent = rowToAgent(row);
-    expect(agent.figure?.portrait).toBe(illustratedPortraitForAgent("new-agent"));
-    expect(parseIllustratedPortrait(agent.figure?.portrait)).not.toBeNull();
-    expect(rowToAgent({ ...row, avatar: { portrait: "figure" } }).figure?.portrait).toBe("figure");
   });
 });

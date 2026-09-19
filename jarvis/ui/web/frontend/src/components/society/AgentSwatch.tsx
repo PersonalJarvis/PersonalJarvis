@@ -16,8 +16,6 @@ import { cn } from "@/lib/utils";
 
 import type { SocietyAgent } from "./data";
 import { agentPortraitUrl } from "./agentPortrait";
-import { IllustratedAgentPortrait } from "./IllustratedAgentPortrait";
-import { parseIllustratedPortrait } from "./illustratedPortrait";
 import { faceCrop } from "./figures/faceCrop";
 import { recipeKey, resolvePalette, type FigureRecipe } from "./figures/figureRecipe";
 
@@ -62,11 +60,10 @@ export function AgentSwatch({
   const primary = agent.figure ? palette.primary : agent.palette.primary;
   const secondary = agent.figure ? palette.secondary : agent.palette.secondary;
   const accent = agent.figure ? palette.accent : agent.palette.accent;
-  const illustrated = parseIllustratedPortrait(agent.figure?.portrait);
-  const portrait = illustrated ? null : agentPortraitUrl(agent.figure?.portrait);
+  const portrait = agentPortraitUrl(agent.figure?.portrait);
   const [failedPortrait, setFailedPortrait] = useState<string | null>(null);
   const activePortrait = portrait === failedPortrait ? null : portrait;
-  const crop = useFaceCrop(activePortrait || illustrated ? null : agent.figure);
+  const crop = useFaceCrop(activePortrait ? null : agent.figure);
   const eyeGap = Math.max(3, size * 0.11);
   const eyeSize = Math.max(2.5, size * 0.085);
   return (
@@ -83,14 +80,7 @@ export function AgentSwatch({
         boxShadow: `inset 0 0 0 2px ${accent}66`,
       }}
     >
-      {illustrated ? (
-        <IllustratedAgentPortrait
-          recipe={illustrated}
-          palette={palette}
-          archetype={agent.figure?.archetype ?? "biped"}
-          base={agent.figure?.base ?? ""}
-        />
-      ) : activePortrait ? (
+      {activePortrait ? (
         <img
           src={activePortrait}
           alt=""

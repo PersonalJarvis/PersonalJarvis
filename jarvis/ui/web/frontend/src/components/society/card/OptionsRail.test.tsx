@@ -142,24 +142,7 @@ describe("OptionsRail", () => {
       expect(patch).toBeTruthy();
       const body = JSON.parse((patch?.[1] as RequestInit).body as string) as { avatar: typeof figure };
       expect(body.avatar.base).toBe("rogue");
-      expect(body.avatar.portrait).toBe("figure");
-    });
-  });
-
-  test("customizing an existing portrait saves a local illustration without changing its figure", async () => {
-    const figure = { contract: 1 as const, archetype: "biped" as const, base: "rogue", parts: {}, portrait: "bot-creator" };
-    mount(agent({ figure }));
-    fireEvent.click(screen.getByTestId("agent-card-options-more"));
-    fireEvent.click(screen.getByTestId("agent-portrait-change"));
-    fireEvent.click(screen.getByTestId("portrait-mode-illustrated"));
-    fireEvent.click(screen.getByTestId("portrait-option-glasses"));
-    fireEvent.click(screen.getByTestId("portrait-save"));
-    await waitFor(() => {
-      const patch = fetchMock.mock.calls.find((call) => (call[1] as RequestInit | undefined)?.method === "PATCH");
-      expect(patch).toBeTruthy();
-      const body = JSON.parse((patch?.[1] as RequestInit).body as string) as { avatar: typeof figure };
-      expect(body.avatar.base).toBe("rogue");
-      expect(body.avatar.portrait).toMatch(/^illustrated:v1:/);
+      expect(body.avatar.portrait).toBeUndefined();
     });
   });
 

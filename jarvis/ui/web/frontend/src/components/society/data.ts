@@ -19,7 +19,6 @@ import type { MentionPlugin } from "./chat/mentionItems";
 import type { Checkpoint, SocietyAgentRow } from "@/lib/societyApi";
 
 import { PALETTE_PRESETS, resolvePalette, type FigureRecipe } from "./figures/figureRecipe";
-import { illustratedPortraitForAgent } from "./illustratedPortrait";
 import { SAMPLE_ROSTER } from "./mockRoster";
 import { beginRetirement, retirementRunning } from "./world/retireStore";
 import { announceSpawn } from "./world/spawnStore";
@@ -209,13 +208,12 @@ const PROVIDER_LABELS: Record<string, string> = {
 export function rowToAgent(row: SocietyAgentRow): SocietyAgent {
   const tier = row.tier as AgentTier;
   const storedFigure = recipeFromAvatar(row.avatar);
-  const baseFigure = storedFigure ?? defaultFigureFor(row.agent_id, tier);
-  // A missing portrait is synthesized from the durable id, including for
-  // agents created through the API. "figure" is an explicit opt-out.
-  const portrait = typeof row.avatar?.portrait === "string"
-    ? row.avatar.portrait
-    : tier === "lead" ? undefined : illustratedPortraitForAgent(row.agent_id);
-  const figure = portrait ? { ...baseFigure, portrait } : baseFigure;
+  const figure = storedFigure ?? defaultFigureFor(row.agent_id, tier);
+  // A portrait may be stored alongside an empty avatar recipe. Keep the
+  // deterministic world figure in that case instead of freezing a new look.
+  if (!storedFigure && typeof row.avatar?.portrait === "string") {
+    figure.portrait = row.avatar.portrait;
+  }
   const runState: AgentRunState =
     row.state === "paused" ? "paused" : ((row.run_state as AgentRunState | undefined) ?? "idle");
   return {
