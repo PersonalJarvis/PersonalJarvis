@@ -37,6 +37,11 @@ and already-started work can finish after speech closes. Subscription tasks use
 the same gateway with a scoped tool grant; unsupported isolation is reported
 instead of silently using another account.
 
+An explicit task cancellation invalidates queued calls and pending approvals.
+The next user request gets a new cancellation token, while interrupted work
+retains its cancelled token. Scheduled turns keep their starting agent selection
+through settings changes, including nested computer-control calls.
+
 Transcripts keep their original fragments and timestamps. The legacy archive
 stores one compatibility group at close, not a fabricated provider turn boundary.
 Voice duration updates are cumulative snapshots. Backend completion, generated
@@ -46,17 +51,37 @@ speech and actual playback are separate states.
 
 Synthetic live API probes have exercised tool execution, response continuation
 and spoken results on OpenAI and Gemini. Contract tests run on Windows and in a
-headless Python 3.11 Linux container. These checks do not establish native audio
-parity or release readiness. Native macOS/Linux audio, fresh installations,
-long-session recovery and comparative latency still require qualification.
+headless Python 3.11 Linux container. A fresh base wheel installation on
+`python:3.11-slim` boots a healthy API without PortAudio. An isolated OpenAI
+synthetic probe using exactly one credential also passes there, including a
+forced reconnect and exactly one tool execution. These checks do not establish
+native audio parity or release readiness. Native-device audio, fresh desktop
+installations, long-session recovery and comparative latency still require qualification.
 
-Transport failures currently stop the call. Automatic reconnection with restored
-conversation state still needs implementation and verification before full migration.
+Safe transport failures reconnect with jitter and a shared connection budget.
+Recovery restores bounded conversation history and completed tool receipts;
+it never replays buffered microphone audio. New actions wait for fresh user
+input. Pending approvals, running actions or uncertain outcomes prevent automatic
+reconnection. Missing final usage remains marked unconfirmed across reconnects.
+
+Synthetic OpenAI and Gemini probes have recovered from forced connection loss,
+spoken the previous verified result and kept the tool execution count at one.
+These probes do not replace long-call or native-device qualification.
 
 Run `python scripts/verify_gpt_live.py --run-live` for the opt-in OpenAI synthetic
 probe. The test uses configured credentials and incurs normal API usage; it
 captures neither microphone nor screen data. Gemini is selectable with
 `--provider gemini --model gemini-3.1-flash-live-preview`.
+Add `--reconnect` to verify recovery after a forced connection loss.
+
+The architecture decision and remaining acceptance requirements are recorded in
+[ADR-0036](adr/0036-continuous-voice-and-agent-selection.md).
+
+The settings form has been inspected in light and dark themes. Its provider
+test uses the continuous session contract and waits for `session.started`;
+browser-owned media no longer waits for the legacy desktop offer broker.
+The separate Live profile owns model and voice selection without duplicate
+legacy pickers on the provider card.
 
 References: [OpenAI architecture](https://developers.openai.com/api/docs/guides/live),
 [delegation](https://developers.openai.com/api/docs/guides/live-delegation),

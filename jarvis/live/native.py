@@ -217,7 +217,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                     self._tools.revision += 1
                     if not self._closing and not self._recovering:
                         self._resume_needs_input = False
-                        self._tools.accepting = True
+                        self._tools.accept_new_input()
                         self._reconnect_attempts = 0
                     from jarvis.core.turn_language import resolve_output_language
 
@@ -335,7 +335,8 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                 self._tools.revision += 1
                 if not self._recovering:
                     self._resume_needs_input = False
-                    self._tools.accepting = True
+                    self._tools.accept_new_input()
+                    self._reconnect_attempts = 0
             await self._connection.send_text(str(message.get("text", "")))
         else:
             await super().handle_control(message)

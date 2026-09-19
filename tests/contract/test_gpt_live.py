@@ -536,3 +536,182 @@ async def test_late_transcript_cannot_reopen_tool_execution_after_close(ledger):
         }
     )
     assert not session._tools.accepting
+
+
+@pytest.mark.asyncio
+async def test_cancelled_work_stays_cancelled_when_a_new_request_arrives(ledger):
+    from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL
+
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class DelayedApprovalGateway(Gateway):
+        def __init__(self):
+            super().__init__()
+            self.cancelled = []
+
+        async def execute(self, name, args, request):
+            self.calls.append((name, args, request))
+            if len(self.calls) == 1:
+                started.set()
+                await release.wait()
+                assert request.cancel_token.is_cancelled()
+                return ToolResult(False, "Approval needed", VOICE_CONFIRM_SENTINEL)
+            assert not request.cancel_token.is_cancelled()
+            return ToolResult(True, "New request completed")
+
+        async def cancel_pending(self, trace):
+            self.cancelled.append(trace)
+            return True
+
+    gateway = DelayedApprovalGateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="chosen")
+    args = {"name": "write-file", "arguments_json": '{"text":"work"}'}
+    job = asyncio.create_task(runtime.execute("old", "call_tool", args, 0))
+    await started.wait()
+    await runtime.cancel_work()
+    runtime.revision += 1
+    runtime.accept_new_input()
+    release.set()
+    assert (await job)["status"] == "superseded"
+    assert gateway.cancelled == [gateway.calls[0][2].trace_id]
+    assert not runtime._pending
+    assert (await runtime.execute("new", "call_tool", args, runtime.revision))["success"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["end_call", "confirm_action", "call_tool"])
+async def test_cancelled_generation_cannot_act_after_new_input(ledger, name):
+    gateway = Gateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="chosen")
+    await runtime.cancel_work()
+    runtime.revision += 1
+    runtime.accept_new_input()
+    result = await runtime.execute("stale", name, {}, 0)
+    assert result["status"] == "superseded"
+    assert not runtime.end_requested
+    assert not gateway.calls
+
+
+@pytest.mark.asyncio
+async def test_task_keeps_starting_agent_after_settings_change():
+    from jarvis.brain.manager import BrainManager
+    from jarvis.core.model_selection import operation_model
+
+    worker = SimpleNamespace(provider="openai-api", model="original", reasoning_effort="medium")
+    config = SimpleNamespace(brain=SimpleNamespace(worker=worker))
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class Manager(BrainManager):
+        def __init__(self):
+            self._config = config
+
+        async def _run_task_with_selection(self, **kwargs):
+            started.set()
+            await release.wait()
+            assert self._task_provider_chain("deep") == [("openai", "original")]
+            assert self._tool_model_provider() == "openai"
+            assert self._tool_model_model("openai") == "original"
+            return "done"
+
+    task = asyncio.create_task(Manager().run_task(prompt="A scheduled request"))
+    await started.wait()
+    worker.provider = "claude-cli"
+    worker.model = "replacement"
+    release.set()
+    assert await task == "done"
+    assert operation_model.get() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["session.started", "error", "session.closed"])
+async def test_provider_test_uses_continuous_contract_and_closes_session(monkeypatch, terminal):
+    from jarvis.brain.provider_test import _default_realtime_probe
+    from jarvis.core import config, registry
+    from jarvis.live import recovery
+
+    opened, sent, closed = [], [], []
+
+    class Connection:
+        async def receive(self):
+            return {"type": terminal, "error": {"message": "private provider body"}}
+
+        async def send(self, event):
+            sent.append(event)
+
+        async def close(self):
+            closed.append(True)
+
+    class Provider:
+        continuous_conversation = True
+        credential_candidates = (("test", "TEST"),)
+
+        def __init__(self, *, api_key):
+            assert api_key == "synthetic"
+
+        async def open_session(self, start):
+            opened.append(start)
+            return Connection()
+
+    async def permit():
+        return None
+
+    monkeypatch.setattr(registry, "load", lambda *args, **kwargs: Provider)
+    monkeypatch.setattr(config, "get_secret_any", lambda *args: "synthetic")
+    monkeypatch.setattr(recovery, "connection_permit", permit)
+    cfg = SimpleNamespace(live=LiveConfig(configured=True, backend_model="chosen-model"))
+    if terminal == "session.started":
+        assert await _default_realtime_probe(SimpleNamespace(id="test"), cfg, timeout_s=1) >= 0
+        assert sent == [{"type": "session.close"}]
+    else:
+        with pytest.raises(RuntimeError, match="selected session") as error:
+            await _default_realtime_probe(SimpleNamespace(id="test"), cfg, timeout_s=1)
+        assert "private provider body" not in str(error.value)
+        assert not sent
+    assert opened[0].session["delegation"]["responses"]["model"] == "chosen-model"
+    assert opened[0].session["store"] is False
+    assert opened[0].offer_sdp == ""
+    assert closed == [True]
+
+
+def test_live_profile_capability_reaches_api_and_frontend(monkeypatch):
+    from pathlib import Path
+    from typing import get_args, get_type_hints
+
+    from jarvis.ui.web import provider_routes as routes
+    from jarvis.ui.web.provider_spec import ProviderSpec, get_spec
+
+    monkeypatch.setattr(routes, "_is_credential_present", lambda *args: False)
+    monkeypatch.setattr(routes.cfg_mod, "get_secret", lambda *args, **kwargs: None)
+    spec = get_spec("openai-live")
+    payload = routes._spec_to_payload(spec, active_brain=None, active_tts=None, active_stt=None)
+    assert payload["configuration_surface"] == "live"
+    source = Path("jarvis/ui/web/frontend/src/hooks/useProviders.ts").read_text(encoding="utf-8")
+    union = " | ".join(
+        f'"{value}"' for value in get_args(get_type_hints(ProviderSpec)["configuration_surface"])
+    )
+    assert f"configuration_surface?: {union};" in source
+
+
+def test_browser_audio_does_not_wait_for_a_legacy_desktop_offer(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from jarvis.realtime import factory
+    from jarvis.ui.web import settings_routes
+
+    monkeypatch.setattr(factory, "realtime_browser_audio", lambda cfg: True)
+    monkeypatch.setattr(settings_routes, "_realtime_available_provider", lambda cfg: "openai-live")
+    monkeypatch.setattr(settings_routes, "_realtime_requires_webrtc_offer", lambda cfg: True)
+    monkeypatch.setattr(settings_routes, "_realtime_handshake_budget_s", lambda cfg: 60)
+
+    async def broker_probe(required):
+        raise AssertionError("Browser-owned audio creates its offer on demand")
+
+    monkeypatch.setattr(settings_routes, "_realtime_transport_offer_ready", broker_probe)
+    app = FastAPI()
+    app.include_router(settings_routes.router)
+    app.state.config = SimpleNamespace(voice=SimpleNamespace(mode="realtime"))
+    response = TestClient(app).get("/api/settings/voice-mode")
+    assert response.status_code == 200
+    assert response.json()["browser_audio"] is True
+    assert response.json()["transport_offer_detail"] is None

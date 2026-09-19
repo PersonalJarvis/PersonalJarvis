@@ -66,12 +66,12 @@ def test_get_voice_mode(monkeypatch):
     assert body["requires_webrtc_offer"] is False
     assert body["transport_offer_ready"] is None
     assert body["transport_offer_detail"] is None
-    assert body["active_provider"] == "openai-realtime"
+    assert body["active_provider"] == "openai-live"
     # Sidebar display fields: registry label + the catalog-default model (no
     # pin configured in this app fixture).
-    assert body["active_provider_label"] == "OpenAI Realtime"
-    assert body["active_model"] == "gpt-realtime"
-    assert body["active_model_label"] == "GPT Realtime (default)"
+    assert body["active_provider_label"] == "OpenAI GPT-Live"
+    assert body["active_model"] == "gpt-live-1"
+    assert body["active_model_label"] == "GPT-Live 1"
     assert body["session_active"] is False
     assert body["active_session_mode"] is None
 

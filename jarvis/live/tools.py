@@ -78,6 +78,18 @@ class LiveTools:
         read = getattr(self.gateway, "voice_catalog", self.gateway.catalog)
         return read()
 
+    def accept_new_input(self) -> None:
+        """New requests get a fresh token; running work keeps its cancelled token."""
+        if self.cancel_token.is_cancelled():
+            self.cancel_token = CancelToken()
+        self.accepting = True
+
+    async def cancel_work(self) -> None:
+        self.cancel_token.cancel("user_cancelled")
+        self.accepting = False
+        self.revision += 1
+        await self._cancel_confirmations()
+
     def declarations(self) -> list[dict]:
         definitions = [
             function(
@@ -159,6 +171,15 @@ class LiveTools:
             return result
 
     async def _execute(self, name: str, args: dict, revision: int) -> dict:
+        operation_token = self.cancel_token
+        if operation_token.is_cancelled():
+            return {"success": False, "status": "cancelled"}
+        if revision != self.revision:
+            return {
+                "success": False,
+                "status": "superseded",
+                "error": "The request changed before execution. Re-evaluate the latest user input.",
+            }
         if ":" in name:
             prefix, suffix = name.split(":", 1)
             if prefix.isidentifier() and (
@@ -175,8 +196,6 @@ class LiveTools:
         if name == "end_call":
             self.end_requested = True
             return {"success": True, "status": "closing_voice"}
-        if self.cancel_token.is_cancelled():
-            return {"success": False, "status": "cancelled"}
         if name == "discover_tools":
             query = str(args.get("query", "")).casefold().split()
             return {
@@ -238,12 +257,6 @@ class LiveTools:
         import jsonschema  # type: ignore[import-untyped]
 
         jsonschema.validate(args, descriptor.input_schema)
-        if revision != self.revision:
-            return {
-                "success": False,
-                "status": "superseded",
-                "error": "The request changed before execution. Re-evaluate the latest user input.",
-            }
         trace = uuid4()
         from jarvis.core.model_selection import ModelSelection, use_operation_model
 
@@ -264,6 +277,9 @@ class LiveTools:
                 }
             result = await self.gateway.execute(canonical, args, self._request(trace))
         if result.error == VOICE_CONFIRM_SENTINEL:
+            if operation_token.is_cancelled() or revision != self.revision:
+                await self.gateway.cancel_pending(trace)
+                return {"success": False, "status": "superseded"}
             if not self.accepting:
                 await self.gateway.cancel_pending(trace)
                 return {"success": False, "status": "voice_closed_before_confirmation"}
@@ -314,6 +330,10 @@ class LiveTools:
 
     async def close(self) -> None:
         self.accepting = False
-        for trace, _, _, _ in self._pending.values():
-            await self.gateway.cancel_pending(trace)
+        await self._cancel_confirmations()
+
+    async def _cancel_confirmations(self) -> None:
+        pending = tuple(self._pending.values())
         self._pending.clear()
+        for trace, _, _, _ in pending:
+            await self.gateway.cancel_pending(trace)

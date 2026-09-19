@@ -139,7 +139,7 @@ class LiveVoiceSession:
         elif kind == "audio_stop":
             await self.end(reason="client_stop")
         elif kind == "cancel_work" and self._tools is not None:
-            self._tools.cancel_token.cancel("user_cancelled")
+            await self._tools.cancel_work()
         elif kind == "text_input" and self._connection is not None:
             text = str(message.get("text", ""))[:32000]
             if self._tools is not None:
@@ -147,7 +147,8 @@ class LiveVoiceSession:
                 self._tools.revision += 1
                 if not self._recovering:
                     self._resume_needs_input = False
-                    self._tools.accepting = True
+                    self._tools.accept_new_input()
+                    self._reconnect_attempts = 0
             preview = text.encode("utf-8")[:192].decode("utf-8", errors="ignore")
             await self._connection.send(
                 {
@@ -374,7 +375,7 @@ class LiveVoiceSession:
                 self._tools.revision += 1
                 if not self._closing and not self._recovering:
                     self._resume_needs_input = False
-                    self._tools.accepting = True
+                    self._tools.accept_new_input()
                     self._reconnect_attempts = 0
             await self._send_json(
                 {

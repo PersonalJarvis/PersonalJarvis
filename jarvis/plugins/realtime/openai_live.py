@@ -102,5 +102,10 @@ class OpenAILiveProvider:
             raise
         connection = OpenAILiveConnection(socket, session_id=session_id, answer_sdp=answer)
         if not offer:
-            await connection.send({"type": "session.start", "session": session})
+            try:
+                await connection.send({"type": "session.start", "session": session})
+            except BaseException:
+                # A failed or cancelled start still owns the newly opened socket.
+                await connection.close()
+                raise
         return connection

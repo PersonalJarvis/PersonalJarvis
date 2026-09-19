@@ -1584,6 +1584,7 @@ export function ProviderCard({
               already having a stored credential like the other tiers' pickers
               above. */}
           {descriptor.tier === "realtime" &&
+            descriptor.configuration_surface !== "live" &&
             (descriptor.configured ||
               // Keep the model/voice pickers mounted through a transient busy
               // probe so the card does not visibly flicker while saying
