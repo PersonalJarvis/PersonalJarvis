@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, Final
 from uuid import uuid4
@@ -49,6 +50,12 @@ log = logging.getLogger(__name__)
 __all__ = ["SocietyRuntime", "current_runtime", "set_current_runtime"]
 
 _DB_NAME = "society.db"
+_CLOSE_TASK_TIMEOUT_S = 2.0
+
+
+class SocietyRuntimeClosed(RuntimeError):
+    """This runtime owner has entered terminal shutdown."""
+
 
 #: What the person hears when a task Jarvis handed out comes back.
 _LEAD_DONE: dict[str, str] = {
@@ -189,6 +196,8 @@ class SocietyRuntime:
         self._delivery_unsubscribe: Callable[[], None] | None = None
         self._lead_incoming_unsubscribe: Callable[[], None] | None = None
         self._started = False
+        self._closing = False
+        self._starting_task: asyncio.Task[Any] | None = None
         self._context_start_task: asyncio.Task[bool] | None = None
 
     # ------------------------------------------------------------ lifecycle
@@ -199,6 +208,8 @@ class SocietyRuntime:
         Voice/chat may continue while storage is slow. One owned task does the
         work; close cancels and reaps it before dismantling runtime components.
         """
+        if self._closing:
+            return False
         if self._started:
             return True
         task = self._context_start_task
@@ -219,36 +230,59 @@ class SocietyRuntime:
         return True
 
     async def ensure_started(self) -> SocietyRuntime:
+        self._require_open_owner()
         async with self._start_lock:
+            self._require_open_owner()
             if self._started:
                 return self
-            await self.store.open()
-            self.scheduler._budget = self._get_budget()  # noqa: SLF001 — the runtime owns its scheduler
-            self.scheduler.attach()
-            self._delivery_unsubscribe = self.store.bus.subscribe_all(self._delivery_failed)
-            self._lead_incoming_unsubscribe = self.store.bus.subscribe_all(self._on_lead_incoming)
-            bus = self._get_mission_bus()
-            if bus is not None:
-                self.bridge.attach(bus)
-            self.checkpoints.attach()
-            self.quests.attach()
-            self.world_feed.attach()
-            await self.seed_lead()
-            if self._seed_starter_team:
-                created = await seed_first_run(self.roster, self.store)
-                if created:
-                    log.info("society: starter team seeded: %s", ", ".join(created))
-            # Warm the roster snapshot so the lead card (lead_card.py) — a
-            # synchronous reader on the brain's prompt build — sees the team from
-            # the first turn, not from the first REST listing.
-            await self.roster.refresh()
-            self._started = True
-            self._delivery_task = asyncio.create_task(self._deliver_pending())
-            set_current_runtime(self)
-            await self.coding_supervision.start()
-            self.background(self.recover_reviews())
-            log.info("society runtime started (%s)", self.store.path)
-            return self
+            self._starting_task = asyncio.current_task()
+            try:
+                return await self._start_runtime()
+            finally:
+                # A slow startup that outlives the shutdown deadline still owns
+                # its provisional store until it unwinds; never orphan it.
+                try:
+                    if self._closing:
+                        await self.store.close()
+                finally:
+                    self._starting_task = None
+
+    def _require_open_owner(self) -> None:
+        if self._closing:
+            raise SocietyRuntimeClosed("society runtime stopped")
+
+    async def _start_runtime(self) -> SocietyRuntime:
+        await self.store.open()
+        self._require_open_owner()
+        self.scheduler._budget = self._get_budget()  # noqa: SLF001 — the runtime owns its scheduler
+        self.scheduler.attach()
+        self._delivery_unsubscribe = self.store.bus.subscribe_all(self._delivery_failed)
+        self._lead_incoming_unsubscribe = self.store.bus.subscribe_all(self._on_lead_incoming)
+        bus = self._get_mission_bus()
+        if bus is not None:
+            self.bridge.attach(bus)
+        self.checkpoints.attach()
+        self.quests.attach()
+        self.world_feed.attach()
+        await self.seed_lead()
+        self._require_open_owner()
+        if self._seed_starter_team:
+            created = await seed_first_run(self.roster, self.store)
+            if created:
+                log.info("society: starter team seeded: %s", ", ".join(created))
+        # Warm the roster snapshot so the lead card (lead_card.py) — a
+        # synchronous reader on the brain's prompt build — sees the team from
+        # the first turn, not from the first REST listing.
+        await self.roster.refresh()
+        self._require_open_owner()
+        self._started = True
+        self._delivery_task = asyncio.create_task(self._deliver_pending())
+        set_current_runtime(self)
+        await self.coding_supervision.start()
+        self._require_open_owner()
+        self.background(self.recover_reviews())
+        log.info("society runtime started (%s)", self.store.path)
+        return self
 
     async def _delivery_failed(self, env: SocietyEnvelope) -> None:
         """Project a terminal scheduler veto onto an already-visible chat receipt."""
@@ -407,37 +441,59 @@ class SocietyRuntime:
         return self._get_cfg()
 
     async def close(self) -> None:
-        await self.coding_supervision.close()
-        if self._context_start_task is not None:
-            self._context_start_task.cancel()
-            await asyncio.gather(self._context_start_task, return_exceptions=True)
-            self._context_start_task = None
-        if self._delivery_task is not None:
-            self._delivery_task.cancel()
-            await asyncio.gather(self._delivery_task, return_exceptions=True)
-            self._delivery_task = None
-        if self._delivery_unsubscribe is not None:
-            self._delivery_unsubscribe()
-            self._delivery_unsubscribe = None
-        if self._lead_incoming_unsubscribe is not None:
-            self._lead_incoming_unsubscribe()
-            self._lead_incoming_unsubscribe = None
-        await self.browser.close()
-        for task in list(self._watchers):
-            task.cancel()
-        if self._watchers:
-            await asyncio.gather(*list(self._watchers), return_exceptions=True)
-        self._watchers.clear()
-        self.conversations.close()
-        self.scheduler.detach()
-        self.bridge.detach()
-        self.checkpoints.detach()
-        self.quests.detach()
-        self.world_feed.detach()
-        await self.store.close()
-        self._started = False
-        if current_runtime() is self:
-            set_current_runtime(None)
+        # HTTP serving continues during independent server cleanup. Fence this
+        # owner synchronously so a late roster/context request cannot reopen it.
+        self._closing = True
+
+        def clear_runtime() -> None:
+            self._started = False
+            if current_runtime() is self:
+                set_current_runtime(None)
+
+        # Register every release before the first await. A failing or cancelled
+        # browser/supervisor cleanup must still close SQLite's non-daemon worker.
+        # Exit-stack callbacks run in reverse order, keeping storage alive until
+        # tasks and subscriptions have relinquished it; failures still propagate.
+        async with AsyncExitStack() as cleanup:
+            cleanup.callback(clear_runtime)
+            cleanup.push_async_callback(self.store.close)
+            for release in (
+                self.world_feed.detach,
+                self.quests.detach,
+                self.checkpoints.detach,
+                self.bridge.detach,
+                self.scheduler.detach,
+                self.conversations.close,
+            ):
+                cleanup.callback(release)
+            cleanup.push_async_callback(self.browser.close)
+            for attribute in ("_delivery_unsubscribe", "_lead_incoming_unsubscribe"):
+                unsubscribe = getattr(self, attribute)
+                if unsubscribe is not None:
+                    cleanup.callback(unsubscribe)
+                    setattr(self, attribute, None)
+            cleanup.push_async_callback(self.coding_supervision.close)
+
+            tasks: set[asyncio.Task[Any]] = set(self._watchers)
+            for task in (self._starting_task, self._context_start_task, self._delivery_task):
+                if task is not None:
+                    tasks.add(task)
+            for task in tasks:
+                task.cancel()
+            try:
+                if tasks:
+                    done, pending = await asyncio.wait(tasks, timeout=_CLOSE_TASK_TIMEOUT_S)
+                    for task in done:
+                        if not task.cancelled() and (error := task.exception()) is not None:
+                            log.warning("society shutdown task failed: %s", type(error).__name__)
+                    if pending:
+                        raise TimeoutError("society task shutdown incomplete")
+            finally:
+                if self._context_start_task is not None and self._context_start_task.done():
+                    self._context_start_task = None
+                if self._delivery_task is not None and self._delivery_task.done():
+                    self._delivery_task = None
+                self._watchers.difference_update(task for task in tasks if task.done())
 
     def skills_for(self, agent_id: str) -> AgentSkills:
         """The agent's private skill namespace (lazy registry)."""

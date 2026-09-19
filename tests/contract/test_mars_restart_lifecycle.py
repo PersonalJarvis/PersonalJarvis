@@ -343,7 +343,7 @@ async def test_server_stop_finishes_independent_cleanup_after_mars_timeout(tmp_p
         return action
 
     runtime.ensure_started = reluctant_start
-    runtime.browser = SimpleNamespace(close=async_cleanup("society-browser"))
+    runtime.close = async_cleanup("society-runtime")
     monkeypatch.setattr(routes, "_INITIALIZATION_STOP_TIMEOUT_S", 0.02)
     monkeypatch.setattr(cli_shared, "set_active_registry", sync_cleanup("cli-registry"))
     monkeypatch.setattr(
@@ -417,7 +417,7 @@ async def test_server_stop_finishes_independent_cleanup_after_mars_timeout(tmp_p
             await asyncio.wait_for(server.stop(), 2)
         assert {
             "browser-prepare",
-            "society-browser",
+            "society-runtime",
             "chat",
             "marketplace-refresh",
             "local-model-health",

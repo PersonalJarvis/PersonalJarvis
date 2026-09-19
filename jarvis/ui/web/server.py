@@ -3670,10 +3670,12 @@ class WebServer:
         follows the live mission manager, budget tracker, brain tool surface
         and skill registry — whichever of them exists at call time.
         """
-        from jarvis.society.runtime import SocietyRuntime
+        from jarvis.society.runtime import SocietyRuntime, SocietyRuntimeClosed
 
-        data_dir = Path(getattr(getattr(self.cfg, "memory", None), "data_dir", None) or "data")
         state = self.app.state
+        if getattr(state, "society_stopping", False):
+            raise SocietyRuntimeClosed("society runtime stopped")
+        data_dir = Path(getattr(getattr(self.cfg, "memory", None), "data_dir", None) or "data")
 
         if getattr(state, "society", None) is not None:
             return state.society
@@ -3764,6 +3766,9 @@ class WebServer:
         return AgentChatService(store, assistant_name=_name, bus=lambda: self.bus)
 
     async def stop(self) -> None:
+        # Fence lazy creation even when no Society owner exists yet. The shared
+        # brain factory and HTTP surface can still be called while shutdown awaits.
+        self.app.state.society_stopping = True
         from .mars_routes import stop_mars_station
 
         # Fence station creation before any other shutdown await can interleave
@@ -3781,8 +3786,15 @@ class WebServer:
             await asyncio.gather(self._browser_prepare_task, return_exceptions=True)
             self._browser_prepare_task = None
         society = getattr(self.app.state, "society", None)
+        society_shutdown_failure: str | None = None
         if society is not None:
-            await society.browser.close()
+            try:
+                # The runtime owns delivery tasks, subscriptions and SQLite as
+                # well as the browser. Leaving its store open prevents exit.
+                await asyncio.wait_for(society.close(), timeout=5.0)
+            except Exception as exc:  # noqa: BLE001 -- finish independent cleanup below
+                society_shutdown_failure = type(exc).__name__
+                logger.warning("Society runtime cleanup incomplete ({})", society_shutdown_failure)
         self._mic_level_sessions.clear()
         self._stop_mic_level_bridge()
 
@@ -4095,6 +4107,8 @@ class WebServer:
             # Report incomplete Mars cleanup only after unrelated browser, chat,
             # plugin, watcher, terminal and server resources have been released.
             raise RuntimeError(f"mars_station_shutdown_incomplete ({mars_shutdown_failure})")
+        if society_shutdown_failure is not None:
+            raise RuntimeError(f"society_runtime_shutdown_incomplete ({society_shutdown_failure})")
 
     @property
     def running(self) -> bool:

@@ -24,7 +24,7 @@ from jarvis.society.failure_reasons import FailureReason, retry_action
 from jarvis.society.memory import MEMORY_SHARE_CAPABILITY, MemoryRefused
 from jarvis.society.rooms import RoomError
 from jarvis.society.roster import RosterError
-from jarvis.society.runtime import SocietyRuntime
+from jarvis.society.runtime import SocietyRuntime, SocietyRuntimeClosed
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +36,8 @@ router = APIRouter(prefix="/api/society", tags=["society"])
 
 async def _runtime(request: HTTPConnection) -> SocietyRuntime:
     state = request.app.state
+    if getattr(state, "society_stopping", False):
+        raise HTTPException(503, "society runtime stopped")
     runtime = getattr(state, "society", None)
     if runtime is None:
         factory = getattr(state, "society_factory", None)
@@ -43,11 +45,16 @@ async def _runtime(request: HTTPConnection) -> SocietyRuntime:
             raise HTTPException(503, "society runtime not configured")
         try:
             runtime = factory()
+        except SocietyRuntimeClosed as exc:
+            raise HTTPException(503, "society runtime stopped") from exc
         except Exception as exc:  # noqa: BLE001 — surfaces as 503 with the reason in the log
             log.warning("society: runtime could not be built: %s", exc)
             raise HTTPException(503, "society runtime unavailable") from exc
         state.society = runtime
-    await runtime.ensure_started()
+    try:
+        await runtime.ensure_started()
+    except SocietyRuntimeClosed as exc:
+        raise HTTPException(503, "society runtime stopped") from exc
     return runtime
 
 
