@@ -89,10 +89,12 @@ live probe demonstrates one controlled project-specific planning improvement.
   credential through stdin. No host data directory or credential files were mounted.
   This probe caught and fixed a reviewer edge case: a user correction classified
   as an unexecuted skill now becomes grounded feedback instead of being discarded.
-- Focused Windows verification: 336 passed, two environment skips. The broader
-  Society/chat/realtime selection produced 864 passes, three skips and 15 failures;
-  all 15 failures were reproduced using the unchanged baseline modules. They
-  concern earlier CLI-seat expectations and realtime bridge test doubles.
+- Windows Society/chat/realtime regression: 888 passed, three environment skips.
+  The outdated API-only seat assertions and incomplete realtime confirmation
+  doubles are corrected; all 15 previously reported baseline failures are resolved.
+- The portable install gate passes all 24 advertised CPython/OS/architecture
+  cells. `uv.lock` matches the existing project version and declared dependency
+  constraints, including the PDF version already pinned in `requirements.txt`.
 - The four routing/output/hangup/language guards plus learning contracts passed
   (620 tests, one environment skip). A later Linux run passed all 27 learning
   contracts, including symlink isolation.
