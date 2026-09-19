@@ -19,7 +19,7 @@ import type { AssistantPresentation } from "../companion/kinematics";
 import { usePendingCompanionFocus } from "../companion/usePendingCompanionFocus";
 import { OUTPOST_SHADOW, SHADOW_MAP_SIZE, SUN_POSITION, SUN_TARGET } from "./shadows";
 import {
-  BUILDING_COLLIDERS, createTerrainGeometry, outpostBounds, PLAYER_SPAWN,
+  BUILDING_COLLIDERS, createTerrainGeometry, outpostBounds, outpostCloseBounds, PLAYER_SPAWN,
   ROADS, terrainHeight, surfaceHeight, WORLD, WORLD_BOUNDS, type Collider, type Road, type Vec3,
 } from "./world";
 
@@ -212,7 +212,7 @@ export function MarsScene({ hostRef, mode, neutral, shadows, viewpoint, initialP
       return;
     }
     restored.current = true;
-    const bounds = mode === "overview" ? WORLD_BOUNDS : outpostBounds();
+    const bounds = mode === "overview" ? WORLD_BOUNDS : viewpoint === "close_reference" ? outpostCloseBounds() : outpostBounds();
     const frame = frameInspectionBounds(bounds, size.width / Math.max(1, size.height), WORLD.view.overview_padding,
       mode === "outpost" ? VIEW_DIRECTIONS[viewpoint] : VIEW_DIRECTIONS.reference);
     camera.position.fromArray(frame.position);

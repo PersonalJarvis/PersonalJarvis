@@ -9,7 +9,22 @@ const parse = (change: Record<string, unknown>) => parseViewPreferences(JSON.str
 
 afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
 
-describe("Mars follow view preferences", () => {
+describe("Mars view preferences", () => {
+  it("restores and persists the close reference preset within its world and layout", () => {
+    const close: ViewPreferences = { ...preferences, mode: "outpost", followAgentId: null, viewpoint: "close_reference" };
+    expect(parse({ ...close })).toEqual(close);
+    saveViewPreferences(close);
+    expect(readViewPreferences()).toEqual(close);
+    expect(JSON.parse(localStorage.getItem(VIEW_KEY)!)).toEqual({ ...saved, ...close });
+    for (const change of [{ world_id: "mars:swarm:other" }, { layout_version: WORLD.layout_version + 1 }]) {
+      expect(parse({ ...close, ...change })).toMatchObject({ mode: "overview", viewpoint: "reference", followAgentId: null });
+    }
+  });
+
+  it("rejects an unknown camera preset instead of restoring unrecognized view state", () => {
+    expect(parse({ viewpoint: "unknown_reference" })).toMatchObject({ mode: "overview", viewpoint: "reference", followAgentId: null, pose: null });
+  });
+
   it("restores a selected agent and trims surrounding spaces without needing a stale pose", () => {
     expect(parse({})).toEqual(preferences);
     expect(parse({ followAgentId: "  comms  ", pose: null })).toEqual({ ...preferences, pose: null });

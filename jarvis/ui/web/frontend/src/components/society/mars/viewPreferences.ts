@@ -1,6 +1,6 @@
 import { WORLD, WORLD_BOUNDS, type Vec3 } from "./world";
 
-export const VIEWPOINTS = ["reference", "front", "rear", "left", "right", "top"] as const;
+export const VIEWPOINTS = ["reference", "close_reference", "front", "rear", "left", "right", "top"] as const;
 export type Viewpoint = typeof VIEWPOINTS[number];
 export type CameraMode = "overview" | "outpost" | "orbit" | "player" | "follow";
 export interface CameraPose { position: Vec3; target: Vec3 }
@@ -15,7 +15,7 @@ export interface ViewPreferences {
 const DEFAULTS: ViewPreferences = { mode: "overview", viewpoint: "reference", neutral: false, shadows: true, pose: null, followAgentId: null };
 export const VIEW_KEY = `jarvis.${WORLD.world_id}.view.v${WORLD.layout_version}`;
 export const VIEW_DIRECTIONS: Record<Viewpoint, Vec3> = {
-  reference: [0.8, 0.9, 1], front: [0, 0.28, 1], rear: [0, 0.28, -1],
+  reference: [0.8, 0.9, 1], close_reference: [0.8, 0.9, 1], front: [0, 0.28, 1], rear: [0, 0.28, -1],
   left: [-1, 0.28, 0], right: [1, 0.28, 0], top: [0, 1, 0.04],
 };
 

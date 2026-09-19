@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { PerspectiveCamera, Vector3 } from "three";
-import { avoidCameraCollision, boundsCorners, CAMERA_FOV, fitWorldBounds, frameInspectionBounds, MAX_POLAR, MIN_POLAR } from "./camera";
-import { box, outpostBounds, WORLD_BOUNDS } from "./world";
+import { avoidCameraCollision, boundsCorners, CAMERA_CLEARANCE, CAMERA_FOV, fitWorldBounds, frameInspectionBounds, MAX_POLAR, MIN_POLAR } from "./camera";
+import { box, BUILDING_COLLIDERS, outpostBounds, outpostCloseBounds, terrainHeight, WORLD_BOUNDS } from "./world";
 import { parseViewPreferences, VIEW_DIRECTIONS, VIEWPOINTS } from "./viewPreferences";
 
 describe("Mars camera", () => {
-  it.each(VIEWPOINTS)("frames the complete authored Outpost from %s", (view) => {
+  it.each(VIEWPOINTS.filter((view) => view !== "close_reference"))("frames the complete authored Outpost from %s", (view) => {
     const bounds = outpostBounds();
     expect(bounds.min[0]).toBeLessThan(125); // West bridge, not just the plateau.
     expect(bounds.min[1]).toBeLessThan(0); // Complete cliff/support base.
@@ -17,6 +17,30 @@ describe("Mars camera", () => {
       expect(Math.abs(projected.x)).toBeLessThan(1 / 1.15);
       expect(Math.abs(projected.y)).toBeLessThan(1 / 1.15);
     }
+  });
+  it.each([0.65, 1, 16 / 9, 3.4])("frames the close Outpost completely with a clear lens at aspect %s", (aspect) => {
+    const bounds = outpostCloseBounds();
+    const frame = frameInspectionBounds(bounds, aspect, 1.15, VIEW_DIRECTIONS.close_reference);
+    const camera = new PerspectiveCamera(CAMERA_FOV, aspect, 0.12, 20000);
+    camera.position.fromArray(frame.position); camera.lookAt(...frame.target); camera.updateMatrixWorld();
+    for (const corner of boundsCorners(bounds)) {
+      const projected = new Vector3(...corner).project(camera);
+      expect(Math.abs(projected.x)).toBeLessThan(1 / 1.15);
+      expect(Math.abs(projected.y)).toBeLessThan(1 / 1.15);
+      expect(projected.z).toBeGreaterThan(-1);
+      expect(projected.z).toBeLessThan(1);
+    }
+    for (const collider of BUILDING_COLLIDERS) {
+      const inSolid = frame.position.every((value, axis) => value >= collider.min[axis] - CAMERA_CLEARANCE && value <= collider.max[axis] + CAMERA_CLEARANCE);
+      expect(inSolid, collider.id).toBe(false);
+    }
+    expect(frame.position[1]).toBeGreaterThanOrEqual(terrainHeight(frame.position[0], frame.position[2]) + CAMERA_CLEARANCE);
+  });
+  it("brings the close reference nearer while retaining the reference viewing direction", () => {
+    expect(VIEW_DIRECTIONS.close_reference).toEqual(VIEW_DIRECTIONS.reference);
+    const full = frameInspectionBounds(outpostBounds(), 16 / 9, 1.15, VIEW_DIRECTIONS.reference);
+    const close = frameInspectionBounds(outpostCloseBounds(), 16 / 9, 1.15, VIEW_DIRECTIONS.close_reference);
+    expect(close.distance).toBeLessThan(full.distance);
   });
   it("backs a preset lens out of solids without cropping its complete subject", () => {
     const bounds = box("subject", 0, 0, 0, 10, 10, 10);

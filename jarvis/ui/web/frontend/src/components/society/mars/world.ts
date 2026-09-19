@@ -220,3 +220,20 @@ export function outpostBounds(): Bounds {
     max: outpostExport.local_runtime_bounds.max.map((n, i) => n + translation[i]) as Vec3,
   };
 }
+
+/** Close inspection excludes the western bridge extension, not the cliff or mast. */
+export function outpostCloseBounds(): Bounds {
+  const bounds = outpostBounds();
+  const plateau = outpostContract.colliders.find((collider) => collider.shape === "plateau");
+  const landing = outpostContract.anchors.find((anchor) => anchor.id === "bridge-outpost-end");
+  if (!plateau?.footprint || !landing) return bounds;
+  // Keep the bridge landing, every platform edge and every Outpost solid.
+  // The export's other five planes retain complete cliff and landmark coverage.
+  bounds.min[0] = Math.min(
+    ...plateau.footprint.map(([x]) => x + OUTPOST_ORIGIN[0]),
+    ...WALK_SURFACES.terrace.footprint.map(([x]) => x + OUTPOST_ORIGIN[0]),
+    ...BUILDING_COLLIDERS.filter((collider) => collider.id.startsWith("outpost:")).map((collider) => collider.min[0]),
+    landing.position[0] + OUTPOST_ORIGIN[0],
+  );
+  return bounds;
+}

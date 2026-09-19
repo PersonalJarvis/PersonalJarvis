@@ -59,6 +59,7 @@
       "move_state_canceled": "Visit stopped",
       "viewpoint": "Outpost viewpoint",
       "view_reference": "Reference view",
+      "view_close_reference": "Close reference",
       "view_front": "Front",
       "view_rear": "Rear",
       "view_left": "Left side",

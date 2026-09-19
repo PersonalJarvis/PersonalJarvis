@@ -1,8 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { BUILDING_COLLIDERS, createTerrainGeometry, PLAYER_SPAWN, projectRoad, ROADS, surfaceHeight, terrainHeight, WORLD } from "./world";
+import { BUILDING_COLLIDERS, createTerrainGeometry, outpostBounds, outpostCloseBounds, PLAYER_SPAWN, projectRoad, ROADS, surfaceHeight, terrainHeight, WORLD } from "./world";
 import { isPositionClear } from "./controller";
+import outpostContract from "../../../../../../../../art/studies/mars-outpost-reference/source/geometry-contract.json";
 
 describe("canonical Mars foundation", () => {
+  it("crops only the distant bridge extension from close inspection, retaining the authored subject", () => {
+    const complete = outpostBounds(), close = outpostCloseBounds();
+    expect(close.min[0]).toBeGreaterThan(complete.min[0]);
+    expect(close.min.slice(1)).toEqual(complete.min.slice(1));
+    expect(close.max).toEqual(complete.max);
+    const origin = outpostContract.world_translation;
+    const plateau = outpostContract.colliders.find((collider) => collider.shape === "plateau")!;
+    for (const [x, z] of [...plateau.footprint!, ...outpostContract.walk_surfaces.terrace.footprint]) {
+      expect(x + origin[0]).toBeGreaterThanOrEqual(close.min[0]);
+      expect(x + origin[0]).toBeLessThanOrEqual(close.max[0]);
+      expect(z + origin[2]).toBeGreaterThanOrEqual(close.min[2]);
+      expect(z + origin[2]).toBeLessThanOrEqual(close.max[2]);
+    }
+    for (const collider of BUILDING_COLLIDERS.filter((item) => item.id.startsWith("outpost:"))) {
+      for (let axis = 0; axis < 3; axis++) {
+        expect(collider.min[axis]).toBeGreaterThanOrEqual(close.min[axis]);
+        expect(collider.max[axis]).toBeLessThanOrEqual(close.max[axis]);
+      }
+    }
+    const landing = outpostContract.anchors.find((anchor) => anchor.id === "bridge-outpost-end")!;
+    const remote = outpostContract.anchors.find((anchor) => anchor.id === "bridge-colony-end")!;
+    expect(landing.position[0] + origin[0]).toBeGreaterThanOrEqual(close.min[0]);
+    expect(remote.position[0] + origin[0]).toBeLessThan(close.min[0]);
+    expect(outpostBounds()).toEqual(complete);
+  });
   it("connects every declared navigation node to the Outpost without changed endpoint heights", () => {
     const visited = new Set(["outpost-arrival"]);
     for (let pass = 0; pass < WORLD.navigation.nodes.length; pass++) {
