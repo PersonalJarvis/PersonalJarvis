@@ -23,7 +23,7 @@ const JarvisAgentsBoard = lazy(() =>
 const MarsStationPanel = lazy(() => import("@/components/society/mars/MarsStationPanel").then((m) => ({ default: m.MarsStationPanel })));
 
 function isProtectedMarsInteraction(target: EventTarget | null): boolean {
-  return target instanceof Element && Boolean(target.closest("[data-mars-ui], [data-mars-mode='player']"));
+  return target instanceof Element && Boolean(target.closest("[data-mars-ui], [data-mars-mode='player'], [data-mars-mode='follow']"));
 }
 
 export function SocietyView() {

@@ -12,7 +12,7 @@ vi.mock("@/components/society/data", () => ({ useSocietyRoster: () => ({ data: {
   { agentId: "specialist", name: "Specialist", tier: "specialist", state: "idle" },
 ] }, isLoading: false }) }));
 vi.mock("@/views/JarvisAgentsView", () => ({ JarvisAgentsView: ({ onSelectAgent, onOpenAgents, onMarsSelectionChange }: any) => (
-  <div data-testid="map"><button onClick={() => onSelectAgent("specialist")}>Map specialist</button><button onClick={onOpenAgents}>Map fallback</button><div data-mars-ui><input aria-label="Mars draft" /></div><div data-mars-mode="player"><button>Player viewport</button></div><button onClick={() => onMarsSelectionChange(false)}>Previous world</button><button onClick={() => onMarsSelectionChange(true)}>Mars world</button></div>
+  <div data-testid="map"><button onClick={() => onSelectAgent("specialist")}>Map specialist</button><button onClick={onOpenAgents}>Map fallback</button><div data-mars-ui><input aria-label="Mars draft" /></div><div data-mars-mode="player"><button>Player viewport</button></div><div data-mars-mode="follow"><button>Follow viewport</button></div><button onClick={() => onMarsSelectionChange(false)}>Previous world</button><button onClick={() => onMarsSelectionChange(true)}>Mars world</button></div>
 ) }));
 vi.mock("@/components/society/mars/MarsStationPanel", () => ({ MarsStationPanel: ({ onClose }: any) => <aside aria-label="Mars station"><button onClick={onClose}>Close station</button></aside> }));
 vi.mock("@/components/society/card/AgentCardOverlay", () => ({ AgentCardOverlay: ({ agent, embedded, onSelectAgent, onCreate }: any) => (
@@ -106,7 +106,7 @@ it("does not discard a Mars form when Escape belongs to its input", async () => 
   expect(screen.queryByTestId("map")).toBeNull();
 });
 
-it.each(["Mars draft", "Player viewport"])("preserves focused %s when the browser exits fullscreen without a keydown", async (target) => {
+it.each(["Mars draft", "Player viewport", "Follow viewport"])("preserves focused %s when the browser exits fullscreen without a keydown", async (target) => {
   render(<SocietyView />);
   fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
   const field = await screen.findByLabelText("Mars draft");

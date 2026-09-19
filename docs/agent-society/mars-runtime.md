@@ -63,6 +63,16 @@ state and opens its existing chat. It creates no second assistant or audio
 session. Camera focus requests live outside the Canvas so graphics recovery
 cannot replay an already-consumed focus action.
 
+Choose an agent in the follow control or beside its location marker to follow
+its confirmed position. The camera keeps the same identity across replacement
+visits and holds its last confirmed view offline. A fresh snapshot showing a
+missing actor ends follow safely. Stopping a visit leaves its physical actor
+present; stopping camera follow does not change the visit or the agent's work.
+Dragging the view, choosing another camera mode, focusing Gigi or pressing
+Escape in the focused viewport relinquishes follow. Browser fullscreen exit
+also stops focused follow while preserving the map and unrelated forms.
+Follow identity and camera preferences are local to the client and world.
+
 ## Window ownership
 
 Background mode is explicit, default-off and session-only. On supported Windows

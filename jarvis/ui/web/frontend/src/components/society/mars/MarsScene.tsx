@@ -12,11 +12,14 @@ import { avoidCameraCollision, frameInspectionBounds, MAX_POLAR, MIN_POLAR } fro
 import { VIEW_DIRECTIONS, type CameraPose, type Viewpoint, type CameraMode } from "./viewPreferences";
 import { MarsAgents } from "./MarsAgents";
 import type { NavigationRecord } from "./navigationApi";
+import type { AgentFollowTarget } from "./useAgentFollowTarget";
+import { createAgentFollowPose } from "./agentFollowCamera";
 import { GigiCompanion } from "../companion/GigiCompanion";
 import type { AssistantPresentation } from "../companion/kinematics";
 import { usePendingCompanionFocus } from "../companion/usePendingCompanionFocus";
+import { OUTPOST_SHADOW, SHADOW_MAP_SIZE, SUN_POSITION, SUN_TARGET } from "./shadows";
 import {
-  BUILDING_COLLIDERS, createTerrainGeometry, OUTPOST, outpostBounds, PLAYER_SPAWN,
+  BUILDING_COLLIDERS, createTerrainGeometry, outpostBounds, PLAYER_SPAWN,
   ROADS, terrainHeight, surfaceHeight, WORLD, WORLD_BOUNDS, type Collider, type Road, type Vec3,
 } from "./world";
 
@@ -39,6 +42,11 @@ export interface MarsSceneProps {
   agentNames: ReadonlyMap<string, string>;
   navigationStale: boolean;
   onSelectAgent?: (id: string | null) => void;
+  followTarget: AgentFollowTarget | null;
+  followAgentId: string | null;
+  followAvailable: boolean;
+  onFollowAgent: (id: string) => void;
+  onStopFollow: () => void;
   gigiVisible: boolean;
   gigiFocus: number;
   onGigiFocusApplied: (id: number) => void;
@@ -137,13 +145,13 @@ function ColonyBlockout({ onSelect, outpostReady, labels }: { onSelect: (id: str
   );
 }
 
-export function MarsScene({ hostRef, mode, neutral, shadows, viewpoint, initialPose, onSavePose, awake, selected, onSelect, onOrbit, onOpenStation, reset, navigationRecords, agentNames, navigationStale, onSelectAgent, gigiVisible, gigiFocus, onGigiFocusApplied, gigiRecall, reducedMotion, gigiPresentation, onOpenAssistant, onFocusGigi }: MarsSceneProps) {
+export function MarsScene({ hostRef, mode, neutral, shadows, viewpoint, initialPose, onSavePose, awake, selected, onSelect, onOrbit, onOpenStation, reset, navigationRecords, agentNames, navigationStale, onSelectAgent, followTarget, followAgentId, followAvailable, onFollowAgent, onStopFollow, gigiVisible, gigiFocus, onGigiFocusApplied, gigiRecall, reducedMotion, gigiPresentation, onOpenAssistant, onFocusGigi }: MarsSceneProps) {
   const t = useT();
   const gigiPosition = useRef<Vec3 | null>(null);
   const [gigiPoseVersion, setGigiPoseVersion] = useState(0);
   const gigiPositionReady = useCallback(() => setGigiPoseVersion((value) => value + 1), []);
   const sunTarget = useMemo(() => {
-    const target = new Object3D(); target.position.set(320, 58, 50); return target;
+    const target = new Object3D(); target.position.fromArray(SUN_TARGET); return target;
   }, []);
   const [outpostReady, setOutpostReady] = useState(false);
   const referenceReady = useCallback((ready: boolean) => {
@@ -157,11 +165,12 @@ export function MarsScene({ hostRef, mode, neutral, shadows, viewpoint, initialP
   const input = useRef<ReturnType<typeof bindPlayerInput> | null>(null);
   const frameCount = useRef(0), lastTelemetry = useRef(0);
   const { camera, size, invalidate, gl } = useThree();
+  const followPose = useMemo(() => followTarget ? createAgentFollowPose(followTarget.position) : null, [followTarget]);
   const orbitYaw = useRef(0.7);
   const followHeight = useRef(2.15);
   const restored = useRef(false);
   const applyGigiFocus = useCallback((position: Vec3) => {
-    if (!controls.current) return false;
+    if (!controls.current || mode === "follow") return false;
     const target: Vec3 = [position[0], position[1] + 0.2, position[2]];
     const desired: Vec3 = [position[0] - 1.05, position[1] + 0.6, position[2] + 1.8];
     camera.position.fromArray(avoidCameraCollision(target, desired));
@@ -169,7 +178,7 @@ export function MarsScene({ hostRef, mode, neutral, shadows, viewpoint, initialP
     onSavePose({ position: camera.position.toArray() as Vec3, target }); invalidate();
     onGigiFocusApplied(gigiFocus);
     return true;
-  }, [camera, invalidate, onSavePose, gigiFocus, onGigiFocusApplied]);
+  }, [camera, invalidate, onSavePose, gigiFocus, onGigiFocusApplied, mode]);
   usePendingCompanionFocus(gigiFocus, gigiPosition, gigiPoseVersion, applyGigiFocus);
 
   useEffect(() => {
@@ -193,7 +202,7 @@ export function MarsScene({ hostRef, mode, neutral, shadows, viewpoint, initialP
       orbitYaw.current = Math.atan2(camera.position.x - value.target.x, camera.position.z - value.target.z);
       invalidate(); return;
     }
-    if (mode === "orbit") {
+    if (mode === "orbit" || mode === "follow") {
       if (!restored.current && initialPose) {
         value.target.fromArray(initialPose.target);
         camera.position.fromArray(avoidCameraCollision(initialPose.target, initialPose.position));
@@ -212,6 +221,14 @@ export function MarsScene({ hostRef, mode, neutral, shadows, viewpoint, initialP
     value.target.fromArray(frame.target);
     value.update(); invalidate();
   }, [camera, size.width, size.height, mode, reset, invalidate, viewpoint, initialPose]);
+
+  useEffect(() => {
+    const value = controls.current;
+    if (mode !== "follow" || !awake || !value || !followPose) return;
+    value.target.fromArray(followPose.target); value.update();
+    camera.position.fromArray(followPose.position); camera.lookAt(...followPose.target);
+    onSavePose(followPose); invalidate();
+  }, [mode, awake, followPose, camera, invalidate, onSavePose]);
 
   useEffect(() => {
     const value = controls.current;
@@ -239,6 +256,11 @@ export function MarsScene({ hostRef, mode, neutral, shadows, viewpoint, initialP
       const position = avoidCameraCollision(target, desired);
       camera.position.fromArray(position);
       value.target.fromArray(target); camera.lookAt(...target);
+    } else if (mode === "follow" && followPose) {
+      // Controls update first. Reapply the collision-safe lens after their zoom
+      // limits, which must not push a short obstructed sightline through a wall.
+      camera.position.fromArray(followPose.position);
+      value.target.fromArray(followPose.target); camera.lookAt(...followPose.target);
     } else if (mode === "orbit") {
       value.target.x = Math.max(WORLD_BOUNDS.min[0], Math.min(WORLD_BOUNDS.max[0], value.target.x));
       value.target.z = Math.max(WORLD_BOUNDS.min[2], Math.min(WORLD_BOUNDS.max[2], value.target.z));
@@ -270,10 +292,14 @@ export function MarsScene({ hostRef, mode, neutral, shadows, viewpoint, initialP
       <color attach="background" args={[neutral ? "#d0d1cd" : "#b8a394"]} />
       <hemisphereLight args={[neutral ? "#ffffff" : "#e4d6c0", "#584333", neutral ? 1.25 : 0.85]} />
       <primitive object={sunTarget} />
-      <directionalLight target={sunTarget} position={[OUTPOST.center[0] - 140, 230, 180]} intensity={neutral ? 2 : 3.4} color={neutral ? "#ffffff" : "#ffdfb0"} castShadow={shadows} shadow-mapSize={[2048, 2048]} shadow-camera-left={-170} shadow-camera-right={170} shadow-camera-top={170} shadow-camera-bottom={-170} shadow-camera-near={1} shadow-camera-far={650} shadow-normalBias={0.06} />
+      <directionalLight target={sunTarget} position={SUN_POSITION} intensity={neutral ? 2 : 3.4} color={neutral ? "#ffffff" : "#ffdfb0"} castShadow={shadows}
+        shadow-mapSize={[SHADOW_MAP_SIZE, SHADOW_MAP_SIZE]} shadow-camera-left={OUTPOST_SHADOW.left} shadow-camera-right={OUTPOST_SHADOW.right}
+        shadow-camera-top={OUTPOST_SHADOW.top} shadow-camera-bottom={OUTPOST_SHADOW.bottom} shadow-camera-near={OUTPOST_SHADOW.near}
+        shadow-camera-far={OUTPOST_SHADOW.far} shadow-bias={OUTPOST_SHADOW.bias} shadow-normalBias={OUTPOST_SHADOW.normalBias} />
       <ColonyBlockout onSelect={onSelect} outpostReady={outpostReady} labels={mode === "overview"} />
       <OutpostReference onSelect={onSelect} onReady={referenceReady} />
-      <MarsAgents records={navigationRecords} names={agentNames} stale={navigationStale} awake={awake} onSelect={onSelectAgent} />
+      <MarsAgents records={navigationRecords} names={agentNames} stale={navigationStale} awake={awake} onSelect={onSelectAgent}
+        followAgentId={followAgentId} followAvailable={followAvailable} onFollow={onFollowAgent} onStopFollow={onStopFollow} />
       <GigiCompanion player={player} colliders={BUILDING_COLLIDERS} getGround={surfaceHeight} awake={awake}
         reducedMotion={reducedMotion} visible={gigiVisible} presentation={gigiPresentation}
         recallSequence={gigiRecall} positionRef={gigiPosition} onPositionReady={gigiPositionReady}

@@ -18,6 +18,9 @@ import { useEventStore } from "@/store/events";
 import { useCompanionPresentation } from "../companion/useCompanionPresentation";
 import { readCompanionVisible, writeCompanionVisible } from "../companion/preferences";
 import { useCompanionFocusRequests } from "../companion/useCompanionFocusRequests";
+import { useAgentFollowTarget } from "./useAgentFollowTarget";
+import { bindFollowEscape } from "./followInput";
+import { ownsTextOrUi } from "./input";
 import "./mars.css";
 
 export interface MarsWorldStageProps {
@@ -47,20 +50,31 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
   const ready = useLocaleChunk("society");
   const hostRef = useRef<HTMLDivElement>(null);
   const awake = useCanvasAwake(hostRef);
+  const [initial] = useState(readViewPreferences);
+  const [mode, setMode] = useState<CameraMode>(initial.mode);
+  const [followAgentId, setFollowAgentId] = useState(initial.followAgentId);
   const navigation = useMarsNavigation(awake);
-  const roster = useQuery({ queryKey: ["mars", WORLD_ID, "roster"], queryFn: ({ signal }) => fetchMarsRoster(signal), enabled: awake, retry: false, staleTime: 5000 });
+  const roster = useQuery({ queryKey: ["mars", WORLD_ID, "roster"], queryFn: ({ signal }) => fetchMarsRoster(signal), enabled: awake, retry: false, staleTime: 5000,
+    refetchOnMount: "always", refetchOnWindowFocus: false, refetchInterval: awake && mode === "follow" ? () => 2500 + Math.random() * 500 : false });
   const navigationRecords = useMemo(() => latestNavigationRecords(navigation.data), [navigation.data]);
   const agentNames = useMemo(() => new Map((roster.data ?? []).map((row) => [row.agent_id, row.name])), [roster.data]);
   const { generation } = useWebglSurface(hostRef);
   const webgl = useWebglSupported();
   const reduced = useReducedMotion() ?? false;
-  const [initial] = useState(readViewPreferences);
-  const [mode, setMode] = useState<CameraMode>(initial.mode);
   const [neutral, setNeutral] = useState(initial.neutral);
   const [shadows, setShadows] = useState(initial.shadows);
   const [viewpoint, setViewpoint] = useState<Viewpoint>(initial.viewpoint);
   const [pose, setPose] = useState<CameraPose | null>(initial.pose);
-  useEffect(() => { saveViewPreferences({ mode, neutral, shadows, viewpoint, pose }); }, [mode, neutral, shadows, viewpoint, pose]);
+  useEffect(() => { saveViewPreferences({ mode, followAgentId, neutral, shadows, viewpoint, pose }); }, [mode, followAgentId, neutral, shadows, viewpoint, pose]);
+  const navigationFresh = navigation.isSuccess && navigation.isFetchedAfterMount;
+  const rosterFresh = roster.isSuccess && roster.isFetchedAfterMount;
+  const followOffline = navigation.isError || roster.isError || navigation.fetchStatus === "paused" || roster.fetchStatus === "paused";
+  const followAvailable = navigationFresh && rosterFresh && !followOffline;
+  const follow = useAgentFollowTarget(mode === "follow" ? followAgentId : null, {
+    records: navigationRecords, names: agentNames, navigationFresh, rosterFresh,
+    offline: followOffline,
+  });
+  const followCandidates = useMemo(() => navigationRecords.filter((row) => row.presence === "placed" && agentNames.has(row.agent_id)), [navigationRecords, agentNames]);
   const [selected, setSelected] = useState<string | null>(null);
   const [reset, setReset] = useState(0);
   const [gigiVisible, setGigiVisible] = useState(() => readCompanionVisible(WORLD.world_id));
@@ -71,12 +85,26 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
   const openAssistant = useCallback(() => useEventStore.getState().setActiveSection("chats"), []);
   const focusGigi = useCallback(() => {
     setGigiVisible(true); writeCompanionVisible(WORLD.world_id, true);
-    setSelected(null); setMode("orbit"); requestGigiFocus();
+    setFollowAgentId(null); setSelected(null); setMode("orbit"); requestGigiFocus();
   }, [requestGigiFocus]);
-  const orbit = useCallback(() => setMode("orbit"), []);
-  const select = useCallback((id: string) => { setSelected(id); setMode("orbit"); }, []);
+  const orbit = useCallback(() => { setFollowAgentId(null); cancelGigiFocus(); setMode("orbit"); }, [cancelGigiFocus]);
+  const select = useCallback((id: string) => { setFollowAgentId(null); cancelGigiFocus(); setSelected(id); setMode("orbit"); }, [cancelGigiFocus]);
+  const startFollow = useCallback((id: string) => {
+    if (!followAvailable || !followCandidates.some((row) => row.agent_id === id)) return;
+    cancelGigiFocus(); setSelected(null); setFollowAgentId(id); setMode("follow");
+    hostRef.current?.focus({ preventScroll: true });
+  }, [cancelGigiFocus, followAvailable, followCandidates]);
+  useEffect(() => {
+    if (mode !== "follow" || follow.status !== "missing") return;
+    setFollowAgentId(null); setMode(pose ? "orbit" : "overview");
+  }, [mode, follow.status, pose]);
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || mode !== "follow" || !awake || stationPanel) return;
+    return bindFollowEscape(host, orbit);
+  }, [ready, mode, awake, stationPanel, orbit]);
   const choose = (next: CameraMode) => {
-    setMode(next); setSelected(null);
+    setFollowAgentId(null); cancelGigiFocus(); setMode(next); setSelected(null);
     if (next === "overview" || next === "outpost") setReset((value) => value + 1);
     if (next === "player") hostRef.current?.focus({ preventScroll: true });
   };
@@ -84,7 +112,7 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
   if (!ready) return null;
   return (
     <MarsNavigationContext.Provider value={navigation}>
-    <section className="mars-stage" data-mars-world={WORLD.world_id} data-mars-layout={WORLD.layout_version} data-mars-stage="blockout" data-mars-mode={mode} aria-label={t("society.mars.foundation")}>
+    <section className="mars-stage" data-mars-world={WORLD.world_id} data-mars-layout={WORLD.layout_version} data-mars-stage="blockout" data-mars-mode={mode} data-mars-follow-agent={followAgentId ?? ""} data-mars-follow-state={follow.status} aria-label={t("society.mars.foundation")}>
       <div className="mars-toolbar" data-mars-ui>
         <div className="mars-title"><strong>{t("society.mars.colony")}</strong><span>{t("society.mars.foundation")}</span></div>
         <div className="mars-actions">
@@ -96,6 +124,12 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
             {VIEWPOINTS.map((value) => <option key={value} value={value}>{t(`society.mars.view_${value}`)}</option>)}
           </select>
           <button type="button" aria-pressed={mode === "player"} onClick={() => choose("player")}>{t("society.mars.walk")}</button>
+          <select aria-label={t("society.mars.follow_agent")} value={mode === "follow" ? followAgentId ?? "" : ""} disabled={!followAvailable}
+            onChange={(event) => { if (event.target.value) startFollow(event.target.value); else orbit(); }}>
+            <option value="">{t("society.mars.follow_agent")}</option>
+            {followCandidates.map((row) => <option key={row.agent_id} value={row.agent_id}>{agentNames.get(row.agent_id)}</option>)}
+          </select>
+          {mode === "follow" && <button type="button" onClick={orbit}>{t("society.mars.stop_follow")}</button>}
           <button type="button" aria-pressed={neutral} onClick={() => setNeutral((value) => !value)}>{t("society.mars.neutral")}</button>
           <button type="button" aria-pressed={shadows} onClick={() => setShadows((value) => !value)}>{t("society.mars.shadows")}</button>
           {onOpenStation && <button type="button" onClick={onOpenStation}>{t("society.mars.station_title")}</button>}
@@ -107,12 +141,14 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
         </div>
       </div>
       <div className="mars-scene-container">
-      <div ref={hostRef} className="mars-viewport" tabIndex={0} role="application" aria-label={t("society.mars.viewport")} data-mars-player="pending" data-mars-frames="0">
+      <div ref={hostRef} className="mars-viewport" tabIndex={0} role="application" aria-label={t("society.mars.viewport")} data-mars-player="pending" data-mars-frames="0"
+        onPointerDownCapture={(event) => { if (mode === "follow" && !ownsTextOrUi(event.target)) hostRef.current?.focus({ preventScroll: true }); }}>
         {webgl ? (
           <RenderBoundary key={generation} fallbackText={t("society.mars.no_graphics")}>
             <Suspense fallback={<div className="mars-render-fallback" role="status">{t("society.mars.loading")}</div>}>
               <Canvas shadows="percentage" camera={{ position: INITIAL_CAMERA, fov: CAMERA_FOV, near: 0.12, far: 20000 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false }} frameloop={!awake ? "never" : reduced ? "demand" : "always"} onPointerMissed={() => { setSelected(null); onSelectAgent?.(null); }}>
                 <MarsScene hostRef={hostRef} mode={mode} neutral={neutral} shadows={shadows} viewpoint={viewpoint} initialPose={pose} onSavePose={setPose} awake={awake && !stationPanel} selected={selected} onSelect={select} onOrbit={orbit} onOpenStation={onOpenStation} reset={reset} navigationRecords={navigationRecords} agentNames={agentNames} navigationStale={navigation.isError} onSelectAgent={onSelectAgent}
+                  followTarget={follow.target} followAgentId={followAgentId} followAvailable={followAvailable} onFollowAgent={startFollow} onStopFollow={orbit}
                   gigiVisible={gigiVisible} gigiFocus={gigiFocus} onGigiFocusApplied={acknowledgeGigiFocus} gigiRecall={gigiRecall} reducedMotion={reduced} gigiPresentation={gigiPresentation} onOpenAssistant={openAssistant} onFocusGigi={focusGigi} />
               </Canvas>
             </Suspense>
@@ -122,6 +158,7 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
       {stationPanel && <div className="mars-station-slot" data-mars-ui>{stationPanel}</div>}
       </div>
       <div className="mars-footer" data-mars-ui>
+        {mode === "follow" && <p role="status" aria-live="polite">{t(follow.status === "offline" ? "society.mars.follow_offline" : follow.status === "live" ? "society.mars.following_agent" : "society.mars.follow_waiting").replace("{0}", follow.target?.name ?? agentNames.get(followAgentId ?? "") ?? followAgentId ?? "")}</p>}
         {navigation.isError && <p role="status">{t("society.mars.positions_offline")}</p>}
         <MarsBackgroundControl />
         <p>{t(mode === "player" ? "society.mars.player_help" : "society.mars.orbit_help")}</p>
