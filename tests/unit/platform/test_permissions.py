@@ -140,6 +140,7 @@ def _port(
     credential_backend: Callable[[], str] = lambda: "platform",
     credential_recover: Callable[[], bool] = lambda: True,
     screen_capture_live: Callable[[], bool | None] = lambda: None,
+    automation_probe: Callable[[str, bool], int | None] = lambda _bundle_id, _ask: None,
 ) -> SystemPermissionPort:
     def load(name: str) -> object:
         if name not in modules:
@@ -157,6 +158,7 @@ def _port(
         screen_capture_live_check=screen_capture_live,
         credential_store_backend=credential_backend,
         credential_store_recover=credential_recover,
+        automation_probe=automation_probe,
     )
 
 
@@ -918,3 +920,226 @@ def test_open_settings_works_while_the_app_sits_in_the_background() -> None:
     assert _permission(snapshot, PermissionId.MICROPHONE)["can_open_settings"] is True
     assert operation.ok is True
     assert workspace.opened_urls
+
+
+# --- Automation (Apple Events): the Music/Spotify consent row
+
+
+_MUSIC = "com.apple.Music"
+_SPOTIFY = "com.spotify.client"
+
+
+class _Player:
+    """An ``NSRunningApplication`` stand-in for one scriptable player."""
+
+    def __init__(self, bundle_id: str, running: set[str]) -> None:
+        self.bundle_id = bundle_id
+        self._running = running
+        self.terminated = False
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self._running.discard(self.bundle_id)
+
+
+class _OpenConfiguration:
+    def __init__(self) -> None:
+        self.activates: bool | None = None
+        self.hides: bool | None = None
+
+    def setActivates_(self, value: bool) -> None:
+        self.activates = value
+
+    def setHides_(self, value: bool) -> None:
+        self.hides = value
+
+
+def _automation_fixture(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    installed: set[str],
+    running: set[str],
+    answers: dict[str, int],
+) -> tuple[
+    dict[str, object],
+    list[tuple[str, bool | None, bool | None]],
+    list[tuple[str, bool]],
+    Callable[[str, bool], int | None],
+]:
+    """Native fakes for the Automation row plus the launch log, probe log and probe."""
+    import jarvis.platform.permissions as permissions_module
+
+    modules, _screen, workspace = _native_modules()
+    workspace.URLForApplicationWithBundleIdentifier_ = (  # type: ignore[attr-defined]
+        lambda bundle_id: (
+            f"file:///Applications/{bundle_id}.app" if bundle_id in installed else None
+        )
+    )
+    players: dict[str, _Player] = {}
+
+    def running_apps(bundle_id: str) -> list[_Player]:
+        if bundle_id not in running:
+            return []
+        return [players.setdefault(bundle_id, _Player(bundle_id, running))]
+
+    launches: list[tuple[str, bool | None, bool | None]] = []
+
+    def open_app(url: str, configuration: _OpenConfiguration, _handler) -> None:
+        launches.append((url, configuration.activates, configuration.hides))
+        running.add(url.removeprefix("file:///Applications/").removesuffix(".app"))
+
+    workspace.openApplicationAtURL_configuration_completionHandler_ = open_app  # type: ignore[attr-defined]
+    appkit = modules["AppKit"]
+    appkit.NSRunningApplication = SimpleNamespace(  # type: ignore[attr-defined]
+        currentApplication=lambda: workspace.current,
+        runningApplicationsWithBundleIdentifier_=running_apps,
+    )
+    appkit.NSWorkspaceOpenConfiguration = SimpleNamespace(  # type: ignore[attr-defined]
+        configuration=_OpenConfiguration
+    )
+    monkeypatch.setattr(
+        permissions_module, "automation_consent_path", lambda: tmp_path / "consent.json"
+    )
+    probes: list[tuple[str, bool]] = []
+
+    def probe(bundle_id: str, ask: bool) -> int | None:
+        probes.append((bundle_id, ask))
+        return answers.get(bundle_id)
+
+    return modules, launches, probes, probe
+
+
+def _consent_file(tmp_path: Path) -> dict:
+    import json
+
+    path = tmp_path / "consent.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+
+def test_automation_is_not_required_without_a_scriptable_player(tmp_path: Path, monkeypatch):
+    modules, _launches, _probes, probe = _automation_fixture(
+        tmp_path, monkeypatch, installed=set(), running=set(), answers={}
+    )
+
+    snapshot = _port(modules, automation_probe=probe).snapshot()
+
+    row = _permission(snapshot, PermissionId.AUTOMATION)
+    assert row["status"] == PermissionState.NOT_REQUIRED
+    assert row["required"] == ["audio_ducking"]
+    assert snapshot["features"]["audio_ducking"]["ready"] is True
+
+
+def test_automation_reads_a_running_player_live_and_records_the_answer(tmp_path: Path, monkeypatch):
+    modules, _launches, probes, probe = _automation_fixture(
+        tmp_path, monkeypatch, installed={_MUSIC}, running={_MUSIC}, answers={_MUSIC: 0}
+    )
+
+    snapshot = _port(modules, automation_probe=probe).snapshot()
+
+    assert _permission(snapshot, PermissionId.AUTOMATION)["status"] == PermissionState.GRANTED
+    assert probes == [(_MUSIC, False)]  # a status probe never raises the dialog
+    assert _consent_file(tmp_path) == {_MUSIC: "granted"}
+
+
+def test_automation_request_opens_a_closed_player_hidden_asks_and_closes_it(
+    tmp_path: Path, monkeypatch
+):
+    """Apple only shows the dialog for a running target — so start it, quietly."""
+    modules, launches, probes, probe = _automation_fixture(
+        tmp_path, monkeypatch, installed={_MUSIC}, running=set(), answers={_MUSIC: 0}
+    )
+    port = _port(modules, automation_probe=probe)
+    before = _permission(port.snapshot(), PermissionId.AUTOMATION)
+    assert before["status"] == PermissionState.NOT_DETERMINED
+    assert before["can_request"] is True
+
+    result = port.request(PermissionId.AUTOMATION)
+
+    assert result.ok and result.performed and result.restart_required is False
+    assert launches == [(f"file:///Applications/{_MUSIC}.app", False, True)]
+    assert (_MUSIC, True) in probes
+    # Closed again — and the answer survives the player being closed.
+    assert (
+        _permission(result.snapshot, PermissionId.AUTOMATION)["status"] == PermissionState.GRANTED
+    )
+    assert _consent_file(tmp_path) == {_MUSIC: "granted"}
+    assert launches and not port._running_automation_targets(modules["AppKit"], _MUSIC)
+
+
+def test_automation_request_leaves_an_already_running_player_open(tmp_path: Path, monkeypatch):
+    modules, launches, _probes, probe = _automation_fixture(
+        tmp_path, monkeypatch, installed={_MUSIC}, running={_MUSIC}, answers={_MUSIC: -1744}
+    )
+    port = _port(modules, automation_probe=probe)
+
+    port.request(PermissionId.AUTOMATION)
+
+    assert launches == []
+    assert port._running_automation_targets(modules["AppKit"], _MUSIC)
+
+
+def test_automation_denial_offers_the_reset_and_the_reset_forgets_the_answer(
+    tmp_path: Path, monkeypatch
+):
+    modules, _launches, _probes, probe = _automation_fixture(
+        tmp_path, monkeypatch, installed={_MUSIC}, running={_MUSIC}, answers={_MUSIC: -1743}
+    )
+    port = _port(modules, automation_probe=probe)
+    row = _permission(port.snapshot(), PermissionId.AUTOMATION)
+    assert row["status"] == PermissionState.DENIED
+    assert row["can_request"] is False and row["can_reset"] is True
+    assert _consent_file(tmp_path) == {_MUSIC: "denied"}
+
+    commands: list[list[str]] = []
+
+    def fake_run(argv, **_kwargs):
+        commands.append(list(argv))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    result = port.reset(PermissionId.AUTOMATION)
+
+    assert result.ok and result.performed
+    assert commands == [["/usr/bin/tccutil", "reset", "AppleEvents", BUNDLE_ID]]
+    # The reset dropped the recorded answer; the after-snapshot then asked the
+    # still-running player live again (the fake keeps saying denied) — a
+    # closed player would have read "not requested" from the empty record.
+    assert _consent_file(tmp_path) == {_MUSIC: "denied"}
+    (tmp_path / "consent.json").unlink()
+    closed = _port(modules, automation_probe=lambda _b, _a: -600).snapshot()
+    assert _permission(closed, PermissionId.AUTOMATION)["status"] == PermissionState.NOT_DETERMINED
+
+
+def test_automation_strictest_player_wins(tmp_path: Path, monkeypatch):
+    modules, _launches, _probes, probe = _automation_fixture(
+        tmp_path,
+        monkeypatch,
+        installed={_MUSIC, _SPOTIFY},
+        running={_SPOTIFY},
+        answers={_SPOTIFY: -1744},
+    )
+    (tmp_path / "consent.json").write_text('{"com.apple.Music": "granted"}', encoding="utf-8")
+
+    snapshot = _port(modules, automation_probe=probe).snapshot()
+
+    assert (
+        _permission(snapshot, PermissionId.AUTOMATION)["status"] == PermissionState.NOT_DETERMINED
+    )
+    assert snapshot["features"]["audio_ducking"]["ready"] is False
+
+
+def test_identity_reset_forgets_the_automation_answers(tmp_path: Path, monkeypatch):
+    import jarvis.platform.permissions as permissions_module
+
+    monkeypatch.setattr(
+        permissions_module, "identity_reset_marker_path", lambda: tmp_path / "reset.json"
+    )
+    monkeypatch.setattr(
+        permissions_module, "automation_consent_path", lambda: tmp_path / "consent.json"
+    )
+    (tmp_path / "consent.json").write_text('{"com.apple.Music": "granted"}', encoding="utf-8")
+
+    permissions_module.record_identity_reset(("Microphone", "AppleEvents"))
+
+    assert not (tmp_path / "consent.json").exists()

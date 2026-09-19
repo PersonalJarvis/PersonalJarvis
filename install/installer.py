@@ -556,6 +556,41 @@ def _write_desktop_integration_log(result: object) -> Path | None:
     return log_path
 
 
+_SPOTLIGHT_PROBE = (
+    "from jarvis.setup.macos_app_bundle import macos_app_bundle_path\n"
+    "from jarvis.setup.macos_search_index import wait_until_indexed\n"
+    "print(wait_until_indexed(macos_app_bundle_path()))\n"
+)
+
+
+def _note_stalled_spotlight() -> None:
+    """Say so when this Mac's Spotlight will not find the app just installed.
+
+    Spotlight answers from an index macOS owns. When that index has stalled —
+    it accepts the import and never lists the app — the app is in Finder and
+    Launchpad but typing its name finds nothing, which reads as a failed
+    install. Only an administrator can rebuild the index, so the installer
+    names the one command instead of leaving the user to guess.
+    """
+    try:
+        result = subprocess.run(
+            [str(venv_python()), "-c", _SPOTLIGHT_PROBE],
+            cwd=repo_root(),
+            capture_output=True,
+            text=True,
+            timeout=90,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        # The probe is a courtesy; an install never fails over it.
+        return
+    if (result.stdout or "").strip().splitlines()[-1:] != ["False"]:
+        return
+    note("Spotlight on this Mac is not indexing new apps, so search will not find")
+    note(f"{PRODUCT_NAME} yet (Finder › Applications, Launchpad and the Dock do).")
+    note("To repair the macOS search index, run:  sudo mdutil -E /")
+
+
 def step_desktop_integration(*, enabled: bool, dry_run: bool) -> bool:
     """Register the managed install with the current desktop shell."""
     if not enabled:
@@ -565,16 +600,29 @@ def step_desktop_integration(*, enabled: bool, dry_run: bool) -> bool:
         return True
     result = None
     report = {}
+    argv = [
+        str(venv_python()),
+        "-m",
+        "jarvis.setup.desktop_integration",
+        "--install-dir",
+        str(repo_root()),
+        "--json",
+    ]
+    if sys.platform == "darwin":
+        # The per-user signing certificate keeps the app's macOS permissions
+        # across every future update. Trusting it is the one step macOS
+        # guards with a password dialog — say so before it appears.
+        argv.append("--create-signing-identity")
+        # Once per install; a user who removes the tile keeps it removed.
+        argv.append("--pin-to-dock")
+        console.print(
+            "[muted]│    macOS may ask for your login password once: it trusts the "
+            f"local signing certificate that keeps {PRODUCT_NAME}'s permissions "
+            "across updates[/]"
+        )
     try:
         result = run_captured(
-            [
-                str(venv_python()),
-                "-m",
-                "jarvis.setup.desktop_integration",
-                "--install-dir",
-                str(repo_root()),
-                "--json",
-            ],
+            argv,
             cwd=repo_root(),
             label="registering the desktop app (a macOS first run can take a few minutes)",
             # py2app build + icon conversion + signing + LaunchServices import
@@ -595,6 +643,8 @@ def step_desktop_integration(*, enabled: bool, dry_run: bool) -> bool:
         and report.get("attempted")
     ):
         ok("desktop app registered with the operating system")
+        if sys.platform == "darwin":
+            _note_stalled_spotlight()
         return True
     console.print(
         "[bad]│  ✗ desktop app registration failed — installation stopped. "
@@ -785,7 +835,7 @@ def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
         rows.append(("Start again", f'Windows search -> "{PRODUCT_NAME}"', "brand"))
     elif sys.platform == "darwin":
         rows.append(
-            ("Start again", f'Spotlight → "{PRODUCT_NAME}" (app in ~/Applications)', "brand")
+            ("Start again", f'Launchpad or Spotlight → "{PRODUCT_NAME}"', "brand")
         )
         rows.append(("Permissions", "macOS asks on first launch - approve each prompt", "muted"))
     elif sys.platform.startswith("linux") and not (headless or is_headless_linux()):

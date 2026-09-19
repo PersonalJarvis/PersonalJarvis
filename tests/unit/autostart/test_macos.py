@@ -111,3 +111,60 @@ def test_install_leaves_no_temp_file_when_the_plist_write_fails(
         MacOSAutostart().install(_spec())
 
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+_OLD_APP = "/Users/u/Applications/Personal Jarvis.app"
+_NEW_APP = "/Applications/Personal Jarvis.app"
+
+
+def test_a_moved_app_takes_its_login_item_along(monkeypatch, tmp_path: Path) -> None:
+    """The boot reconcile cannot heal this: an entry aimed at the old path is
+    what keeps the app from booting at login in the first place."""
+    monkeypatch.setattr(macos, "_agents_dir", lambda: tmp_path)
+    MacOSAutostart().install(_spec())
+
+    assert macos.retarget_launch_agent(Path(_NEW_APP)) is True
+
+    with (tmp_path / "com.personal-jarvis.autostart.plist").open("rb") as fh:
+        data = plistlib.load(fh)
+    assert data["ProgramArguments"] == ["/usr/bin/open", "-W", "-a", _NEW_APP]
+    # Everything that is not the bundle path is the user's and stays.
+    assert data["WorkingDirectory"] == "/Users/u/jarvis"
+    assert data["RunAtLoad"] is True
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_a_current_login_item_is_left_alone(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(macos, "_agents_dir", lambda: tmp_path)
+    MacOSAutostart().install(_spec())
+    entry = tmp_path / "com.personal-jarvis.autostart.plist"
+    before = entry.read_bytes()
+
+    assert macos.retarget_launch_agent(Path(_OLD_APP)) is False
+    assert entry.read_bytes() == before
+
+
+def test_moving_the_app_never_switches_autostart_back_on(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(macos, "_agents_dir", lambda: tmp_path)
+
+    assert macos.retarget_launch_agent(Path(_NEW_APP)) is False
+    assert not list(tmp_path.iterdir())
+
+
+def test_moving_the_app_never_starts_it(monkeypatch, tmp_path: Path) -> None:
+    """``launchctl load`` fires RunAtLoad — in the middle of an installer run."""
+    monkeypatch.setattr(macos, "_agents_dir", lambda: tmp_path)
+    MacOSAutostart().install(_spec())
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(macos, "_launchctl", lambda *argv: calls.append(argv) or True)
+
+    macos.retarget_launch_agent(Path(_NEW_APP))
+
+    assert calls == []
+
+
+def test_an_unreadable_login_item_does_not_fail_the_move(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(macos, "_agents_dir", lambda: tmp_path)
+    (tmp_path / "com.personal-jarvis.autostart.plist").write_bytes(b"not a plist")
+
+    assert macos.retarget_launch_agent(Path(_NEW_APP)) is False

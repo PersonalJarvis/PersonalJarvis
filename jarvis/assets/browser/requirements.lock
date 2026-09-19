@@ -1,11 +1,15 @@
 aiofiles==25.1.0 \
     --hash=sha256:a8d728f0a29de45dc521f18f07297428d56992a742f0cd2701ba86e44d23d5b2 \
     --hash=sha256:abe311e527c862958650f9438e859c1fa7568a141b22abcd015e120e86a85695
-    # via bubus
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   bubus
 aiohappyeyeballs==2.7.1 \
     --hash=sha256:065665c041c42a5938ed220bdcd7230f22527fbec085e1853d2402c8a3615d9d \
     --hash=sha256:9243213661e29250eb41368e5daa826fc017156c3b8a11440826b2e3ed376472
-    # via aiohttp
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   aiohttp
 aiohttp==3.14.3 \
     --hash=sha256:03cd2bde3d7f085b64e549c985f4bb928cad7e8ecf5323bfca320db548d81b39 \
     --hash=sha256:041badb8f84396357c4d3ad26de6afd7a32b112f43d3c63045c0c8278cfd2043 \
@@ -126,23 +130,32 @@ aiohttp==3.14.3 \
     --hash=sha256:f8fb78a83c9e5f741ca3a68cfb455c1f5bb83b4e7249a3848b3cd78d0a8563b0 \
     --hash=sha256:fa9467a8113aa69d3d7c55a70ef0b7c636010a40993f3df9d9d0d73b3eb7ef24 \
     --hash=sha256:fd51ebf9d3a00c074df4ede271023f4d2dba289bcc740b88191872716014e3c5
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 aiosignal==1.4.0 \
     --hash=sha256:053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e \
     --hash=sha256:f47eecd9468083c2029cc99945502cb7708b082c232f9aca65da147157b251c7
-    # via aiohttp
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   aiohttp
 annotated-types==0.8.0 \
     --hash=sha256:13b2beaad985e05e2d6407ee4c4f35590b11f8d693a258a561055cac8f64cab7 \
     --hash=sha256:f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0
-    # via pydantic
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pydantic
 anthropic==0.76.0 \
     --hash=sha256:81efa3113901192af2f0fe977d3ec73fdadb1e691586306c4256cd6d5ccc331c \
     --hash=sha256:e0cae6a368986d5cf6df743dfbb1b9519e6a9eee9c6c942ad8121c0b34416ffe
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 anyio==4.12.1 \
     --hash=sha256:41cfcc3a4c85d3f05c932da7c26d0201ac36f72abd4435ba90d0464a3ffed703 \
     --hash=sha256:d405828884fc140aa80a3c667b8beed277f1dfedec42ba031bd6ac3db606ab6c
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   anthropic
     #   browser-use
     #   bubus
@@ -158,43 +171,58 @@ attrs==26.1.0 \
     --hash=sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309 \
     --hash=sha256:d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   aiohttp
     #   jsonschema
     #   referencing
 backoff==2.2.1 \
     --hash=sha256:03f829f5bb1923180821643f8753b0502c3b682293992485b0eef2807afa5cba \
     --hash=sha256:63579f9a0628e06278f7e47b7d7d5b6ce20dc65c5e96a6f3ca99a6adca0396e8
-    # via posthog
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   posthog
 beautifulsoup4==4.15.0 \
     --hash=sha256:288e3ca7d54b06f2ac191970bc275c1939cb46d450b255bf6718b04aa37ab4f7 \
     --hash=sha256:d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9
-    # via markdownify
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   markdownify
 browser-harness==0.1.13 \
     --hash=sha256:2491459e4bfc0ee8aea22dc6c4680fc0f791b7ba553446323c50d2883449d769 \
     --hash=sha256:284dc547a042c309feafd9a9f4a74b2a8651b7963ea3ac6cb2f2d64889f6a8f3
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 browser-use==0.13.10 \
     --hash=sha256:66eb20153094f21728bc0110ada17c03a0c475df2374985d6b47e349cbd47705 \
     --hash=sha256:f0e97fcad3319bc7a19ef7bb27eadf2e0824def0a916fd1988557dab9267cb17
-    # via -r jarvis/assets/browser/requirements.in
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   -r jarvis/assets/browser/requirements.in
 browser-use-sdk==3.4.2 \
     --hash=sha256:1c6dac6e44f4ac4d552a3249d0282cb743d0d02bbadda093d78e599392c504d3 \
     --hash=sha256:be050bc803b31ec4e9f23dfd71d9dc5f1160d7dec0b962327915caf743a10208
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 bubus==1.5.6 \
     --hash=sha256:1a5456f0a576e86613a7bd66e819891b677778320b6e291094e339b0d9df2e0d \
     --hash=sha256:254ae37cd9299941f5e9d6afb11f8e3ce069f83e5b9476f88c6b2e32912f237d
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 cdp-use==1.4.5 \
     --hash=sha256:0da3a32df46336a03ff5a22bc6bc442cd7d2f2d50a118fd4856f29d37f6d26a0 \
     --hash=sha256:8f8e2435e3a20e4009d2974144192cf3c132f6c2971338e156198814d9b91ecb
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   browser-harness
     #   browser-use
 certifi==2026.7.22 \
     --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775 \
     --hash=sha256:741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   httpcore
     #   httpx
     #   requests
@@ -299,7 +327,9 @@ cffi==2.1.1 ; platform_python_implementation != 'PyPy' \
     --hash=sha256:f8ec5e643a9a937f64e1999eb9f75d072263751912dc5cd06d3c85f8f44be7c3 \
     --hash=sha256:fb92203a88b3d3053034db775110081c49d28be6551923805e039924093761e4 \
     --hash=sha256:fcd22650c908d7b7da162bbfaab594a1227a15d1643a98c68b122ac642fa2264
-    # via cryptography
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   cryptography
 charset-normalizer==3.5.1 \
     --hash=sha256:00668ebb0609751758682eb0b5857e7c35b9f00e84dfdef062e103244ec94d45 \
     --hash=sha256:012a22b88a77ca2e59b98ac5889b0deb604147666032f45e6d6e217634d2550d \
@@ -474,22 +504,27 @@ charset-normalizer==3.5.1 \
     --hash=sha256:fd0a274c0e5f9a21565cd9d3dd749b61f96b7aa1e20a93aa1ba4029518f2e5c0 \
     --hash=sha256:fdb8a068947befafba9952162645dc2fecaeb400e64584829ed5e9b2fbe21a7f
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   reportlab
     #   requests
 click==8.3.3 \
     --hash=sha256:398329ad4837b2ff7cbe1dd166a4c0f8900c3ca3a218de04466f38f6497f18a2 \
     --hash=sha256:a2bf429bb3033c89fa4936ffb35d5cb471e3719e1f3c8a7c3fff0b8314305613
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   browser-use
     #   uvicorn
 cloudpickle==3.1.2 \
     --hash=sha256:7fda9eb655c9c230dab534f1983763de5835249750e85fbcef43aaa30a9a2414 \
     --hash=sha256:9acb47f6afd73f60dc1df93bb801b472f05ff42fa6c84167d25cb206be1fbf4a
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 colorama==0.4.6 ; sys_platform == 'win32' \
     --hash=sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44 \
     --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   click
     #   tqdm
 cryptography==50.0.1 \
@@ -540,6 +575,7 @@ cryptography==50.0.1 \
     --hash=sha256:fd3718b960d0b5dd213cdf03f3bcb7000e69dda0de8b956061947ff6bcff5558 \
     --hash=sha256:ff838d62ec1bfce4f9ba7fa16f4a7b554cd8d0c299e6be37502161a660c84eef
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   google-auth
     #   pyjwt
 cython==3.3.0 ; platform_system != 'darwin' and sys_platform == 'darwin' \
@@ -582,11 +618,14 @@ cython==3.3.0 ; platform_system != 'darwin' and sys_platform == 'darwin' \
     --hash=sha256:ec09dbf73ff4f7be2b339b995fadae9c4bb517bbbed7ec11d6fe99c2092b48fd \
     --hash=sha256:eda47eb7731c3b41180b58bb83de423f43aa58a677677e3390e8d332b003859e \
     --hash=sha256:eed0d93fbca7087f143b42c34b05a825849bdf17f101572c2105acfa49aa88b8
-    # via screeninfo
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   screeninfo
 distro==1.9.0 \
     --hash=sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed \
     --hash=sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   anthropic
     #   google-genai
     #   groq
@@ -595,11 +634,15 @@ distro==1.9.0 \
 docstring-parser==0.18.0 \
     --hash=sha256:292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015 \
     --hash=sha256:b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b
-    # via anthropic
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   anthropic
 fetch-use==0.4.0 \
     --hash=sha256:9511987d4907ec6dac501e21d66946d10098f66b5d21bc2aba4189cd81ba189a \
     --hash=sha256:b7885f2907e7920373fa75dcdb00afd6e603a25a9ee2151aa2881f5465e1a2c0
-    # via browser-harness
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-harness
 frozenlist==1.8.0 \
     --hash=sha256:0325024fe97f94c41c08872db482cf8ac4800d80e79222c6b0b7b162d5b13686 \
     --hash=sha256:032efa2674356903cd0261c4317a561a6850f3ac864a63fc1583147fb05a79b0 \
@@ -732,22 +775,27 @@ frozenlist==1.8.0 \
     --hash=sha256:fb30f9626572a76dfe4293c7194a09fb1fe93ba94c7d4f720dfae3b646b45027 \
     --hash=sha256:fe3c58d2f5db5fbd18c2987cba06d51b0529f52bc3a6cdc33d3f4eab725104bd
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   aiohttp
     #   aiosignal
 google-api-core==2.29.0 \
     --hash=sha256:84181be0f8e6b04006df75ddfe728f24489f0af57c96a529ff7cf45bc28797f7 \
     --hash=sha256:d30bc60980daa36e314b5d5a3e5958b0200cb44ca8fa1be2b614e932b75a3ea9
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   browser-use
     #   google-api-python-client
 google-api-python-client==2.188.0 \
     --hash=sha256:3cad1b68f9d48b82b93d77927e8370a6f43f33d97848242601f14a93a1c70ef5 \
     --hash=sha256:5c469db6614f071009e3e5bb8b6aeeccae3beb3647fa9c6cd97f0d551edde0b6
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 google-auth==2.48.0 \
     --hash=sha256:2e2a537873d449434252a9632c28bfc268b0adb1e53f9fb62afc5333a975903f \
     --hash=sha256:4f7e706b0cd3208a3d940a19a822c37a476ddba5450156c3e6624a71f7c841ce
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   browser-use
     #   google-api-core
     #   google-api-python-client
@@ -757,19 +805,27 @@ google-auth==2.48.0 \
 google-auth-httplib2==0.4.2 \
     --hash=sha256:4298dd6b1415972d0c464b7177e6a69a595e7aec5b972222ecdca342f6009647 \
     --hash=sha256:916225a6367e613c9af44d83f41688a599d3f687777846b8b91bec65085ed1f1
-    # via google-api-python-client
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   google-api-python-client
 google-auth-oauthlib==1.2.4 \
     --hash=sha256:0e922eea5f2baacaf8867febb782e46e7b153236c21592ed76ab3ddb77ffd772 \
     --hash=sha256:3ca93859c6cc9003c8e12b2a0868915209d7953f05a70f4880ab57d57e56ee3e
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 google-genai==1.65.0 \
     --hash=sha256:68c025205856919bc03edb0155c11b4b833810b7ce17ad4b7a9eeba5158f6c44 \
     --hash=sha256:d470eb600af802d58a79c7f13342d9ea0d05d965007cae8f76c7adff3d7a4750
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 googleapis-common-protos==1.75.3 \
     --hash=sha256:57c435ac2c68b108999b6db075d9053e4d7a936ba57b4a3d45667b1346f1738a \
     --hash=sha256:a018d2bf098ca9fb6faa08d5bb780e2a2c2f73c566f069761331386c9596d3f2
-    # via google-api-core
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   google-api-core
 greenlet==3.5.5 \
     --hash=sha256:03115c2e0a371999bf8ae616aa8d653f96641d4705c457aebaa187276e9f7537 \
     --hash=sha256:03551ed792cb1b4fc0277a0c60dfd8c343894a0ba06fe60dcd22f568b433da39 \
@@ -850,36 +906,47 @@ greenlet==3.5.5 \
     --hash=sha256:f2e3d061b8e13aec2f0441689b3c71b244a20e5d274a52cb0f7e31bd1d139552 \
     --hash=sha256:f7278591501941bb2456af102bb9cd59aab48c6cfd6e2dd68fa1290bb0c49a42 \
     --hash=sha256:fef01bd457f11fc158b130ca0027a3c365693280e8e231b65bdaf57999f39f5b
-    # via playwright
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   playwright
 groq==1.0.0 \
     --hash=sha256:66cb7bb729e6eb644daac7ce8efe945e99e4eb33657f733ee6f13059ef0c25a9 \
     --hash=sha256:6e22bf92ffad988f01d2d4df7729add66b8fd5dbfb2154b5bbf3af245b72c731
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 h11==0.16.0 \
     --hash=sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1 \
     --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   httpcore
     #   httpcore2
     #   uvicorn
 httpcore==1.0.9 \
     --hash=sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55 \
     --hash=sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8
-    # via httpx
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   httpx
 httpcore2==2.12.0 ; sys_platform != 'emscripten' \
     --hash=sha256:7e04258ce01013d7d615e5b910a3b27fac937d7a95038227e79652b4ba3b4ceb \
     --hash=sha256:9293522bba0aa7c4c8e9e3f040c16575bd8868e155a77fa30c7a9085a5eae648
-    # via httpx2
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   httpx2
 httplib2==0.32.0 \
     --hash=sha256:48a0ef30a42db65d8f3399045e1d09ab0ba66e3b9efc360d07f80ea55d286025 \
     --hash=sha256:dc6705cacdf3fb0a2aba7629fa33c90fd93e30035db0c157325826be177e4816
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   google-api-python-client
     #   google-auth-httplib2
 httpx==0.28.1 \
     --hash=sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc \
     --hash=sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   anthropic
     #   browser-use
     #   browser-use-sdk
@@ -891,15 +958,20 @@ httpx==0.28.1 \
 httpx2==2.12.0 \
     --hash=sha256:7631fe9887a8a2275f4a2540e053aa670fcc50742864a9ae7c66e609fdcf12cf \
     --hash=sha256:cc8b6eecb8661c146b8f89a60e97456ee086e91a784ed31ac450c3a9e613dd36
-    # via mcp
-httpx2-jsfetch==1.0 ; python_full_version >= '3.12' and sys_platform == 'emscripten' \
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   mcp
+httpx2-jsfetch==1.0 ; sys_platform == 'emscripten' \
     --hash=sha256:70a0e3eabfef7cce5ad9c629f7d01ca05e418f586646f4ddf14782e4c1454c60 \
     --hash=sha256:cb916b707601e69a07721aabc8f3f6659be3a6893bc1ff5c6f9e02241df2da32
-    # via httpx2
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   httpx2
 idna==3.19 \
     --hash=sha256:5e0811a4383b21dc5838069f801c4fb62113b7447663d2530d2bd6e77b49bf15 \
     --hash=sha256:815e7be7a7806d54abb586dc943addc79e8b2ee16915059658cbeff4b1b43bf4
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   anyio
     #   httpx
     #   httpx2
@@ -908,7 +980,9 @@ idna==3.19 \
 inquirerpy==0.3.4 \
     --hash=sha256:89d2ada0111f337483cb41ae31073108b2ec1e618a49d7110b0d7ade89fc197e \
     --hash=sha256:c65fdfbac1fa00e3ee4fb10679f4d3ed7a012abf4833910e63c295827fe2a7d4
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 jiter==0.16.0 \
     --hash=sha256:0542a7189c26920778658fc8fcf2af8bae05bae9924577f71804acef37996536 \
     --hash=sha256:0758ab7747a984797cf048e8eedea1d8ef39d7994b25611daf5b48fc903e8873 \
@@ -1016,16 +1090,21 @@ jiter==0.16.0 \
     --hash=sha256:f4444a83f946605990c98f625cdd3d2725bfb818158760c5748c653170a20e0e \
     --hash=sha256:fb08c276dd02dac3a284acdd02cacc630d2e3cd6572a4b85519f35cbd133c3de
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   anthropic
     #   openai
 jsonschema==4.26.0 \
     --hash=sha256:0c26707e2efad8aa1bfc5b7ce170f3fccc2e4918ff85989ba9ffa9facb2be326 \
     --hash=sha256:d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce
-    # via mcp
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   mcp
 jsonschema-specifications==2025.9.1 \
     --hash=sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe \
     --hash=sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d
-    # via jsonschema
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   jsonschema
 lxml==6.1.3 \
     --hash=sha256:032a0a97eed428bd143c75a11118238546424ceb2fa311cca5f073aa44658dc4 \
     --hash=sha256:05f5bce9af14fd1506997594bd81cee6d9c6b58ea80a39c058327aa6371ed9e9 \
@@ -1203,27 +1282,39 @@ lxml==6.1.3 \
     --hash=sha256:fe91993149523aa59941b9e3c90e2eb45f57ad014697aef6c8b13339a59c019e \
     --hash=sha256:febd35ef45f603c2d74b74655efdbf45e14f55fc0aef4ac82b663ca829b283e0 \
     --hash=sha256:ff88a92cafde90888511242d1c54afcc1a8adbb6dc0a88fa7f87e29e92400d4a
-    # via python-docx
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   python-docx
 markdown-it-py==4.2.0 \
     --hash=sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49 \
     --hash=sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a
-    # via rich
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   rich
 markdownify==1.2.2 \
     --hash=sha256:3f02d3cc52714084d6e589f70397b6fc9f2f3a8531481bf35e8cc39f975e186a \
     --hash=sha256:b274f1b5943180b031b699b199cbaeb1e2ac938b75851849a31fd0c3d6603d09
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 mcp==2.1.1 \
     --hash=sha256:1c6c31c5d6471c58db76af3af8af67f46d11d01f0a59077d0a308cbdb3d3e915 \
     --hash=sha256:50b7ba1ebbe117008ea7bdd288234043e69c20b403d6851d19661e6d431a75ef
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 mcp-types==2.1.1 \
     --hash=sha256:26f9f7f03f2a5730717a5b98e2ab7eb640ac352d05a00cdc725c311864778295 \
     --hash=sha256:77dcbe48fba73cca71a673f2646a5f037a017b7a0a07ac89cec1113028890eda
-    # via mcp
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   mcp
 mdurl==0.1.2 \
     --hash=sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8 \
     --hash=sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba
-    # via markdown-it-py
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   markdown-it-py
 multidict==6.8.0 \
     --hash=sha256:003a3bddb32915c3f67096ea41d24e53edf710edb65a1f5d0c70ab40b0e4d20b \
     --hash=sha256:00be37bde741bf60871082cd347a093218c44886e99231b7516671c70f2c280d \
@@ -1397,28 +1488,120 @@ multidict==6.8.0 \
     --hash=sha256:fc5460940f50dff00731b4132366840ba9685286ea88ea104b661899084f3fea \
     --hash=sha256:fd789a294d8e098528be29b2669b83005ce569339f8cef167fc0274c3115c34c
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   aiohttp
     #   yarl
+numpy==2.5.3 ; sys_platform == 'win32' \
+    --hash=sha256:012e66aca395d795496446e52aeeb5866312a5d4d3f27da270e5a0b43f70dc5c \
+    --hash=sha256:09d5a423c71ad5feb5625844ad58050e35df43871004b52ac9c0ad44a56775be \
+    --hash=sha256:09ffa5d903faeaa5c4dd05009cf81c8bab9f2cb37c548b8d39b65b4cfa7c97f7 \
+    --hash=sha256:0a59a421a32580a009e8a1751345bf829631b990dc1794b80514ab722b435def \
+    --hash=sha256:116f96cadd935c6122e9228d676fe7ede19e741f5c8bb1c3cddbe0c51ccebea2 \
+    --hash=sha256:1302b90c0e52281681b2975adfe8a860cb7b12216a27b4b0b4207c44bf7bccf0 \
+    --hash=sha256:15aa985ac73a8db02db7663381aa109510449d3819d37206caed27b33a65a8a6 \
+    --hash=sha256:1aad64d99730d013cfc6debafed22783b4fc5a7f4b8bc744d2d8cf7dcc880551 \
+    --hash=sha256:1c80eabb4035ecf4ca9cd49cde8a9fdd69a729e63e6474887d1523ade7aa277f \
+    --hash=sha256:1f3ed25271581281f2fccb1adcedfcde4c07362eec69189b50baf6f90e3ae159 \
+    --hash=sha256:1fb6f8fb9ff0b3a69f52c66ce397b0246583e9f28616231b0e32ca49259a5fa6 \
+    --hash=sha256:214045a5bf00113a146ab9ee9730c44501af6723cdf1f6830932f7b5ef2e7af0 \
+    --hash=sha256:26e15e4aecd8617dfbaecb37d223e365d7b39411fba20454be2670a96aa74cb5 \
+    --hash=sha256:2c25dfa72943e4336ddb6b0ee4277b47a0c85bede0807530ec68103bf58e2c10 \
+    --hash=sha256:2d8240cb4c16fd831074aa2b2cf9fc54664d826341d61c372245b96a74a49a9a \
+    --hash=sha256:350ba9783ce969cf9f7ce6e6a9a58e1a6e2a19ca025b7ee448c4db727706212a \
+    --hash=sha256:4c8a6d2ebce6305fd82fbefca827775437147052a976ee7c94b36a0c1b52ac6c \
+    --hash=sha256:4f8929ee6c96bfbd7b4ed2032e0c03af86fe1826740ab61ddabf9072d06e57ff \
+    --hash=sha256:536f963710a4e63934d80ac0dc4f478804a83e9a84b6828018f25d09953ada33 \
+    --hash=sha256:54a115e5a73b8fc44f0cebef486365a1894b5c9760685d4558b72b7c3eb846e0 \
+    --hash=sha256:595d020938c84e320bcf40ad71089e108eac0d377cd018e14a8c094f39e98d85 \
+    --hash=sha256:66a78fe4556c60aceda5916f9eacd638b18e9e681016ec302dcb4682d6d4d034 \
+    --hash=sha256:6b05c171afb3aa07adbd20abc00aea86fe375beb0fdb9ef780ec5b7f63bab1c0 \
+    --hash=sha256:6cef4bb1706dfec49243c05d921eefb4e190d41e2528b30d8035ea1f36b4c24a \
+    --hash=sha256:6f24021b9f22bc6301c37b196974a92c1c18dccedb6fef3dd252e95f2d6adbe4 \
+    --hash=sha256:71b39d9f935b6ec0f8753e3e2afb51e3efba6f2e05b68b32a40754d24bcd4a3c \
+    --hash=sha256:71cad2b2a7451ab79d8f5e71b453485b6775963d5cf794179144a7463fe6e8ec \
+    --hash=sha256:76c2c1e6bfa5c84adc6434dfbf013aa92096a7985221762c8f11fedfd20fff58 \
+    --hash=sha256:8617bbfae4486cf99c9f899966699428d19da931d06ca94ad3da986c76e15997 \
+    --hash=sha256:86bff898a431c0fb71f7610b75726e75a54d47b37edc9d537f48de63bb3c0b90 \
+    --hash=sha256:8e4dd766076855b5ff7ea52fa5f07ce26286726e0f8bff446b7739d02e6ea204 \
+    --hash=sha256:92f30e89b8ee0ecf363033576c422b2f58fed6a80bed0aa48dff6d14c654663e \
+    --hash=sha256:93e1f5447e2b1e479d7bd74701e84746b86450cff1fc368b132d195e2b8f8211 \
+    --hash=sha256:9a37475425b431b4d060f23b4f52cd2f3aef6bc7c654bd760adf0040eec9d435 \
+    --hash=sha256:9deb49575e5b0b94ed72c8a64ec4d033381adc27e9060ae842971f697ba96104 \
+    --hash=sha256:a5fa86b80fd24bcd1aff83ad23be44ea323de3f787be8f8b15d4a65621e25321 \
+    --hash=sha256:a6391fafaba97500887132cd582abc6e19452b1ac775a47caa7b24490e152058 \
+    --hash=sha256:a72f874bc9e10e4b8f80426fb49716d5141f64442a0c8418065093ec8017fbb0 \
+    --hash=sha256:ac7bb1c52d445bd4f8f7f97fefe6abc3a084dc4d63df50d79b17fa2b78e89297 \
+    --hash=sha256:adc1ada2662f8a5f960b8a10d9986897e7499ef07e06d4cfe7197f8cce923c07 \
+    --hash=sha256:b00eefbcf0f292945c4b4dec2ae845389ef5bcdcd596e6e4328051db5b5ba694 \
+    --hash=sha256:b0521d0f4aebb6e06189451025fa17a913287b13c03d5fe05c017333b654ea5b \
+    --hash=sha256:b5d93cf48f687479941d12b69c873ad2cc76bbd487f0091c2200636497f34034 \
+    --hash=sha256:b7e18c623bb5c95acb3b3328861272816ba199fb531921c5d6d0b675f1fde9e3 \
+    --hash=sha256:bd4cb9ad3c7889b9b3fe0a9a9fb5d2ed26f9879bff2608d9f01aed147a20d231 \
+    --hash=sha256:be5a8381859b6da607c84f4f7d6847725f1cf1853ef8a2c9e115b7d58bef47dc \
+    --hash=sha256:befa1ae5bd6030b3f512b43ff3fa5290bbed6b84411a44244b14adf835f5b89d \
+    --hash=sha256:bf63afbe037eb5d2fe87fbcc7778e61da53ebaf21d938a4515aa73b62532a5d4 \
+    --hash=sha256:c00abe94c1a69d75d827dcf1c025b25c8a45d230b3bcd77a9020883a1b047653 \
+    --hash=sha256:c2381f82999704f818e2c987a865050e285ec3621262c66d40f5a96c8f899f8e \
+    --hash=sha256:c76d5dde9f445058f83d0c02af00557a4db91de9a9a57c0df87d1535001d654b \
+    --hash=sha256:cb189f09db39283b26bfd061ec16189e14f71c6755207f72a0f7540867afe5b9 \
+    --hash=sha256:ccb32e0525d29e8b0572eb84c9a57af0e7a4e615726927506f55063c62414034 \
+    --hash=sha256:ccbc4665079665c3cf3bab4db9f6b095370cd6437d66be549b6c2a1fd19e1958 \
+    --hash=sha256:d1c89973648c85069c5046ad460f7b8a00218b29a2e42359ac8cc63e9ab94832 \
+    --hash=sha256:df2d5874ff183595a4ba404edd04f6bd9b5505c1d7708573f6a6c17489a67563 \
+    --hash=sha256:e01c918ac3d48e18a927cf7b14a26a3e29ff2bdf2eacb976da0aecd6a43ed034 \
+    --hash=sha256:e6ab667ba76450084eb64013762c438ea76d9d29cc676dcd6c2e9892ba37f841 \
+    --hash=sha256:e931e4f499e0dc7ef29d269a8e5b35dd722e5d14be07df6240166ea7c6532fae \
+    --hash=sha256:f54660b0eb6b0b9f36e7fe1cdfdff472028dd0d14acd9b9b65098efbad059469 \
+    --hash=sha256:f59a878c33d6b88122d80d239bb3b845d58708750b0cb06a09aebb9b18ec696c \
+    --hash=sha256:f7fabeb6cea87d65f3b926de33d03fb016cfdc29314c90974383b5582ae72891 \
+    --hash=sha256:f9579f383d1bf9df80081e72760e84960a7fd4f88cf0c9e535a8597c9bb646f5 \
+    --hash=sha256:f9a2353b37a1a9e78fd82b27ad7e2a32a2d036604d18f02b05e3136c62ca3b09 \
+    --hash=sha256:fc36dc566135b5eceec4cf89758fcb719266a019ef07dae1754ae7c9f617ef3e \
+    --hash=sha256:ffdc76bfcae6b255dff75202c5e7feaf95b40246bc0a17944facc1fecf9f79ab
+    # via
+    #   opencv-python
+    #   windows-capture
 oauthlib==3.3.1 \
     --hash=sha256:0f0f8aa759826a193cf66c12ea1af1637f87b9b4622d46e866952bb022e538c9 \
     --hash=sha256:88119c938d2b8fb88561af5f6ee0eec8cc8d552b7bb1f712743136eb7523b7a1
-    # via requests-oauthlib
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   requests-oauthlib
 ollama==0.6.1 \
     --hash=sha256:478c67546836430034b415ed64fa890fd3d1ff91781a9d548b3325274e69d7c6 \
     --hash=sha256:fc4c984b345735c5486faeee67d8a265214a31cbb828167782dc642ce0a2bf8c
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 openai==2.26.0 \
     --hash=sha256:6151bf8f83802f036117f06cc8a57b3a4da60da9926826cc96747888b57f394f \
     --hash=sha256:b41f37c140ae0034a6e92b0c509376d907f3a66109935fba2c1b471a7c05a8fb
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
+opencv-python==5.0.0.93 ; sys_platform == 'win32' \
+    --hash=sha256:08d5d91d967b58d6db86073b2ad3eaef88ca4ebdfd45c9059bf59f5ded0c7ad2 \
+    --hash=sha256:198a75138241810206a17c829dbcc40a7cb1841cda538ca86cbbfc6c7d95f898 \
+    --hash=sha256:4b4b1a34c79bf8d3738e3cfe9a9e67b51a79663f6b692cbdad8c31f570da4157 \
+    --hash=sha256:66aac3e5b5faa48d4025816592f3af19e4bfc2c68dec067bae2dbb4ca10aa9e2 \
+    --hash=sha256:6bbc32f59e1b1a7db7b39c81f63d00625f041d333037fd8702f6da52cc39108b \
+    --hash=sha256:c8de2dec111122a02e8beb28e16c31904992dfd6186560b142a92c71403c1039 \
+    --hash=sha256:e2b4272e736836f66c2d176e43ab8101f3a00d45654916399f52e150c58981ac \
+    --hash=sha256:f8b6d0a212253dd26ad338c812f1f23ca118fdf05a9c8c6b9444f161aa8c5881 \
+    --hash=sha256:f90ba04b8f73bc5c3814037699739f0156f597338a98f05956c684e7c3ca10d2
+    # via windows-capture
 opentelemetry-api==1.44.0 \
     --hash=sha256:67647e5e9566edcf421166fdf022b3537f818635daa852b289e34604dc6fb33a \
     --hash=sha256:94b98c893a91b88657eaac1e3ba89618cdb85be6918196705354f34728b2cdef
-    # via mcp
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   mcp
 pfzy==0.3.4 \
     --hash=sha256:5f50d5b2b3207fa72e7ec0ef08372ef652685470974a107d0d4999fc5a903a96 \
     --hash=sha256:717ea765dd10b63618e7298b2d98efd819e0b30cd5905c9707223dceeb94b3f1
-    # via inquirerpy
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   inquirerpy
 pillow==12.3.0 \
     --hash=sha256:00808c5e14ef63ac5161091d242999076604ff74b883423a11e5d7bbb38bf756 \
     --hash=sha256:04f01d28a6aaff387bf842a13be313df23ba0597a44f1a976c9feb3c6ff4711a \
@@ -1508,6 +1691,7 @@ pillow==12.3.0 \
     --hash=sha256:fe3cca2e4e8a592be0f269a1ca4835c25199d9f3ce815c8491048f785b0a0198 \
     --hash=sha256:ffd0c5368496f41b0944be820fcb7a838aa6e623d250b01acf2643939c3f99d7
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   browser-harness
     #   browser-use
     #   reportlab
@@ -1520,19 +1704,27 @@ playwright==1.62.0 \
     --hash=sha256:db755ab27db21a04186f1fe8169888e42356086e439b1059b923ef417f0b6034 \
     --hash=sha256:e5614fa89355d7081457680324bb219f79f69c423c5cb6fa250e30b0d8aebf1c \
     --hash=sha256:ea8d3055aa9d5a9f1832ac82517bd8b42c78fac7ebcbebb0107116735c8cb6a1
-    # via -r jarvis/assets/browser/requirements.in
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   -r jarvis/assets/browser/requirements.in
 portalocker==4.3.0 \
     --hash=sha256:69bf8e46769d66eb0a23219b9550253d2c3b5f03400202a2333784c1e6395e32 \
     --hash=sha256:aa91709ccfc322b8225171392d64a2f9fc833f15f5ab741cfba6d3fba285ce31
-    # via bubus
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   bubus
 posthog==7.7.0 \
     --hash=sha256:955f42097bf147459653b9102e5f7f9a22e4b6fc9f15003447bd1137fafbc505 \
     --hash=sha256:b4f2b1a616e099961f6ab61a5a2f88de62082c26801699e556927d21c00737ef
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 prompt-toolkit==3.0.53 \
     --hash=sha256:01c0891d7f9237d5e339f7d3e42cdae80b7534abb1c7c0e3352efba6231492f2 \
     --hash=sha256:9ec8a0ad96d5c56148b3f914aa79c1564c3fde5d2e6b876e7bc327e353cf8fa6
-    # via inquirerpy
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   inquirerpy
 propcache==0.5.2 \
     --hash=sha256:01c4fc7480cd0598bb4b57022df55b9ca296da7fc5a8760bd8451a7e63a7d427 \
     --hash=sha256:04dc2390d9edbbaef7461f33322555976ffddf0b650a038649d026358714e6c5 \
@@ -1656,12 +1848,15 @@ propcache==0.5.2 \
     --hash=sha256:fc88b26f08d634f7bc819a7852e5214f5802641ab8d9fd5326892292eee1993e \
     --hash=sha256:fe67a3d11cd9b4efabfa45c3d00ffba2b26811442a73a581a94b67c2b5faccf6
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   aiohttp
     #   yarl
 proto-plus==1.28.4 \
     --hash=sha256:4b01341272f8a348db3f003b6143109f83ab43091019d5181b3fcdf500ab32aa \
     --hash=sha256:5ff7ecad828e032a491fcb86947801768e32237f99dd049b649965b892ae9a63
-    # via google-api-core
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   google-api-core
 protobuf==6.33.6 \
     --hash=sha256:0cd27b587afca21b7cfa59a74dcbd48a50f0a6400cfb59391340ad729d91d326 \
     --hash=sha256:77179e006c476e69bf8e8ce866640091ec42e1beb80b213c3900006ecfba6901 \
@@ -1674,6 +1869,7 @@ protobuf==6.33.6 \
     --hash=sha256:e9db7e292e0ab79dd108d7f1a94fe31601ce1ee3f7b79e0692043423020b0593 \
     --hash=sha256:f443a394af5ed23672bc6c486be138628fbe5c651ccbc536873d7da23d1868cf
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   google-api-core
     #   googleapis-common-protos
     #   proto-plus
@@ -1699,25 +1895,33 @@ psutil==7.2.2 \
     --hash=sha256:ed0cace939114f62738d808fdcecd4c869222507e266e574799e9c0faa17d486 \
     --hash=sha256:eed63d3b4d62449571547b60578c5b2c4bcccc5387148db46e0c2313dad0ee00 \
     --hash=sha256:fd04ef36b4a6d599bbdb225dd1d3f51e00105f6d48a28f006da7f9822f2606d8
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 pyasn1==0.6.4 \
     --hash=sha256:9c447d8431c947fe4c8febc4ed9e760bc29011a5b01e5c74b67025bd9fb8ce81 \
     --hash=sha256:deda9277cfd454080ec40b207fb6df82206a3a2688735233cdcd8d3d565f088b
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyasn1-modules
     #   rsa
 pyasn1-modules==0.4.2 \
     --hash=sha256:29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a \
     --hash=sha256:677091de870a80aae844b1ca6134f54652fa2c8c5a52aa396440ac3106e941e6
-    # via google-auth
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   google-auth
 pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy' \
     --hash=sha256:600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29 \
     --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
-    # via cffi
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   cffi
 pydantic==2.13.5 \
     --hash=sha256:346a034f080da3755d8e9cb5e00e8b07de1d39e4f6e2c87d8ab7cafa0b269a73 \
     --hash=sha256:51a9c5f7b2f8e636f04c6cada605d9b6a3bf1348fdf945a3d8869b19bba0ee08
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   anthropic
     #   browser-use
     #   browser-use-sdk
@@ -1850,27 +2054,39 @@ pydantic-core==2.46.5 \
     --hash=sha256:fc5d783bd4a2387e97b8a2d5ec781cfb92b3d893bf82370548e99db5915935d3 \
     --hash=sha256:fc8515076c11f3cfdf4fb142dcca0fe384b1230a3b5415458ac84f3e0903ec13 \
     --hash=sha256:ff218293c9c806138dca139765e3b067621be52bcd93cdc14c7711be7ddc90a9
-    # via pydantic
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pydantic
 pydantic-settings==2.15.0 \
     --hash=sha256:0ba092c291c94baceb5eff768aa0d56400a457585bc0175925a5a5510303da42 \
     --hash=sha256:694b793e84f766ba76a90ebdefc01d0a9a045dab0382bee70393da93712ad117
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 pyee==13.0.1 \
     --hash=sha256:0b931f7c14535667ed4c7e0d531716368715e860b988770fc7eb8578d1f67fc8 \
     --hash=sha256:af2f8fede4171ef667dfded53f96e2ed0d6e6bd7ee3bb46437f77e3b57689228
-    # via playwright
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   playwright
 pygments==2.21.0 \
     --hash=sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9 \
     --hash=sha256:610ca751c9bc2492b38eb9a38a7fbc93edbbb2d7182edaf34e66ae493dee5c8c
-    # via rich
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   rich
 pyjwt==2.13.0 \
     --hash=sha256:41571c89ca91598c79e8ef18a2d07367d4810fbbd6f637794879baf1b7703423 \
     --hash=sha256:66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728
-    # via mcp
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   mcp
 pyobjc==12.1 ; platform_system == 'darwin' \
     --hash=sha256:686d6db3eb3182fac9846b8ce3eedf4c7d2680b21b8b8d6e6df054a17e92a12d \
     --hash=sha256:6f8c36cf87b1159d2ca1aa387ffc3efcd51cc3da13ef47c65f45e6d9fbccc729
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 pyobjc-core==12.1 ; platform_system == 'darwin' or sys_platform == 'darwin' \
     --hash=sha256:01c0cf500596f03e21c23aef9b5f326b9fb1f8f118cf0d8b66749b6cf4cbb37a \
     --hash=sha256:177aaca84bb369a483e4961186704f64b2697708046745f8167e818d968c88fc \
@@ -1881,6 +2097,7 @@ pyobjc-core==12.1 ; platform_system == 'darwin' or sys_platform == 'darwin' \
     --hash=sha256:93418e79c1655f66b4352168f8c85c942707cb1d3ea13a1da3e6f6a143bacda7 \
     --hash=sha256:c918ebca280925e7fcb14c5c43ce12dcb9574a33cccb889be7c8c17f3bcce8b6
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-accessibility
     #   pyobjc-framework-accounts
@@ -2051,11 +2268,14 @@ pyobjc-framework-accessibility==12.1 ; platform_release >= '20.0' and platform_s
     --hash=sha256:5ff362c3425edc242d49deec11f5f3e26e565cefb6a2872eda59ab7362149772 \
     --hash=sha256:bc517a0eff3989ea98197858fbe4bbb4c673e171f4acbb94dc8cf94415b11e0b \
     --hash=sha256:ca72a049a9dc56686cfe7b8c0bbb556205fb7a955a48cabf7f90447708d89651
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-accounts==12.1 ; platform_release >= '12.0' and platform_system == 'darwin' \
     --hash=sha256:76d62c5e7b831eb8f4c9ca6abaf79d9ed961dfffe24d89a041fb1de97fe56a3e \
     --hash=sha256:e1544ad11a2f889a7aaed649188d0e76d58595a27eec07ca663847a7adb21ae5
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-cloudkit
 pyobjc-framework-addressbook==12.1 ; platform_system == 'darwin' \
@@ -2067,23 +2287,33 @@ pyobjc-framework-addressbook==12.1 ; platform_system == 'darwin' \
     --hash=sha256:e4e24094fa293f158ed21fcd57414b759dc1220c23efec4ee8a7672d726b3576 \
     --hash=sha256:e6291d67436112057df27f76d758a8fb9a6ff1557420dee0baf52e61cf174872 \
     --hash=sha256:f03312faeb3c381e040f965b288379468d567b1449c1cfe66d150885b48510a3
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-adservices==12.1 ; platform_release >= '20.0' and platform_system == 'darwin' \
     --hash=sha256:7a31fc8d5c6fd58f012db87c89ba581361fc905114bfb912e0a3a87475c02183 \
     --hash=sha256:9ca3c55e35b2abb3149a0bce5de9a1f7e8ee4f8642036910ca8586ab2e161538
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-adsupport==12.1 ; platform_release >= '18.0' and platform_system == 'darwin' \
     --hash=sha256:97dcd8799dd61f047bb2eb788bbde81f86e95241b5e5173a3a61cfc05b5598b1 \
     --hash=sha256:9a68480e76de567c339dca29a8c739d6d7b5cad30e1cd585ff6e49ec2fc283dd
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-applescriptkit==12.1 ; platform_system == 'darwin' \
     --hash=sha256:b955fc017b524027f635d92a8a45a5fd9fbae898f3e03de16ecd94aa4c4db987 \
     --hash=sha256:cb09f88cf0ad9753dedc02720065818f854b50e33eb4194f0ea34de6d7a3eb33
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-applescriptobjc==12.1 ; platform_release >= '10.0' and platform_system == 'darwin' \
     --hash=sha256:79068f982cc22471712ce808c0a8fd5deea11258fc8d8c61968a84b1962a3d10 \
     --hash=sha256:dce080ed07409b0dda2fee75d559bd312ea1ef0243a4338606440f282a6a0f5f
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-applicationservices==12.1 ; platform_system == 'darwin' \
     --hash=sha256:1f72e20009a4ebfd5ed5b23dc11c1528ad6b55cc63ee71952ddb2a5e5f1cb7da \
     --hash=sha256:8a5d2845249b6a85ba9e320a9848468c3f8cd6f59605a9a43f406a7810eaa830 \
@@ -2093,15 +2323,21 @@ pyobjc-framework-applicationservices==12.1 ; platform_system == 'darwin' \
     --hash=sha256:c4fd1b008757182b9e2603a63c6ffa930cc412fab47294ec64260ab3f8ec695d \
     --hash=sha256:c8f6e2fb3b3e9214ab4864ef04eee18f592b46a986c86ea0113448b310520532 \
     --hash=sha256:f43c9a24ad97a9121276d4d571aa04a924282c80d7291cfb3b29839c3e2013a8
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-apptrackingtransparency==12.1 ; platform_release >= '20.0' and platform_system == 'darwin' \
     --hash=sha256:23a98ade55495f2f992ecf62c3cbd8f648cbd68ba5539c3f795bf66de82e37ca \
     --hash=sha256:e25bf4e4dfa2d929993ee8e852b28fdf332fa6cde0a33328fdc3b2f502fa50ec
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-arkit==12.1 ; platform_release >= '25.0' and platform_system == 'darwin' \
     --hash=sha256:0c5c6b702926179700b68ba29b8247464c3b609fd002a07a3308e72cfa953adf \
     --hash=sha256:f6d39e28d858ee03f052d6780a552247e682204382dbc090f1d3192fa1b21493
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-audiovideobridging==12.1 ; platform_release >= '12.0' and platform_system == 'darwin' \
     --hash=sha256:010021502649e2cca4e999a7c09358d48c6b0ed83530bbc0b85bba6834340e4b \
     --hash=sha256:0c57fdf1762f616d10549c0eddf84e59c193800f4a7932aaa7d5f13c123609c0 \
@@ -2111,7 +2347,9 @@ pyobjc-framework-audiovideobridging==12.1 ; platform_release >= '12.0' and platf
     --hash=sha256:88f97bf62cba0d07f623650a7b2a58f73aedcc03b523e2bcd5653042dd50c152 \
     --hash=sha256:a9901a88b6c8dbc982d8605c6b1ff0330ff80647a0a96a8187b6784249eb42dc \
     --hash=sha256:c2fa51d674ba30801cfe67d1b5e71424635b62f6377b96602bce124ae3086823
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-authenticationservices==12.1 ; platform_release >= '19.0' and platform_system == 'darwin' \
     --hash=sha256:39bba6cc6041467d0046a04610e8aacc852961c82055d84bf3981971780ee5eb \
     --hash=sha256:3ee69de818ce91c3bea6f87deba59ab8392a2c17c48f3d6fce0639c0e548bb0c \
@@ -2121,7 +2359,9 @@ pyobjc-framework-authenticationservices==12.1 ; platform_release >= '19.0' and p
     --hash=sha256:b14997d96887127f393434d42e3e108eeca2116ca935dd7e37e91c709a93b422 \
     --hash=sha256:c15bb81282356f3f062ac79ff4166c93097448edc44b17dcf686e1dac78cc832 \
     --hash=sha256:cef71faeae2559f5c0ff9a81c9ceea1c81108e2f4ec7de52a98c269feff7a4b6
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-automaticassessmentconfiguration==12.1 ; platform_release >= '19.0' and platform_system == 'darwin' \
     --hash=sha256:096c1f0dcd96a6e9903b70b3090747e76344324c02066026c4f7c347bc1823ae \
     --hash=sha256:2b732c02d9097682ca16e48f5d3b10056b740bc091e217ee4d5715194c8970b1 \
@@ -2131,7 +2371,9 @@ pyobjc-framework-automaticassessmentconfiguration==12.1 ; platform_release >= '1
     --hash=sha256:c2e22ea67d7e6d6a84d968169f83d92b59857a49ab12132de07345adbfea8a62 \
     --hash=sha256:d94a4a3beb77b3b2ab7b610c4b41e28593d15571724a9e6ab196b82acc98dc13 \
     --hash=sha256:f5f1818c6f77daf64d954878bbbda6b3f5e41e23b599210da08fefed1f1d5981
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-automator==12.1 ; platform_system == 'darwin' \
     --hash=sha256:275ed04d339c5a5849a4be8ef82c2035be07ab92ccbf69007f544bcfabe060ad \
     --hash=sha256:4df9aec77f0fbca66cd3534d1b8398fe6f3e3c2748c0fc12fec2546c7f2e3ffd \
@@ -2141,7 +2383,9 @@ pyobjc-framework-automator==12.1 ; platform_system == 'darwin' \
     --hash=sha256:e9962ea45875fda6a648449015ccc26cc1229fdbd0166556a7271c60ba6d9011 \
     --hash=sha256:fa9189b481db4429e3aea6b567b0888f8c6f6ba388064be2ce6f287e19cea096 \
     --hash=sha256:fb6a177cac056f2ecacaae1d4815f4e10529025cb13184fdee297989b55846f7
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-avfoundation==12.1 ; platform_release >= '11.0' and platform_system == 'darwin' \
     --hash=sha256:370d5f1149c1041028cb1f5fb61b9f56655fe53bbffafc79393b0824a474bef0 \
     --hash=sha256:394c99876b9a38db4851ddf8146db363556895c12e9c711ccd3c3f907ac8e273 \
@@ -2152,6 +2396,7 @@ pyobjc-framework-avfoundation==12.1 ; platform_release >= '11.0' and platform_sy
     --hash=sha256:eda0bb60be380f9ba2344600c4231dd58a3efafa99fdc65d3673ecfbb83f6fcb \
     --hash=sha256:f8ac7f7e0884ac8f12009cdb9d4fefc2f269294ab2ccfd84520a560859b69cec
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-cinematic
     #   pyobjc-framework-mediaextension
@@ -2166,7 +2411,9 @@ pyobjc-framework-avkit==12.1 ; platform_release >= '13.0' and platform_system ==
     --hash=sha256:ec696a9ba354cdf4271d0076ed2daf7e4779ce809a7dc3d6c9cff4e14c88c1b0 \
     --hash=sha256:eef2c0a51465de025a4509db05ef18ca2b678bb00ee0a8fbad7fd470edfd58f9 \
     --hash=sha256:f49ee90e4f8737ae5dea7579016cdf344b64092810bf5b5acf0cb9c1c6a0d328
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-avrouting==12.1 ; platform_release >= '22.0' and platform_system == 'darwin' \
     --hash=sha256:0b9724fcd834a8ee206df25139c3033bd508a4a830ac6d91dd7c611a03085386 \
     --hash=sha256:18c62af1ce9ac99b04c36f66959ca64530d51b62aa0e6f00400dea600112e370 \
@@ -2176,7 +2423,9 @@ pyobjc-framework-avrouting==12.1 ; platform_release >= '22.0' and platform_syste
     --hash=sha256:c5f80ba96f5f874193fc0d9656aa6b4ed0df43c7c88ecfbf6cd4760d75776157 \
     --hash=sha256:defaad8e98793dfaceb7e36eba3da9bf92d0840207d39e39b018ce6eb41d80f8 \
     --hash=sha256:e5a1d2e4e431aae815e38b75dbe644aa1fd495f8ec1e2194fc175132d7cfc1d3
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-backgroundassets==12.1 ; platform_release >= '22.0' and platform_system == 'darwin' \
     --hash=sha256:17de7990b5ea8047d447339f9e9e6f54b954ffc06647c830932a1688c4743fea \
     --hash=sha256:2c11cb98650c1a4bc68eeb4b040541ba96613434c5957e98e9bb363413b23c91 \
@@ -2186,7 +2435,9 @@ pyobjc-framework-backgroundassets==12.1 ; platform_release >= '22.0' and platfor
     --hash=sha256:a089a71b2db471f5af703e35f7a61060164d61eb60a3f482076826dfa5697c7c \
     --hash=sha256:acaa091ff12acb24536745803af95e10d535b22e2e123fd2dd5920f3d47338ee \
     --hash=sha256:e8c560f1aaa7a4bf6e336806749ce0a20f2a792ab924d9424714e299a59b3edf
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-browserenginekit==12.1 ; platform_release >= '23.4' and platform_system == 'darwin' \
     --hash=sha256:1aa2da131bbdf81748894c18d253cd2711dc535f1711263c6c604e20cdc094a6 \
     --hash=sha256:41229c766fb3e5bba2de5e580776388297303b4d63d3065fef3f67b77ec46c3f \
@@ -2196,15 +2447,21 @@ pyobjc-framework-browserenginekit==12.1 ; platform_release >= '23.4' and platfor
     --hash=sha256:ad7896751accf7a6f866e64e8155f97b6cf0fc0e6efd64e9940346d8fbf0ec66 \
     --hash=sha256:c52a3b0000e67fbaa51eef0b455d90b1140e3f6a0014945227cedf242fa57dcc \
     --hash=sha256:d15766bb841b081447015c9626e2a766febfe651f487893d29c5d72bef976b94
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-businesschat==12.1 ; platform_release >= '18.0' and platform_system == 'darwin' \
     --hash=sha256:f66ce741507b324de3c301d72ba0cfa6aaf7093d7235972332807645c118cc29 \
     --hash=sha256:f6fa3a8369a1a51363e1757530128741d9d09ed90692a1d6777a4c0fbad25868
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-calendarstore==12.1 ; platform_release >= '9.0' and platform_system == 'darwin' \
     --hash=sha256:18533e0fcbcdd29ee5884dfbd30606710f65df9b688bf47daee1438ee22e50cc \
     --hash=sha256:f9a798d560a3c99ad4c0d2af68767bc5695d8b1aabef04d8377861cd1d6d1670
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-callkit==12.1 ; platform_release >= '20.0' and platform_system == 'darwin' \
     --hash=sha256:12adc0ace464a057f8908187698e1d417c6c53619797a69d096f4329bffb1089 \
     --hash=sha256:57e8c04d8e4f9358d0fe1f14862caf9aa74ae5ba90c8cae1751798a24b459166 \
@@ -2214,11 +2471,15 @@ pyobjc-framework-callkit==12.1 ; platform_release >= '20.0' and platform_system 
     --hash=sha256:b8909402f8690ea2fe8fa7c0256b5c491435f20881832808b86433f526ff28f8 \
     --hash=sha256:e73beae08e6a32bcced8d5bdb45b52d6a0866dd1485eaaddba6063f17d41fcb0 \
     --hash=sha256:fd6dc9688b785aab360139d683be56f0844bf68bf5e45d0eb770cb68221083cc
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-carbon==12.1 ; platform_system == 'darwin' \
     --hash=sha256:57a72807db252d5746caccc46da4bd20ff8ea9e82109af9f72735579645ff4f0 \
     --hash=sha256:f8b719b3c7c5cf1d61ac7c45a8a70b5e5e5a83fa02f5194c2a48a7e81a3d1b7f
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-cfnetwork==12.1 ; platform_system == 'darwin' \
     --hash=sha256:2d16e820f2d43522c793f55833fda89888139d7a84ca5758548ba1f3a325a88d \
     --hash=sha256:3bf93c0f3d262f629e72f8dd43384d0930ed8e610b3fc5ff555c0c1a1e05334a \
@@ -2228,11 +2489,15 @@ pyobjc-framework-cfnetwork==12.1 ; platform_system == 'darwin' \
     --hash=sha256:92760da248c757085fc39bce4388a0f6f0b67540e51edf60a92ad60ca907d071 \
     --hash=sha256:b94c190bdfdf0c8f3f6f7bf8e19ccc2847ecb67adab0068f8d12a25ab7df3c1a \
     --hash=sha256:d54206b13f44f2503db53efbdb76d892c719959fb620266875d9934ceb586f2d
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-cinematic==12.1 ; platform_release >= '23.0' and platform_system == 'darwin' \
     --hash=sha256:795068c30447548c0e8614e9c432d4b288b13d5614622ef2f9e3246132329b06 \
     --hash=sha256:c003543bb6908379680a93dfd77a44228686b86c118cf3bc930f60241d0cd141
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-classkit==12.1 ; platform_release >= '20.0' and platform_system == 'darwin' \
     --hash=sha256:0ac959a4e91a40865f12f041c083fa8862672f13e596c983f2b99afc8c67bc4e \
     --hash=sha256:5d0a5cd026c51a22d13eb75404f8317089aabb3faef723aeafc4ca9a0c17e66e \
@@ -2242,11 +2507,15 @@ pyobjc-framework-classkit==12.1 ; platform_release >= '20.0' and platform_system
     --hash=sha256:bd90aacc68eff3412204a9040fa81eb18348cbd88ed56d33558349f3e51bff52 \
     --hash=sha256:c027a3cd9be5fee3f605589118b8b278297c384a271f224c1a98b224e0c087e6 \
     --hash=sha256:c95cd6a4f598e877197a93cc202d40d0d830bf09be5a2b15942e5a1b03e29cd4
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-cloudkit==12.1 ; platform_release >= '14.0' and platform_system == 'darwin' \
     --hash=sha256:1dddd38e60863f88adb3d1d37d3b4ccb9cbff48c4ef02ab50e36fa40c2379d2f \
     --hash=sha256:875e37bf1a2ce3d05c2492692650104f2d908b56b71a0aedf6620bc517c6c9ca
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-cocoa==12.1 ; platform_system == 'darwin' or sys_platform == 'darwin' \
     --hash=sha256:03342a60fc0015bcdf9b93ac0b4f457d3938e9ef761b28df9564c91a14f0129a \
     --hash=sha256:547c182837214b7ec4796dac5aee3aa25abc665757b75d7f44f83c994bcb0858 \
@@ -2257,6 +2526,7 @@ pyobjc-framework-cocoa==12.1 ; platform_system == 'darwin' or sys_platform == 'd
     --hash=sha256:9b880d3bdcd102809d704b6d8e14e31611443aa892d9f60e8491e457182fdd48 \
     --hash=sha256:f52228bcf38da64b77328787967d464e28b981492b33a7675585141e1b0a01e6
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-accessibility
     #   pyobjc-framework-accounts
@@ -2409,15 +2679,21 @@ pyobjc-framework-cocoa==12.1 ; platform_system == 'darwin' or sys_platform == 'd
 pyobjc-framework-collaboration==12.1 ; platform_release >= '9.0' and platform_system == 'darwin' \
     --hash=sha256:182d6e6080833b97f9bef61738ae7bacb509714538f0d7281e5f0814c804b315 \
     --hash=sha256:2afa264d3233fc0a03a56789c6fefe655ffd81a2da4ba1dc79ea0c45931ad47b
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-colorsync==12.1 ; platform_release >= '17.0' and platform_system == 'darwin' \
     --hash=sha256:41e08d5b9a7af4b380c9adab24c7ff59dfd607b3073ae466693a3e791d8ffdc9 \
     --hash=sha256:d69dab7df01245a8c1bd536b9231c97993a5d1a2765d77692ce40ebbe6c1b8e9
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-compositorservices==12.1 ; platform_release >= '25.0' and platform_system == 'darwin' \
     --hash=sha256:028e357bbee7fbd3723339a321bbe14e6da5a772708a661a13eea5f17c89e4ab \
     --hash=sha256:9ef22d4eacd492e13099b9b8936db892cdbbef1e3d23c3484e0ed749f83c4984
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-contacts==12.1 ; platform_release >= '15.0' and platform_system == 'darwin' \
     --hash=sha256:1fac7feca7428047abf3f094fab678c4d0413296f34c30085119850509bc2905 \
     --hash=sha256:2e5ce33b686eb9c0a39351938a756442ea8dea88f6ae2f16bff5494a8569c687 \
@@ -2428,6 +2704,7 @@ pyobjc-framework-contacts==12.1 ; platform_release >= '15.0' and platform_system
     --hash=sha256:8ab86070895a005239256d207e18209b1a79d35335b6604db160e8375a7165e6 \
     --hash=sha256:ab1d78f363dfede16bd5d951327332564bae86f68834d1e657dd18fe4dc12082
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-contactsui
 pyobjc-framework-contactsui==12.1 ; platform_release >= '15.0' and platform_system == 'darwin' \
@@ -2439,7 +2716,9 @@ pyobjc-framework-contactsui==12.1 ; platform_release >= '15.0' and platform_syst
     --hash=sha256:aaeca7c9e0c9c4e224d73636f9a558f9368c2c7422155a41fd4d7a13613a77c1 \
     --hash=sha256:c9d64bbc4cfae0f082627b57f7e29e71b924af970f344b106b17fb68e13f7da0 \
     --hash=sha256:eb06b422ce8d422dce2c9af49a2bd093f78761e5aa3f1c866582a4c60cf31f79
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-coreaudio==12.1 ; platform_system == 'darwin' \
     --hash=sha256:3d8ef424850c8ae2146f963afaec6c4f5bf0c2e412871e68fb6ecfb209b8376f \
     --hash=sha256:6552624df39dbc68ff9328f244ba56f59234ecbde8455db1e617a71bc4f3dd3a \
@@ -2450,6 +2729,7 @@ pyobjc-framework-coreaudio==12.1 ; platform_system == 'darwin' \
     --hash=sha256:a9e72925fcc1795430496ce0bffd4ddaa92c22460a10308a7283ade830089fe1 \
     --hash=sha256:d676c85bb9dc51217d94adc3b5b60e7e5b59a81167446f06821b2687d92641d3
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-avfoundation
     #   pyobjc-framework-browserenginekit
@@ -2463,7 +2743,9 @@ pyobjc-framework-coreaudiokit==12.1 ; platform_system == 'darwin' \
     --hash=sha256:b83624f8de3068ab2ca279f786be0804da5cf904ff9979d96007b69ef4869e1e \
     --hash=sha256:dc1589cda7a4ae0560bf73e1a0623bb710de09ef030d585035f8a428a3e8d6a1 \
     --hash=sha256:e1144c272f8d6429a34a6757700048f4631eb067c4b08d4768ddc28c371a7014
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-corebluetooth==12.1 ; platform_release >= '14.0' and platform_system == 'darwin' \
     --hash=sha256:15ba5207ca626dffe57ccb7c1beaf01f93930159564211cb97d744eaf0d812aa \
     --hash=sha256:1daf07a0047c3ed89fab84ad5f6769537306733b6a6e92e631581a0f419e3f32 \
@@ -2473,7 +2755,9 @@ pyobjc-framework-corebluetooth==12.1 ; platform_release >= '14.0' and platform_s
     --hash=sha256:937849f4d40a33afbcc56cbe90c8d1fbf30fb27a962575b9fb7e8e2c61d3c551 \
     --hash=sha256:e5385195bd365a49ce70e2fb29953681eefbe68a7b15ecc2493981d2fb4a02b1 \
     --hash=sha256:fe72c9732ee6c5c793b9543f08c1f5bdd98cd95dfc9d96efd5708ec9d6eeb213
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-coredata==12.1 ; platform_system == 'darwin' \
     --hash=sha256:07d19e7db06e1ad21708cf01fc8014d5f1b73efd373a99af6ff882c1bfb8497b \
     --hash=sha256:1e47d3c5e51fdc87a90da62b97cae1bc49931a2bb064db1305827028e1fc0ffa \
@@ -2484,13 +2768,16 @@ pyobjc-framework-coredata==12.1 ; platform_system == 'darwin' \
     --hash=sha256:ac49d45b372f768bd577a26b503dd04e553ffebd3aa96c653b1c88a3f2733552 \
     --hash=sha256:c861dc42b786243cbd96d9ea07d74023787d03637ef69a2f75a1191a2f16d9d6
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-cloudkit
     #   pyobjc-framework-syncservices
 pyobjc-framework-corehaptics==12.1 ; platform_release >= '19.0' and platform_system == 'darwin' \
     --hash=sha256:521dd2986c8a4266d583dd9ed9ae42053b11ae7d3aa89bf53fbee88307d8db10 \
     --hash=sha256:a3b07d36ddf5c86a9cdaa411ab53d09553d26ea04fc7d4f82d21a84f0fc05fc0
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-corelocation==12.1 ; platform_release >= '10.0' and platform_system == 'darwin' \
     --hash=sha256:0a80ba8e8d9120eb80486235c483a0c734cb451265e5aa81bcf315f0e644eb00 \
     --hash=sha256:3674e9353f949d91dde6230ad68f6d5748a7f0424751e08a2c09d06050d66231 \
@@ -2501,6 +2788,7 @@ pyobjc-framework-corelocation==12.1 ; platform_release >= '10.0' and platform_sy
     --hash=sha256:8c35ad29a062fea7d417fd8997a9309660ba7963f2847c004e670efbe6bb5b00 \
     --hash=sha256:ffc96b9ba504b35fe3e0fcfb0153e68fdfca6fe71663d240829ceab2d7122588
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-cloudkit
     #   pyobjc-framework-mapkit
@@ -2514,6 +2802,7 @@ pyobjc-framework-coremedia==12.1 ; platform_release >= '11.0' and platform_syste
     --hash=sha256:d2b84149c1b3e65ec9050a3e5b617e6c0b4cdad2ab622c2d8c5747a20f013e16 \
     --hash=sha256:ee7b822c9bb674b5b0a70bfb133410acae354e9241b6983f075395f3562f3c46
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-avfoundation
     #   pyobjc-framework-browserenginekit
@@ -2531,7 +2820,9 @@ pyobjc-framework-coremediaio==12.1 ; platform_release >= '11.0' and platform_sys
     --hash=sha256:880b313b28f00b27775d630174d09e0b53d1cdbadb74216618c9dd5b3eb6806a \
     --hash=sha256:8aaeb44fdf9382dda30ff5f53ba6e291c1b514b7ab651f7b31d7fb4c27bfd309 \
     --hash=sha256:a5ca5763f185f48fedafec82f794dca53c55d2e52058d1b11baa43dd4ab0cd16
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-coremidi==12.1 ; platform_system == 'darwin' \
     --hash=sha256:06e5bce0a28bac21f09bcfedda46d93b2152c138764380314d99f2370a8c00f2 \
     --hash=sha256:194bc4da148ace8b71117c227562cad39a2708d296f569839f56d83e8801b25b \
@@ -2541,7 +2832,9 @@ pyobjc-framework-coremidi==12.1 ; platform_system == 'darwin' \
     --hash=sha256:b49442cf533923952f56049be407edbe2ab2ece04ae1c94ca1e28d500f9f5754 \
     --hash=sha256:bcbe70bdd5f79999d028aee7a8b34e72ff955547c7d277357c4d67afd8a23024 \
     --hash=sha256:e84ffc1de59691c04201b0872e184fe55b5589f3a14876bd14460f3b5f3cd109
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-coreml==12.1 ; platform_release >= '17.0' and platform_system == 'darwin' \
     --hash=sha256:0d1a4216891a18775c9e0170d908714c18e4f53f9dc79fb0f5263b2aa81609ba \
     --hash=sha256:10dc8e8db53d7631ebc712cad146e3a9a9a443f4e1a037e844149a24c3c42669 \
@@ -2552,6 +2845,7 @@ pyobjc-framework-coreml==12.1 ; platform_release >= '17.0' and platform_system =
     --hash=sha256:a04a96e512ecf6999aa9e1f60ad5635cb9d1cd839be470341d8d1541797baef6 \
     --hash=sha256:df4e9b4f97063148cc481f72e2fbe3cc53b9464d722752aa658d7c0aec9f02fd
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-vision
 pyobjc-framework-coremotion==12.1 ; platform_release >= '19.0' and platform_system == 'darwin' \
@@ -2563,7 +2857,9 @@ pyobjc-framework-coremotion==12.1 ; platform_release >= '19.0' and platform_syst
     --hash=sha256:d0aedcf8157c1428c7d2df8edae159b9de226d4df719c5bac8a96b648950b63e \
     --hash=sha256:e7ce95dfa7e33b5762e0a800d76ef9c6a34b827c700d7e80c3740b7cd05168a5 \
     --hash=sha256:ed8cb67927985d97b1dd23ab6a4a1b716fc7c409c35349816108781efdcbb5b6
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-coreservices==12.1 ; platform_system == 'darwin' \
     --hash=sha256:227fb4144a87c6c97a5f737fb0c666293b33e54f0ffb500f2c420da6c110ba2d \
     --hash=sha256:38856a89ccab766a03270c415a6bf5ea0f87134134fe4c122af9894d50162d77 \
@@ -2574,6 +2870,7 @@ pyobjc-framework-coreservices==12.1 ; platform_system == 'darwin' \
     --hash=sha256:dff0cb6ccbd39ea45b01a50955d757172567de5c164f6e8e241bf4e7639b0946 \
     --hash=sha256:fc6a9f18fc6da64c166fe95f2defeb7ac8a9836b3b03bb6a891d36035260dbaa
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-dictionaryservices
     #   pyobjc-framework-launchservices
@@ -2587,7 +2884,9 @@ pyobjc-framework-corespotlight==12.1 ; platform_release >= '17.0' and platform_s
     --hash=sha256:986ac40755e15aa3a562aac687b22c882de2b4b0fa58fbd419cc3487a0df1507 \
     --hash=sha256:bfcea64ab3250e2886d202b8731be3817b5ac0c8c9f43e77d0d5a0b6602e71a7 \
     --hash=sha256:ede26027cfa577e6748b7dd0615e8a1bb379e48ad2324489b2c8d242cdf6fce8
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-coretext==12.1 ; platform_system == 'darwin' \
     --hash=sha256:14100d1e39efb30f57869671fb6fce8d668f80c82e25e7930fb364866e5c0dab \
     --hash=sha256:1c8315dcef6699c2953461d97117fe81402f7c29cff36d2950dacce028a362fd \
@@ -2598,6 +2897,7 @@ pyobjc-framework-coretext==12.1 ; platform_system == 'darwin' \
     --hash=sha256:d246fa654bdbf43bae3969887d58f0b336c29b795ad55a54eb76397d0e62b93c \
     --hash=sha256:e0adb717738fae395dc645c9e8a10bb5f6a4277e73cba8fa2a57f3b518e71da5
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-applicationservices
 pyobjc-framework-corewlan==12.1 ; platform_release >= '10.0' and platform_system == 'darwin' \
@@ -2609,7 +2909,9 @@ pyobjc-framework-corewlan==12.1 ; platform_release >= '10.0' and platform_system
     --hash=sha256:aac949646953effdd36d2d21bc0ab645e58bb25deafe86c6e600b3cdcfc2228b \
     --hash=sha256:dae63c36affcc933c9161980e4fe7333e0c59c968174a00a75cb5f6e4ede10c6 \
     --hash=sha256:fe6373e83e12be6854f7c1f054e2f68b41847fd739aa578d3c5478bd3fd4014f
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-cryptotokenkit==12.1 ; platform_release >= '14.0' and platform_system == 'darwin' \
     --hash=sha256:05d40859a40ba4ed3dd8befabefc02aa224336c660b2f33ebf14d5397a30ffb3 \
     --hash=sha256:94fa4b3903a1a39fe1d5874a5ae5b67471f488925c485a7e9c3575fbf9eba43e \
@@ -2619,23 +2921,33 @@ pyobjc-framework-cryptotokenkit==12.1 ; platform_release >= '14.0' and platform_
     --hash=sha256:d84b75569054fa0886e3e341c00d7179d5fe287e6d1509630dd698ee60ec5af1 \
     --hash=sha256:e65a8e4558e6cf1e46a9b4a52fcbf7b2ddd17958d675e9047d8a9f131d0a4d33 \
     --hash=sha256:ef51a86c1d0125fabdfad0b3efa51098fb03660d8dad2787d82e8b71c9f189de
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-datadetection==12.1 ; platform_release >= '21.0' and platform_system == 'darwin' \
     --hash=sha256:4dc8e1d386d655b44b2681a4a2341fb2fc9addbf3dda14cb1553cd22be6a5387 \
     --hash=sha256:95539e46d3bc970ce890aa4a97515db10b2690597c5dd362996794572e5d5de0
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-devicecheck==12.1 ; platform_release >= '19.0' and platform_system == 'darwin' \
     --hash=sha256:567e85fc1f567b3fe64ac1cdc323d989509331f64ee54fbcbde2001aec5adbdb \
     --hash=sha256:ffd58148bdef4a1ee8548b243861b7d97a686e73808ca0efac5bef3c430e4a15
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-devicediscoveryextension==12.1 ; platform_release >= '24.0' and platform_system == 'darwin' \
     --hash=sha256:60e12445fad97ff1f83472255c943685a8f3a9d95b3126d887cfe769b7261044 \
     --hash=sha256:d6d6b606d27d4d88efc0bed4727c375e749149b360290c3ad2afc52337739a1b
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-dictionaryservices==12.1 ; platform_release >= '9.0' and platform_system == 'darwin' \
     --hash=sha256:354158f3c55d66681fa903c7b3cb05a435b717fa78d0cef44d258d61156454a7 \
     --hash=sha256:578854eec17fa473ac17ab30050a7bbb2ab69f17c5c49b673695254c3e88ad4b
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-discrecording==12.1 ; platform_system == 'darwin' \
     --hash=sha256:3345fcb139f1646c2aef41be6344c5b944817ea4df85d7f61db27781a90d77a6 \
     --hash=sha256:36e1ba4d37fe310bad2fbfeadd43c8ef001cfae9a2a0484d7318504c5dbefa3f \
@@ -2646,32 +2958,45 @@ pyobjc-framework-discrecording==12.1 ; platform_system == 'darwin' \
     --hash=sha256:b940e018b57ce637f5ada4d44ed6775d349dbc4e67c6e563f682fc3277c7affe \
     --hash=sha256:f7d815f28f781e20de0bf278aaa10b0de7e5ea1189aa17676c0bf5b99e9e0d52
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-discrecordingui
 pyobjc-framework-discrecordingui==12.1 ; platform_system == 'darwin' \
     --hash=sha256:6544ef99cad3dee95716c83cb207088768b6ecd3de178f7e1b17df5997689dfd \
     --hash=sha256:6793d4a1a7f3219d063f39d87f1d4ebbbb3347e35d09194a193cfe16cba718a8
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-diskarbitration==12.1 ; platform_system == 'darwin' \
     --hash=sha256:54caf3079fe4ae5ac14466a9b68923ee260a1a88a8290686b4a2015ba14c2db6 \
     --hash=sha256:6703bc5a09b38a720c9ffca356b58f7e99fa76fc988c9ec4d87112344e63dfc2
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-dvdplayback==12.1 ; platform_system == 'darwin' \
     --hash=sha256:279345d4b5fb2c47dd8e5c2fd289e644b6648b74f5c25079805eeb61bfc4a9cd \
     --hash=sha256:af911cc222272a55b46a1a02a46a355279aecfd8132231d8d1b279e252b8ad4c
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-eventkit==12.1 ; platform_release >= '12.0' and platform_system == 'darwin' \
     --hash=sha256:3d2d36d5bd9e0a13887a6ac7cdd36675985ebe2a9cb3cdf8cec0725670c92c60 \
     --hash=sha256:7c1882be2f444b1d0f71e9a0cd1e9c04ad98e0261292ab741fc9de0b8bbbbae9
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-exceptionhandling==12.1 ; platform_system == 'darwin' \
     --hash=sha256:2f1eae14cf0162e53a0888d9ffe63f047501fe583a23cdc9c966e89f48cf4713 \
     --hash=sha256:7f0719eeea6695197fce0e7042342daa462683dc466eb6a442aad897032ab00d
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-executionpolicy==12.1 ; platform_release >= '19.0' and platform_system == 'darwin' \
     --hash=sha256:682866589365cd01d3a724d8a2781794b5cba1e152411a58825ea52d7b972941 \
     --hash=sha256:c3a9eca3bd143cf202787dd5e3f40d954c198f18a5e0b8b3e2fcdd317bf33a52
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-extensionkit==12.1 ; platform_release >= '22.0' and platform_system == 'darwin' \
     --hash=sha256:570e8a89116380a27dd8df7ce28cd5f7296eb785aea4cb7dc6447954005360c2 \
     --hash=sha256:6764f7477bb0f6407a5217cbfc2da13a71a5d402ac5f005300958886e25fd9b5 \
@@ -2681,7 +3006,9 @@ pyobjc-framework-extensionkit==12.1 ; platform_release >= '22.0' and platform_sy
     --hash=sha256:9139c064e1c7f21455411848eb39f092af6085a26cad322aa26309260e7929d9 \
     --hash=sha256:b002bd4ee7aa951298f8bdd41e2a59d172050975499f94a26caff263b5fadca4 \
     --hash=sha256:d14ebebffe05d33d189bf2bec5b676721790cf041b7ee628bfd05bcda4c148cc
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-externalaccessory==12.1 ; platform_release >= '17.0' and platform_system == 'darwin' \
     --hash=sha256:079f770a115d517a6ab87db1b8a62ca6cdf6c35ae65f45eecc21b491e78776c0 \
     --hash=sha256:22efc5bf68f5f0ef39f4308ef06403c42544f5fc75f6eeb137a87af99357dda1 \
@@ -2691,7 +3018,9 @@ pyobjc-framework-externalaccessory==12.1 ; platform_release >= '17.0' and platfo
     --hash=sha256:5551915fa82ff1eea8e5810f74c1298e5327aefe4ac90abeb9a7abd69ff33a22 \
     --hash=sha256:dedbf7a09375ac19668156c1417bd7829565b164a246b714e225b9cbb6a351ad \
     --hash=sha256:ee55a06fe8ef7ff07a435d75544d8c7177e790afaff60b5a55e3ceea1c9f03e7
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-fileprovider==12.1 ; platform_release >= '19.0' and platform_system == 'darwin' \
     --hash=sha256:45034e0d00ae153c991aa01cb1fd41874650a30093e77ba73401dcce5534c8ad \
     --hash=sha256:520b8c83b1ce63e0f668ea1683e3843f2e5379c0af76dceb19d5d540d584ff54 \
@@ -2702,16 +3031,21 @@ pyobjc-framework-fileprovider==12.1 ; platform_release >= '19.0' and platform_sy
     --hash=sha256:a1a7a6ac3af1e93d23f5644b4c7140dc7edf5ff79419cc0bd25ce7001afc1cf6 \
     --hash=sha256:de9aaea1308e37f7537dd2a8e89f151d4eaee2b0db5d248dc85cc1fd521adaaa
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-fileproviderui
 pyobjc-framework-fileproviderui==12.1 ; platform_release >= '19.0' and platform_system == 'darwin' \
     --hash=sha256:15296429d9db0955abc3242b2920b7a810509a85118dbc185f3ac8234e5a6165 \
     --hash=sha256:521a914055089e28631018bd78df4c4f7416e98b4150f861d4a5bc97d5b1ffe4
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-findersync==12.1 ; platform_release >= '14.0' and platform_system == 'darwin' \
     --hash=sha256:c513104cef0013c233bf8655b527df665ce6f840c8bc0b3781e996933d4dcfa6 \
     --hash=sha256:e07abeca52c486cf14927f617afc27afa7a3828b99fab3ad02355105fb29203e
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-fsevents==12.1 ; platform_system == 'darwin' \
     --hash=sha256:028f6a3195c6a00ca29baef31019cb2ca0c54e799072f0f0246b391dc6c4c1d3 \
     --hash=sha256:05220368b0685783e0ae00c885e167169d47ff5cf66de7172ca8074682dfc330 \
@@ -2722,6 +3056,7 @@ pyobjc-framework-fsevents==12.1 ; platform_system == 'darwin' \
     --hash=sha256:a2949358513fd7bc622fb362b5c4af4fc24fc6307320070ca410885e5e13d975 \
     --hash=sha256:b3af4e030325672679e3fce55d34fff2a6d9da0cf27810f3cfc0eec0880e45e8
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-coreservices
 pyobjc-framework-fskit==12.1 ; platform_release >= '24.4' and platform_system == 'darwin' \
@@ -2733,7 +3068,9 @@ pyobjc-framework-fskit==12.1 ; platform_release >= '24.4' and platform_system ==
     --hash=sha256:95b9135eea81eeed319dcca32c9db04b38688301586180b86c4585fef6b0e9cd \
     --hash=sha256:d856df1b12ef79803e11904571411ffe5720ceb8840f489ca7ec977c1d789e57 \
     --hash=sha256:ec54e941cdb0b7d800616c06ca76a93685bd7119b8aa6eb4e7a3ee27658fc7ba
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-gamecenter==12.1 ; platform_release >= '12.0' and platform_system == 'darwin' \
     --hash=sha256:16c885eae6ad29abb8d3ad17a9068c920f778622bff5401df31842fdbcebdd84 \
     --hash=sha256:25f6a403352aaf8755a3874477fb70b1107ca28769e585541b52727ec50834be \
@@ -2743,7 +3080,9 @@ pyobjc-framework-gamecenter==12.1 ; platform_release >= '12.0' and platform_syst
     --hash=sha256:c452f65aaa102c11196193f44d41061ce33a66be2e9cf79d890d8eb611f84aa9 \
     --hash=sha256:de4118f14c9cf93eb0316d49da410faded3609ce9cd63425e9ef878cebb7ea72 \
     --hash=sha256:e8d6d10b868be7c00c2d5a0944cc79315945735dcf17eaa3fec1a7986d26be9b
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-gamecontroller==12.1 ; platform_release >= '13.0' and platform_system == 'darwin' \
     --hash=sha256:2105b4309222e538b9bccf906d24f083c3cbf1cd1c18b3ae6876e842e84d2163 \
     --hash=sha256:2633c2703fb30ce068b2f5ce145edbd10fd574d2670b5cdee77a9a126f154fec \
@@ -2753,7 +3092,9 @@ pyobjc-framework-gamecontroller==12.1 ; platform_release >= '13.0' and platform_
     --hash=sha256:878aa6590c1510e91bfc8710d6c880e7a8f3656a7b7b6f4f3af487a6f677ccd5 \
     --hash=sha256:a772cc9fbe09bcc601abcc36855a70cbad4640bd3349c1d611c09fcc7e45b73b \
     --hash=sha256:f4a16cd469aec142ec8e199d52a797f771441b3ea7198d21f6d75c2cc218b4e6
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-gamekit==12.1 ; platform_release >= '12.0' and platform_system == 'darwin' \
     --hash=sha256:014d032c3484093f1409f8f631ba8a0fd2ff7a3ae23fd9d14235340889854c16 \
     --hash=sha256:14080fdea98ec01c3e06260f1f5b31aaf59c78c2872fe8b843e17fd0ce151fa4 \
@@ -2763,7 +3104,9 @@ pyobjc-framework-gamekit==12.1 ; platform_release >= '12.0' and platform_system 
     --hash=sha256:ad14393ac496a4cb8008b6172d536f5c07fc11bb7b00fb541b044681cf9e4a34 \
     --hash=sha256:b15492801dafcbb569dee8c58d26e16ce06b33912872e85dfd50cf39b8f98f1e \
     --hash=sha256:eb263e90a6af3d7294bc1b1ea5907f8e33bb77d62fb806696f8df7e14806ccad
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-gameplaykit==12.1 ; platform_release >= '15.0' and platform_system == 'darwin' \
     --hash=sha256:1af3963897c1ff2dfbcc6782ff162d6bf34488f6736e60cfc73411fdfaba2b31 \
     --hash=sha256:309b0d7479f702830c9be92dbe5855ac2557a9d23f05f063caf9d9fdb85ff5f0 \
@@ -2773,11 +3116,15 @@ pyobjc-framework-gameplaykit==12.1 ; platform_release >= '15.0' and platform_sys
     --hash=sha256:947911902e0caf1d82dedae8842025891d57e91504714a7732dc7c4f80d486a1 \
     --hash=sha256:b2fb27f9f48c3279937e938a0456a5231b5c89e53e3199b9d54009a0bbd1228a \
     --hash=sha256:d58c0cc671ac8b80a4bf702efabbb9c0a42020999b87efed162b71830db005a9
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-gamesave==12.1 ; platform_release >= '25.0' and platform_system == 'darwin' \
     --hash=sha256:432e69f8404be9290d42c89caba241a3156ed52013947978ac54f0f032a14ffd \
     --hash=sha256:eb731c97aa644e78a87838ed56d0e5bdbaae125bdc8854a7772394877312cc2e
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-healthkit==12.1 ; platform_release >= '22.0' and platform_system == 'darwin' \
     --hash=sha256:15b6fc958ff5de42888b18dffdec839cb36d2dd8b82076ed2f21a51db5271109 \
     --hash=sha256:1f10a3abf6d5a326192e96343e7e1d9d16efa0cf4b39266335e385455680bc69 \
@@ -2787,7 +3134,9 @@ pyobjc-framework-healthkit==12.1 ; platform_release >= '22.0' and platform_syste
     --hash=sha256:c57ba8e3cce620665236d9f6b77482c9cfb16fe3372c8b6bbabc50222fb1b790 \
     --hash=sha256:e67bce41f8f63c11000394c6ce1dc694655d9ff0458771340d2c782f9eafcc6e \
     --hash=sha256:f1850c4f079374aaa3e91f22ab22b83817872460cc3a9c5310fe18c6140dc307
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-imagecapturecore==12.1 ; platform_release >= '10.0' and platform_system == 'darwin' \
     --hash=sha256:08f8ed5434ee5cc7605e71227c284c0c3fa0a32a6d83e1862e7870543a65a630 \
     --hash=sha256:1fcfcc907673331cc4be3ea63fce6e1346620ac74661a19566dfcdf855bb8eee \
@@ -2797,7 +3146,9 @@ pyobjc-framework-imagecapturecore==12.1 ; platform_release >= '10.0' and platfor
     --hash=sha256:a2777e17ff71fb5a327a897e48c5c7b5a561723a80f990d26e6ed5a1b8748816 \
     --hash=sha256:b7a7feeb0b53f5b0e0305c5c41f6b722d5f8cfca506c49678902244cd339ac10 \
     --hash=sha256:c4776c59f4db57727389d17e1ffd9c567b854b8db52198b3ccc11281711074e5
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-inputmethodkit==12.1 ; platform_release >= '9.0' and platform_system == 'darwin' \
     --hash=sha256:0b7d813d46a060572fc0c14ef832e4fe538ebf64e5cab80ee955191792ce0110 \
     --hash=sha256:1f065cb44041821a1812861e13ee1eca4aee37b57c8de0ce7ffd7e55f7af8907 \
@@ -2807,15 +3158,21 @@ pyobjc-framework-inputmethodkit==12.1 ; platform_release >= '9.0' and platform_s
     --hash=sha256:c4e02f49816799a31d558866492048d69e8086178770b76f4c511295610e02ab \
     --hash=sha256:e655947e314e6fe743ce225fc3170466003030b0186b8a7db161b54e87ee5c0e \
     --hash=sha256:f63b6fe2fa7f1412eae63baea1e120e7865e3b68ccfb7d8b0a4aadb309f2b278
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-installerplugins==12.1 ; platform_system == 'darwin' \
     --hash=sha256:1329a193bd2e92a2320a981a9a421a9b99749bade3e5914358923e94fe995795 \
     --hash=sha256:d2201c81b05bdbe0abf0af25db58dc230802573463bea322f8b2863e37b511d5
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-instantmessage==12.1 ; platform_release >= '9.0' and platform_system == 'darwin' \
     --hash=sha256:cd91d38e8f356afd726b6ea8c235699316ea90edfd3472965c251efbf4150bc9 \
     --hash=sha256:f453118d5693dc3c94554791bd2aaafe32a8b03b0e3d8ec3934b44b7fdd1f7e7
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-intents==12.1 ; platform_release >= '16.0' and platform_system == 'darwin' \
     --hash=sha256:03cbccec0380a431bc291725af0fcbaf61ea1bb1301a70cb267c8ecf2d04d608 \
     --hash=sha256:0ea9f3e79bf4baf6c7b0fd2d2797184ed51a372bf7f32974b4424f9bd067ef50 \
@@ -2826,6 +3183,7 @@ pyobjc-framework-intents==12.1 ; platform_release >= '16.0' and platform_system 
     --hash=sha256:bd688c3ab34a18412f56e459e9dae29e1f4152d3c2048fcacdef5fc49dfb9765 \
     --hash=sha256:dc68dc49f1f8d9f8d2ffbc0f57ad25caac35312ddc444899707461e596024fec
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-intentsui
 pyobjc-framework-intentsui==12.1 ; platform_release >= '21.0' and platform_system == 'darwin' \
@@ -2837,7 +3195,9 @@ pyobjc-framework-intentsui==12.1 ; platform_release >= '21.0' and platform_syste
     --hash=sha256:a877555e313d74ac3b10f7b4e738647eea9f744c00a227d1238935ac3f9d7968 \
     --hash=sha256:cb894fcc4c9ea613a424dcf6fb48142d51174559b82cfdafac8cb47555c842cf \
     --hash=sha256:d01222760005421324c3892b6b98c5b4295828a6b157a1fc410f63eb336b2d97
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-iobluetooth==12.1 ; platform_system == 'darwin' \
     --hash=sha256:0cd2ea9384e93913703bf40641196a930af83c2f6f62f59f8606b7162fe1caa3 \
     --hash=sha256:111a6e54be9e9dcf77fa2bf84fdac09fae339aa33087d8647ea7ffbd34765d4c \
@@ -2848,32 +3208,45 @@ pyobjc-framework-iobluetooth==12.1 ; platform_system == 'darwin' \
     --hash=sha256:8a434118812f4c01dfc64339d41fe8229516864a59d2803e9094ee4cbe2b7edd \
     --hash=sha256:a14506046ad9403ea95c75c1dd248167f41aef4aed62f50b567bf2482056ebf5
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-iobluetoothui
 pyobjc-framework-iobluetoothui==12.1 ; platform_system == 'darwin' \
     --hash=sha256:81f8158bdfb2966a574b6988eb346114d6a4c277300c8c0a978c272018184e6f \
     --hash=sha256:a6d8ab98efa3029130577a57ee96b183c35c39b0f1c53a7534f8838260fab993
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-iosurface==12.1 ; platform_release >= '10.0' and platform_system == 'darwin' \
     --hash=sha256:4b9d0c66431aa296f3ca7c4f84c00dc5fc961194830ad7682fdbbc358fa0db55 \
     --hash=sha256:e784e248397cfebef4655d2c0025766d3eaa4a70474e363d084fc5ce2a4f2a3f
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-ituneslibrary==12.1 ; platform_release >= '10.0' and platform_system == 'darwin' \
     --hash=sha256:7f3aa76c4d05f6fa6015056b88986cacbda107c3f29520dd35ef0936c7367a6e \
     --hash=sha256:fb678d7c3ff14c81672e09c015e25880dac278aa819971f4d5f75d46465932ef
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-kernelmanagement==12.1 ; platform_release >= '20.0' and platform_system == 'darwin' \
     --hash=sha256:488062893ac2074e0c8178667bf864a21f7909c11111de2f6a10d9bc579df59d \
     --hash=sha256:926381bfbfbc985c3e6dfcb7004af21bb16ff66ecbc08912b925989a705944ff
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-latentsemanticmapping==12.1 ; platform_system == 'darwin' \
     --hash=sha256:7d760213b42bc8b1bc1472e1873c0f78ee80f987225978837b1fecdceddbdbf4 \
     --hash=sha256:f0b1fa823313eefecbf1539b4ed4b32461534b7a35826c2cd9f6024411dc9284
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-launchservices==12.1 ; platform_system == 'darwin' \
     --hash=sha256:4d2d34c9bd6fb7f77566155b539a2c70283d1f0326e1695da234a93ef48352dc \
     --hash=sha256:e63e78fceeed4d4dc807f9dabd5cf90407e4f552fab6a0d75a8d0af63094ad3c
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-libdispatch==12.1 ; platform_release >= '12.0' and platform_system == 'darwin' \
     --hash=sha256:0e9570d7a9a3136f54b0b834683bf3f206acd5df0e421c30f8fd4f8b9b556789 \
     --hash=sha256:0ebfd9e4446ab6528126bff25cfb09e4213ddf992b3208978911cfd3152e45f5 \
@@ -2883,7 +3256,9 @@ pyobjc-framework-libdispatch==12.1 ; platform_release >= '12.0' and platform_sys
     --hash=sha256:58ffce5e6bcd7456b4311009480b195b9f22107b7682fb0835d4908af5a68ad0 \
     --hash=sha256:954cc2d817b71383bd267cc5cd27d83536c5f879539122353ca59f1c945ac706 \
     --hash=sha256:e9f49517e253716e40a0009412151f527005eec0b9a2311ac63ecac1bdf02332
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-libxpc==12.1 ; platform_release >= '12.0' and platform_system == 'darwin' \
     --hash=sha256:1c36e3e109a95275f90b319161265a7f6a5e0e674938ce49babdf3a64d9fc892 \
     --hash=sha256:635520187a6456ad259e40dd04829caeef08561d0a1a0cfd09787ebd281d47b3 \
@@ -2893,11 +3268,15 @@ pyobjc-framework-libxpc==12.1 ; platform_release >= '12.0' and platform_system =
     --hash=sha256:c862ed4f79c82e7a246fe49a8fae9e9684a7163512265f1c01790899dc730551 \
     --hash=sha256:e46363a735f3ecc9a2f91637750623f90ee74f9938a4e7c833e01233174af44d \
     --hash=sha256:f135b9734ee461c30dc692e58ce4b58c84c9a455738afe9ac70040c893625f4f
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-linkpresentation==12.1 ; platform_release >= '19.0' and platform_system == 'darwin' \
     --hash=sha256:84df6779591bb93217aa8bd82c10e16643441678547d2d73ba895475a02ade94 \
     --hash=sha256:853a84c7b525b77b114a7a8d798aef83f528ed3a6803bda12184fe5af4e79a47
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-localauthentication==12.1 ; platform_release >= '14.0' and platform_system == 'darwin' \
     --hash=sha256:02357cddc979aa169782bf09f380aab1c3af475c9eb6ffb07c77084ed10f6a6a \
     --hash=sha256:2284f587d8e1206166e4495b33f420c1de486c36c28c4921d09eec858a699d05 \
@@ -2908,16 +3287,21 @@ pyobjc-framework-localauthentication==12.1 ; platform_release >= '14.0' and plat
     --hash=sha256:e26e746717f4774cce0568debec711f1d8effc430559ad634ff6b06fefd0a0bf \
     --hash=sha256:f8d525ed2ad5cd56e420436187b534454d1f7d1fae6e585df82397d6d92c6e54
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-localauthenticationembeddedui
 pyobjc-framework-localauthenticationembeddedui==12.1 ; platform_release >= '21.0' and platform_system == 'darwin' \
     --hash=sha256:a15ec44bf2769c872e86c6b550b6dd4f58d4eda40ad9ff00272a67d279d1d4e9 \
     --hash=sha256:a7ce7b56346597b9f4768be61938cbc8fc5b1292137225b6c7f631b9cde97cd7
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-mailkit==12.1 ; platform_release >= '21.0' and platform_system == 'darwin' \
     --hash=sha256:536ac0c4ea3560364cd159a6512c3c18a744a12e4e0883c07df0f8a2ff21e3fe \
     --hash=sha256:d5574b7259baec17096410efcaacf5d45c7bb5f893d4c25cbb7072369799b652
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-mapkit==12.1 ; platform_release >= '13.0' and platform_system == 'darwin' \
     --hash=sha256:59a746ac2d4bb32fca301325430b37cde7959213ce1b6c3e30fa40d6085bf75a \
     --hash=sha256:84ad7766271c114bdc423e4e2ff5433e5fc6771a3338b5f8e4b54d0340775800 \
@@ -2927,11 +3311,15 @@ pyobjc-framework-mapkit==12.1 ; platform_release >= '13.0' and platform_system =
     --hash=sha256:e8aa82d4aae81765c05dcd53fd362af615aa04159fc7a1df1d0eac9c252cb7d5 \
     --hash=sha256:ea210ba88bef2468adb5c8303071d86118d630bf37a29d28cf236c13c3bb85ad \
     --hash=sha256:f48a5c9a95735d41a12929446fc45fd43913367faddedf852ab02e0452e06db4
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-mediaaccessibility==12.1 ; platform_release >= '13.0' and platform_system == 'darwin' \
     --hash=sha256:2ff8845c97dd52b0e5cf53990291e6d77c8a73a7aac0e9235d62d9a4256916d1 \
     --hash=sha256:cc4e3b1d45e84133d240318d53424eff55968f5c6873c2c53267598853445a3f
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-mediaextension==12.1 ; platform_release >= '24.0' and platform_system == 'darwin' \
     --hash=sha256:0101b8495051bac9791a0488530386eefe9c722477a5239c5bd208967d0eaa67 \
     --hash=sha256:0f3bdca0eb11923efc1e3b95beb1e6e01c675fd7809ed7ef0b475334e3562931 \
@@ -2941,15 +3329,21 @@ pyobjc-framework-mediaextension==12.1 ; platform_release >= '24.0' and platform_
     --hash=sha256:4f66719c97f508c619368377d768266c58cc783cf5fc51bd9d8e5e0cad0c824c \
     --hash=sha256:9555f937f2508bd2b6264cba088e2c2e516b2f94a6c804aee40e33fd89c2fb78 \
     --hash=sha256:eef6ab5104fdfb257e17a73c2e7c11b0db09a94ced24f2a4948e1d593ec6200e
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-medialibrary==12.1 ; platform_release >= '13.0' and platform_system == 'darwin' \
     --hash=sha256:1f03ad6802a5c6e19ee3208b065689d3ec79defe1052cb80e00f54e1eff5f2a0 \
     --hash=sha256:690dcca09b62511df18f58e8566cb33d9652aae09fe63a83f594bd018b5edfcd
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-mediaplayer==12.1 ; platform_release >= '16.0' and platform_system == 'darwin' \
     --hash=sha256:5ef3f669bdf837d87cdb5a486ec34831542360d14bcba099c7c2e0383380794c \
     --hash=sha256:85d9baec131807bfdf0f4c24d4b943e83cce806ab31c95c7e19c78e3fb7eefc8
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-mediatoolbox==12.1 ; platform_release >= '13.0' and platform_system == 'darwin' \
     --hash=sha256:13afec7d9f094ca5642e32b98680d1ee59aaa11a3d694cb1a6e454f72003f51c \
     --hash=sha256:1529a754cdb5b32797d297c0bf6279c7c14a3f7088f2dfbded09edcbfda19838 \
@@ -2959,7 +3353,9 @@ pyobjc-framework-mediatoolbox==12.1 ; platform_release >= '13.0' and platform_sy
     --hash=sha256:91e039f988d2fd8cb852ee880e853a90902bb0fe9c337d1947241b79db145244 \
     --hash=sha256:d7bcfeeff3fbf7e9e556ecafd8eaed2411df15c52baf134efa7480494e6faf6d \
     --hash=sha256:d99bf31c46b382f466888d1d80f738309916cbb83be0b4f1ccab5200de8f06c9
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-metal==12.1 ; platform_release >= '15.0' and platform_system == 'darwin' \
     --hash=sha256:2440db9b7057b6bafbabe8a2c5dde044865569176058ee34a7d138df0fc96c8c \
     --hash=sha256:2f04a1a687cc346d23f3baf1ec56e3f42206709b590058d9778b52d45ca1c8ab \
@@ -2970,6 +3366,7 @@ pyobjc-framework-metal==12.1 ; platform_release >= '15.0' and platform_system ==
     --hash=sha256:bb554877d5ee2bf3f340ad88e8fe1b85baab7b5ec4bd6ae0f4f7604147e3eae7 \
     --hash=sha256:d563b540ef659176938f0eaa7d8353d5b7d4235aa76fc7fddb1beb00391c0905
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-cinematic
     #   pyobjc-framework-compositorservices
@@ -2985,7 +3382,9 @@ pyobjc-framework-metalfx==12.1 ; platform_release >= '22.0' and platform_system 
     --hash=sha256:c28d875f8817cb80c44afaebdbc2960af66ea8eef63e0236fab3dde9be685d50 \
     --hash=sha256:d443b0ee06de1b21a3ec5adab315840e71d52a74f8585090200228ab2fa1e59d \
     --hash=sha256:dcd334b42c5c50ec88e049f1b0bf43544b52e3ac09fd57b712fec8f63507190e
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-metalkit==12.1 ; platform_release >= '15.0' and platform_system == 'darwin' \
     --hash=sha256:14cc5c256f0e3471b412a5b3582cb2a0d36d3d57401a8aa09e433252d1c34824 \
     --hash=sha256:1c4869076571d94788fe539fabfdd568a5c8e340936c7726d2551196640bd152 \
@@ -2995,7 +3394,9 @@ pyobjc-framework-metalkit==12.1 ; platform_release >= '15.0' and platform_system
     --hash=sha256:a1b8ac9582b65d2711836b56dd24ce450aa740b0c478da9ee0621cc4c64e64cb \
     --hash=sha256:d16958c0d4e2a75e1ea973de8951c775da1e39e378a7a7762fbce1837bf3179c \
     --hash=sha256:e8d2cfdf2dc4e8fc229dafe7c76787caa5430a0588d205bc9b61affd2d35d26a
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-metalperformanceshaders==12.1 ; platform_release >= '17.0' and platform_system == 'darwin' \
     --hash=sha256:0aa287ee357fe5bd5660b3d0688f947a768cda8565dbbca3b876307b9876639e \
     --hash=sha256:240321f2fad1555b5ede3aed938c9f37da40a57fc3e7e9c96a45658dc12c3771 \
@@ -3006,12 +3407,15 @@ pyobjc-framework-metalperformanceshaders==12.1 ; platform_release >= '17.0' and 
     --hash=sha256:c23b3a0f869c730e50851468a082014f1b0b3d4433d5d15ac28d6a736084026c \
     --hash=sha256:e0159a6f731dc0fd126481a26490683586864e9d47c678900049a8ffe0135f56
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-metalperformanceshadersgraph
 pyobjc-framework-metalperformanceshadersgraph==12.1 ; platform_release >= '20.0' and platform_system == 'darwin' \
     --hash=sha256:85a1c7a6114ada05c7924b3235a1a98c45359410d148097488f15aee5ebb6ab9 \
     --hash=sha256:b8fd017b47698037d7b172d41bed7a4835f4c4f2a288235819d200005f89ee35
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-metrickit==12.1 ; platform_release >= '21.0' and platform_system == 'darwin' \
     --hash=sha256:37674b0e049035d8b32d0221d0afbfedd3f643e4a2ee74b9a0e4e6d1b94fcd69 \
     --hash=sha256:3ec96e9ec7dc37fbce57dae277f0d89c66ffe1c3fa2feaca1b7125f8b2b29d87 \
@@ -3021,11 +3425,15 @@ pyobjc-framework-metrickit==12.1 ; platform_release >= '21.0' and platform_syste
     --hash=sha256:8f407172e1ecc8ee63afadda477a0f1c633c09be761edcadab8a9d1eebddd27c \
     --hash=sha256:da6650afd9523cf7a9cae177f4bbd1ad45cc122d97784785fa1482847485142c \
     --hash=sha256:f6cde78ba1a401660fe0e3a945d1941efef255c1021a8772a838aceb31bd74e6
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-mlcompute==12.1 ; platform_release >= '20.0' and platform_system == 'darwin' \
     --hash=sha256:3281db120273dcc56e97becffd5cedf9c62042788289f7be6ea067a863164f1e \
     --hash=sha256:4f0fc19551d710a03dfc4c7129299897544ff8ea76db6c7539ecc2f9b2571bde
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-modelio==12.1 ; platform_release >= '15.0' and platform_system == 'darwin' \
     --hash=sha256:1c2c99d47a7e4956a75ce19bddbe2d8ada7d7ce9e2f56ff53fc2898367187749 \
     --hash=sha256:5250e7f58cc71ca8928b33a00ac0dc56ca0eead97507f4bfcf777582a4b05e39 \
@@ -3035,7 +3443,9 @@ pyobjc-framework-modelio==12.1 ; platform_release >= '15.0' and platform_system 
     --hash=sha256:dad6e914b6efe8ea3d2cd10029c4eb838f1ad6a12344787e8db70c4149df8cfc \
     --hash=sha256:e25d153ab231ca95954e3d12082f48aea4ec72db48269421011679f926638d07 \
     --hash=sha256:f00b739f9333d611e7124acf95491bdf025dd32ba7c48b7521f6845b92e2dcce
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-multipeerconnectivity==12.1 ; platform_release >= '14.0' and platform_system == 'darwin' \
     --hash=sha256:014f92d7e176154531c3173cf7113b6be374c041646c4b86d93afb84d2ea334c \
     --hash=sha256:1c3bd254a16debed321debf4858f9c9b7d41572ddf1058a4bacf6a5bcfedeeff \
@@ -3045,15 +3455,21 @@ pyobjc-framework-multipeerconnectivity==12.1 ; platform_release >= '14.0' and pl
     --hash=sha256:6490651224d1403d96e52ca3aed041b79b5456e3261abd9cb225c1fbc1893a69 \
     --hash=sha256:7123f734b7174cacbe92a51a62b4645cc9033f6b462ff945b504b62e1b9e6c1c \
     --hash=sha256:7372e505ed050286aeb83d7e158fda65ad379eae12e1526f32da0a260a8b7d06
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-naturallanguage==12.1 ; platform_release >= '18.0' and platform_system == 'darwin' \
     --hash=sha256:a02ef383ec88948ca28f03ab8995523726b3bc75c49f593b5c89c218bcbce7ce \
     --hash=sha256:cb27a1e1e5b2913d308c49fcd2fd04ab5ea87cb60cac4a576a91ebf6a50e52f6
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-netfs==12.1 ; platform_release >= '10.0' and platform_system == 'darwin' \
     --hash=sha256:0021f8b141e693d3821524c170e9c645090eb320e80c2935ddb978a6e8b8da81 \
     --hash=sha256:e8d0c25f41d7d9ced1aa2483238d0a80536df21f4b588640a72e1bdb87e75c1e
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-network==12.1 ; platform_release >= '18.0' and platform_system == 'darwin' \
     --hash=sha256:07264f1dc5d7c437dfbbbf9302a60ead87bbce14692c4cc20b2a259a9fe20b3d \
     --hash=sha256:25e20ec81e23699e1182808384b8e426cb3ae9adaf639684232fc205edb48183 \
@@ -3063,7 +3479,9 @@ pyobjc-framework-network==12.1 ; platform_release >= '18.0' and platform_system 
     --hash=sha256:d1ad948b9b977f432bf05363381d7d85a7021246ebf9d50771b35bf8d4548d2b \
     --hash=sha256:dbf736ff84d1caa41224e86ff84d34b4e9eb6918ae4e373a44d3cb597648a16a \
     --hash=sha256:e341beb32c7f95ed3e38f00cfed0a9fe7f89b8d80679bf2bd97c1a8d2280180a
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-networkextension==12.1 ; platform_release >= '15.0' and platform_system == 'darwin' \
     --hash=sha256:06d78bab27d4a7c51c9787b1f4cfcfed4d85488fcd96d93bac400bb2690ddceb \
     --hash=sha256:21076ec44790023b579f21f6b88e13388d353de98658dbb50369df53e6a9c967 \
@@ -3073,7 +3491,9 @@ pyobjc-framework-networkextension==12.1 ; platform_release >= '15.0' and platfor
     --hash=sha256:c3082c29f94ca3a05cd1f3219999ca3af9b6dece1302ccf789f347e612bb9303 \
     --hash=sha256:dd96684be3a942a301eb38b5f46236091c87ec9830ed8d56be434e420af45387 \
     --hash=sha256:e21d8ec762ded95afaff41b68425219df55ca8c3f777b810238441a4f7c221e3
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-notificationcenter==12.1 ; platform_release >= '14.0' and platform_system == 'darwin' \
     --hash=sha256:06470683f568803f55f1646accfbf5eaa3fda56d15f27fca31bdbff4eaa8796c \
     --hash=sha256:1aca78efbf3ceab878758ec11dacef0c85629f844eee9e21645319dd98fd3673 \
@@ -3083,15 +3503,21 @@ pyobjc-framework-notificationcenter==12.1 ; platform_release >= '14.0' and platf
     --hash=sha256:9495b1b0820a3e82bfcd0331b92bc29e4e4ca3a4e58d6ec0e1eda6c301ec4460 \
     --hash=sha256:bdf87e5f027bec727b24bb1764a9933af9728862f6a0e9a7f4a1835061f283dd \
     --hash=sha256:f227d4b2e197f614b64302faea974f25434827da30f6d46b3a8d73cb3788cf69
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-opendirectory==12.1 ; platform_release >= '10.0' and platform_system == 'darwin' \
     --hash=sha256:2c63ce5dd179828ef2d8f9e3961da3bfa971a57db07a6c34eedc296548a928bb \
     --hash=sha256:b5b5a5cf3cc2fb25147b16b79f046b90e3982bf3ded1b210a993d8cfdba737c4
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-osakit==12.1 ; platform_system == 'darwin' \
     --hash=sha256:36ea6acf03483dc1e4344a0cce7250a9656f44277d12bc265fa86d4cbde01f23 \
     --hash=sha256:c49165336856fd75113d2e264a98c6deb235f1bd033eae48f661d4d832d85e6b
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-oslog==12.1 ; platform_release >= '19.0' and platform_system == 'darwin' \
     --hash=sha256:072a41d36fcf780a070f13ac2569f8bafbb5ae4792fab4136b1a4d602dd9f5b4 \
     --hash=sha256:16d98c49698da839b79904a2c63fee658fd4a8c4fa9223e5694270533127e8d4 \
@@ -3101,7 +3527,9 @@ pyobjc-framework-oslog==12.1 ; platform_release >= '19.0' and platform_system ==
     --hash=sha256:a6925e6764c6f293b69fbd4f5fd32a9810fca07d63e782c41cb4ebf05dc42977 \
     --hash=sha256:d0ec6f4e3d1689d5e4341bc1130c6f24cb4ad619939f6c14d11a7e80c0ac4553 \
     --hash=sha256:d26ce39be2394695cf4c4c699e47f9b85479cf1ccb0472614bb88027803a8986
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-passkit==12.1 ; platform_release >= '20.0' and platform_system == 'darwin' \
     --hash=sha256:4a360e98b29eee8642f3e7d973c636284c24fb2ec2c3ee56022eeae6270943be \
     --hash=sha256:64287e6dc54ab4c0aa8ba80a7a51762e36591602c77c6a803aee690e7464b6b2 \
@@ -3111,15 +3539,21 @@ pyobjc-framework-passkit==12.1 ; platform_release >= '20.0' and platform_system 
     --hash=sha256:cb5c8f0fdc46db6b91c51ee1f41a2b81e9a482c96a0c91c096dcb78a012b740a \
     --hash=sha256:d8c27c352e86a3549bf696504e6b25af5f2134b173d9dd60d66c6d3da53bb078 \
     --hash=sha256:e28dcf1074cddd82c2bd3ee5c3800952ac59850578b1135b38871ff584ea9d41
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-pencilkit==12.1 ; platform_release >= '19.0' and platform_system == 'darwin' \
     --hash=sha256:33b88e5ed15724a12fd8bf27a68614b654ff739d227e81161298bc0d03acca4f \
     --hash=sha256:d404982d1f7a474369f3e7fea3fbd6290326143fa4138d64b6753005a6263dc4
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-phase==12.1 ; platform_release >= '21.0' and platform_system == 'darwin' \
     --hash=sha256:3a69005c572f6fd777276a835115eb8359a33673d4a87e754209f99583534475 \
     --hash=sha256:99a1c1efc6644f5312cce3693117d4e4482538f65ad08fe59e41e2579b67ab17
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-photos==12.1 ; platform_release >= '15.0' and platform_system == 'darwin' \
     --hash=sha256:77f181d3cb3fde9c04301c9a96693d02a139d478891e49ed76573dedf0437f49 \
     --hash=sha256:95d5036bdaf1c50559adfa60fd715b57c68577d2574241ed1890e359849f923f \
@@ -3129,7 +3563,9 @@ pyobjc-framework-photos==12.1 ; platform_release >= '15.0' and platform_system =
     --hash=sha256:ed6ca0ace0d12b469f68d35dddbede445350afd13b3c582e3297792fd08ad5f8 \
     --hash=sha256:eda8a584a851506a1ebbb2ee8de2cb1ed9e3431e6a642ef6a9543e32117d17b9 \
     --hash=sha256:f28db92602daac9d760067449fc9bf940594536e65ad542aec47d52b56f51959
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-photosui==12.1 ; platform_release >= '15.0' and platform_system == 'darwin' \
     --hash=sha256:02ca941187b2a2dcbbd4964d7b2a05de869653ed8484dc059a51cc70f520cd07 \
     --hash=sha256:14a088aeb67232a2e8f8658bd52fa0ccb896a2fe7c4e580299ec2da486c597fa \
@@ -3139,11 +3575,15 @@ pyobjc-framework-photosui==12.1 ; platform_release >= '15.0' and platform_system
     --hash=sha256:713ec72b13d8399229d285ccd1e94e5ea2627cf88858977a2a91cc94d1affcd6 \
     --hash=sha256:9141234bb9d17687f1e8b66303158eccdd45132341fbe5e892174910035f029a \
     --hash=sha256:a8e0320908f497d1e548336569f435afd27ed964e65b2aefa3a2d2ea4c041da2
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-preferencepanes==12.1 ; platform_system == 'darwin' \
     --hash=sha256:1b3af9db9e0cfed8db28c260b2cf9a22c15fda5f0ff4c26157b17f99a0e29bbf \
     --hash=sha256:b2a02f9049f136bdeca7642b3307637b190850e5853b74b5c372bc7d88ef9744
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-pushkit==12.1 ; platform_release >= '19.0' and platform_system == 'darwin' \
     --hash=sha256:03f41be8b27d06302ea487a6b250aaf811917a0e7d648cd4043fac759d027210 \
     --hash=sha256:64955af6441635449c2af6c6f468c9ba5e413e1494b87617bc1e9fbd8be7e5bf \
@@ -3153,7 +3593,9 @@ pyobjc-framework-pushkit==12.1 ; platform_release >= '19.0' and platform_system 
     --hash=sha256:d1d6cb54971c7ed73ce1d13b683d117d4aa34415563c9ca2437dcffefd489940 \
     --hash=sha256:de82e1f6e01444582ad2ca6a76aeee1524c23695f0e4f56596f9db3e9d635623 \
     --hash=sha256:f3751276cb595a9f886ed6094e06004fd11932443e345760eade09119f8e0181
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-quartz==12.1 ; platform_system == 'darwin' \
     --hash=sha256:0cc08fddb339b2760df60dea1057453557588908e42bdc62184b6396ce2d6e9a \
     --hash=sha256:19f99ac49a0b15dd892e155644fe80242d741411a9ed9c119b18b7466048625a \
@@ -3164,6 +3606,7 @@ pyobjc-framework-quartz==12.1 ; platform_system == 'darwin' \
     --hash=sha256:7730cdce46c7e985535b5a42c31381af4aa6556e5642dc55b5e6597595e57a16 \
     --hash=sha256:c6f312ae79ef8b3019dcf4b3374c52035c7c7bc4a09a1748b61b041bb685a0ed
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-accessibility
     #   pyobjc-framework-applicationservices
@@ -3188,7 +3631,9 @@ pyobjc-framework-quartz==12.1 ; platform_system == 'darwin' \
 pyobjc-framework-quicklookthumbnailing==12.1 ; platform_release >= '19.0' and platform_system == 'darwin' \
     --hash=sha256:4f7e09e873e9bda236dce6e2f238cab571baeb75eca2e0bc0961d5fcd85f3c8f \
     --hash=sha256:5efe50b0318188b3a4147681788b47fce64709f6fe0e1b5d020e408ef40ab08e
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-replaykit==12.1 ; platform_release >= '20.0' and platform_system == 'darwin' \
     --hash=sha256:05c8e4cbda2ff22cd5180bee4a892306a4004127365b15e18335ab39e577faa8 \
     --hash=sha256:18af5ab59574102978790ce9ccc89fe24be9fa57579f24ed8cfc2b44ea28d839 \
@@ -3198,7 +3643,9 @@ pyobjc-framework-replaykit==12.1 ; platform_release >= '20.0' and platform_syste
     --hash=sha256:9f77dc914d5aabcd9273c39777a3372175aa839a3bd7f673a0ead4b7f2cf4211 \
     --hash=sha256:b0528c2a6188440fdc2017f0924c0a0f15d0a2f6aa295f1d1c2d6b3894c22f1d \
     --hash=sha256:d6d8046825149f7f2627987a1b48ac7e4c9747a15e263054de0dfde1926a0f42
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-safariservices==12.1 ; platform_release >= '16.0' and platform_system == 'darwin' \
     --hash=sha256:090afa066820de497d2479a1c5bd4c8ed381eb36a615e4644e12e347ec9d9a3e \
     --hash=sha256:097a2166f79c60633e963913722a087a13b1c5849f3173655b24a8be47039ac4 \
@@ -3208,7 +3655,9 @@ pyobjc-framework-safariservices==12.1 ; platform_release >= '16.0' and platform_
     --hash=sha256:6a56f71c1e692bca1f48fe7c40e4c5a41e148b4e3c6cfb185fd80a4d4a951897 \
     --hash=sha256:ae709cf7a72ac7b95d2f131349f852d5d7a1729a8d760ea3308883f8269a4c37 \
     --hash=sha256:b475abc82504fc1c0801096a639562d6a6d37370193e8e4a406de9199a7cea13
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-safetykit==12.1 ; platform_release >= '22.0' and platform_system == 'darwin' \
     --hash=sha256:0cd4850659fb9b5632fd8ad21f2de6863e8303ff0d51c5cc9c0034aac5db08d8 \
     --hash=sha256:1b0e8761fd53e6a83a48dbd93961434b05fe17658478b9001c65627da46ba02b \
@@ -3218,7 +3667,9 @@ pyobjc-framework-safetykit==12.1 ; platform_release >= '22.0' and platform_syste
     --hash=sha256:b3ea88d1de4be84f630e25856abb417f3b19c242038ac061cca85a9a9e3dc61b \
     --hash=sha256:cbb7bcacc88aab1ab4d8dacedc9569be00e26bb7e761b7759dc4d4a2c2656586 \
     --hash=sha256:e4977f7069a23252053d1a42b1a053aefc19b85c960a5214b05daf3c037a6f16
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-scenekit==12.1 ; platform_release >= '11.0' and platform_system == 'darwin' \
     --hash=sha256:01bf1336a7a8bdc96fabde8f3506aa7a7d1905e20a5c46030a57daf0ce2cbd16 \
     --hash=sha256:1bd5b866f31fd829f26feac52e807ed942254fd248115c7c742cfad41d949426 \
@@ -3228,7 +3679,9 @@ pyobjc-framework-scenekit==12.1 ; platform_release >= '11.0' and platform_system
     --hash=sha256:a032377a7374320131768b6c8bf84589e45819d9e0fe187bd3f8d985207016b9 \
     --hash=sha256:b99a99edf37c8fe4194a9c0ab2092f57e564e07adb1ad54ef82b7213184be668 \
     --hash=sha256:d4c8512c9186f12602ac19558072cdeec3a607d628c269317d5965341a14372c
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-screencapturekit==12.1 ; platform_release >= '21.4' and platform_system == 'darwin' \
     --hash=sha256:168125388fb35c6909bec93b259508156e89b9e30fec5748d4a04fd0157f0e0d \
     --hash=sha256:27df138ce2dfa9d4aae5106d4877e9ed694b5a174643c058f1c48678ffc7001a \
@@ -3238,7 +3691,9 @@ pyobjc-framework-screencapturekit==12.1 ; platform_release >= '21.4' and platfor
     --hash=sha256:ae412d397eedf189e763defe3497fcb8dffa5e0b54f62390cb33bf9b1cfb864a \
     --hash=sha256:be210ea5df36c1392425c026c59c5e0797b0d6e07ee9551d032e40bed95d2833 \
     --hash=sha256:cf13285180e9acf8a6d0eff494dd7fb63296c648d4838f628c67be72b1af4725
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-screensaver==12.1 ; platform_system == 'darwin' \
     --hash=sha256:2a865b6dbb39fb92cdb67b13f68d594ab84d08a984cc3e9a39fab3386f431649 \
     --hash=sha256:4744a01043a9c6b464f6a2230948812bf88bdd68f084b6f05b475b93093c3ea9 \
@@ -3248,11 +3703,15 @@ pyobjc-framework-screensaver==12.1 ; platform_system == 'darwin' \
     --hash=sha256:c02ec9dccf49463056a438b7f8a6374dc2416d4a0672003382d50603aed9ab5d \
     --hash=sha256:c249dffcb95d55fc6be626bf17f70b477e320c33d94e234597bc0074e302cfcd \
     --hash=sha256:c4ca111317c5a3883b7eace0a9e7dd72bc6ffaa2ca954bdec918c3ab7c65c96f
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-screentime==12.1 ; platform_release >= '20.0' and platform_system == 'darwin' \
     --hash=sha256:583de46b365543bbbcf27cd70eedd375d397441d64a2cf43c65286fd9c91af55 \
     --hash=sha256:d34a068ec8ba2704987fcd05c37c9a9392de61d92933e6e71c8e4eaa4dfce029
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-scriptingbridge==12.1 ; platform_release >= '9.0' and platform_system == 'darwin' \
     --hash=sha256:0e90f866a7e6a8aeaf723d04c826657dd528c8c1b91e7a605f8bb947c74ad082 \
     --hash=sha256:148191010b4e10c3938cdb2dcecad43fa0884cefb5a78499a21bdaf5a78318b3 \
@@ -3262,11 +3721,15 @@ pyobjc-framework-scriptingbridge==12.1 ; platform_release >= '9.0' and platform_
     --hash=sha256:97acd79168892ba457bc472214851f4e4a2d40a8aae106fb07cc94417e1fc681 \
     --hash=sha256:bddbd3a13bfaeaa38ab66e44f10446d5bc7d1110dbc02e59b80bcd9c3a60548a \
     --hash=sha256:e6e37e69760d6ac9d813decf135d107760d33e1cdf7335016522235607f6f31b
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-searchkit==12.1 ; platform_system == 'darwin' \
     --hash=sha256:844ce62b7296b19da8db7dedd539d07f7b3fb3bb8b029c261f7bcf0e01a97758 \
     --hash=sha256:ddd94131dabbbc2d7c3f17db3da87c1a712c431310eef16f07187771e7e85226
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-security==12.1 ; platform_system == 'darwin' \
     --hash=sha256:03d166371cefdef24908825148eb848f99ee2c0b865870a09dcbb94334dd3e0a \
     --hash=sha256:1b2d8819f0fb7b619ec7627a0d8c1cac1a57c5143579ce8ac21548165680684b \
@@ -3277,6 +3740,7 @@ pyobjc-framework-security==12.1 ; platform_system == 'darwin' \
     --hash=sha256:ab42e55f5b782332be5442750fcd9637ee33247d57c7b1d5801bc0e24ee13278 \
     --hash=sha256:afc36661cc6eb98cd794bed1d6668791e96557d6f72d9ac70aa49022d26af1d4
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-localauthentication
     #   pyobjc-framework-securityfoundation
@@ -3285,7 +3749,9 @@ pyobjc-framework-security==12.1 ; platform_system == 'darwin' \
 pyobjc-framework-securityfoundation==12.1 ; platform_system == 'darwin' \
     --hash=sha256:1f39f4b3db6e3bd3a420aaf4923228b88e48c90692cf3612b0f6f1573302a75d \
     --hash=sha256:579cf23e63434226f78ffe0afb8426e971009588e4ad812c478d47dfd558201c
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-securityinterface==12.1 ; platform_system == 'darwin' \
     --hash=sha256:048950875a968032bc133c64e594d4810d5bf5ef359012830cf193610d9c04ac \
     --hash=sha256:08516c01954233fecb9bd203778b1bf559d427ccea26444ae1fa93691e751ddd \
@@ -3295,19 +3761,27 @@ pyobjc-framework-securityinterface==12.1 ; platform_system == 'darwin' \
     --hash=sha256:b9eb42c5d4c62af83d69adeff3608af9cd4cfe5b7c9885a6a399be74fcc3d0f0 \
     --hash=sha256:deef11ad03be8d9ff77db6e7ac40f6b641ee2d72eaafcf91040537942472e88b \
     --hash=sha256:ed599be750122376392e95c2407d57bd94644e8320ddef1d67660e16e96b0d06
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-securityui==12.1 ; platform_release >= '24.4' and platform_system == 'darwin' \
     --hash=sha256:3e988b83c9a2bb0393207eaa030fc023a8708a975ac5b8ea0508cdafc2b60705 \
     --hash=sha256:f1435fed85edc57533c334a4efc8032170424b759da184cb7a7a950ceea0e0b6
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-sensitivecontentanalysis==12.1 ; platform_release >= '23.0' and platform_system == 'darwin' \
     --hash=sha256:2c615ac10e93eb547b32b214cd45092056bee0e79696426fd09978dc3e670f25 \
     --hash=sha256:faf19d32d4599ac2b18fb1ccdc3e33b2b242bdf34c02e69978bd62d3643ad068
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-servicemanagement==12.1 ; platform_release >= '10.0' and platform_system == 'darwin' \
     --hash=sha256:08120981749a698033a1d7a6ab99dbbe412c5c0d40f2b4154014b52113511c1d \
     --hash=sha256:9a2941f16eeb71e55e1cd94f50197f91520778c7f48ad896761f5e78725cc08f
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-sharedwithyou==12.1 ; platform_release >= '22.0' and platform_system == 'darwin' \
     --hash=sha256:167d84794a48f408ee51f885210c616fda1ec4bff3dd8617a4b5547f61b05caf \
     --hash=sha256:1b65c51a8f6f5baf382e419cda74896d196625f1468710660a1a87a8b02b34dc \
@@ -3317,7 +3791,9 @@ pyobjc-framework-sharedwithyou==12.1 ; platform_release >= '22.0' and platform_s
     --hash=sha256:5a38bc6e3e0c9a36fe86e331eb16b680bab0024c897d252af1e611f0cd1087ef \
     --hash=sha256:a99a6ebc6b6de7bc8663b1f07332fab9560b984a57ce344dc5703f25258f258d \
     --hash=sha256:b5e05940bd0b9107340437ecef4502a2d2326072b0fa0b458f41c02a173d1047
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-sharedwithyoucore==12.1 ; platform_release >= '22.0' and platform_system == 'darwin' \
     --hash=sha256:0813149eeb755d718b146ec9365eb4ca3262b6af9ff9ba7db2f7b6f4fd104518 \
     --hash=sha256:0a55c843bd4cfdefa4a4566ccb64782466341715ecab3956c3566dbfbad0d1e5 \
@@ -3328,6 +3804,7 @@ pyobjc-framework-sharedwithyoucore==12.1 ; platform_release >= '22.0' and platfo
     --hash=sha256:ed928266ae9d577ff73de72a03bebc66a751918eb59ca660a9eca157392f17be \
     --hash=sha256:f4f9f7fed0768ebbbc2d24248365da2cf5f014b8822b2a1fbbce5fa920f410f1
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-sharedwithyou
 pyobjc-framework-shazamkit==12.1 ; platform_release >= '21.0' and platform_system == 'darwin' \
@@ -3339,15 +3816,21 @@ pyobjc-framework-shazamkit==12.1 ; platform_release >= '21.0' and platform_syste
     --hash=sha256:957c5e31b2b275c822ea43d7c4435fa1455c6dc5469ad4b86b29455571794027 \
     --hash=sha256:e184dd0f61a604b1cfcf44418eb95b943e7b8f536058a29e4b81acadd27a9420 \
     --hash=sha256:eb2875ddf18d3cd2dc2b1327f58e142b9bd86fafd32078387ed867ec5a6c5571
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-social==12.1 ; platform_release >= '12.0' and platform_system == 'darwin' \
     --hash=sha256:1963db6939e92ae40dd9d68852e8f88111cbfd37a83a9fdbc9a0c08993ca7e60 \
     --hash=sha256:2f3b36ba5769503b1bc945f85fd7b255d42d7f6e417d78567507816502ff2b44
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-soundanalysis==12.1 ; platform_release >= '19.0' and platform_system == 'darwin' \
     --hash=sha256:8b2029ab48c1a9772f247f0aea995e8c3ff4706909002a9c1551722769343a52 \
     --hash=sha256:e2deead8b9a1c4513dbdcf703b21650dcb234b60a32d08afcec4895582b040b1
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-speech==12.1 ; platform_release >= '19.0' and platform_system == 'darwin' \
     --hash=sha256:0301bfae5d0d09b6e69bd4dbabc5631209e291cc40bda223c69ed0c618f8f2dc \
     --hash=sha256:2a2a546ba6c52d5dd35ddcfee3fd9226a428043d1719597e8701851a6566afdd \
@@ -3357,7 +3840,9 @@ pyobjc-framework-speech==12.1 ; platform_release >= '19.0' and platform_system =
     --hash=sha256:be5c005595918557f17e991b2575159b8ea943e7fb08fd00b1dabccde35f8b1b \
     --hash=sha256:cae4b88ef9563157a6c9e66b37778fc4022ee44dd1a2a53081c2adbb69698945 \
     --hash=sha256:ed5455f6d9e473c08ebf904ae280ad5fd0d00a073448bf4f0a01fee5887c5537
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-spritekit==12.1 ; platform_release >= '13.0' and platform_system == 'darwin' \
     --hash=sha256:1649e57c25145795d04bb6a1ec44c20ef7cf0af7c60a9f6f5bc7998dd269db1e \
     --hash=sha256:26fd12944684713ae1e3cdd229348609c1142e60802624161ca0c3540eec3ffa \
@@ -3368,6 +3853,7 @@ pyobjc-framework-spritekit==12.1 ; platform_release >= '13.0' and platform_syste
     --hash=sha256:dd6847cb7a287c42492ffd7c30bc08165f4fbb51b2602290e001c0d27e0aa0f0 \
     --hash=sha256:dd6e309aa284fa9b434aa7bf8ab9ab23fe52e7a372e2db3869586a74471f3419
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-gameplaykit
 pyobjc-framework-storekit==12.1 ; platform_release >= '11.0' and platform_system == 'darwin' \
@@ -3379,11 +3865,15 @@ pyobjc-framework-storekit==12.1 ; platform_release >= '11.0' and platform_system
     --hash=sha256:a29f45bcba9dee4cf73dae05ab0f94d06a32fb052e31414d0c23791c1ec7931c \
     --hash=sha256:d11ffe3f8e638ebe7c156c5bf2919115c7562f44f44be8067521b7c5f6e50553 \
     --hash=sha256:e67341cb14adfdecbd230393f3b02d4b19fbb3ada427b06d4f82a703ae90431f
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-symbols==12.1 ; platform_release >= '23.0' and platform_system == 'darwin' \
     --hash=sha256:7d8e999b8a59c97d38d1d343b6253b1b7d04bf50b665700957d89c8ac43b9110 \
     --hash=sha256:c72eecbc25f6bfcd39c733067276270057c5aca684be20fdc56def645f2b6446
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-syncservices==12.1 ; platform_system == 'darwin' \
     --hash=sha256:0cd629bea95692aad2d26196657cde2fbadedae252c7846964228661a600b900 \
     --hash=sha256:21dcb61da6816d2c55afb24d5bbf30741f806c0db8bb7a842fd27177550a3c9c \
@@ -3393,7 +3883,9 @@ pyobjc-framework-syncservices==12.1 ; platform_system == 'darwin' \
     --hash=sha256:9d1ebe60e92efd08455be209a265879cf297feda831aadf36431f38229b1dd52 \
     --hash=sha256:c27754af8cb86bd445e1182a184617229fa70cf3a716e740a93b0622f44ceb27 \
     --hash=sha256:e81a38c2eb7617cb0ecfc4406c1ae2a97c60e95af42e863b2b0f1f6facd9b0da
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-systemconfiguration==12.1 ; platform_system == 'darwin' \
     --hash=sha256:0e5bb9103d39483964431db7125195c59001b7bff2961869cfe157b4c861e52d \
     --hash=sha256:10ad47ec2bee4f567e78369359b8c75a23097c6d89b11aa37840c22cc79229f1 \
@@ -3403,7 +3895,9 @@ pyobjc-framework-systemconfiguration==12.1 ; platform_system == 'darwin' \
     --hash=sha256:db640a31120e8cd4e47516f5e32a222488809478d6cf4402db506496defd3e18 \
     --hash=sha256:e9c597c13b9815dce7e1fccdfae7c66b9df98e8c688b7afdf4af39de26d917b3 \
     --hash=sha256:f4ff57defb4dcd933db392eb8ea9e5a46005cb7a6f2b46c27ab2dd5e13a459ab
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-systemextensions==12.1 ; platform_release >= '19.0' and platform_system == 'darwin' \
     --hash=sha256:01fac4f8d88c0956d9fc714d24811cd070e67200ba811904317d91e849e38233 \
     --hash=sha256:038032801d46cc7b1ea69400f43d5c17b25d7a16efa7a7d9727b25789387a8cf \
@@ -3413,15 +3907,21 @@ pyobjc-framework-systemextensions==12.1 ; platform_release >= '19.0' and platfor
     --hash=sha256:51f0a4488fa245695c7e8c1c83909c86bf27b34519807437c753602ff6d7e9af \
     --hash=sha256:820f2d0364340395efafdfa85630b2e4a3ffc3f40b469b2880bab2c03f1e2907 \
     --hash=sha256:b393e3bf85ccb9321f134405eac6fd16a8e7f048286301b67f0cf8d99588bf29
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-threadnetwork==12.1 ; platform_release >= '22.0' and platform_system == 'darwin' \
     --hash=sha256:07d937748fc54199f5ec04d5a408e8691a870481c11b641785c2adc279dd8e4b \
     --hash=sha256:e071eedb41bfc1b205111deb54783ec5a035ccd6929e6e0076336107fdd046ee
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-uniformtypeidentifiers==12.1 ; platform_release >= '20.0' and platform_system == 'darwin' \
     --hash=sha256:64510a6df78336579e9c39b873cfcd03371c4b4be2cec8af75a8a3d07dff607d \
     --hash=sha256:ec5411e39152304d2a7e0e426c3058fa37a00860af64e164794e0bcffee813f2
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-usernotifications==12.1 ; platform_release >= '18.0' and platform_system == 'darwin' \
     --hash=sha256:019ccdf2d400f9a428769df7dba4ea97c02453372bc5f8b75ce7ae54dfe130f9 \
     --hash=sha256:0746d2a67ca05ae907b7551ccd3a534e9d6e76115882ab962365f9ad259c4032 \
@@ -3432,16 +3932,21 @@ pyobjc-framework-usernotifications==12.1 ; platform_release >= '18.0' and platfo
     --hash=sha256:c62e8d7153d72c4379071e34258aa8b7263fa59212cfffd2f137013667e50381 \
     --hash=sha256:cc69e2aed9b55296a447f2fb69cc52a1a026c50e46253dbf482f5807bce3ae7c
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   pyobjc
     #   pyobjc-framework-usernotificationsui
 pyobjc-framework-usernotificationsui==12.1 ; platform_release >= '20.0' and platform_system == 'darwin' \
     --hash=sha256:11af59dc5abfcb72c08769ab4d7ca32a628527a8ba341786431a0d2dacf31605 \
     --hash=sha256:51381c97c7344099377870e49ed0871fea85ba50efe50ab05ccffc06b43ec02e
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-videosubscriberaccount==12.1 ; platform_release >= '18.0' and platform_system == 'darwin' \
     --hash=sha256:381a5e8a3016676e52b88e38b706559fa09391d33474d8a8a52f20a883104a7b \
     --hash=sha256:750459fa88220ab83416f769f2d5d210a1f77b8938fa4d119aad0002fc32846b
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-videotoolbox==12.1 ; platform_release >= '12.0' and platform_system == 'darwin' \
     --hash=sha256:5cb63e0e69aac148fa45d577f049e1e4846d65d046fcb0f7744fb90ac85da936 \
     --hash=sha256:67227431c340e308c4ecdce743b5d1d27757994663c983f179f2e934acdacb99 \
@@ -3451,7 +3956,9 @@ pyobjc-framework-videotoolbox==12.1 ; platform_release >= '12.0' and platform_sy
     --hash=sha256:dba7e078df01432331ee75a90c2c147264bfdb9e31998b4e4fc28913b93b832e \
     --hash=sha256:e67a3890916346b7c15c9270d247e191c3899e4698fee79d460a476145715401 \
     --hash=sha256:eb6ce6837344ee319122066c16ada4beb913e7bfd62188a8d14b1ecbb5a89234
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-virtualization==12.1 ; platform_release >= '20.0' and platform_system == 'darwin' \
     --hash=sha256:232956de8a0c3086a58c96621e0a2148497d1750ebb1bb6bea9f7f34ec3c83c6 \
     --hash=sha256:7d5724b38e64b39ab5ec3b45993afa29fc88b307d99ee2c7a1c0fd770e9b4b21 \
@@ -3461,7 +3968,9 @@ pyobjc-framework-virtualization==12.1 ; platform_release >= '20.0' and platform_
     --hash=sha256:a9552e49b967fb520e5be1cfce510e0b68c2ba314a28ac90aad36fe33218d430 \
     --hash=sha256:e40bff972adfefbe8a02e508571b32c58e90e4d974d65470eab75c53fe47006d \
     --hash=sha256:e96afd8e801e92c6863da0921e40a3b68f724804f888bce43791330658abdb0f
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-vision==12.1 ; platform_release >= '17.0' and platform_system == 'darwin' \
     --hash=sha256:04296f0848cc8cdead66c76df6063720885cbdf24fdfd1900749a6e2297313db \
     --hash=sha256:1edbf2fc18ce3b31108f845901a88f2236783ae6bf0bc68438d7ece572dc2a29 \
@@ -3471,7 +3980,9 @@ pyobjc-framework-vision==12.1 ; platform_release >= '17.0' and platform_system =
     --hash=sha256:a30959100e85dcede3a786c544e621ad6eb65ff6abf85721f805822b8c5fe9b0 \
     --hash=sha256:a30c3fff926348baecc3ce1f6da8ed327d0cbd55ca1c376d018e31023b79c0ab \
     --hash=sha256:fe41a1a70cc91068aee7b5293fa09dc66d1c666a8da79fdf948900988b439df6
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyobjc-framework-webkit==12.1 ; platform_system == 'darwin' \
     --hash=sha256:1a29e334d5a7dd4a4f0b5647481b6ccf8a107b92e67b2b3c6b368c899f571965 \
     --hash=sha256:1aaa3bf12c7b68e1a36c0b294d2728e06f2cc220775e6dc4541d5046290e4dc8 \
@@ -3481,37 +3992,52 @@ pyobjc-framework-webkit==12.1 ; platform_system == 'darwin' \
     --hash=sha256:97a54dd05ab5266bd4f614e41add517ae62cdd5a30328eabb06792474b37d82a \
     --hash=sha256:99d0d28542a266a95ee2585f51765c0331794bca461aaf4d1f5091489d475179 \
     --hash=sha256:af2c7197447638b92aafbe4847c063b6dd5e1ed83b44d3ce7e71e4c9b042ab5a
-    # via pyobjc
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   pyobjc
 pyotp==2.9.0 \
     --hash=sha256:346b6642e0dbdde3b4ff5a930b664ca82abfa116356ed48cc42c7d6590d36f63 \
     --hash=sha256:81c2e5865b8ac55e825b0358e496e1d9387c811e85bb40e71a3b29b288963612
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 pyparsing==3.3.2 \
     --hash=sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d \
     --hash=sha256:c777f4d763f140633dcb6d8a3eda953bf7a214dc4eff598413c070bcdc117cbc
-    # via httplib2
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   httplib2
 pypdf==6.16.2 \
     --hash=sha256:595647f6191de6f402cfde1d0c455d6cbccbd509aac32b34783009c032de5d6e \
     --hash=sha256:c8b09a59399062fb45a1b8156c18a787a10a3dae03ac9674397a226712c94604
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 python-dateutil==2.9.0.post0 \
     --hash=sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3 \
     --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427
-    # via posthog
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   posthog
 python-docx==1.2.0 \
     --hash=sha256:3fd478f3250fbbbfd3b94fe1e985955737c145627498896a8a6bf81f4baf66c7 \
     --hash=sha256:7bc9d7b7d8a69c9c02ca09216118c86552704edc23bac179283f2e38f86220ce
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 python-dotenv==1.2.2 \
     --hash=sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a \
     --hash=sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   browser-use
     #   pydantic-settings
 python-multipart==0.0.32 \
     --hash=sha256:be54b7f3fa167bb83e4fcd936b887b708f4e57fe75911c02aebf53efaf8d938e \
     --hash=sha256:ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23
-    # via mcp
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   mcp
 pywin32==312 ; sys_platform == 'win32' \
     --hash=sha256:02ebca0f0242b75292e218065004310d6a477407c09fa449bfe4f6022bc0c0fc \
     --hash=sha256:17948aeadbdb091f0ced6ef0841620794e68327b94ee415571c1203594b7215c \
@@ -3534,21 +4060,27 @@ pywin32==312 ; sys_platform == 'win32' \
     --hash=sha256:d620900033cc7531e50727c3c8333091df5dd3ffe6d68cdca38c03f5821408d5 \
     --hash=sha256:dab4f65ac9c4e48400a2a0530c46c3c579cd5905ecd11b80692373915269208b \
     --hash=sha256:dc90147579a905b8635e1b0ec6514967dcb07e6e0d9c42f1477feef14cac23bb
-    # via mcp
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   mcp
 referencing==0.37.0 \
     --hash=sha256:381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231 \
     --hash=sha256:44aefc3142c5b842538163acb373e24cce6632bd54bdb01b21ad5863489f50d8
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   jsonschema
     #   jsonschema-specifications
 reportlab==4.4.9 \
     --hash=sha256:68e2d103ae8041a37714e8896ec9b79a1c1e911d68c3bd2ea17546568cf17bfd \
     --hash=sha256:7cf487764294ee791a4781f5a157bebce262a666ae4bbb87786760a9676c9378
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 requests==2.33.0 \
     --hash=sha256:3324635456fa185245e24865e810cecec7b4caf933d7eb133dcde67d48cee69b \
     --hash=sha256:c7ebc5e8b0f21837386ad0e1c8fe8b829fa5f544d8df3b2253bff14ef29d7652
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   browser-use
     #   google-api-core
     #   google-auth
@@ -3558,11 +4090,15 @@ requests==2.33.0 \
 requests-oauthlib==2.0.0 \
     --hash=sha256:7dd8a5c40426b779b0868c404bdef9768deccf22749cde15852df527e6269b36 \
     --hash=sha256:b3dffaebd884d8cd778494369603a9e7b58d29111bf6b41bdc2dcd87203af4e9
-    # via google-auth-oauthlib
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   google-auth-oauthlib
 rich==14.3.3 \
     --hash=sha256:793431c1f8619afa7d3b52b2cdec859562b950ea0d4b6b505397612db8d5362d \
     --hash=sha256:b8daa0b9e4eef54dd8cf7c86c03713f53241884e814f4e2f5fb342fe520f639b
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 rpds-py==2026.6.3 \
     --hash=sha256:0be972be84cfcaf46c8c6edf690ca0f154ac17babf1f6a955a51579b34ad2dc5 \
     --hash=sha256:127565fead0a10943b282957bd5447804ff3160ad79f2ad2635e6d249e380680 \
@@ -3681,20 +4217,26 @@ rpds-py==2026.6.3 \
     --hash=sha256:f90938e92afda60266da758ee7d363447f7f0138c9559f9e1811629580582d90 \
     --hash=sha256:faa679d19a6696fd54259ad321251ad77a13e70e03dd834daa762a44fb6196ef
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   jsonschema
     #   referencing
 rsa==4.9.1 \
     --hash=sha256:68635866661c6836b8d39430f97a996acbd61bfa49406748ea243539fe239762 \
     --hash=sha256:e7bdbfdb5497da4c07dfd35530e1a902659db6ff241e39d9953cad06ebd0ae75
-    # via google-auth
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   google-auth
 screeninfo==0.8.1 ; platform_system != 'darwin' \
     --hash=sha256:9983076bcc7e34402a1a9e4d7dabf3729411fd2abb3f3b4be7eba73519cd2ed1 \
     --hash=sha256:e97d6b173856edcfa3bd282f81deb528188aff14b11ec3e195584e7641be733c
-    # via browser-use
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   browser-use
 six==1.17.0 \
     --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274 \
     --hash=sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   markdownify
     #   posthog
     #   python-dateutil
@@ -3702,6 +4244,7 @@ sniffio==1.3.1 \
     --hash=sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2 \
     --hash=sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   anthropic
     #   google-genai
     #   groq
@@ -3709,35 +4252,46 @@ sniffio==1.3.1 \
 soupsieve==2.9.2 \
     --hash=sha256:4a55d8cf158a9c2e587fa4922f1bbb91d68ac829e2d6f25403a85747c71daf74 \
     --hash=sha256:8089a26fd974ca7a1f30276d3d8492ab266ab15af581642dfe8aa162e0c1c823
-    # via beautifulsoup4
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   beautifulsoup4
 sse-starlette==3.4.11 \
     --hash=sha256:1bae716c02f3e6f294be41ff333220692dae7c3cbab077c900f159676719dade \
     --hash=sha256:c7b2244bdff016fe7f64e10075e89a3e6bbf899649cc89b0fe884b5545042453
-    # via mcp
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   mcp
 starlette==1.6.0 \
     --hash=sha256:a86dd39d14bb45f85a3d18525215a9ef0cfd1f192ac793220e72598c90335f0c \
     --hash=sha256:d4e3ac5e546444960c710297a3c9fc3f7ebae1b7e963f3d36173b49da535be9b
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   mcp
     #   sse-starlette
 tenacity==9.1.4 \
     --hash=sha256:6095a360c919085f28c6527de529e76a06ad89b23659fa881ae0649b867a9d55 \
     --hash=sha256:adb31d4c263f2bd041081ab33b498309a57c77f9acf2db65aadf0898179cf93a
-    # via google-genai
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   google-genai
 tqdm==4.70.0 \
     --hash=sha256:55b0b0dbd97462d06ebee91e4dac24ed4d4702be82b24f07e6c1d27e08cea220 \
     --hash=sha256:7f585706bfddbdebf89daac705b2dfcc16890130727d3197ca62c732b4310953
-    # via openai
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   openai
 truststore==0.10.4 ; sys_platform != 'emscripten' \
     --hash=sha256:9d91bd436463ad5e4ee4aba766628dd6cd7010cf3e2461756b3303710eebc301 \
     --hash=sha256:adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   httpcore2
     #   httpx2
 typing-extensions==4.15.0 \
     --hash=sha256:0cea48d173cc12fa28ecabc3b837ea3cf6f38c6d1136f85cbaaf598984861466 \
     --hash=sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   aiohttp
     #   aiosignal
     #   anthropic
@@ -3765,31 +4319,41 @@ typing-inspection==0.4.4 \
     --hash=sha256:547274fa6b0a561ccf549cc9524b999a578e737d015d8709d021f9d0d13bea47 \
     --hash=sha256:65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   mcp
     #   pydantic
     #   pydantic-settings
 uritemplate==4.2.0 \
     --hash=sha256:480c2ed180878955863323eea31b0ede668795de182617fef9c6ca09e6ec9d0e \
     --hash=sha256:962201ba1c4edcab02e60f9a0d3821e82dfc5d2d6662a21abd533879bdb8a686
-    # via google-api-python-client
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   google-api-python-client
 urllib3==2.7.0 \
     --hash=sha256:231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c \
     --hash=sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897
-    # via requests
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   requests
 uuid7==0.1.0 \
     --hash=sha256:5e259bb63c8cb4aded5927ff41b444a80d0c7124e8a0ced7cf44efa1f5cccf61 \
     --hash=sha256:8c57aa32ee7456d3cc68c95c4530bc571646defac01895cfc73545449894a63c
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   browser-use
     #   bubus
 uvicorn==0.52.4 ; sys_platform != 'emscripten' \
     --hash=sha256:73acfee47a0b133c5de13d219492d62d8a31e935f4fe6e41a232451a15379f86 \
     --hash=sha256:f86e41a149d7d05a9969337e3946a9c171c06a5d42680896daaba624aeac8da1
-    # via mcp
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   mcp
 wcwidth==0.8.3 \
     --hash=sha256:d128512515fbf4612e0ff21fd6380399210318b7b54a9af59dff8454cf9730eb \
     --hash=sha256:d5b73dba6158a595ec9370350e7f2637bcac8d6c5e4fde34f30fcffb6103a5e4
-    # via prompt-toolkit
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   prompt-toolkit
 websockets==15.0.1 \
     --hash=sha256:0701bc3cfcb9164d04a14b149fd74be7347a530ad3bbf15ab2c678a2cd3dd9a2 \
     --hash=sha256:0a34631031a8f05657e8e90903e656959234f3a04552259458aac0b0f9ae6fd9 \
@@ -3861,9 +4425,14 @@ websockets==15.0.1 \
     --hash=sha256:f7a866fbc1e97b5c617ee4116daaa09b722101d4a3c170c787450ba409f9736f \
     --hash=sha256:fcd5cf9e305d7b8338754470cf69cf81f420459dbae8a3b40cee57417f4614a7
     # via
+    #   -c jarvis/assets/browser/requirements.lock
     #   browser-harness
     #   cdp-use
     #   google-genai
+windows-capture==2.0.1 ; sys_platform == 'win32' \
+    --hash=sha256:209c2318e2168802b9afd1005e99499639e8835e71a1e188a3ddc77c7ccc3f04 \
+    --hash=sha256:2c2b394f4587b067cf520456f7f64c11b00380851b077a4d061fe5356a9a7645
+    # via -r jarvis/assets/browser/requirements.in
 yarl==1.24.5 \
     --hash=sha256:0055afc45e864b92729ac7600e2d102c17bef060647e74bca75fa84d66b9ff36 \
     --hash=sha256:0465ec8cedc2349b97a6b595ace64084a50c6e839eca40aa0626f38b8350e331 \
@@ -3969,4 +4538,6 @@ yarl==1.24.5 \
     --hash=sha256:ff330d3c30db4eb6b01d79e29d2d0b407a7ecad39cfd9ec993ece57396a2ec0d \
     --hash=sha256:ff405d91509d88e8d44129cd87b18d70acd1f0c1aeabd7bc3c46792b1fe2acba \
     --hash=sha256:ffcd54362564dc1a30fb74d8b8a6e5a6b11ebd5e27266adc3b7427a21a6c9104
-    # via aiohttp
+    # via
+    #   -c jarvis/assets/browser/requirements.lock
+    #   aiohttp

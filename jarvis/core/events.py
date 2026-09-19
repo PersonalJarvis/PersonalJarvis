@@ -1722,6 +1722,13 @@ class VoiceSessionStarted(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class BrowserVoiceRequested(Event):
+    """A desktop trigger hands a voice call to the browser media owner."""
+
+    action: Literal["start", "stop"] = "start"
+
+
+@dataclass(frozen=True, slots=True)
 class RealtimeSessionReady(Event):
     """A duplex provider accepted the effective session configuration."""
 

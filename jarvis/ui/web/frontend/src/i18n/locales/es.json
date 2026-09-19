@@ -1,4 +1,14 @@
 {
+  "live": {
+    "open_browser": "Abrir voz en el navegador",
+    "loading": "Cargando ajustes de voz…", "description": "Conversación natural, tu modelo de razonamiento y las herramientas de Jarvis con una sola clave de OpenAI.",
+    "key_required": "Conecta tu clave de OpenAI abajo para activar GPT-Live.", "voice_model": "Modelo de voz", "voice": "Voz", "thinking_model": "Modelo de razonamiento",
+    "choose_model": "Selecciona un modelo", "reasoning": "Esfuerzo de razonamiento", "model_default": "Predeterminado del modelo", "web_search": "Búsqueda web",
+    "prompts": "Personalizar instrucciones", "conversation_prompt": "Estilo de conversación", "backend_prompt": "Instrucciones de razonamiento y herramientas",
+    "billing": "La duración de voz y el modelo se facturan por separado. El control del ordenador usa el mismo modelo. OpenAI no almacena una grabación de la conversación.",
+    "save": "Guardar y usar GPT-Live", "saved": "Guardado para la próxima llamada. Se guardó una copia de la configuración anterior.",
+    "use_for_agents": "Usar esta clave y modelo para agentes y chat de texto", "agent_saved": "Los agentes y el chat ahora usan este modelo de OpenAI."
+  },
   "input_isolation": {
     "title": "Las herramientas de dictado y escritura no alcanzan esta ventana",
     "impact": "Esta aplicación se está ejecutando con permisos de administrador, por lo que Windows impide que otros programas escriban en ella. Las apps de dictado, los expansores de texto, los gestores de portapapeles y el autocompletado de los gestores de contraseñas parecerán no hacer nada aquí, aunque sigan funcionando en el resto de aplicaciones.",
@@ -479,6 +489,16 @@
     "indicator_label": "Estado de voz"
   },
   "sidebar": {
+    "extensions_label": "Plugins / Skills / MCP",
+    "pinned": "Fijados",
+    "recent": "Recientes",
+    "pin_chat": "Fijar chat",
+    "unpin_chat": "Desfijar chat",
+
+    "jarvis_tools": "Herramientas Jarvis",
+    "scheduled": "Programado",
+    "more": "Más",
+
     "instance_dev_hint": "Instancia de desarrollo: una segunda copia de la app que puedes reiniciar libremente, con sus propios datos, puertos e icono. La app normal sigue funcionando al lado.",
     "surface_voice": "Voz",
     "surface_chat": "Chat",
@@ -531,7 +551,7 @@
     "realtime_transport_socket_unreachable": "No se pudo acceder al canal del transporte de suscripción. Reinicia la aplicación e inténtalo de nuevo."
   },
   "provider_billing": {
-    "api": "API, facturación por token",
+    "api": "API, facturación por uso",
     "subscription": "Inicio de sesión con suscripción",
     "subscription_or_api": "Inicio de sesión con suscripción o clave API",
     "local": "Local, no necesita clave"
@@ -1930,7 +1950,7 @@
     "mode_active_badge": "Activo",
     "mode_recommended": "Recomendado",
     "voice_engine_label": "Motor de voz",
-    "voice_engine_desc": "Cómo escucha y habla {name}: la pipeline clásica o un único modelo en tiempo real.",
+    "voice_engine_desc": "Cómo escucha y habla {name}: conversación en vivo con herramientas o voz local.",
     "mode_needs_credentials": "Conecta o configura un proveedor de tiempo real abajo para cambiar.",
     "mode_desc_pipeline": "Tres pasos: voz a texto, el Brain piensa, texto a voz.",
     "mode_desc_realtime": "Un solo modelo escucha y responde en el mismo flujo de audio en vivo.",
@@ -1992,7 +2012,7 @@
     "guide_computer_use_title": "¿Qué proveedor debería impulsar el Tool Model?",
     "guide_computer_use_body": "El Tool Model se encarga de cada acción que Jarvis realiza por ti — incluido Computer-Use, que lee capturas de tu pantalla y necesita un modelo que entienda imágenes; el selector oculta los modelos de solo texto. En caso de duda, quédate con tu proveedor Brain principal y su modelo predeterminado.",
     "reco_title": "Recomendación personal",
-    "reco_realtime_pick": "OpenAI Realtime",
+    "reco_realtime_pick": "OpenAI GPT-Live",
     "reco_realtime_why": "Gemini Live también vale, cualquiera funciona.",
     "reco_computer_use_pick": "Gemini 3.5 Flash",
     "reco_computer_use_why": "la latencia más rápida para herramientas.",
@@ -2187,6 +2207,10 @@
         "title": "Control de entrada",
         "description": "Necesario para que Computer-Use envíe eventos de ratón y teclado."
       },
+      "automation": {
+        "title": "Automatización (Música y Spotify)",
+        "description": "Permite a Jarvis bajar el volumen de Música y Spotify mientras dictas y subirlo después. Se pregunta una vez por reproductor; un reproductor cerrado se abre brevemente en segundo plano para el diálogo."
+      },
       "credential_store": {
         "title": "Llavero (claves API)",
         "description": "Guarda tus claves API cifradas en el Llavero de macOS en lugar de un archivo de texto plano — ese es el aviso del Llavero que ves al iniciar la app. Tus claves se quedan en tu Mac y nunca se envían a ningún sitio."
@@ -2204,12 +2228,28 @@
       "computer_use": "Computer-Use",
       "global_hotkeys": "Atajos globales",
       "window_control": "Control de ventanas",
+      "audio_ducking": "Bajar la música al dictar",
       "api_keys": "Almacenamiento seguro de claves API"
     },
     "restart_deferred": "Los permisos recién concedidos se activan con el reinicio automático al final de la configuración; no hay nada que hacer ahora.",
+    "setup_all": "Configurar todo",
+    "setup_all_hint": "Un clic te guía por todos los permisos que faltan y los aplica al final.",
+    "setup_running": "Paso {0} de {1}: {2}",
+    "setup_wait_prompt": "Responde al diálogo de macOS — continúa solo.",
+    "setup_wait_settings": "Activa Personal Jarvis en el panel de Ajustes del Sistema que se acaba de abrir y vuelve — continúa solo.",
+    "setup_cancel": "Detener",
+    "setup_restarting": "Listo — Personal Jarvis se reinicia una vez para aplicar el nuevo acceso.",
+    "setup_timeout": "Configuración en pausa: un permiso no se concedió a tiempo. Usa «Configurar todo» de nuevo cuando quieras.",
     "ask_again": "Preguntar de nuevo",
     "stale_grant_hint": "macOS ya no volverá a preguntar por este acceso. Si Ajustes del Sistema ya lo muestra activado, ese registro pertenece a una versión anterior de la app: pulsa «Preguntar de nuevo» y concede el acceso otra vez.",
     "identity_reset": "Desde la última reconstrucción, macOS considera Personal Jarvis una app nueva y descartó todos los accesos concedidos. Vuelve a concederlos una vez; a partir de ahí se mantendrán."
+  },
+  "settings_hub": {
+    "subtitle": "Todo sobre ti, tus claves y esta aplicación, en un lugar.",
+    "search_placeholder": "Buscar ajustes...",
+    "group_general": "General",
+    "group_system": "Sistema",
+    "group_activity": "Actividad"
   },
   "settings_view": {
     "silence_window": {

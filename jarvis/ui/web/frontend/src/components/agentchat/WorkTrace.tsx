@@ -1,17 +1,18 @@
-import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Brain, Check, ChevronRight, CircleAlert, CircleDashed, FilePenLine, FileText, FolderSearch, ShieldQuestion, Terminal } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
-import type { ReasoningBlock, ToolBlock, TurnBlock, TurnItem, TurnStatus } from "./reduce";
+import type { ReasoningBlock, TextBlock, ToolBlock, TurnBlock, TurnItem, TurnStatus } from "./reduce";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { toolDiff } from "./toolDiff";
 import { formatTokens, outputTokens } from "./toolView";
 import { activityParts, traceToolIdentity } from "./traceActivity";
 import { ToolChoiceIcon } from "./ToolChoiceChips";
 import { toolIdentityStyle } from "./toolIdentity";
+import "./WorkTrace.css";
 
 export type Decide = (id: string, decision: ApprovalDecision) => void | Promise<void>;
 type Group = { id: string; blocks: TurnBlock[]; family: string | null };
@@ -72,6 +73,41 @@ export function groupConversationTrace(blocks: TurnBlock[]): Group[] {
   return groups;
 }
 
+/**
+ * The last assistant reply stays in the conversation. Narration between
+ * tools, and every tool or thought before that reply, is foldable work.
+ * Failures after the reply stay after it.
+ */
+export function splitConversationTurn(blocks: TurnBlock[]): { work: TurnBlock[]; answer: TextBlock[]; after: TurnBlock[] } {
+  let lastText = -1;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i];
+    if (block.kind === "text" && block.text.trim()) {
+      lastText = i;
+      break;
+    }
+  }
+  if (lastText < 0) return { work: blocks, answer: [], after: [] };
+  let firstText = lastText;
+  while (firstText > 0 && blocks[firstText - 1].kind === "text") firstText--;
+  return {
+    work: blocks.slice(0, firstText),
+    answer: blocks.slice(firstText, lastText + 1) as TextBlock[],
+    after: blocks.slice(lastText + 1),
+  };
+}
+
+function isAttentionBlock(block: TurnBlock): block is ToolBlock {
+  return block.kind === "tool" && attention(block);
+}
+
+function hasFoldableWork(blocks: TurnBlock[]): boolean {
+  return blocks.some((block) => {
+    if (isAttentionBlock(block)) return false;
+    return block.kind !== "text" || Boolean(block.text.trim());
+  });
+}
+
 /** Summarize completed adjacent work; replies and attention are hard boundaries. */
 export function groupActivityTrace(blocks: TurnBlock[]): Group[] {
   const groups: Group[] = [];
@@ -127,6 +163,24 @@ function Disclosure({ label, children, forced = false, initiallyOpen = false, ic
   );
 }
 
+function ReasoningBody({ text, live }: { text: string; live: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !live) return;
+    el.scrollTop = el.scrollHeight;
+  }, [text, live]);
+  return (
+    <div
+      ref={ref}
+      data-testid="reasoning-body"
+      className="prose prose-sm max-h-64 max-w-none overflow-auto text-xs leading-6 text-muted-foreground dark:prose-invert [overflow-wrap:anywhere] prose-p:my-1 prose-pre:overflow-auto"
+    >
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
+  );
+}
+
 export function ReasoningTrace({ block, turnLive, compact = false }: { block: ReasoningBlock; turnLive: boolean; compact?: boolean }) {
   const t = useT();
   const live = turnLive && block.live;
@@ -140,9 +194,7 @@ export function ReasoningTrace({ block, turnLive, compact = false }: { block: Re
     forced={live} initiallyOpen={compact ? live : turnLive}
     resetKey={compact ? String(turnLive) : ""}
     summary={!compact && !turnLive && gist ? <p className="mb-2 ml-6 line-clamp-2 text-xs leading-5">{gist.slice(0, 240)}</p> : undefined}>
-    {text ? <div className="prose prose-sm max-h-64 max-w-none overflow-auto text-xs leading-6 text-muted-foreground dark:prose-invert [overflow-wrap:anywhere] prose-p:my-1 prose-pre:overflow-auto">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
-    </div> : undefined}
+    {text ? <ReasoningBody text={text} live={live} /> : undefined}
   </Disclosure>;
 }
 
@@ -244,6 +296,56 @@ function ActivityIcon({ blocks, live }: { blocks: TurnBlock[]; live: boolean }) 
   return <Icon aria-hidden className={cn(iconClass, "mt-1", live && "motion-safe:animate-spin")} />;
 }
 
+/** Small chevron that hides finished work so the reply can stand alone. */
+function ConversationWorkFold({ durationMs, attention, children }: {
+  durationMs: number | null; attention?: ReactNode; children: ReactNode;
+}) {
+  const t = useT();
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const label = durationMs !== null && durationMs > 0
+    ? t("work_trace.thought_for").replace("{duration}", traceDuration(durationMs))
+    : t("work_trace.thought");
+  return (
+    <div className="min-w-0" data-testid="conversation-work-fold" data-open={open ? "true" : "false"}>
+      <button type="button" aria-expanded={open} aria-controls={id}
+        className="group/fold mb-1 inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-1 text-left text-xs leading-5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={() => setOpen(!open)}>
+        <ChevronRight aria-hidden className={cn("h-3 w-3 shrink-0 opacity-70 transition-transform group-hover/fold:opacity-100", open && "rotate-90")} />
+        <span className="truncate">{label}</span>
+      </button>
+      {open ? <div id={id}>{children}</div> : attention}
+    </div>
+  );
+}
+
+function TraceGroups({ groups, live, status, onDecide, renderText, conversation }: {
+  groups: Group[]; live: boolean; status: TurnStatus; onDecide?: Decide;
+  renderText?: (text: string, id: string) => ReactNode; conversation: boolean;
+}) {
+  const t = useT();
+  return groups.map(group => {
+    const first = group.blocks[0];
+    if (group.family === "activity" && group.blocks.length > 1) return <div key={group.id} className={cn("py-1", conversation && "w-full")} data-trace-summary>
+      <Disclosure label={<ActivitySummary blocks={group.blocks} live={live} />}
+        icon={<ActivityIcon blocks={group.blocks} live={live} />} initiallyOpen={live}
+        forced={live}>
+        {group.blocks.map(block => block.kind === "tool"
+          ? <TraceTool key={block.callId} block={block} status={status} onDecide={onDecide} />
+          : block.kind === "reasoning" ? <ReasoningTrace key={block.id} block={block} turnLive={live} compact /> : null)}
+      </Disclosure>
+    </div>;
+    if (group.blocks.length > 1) return <Disclosure key={group.id}
+      label={t(`work_trace.group_${group.family}`).replace("{count}", String(group.blocks.length))}
+      icon={<Check aria-hidden className={iconClass} />} initiallyOpen={live}>
+      {group.blocks.map(block => <TraceTool key={(block as ToolBlock).callId} block={block as ToolBlock} status={status} onDecide={onDecide} />)}
+    </Disclosure>;
+    if (first.kind === "tool") return <div key={group.id} className={conversation ? "w-full py-1 text-xs [&_button]:text-xs" : undefined}><TraceTool block={first} status={status} onDecide={onDecide} /></div>;
+    if (first.kind === "reasoning") return <div key={group.id} className={conversation ? "w-full text-xs [&_button]:text-xs" : undefined}><ReasoningTrace block={first} turnLive={live} compact={conversation} /></div>;
+    return first.text.trim() ? <div key={group.id} className={cn("min-w-0 py-2", conversation && "w-fit max-w-[min(85%,42rem)] rounded-2xl rounded-bl-md bg-secondary px-4 py-2.5")}>{renderText ? renderText(first.text, first.id) : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ChatMarkdown text={first.text} /></div>}</div> : null;
+  });
+}
+
 export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false }: {
   blocks: TurnBlock[]; status: TurnStatus; startedMs: number; durationMs: number | null; error?: string | null;
   onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; className?: string;
@@ -252,31 +354,22 @@ export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDeci
   const t = useT();
   const live = status === "running";
   const elapsed = useClock(startedMs, live);
-  const groups = useMemo(() => conversation ? groupConversationTrace(blocks) : groupActivityTrace(blocks), [blocks, conversation]);
+  const split = useMemo(() => conversation && !live ? splitConversationTurn(blocks) : null, [blocks, conversation, live]);
+  const fold = split && hasFoldableWork(split.work) ? split : null;
+  const groups = useMemo(() => conversation ? groupConversationTrace(fold ? fold.work : blocks) : groupActivityTrace(blocks), [blocks, conversation, fold]);
+  const restGroups = useMemo(() => fold ? groupConversationTrace([...fold.answer, ...fold.after]) : null, [fold]);
   const pending = blocks.some(block => block.kind === "tool" && block.approval?.decision === null);
   const outcome = pending ? "approval" : live ? "working" : status === "error" ? "failed" : status === "cancelled" ? "stopped" : "done";
   const Icon = pending ? ShieldQuestion : live ? CircleDashed : status === "error" ? CircleAlert : Check;
-  return <div className={cn("min-w-0 space-y-0.5", className)} data-testid="work-trace" data-state={status}>
-    {groups.map(group => {
-      const first = group.blocks[0];
-      if (group.family === "activity" && group.blocks.length > 1) return <div key={group.id} className={cn("py-1", conversation && "w-full max-w-xl")} data-trace-summary>
-        <Disclosure label={<ActivitySummary blocks={group.blocks} live={live} />}
-          icon={<ActivityIcon blocks={group.blocks} live={live} />} initiallyOpen={live}
-          forced={live}>
-          {group.blocks.map(block => block.kind === "tool"
-            ? <TraceTool key={block.callId} block={block} status={status} onDecide={onDecide} />
-            : block.kind === "reasoning" ? <ReasoningTrace key={block.id} block={block} turnLive={live} compact /> : null)}
-        </Disclosure>
-      </div>;
-      if (group.blocks.length > 1) return <Disclosure key={group.id}
-        label={t(`work_trace.group_${group.family}`).replace("{count}", String(group.blocks.length))}
-        icon={<Check aria-hidden className={iconClass} />} initiallyOpen={live}>
-        {group.blocks.map(block => <TraceTool key={(block as ToolBlock).callId} block={block as ToolBlock} status={status} onDecide={onDecide} />)}
-      </Disclosure>;
-      if (first.kind === "tool") return <div key={group.id} className={conversation ? "mx-auto w-full max-w-xl py-1 text-xs [&_button]:text-xs" : undefined}><TraceTool block={first} status={status} onDecide={onDecide} /></div>;
-      if (first.kind === "reasoning") return <div key={group.id} className={conversation ? "max-w-xl text-xs [&_button]:text-xs" : undefined}><ReasoningTrace block={first} turnLive={live} compact={conversation} /></div>;
-      return first.text.trim() ? <div key={group.id} className={cn("min-w-0 py-2", conversation && "w-fit max-w-[min(85%,42rem)] rounded-2xl rounded-bl-md bg-secondary px-4 py-2.5")}>{renderText ? renderText(first.text, first.id) : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ChatMarkdown text={first.text} /></div>}</div> : null;
-    })}
+  const groupProps = { live, status, onDecide, renderText, conversation };
+  return <div className={cn("min-w-0 space-y-0.5", conversation && "w-full max-w-xl self-start", className)} data-testid="work-trace" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
+    {fold ? <ConversationWorkFold durationMs={durationMs} attention={fold.work.filter(isAttentionBlock).map(block =>
+      <div key={block.callId} className="w-full py-1 text-xs [&_button]:text-xs">
+        <TraceTool block={block} status={status} onDecide={onDecide} />
+      </div>)}>
+      <TraceGroups groups={groups} {...groupProps} />
+    </ConversationWorkFold> : <TraceGroups groups={groups} {...groupProps} />}
+    {restGroups ? <TraceGroups groups={restGroups} {...groupProps} /> : null}
     {error ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{error}</p> : null}
     <div role="status" aria-live="polite" className={cn("flex flex-wrap items-center gap-2 text-xs text-muted-foreground", conversation ? "px-1 pb-2 pt-1" : "border-t border-border pt-3", status === "error" && "text-destructive")}>
       <Icon aria-hidden className={cn("h-3.5 w-3.5", live && !pending && "motion-safe:animate-spin")} />

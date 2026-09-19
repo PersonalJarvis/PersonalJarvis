@@ -898,16 +898,15 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     # the stable classic-pipeline composition (voice.profile =
     # "codex-subscription-voice") over the audited app-server text protocol.
     ProviderSpec(
-        id="openai-realtime",
-        label="OpenAI Realtime",
+        id="openai-live",
+        label="OpenAI GPT-Live",
         tier="realtime",
         auth_mode="api_key",
-        secret_keys=("realtime_openai_api_key",),
+        secret_keys=("openai_api_key",),
         dashboard_url="https://platform.openai.com/api-keys",
         credential_help=(
-            "OpenAI API key dedicated to Realtime Voice. It is not reused by "
-            "Brain, STT, or Jarvis-Agents. Existing shared OpenAI credentials "
-            "remain a compatibility fallback until a dedicated key is saved."
+            "One OpenAI API key for GPT-Live and its selected thinking model. "
+            "The same key can also serve agents and text chat."
         ),
     ),
     ProviderSpec(

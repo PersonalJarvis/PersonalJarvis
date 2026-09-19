@@ -32,7 +32,7 @@
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "The invalid worker model override was cleared through the product configuration API and the app restarted. A real Codex UI turn then completed with the correct empty/default model, but reported github/get_me unavailable. Investigation found that the native MCP adapter rejected all canonical slash tool names. Stable authorized wire aliases are now implemented and tested, but final native-browser retest is pending because the Codex Chrome connection lost its native-host registration. No GitHub smoke PASS is claimed; the earlier cli_gh result remains excluded.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "reconnect": {
@@ -178,9 +178,10 @@
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "2026-09-12: a read-only request submitted through Jarvis Chat executed notion/notion-fetch; the persisted tool_result reports is_error=false and duration_ms=790. Existing grant only; this does not prove a new authorization or full reconnect cycle.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix",
+          "real_action": true
         },
         "reconnect": {
           "status": "BLOCKED",
@@ -194,7 +195,7 @@
         }
       },
       "blocker": {
-        "reason": "Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+        "reason": "A genuine read-only action succeeded with the existing grant. Clean-state authorization, disconnect/reconnect, restart persistence and fresh-install acceptance remain unverified.",
         "owner": "Provider account holder",
         "next_action": "Approve the intended workspace or cloud resource grant, then verify callback, action, reconnect and restart.",
         "evidence": "Existing connection retained; Reconnect reached real Notion workspace consent. New grant awaits explicit user approval for workspace access."
@@ -276,9 +277,10 @@
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "2026-09-12: a read-only request submitted through Jarvis Chat executed linear/get_workspace; the persisted tool_result reports is_error=false and duration_ms=188. Existing grant only; this does not prove a new authorization or full reconnect cycle.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix",
+          "real_action": true
         },
         "reconnect": {
           "status": "BLOCKED",
@@ -292,7 +294,7 @@
         }
       },
       "blocker": {
-        "reason": "Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+        "reason": "A genuine read-only action succeeded with the existing grant. Clean-state authorization, disconnect/reconnect, restart persistence and fresh-install acceptance remain unverified.",
         "owner": "Provider account holder",
         "next_action": "Approve the intended workspace or cloud resource grant, then verify callback, action, reconnect and restart.",
         "evidence": "Existing connection retained; Reconnect reached official mcp.linear.app authorization page for Personal Jarvis."
@@ -374,9 +376,10 @@
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "2026-09-12: a read-only request submitted through Jarvis Chat executed cloudflare/workers_list; the persisted tool_result reports is_error=false and duration_ms=1829. Existing grant only; this does not prove a new authorization or full reconnect cycle.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix",
+          "real_action": true
         },
         "reconnect": {
           "status": "BLOCKED",
@@ -390,7 +393,7 @@
         }
       },
       "blocker": {
-        "reason": "Official provider consent page reached; a new resource access grant awaits explicit account-holder approval.",
+        "reason": "A genuine read-only action succeeded with the existing grant. Clean-state authorization, disconnect/reconnect, restart persistence and fresh-install acceptance remain unverified.",
         "owner": "Provider account holder",
         "next_action": "Approve the intended workspace or cloud resource grant, then verify callback, action, reconnect and restart.",
         "evidence": "Existing connection retained; Reconnect reached official workers-observability approval page for Personal Jarvis; private cloud resource access requires approval."
@@ -399,50 +402,50 @@
     {
       "plugin_id": "discord",
       "result": "BLOCKED",
-      "config_fingerprint": "34b6057247b861a45258b21ab59c98e60742a8316f78fdc1460eee8317d87e99",
+      "config_fingerprint": "60c55d3c28c3e0d894bf8e74bd516de64c36e2099923e4179f83c765a60604ff",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect Discord\n\nAccess token · Access Token\n\n1\nGenerate a token at Discord\n\n1. Open https://discord.com/developers/applications and click 'New Application'.\n2. Go to the 'Bot' page, click 'Reset Token', and copy it (shown once).\n3. Under 'Privileged Gateway Intents', enable 'Message Content Intent' so the bot can read message text.\n4. Invite the bot to your server: OAuth2 -> URL Generator -> scope 'bot' + the permissions you want (View Channels, Read Message History, Send Messages), open the link, pick your server, Authorize.\n5. Paste the bot token below, plus your numeric Discord user id (Developer Mode -> right-click yourself -> Copy User ID) so only you can command the bot.\n\nOpen Discord tokens\nCopy\n\nOr copy this link and open it in your browser yourself.\n\n2\nPaste the token below\n3\nLock the bot to you (recommended)\n\nOnly this user id can command the bot. Leave blank to let the first person who messages it claim access instead.\n\nCancel\nConnect",
+          "detail": "Connect Discord now opens browser sign-in first (Continue in browser via /connect/start, scopes identify guilds guilds.members.read connections). The previous bot-token dialog survives as a collapsed fallback and gained two browser helpers: Fill in my Discord ID (GET /plugins/discord/identity) and Add the bot to my server (GET /plugins/discord/invite). Dialog rendering is covered by PatConnectDialog tests; live provider consent is still pending (see blocker).",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "detail": "Browser completion was not verified in this audit. The catalog is browser-primary now, but no publisher-shared Discord OAuth client is provisioned, so /connect/start honestly reports 409 and the live consent journey is unverified.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "detail": "Callback completion was not verified in this audit. Loopback wiring (fixed port 3129) is implemented, but no live code exchange against a registered Discord app has been observed.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "detail": "Connected completion was not verified in this audit. The native verification probe (GET /users/@me expecting id) is implemented, but no live grant has passed it yet.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "detail": "Smoke completion was not verified in this audit. No live read-only Discord action has been attested with a real grant; discovery alone does not count.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "detail": "Reconnect completion was not verified in this audit. Refresh plumbing (PKCE handler) and revocation (official token/revoke endpoint declared) are implemented but unobserved live.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Local channel bot credential is required; no replacement credential was supplied.",
+          "detail": "Restart completion was not verified in this audit. No live grant has been persisted and reloaded across a restart yet.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         }
       },
       "blocker": {
-        "reason": "Local channel bot credential is required; no replacement credential was supplied.",
-        "owner": "Provider account holder",
-        "next_action": "Provide an authorized test credential through onboarding, verify a real action and lifecycle, and retain the documented browser-standard exception.",
-        "evidence": "Connect Discord\n\nAccess token · Access Token\n\n1\nGenerate a token at Discord\n\n1. Open https://discord.com/developers/applications and click 'New Application'.\n2. Go to the 'Bot' page, click 'Reset Token', and copy it (shown once).\n3. Under 'Privileged Gateway Intents', enable 'Message Content Intent' so the bot can read message text.\n4. Invite the bot to your server: OAuth2 -> URL Generator -> scope 'bot' + the permissions you want (View Channels, Read Message History, Send Messages), open the link, pick your server, Authorize.\n5. Paste the bot token below, plus your numeric Discord user id (Developer Mode -> right-click yourself -> Copy User ID) so only you can command the bot.\n\nOpen Discord tokens\nCopy\n\nOr copy this link and open it in your browser yourself.\n\n2\nPaste the token below\n3\nLock the bot to you (recommended)\n\nOnly this user id can command the bot. Leave blank to let the first person who messages it claim access instead.\n\nCancel\nConnect"
+        "reason": "No publisher-shared Discord OAuth client is provisioned (client_id/secret, registered redirect http://127.0.0.1:3129/oauth/callback, Message Content Intent). The browser flow therefore reports 409 by design.",
+        "owner": "Project publisher",
+        "next_action": "Register the official shared Discord app (redirect URI + minimal OAuth2 install params), provision publisher_discord_oauth_client_id/secret, then repeat the full clean browser journey including guild install, real read-only action, reconnect and restart.",
+        "evidence": "Catalog discord entry is oauth_pkce_loopback-primary with pat_paste fallback; /connect/start returns the documented 409 until the publisher client lands. Gateway messaging still needs the bot token via the fallback (documented provider exception)."
       },
       "provider_exception": {
         "reason": "This local channel uses a bot credential. OAuth bot installation does not replace that runtime credential; this is not a claim that Discord lacks OAuth.",
@@ -628,9 +631,10 @@
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "2026-09-12: a read-only request submitted through Jarvis Chat executed gmail/list_messages; the persisted tool_result reports is_error=false and duration_ms=290. Existing grant only; this does not prove a new authorization or full reconnect cycle.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix",
+          "real_action": true
         },
         "reconnect": {
           "status": "BLOCKED",
@@ -644,7 +648,7 @@
         }
       },
       "blocker": {
-        "reason": "Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+        "reason": "A genuine read-only action succeeded with the existing grant. Clean-state authorization, disconnect/reconnect, restart persistence and fresh-install acceptance remain unverified.",
         "owner": "Provider account holder",
         "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
         "evidence": "Existing connection; Reconnect entry: Connect Gmail\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
@@ -677,9 +681,10 @@
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+          "status": "PASS",
+          "detail": "2026-09-12: a read-only request submitted through Jarvis Chat executed google_calendar/list_events; the persisted tool_result reports is_error=false and duration_ms=606. Existing grant only; this does not prove a new authorization or full reconnect cycle.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix",
+          "real_action": true
         },
         "reconnect": {
           "status": "BLOCKED",
@@ -693,7 +698,7 @@
         }
       },
       "blocker": {
-        "reason": "Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
+        "reason": "A genuine read-only action succeeded with the existing grant. Clean-state authorization, disconnect/reconnect, restart persistence and fresh-install acceptance remain unverified.",
         "owner": "Provider account holder",
         "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
         "evidence": "Existing connection; Reconnect entry: Connect Google Calendar\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"

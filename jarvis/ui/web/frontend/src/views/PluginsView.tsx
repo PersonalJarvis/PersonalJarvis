@@ -456,6 +456,13 @@ const OAUTH_NO_SECRET_NEEDED: Record<string, string> = {
  *  meaningful for a plugin with a FIXED port; one with an ephemeral port has
  *  nothing stable to register.
  *
+ *  An absent `callback_path` means the backend default (`/oauth/callback` in
+ *  `OAuthPkceLoopbackAuth`) — NOT an empty path. Showing the bare
+ *  `http://127.0.0.1:PORT` made users register exactly that address while the
+ *  listener waited one level deeper, so the provider either rejected the
+ *  login as a redirect mismatch or called back into a 404 and the dialog spun
+ *  forever.
+ *
  *  Worth surfacing because a mismatch here is the single most common reason a
  *  first connect fails, and the provider's error ("INVALID_CLIENT: Invalid
  *  redirect URI") names neither the expected value nor where to put it. */
@@ -467,7 +474,7 @@ function loopbackRedirectUri(plugin: Plugin): string | undefined {
   };
   const port = typeof auth?.callback_port === "number" ? auth.callback_port : 0;
   if (!port) return undefined;
-  const path = typeof auth?.callback_path === "string" ? auth.callback_path : "";
+  const path = typeof auth?.callback_path === "string" ? auth.callback_path : "/oauth/callback";
   return `http://127.0.0.1:${port}${path}`;
 }
 
@@ -622,14 +629,23 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
           : { method: "POST" },
       );
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-        throw new Error(err.error_code ?? "unknown");
+        const err = (await res.json().catch(() => ({ detail: `HTTP ${res.status}` }))) as {
+          error_code?: string;
+          error?: string;
+          detail?: string;
+        };
+        // The backend serves `{detail}` for HTTP errors; OAuth handlers use
+        // `{error_code}`. Prefer the code for known flows so the dialog can
+        // map it, otherwise surface the human-readable detail instead of a
+        // bare "unknown" (e.g. the 409 publisher-provisioning message).
+        throw new Error(err.error_code ?? err.error ?? err.detail ?? `HTTP ${res.status}`);
       }
       return res.json() as Promise<{
         flow_id: string;
         plugin_id: string;
         kind: "browser_redirect" | "device_flow" | "local";
         open_url: string | null;
+        redirect_uri: string | null;
         expires_at_ms: number | null;
       }>;
     },
@@ -640,6 +656,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
     pluginId: string;
     pluginName: string;
     openUrl: string;
+    redirectUri: string | null;
   } | null>(null);
 
   const [deviceSession, setDeviceSession] = useState<{
@@ -677,9 +694,11 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
           return false;
         }
         // Auto-open the pre-filled verify URL if available; user lands
-        // on the consent page with the code already typed in.
+        // on the consent page with the code already typed in. Awaited so the
+        // bridge dispatch happens before the dialog paints; when it reports
+        // failure the dialog's manual link + retry button take over.
         if (verifyUrlComplete) {
-          void openExternalUrl(verifyUrlComplete);
+          await openExternalUrl(verifyUrlComplete);
         }
         setDeviceSession({
           flowId: r.flow_id,
@@ -696,12 +715,17 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
         setConnectFailure("The sign-in page is unavailable. Please try again.");
         return false;
       }
-      void openExternalUrl(r.open_url);
+      // Awaited: the bridge must dispatch before the pending dialog paints.
+      // When neither the bridge nor a fallback tab reaches a browser (popup
+      // blocker, headless host), the dialog keeps an explicit retry + a
+      // copyable link instead of claiming a tab opened.
+      await openExternalUrl(r.open_url);
       setOauthSession({
         flowId: r.flow_id,
         pluginId: r.plugin_id,
         pluginName: p.name,
         openUrl: r.open_url,
+        redirectUri: r.redirect_uri ?? null,
       });
       return true;
     } catch (e) {
@@ -713,7 +737,10 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
         port_in_use: "The sign-in callback is busy. Close the other sign-in attempt and try again.",
         misconfigured: "Browser sign-in is pending publisher setup. No developer setup is required from you.",
       };
-      setConnectFailure(messages[code] ?? `Could not connect ${p.name}. Please try again. If this continues, check the service availability.`);
+      // Known OAuth codes map to a short sentence; anything else is already a
+      // backend-provided human-readable detail (e.g. the 409 provisioning
+      // note) and is shown verbatim instead of a generic fallback.
+      setConnectFailure(messages[code] ?? code);
       return false;
     }
   };
@@ -758,15 +785,25 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
       setConnectingPlugin(p);
       return;
     }
-    if (p.authMode === "oauth_pkce_loopback" ||
-      (p.authMode === "oauth_device_flow" && !p.browserReady)) {
+    // The pre-connect dialog is only for browser flows whose shared client is
+    // still pending (!browserReady): it explains the wait and offers the
+    // collapsed expert token fallback. A provisioned browser flow (PKCE or
+    // device) goes straight to /connect/start so the provider opens at once —
+    // the standard is "Connect → provider opens", not "Connect → setup form".
+    // An already-stored own OAuth client is still picked up by the backend's
+    // resolve step, so skipping the form loses no expert path.
+    if (
+      (p.authMode === "oauth_pkce_loopback" || p.authMode === "oauth_device_flow") &&
+      !p.browserReady
+    ) {
       setPkceSetupPlugin(p);
       return;
     }
     if (
       p.authMode === "hosted_mcp_oauth_dcr" ||
       p.authMode === "local" ||
-      p.authMode === "oauth_device_flow"
+      p.authMode === "oauth_device_flow" ||
+      p.authMode === "oauth_pkce_loopback"
     ) {
       await startOAuthFlow(p);
       return;
@@ -781,6 +818,28 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
   );
   const handleDisconnect = (id: string) =>
     setDisconnectingPlugin(allPlugins.find((p) => p.id === id) ?? null);
+
+  // A fresh install is never usable yet — installed ≠ connected. Bring the
+  // new card into view and immediately run its connect flow, so the provider
+  // opens in the browser and the card stays "Not connected" until the OAuth
+  // callback completes AND the verification check passes. Never marks the
+  // card connected optimistically.
+  const handleFreshInstall = async (pluginId: string) => {
+    setView("list");
+    setListFilter("installed");
+    try {
+      const fresh = await fetchCatalog();
+      qc.setQueryData<CatalogResponse>(["marketplace-plugins"], fresh);
+      const found = fresh.plugins.map(adapt).find((p) => p.id === pluginId);
+      if (found) {
+        await handleConnect(found);
+        return;
+      }
+    } catch {
+      // Fall through to a plain refetch: the card still lands in Installed.
+    }
+    void qc.refetchQueries({ queryKey: ["marketplace-plugins"] });
+  };
   const categoryOrder = useMemo(
     () => orderedCategories(data, allPlugins),
     [data, allPlugins],
@@ -867,9 +926,9 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
       <PluginUploadDialog
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
-        onInstalled={() => {
-          setListFilter("installed");
-          void refetch();
+        onInstalled={(id) => {
+          setUploadOpen(false);
+          void handleFreshInstall(id);
         }}
       />
 
@@ -949,6 +1008,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
           pluginId={oauthSession.pluginId}
           pluginName={oauthSession.pluginName}
           openUrl={oauthSession.openUrl}
+          redirectUri={oauthSession.redirectUri}
           onClose={() => {
             cancelOAuthSession(oauthSession);
             setOauthSession(null);
@@ -997,7 +1057,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
       <>
         <BackLink label={translate("plugins_view.title")} onClick={() => setView("list")} />
         <div className="mt-5">
-          <CommunityTab />
+          <CommunityTab onInstalled={(name) => void handleFreshInstall(name)} />
         </div>
       </>,
     );
@@ -1267,6 +1327,7 @@ function PluginWindowCatalog({
           </div>
           <BrandedSelect value={category} onValueChange={onCategory}
             ariaLabel={translate("plugins_view.col_category")}
+            testId="plugin-window-category"
             className="h-8 w-auto max-w-full rounded-full bg-secondary px-3 text-xs"
             options={[{ value: "all", label: translate("plugins_view.all_categories") },
               ...[...categories].sort((a, b) => WINDOW_CATEGORY_ORDER.indexOf(a) - WINDOW_CATEGORY_ORDER.indexOf(b)).map((name) => ({ value: name, label: name }))]} />
@@ -1320,12 +1381,16 @@ function WindowConnectButton({ plugin, onConnect, onDisconnect }: { plugin: Plug
       else await onConnect(plugin);
     } finally { setBusy(false); }
   };
+  // Connection state in connection words, never install words: "Installed"
+  // already names the marketplace tab and the community badge, so a connected
+  // card saying "Added" read as done-before-authed. Connected says Connected,
+  // untouched says Connect.
   return <button type="button" disabled={busy || Boolean(plugin.unavailableReason)} title={plugin.unavailableReason} onClick={() => void act()}
     aria-label={translate(connected ? "plugins_view.disconnect" : reconnect ? "plugins_view.reconnect" : "plugins_view.connect")}
     className={cn("flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
       connected ? "text-muted-foreground hover:bg-secondary" : "bg-secondary text-foreground hover:bg-accent-soft")}>
     {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : connected ? <Check className="h-3.5 w-3.5 text-success" /> : reconnect ? <RotateCw className="h-3.5 w-3.5" /> : null}
-    {translate(connected ? "plugins_view.added" : reconnect ? "plugins_view.reconnect" : "plugins_view.add")}
+    {translate(connected ? "plugins_view.status_connected" : reconnect ? "plugins_view.reconnect" : "plugins_view.connect")}
   </button>;
 }
 
@@ -2051,6 +2116,7 @@ function OAuthRedirectDialog({
   pluginId,
   pluginName,
   openUrl,
+  redirectUri,
   onClose,
   onSuccess,
 }: {
@@ -2058,6 +2124,7 @@ function OAuthRedirectDialog({
   pluginId: string;
   pluginName: string;
   openUrl: string;
+  redirectUri: string | null;
   onClose: () => void;
   onSuccess: () => void;
 }) {
@@ -2133,25 +2200,38 @@ function OAuthRedirectDialog({
                   Authorize {PRODUCT_NAME} in your browser
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  A browser tab opened for {pluginName}. Sign in if prompted,
-                  click "Authorize", then come back here.
+                  Continue in the browser tab for {pluginName} — sign in if
+                  prompted, click "Authorize", then come back here. No tab
+                  visible? Open it again or copy the link below. The plugin
+                  stays "Not connected" until you finish there.
                 </p>
               </div>
-              <a
-                href={openUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => {
-                  e.preventDefault();
-                  void openExternalUrl(openUrl);
-                }}
-                className="text-micro text-muted-foreground underline-offset-4 hover:text-foreground-strong hover:underline"
+              {redirectUri && (
+                <div className="w-full rounded-md border border-border bg-background px-3 py-2 text-left">
+                  <p className="text-micro text-muted-foreground">
+                    Waiting for {pluginName} to call back at
+                  </p>
+                  <code className="mt-0.5 block select-all break-all font-mono text-micro text-foreground">
+                    {redirectUri}
+                  </code>
+                  <p className="mt-1 text-micro text-muted-foreground">
+                    If the provider shows an error instead of asking for
+                    approval, allow exactly this address in your provider
+                    app's redirect settings, then open the sign-in again.
+                  </p>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => void openExternalUrl(openUrl)}
+                className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90"
               >
-                Tab didn't open? Click here
-              </a>
+                Open {pluginName} again
+                <ExternalLink className="h-3 w-3" />
+              </button>
               <CopyableUrl
                 url={openUrl}
-                hint="Still nothing? Copy this link and paste it into your browser's address bar."
+                hint="Or copy this link and paste it into your browser's address bar."
               />
             </div>
           )}
@@ -2412,7 +2492,9 @@ export function PkceConnectDialog({
   const fam = oauthClientFamily(plugin);
   const clientRequired = !(plugin.browserReady ?? plugin.oauthClientConfigured);
   const redirectUri = loopbackRedirectUri(plugin);
-  const [showClient, setShowClient] = useState(false);
+  // Publisher-pending flows open expanded: the client form IS the way to
+  // connect today, not an expert override. Ready flows keep it collapsed.
+  const [showClient, setShowClient] = useState(clientRequired);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2490,7 +2572,26 @@ export function PkceConnectDialog({
         </header>
 
         <div className="space-y-3 px-5 py-4">
-          {clientRequired && <p className="rounded-md bg-secondary px-3 py-2 text-micro text-foreground">Browser sign-in is pending publisher setup. No developer account or client registration is required from you.</p>}
+          {clientRequired ? (
+            <div className="rounded-md bg-secondary px-3 py-2 text-micro text-foreground">
+              <p>
+                Browser sign-in is pending publisher setup. Connect today with
+                your own free {fam?.label ?? "provider"} app — a few minutes,
+                no code. Continue opens the real {plugin.name} login in your
+                browser once the client below is filled in.
+              </p>
+              {fam && OAUTH_CLIENT_CONSOLE[fam.family] && (
+                <button
+                  type="button"
+                  onClick={() => void openExternalUrl(OAUTH_CLIENT_CONSOLE[fam.family])}
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1 text-micro font-semibold text-primary-foreground transition-all hover:bg-primary/90"
+                >
+                  Step 1 — open the {fam.label} app console
+                  <ExternalLink className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          ) : null}
 
           {fam && (
             <div>
@@ -2500,31 +2601,42 @@ export function PkceConnectDialog({
                 aria-expanded={showClient}
                 className="text-micro font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
               >
-                Use your own OAuth client (advanced)
+                {clientRequired ? "Your OAuth client" : "Use your own OAuth client (advanced)"}
               </button>
               {showClient && (
                 <div className="mt-2 space-y-2">
                   <p className="text-micro text-muted-foreground">
-                    Optional expert override. Paste a client
-                    from your own {fam.label}{" "}
-                    {OAUTH_CLIENT_CONSOLE[fam.family] && (
-                      <a
-                        href={OAUTH_CLIENT_CONSOLE[fam.family]}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="underline underline-offset-2 hover:text-foreground"
-                      >
-                        console
-                      </a>
+                    {clientRequired ? (
+                      <>
+                        Step 2 — paste the client from the app you just
+                        created{fam.family === "google" &&
+                          ". One client covers Gmail, Drive, Calendar and YouTube Music"}
+                        .
+                      </>
+                    ) : (
+                      <>
+                        Optional expert override. Paste a client from your own{" "}
+                        {fam.label}{" "}
+                        {OAUTH_CLIENT_CONSOLE[fam.family] && (
+                          <a
+                            href={OAUTH_CLIENT_CONSOLE[fam.family]}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="underline underline-offset-2 hover:text-foreground"
+                          >
+                            console
+                          </a>
+                        )}
+                        .{" "}
+                        {fam.family === "google" &&
+                          "One client covers Gmail, Drive, Calendar and YouTube Music."}
+                      </>
                     )}
-                    .{" "}
-                    {fam.family === "google" &&
-                      "One client covers Gmail, Drive, Calendar and YouTube Music."}
                   </p>
                   {redirectUri && (
                     <div className="rounded-md border border-border bg-background px-2.5 py-2">
                       <p className="text-micro text-muted-foreground">
-                        While creating the app, register this as its{" "}
+                        {clientRequired ? "Step 3 — while" : "While"} creating the app, register this as its{" "}
                         <span className="font-medium text-foreground">
                           redirect URI
                         </span>
@@ -2813,6 +2925,55 @@ export function PatConnectDialog({
   const [userId, setUserId] = useState("");
   const [instanceUrl, setInstanceUrl] = useState("");
   const ownerLock = OWNER_LOCK_PLUGIN_IDS.has(plugin.id);
+  const discordHelpers = plugin.id === "discord";
+  const [discordIdLoading, setDiscordIdLoading] = useState(false);
+  const [discordIdError, setDiscordIdError] = useState<string | null>(null);
+  const [discordInviteLoading, setDiscordInviteLoading] = useState(false);
+  const [discordInviteError, setDiscordInviteError] = useState<string | null>(null);
+
+  // Discord token fallback: fill the owner id from the verified browser
+  // login instead of Developer Mode, and open the official guild picker
+  // for the bot install. Both hit the backend helpers; no secret or id
+  // is ever invented client-side.
+  const fetchDiscordId = async () => {
+    setDiscordIdLoading(true);
+    setDiscordIdError(null);
+    try {
+      const res = await fetch("/api/marketplace/plugins/discord/identity");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        throw new Error(err.detail || `Could not read your Discord ID (HTTP ${res.status})`);
+      }
+      const data = await res.json();
+      if (!data.user_id) throw new Error("Discord returned no user id.");
+      setUserId(String(data.user_id));
+    } catch (e) {
+      setDiscordIdError(e instanceof Error ? e.message : "Could not read your Discord ID.");
+    } finally {
+      setDiscordIdLoading(false);
+    }
+  };
+
+  const openDiscordInvite = async () => {
+    setDiscordInviteLoading(true);
+    setDiscordInviteError(null);
+    try {
+      const res = await fetch("/api/marketplace/plugins/discord/invite");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        throw new Error(err.detail || `Could not build the invite link (HTTP ${res.status})`);
+      }
+      const data = await res.json();
+      if (!data.invite_url) throw new Error("Discord returned no invite link.");
+      await openExternalUrl(data.invite_url);
+    } catch (e) {
+      setDiscordInviteError(
+        e instanceof Error ? e.message : "Could not build the invite link.",
+      );
+    } finally {
+      setDiscordInviteLoading(false);
+    }
+  };
   const auth = plugin.authConfig as unknown as PatPasteAuthDetail;
   const instanceField = auth.instance_url ?? null;
   const expectedPrefixes = [
@@ -2981,6 +3142,31 @@ export function PatConnectDialog({
                 Only this user id can command the bot. Leave blank to let the
                 first person who messages it claim access instead.
               </p>
+              {discordHelpers && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={isPending || discordIdLoading}
+                    onClick={() => void fetchDiscordId()}
+                    className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30"
+                  >
+                    {discordIdLoading ? "Looking up…" : "Fill in my Discord ID"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isPending || discordInviteLoading}
+                    onClick={() => void openDiscordInvite()}
+                    className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30"
+                  >
+                    {discordInviteLoading ? "Opening…" : "Add the bot to my server"}
+                  </button>
+                </div>
+              )}
+              {(discordIdError || discordInviteError) && (
+                <p className="mt-1.5 text-micro text-destructive">
+                  {discordIdError ?? discordInviteError}
+                </p>
+              )}
               {userIdTrimmed !== "" && !userIdOk && (
                 <p className="mt-1 text-micro text-foreground">
                   User id must be digits only.

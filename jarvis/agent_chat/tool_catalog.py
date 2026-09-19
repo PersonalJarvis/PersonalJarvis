@@ -118,7 +118,7 @@ def build_catalog(
         rows.append(
             ToolChoice(
                 id=f"tool:{name}",
-                label=label,
+                label="Chrome / Browser" if name == "society_browser" else label,
                 description=str(tool.description),
                 category=category,
                 group=group,

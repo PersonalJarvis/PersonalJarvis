@@ -1,5 +1,43 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Prepaid search hop (2026-09-17, T2)
+
+`search_web` may use an optional Apifare HTTP hop
+(`POST https://apifare.com/v1/call/dataforseo`) when a token is stored.
+Windows, macOS and Linux share the same `httpx` path; a missing token or a
+402/error degrades to the existing key-free DuckDuckGo chain. No OS-specific
+code. Tests: `tests/unit/plugins/tool/test_search_backends.py` (MockTransport).
+Live Apifare account consent is not part of this change.
+
+## GPT-Live migration (acceptance pending)
+
+The new continuous voice core uses portable Python, SQLite and WebRTC/WebSocket
+transports. Browser audio is selected by provider capability and owns echo
+cancellation on desktop and remote surfaces. OS-specific capture and actuation
+remain behind the existing screen/desktop adapters and ToolExecutor.
+
+Windows contract tests, an OpenAI API synthetic tool-and-audio test, and a Python
+3.11 Linux-container contract run passed. Native macOS audio, native Linux audio,
+fresh installations, long-call recovery and comparative latency remain unverified.
+See [the continuous voice architecture](gpt-live.md).
+
+## Full Chrome window preview (2026-09-12, T3; acceptance open)
+
+Windows interactive sessions now capture the owned Chrome window with Windows
+Graphics Capture, including the original tab strip and address bar. The browser
+worker probes the input desktop and capture package before selecting this path.
+Its frame dimensions drive pointer mapping, and input targets only the owned
+Chrome process. The capture thread is stopped and joined before browser cleanup.
+Dependencies are platform-marked inside the isolated, hash-locked browser runtime;
+base installation and headless boot do not import native capture packages.
+
+macOS, Linux and non-interactive Windows retain the existing page-only CDP stream
+and controls. Full native Chrome UI capture/input is **not implemented** on macOS
+or Linux and must not be described as native-window parity or release-complete.
+The existing page-stream behavior on those hosts is intentionally preserved.
+Current native evidence is Windows-only; cross-platform full-window acceptance
+remains open under RUB-17.
+
 ## Service connectors (2026-09-10, T3)
 
 The 21 cloud-service additions use the same HTTP/OAuth code on Windows, macOS
@@ -329,6 +367,40 @@ installed everywhere and `lsregister` can be absent from a stripped system —
 so no platform silently claims an entry the shell cannot see. Announcement is
 re-run for an unchanged entry too, which heals an install whose earlier write
 succeeded while its announcement did not.
+
+**Fix pass 2026-09-16 (macOS: registered is not searchable, BUG-216).**
+LaunchServices and Spotlight are separate indexes; `lsregister` alone left the
+bundle out of Spotlight search. macOS now also imports the bundle with
+`mdimport` and checks the indexing switch of the volume that controls it (`/`
+for the APFS data volume), logging the admin repair command when indexing is
+off; `--doctor` (`macos-spotlight`) additionally detects a stalled index by an
+import that never appears. The bundle is also installed into `/Applications`
+(Finder's Applications folder, Launchpad) whenever the account may write there,
+falling back to `~/Applications` for standard accounts; an existing per-user
+install is moved over by rename, keeping its signature and TCC grants, and the
+LaunchAgent is pointed at the new path in the same step (BUG-218). A same-named
+app with another bundle id (the DMG build) is never replaced or removed, and a
+certificate-signed bundle's `Info.plist` version follows source updates. The
+installer adds the app to the Dock once per install (the macOS counterpart of
+the Windows Desktop/Start-menu launcher) and names a stalled Spotlight index
+with its admin repair command. Windows
+and Linux are
+unchanged — their index announcements already feed the search the user types
+into.
+
+**Fix pass 2026-09-16 (macOS: one TCC identity for the life of the install,
+BUG-217).** The source installer creates a per-user code-signing certificate
+("Personal Jarvis Local Signing", login keychain, trusted for code signing in
+the user domain — the one password dialog of the install) and signs the bundle
+with it, so macOS pins privacy grants to `identifier + certificate` instead of
+the per-build CDHash: rebuilds and updates keep every grant. Without a GUI
+session, or if the dialog is declined, signing stays ad-hoc and the previous
+"reset on identity change" behaviour applies. The Music/Spotify Automation
+consent is a permission row of its own (`automation`), asked up front through
+`AEDeterminePermissionToAutomateTarget` with a hidden launch of a closed
+player, and **Set up everything** walks all rows and ends in a single restart.
+Windows and Linux: no TCC, no signing identity, the rows read "not required"
+as before.
 
 ## Audit verdict summary
 

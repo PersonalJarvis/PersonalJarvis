@@ -10,6 +10,7 @@ import { BrandedSelect } from "@/components/ui/select";
 import type { SocietyAgent } from "../data";
 import { useBrowserInstallStatus } from "../cardData";
 import { useBrowserView } from "./useBrowserView";
+import { BrowserPointer } from "./BrowserPointer";
 import "./agentCard.css";
 
 export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
@@ -21,9 +22,9 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
   const [address, setAddress] = useState("");
   useEffect(() => setAddress(state.url), [state.url]);
   useEffect(() => { setExpanded(false); }, [agent.agentId]);
-  const status = !install.data?.installed ? t("society.card.browser_setting_up")
-    : !state.connected || !state.ready || state.controlPending ? t("society.card.browser_connecting")
-    : state.manual ? t("society.browser_live.manual") : t("society.browser_live.live");
+  const status = state.connected && state.ready
+    ? t(state.manual ? "society.browser_live.manual" : "society.browser_live.live")
+    : t(install.data && !install.data.installed ? "society.card.browser_setting_up" : "society.card.browser_connecting");
   const buttonClass = "rounded px-2 py-1 text-xs hover:bg-secondary disabled:opacity-40";
   const enterUrl = () => {
     const url = /^https?:\/\//i.test(address) ? address : "https://" + address;
@@ -35,7 +36,6 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
     )}>
       <div className="mb-1 flex items-center justify-between gap-1 text-[10px] text-muted-foreground">
         <div className="min-w-0">
-          <div className="font-medium text-foreground">Personal Jarvis</div>
           <div className="truncate">{agent.name} · {status}</div>
         </div>
         <button className={buttonClass} onClick={() => setExpanded((v) => !v)}
@@ -43,7 +43,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
           {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
         </button>
       </div>
-      {expanded && (
+      {expanded && state.ready && !state.fullWindow && (
         <div className="mb-2 flex items-center gap-1">
           <button disabled={!state.manual} className={buttonClass} onClick={() => control("back")} aria-label={t("society.browser_live.back")}><ArrowLeft size={16} /></button>
           <button disabled={!state.manual} className={buttonClass} onClick={() => control("forward")} aria-label={t("society.browser_live.forward")}><ArrowRight size={16} /></button>
@@ -65,22 +65,23 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
           className="block max-h-full max-w-full object-contain focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
           style={{ aspectRatio: "16/10", width: "100%", height: "100%", objectFit: "contain" }}
           onClick={(e) => {
-            if (!state.manual) return;
+            if (!state.ready) return;
             e.currentTarget.focus();
             const box = e.currentTarget.getBoundingClientRect();
-            const scale = Math.min(box.width / 1280, box.height / 800);
-            const x = (e.clientX - box.left - (box.width - 1280 * scale) / 2) / scale;
-            const y = (e.clientY - box.top - (box.height - 800 * scale) / 2) / scale;
-            if (x >= 0 && y >= 0 && x <= 1280 && y <= 800) control("click", { x, y });
+            const { width, height } = e.currentTarget;
+            const scale = Math.min(box.width / width, box.height / height);
+            const x = (e.clientX - box.left - (box.width - width * scale) / 2) / scale;
+            const y = (e.clientY - box.top - (box.height - height * scale) / 2) / scale;
+            if (x >= 0 && y >= 0 && x <= width && y <= height) control("click", { x, y });
           }}
-          onWheel={(e) => { if (state.manual) control("scroll", { dx: e.deltaX, dy: e.deltaY }); }}
+          onWheel={(e) => { if (state.ready && document.activeElement === e.currentTarget) control("scroll", { dx: e.deltaX, dy: e.deltaY }); }}
           onPaste={(e) => {
-            if (!state.manual) return;
+            if (!state.ready || document.activeElement !== e.currentTarget) return;
             e.preventDefault();
             control("text", { text: e.clipboardData.getData("text/plain") });
           }}
           onKeyDown={(e) => {
-            if (!state.manual) return;
+            if (!state.ready || (!state.manual && document.activeElement !== e.currentTarget)) return;
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") return;
             e.preventDefault();
             e.stopPropagation();
@@ -91,6 +92,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
               control("key", { key: [...modifiers, e.key].join("+") });
             }
           }} />
+        <BrowserPointer pointer={state.ready && state.connected && !state.manual ? state.pointer : undefined} />
         {!state.ready && <div className="absolute inset-0 grid place-items-center bg-muted p-3 text-center text-xs text-muted-foreground">
           {install.data?.detail || status}
           {install.data?.running && <span>{install.data.percent}%</span>}

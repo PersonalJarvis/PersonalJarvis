@@ -50,15 +50,17 @@ export function AgentRoutinesList({ agentId, sampleRoutines, variant = "rail", c
       {rows.map((routine) => {
         const active = ["scheduled", "active", "enabled", ""].includes(routine.state);
         const trigger = routine.trigger as { type?: string; source?: { kind: string } } | null;
-        return <li key={routine.id} className="flex items-start gap-2 rounded-md px-0.5 py-1.5 hover:bg-secondary/60">
+        return <li key={routine.id} className="rounded-md">
+          <button type="button" aria-label={displayRoutineTitle(routine.title)} className="flex w-full cursor-pointer select-none items-start gap-2 rounded-md px-0.5 py-1.5 text-left hover:bg-secondary/60 focus-visible:outline focus-visible:outline-ring" onClick={() => setSelected(routine.id)}>
           <Clock size={16} aria-hidden className={cn("mt-0.5 shrink-0", active ? "text-success" : "text-muted-foreground")} />
-          <div className="min-w-0 flex-1">
-            <button type="button" className="block w-full truncate rounded text-left text-[13px] font-medium text-foreground focus-visible:outline focus-visible:outline-ring" onClick={() => setSelected(routine.id)}>{displayRoutineTitle(routine.title)}</button>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[13px] font-medium text-foreground">{displayRoutineTitle(routine.title)}</span>
             <span className="block break-words text-[11px] leading-snug text-muted-foreground">{routineScheduleLine(routine, t)}{routine.state === "paused" ? ` · ${t("tasks_view.state.paused")}` : ""}</span>
             {routine.dueMs && active ? <span className="block text-[11px] text-muted-foreground">{t("automations_view.next_run")}: {new Date(routine.dueMs).toLocaleString(undefined, { timeZoneName: "short" })}</span> : null}
-            {trigger?.type === "webhook" && <WebhookConnection key={routine.id} taskId={routine.id} />}
-            {trigger?.type === "source" && trigger.source && <SourceControls key={routine.id} taskId={routine.id} source={trigger.source} />}
-          </div>
+          </span>
+          </button>
+          {trigger?.type === "webhook" && <div className="pl-6"><WebhookConnection key={routine.id} taskId={routine.id} /></div>}
+          {trigger?.type === "source" && trigger.source && <div className="pl-6"><SourceControls key={routine.id} taskId={routine.id} source={trigger.source} /></div>}
         </li>;
       })}
     </ul>

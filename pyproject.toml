@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "2.1.0"
+version = "2.2.1"
 description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
@@ -238,7 +238,7 @@ dependencies = [
     # IDE's drop analysis: pypdf is the one non-stdlib parser those need, and
     # it is a pure-Python universal wheel. Lazy-imported, with honest
     # per-file degradation when absent.
-    "pypdf>=6.15",
+    "pypdf>=6.16.1",
     # Phase F1 — Telegram channel bot via long-polling (ChannelAdapter).
     "python-telegram-bot>=22,<23",
 ]
@@ -599,6 +599,7 @@ discord = "jarvis.channels.discord:DiscordChannel"
 # through the stable classic-pipeline composition (voice.profile =
 # "codex-subscription-voice"), which uses the audited app-server TEXT protocol.
 openai-realtime = "jarvis.plugins.realtime.openai_realtime:OpenAIRealtimeProvider"
+openai-live = "jarvis.plugins.realtime.openai_live:OpenAILiveProvider"
 gemini-live = "jarvis.plugins.realtime.gemini_live:GeminiLiveProvider"
 # Same duplex socket on Google Cloud Vertex AI. A DISTINCT credential family:
 # a Cloud project and an AI Studio account fail independently, so crossing
@@ -610,6 +611,7 @@ vertex-live = "jarvis.plugins.realtime.gemini_live:VertexLiveProvider"
 local-realtime = "jarvis.plugins.realtime.openai_realtime:LocalRealtimeProvider"
 
 [project.entry-points."jarvis.tool"]
+live-screen-snapshot = "jarvis.plugins.tool.live_screen:LiveScreenTool"
 open-app = "jarvis.plugins.tool.open_app:OpenAppTool"
 type-text = "jarvis.plugins.tool.type_text:TypeTextTool"
 hotkey = "jarvis.plugins.tool.hotkey:HotkeyTool"

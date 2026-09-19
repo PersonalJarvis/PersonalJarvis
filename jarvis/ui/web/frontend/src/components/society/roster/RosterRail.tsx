@@ -1,11 +1,15 @@
 /**
- * The fixed agents rail beside the stage (MASTERPLAN §4.1): one row per
- * agent — swatch, name, title, state dot — a search field and the "+" that
- * opens the creator. One click on a row opens the model card (the row-click
- * doctrine: open and activate in one click, never a double-click split).
+ * The fixed agents rail beside the stage (MASTERPLAN §4.1): the lead as a
+ * compact centered master above the team — swatch and name in a small box —
+ * then a search field and one row per remaining agent, plus the "+" that
+ * opens the creator. One click on the master or a row opens the model card
+ * (the row-click doctrine: open and activate in one click, never a
+ * double-click split).
  *
- * The rail is app chrome: Ink & Paper tokens, both modes. The world beside
- * it carries its own branding; nothing here leaks into the viewport.
+ * The layout follows the Chef Bot reference: the master is centered and
+ * larger, the team stays a compact list below the search. The rail is app
+ * chrome: Ink & Paper tokens, both modes. The world beside it carries its
+ * own branding; nothing here leaks into the viewport.
  *
  * It sits on either edge. Beside the island it is the RIGHT rail with its own
  * fixed width; inside the agent card it is the LEFT eighth and takes its width
@@ -57,15 +61,22 @@ export function RosterRail({
   const t = useT();
   const [query, setQuery] = useState("");
 
-  const rows = useMemo(() => {
+  const lead = useMemo(() => agents.find((a) => a.tier === "lead") ?? null, [agents]);
+
+  const { leadVisible, rows } = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const list = q
+    const filtered = q
       ? agents.filter((a) => `${a.name} ${a.title}`.toLowerCase().includes(q))
       : agents;
-    // Lead first, then orchestrators, then specialists; stable within a tier.
+    const masterVisible = lead ? filtered.some((a) => a.agentId === lead.agentId) : false;
+    // Orchestrators, then specialists; stable within a tier. The lead lives
+    // in its own centered hero above and never repeats in the list.
     const rank = { lead: 0, orchestrator: 1, specialist: 2 } as const;
-    return [...list].sort((a, b) => rank[a.tier] - rank[b.tier]);
-  }, [agents, query]);
+    const rest = filtered
+      .filter((a) => a.agentId !== lead?.agentId)
+      .sort((a, b) => rank[a.tier] - rank[b.tier]);
+    return { leadVisible: masterVisible, rows: rest };
+  }, [agents, lead, query]);
 
   return (
     <aside
@@ -113,11 +124,36 @@ export function RosterRail({
         />
       </label>
       <ScrollArea className="mt-2 min-h-0 flex-1">
+        {lead && leadVisible ? (
+          <div className="flex justify-center px-2 pb-2">
+            <button
+              type="button"
+              onClick={() => onOpen(lead.agentId)}
+              aria-current={lead.agentId === activeAgentId ? "true" : undefined}
+              data-testid="society-lead-hero"
+              className={cn(
+                "flex flex-col items-center gap-1.5 rounded-xl bg-secondary/50 px-5 py-3 text-center transition-colors hover:bg-secondary/80",
+                lead.agentId === activeAgentId && "bg-secondary",
+              )}
+            >
+              <AgentSwatch agent={lead} size={56} />
+              <span className="flex max-w-full items-center justify-center gap-1.5">
+                <span className="truncate text-sm font-medium text-foreground">{lead.name}</span>
+                <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-xs">
+                  {t("society.tier.lead")}
+                </Badge>
+              </span>
+            </button>
+          </div>
+        ) : null}
+        {leadVisible ? (
+          <div className="mx-3 mb-1 border-t border-border/60" aria-hidden />
+        ) : null}
         <ul className="flex flex-col gap-0.5 px-2 pb-3">
-          {loading && rows.length === 0 ? (
+          {loading && !leadVisible && rows.length === 0 ? (
             <li className="px-2 py-3 text-xs text-muted-foreground">{t("society.roster.loading")}</li>
           ) : null}
-          {!loading && rows.length === 0 ? (
+          {!loading && !leadVisible && rows.length === 0 ? (
             <li className="px-2 py-3 text-xs text-muted-foreground">{t("society.roster.empty")}</li>
           ) : null}
           {rows.map((agent) => (

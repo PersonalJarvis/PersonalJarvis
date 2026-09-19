@@ -130,6 +130,32 @@ describe("PluginsView live badge", () => {
   });
 });
 
+describe("PluginsView window catalog states connection in connection words", () => {
+  it("says Connect/Connected, never Add/Added, so install and auth cannot mix", async () => {
+    installCatalogFetchMock();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <PluginsView inDialog />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByText("GitHub")).toBeDefined());
+    expect(screen.getByText("Vercel")).toBeDefined();
+    // Untouched card offers a connection, connected card names it. (The
+    // window catalog buttons are labelled Connect/Disconnect.)
+    expect(screen.getByRole("button", { name: "Connect" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Disconnect" })).toBeDefined();
+    expect(screen.getByText("Connect")).toBeDefined();
+    expect(screen.getByText("Connected")).toBeDefined();
+    // No install wording on connection buttons: "Installed" already names the
+    // tab and the community badge, and "Added" read as done-before-authed.
+    expect(screen.queryByText("Added")).toBeNull();
+  });
+});
+
 // Regression: `/connect/start` takes ~0.6s with no other feedback, so a user
 // clicked the "+" several times and EACH click launched its own OAuth flow — a
 // burst of browser tabs + multiple DCR client registrations. The button must
@@ -361,7 +387,56 @@ describe("PkceConnectDialog own-client + production hint", () => {
       (screen.getByRole("button", { name: /^continue$/i }) as HTMLButtonElement)
         .disabled,
     ).toBe(true);
-    expect(screen.queryByLabelText(/client id/i)).toBeNull();
+    // Publisher-pending setup is expanded up front: the client form is the
+    // way to connect today, not a hidden expert override.
+    expect(screen.getByLabelText(/client id/i)).toBeDefined();
+  });
+
+  it("guides a publisher-pending provider through console, redirect URI and client", async () => {
+    const slack = {
+      ...gmail,
+      id: "slack",
+      name: "Slack",
+      oauthClientFamily: "slack",
+      oauthClientConfigured: false,
+      browserReady: false,
+      authConfig: {
+        mode: "oauth_pkce_loopback" as const,
+        callback_port: 3118,
+        callback_path: "/oauth/callback",
+      },
+    } as unknown as Parameters<typeof PkceConnectDialog>[0]["plugin"];
+    const calls: { url: string; body: string }[] = [];
+    (globalThis as unknown as { fetch: typeof fetch }).fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      calls.push({ url: String(input), body: String(init?.body ?? "") });
+      return { ok: true, status: 200, json: async () => ({ opened: true }) } as Response;
+    }) as unknown as typeof fetch;
+    render(
+      <PkceConnectDialog plugin={slack} onClose={() => {}} onProceed={() => {}} />,
+    );
+
+    // Step 1 opens the provider app console in the browser.
+    fireEvent.click(
+      screen.getByRole("button", { name: /open the slack app console/i }),
+    );
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) =>
+            c.url === "/api/settings/open-external" &&
+            c.body.includes("https://api.slack.com/apps"),
+        ),
+      ).toBe(true),
+    );
+    // The exact redirect URI to register, and the client field, are visible
+    // without opening any collapsed section first.
+    expect(
+      screen.getByText("http://127.0.0.1:3118/oauth/callback"),
+    ).toBeDefined();
+    expect(screen.getByLabelText(/client id/i)).toBeDefined();
   });
 });
 
@@ -419,7 +494,7 @@ describe("PluginsView opens the PKCE pre-connect dialog", () => {
 });
 
 describe("PluginsView publishes OAuth success immediately", () => {
-  it("shows Gmail as connected while the catalog revalidation is still pending", async () => {
+  it("opens a provisioned browser login at once and shows Gmail as connected", async () => {
     let catalogReads = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -488,14 +563,93 @@ describe("PluginsView publishes OAuth success immediately", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Connect plugin" })).toBeDefined(),
     );
+    // A provisioned browser flow opens the provider at once — no intermediate
+    // setup form. (Unprovisioned flows still show the pre-connect dialog.)
     fireEvent.click(screen.getByRole("button", { name: "Connect plugin" }));
-    fireEvent.click(await screen.findByRole("button", { name: /^continue$/i }));
 
     await screen.findByText("Gmail connected");
     expect(
       screen.getByRole("button", { name: "Disconnect plugin" }),
     ).toBeDefined();
     expect(catalogReads).toBeGreaterThan(1);
+  });
+
+  it("names the callback address while waiting so a silent provider is diagnosable", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/marketplace/plugins") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            version: 1,
+            schema_version: "t",
+            total: 1,
+            connected: 0,
+            plugins: [
+              {
+                id: "slack",
+                display_name: "Slack",
+                description: "Chat",
+                category: "Communication",
+                logo_slug: "slack",
+                auth: { mode: "oauth_pkce_loopback" },
+                status: "not_connected",
+                live_callable: false,
+                oauth_client_configured: true,
+              },
+            ],
+          }),
+        } as Response;
+      }
+      if (url.endsWith("/connect/start")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            flow_id: "slack-flow",
+            plugin_id: "slack",
+            kind: "browser_redirect",
+            open_url: "https://slack.com/oauth/v2/authorize",
+            redirect_uri: "http://127.0.0.1:3118/oauth/callback",
+            expires_at_ms: null,
+          }),
+        } as Response;
+      }
+      if (url === "/api/settings/open-external") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ opened: true }),
+        } as Response;
+      }
+      if (url.endsWith("/connect/poll/slack-flow")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ state: "pending", flow_id: "slack-flow" }),
+        } as Response;
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+
+    renderPluginsView();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Connect plugin" })).toBeDefined(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Connect plugin" }));
+
+    // The pending dialog names the exact address the provider must call
+    // back — previously it spun silently when the provider never did.
+    await screen.findByText(/to call back at/i);
+    expect(
+      screen.getByText("http://127.0.0.1:3118/oauth/callback"),
+    ).toBeDefined();
+    expect(
+      screen.getByRole("button", { name: /open slack again/i }),
+    ).toBeDefined();
   });
 });
 

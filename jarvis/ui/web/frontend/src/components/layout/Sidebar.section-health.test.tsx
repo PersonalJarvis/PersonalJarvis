@@ -65,13 +65,16 @@ afterEach(() => {
 });
 
 describe("Sidebar — API-Keys alert dot", () => {
-  it("shows a red alert dot on API Keys when a section reports error", () => {
+  it("shows a red attention dot on the profile button when a section reports error", () => {
     mockHealth = {
       brain: { status: "error", reason: "rate_limited", detail: "OpenRouter: rate limited", subject_id: "openrouter" },
       tts: { status: "ok", reason: "ok", detail: "", subject_id: "gemini-flash-tts" },
     };
     render(<Sidebar />);
-    const dot = screen.getByTestId("nav-alert-apikeys");
+    // The profile button IS the Settings hub's entry point now, so its dot is
+    // the app-wide signal; the per-row dot lives on the hub's own nav (see
+    // SettingsHubView.test).
+    const dot = screen.getByTestId("sidebar-profile-attention");
     expect(dot).toBeTruthy();
     expect(dot.className).toMatch(/bg-destructive/);
   });

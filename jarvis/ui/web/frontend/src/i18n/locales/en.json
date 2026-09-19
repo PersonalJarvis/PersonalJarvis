@@ -1,4 +1,14 @@
 {
+  "live": {
+    "open_browser": "Open voice in your browser",
+    "loading": "Loading voice setup…", "description": "Natural conversation, your chosen thinking model, and Jarvis tools — one OpenAI key.",
+    "key_required": "Connect your OpenAI key below to enable GPT-Live.", "voice_model": "Voice model", "voice": "Voice", "thinking_model": "Thinking model",
+    "choose_model": "Choose a model", "reasoning": "Reasoning effort", "model_default": "Model default", "web_search": "Web search",
+    "prompts": "Customize instructions", "conversation_prompt": "Conversation style", "backend_prompt": "Thinking and tool instructions",
+    "billing": "Voice duration and thinking-model usage are billed separately. Computer control uses this same thinking model. Recordings are not stored by OpenAI.",
+    "save": "Save and use GPT-Live", "saved": "Saved. Your selection applies to the next call; the previous configuration was backed up.",
+    "use_for_agents": "Use this key and model for agents and text chat", "agent_saved": "Agents and text chat now use this OpenAI model."
+  },
   "input_isolation": {
     "title": "Dictation and typing tools can't reach this window",
     "impact": "This app is running with administrator rights, so Windows blocks other programs from typing into it. Dictation apps, text expanders, clipboard tools, and password-manager auto-type will seem to do nothing here, while still working in every other app.",
@@ -479,6 +489,16 @@
     "indicator_label": "Voice state"
   },
   "sidebar": {
+    "extensions_label": "Plugins / Skills / MCP",
+    "pinned": "Pinned",
+    "recent": "Recent",
+    "pin_chat": "Pin chat",
+    "unpin_chat": "Unpin chat",
+
+    "jarvis_tools": "Jarvis Tools",
+    "scheduled": "Scheduled",
+    "more": "More",
+
     "instance_dev_hint": "Dev instance — a second, freely restartable copy of the app with its own data, ports and icon. The regular app keeps running beside it.",
     "surface_voice": "Voice",
     "surface_chat": "Chat",
@@ -531,7 +551,7 @@
     "realtime_transport_socket_unreachable": "The subscription transport channel could not be reached. Restart the app, then try again."
   },
   "provider_billing": {
-    "api": "API, billed per token",
+    "api": "API, usage-based billing",
     "subscription": "Subscription login",
     "subscription_or_api": "Subscription login or API key",
     "local": "Local, no key needed"
@@ -1963,7 +1983,7 @@
     "mode_active_badge": "Active",
     "mode_recommended": "Recommended",
     "voice_engine_label": "Voice engine",
-    "voice_engine_desc": "How {name} listens and talks — the classic pipeline, or a single realtime model.",
+    "voice_engine_desc": "How {name} listens and talks — live conversation with tools, or local speech.",
     "mode_needs_credentials": "Connect or configure a Realtime provider below to switch.",
     "mode_desc_pipeline": "Three steps: speech-to-text, the Brain thinks, text-to-speech.",
     "mode_desc_realtime": "One model listens and answers in the same live audio stream.",
@@ -2026,7 +2046,7 @@
     "guide_computer_use_title": "Which provider should power the Tool Model?",
     "guide_computer_use_body": "The Tool Model handles every action Jarvis takes for you — including Computer-Use, which reads screenshots of your screen, so it needs a model that understands images; the picker hides text-only models. If unsure, keep your main Brain provider and its default model.",
     "reco_title": "Personal recommendation",
-    "reco_realtime_pick": "OpenAI Realtime",
+    "reco_realtime_pick": "OpenAI GPT-Live",
     "reco_realtime_why": "Gemini Live is fine too, either works.",
     "reco_computer_use_pick": "Gemini 3.5 Flash",
     "reco_computer_use_why": "the snappiest tool latency.",
@@ -2220,6 +2240,10 @@
         "title": "Input control",
         "description": "Required for Computer-Use to send mouse and keyboard events."
       },
+      "automation": {
+        "title": "Automation (Music & Spotify)",
+        "description": "Lets Jarvis turn Music and Spotify down while you dictate and back up afterwards. Asked once per player — a closed player is opened briefly in the background for the dialog."
+      },
       "credential_store": {
         "title": "Keychain (API keys)",
         "description": "Stores your API keys encrypted in the macOS Keychain instead of a plain file — that is the Keychain prompt you see when the app starts. Your keys stay on your Mac and are never sent anywhere."
@@ -2237,12 +2261,28 @@
       "computer_use": "Computer-Use",
       "global_hotkeys": "Global shortcuts",
       "window_control": "Window control",
+      "audio_ducking": "Music ducking while dictating",
       "api_keys": "Secure API-key storage"
     },
     "restart_deferred": "Newly granted access turns on with the automatic restart at the end of setup - nothing to do now.",
+    "setup_all": "Set up everything",
+    "setup_all_hint": "One click walks you through every remaining permission and applies them at the end.",
+    "setup_running": "Step {0} of {1}: {2}",
+    "setup_wait_prompt": "Answer the macOS dialog — this continues on its own.",
+    "setup_wait_settings": "Turn on Personal Jarvis in the System Settings pane that just opened, then come back — this continues on its own.",
+    "setup_cancel": "Stop",
+    "setup_restarting": "All set — Personal Jarvis restarts once to apply the new access.",
+    "setup_timeout": "Setup paused: a permission was not granted in time. Use “Set up everything” again whenever you like.",
     "ask_again": "Ask again",
     "stale_grant_hint": "macOS will not ask for this access again. If System Settings already shows it as enabled, that record belongs to an older version of the app — tap “Ask again” and allow access once more.",
     "identity_reset": "Since the app was last rebuilt, macOS treats Personal Jarvis as a new app and discarded every access you had granted. Please allow them once more — they will stick from then on."
+  },
+  "settings_hub": {
+    "subtitle": "Everything about you, your keys and this app — in one place.",
+    "search_placeholder": "Search settings...",
+    "group_general": "General",
+    "group_system": "System",
+    "group_activity": "Activity"
   },
   "settings_view": {
     "silence_window": {

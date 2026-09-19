@@ -156,6 +156,26 @@ def test_slash_query_ranks_prefix_before_substring_before_hint(account: Path, fo
     assert [i["value"] for i in items] == ["commit", "autocommit", "release"]
 
 
+def test_single_letter_query_only_matches_prefix():
+    """@x lists X, not every row with an x in its name or description."""
+    rows = [
+        typeahead.Suggestion(
+            value="x", label="X (Twitter)", hint="Read posts", kind="capability", group="plugins"
+        ),
+        typeahead.Suggestion(value="codex", label="Codex", hint="", kind="agent", group="agents"),
+        typeahead.Suggestion(
+            value="Nala", label="Nala", hint="X-Marketing Lead", kind="agent", group="agents"
+        ),
+        typeahead.Suggestion(
+            value="dropbox", label="Dropbox", hint="Files", kind="capability", group="plugins"
+        ),
+    ]
+    assert [r.value for r in typeahead._filter_definitions(rows, "x")] == ["x"]
+    # Longer queries still search substrings and descriptions.
+    assert [r.value for r in typeahead._filter_definitions(rows, "code")] == ["codex"]
+    assert [r.value for r in typeahead._filter_definitions(rows, "marketing")] == ["Nala"]
+
+
 # ------------------------------------------------------------- agents
 
 

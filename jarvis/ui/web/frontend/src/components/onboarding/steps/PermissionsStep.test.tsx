@@ -8,6 +8,7 @@ const IDS = [
   "accessibility",
   "input_monitoring",
   "event_posting",
+  "automation",
   "credential_store",
 ] as const;
 

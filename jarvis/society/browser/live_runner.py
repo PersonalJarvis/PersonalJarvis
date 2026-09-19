@@ -35,7 +35,7 @@ def emit(kind: str, **values: Any) -> None:
 
 async def probe() -> None:
     from PIL import Image
-    from playwright.async_api import async_playwright
+    from playwright.async_api import async_playwright  # type: ignore[import-not-found]
 
     __import__("browser_use")  # The health check includes the actual runtime import.
     async with async_playwright() as pw:
@@ -97,6 +97,12 @@ class Worker:
         self.step_idle = asyncio.Event()
         self.step_idle.set()
         self.takeover_generation = 0
+        self.native: Any = None
+        self.native_frame_at = 0.0
+        self.native_replay = False
+        self.branding: asyncio.Task | None = None
+        self.pointer: Any = None
+        self.visual_action = False
 
     async def rpc(self, kind: str, payload: dict) -> dict:
         key = uuid.uuid4().hex
@@ -109,6 +115,14 @@ class Worker:
             self.pending.pop(key, None)
 
     async def start(self, args: dict) -> dict:
+        from native_window import NativeWindow, available  # type: ignore[import-not-found]
+
+        native_enabled = available()
+        if args.get("window_view") and sys.platform == "win32" and not native_enabled:
+            raise RuntimeError(
+                "Chrome needs an unlocked Windows desktop and the managed capture runtime"
+            )
+
         from browser_use import Browser  # type: ignore[import-not-found]
         from playwright.async_api import async_playwright
 
@@ -126,7 +140,7 @@ class Worker:
             self.context = await self.playwright.chromium.launch_persistent_context(
                 str(profile),
                 executable_path=args["executable"],
-                headless=True,
+                headless=not native_enabled,
                 viewport={"width": 1280, "height": 800},
                 accept_downloads=True,
                 service_workers="block",
@@ -185,11 +199,40 @@ class Worker:
             allowed_domains=args.get("allowed_domains") or None,
         )
         await self.browser.start()
+        from pointer import PointerTracker  # type: ignore[import-not-found]
+
+        self.pointer = PointerTracker(
+            self.generation,
+            emit,
+            lambda: self.visual_action and not self.manual,
+            lambda x, y: self.native.viewport_point(x, y) if self.native else (x, y, 1280, 800),
+        )
+        self.browser.cdp_client.send_raw = self.pointer.wrap(self.browser.cdp_client.send_raw)
         self.context.on("page", self.page_opened)
         for page in self.context.pages:
             self.page_opened(page)
         self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
-        if self.owns_context and self.page.url == "about:blank":
+        if self.owns_context and native_enabled:
+            connection = await self.context.browser.new_browser_cdp_session()
+            try:
+                processes = await connection.send("SystemInfo.getProcessInfo")
+                pid = next(p["id"] for p in processes["processInfo"] if p["type"] == "browser")
+                # Native extension loading belongs to this isolated worker's
+                # main thread; NumPy/OpenCV DLL loading can stall in a pool thread.
+                self.native = NativeWindow(int(pid))
+                if not await asyncio.to_thread(self.native.ready.wait, 10):
+                    raise RuntimeError("Chrome did not produce a window image")
+                self.native.frame()
+                await asyncio.to_thread(self.native.park)
+                if args.get("icon_path"):
+                    self.branding = asyncio.create_task(
+                        asyncio.to_thread(self.native.brand, str(args["icon_path"]))
+                    )
+            finally:
+                await connection.detach()
+            if self.page.url == "about:blank":
+                await self.page.goto("chrome://newtab/", wait_until="commit", timeout=5000)
+        elif self.owns_context and self.page.url == "about:blank":
             await self.page.set_content(
                 "<html><head><title>Personal Jarvis — Agent Browser</title></head>"
                 "<body style='background:#fafafa;color:#303030;font:24px system-ui;"
@@ -200,7 +243,11 @@ class Worker:
             )
         self.state_task = asyncio.create_task(self.watch_state())
         self.stream = asyncio.create_task(self.watch())
-        return {"generation": self.generation, "protocol": PROTOCOL_VERSION}
+        return {
+            "generation": self.generation,
+            "protocol": PROTOCOL_VERSION,
+            "full_window": bool(self.native),
+        }
 
     def page_opened(self, page: Any) -> None:
         page.on("dialog", self.on_dialog)
@@ -221,6 +268,22 @@ class Worker:
             finally:
                 await session.detach()
         focused = self.browser.get_focused_target()
+        if self.native and self.manual:
+            window_title = self.native.title()
+            candidates = []
+            for page in self.tabs.values():
+                title = await page.title()
+                if title and (window_title == title or window_title.startswith(title + " - ")):
+                    candidates.append(page)
+            # Chrome's internal new-tab content can report visible even when
+            # another tab is selected. Its native caption disambiguates that.
+            if len(candidates) == 1:
+                self.page = candidates[0]
+            else:
+                for page in candidates:
+                    if await page.evaluate("document.visibilityState === 'visible'"):
+                        self.page = page
+                        break
         if not self.manual and focused and focused.target_id in self.tabs:
             self.page = self.tabs[focused.target_id]
         if self.page is None or self.page.is_closed():
@@ -279,7 +342,9 @@ class Worker:
                 if self.viewers:
                     page = await self.focused()
                     target = next((t for t, p in self.tabs.items() if p is page), "")
-                    if page and (target != self.target or self.cdp is None):
+                    if self.native:
+                        self.target = target
+                    elif page and (target != self.target or self.cdp is None):
                         await self.switch_stream(page, target)
                     emit(
                         "state",
@@ -289,6 +354,7 @@ class Worker:
                         url=page.url if page else "",
                         target=target,
                         tabs=[{"id": t, "url": p.url} for t, p in self.tabs.items()],
+                        full_window=bool(self.native),
                     )
                 elif self.cdp:
                     await self.cdp.send("Page.stopScreencast")
@@ -299,6 +365,10 @@ class Worker:
                 raise
             except Exception as exc:
                 emit("warning", error=f"Browser stream: {type(exc).__name__}")
+                if self.native and self.native.failed:
+                    emit("fatal", error="The Chrome window closed or its capture stopped")
+                    self.closed = True
+                    return
                 self.target = ""
                 await asyncio.sleep(1)
             await asyncio.sleep(0.5)
@@ -307,6 +377,18 @@ class Worker:
         while not self.closed:
             try:
                 if self.viewers:
+                    if self.native:
+                        native_frame = self.native.frame()
+                        if native_frame and (
+                            self.native_replay or native_frame["timestamp"] != self.native_frame_at
+                        ):
+                            self.native_frame_at = native_frame["timestamp"]
+                            self.native_replay = False
+                            self.latest = {
+                                "data": base64.b64encode(native_frame.pop("bytes")).decode(),
+                                **native_frame,
+                                "target": self.target,
+                            }
                     if self.capture_fallback and self.page and not self.page.is_closed():
                         captured_at = time.time()
                         blob = await self.page.screenshot(type="jpeg", quality=65)
@@ -321,13 +403,23 @@ class Worker:
                         frame = self.latest
                         self.latest = None
                         self.sequence += 1
-                        emit("frame", generation=self.generation, sequence=self.sequence, **frame)
+                        emit(
+                            "frame",
+                            generation=self.generation,
+                            sequence=self.sequence,
+                            full_window=bool(self.native),
+                            **frame,
+                        )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 emit("warning", error=f"Browser stream: {type(exc).__name__}")
                 self.target = ""
                 await asyncio.sleep(1)
+            if self.native and self.native.failed:
+                emit("fatal", error="The Chrome window closed or its capture stopped")
+                self.closed = True
+                return
             await asyncio.sleep(1 / 15)
 
     async def run(self, args: dict) -> dict:
@@ -385,11 +477,14 @@ class Worker:
                 )
                 if not answer.get("ok"):
                     raise asyncio.CancelledError(answer.get("error", "Browser action denied"))
+                worker.visual_action = True
                 try:
                     result = await super().act(action, browser_session, *pos, **kw)
                 except Exception as exc:
                     # The result is emitted below and becomes the executor's visible failure.
                     result = ActionResult(error=f"{type(exc).__name__}: browser action failed")
+                finally:
+                    worker.visual_action = False
                 emit("action_result", id=answer["permit"], result=result.model_dump(mode="json"))
                 return result
 
@@ -440,6 +535,8 @@ class Worker:
             }
         finally:
             self.agent = None
+            if self.pointer:
+                self.pointer.clear()
             self.step_idle.set()
 
     async def command(self, op: str, args: dict) -> dict:
@@ -449,7 +546,9 @@ class Worker:
             )
         if op == "subscribe":
             self.viewers = bool(args.get("enabled"))
-            if self.viewers and self.page and not self.page.is_closed():
+            if self.native:
+                self.native_replay = self.viewers
+            elif self.viewers and self.page and not self.page.is_closed():
                 # A second viewer may join an unchanged page whose screencast
                 # has nothing new to emit. Give it current pixels immediately.
                 captured_at = time.time()
@@ -479,7 +578,18 @@ class Worker:
                 if generation != self.takeover_generation:
                     return {"manual": self.manual}
                 self.manual = True
+                if self.pointer:
+                    self.pointer.clear()
             else:
+                if self.native and self.manual:
+                    from browser_use.browser import events  # type: ignore[import-not-found]
+
+                    await self.focused()
+                    target = next((t for t, p in self.tabs.items() if p is self.page), "")
+                    if target:
+                        await self.browser.event_bus.dispatch(
+                            events.SwitchTabEvent(target_id=target)
+                        )
                 self.manual = False
                 self.agent_gate.set()
             return {"manual": self.manual}
@@ -492,6 +602,15 @@ class Worker:
             return {}
         if not self.manual:
             raise RuntimeError("Take control of the browser before interacting")
+        if self.native and op in {"click", "scroll", "text", "key"}:
+            if op == "key" and args.get("key") == "Control+t":
+                async with self.context.expect_page(timeout=5000) as opened:
+                    await asyncio.to_thread(self.native.input, op, args)
+                self.page = await opened.value
+                await asyncio.to_thread(self.native.input, "key", {"key": "Control+l"})
+            else:
+                await asyncio.to_thread(self.native.input, op, args)
+            return {}
         page = await self.focused()
         if op == "navigate":
             from urllib.parse import urlsplit
@@ -547,6 +666,12 @@ class Worker:
             emit("response", id=key, ok=False, error=f"{type(exc).__name__}: {str(exc)[:1000]}")
 
     async def main(self) -> None:
+        from native_window import available
+
+        if available():
+            # Native DLL initialization must finish before a Windows CRT stdin
+            # reader holds its stream lock in another thread.
+            __import__("windows_capture")
         emit("hello", protocol=PROTOCOL_VERSION)
         tasks: set[asyncio.Task] = set()
         try:
@@ -582,6 +707,10 @@ class Worker:
             for task in monitors:
                 task.cancel()
             await asyncio.gather(*monitors, return_exceptions=True)
+            if self.native:
+                if self.branding:
+                    await self.branding
+                await asyncio.to_thread(self.native.close)
             if self.browser:
                 with contextlib.suppress(Exception):
                     await self.browser.stop()

@@ -115,7 +115,7 @@ def test_subagent_switch_persists_and_applies_to_next_mission(
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda p: "fake-key")
     # Do NOT touch the real jarvis.toml — record the persist call instead.
     calls: list[str] = []
-    monkeypatch.setattr(config_writer, "set_worker_provider", lambda name: calls.append(name))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda name, **kwargs: calls.append(name))
 
     cfg = load_config()
     cfg.brain.primary = "gemini"
@@ -149,7 +149,7 @@ def test_subagent_switch_409_when_no_key(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda p: None)
     persisted: list[str] = []
-    monkeypatch.setattr(config_writer, "set_worker_provider", lambda name: persisted.append(name))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda name, **kwargs: persisted.append(name))
 
     cfg = load_config()
     resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "openai"})
@@ -171,7 +171,7 @@ def test_realtime_only_key_unlocks_same_family_jarvis_agent(
             "realtime-only" if key == "realtime_openai_api_key" else None
         ),
     )
-    monkeypatch.setattr(config_writer, "set_worker_provider", lambda name: None)
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda name, **kwargs: None)
 
     cfg = load_config()
     client = _client(cfg)
@@ -197,7 +197,7 @@ def test_dedicated_jarvis_agent_key_unlocks_provider_without_brain_key(
             "agent-only" if key == "jarvis_agent_openai_api_key" else None
         ),
     )
-    monkeypatch.setattr(config_writer, "set_worker_provider", lambda name: None)
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda name, **kwargs: None)
 
     cfg = load_config()
     client = _client(cfg)
@@ -225,7 +225,7 @@ def test_subagent_switch_updates_status_endpoint(monkeypatch: pytest.MonkeyPatch
     import jarvis.core.config_writer as config_writer
 
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda p: "fake-key")
-    monkeypatch.setattr(config_writer, "set_worker_provider", lambda name: None)
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda name, **kwargs: None)
 
     cfg = load_config()
     cfg.brain.primary = "gemini"
@@ -292,12 +292,12 @@ def test_subagent_switch_accepts_codex_oauth(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(
         cfg_mod,
         "get_provider_secret",
-        lambda provider: "AIza-fake" if provider == "gemini" else None,
+        lambda provider, **kwargs: "AIza-fake" if provider == "gemini" else None,
     )
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
     _patch_codex(monkeypatch, connected=True)
     calls: list[str] = []
-    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: calls.append(n))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n, **kwargs: calls.append(n))
 
     cfg = load_config()
     resp = _client(cfg).post(
@@ -319,7 +319,7 @@ def test_subagent_switch_codex_api_key_only(monkeypatch: pytest.MonkeyPatch) -> 
     )
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
     _patch_codex(monkeypatch, connected=False)
-    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: None)
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n, **kwargs: None)
 
     cfg = load_config()
     resp = _client(cfg).post(
@@ -338,7 +338,7 @@ def test_subagent_switch_chatgpt_alias_normalizes(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
     _patch_codex(monkeypatch, connected=True)
     calls: list[str] = []
-    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: calls.append(n))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n, **kwargs: calls.append(n))
 
     cfg = load_config()
     resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "chatgpt"})
@@ -358,7 +358,7 @@ def test_subagent_switch_409_codex_when_not_connected(
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
     _patch_codex(monkeypatch, connected=False)
     persisted: list[str] = []
-    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: persisted.append(n))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n, **kwargs: persisted.append(n))
 
     cfg = load_config()
     resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "openai-codex"})
@@ -443,7 +443,7 @@ def test_subagent_switch_accepts_claude_max_oauth(monkeypatch: pytest.MonkeyPatc
         lambda: "sk-ant-oat-live",
     )
     calls: list[str] = []
-    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: calls.append(n))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n, **kwargs: calls.append(n))
 
     cfg = load_config()
     resp = _client(cfg).post(
@@ -482,7 +482,10 @@ def test_subagent_switch_accepts_native_claude_subscription(
         ),
     )
     calls: list[str] = []
-    monkeypatch.setattr(config_writer, "set_worker_provider", calls.append)
+    def save_worker(provider, **kwargs):
+        calls.append(provider)
+
+    monkeypatch.setattr(config_writer, "set_worker_provider", save_worker)
 
     cfg = load_config()
     response = _client(cfg).post(
@@ -511,7 +514,7 @@ def test_subagent_switch_409_claude_api_no_key_no_oauth(
         lambda: None,
     )
     persisted: list[str] = []
-    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: persisted.append(n))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n, **kwargs: persisted.append(n))
 
     cfg = load_config()
     resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "claude-api"})
@@ -601,7 +604,7 @@ def test_subagent_switch_accepts_antigravity(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
     _patch_antigravity(monkeypatch, connected=True)
     calls: list[str] = []
-    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: calls.append(n))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n, **kwargs: calls.append(n))
 
     cfg = load_config()
     resp = _client(cfg).post(
@@ -623,7 +626,7 @@ def test_subagent_switch_409_antigravity_when_not_connected(
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
     _patch_antigravity(monkeypatch, connected=False)
     persisted: list[str] = []
-    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: persisted.append(n))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n, **kwargs: persisted.append(n))
 
     cfg = load_config()
     resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "antigravity"})
@@ -646,7 +649,7 @@ def test_antigravity_row_key_set_via_gemini_api_key(
     monkeypatch.setattr(
         cfg_mod,
         "get_jarvis_agent_secret",
-        lambda provider: "AIza-fake" if provider == "gemini" else None,
+        lambda provider, **kwargs: "AIza-fake" if provider == "gemini" else None,
     )
     cfg = load_config()
     row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "antigravity")
@@ -663,7 +666,7 @@ def test_antigravity_row_stays_locked_with_key_but_no_cli(
     monkeypatch.setattr(
         cfg_mod,
         "get_jarvis_agent_secret",
-        lambda provider: "AIza-fake" if provider == "gemini" else None,
+        lambda provider, **kwargs: "AIza-fake" if provider == "gemini" else None,
     )
     cfg = load_config()
     row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "antigravity")
@@ -695,11 +698,11 @@ def test_subagent_switch_accepts_antigravity_via_api_key(
     monkeypatch.setattr(
         cfg_mod,
         "get_jarvis_agent_secret",
-        lambda provider: "AIza-fake" if provider == "gemini" else None,
+        lambda provider, **kwargs: "AIza-fake" if provider == "gemini" else None,
     )
     _patch_antigravity(monkeypatch, connected=False)
     calls: list[str] = []
-    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: calls.append(n))
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda n, **kwargs: calls.append(n))
 
     cfg = load_config()
     resp = _client(cfg).post(
@@ -719,11 +722,14 @@ def test_jarvis_agent_switch_rejects_antigravity_key_without_cli(
     monkeypatch.setattr(
         cfg_mod,
         "get_jarvis_agent_secret",
-        lambda provider: "AIza-fake" if provider == "gemini" else None,
+        lambda provider, **kwargs: "AIza-fake" if provider == "gemini" else None,
     )
     _patch_antigravity(monkeypatch, connected=False, installed=False)
     persisted: list[str] = []
-    monkeypatch.setattr(config_writer, "set_worker_provider", persisted.append)
+    def save_worker(provider, **kwargs):
+        persisted.append(provider)
+
+    monkeypatch.setattr(config_writer, "set_worker_provider", save_worker)
 
     cfg = load_config()
     resp = _client(cfg).post(

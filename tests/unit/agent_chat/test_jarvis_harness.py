@@ -7,6 +7,7 @@ spawned CLI is actually told.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,6 +31,7 @@ class _Descriptor:
     description: str = "a tool"
     input_schema: dict[str, Any] = field(default_factory=lambda: {"type": "object"})
     risk_tier: str = "safe"
+    is_action_tool: bool = False
 
 
 @dataclass
@@ -71,6 +73,60 @@ def test_a_name_mcp_cannot_carry_is_dropped_not_renamed():
     assert [e.name for e in server.offered_tools()] == ["fine-name"]
 
 
+def test_plugin_wire_names_are_stable_portable_and_unambiguous():
+    canonical = "github/get_me"
+    wire = server._wire_name(canonical)
+    assert wire is not None and wire.startswith("github_get_me_")
+    assert server._usable_name(wire) and len(wire) <= 64
+    assert server._wire_name(canonical) == wire
+    assert len(server._wire_name("a" * 128 + "/" + "b" * 128)) <= 64
+    assert server._wire_name("github/not a tool") is None
+    assert server._wire_name("github/get/me") is None
+    assert server._wire_name("github_get_me") != wire
+    assert server._wire_catalog([_Descriptor(canonical), _Descriptor(wire)]) == {}
+
+
+@pytest.mark.asyncio
+async def test_plugin_wire_listing_and_execution_preserve_canonical_gateway_name():
+    import mcp.types as types
+
+    gateway = _Gateway(names=("github/get_me", "spawn-worker"))
+    runtime_refs.set_supervisor_tool_gateway(gateway)
+    instance = server.build_server()
+    listed = await instance.request_handlers[types.ListToolsRequest](types.ListToolsRequest())
+    tools = listed.root.tools
+    assert len(tools) == 1
+    wire = tools[0].name
+    assert "github/get_me" in tools[0].description
+    request = types.CallToolRequest(params=types.CallToolRequestParams(name=wire, arguments={}))
+    await instance.request_handlers[types.CallToolRequest](request)
+    assert gateway.calls[-1][0] == "github/get_me"
+    gateway.names = ()
+    await instance.request_handlers[types.CallToolRequest](request)
+    assert len(gateway.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_plugin_wire_catalog_rechecks_session_scope():
+    class ScopedGateway(_Gateway):
+        permitted = ("github/get_me",)
+
+        async def session_catalog(self, session_id):
+            assert session_id == "scoped-chat"
+            return tuple(_Descriptor(name) for name in self.permitted)
+
+    gateway = ScopedGateway(names=("github/get_me", "other/list"))
+    runtime_refs.set_supervisor_tool_gateway(gateway)
+    token = server.CHAT_SESSION_REF.set("scoped-chat")
+    try:
+        entries = await server._session_wire_catalog()
+        assert [entry.name for entry in entries.values()] == ["github/get_me"]
+        gateway.permitted = ()
+        assert await server._session_wire_catalog() == {}
+    finally:
+        server.CHAT_SESSION_REF.reset(token)
+
+
 def test_a_tool_result_becomes_text_the_model_can_read():
     assert server._render(_Result(success=True, output="plain")) == "plain"
     assert server._render(_Result(success=True, output={"a": 1})) == '{"a": 1}'
@@ -86,6 +142,7 @@ def test_the_config_is_withheld_until_the_app_can_actually_serve_it(monkeypatch)
     assert jarvis_harness.mcp_config_json() is None  # no base URL yet
     assert jarvis_harness.codex_config_args() == []
     assert jarvis_harness.agy_mcp_server_entry() is None
+    assert jarvis_harness.grok_mcp_server_entry() is None
 
     monkeypatch.setattr(
         jarvis_harness, "endpoint", lambda: "http://127.0.0.1:47821/api/control/mcp/"
@@ -94,6 +151,7 @@ def test_the_config_is_withheld_until_the_app_can_actually_serve_it(monkeypatch)
     assert jarvis_harness.mcp_config_json() is None  # no key
     assert jarvis_harness.codex_config_args() == []
     assert jarvis_harness.agy_mcp_server_entry() is None
+    assert jarvis_harness.grok_mcp_server_entry() is None
 
 
 def test_the_key_travels_in_the_environment_never_in_argv(monkeypatch):
@@ -103,10 +161,13 @@ def test_the_key_travels_in_the_environment_never_in_argv(monkeypatch):
 
     config = jarvis_harness.mcp_config_json() or ""
     codex_args = " ".join(jarvis_harness.codex_config_args())
+    grok = jarvis_harness.grok_mcp_server_entry("sess-g") or {}
     assert "super-secret-key" not in config
     assert "super-secret-key" not in codex_args
+    assert "super-secret-key" not in json.dumps(grok)
     assert "${JARVIS_CONTROL_API_KEY}" in config
     assert "bearer_token_env_var" in codex_args
+    assert grok["bearer_token_env_var"] == jarvis_harness.KEY_ENV_VAR
 
     env = jarvis_harness.apply_env({})
     assert env["JARVIS_CONTROL_API_KEY"] == "super-secret-key"
@@ -122,18 +183,25 @@ def test_both_cli_shapes_point_at_the_same_endpoint(monkeypatch):
     assert agy is not None
     assert url in agy["serverUrl"]
     assert agy["headers"][jarvis_harness.HEADER_NAME] == "sess-9"
+    grok = jarvis_harness.grok_mcp_server_entry("sess-9")
+    assert grok is not None
+    assert url in grok["url"]
+    assert grok["headers"][jarvis_harness.HEADER_NAME] == "sess-9"
+
+
+def test_the_preamble_names_the_prefix_the_tools_actually_get():
+    """If the prefix drifts, the model is told to use tools it cannot see."""
+    assert "`mcp__jarvis__<tool>`" in jarvis_harness.SYSTEM_PREAMBLE
+    assert "`jarvis__<tool>`" in jarvis_harness.SYSTEM_PREAMBLE
+    assert jarvis_harness._SERVER_NAME == "jarvis"
 
 
 def test_agy_plugin_is_skipped_when_the_app_is_not_ready(tmp_path, monkeypatch):
     monkeypatch.setattr(jarvis_harness, "control_key", lambda: None)
     assert jarvis_harness.install_agy_jarvis_plugin(tmp_path, "sess") is None
     assert not (tmp_path / ".agents").exists()
-
-
-def test_the_preamble_names_the_prefix_the_tools_actually_get():
-    """If the prefix drifts, the model is told to use tools it cannot see."""
-    assert "mcp__jarvis__" in jarvis_harness.SYSTEM_PREAMBLE
-    assert jarvis_harness._SERVER_NAME == "jarvis"
+    assert jarvis_harness.install_grok_jarvis_mcp(tmp_path, "sess") is None
+    assert not (tmp_path / ".grok").exists()
 
 
 def test_claude_argv_carries_the_tools_and_the_identity(monkeypatch):

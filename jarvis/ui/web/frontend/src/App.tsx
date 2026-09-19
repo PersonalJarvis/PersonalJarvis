@@ -1,3 +1,4 @@
+import { useSocietyShell } from "@/store/societyShell";
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 
 import { isSectionId, useEventStore } from "@/store/events";
@@ -42,6 +43,7 @@ import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
 import { installDictationFocusTracker } from "@/lib/dictationTarget";
 import { SubscriptionRealtimeTransportBroker } from "@/components/voice/SubscriptionRealtimeTransportBroker";
+import { BrowserRealtimeControl } from "@/components/voice/BrowserRealtimeControl";
 import { useDesktopWallpaper } from "@/hooks/useDesktopWallpaper";
 import { installWallpaperSync, useWallpaperStore } from "@/store/wallpaper";
 import { cn } from "@/lib/utils";
@@ -272,6 +274,9 @@ export default function App() {
   );
 
   const activeSection = useEventStore((s) => s.activeSection);
+  const agentsNavOpen = useSocietyShell((s) => s.navigationOpen);
+  const toggleAgentsNav = useSocietyShell((s) => s.toggleNavigation);
+  const hideNavigation = activeSection === "agents" && !agentsNavOpen;
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
 
@@ -305,6 +310,7 @@ export default function App() {
       <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
         <DesktopWallpaper />
         {brokerMounted && <SubscriptionRealtimeTransportBroker />}
+        <BrowserRealtimeControl controlOnly />
         {/* No z-index on the stage column — see the shell below. */}
         <main className="relative flex min-w-0 flex-1 flex-col">
           <SectionStage visualization={visualizationActive}>
@@ -326,12 +332,14 @@ export default function App() {
   return (
     <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
       {brokerMounted && <SubscriptionRealtimeTransportBroker />}
+      <BrowserRealtimeControl controlOnly />
       <DesktopWallpaper />
 
+      {!hideNavigation && <>
       <Sidebar
         width={sidebar.size}
-        collapsed={navCollapsed}
-        onToggleCollapsed={toggleNav}
+        collapsed={activeSection === "agents" ? false : navCollapsed}
+        onToggleCollapsed={activeSection === "agents" ? toggleAgentsNav : toggleNav}
       />
 
       <PaneResizer
@@ -342,6 +350,7 @@ export default function App() {
         active={sidebar.isResizing}
         title="Drag to resize the sidebar — double-click to reset"
       />
+      </>}
 
       {/*
         The stage column carries NO z-index, and must not get one back.

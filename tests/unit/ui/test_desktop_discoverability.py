@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.setup import macos_app_bundle
+from jarvis.setup import macos_app_bundle, macos_search_index
 from jarvis.ui import icon_utils
 
 
@@ -137,6 +137,7 @@ def test_launch_services_registration_forces_the_bundle(
     """``-f`` re-registers a bundle LaunchServices may already have stale."""
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(Path, "is_file", lambda self: True)
+    monkeypatch.setattr(macos_search_index, "announce_to_spotlight", lambda _bundle: True)
     calls: list[list[str]] = []
 
     class _Result:

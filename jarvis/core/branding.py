@@ -43,6 +43,9 @@ MACOS_APP_DIR_NAME = f"{MACOS_APP_NAME}.app"
 MACOS_EXECUTABLE_NAME = PRODUCT_COMPACT_NAME
 MACOS_BUNDLE_ID = f"com.{PRODUCT_SLUG}.desktop"
 MACOS_AUTOSTART_LABEL = f"com.{PRODUCT_SLUG}.autostart"
+# Common name of the per-user self-signed code-signing certificate the
+# installer creates so the app bundle keeps one TCC identity across rebuilds.
+MACOS_SIGNING_IDENTITY_LABEL = f"{MACOS_APP_NAME} Local Signing"
 
 LINUX_APP_NAME = PRODUCT_NAME
 LINUX_DESKTOP_ENTRY_FILE_NAME = f"{PRODUCT_SLUG}.desktop"
@@ -92,6 +95,7 @@ __all__ = [
     "MACOS_AUTOSTART_LABEL",
     "MACOS_BUNDLE_ID",
     "MACOS_EXECUTABLE_NAME",
+    "MACOS_SIGNING_IDENTITY_LABEL",
     "MANAGED_INSTALL_MARKER",
     "OFFICIAL_RELEASES_LATEST_API_URL",
     "OFFICIAL_REPO_GIT_URL",

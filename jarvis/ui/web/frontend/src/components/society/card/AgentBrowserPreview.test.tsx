@@ -5,7 +5,7 @@ import { AgentBrowserPreview } from "./AgentBrowserPreview";
 import type { SocietyAgent } from "../data";
 const { control, state } = vi.hoisted(() => ({
   control: vi.fn(),
-  state: { connected: true, ready: true, manual: false, running: false,
+  state: { connected: true, ready: true, fullWindow: false, manual: false, running: false,
     url: "https://example.com", target: "one", tabs: [{ id: "one", url: "https://example.com" }], error: "" },
 }));
 vi.mock("./useBrowserView", () => ({
@@ -20,8 +20,16 @@ function mount() {
     <AgentBrowserPreview agent={agent} />
   </QueryClientProvider>);
 }
-afterEach(() => { cleanup(); control.mockClear(); state.manual = false; });
+afterEach(() => { cleanup(); control.mockClear(); state.manual = false; state.fullWindow = false; });
 describe("live agent browser", () => {
+  test("full Chrome window never adds a second address bar or tab picker", async () => {
+    state.fullWindow = true;
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: /Take control/ }));
+    expect(screen.queryByLabelText("Website address")).toBeNull();
+    expect(screen.queryByLabelText("Back")).toBeNull();
+    expect(screen.getByLabelText("Live browser of Scout")).toBeTruthy();
+  });
   test("renders the real browser canvas in the options rail", async () => {
     mount();
     expect((await screen.findByLabelText("Live browser of Scout")).tagName).toBe("CANVAS");
@@ -38,6 +46,18 @@ describe("live agent browser", () => {
     mount();
     fireEvent.keyDown(screen.getByLabelText("Live browser of Scout"), { key: "x" });
     expect(control).not.toHaveBeenCalled();
+  });
+  test("clicking the preview starts interaction without a separate takeover button", () => {
+    mount();
+    const canvas = screen.getByLabelText("Live browser of Scout") as HTMLCanvasElement;
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, width: 1280, height: 800,
+    } as DOMRect);
+    fireEvent.click(canvas, { clientX: 200, clientY: 60 });
+    expect(document.activeElement).toBe(canvas);
+    expect(control).toHaveBeenCalledWith("click", { x: 200, y: 60 });
+    fireEvent.keyDown(canvas, { key: "x" });
+    expect(control).toHaveBeenCalledWith("text", { text: "x" });
   });
   test("manual typing uses browser control, never chat", () => {
     state.manual = true;

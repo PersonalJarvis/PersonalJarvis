@@ -6,16 +6,21 @@ the previous volume afterwards. Optionally (opt-in) falls back to lowering the
 MASTER output volume when no known player was ducked — note the master
 fallback also lowers Jarvis's own TTS voice.
 
-Pure stdlib and safe to import on any OS: the factory only constructs this
-class when ``sys.platform == 'darwin'`` and ``osascript`` is on PATH. Every
-osascript call is wrapped — a timeout, a non-zero exit (e.g. the Automation
-TCC denial ``-1743``), or an unparsable volume degrades to a skipped player,
-never an exception out of the runtime path.
+Safe to import on any OS: the factory only constructs this class when
+``sys.platform == 'darwin'`` and ``osascript`` is on PATH. Every osascript
+call is wrapped — a timeout, a non-zero exit (e.g. the Automation TCC denial
+``-1743``), or an unparsable volume degrades to a skipped player, never an
+exception out of the runtime path.
+
+The Automation consent itself is owned by ``jarvis.platform.permissions``
+(the ``automation`` row asks for every player up front); the player list is
+shared with it so the scripts and the permission row can never disagree.
 
 CRITICAL script shape: a bare ``tell application ...`` LAUNCHES the app, so
 every script guards with ``if application id "..." is running`` INSIDE the
 same script and returns ``"-"`` when the player is not running.
 """
+
 from __future__ import annotations
 
 import logging
@@ -24,31 +29,41 @@ from collections.abc import Callable
 from typing import Any
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+from jarvis.platform.permissions import AUTOMATION_TARGETS
 
 log = logging.getLogger("jarvis.audio.ducking")
 
 # Opaque restore tokens — the controller treats them as an opaque list[int]
 # of "PIDs", so player tokens and the master token just have to be distinct.
-_PLAYERS: dict[int, tuple[str, str]] = {
-    1: ("Music", "com.apple.Music"),
-    2: ("Spotify", "com.spotify.client"),
-}
+_PLAYERS: dict[int, tuple[str, str]] = dict(enumerate(AUTOMATION_TARGETS, start=1))
 _MASTER_TOKEN = 100
 
 # Sentinel a script returns when the player is not running.
 _NOT_RUNNING = "-"
 
+# A duck/restore script must never stall a voice session; a consent prompt
+# is answered by a human. Killing osascript at 3 s tore the Automation dialog
+# down before the user could click — every session asked again.
+_SCRIPT_TIMEOUT_S = 3.0
+_CONSENT_TIMEOUT_S = 120.0
 
-def _run_osascript(script: str) -> subprocess.CompletedProcess:
+
+def _run_osascript(
+    script: str, *, timeout: float = _SCRIPT_TIMEOUT_S
+) -> subprocess.CompletedProcess:
     """Default runner: one bounded, windowless osascript invocation."""
     return subprocess.run(  # noqa: S603, S607 — fixed argv, no shell
         ["osascript", "-e", script],
         capture_output=True,
         text=True,
-        timeout=3.0,
+        timeout=timeout,
         check=False,
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
+
+
+def _run_consent_osascript(script: str) -> subprocess.CompletedProcess:
+    return _run_osascript(script, timeout=_CONSENT_TIMEOUT_S)
 
 
 def _duck_script(bundle_id: str, target: int) -> str:
@@ -111,10 +126,14 @@ class MacOSScriptDucker:
         master_fallback: bool = False,
         duck_volume_percent: int = 0,
         run: Callable[[str], subprocess.CompletedProcess] | None = None,
+        consent_run: Callable[[str], subprocess.CompletedProcess] | None = None,
     ) -> None:
         self._master_fallback = bool(master_fallback)
         self._duck = max(0, min(100, int(duck_volume_percent)))
         self._run = run or _run_osascript
+        # An injected runner (tests) covers the consent path too unless a
+        # dedicated one is given; production waits for the dialog there.
+        self._consent_run = consent_run or (run if run is not None else _run_consent_osascript)
         self._saved: dict[int, int] = {}  # token -> previous volume
 
     @classmethod
@@ -123,9 +142,7 @@ class MacOSScriptDucker:
             ducking = getattr(cfg, "ducking", None)
             return cls(
                 master_fallback=bool(getattr(ducking, "macos_master_fallback", False)),
-                duck_volume_percent=int(
-                    getattr(ducking, "duck_volume_percent", 0) or 0
-                ),
+                duck_volume_percent=int(getattr(ducking, "duck_volume_percent", 0) or 0),
             )
         except Exception:  # noqa: BLE001 — malformed config degrades to defaults
             log.debug("ducking config read failed; using defaults", exc_info=True)
@@ -174,7 +191,9 @@ class MacOSScriptDucker:
                     # silent for good. Hand it to THIS session's restore.
                     log.info(
                         "ducking: re-adopting %s (still at the duck volume with "
-                        "an unrestored level of %d)", name, self._saved[token],
+                        "an unrestored level of %d)",
+                        name,
+                        self._saved[token],
                     )
                     ducked.append(token)
             except Exception:  # noqa: BLE001 — timeout/TCC denial: skip player
@@ -245,7 +264,7 @@ class MacOSScriptDucker:
         """
         for _token, (name, bundle_id) in _PLAYERS.items():
             try:
-                self._run(_prewarm_script(bundle_id))
+                self._consent_run(_prewarm_script(bundle_id))
             except Exception:  # noqa: BLE001
                 log.debug("ducking prewarm skip (%s)", name, exc_info=True)
 

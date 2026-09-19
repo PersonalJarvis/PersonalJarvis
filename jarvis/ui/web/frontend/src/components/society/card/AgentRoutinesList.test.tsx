@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { AgentRoutinesList } from "@/components/society/card/AgentRoutinesList";
 
+vi.mock("./AgentRoutineDetail", () => ({ AgentRoutineDetail: () => <div data-testid="routine-opened" /> }));
+
 function mount(agentId = "mailbox") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity, refetchInterval: false } },
@@ -27,7 +29,7 @@ function json(body: unknown, status = 200) {
   } as Response;
 }
 
-let routines: { id: string; title: string; state: string; trigger: unknown }[];
+let routines: { id: string; title: string; state: string; trigger: unknown; due_at_ns?: number }[];
 let fetchMock: ReturnType<typeof vi.fn>;
 
 describe("AgentRoutinesList", () => {
@@ -71,6 +73,18 @@ describe("AgentRoutinesList", () => {
     mount();
     await waitFor(() => expect(screen.getByTestId("agent-routines").textContent).toContain("Morning inbox"));
     expect(screen.getByTestId("agent-routines").textContent).not.toContain("[agent:Mailbox]");
+  });
+
+  test.each(["schedule", "next-run", "icon", "padding"])("opens the routine when clicking %s", async (area) => {
+    routines[0].due_at_ns = Date.UTC(2026, 8, 13, 8) * 1e6;
+    mount();
+    const card = await screen.findByRole("button", { name: "Morning inbox" });
+    const target = area === "schedule" ? screen.getByText("Every hour")
+      : area === "next-run" ? screen.getByText(/^Next run:/)
+      : area === "icon" ? card.querySelector("svg")! : card;
+    expect(card.contains(target)).toBe(true);
+    fireEvent.click(target);
+    expect(await screen.findByTestId("routine-opened")).toBeTruthy();
   });
 
   test("adding a routine posts to this agent and shows the new row", async () => {

@@ -19,6 +19,28 @@ def test_browser_capability_roundtrip():
         {"society_browser": SimpleNamespace(description="Browse", risk_tier="monitor")}
     )
     assert "browser-use" in rows[0].aliases
+    assert "chrome" in rows[0].aliases
+    assert rows[0].label == "Chrome / Browser"
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+def test_native_window_probe_degrades_without_native_dependencies(monkeypatch, platform):
+    import importlib.util
+    from jarvis.society.browser import native_window
+
+    monkeypatch.setattr(native_window.sys, "platform", platform)
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _: None)
+    assert native_window.available() is False
+
+
+def test_add_menu_names_the_browser_as_chrome():
+    from jarvis.agent_chat.tool_catalog import build_catalog, keyword_rank
+
+    rows = build_catalog({"society_browser": SimpleNamespace(description="Browse websites", risk_tier="monitor")})
+    row = next(row for row in rows if row.id == "tool:society_browser")
+    assert row.label == "Chrome / Browser"
+    assert keyword_rank("chrome", row) is not None
+    assert keyword_rank("browser", row) is not None
 
 
 async def test_cold_browser_start_emits_progress_until_subscription_ready():

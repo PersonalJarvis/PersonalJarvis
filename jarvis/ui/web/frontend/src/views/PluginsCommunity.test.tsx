@@ -79,13 +79,13 @@ function installFetchMock(overrides?: Partial<CommunityResponse>) {
   return fetchMock;
 }
 
-function renderTab() {
+function renderTab(props?: { onInstalled?: (name: string) => void }) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={qc}>
-      <CommunityTab />
+      <CommunityTab {...props} />
     </QueryClientProvider>,
   );
 }
@@ -193,5 +193,21 @@ describe("CommunityTab", () => {
     expect(
       await screen.findByText(/switched off in the configuration/i),
     ).toBeDefined();
+  });
+
+  it("notifies the parent after install so it can start the browser login", async () => {
+    installFetchMock();
+    const onInstalled = vi.fn();
+    renderTab({ onInstalled });
+    await screen.findByText("TodoFox");
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Install" })[0]);
+    const dialog = await screen.findByRole("dialog");
+    const confirm = screen
+      .getAllByRole("button", { name: "Install" })
+      .find((b) => dialog.contains(b));
+    fireEvent.click(confirm!);
+
+    await waitFor(() => expect(onInstalled).toHaveBeenCalledWith("todo-fox"));
   });
 });

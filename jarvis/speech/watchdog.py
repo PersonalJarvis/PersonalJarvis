@@ -51,6 +51,91 @@ def _load_env() -> None:
             os.environ[k] = v
 
 
+def _pid_file(project_root: Path) -> Path:
+    """PID file for the fast voice.bat single-instance check.
+
+    The launcher used to enumerate every process via PowerShell
+    (Get-CimInstance, ~1s startup cost) on each ``voice`` start.
+    A plain PID file plus a native ``tasklist`` liveness probe in the
+    batch file is instant and needs no PowerShell at all.
+    """
+    return project_root / "data" / "jarvis_watchdog.pid"
+
+
+def _write_pid_file(path: Path) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(os.getpid()), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _read_pid_file(path: Path) -> int | None:
+    try:
+        return int(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _pid_is_live_watchdog(pid: int) -> bool:
+    """True only when ``pid`` is a running jarvis.speech.watchdog process.
+
+    Guards against PID reuse: a stale PID file must never block a fresh
+    start or kill an unrelated process (e.g. a browser that inherited the
+    number). Uses psutil's command line when available; without psutil it
+    fails closed (assumes running) so we never double-start blindly.
+    """
+    if pid <= 0:
+        return False
+    try:
+        import psutil  # noqa: PLC0415 - optional at type-check time, required at runtime
+    except ImportError:
+        return True
+    try:
+        proc = psutil.Process(pid)
+        if not proc.is_running():
+            return False
+        try:
+            parts = list(proc.cmdline())
+        except Exception:  # noqa: BLE001 - unreadable cmdline fails closed
+            return True
+        joined = " ".join(parts)
+        if "jarvis.speech.watchdog" not in joined:
+            return False
+        # Strict: a real watchdog runs as ``python -m jarvis.speech.watchdog``
+        # (or pythonw). A bare substring also matches our own lightweight
+        # ``python -c "from jarvis.speech.watchdog import ..."`` verifier,
+        # which must never count as a running watchdog.
+        return (
+            ("-m" in parts) or ("speech/watchdog.py" in joined) or ("speech\\watchdog.py" in joined)
+        )
+    except Exception:  # noqa: BLE001 - gone/denied means not our watchdog
+        return False
+
+
+def recorded_watchdog_alive(project_root: Path | None = None) -> bool:
+    """Whether the PID file points at a live watchdog process."""
+    root = project_root or Path(__file__).resolve().parents[2]
+    pid = _read_pid_file(_pid_file(root))
+    return pid is not None and _pid_is_live_watchdog(pid)
+
+
+def recorded_watchdog_pid(project_root: Path | None = None) -> int | None:
+    """The PID recorded in the PID file, or ``None`` when unreadable."""
+    root = project_root or Path(__file__).resolve().parents[2]
+    return _read_pid_file(_pid_file(root))
+
+
+def _clear_pid_file(path: Path) -> None:
+    try:
+        if path.is_file():
+            if _read_pid_file(path) != os.getpid():
+                return
+            path.unlink()
+    except OSError:
+        pass
+
+
 async def _main() -> None:
     if sys.platform == "win32":
         try:
@@ -68,6 +153,9 @@ async def _main() -> None:
     os.environ["JARVIS_DEBUG_DIR"] = str(debug_dir)
     _setup_logging(log_file)
     _load_env()
+
+    pid_file = _pid_file(project_root)
+    _write_pid_file(pid_file)
 
     log = logging.getLogger("jarvis.watchdog")
     log.info("=" * 60)
@@ -172,7 +260,10 @@ async def _main() -> None:
         output_device=output_device,
     )
     log.info("Starting pipeline …")
-    await pipeline.run()
+    try:
+        await pipeline.run()
+    finally:
+        _clear_pid_file(pid_file)
 
 
 if __name__ == "__main__":

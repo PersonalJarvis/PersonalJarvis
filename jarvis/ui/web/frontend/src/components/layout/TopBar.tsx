@@ -44,7 +44,9 @@ import { openExternalUrl } from "@/lib/openExternal";
  * an empty chrome strip above it was a second, boring row. Both take
  * `TopBarActions` into their own row and this bar steps aside there — the
  * actions are still on that screen, which is the rule that matters; what
- * moved is the furniture around them. Every other view keeps the bar.
+ * moved is the furniture around them. The agents section follows the same
+ * rule with its own unified header (`SocietyView`). Every other view keeps
+ * the bar.
  */
 const CONFIRM_TIMEOUT_MS = 4000;
 
@@ -121,6 +123,16 @@ export function TopBar() {
    */
   const chatsDetached = !solo && detachedViews.includes("chats");
   if (activeSection === "chats" && !chatsDetached) {
+    return null;
+  }
+
+  /*
+   * The agents section carries a single unified header of its own
+   * (`SocietyView`): the section toggle, the Map/Agents switch and these
+   * actions in one row. A global bar above it would be a second, boring row.
+   * Agents cannot detach, so no placeholder case applies here.
+   */
+  if (activeSection === "agents") {
     return null;
   }
 

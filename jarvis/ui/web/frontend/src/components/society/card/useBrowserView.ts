@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mintWsTicket } from "@/lib/ws";
 import { jitteredDelay, requestConnect } from "@/lib/connectBudget";
+import type { BrowserPointerState } from "./BrowserPointer";
 
 export interface BrowserViewState {
   connected: boolean;
   ready: boolean;
+  fullWindow: boolean;
   manual: boolean;
   running: boolean;
   controlPending: boolean;
@@ -12,11 +14,12 @@ export interface BrowserViewState {
   tabs: Array<{ id: string; url: string }>;
   target: string;
   error: string;
+  pointer?: BrowserPointerState;
   approval?: { id: string; action: string };
   dialog?: { type: string; message: string };
 }
 const empty: BrowserViewState = {
-  connected: false, ready: false, manual: false, running: false, controlPending: false,
+  connected: false, ready: false, fullWindow: false, manual: false, running: false, controlPending: false,
   url: "", tabs: [], target: "", error: "",
 };
 
@@ -24,6 +27,9 @@ export function useBrowserView(agentId: string) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const socket = useRef<WebSocket | null>(null);
   const [state, setState] = useState<BrowserViewState>(empty);
+  const manual = useRef(false);
+  const claiming = useRef(false);
+  const inputs = useRef<Array<{ op: string; args: Record<string, unknown> }>>([]);
   useEffect(() => {
     let disposed = false;
     let attempt = 0;
@@ -35,7 +41,9 @@ export function useBrowserView(agentId: string) {
     let lastLiveEvent = Date.now();
     let renderedFrames = 0;
     let latestFrame: { data: string; sequence: number; timestamp: number } | null = null;
-    const abort = new AbortController();
+    manual.current = false;
+    claiming.current = false;
+    inputs.current = [];
     setState(empty);
     const clearCanvas = () => {
       const el = canvas.current;
@@ -92,8 +100,12 @@ export function useBrowserView(agentId: string) {
               if (!Number.isFinite(event.timestamp)) return;
               lastLiveEvent = Date.now();
               attempt = 0;
+              if (typeof event.full_window === "boolean") {
+                setState((s) => s.fullWindow === event.full_window ? s : { ...s, fullWindow: event.full_window });
+              }
               if (event.generation !== generation) {
                 generation = event.generation;
+                setState((s) => ({ ...s, pointer: undefined }));
                 lastSequence = -1;
                 epoch++;
               }
@@ -103,13 +115,29 @@ export function useBrowserView(agentId: string) {
               decodeFrame();
             } else if (event.kind === "starting") {
               lastLiveEvent = Date.now();
+            } else if (event.kind === "pointer") {
+              if (generation && event.generation !== generation) return;
+              if (!event.visible) {
+                setState((s) => ({ ...s, pointer: undefined }));
+              } else if ([event.x, event.y, event.width, event.height, event.click_id, event.click_x, event.click_y].every(Number.isFinite)
+                && event.width > 0 && event.height > 0) {
+                setState((s) => ({ ...s, pointer: event }));
+              }
             } else if (event.kind === "error") {
               setState((s) => ({ ...s, ready: false, error: event.error }));
             } else if (event.kind === "state") {
               lastLiveEvent = Date.now();
               setState((s) => ({ ...s, manual: event.manual, running: event.running,
-                url: event.url, target: event.target, tabs: event.tabs ?? [] }));
+                url: event.url, target: event.target, tabs: event.tabs ?? [], fullWindow: Boolean(event.full_window) }));
             } else if (event.kind === "control") {
+              if (typeof event.manual === "boolean") manual.current = event.manual;
+              if (claiming.current && (event.manual === true || !event.ok)) {
+                claiming.current = false;
+                const queued = inputs.current.splice(0);
+                if (event.ok && event.manual === true && ws.readyState === WebSocket.OPEN) {
+                  for (const input of queued) ws.send(JSON.stringify(input));
+                }
+              }
               setState((s) => ({ ...s, controlPending: false, error: event.ok ? "" : event.error,
                 manual: typeof event.manual === "boolean" ? event.manual : s.manual }));
             } else if (event.kind === "control_pending") {
@@ -132,7 +160,10 @@ export function useBrowserView(agentId: string) {
         ws.onclose = () => {
           if (disposed || socket.current !== ws) return;
           epoch++;
-          setState((s) => ({ ...s, connected: false, manual: false, controlPending: false }));
+          manual.current = false;
+          claiming.current = false;
+          inputs.current = [];
+          setState((s) => ({ ...s, connected: false, manual: false, controlPending: false, pointer: undefined }));
           cancelConnect = requestConnect(() => void connect(), jitteredDelay(attempt++));
         };
         ws.onerror = () => ws.close();
@@ -143,13 +174,9 @@ export function useBrowserView(agentId: string) {
         cancelConnect = requestConnect(() => void connect(), jitteredDelay(attempt++));
       }
     };
-    void fetch("/api/society/agents/" + encodeURIComponent(agentId) + "/browser/session",
-      { method: "POST", signal: abort.signal }).then((response) => {
-        if (!response.ok) throw new Error("Browser setup " + response.status);
-        if (!disposed) cancelConnect = requestConnect(() => void connect());
-      }).catch((error) => {
-        if (!disposed) setState((s) => ({ ...s, error: String(error) }));
-      });
+    // subscribe() already provisions the runtime. Do not block first pixels
+    // behind a redundant setup request and a second roster/runtime lookup.
+    cancelConnect = requestConnect(() => void connect());
     // Static pages still send state heartbeats. A silent transport is not Live.
     const watchdog = setInterval(() => {
       if (socket.current?.readyState === WebSocket.OPEN && Date.now() - lastLiveEvent > 7500) {
@@ -160,7 +187,9 @@ export function useBrowserView(agentId: string) {
     return () => {
       disposed = true;
       epoch++;
-      abort.abort();
+      manual.current = false;
+      claiming.current = false;
+      inputs.current = [];
       clearInterval(watchdog);
       cancelConnect();
       const ws = socket.current;
@@ -179,6 +208,28 @@ export function useBrowserView(agentId: string) {
       return;
     }
     if (socket.current?.readyState !== WebSocket.OPEN) return;
+    if (["click", "scroll", "text", "key"].includes(op) && !manual.current) {
+      if (inputs.current.length >= 128) {
+        setState((s) => ({ ...s, error: "Waiting for browser control; input queue is full" }));
+        return;
+      }
+      inputs.current.push({ op, args });
+      if (!claiming.current) {
+        claiming.current = true;
+        setState((s) => ({ ...s, controlPending: true }));
+        socket.current.send(JSON.stringify({ op: "takeover", args: { enabled: true } }));
+      }
+      return;
+    }
+    if (op === "takeover" && args.enabled === false) {
+      inputs.current = [];
+      claiming.current = false;
+      manual.current = false;
+    } else if (op === "takeover" && args.enabled === true) {
+      if (claiming.current) return;
+      claiming.current = true;
+      setState((s) => ({ ...s, controlPending: true }));
+    }
     socket.current.send(JSON.stringify({ op, args }));
   }, [agentId]);
   const approve = useCallback(async (allow: boolean) => {
