@@ -251,7 +251,14 @@ async def test_routine_uses_current_rules_and_memory(world):
     briefing = kwargs["turn_override"].system_extra
     assert "Use plain text and never send mail." in briefing and "Cedar" in briefing
     assert "Prepare drafts only." not in prompt
-    assert kwargs["conversation_id"] == session.session_id
+    routine_session_id = kwargs["conversation_id"]
+    assert routine_session_id.startswith(f"{session.session_id}:routine:{spec.id}:")
+    assert svc.store.get_session(routine_session_id).permission_mode == "bypass"
+    assert svc.store.list_events(session.session_id) == []
+
+    await run_owned_routine(rt, str(spec.id), spec.tags, spec.action.prompt)
+    assert brain.calls[-1][1]["conversation_id"] != routine_session_id
+    assert svc.store.list_events(session.session_id) == []
 
 
 async def test_routine_update_preserves_id_and_pause_state(tmp_path):

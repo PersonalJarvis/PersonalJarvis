@@ -27,7 +27,7 @@ from jarvis.plugins.brain._anthropic_base import _is_reasoning_model, reasoning_
 async def test_agy_cold_chat_resolves_catalog_before_building_command(tmp_path, monkeypatch):
     seen = []
 
-    def catalog():
+    def catalog(**kwargs):
         seen.append("catalog")
         return []
 
@@ -51,6 +51,50 @@ async def test_agy_cold_chat_resolves_catalog_before_building_command(tmp_path, 
     result = await runner_cli._run_cli_once(handle, "Read a page", "agy-cli", None)
     assert result.status == "error"
     assert result.error == "stop before process launch"
+
+
+def test_agy_refreshes_a_cached_fallback_missing_the_scheduled_model(monkeypatch):
+    import subprocess
+    import time
+
+    monkeypatch.setattr(
+        runner_cli,
+        "_AGY_CATALOG",
+        {
+            "at": time.monotonic(),
+            "rows": [{"id": "old-model", "efforts": []}],
+        },
+    )
+    monkeypatch.setattr(runner_cli, "agy_argv_prefix", lambda: ["agy"])
+    calls = []
+
+    def models(*args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "command": {
+                        "data": {
+                            "models": [
+                                {"id": "current-model-low"},
+                                {"id": "current-model-high"},
+                            ]
+                        }
+                    }
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(subprocess, "run", models)
+    rows = runner_cli.read_agy_models(required_model="current-model")
+    assert agy_model_args("current-model", "high", rows) == [
+        "--model",
+        "current-model",
+        "--effort",
+        "high",
+    ]
+    runner_cli.read_agy_models(required_model="current-model")
+    assert len(calls) == 1
 
 
 def test_every_runner_has_a_ladder_with_its_default_on_it():

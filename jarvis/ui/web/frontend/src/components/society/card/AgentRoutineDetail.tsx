@@ -1,5 +1,5 @@
 /** The agent's routine editor, backed by the existing task scheduler. */
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Clock, Plus, X } from "lucide-react";
 import { useT } from "@/i18n";
@@ -16,8 +16,9 @@ const button = "rounded-md bg-secondary px-2.5 py-1.5 text-[12px] text-foregroun
 const recurring = ["every", "calendar", "cron", "webhook", "event_hook", "source", "on_event"];
 const terminal = ["completed", "failed", "cancelled", "interrupted"];
 const timeKinds = ["every", "calendar", "cron"];
+const RoutineChat = lazy(() => import("./RoutineChat"));
 
-interface Run { id: string; timestamp: number; status: string; text: string }
+interface Run { id: string; timestamp: number; status: string; text: string; sessionId?: string }
 
 /** New runs have explicit boundaries; retain older result/error records too. */
 export function routineRuns(taskId: string, steps: TaskStep[]): Run[] {
@@ -30,6 +31,8 @@ export function routineRuns(taskId: string, steps: TaskStep[]): Run[] {
       if (current?.status === "running") current.status = "interrupted";
       current = { id: `${taskId}:${step.seq}`, timestamp: step.timestamp_ns / 1e6, status: "running", text: "" };
       runs.push(current);
+    } else if (event === "routine_chat" && current && typeof step.payload.session_id === "string") {
+      current.sessionId = step.payload.session_id;
     } else if (event === "agent_result" && current) {
       current.text = text;
     } else if (["run_completed", "run_cancelled", "error", "deferred"].includes(String(event))) {
@@ -70,6 +73,7 @@ export function AgentRoutineDetail({ agentId, routine, onClose }: {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [chatSessionId, setChatSessionId] = useState<string | null>(null);
   const details = queries.map((query) => query.data);
   const first = details[0];
   const rawPrompt = String((first?.spec?.action as { prompt?: string } | undefined)?.prompt ?? "");
@@ -103,6 +107,10 @@ export function AgentRoutineDetail({ agentId, routine, onClose }: {
     if (detail.trigger_type === "source") return <SourceControls taskId={detail.id} source={(detail.trigger as { source: { kind: string } }).source} />;
     return null;
   };
+
+  if (chatSessionId) return <Suspense fallback={<p role="status">{t("tasks_view.loading_details")}</p>}>
+    <RoutineChat key={chatSessionId} sessionId={chatSessionId} onClose={() => setChatSessionId(null)} />
+  </Suspense>;
 
   return <section className="min-h-0 flex-1 space-y-4 overflow-y-auto pb-4 text-foreground" data-testid="agent-routine-detail">
     <button type="button" className="flex items-center gap-1 text-[12px] text-muted-foreground" disabled={pending} onClick={onClose}><ArrowLeft size={14} />{t("society.card.routines")}</button>
@@ -160,11 +168,13 @@ export function AgentRoutineDetail({ agentId, routine, onClose }: {
     </div>
     <div className="space-y-2">
       <h4 className="text-[11px] text-muted-foreground">{label("history")}</h4>
+      {runs.find((run) => run.sessionId) && <button type="button" className={button} onClick={() => setChatSessionId(runs.find((run) => run.sessionId)!.sessionId!)}>{label("latest_chat")}</button>}
       {ready && runs.length === 0 && <p className="text-[12px] text-muted-foreground">{label("no_runs")}</p>}
       {runs.map((run) => <details key={run.id} className="text-[12px]">
         <summary className="flex cursor-pointer items-center justify-between gap-2 rounded py-1 hover:bg-secondary"><time dateTime={new Date(run.timestamp).toISOString()}>{new Date(run.timestamp).toLocaleString()}</time><span className="flex items-center gap-1" title={run.status === "legacy" ? label("legacy") : t(`tasks_view.state.${run.status}`)}>
           {run.status === "completed" ? <Check size={15} className="text-success" aria-label={t("tasks_view.state.completed")} /> : run.status === "failed" || run.status === "cancelled" ? <X size={15} className="text-destructive" aria-label={t(`tasks_view.state.${run.status}`)} /> : <Clock size={15} aria-label={run.status === "legacy" ? label("legacy") : t(`tasks_view.state.${run.status}`)} />}
         </span></summary>
+        {run.sessionId && <button type="button" className={button} onClick={() => setChatSessionId(run.sessionId!)}>{label("open_chat")}</button>}
         <p className="whitespace-pre-wrap break-words rounded bg-secondary p-2">{run.text || (run.status === "legacy" ? label("legacy") : t(`tasks_view.state.${run.status}`))}</p>
       </details>)}
     </div>

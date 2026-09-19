@@ -763,7 +763,7 @@ def _agy_catalog_cached() -> list[dict[str, Any]] | None:
     return rows if isinstance(rows, list) else None
 
 
-def read_agy_models(timeout_s: float = 8.0) -> list[dict[str, Any]]:
+def read_agy_models(timeout_s: float = 8.0, *, required_model: str = "") -> list[dict[str, Any]]:
     """``agy --output-format json models`` -> the folded catalog (cached 10 min).
 
     Blocking (a ~2 s subprocess) — call it off the event loop. Any failure
@@ -773,8 +773,10 @@ def read_agy_models(timeout_s: float = 8.0) -> list[dict[str, Any]]:
     import subprocess
 
     now = time.monotonic()
-    if _AGY_CATALOG["rows"] is not None and now - _AGY_CATALOG["at"] < _AGY_CATALOG_TTL_S:
-        return list(_AGY_CATALOG["rows"])
+    cached = _agy_catalog_cached()
+    model_known = not required_model or any(row["id"] == required_model for row in cached or [])
+    if cached is not None and model_known and now - _AGY_CATALOG["at"] < _AGY_CATALOG_TTL_S:
+        return list(cached)
     raw: list[dict[str, Any]] | None = None
     try:
         argv = [*agy_argv_prefix(), "--output-format", "json", "models"]
@@ -2616,7 +2618,7 @@ async def _run_cli_once(
             # A chat can start before the model picker has loaded its catalog.
             # Resolve the installed CLI's effort ladder off the event loop so
             # newly available models keep the required model/effort pairing.
-            await asyncio.to_thread(read_agy_models)
+            await asyncio.to_thread(read_agy_models, required_model=session.model)
         plan: CliPlan = planner(
             prompt=user_text,
             cwd=cwd,

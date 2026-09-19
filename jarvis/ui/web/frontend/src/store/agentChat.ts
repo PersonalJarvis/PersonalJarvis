@@ -268,8 +268,8 @@ function onLadder(value: string, ladder: readonly string[], fallback: string): s
 /** How many left-behind transcripts the store keeps for an instant switch-back. */
 const TIMELINE_CACHE_LIMIT = 24;
 
-export function createAgentChatStore(surface: AgentChatSurface) {
-  const DRAFT_KEY = draftKey(surface);
+export function createAgentChatStore(surface: AgentChatSurface, draftNamespace = "") {
+  const DRAFT_KEY = draftKey(surface) + (draftNamespace ? `:${draftNamespace}` : "");
 
   let socket: WebSocket | null = null;
   let socketSession: string | null = null;
