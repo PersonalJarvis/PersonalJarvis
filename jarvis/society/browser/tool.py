@@ -82,7 +82,10 @@ class BrowserTool:
         "Give one clear task (what to achieve, where, what to return) and optionally the "
         "URL to start at. The run is capped (max_steps); it returns the final result, the "
         "pages visited and any errors. Tasks that send, buy, delete or publish ask the user "
-        "first. Prefer a connected plugin or CLI when one exists for the service."
+        "first. This is the live browser shown in your Options rail. Use this tool "
+        "when the user selects Browser or asks to operate the visible browser, and "
+        "for web tasks without a suitable connected API. Otherwise prefer a connected "
+        "plugin or CLI when one exists for the service."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -120,7 +123,10 @@ class BrowserTool:
         if read_only:
             self.risk_tier = "safe"
             self.is_action_tool = False
-            self.description = "Read-only agent browser: navigate, inspect and extract website content. Form input, clicks, uploads and file writes are blocked in this mode."
+            self.description = (
+                "Read-only agent browser: navigate, inspect and extract website content. "
+                "Form input, clicks, uploads and file writes are blocked in this mode."
+            )
 
     def risk_tier_for_args(self, args: dict[str, Any]) -> str | None:
         if self._jobs._python is None:

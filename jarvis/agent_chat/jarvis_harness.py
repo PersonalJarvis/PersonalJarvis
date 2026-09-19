@@ -84,6 +84,13 @@ SYSTEM_PREAMBLE: Final[str] = (
     "browser whenever the request is about the person's own apps, data or "
     "machine: those tools are already signed in and already permitted. Reach for "
     "your file and shell tools for code and for the filesystem.\n\n"
+    "When the user selects Chrome / Browser, @browser, @browser-use or "
+    "[tools: core:browser], use society_browser from the Jarvis MCP server. "
+    "That is the persistent browser displayed live in this agent's Options rail. "
+    "Use it for website interaction when no connected service tool can do the task. "
+    "A browser request takes priority over the general plugin preference. "
+    "Do not substitute your own browser, HTTP fetch or shell for this selection. "
+    "If society_browser is unavailable, report that explicitly.\n\n"
     "Two kinds of hands: your own file and shell tools are your hands in the "
     "working folder this chat is open in; `mcp__jarvis__run_shell` / "
     "`jarvis__run_shell` and their siblings are Jarvis' hands on the whole "
@@ -179,12 +186,17 @@ def codex_config_args(session_id: str | None = None) -> list[str]:
             args += [
                 "-c",
                 f'mcp_servers.{_SERVER_NAME}.http_headers={{"{HEADER_NAME}"="{session_id}"}}',
+                "-c",
+                f"mcp_servers.{_SERVER_NAME}.required=true",
+                # The entrypoint delegates actual actions to Jarvis' executor
+                # and approval UI, including on the root chat's browser.
+                "-c",
+                f'mcp_servers.{_SERVER_NAME}.tools.society_browser.approval_mode="approve"',
             ]
             if session_id.startswith("society:"):
                 # A society seat cannot carry out its role without its owned
                 # tools. Surface startup failures instead of a tools-free chat
                 # that can only promise to configure the running app.
-                args += ["-c", f"mcp_servers.{_SERVER_NAME}.required=true"]
                 # This local configuration tool already verifies the current
                 # user request and routes permission changes to Jarvis' own
                 # approval card. A second Codex write prompt cannot be answered
@@ -192,11 +204,6 @@ def codex_config_args(session_id: str | None = None) -> list[str]:
                 args += [
                     "-c",
                     f'mcp_servers.{_SERVER_NAME}.tools.society_propose_change.approval_mode="approve"',
-                    # The browser entrypoint delegates each actual action to
-                    # Jarvis' executor and its approval UI. Let it reach that
-                    # boundary instead of asking exec for an unreadable prompt.
-                    "-c",
-                    f'mcp_servers.{_SERVER_NAME}.tools.society_browser.approval_mode="approve"',
                 ]
         return args
     except Exception:  # noqa: BLE001 — see mcp_config_json

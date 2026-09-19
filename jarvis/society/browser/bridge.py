@@ -109,7 +109,7 @@ async def execute_live(
     key = get_jarvis_agent_secret(provider)
     overrides = {provider: key} if key else {}
     with override_provider_secrets(overrides):
-        brain = live.model_resolver(caller)
+        brain = await asyncio.to_thread(live.model_resolver, caller)
     if brain is None or not callable(getattr(brain, "complete", None)):
         return ToolResult(False, None, "This agent has no browser-capable model connection")
     usage_total = {"input_tokens": 0, "output_tokens": 0, "cache_hit_tokens": 0}
@@ -256,7 +256,8 @@ async def execute_live(
     task = str(args.get("task") or "").strip()
     if read_only:
         task = (
-            "READ-ONLY: use navigation, reading and extraction only; no clicks, inputs, uploads or writes. "
+            "READ-ONLY: use navigation, reading and extraction only; "
+            "no clicks, inputs, uploads or writes. "
             + task
         )
     workspace = (Path(runtime.data_dir) / "society" / caller.agent_id / "workspace").resolve()

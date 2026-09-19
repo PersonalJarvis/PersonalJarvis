@@ -2,15 +2,17 @@
 
 from types import SimpleNamespace
 from uuid import uuid4
+
 import pytest
+
 from jarvis.brain.tool_gateway import BrainSupervisorToolGateway
 from jarvis.core.protocols import SupervisorToolRequest, ToolResult
 
 
 async def test_desktop_bootstrap_publishes_the_mcp_endpoint(monkeypatch):
-    from jarvis.ui.web.server import WebServer
-    from jarvis.core import runtime_refs
     from jarvis.agent_chat import jarvis_harness
+    from jarvis.core import runtime_refs
+    from jarvis.ui.web.server import WebServer
 
     urls = []
     monkeypatch.setattr(runtime_refs, "set_api_base_url", urls.append)
@@ -99,8 +101,8 @@ async def test_plan_session_gets_readonly_browser_but_not_coding_control(tmp_pat
 
 @pytest.mark.parametrize("action_name", ["navigate", "input", "click", "upload_file"])
 async def test_readonly_browser_enforces_action_boundary(tmp_path, monkeypatch, action_name):
-    from jarvis.society.runtime import SocietyRuntime
     from jarvis.society.browser.bridge import execute_live
+    from jarvis.society.runtime import SocietyRuntime
 
     monkeypatch.setattr("jarvis.core.config.get_jarvis_agent_secret", lambda _: None)
     rt = SocietyRuntime(tmp_path, seed_starter_team=False)
@@ -138,3 +140,68 @@ async def test_readonly_browser_enforces_action_boundary(tmp_path, monkeypatch, 
         assert applied == (["navigate"] if action_name == "navigate" else [])
     finally:
         await rt.close()
+
+
+async def test_root_subscription_browser_uses_chat_model_without_changing_roster(
+    tmp_path, monkeypatch
+):
+    from jarvis.society.runtime import SocietyRuntime
+    from jarvis.society.surface import browser_tool_for_session
+
+    rt = SocietyRuntime(tmp_path, seed_starter_team=False)
+    await rt.ensure_started()
+    seen = []
+    session = SimpleNamespace(
+        surface="jarvis", provider="openai-codex", model="picked-model", permission_mode="ask"
+    )
+    rt.chat_service = lambda: SimpleNamespace(store=SimpleNamespace(get_session=lambda _: session))
+
+    async def execute(runtime, caller, jobs, args, ctx, *, read_only=False):
+        seen.append((caller.agent_id, caller.provider, caller.model))
+        return ToolResult(True, {}, None)
+
+    monkeypatch.setattr("jarvis.society.browser.bridge.execute_live", execute)
+    try:
+        original = await rt.roster.get(rt.lead_id)
+        browser = await browser_tool_for_session("root-chat")
+        assert browser is not None
+        result = await browser.execute({"task": "Read the page"}, SimpleNamespace())
+        assert result.success
+        assert seen == [(rt.lead_id, "openai-codex", "picked-model")]
+        current = await rt.roster.get(rt.lead_id)
+        assert (current.provider, current.model) == (original.provider, original.model)
+    finally:
+        await rt.close()
+
+
+@pytest.mark.parametrize("session_id", ["society:scout", "root-chat"])
+@pytest.mark.parametrize("resume", [None, "existing-vendor-session"])
+def test_jarvis_codex_seat_uses_owned_browser_not_inherited_plugins(
+    tmp_path, monkeypatch, session_id, resume
+):
+    from jarvis.agent_chat import jarvis_harness, runner_cli
+
+    monkeypatch.setattr(runner_cli, "codex_argv_prefix", lambda: ["codex"])
+    monkeypatch.setattr(runner_cli, "_account_env", lambda _: {})
+    monkeypatch.setattr(
+        jarvis_harness, "endpoint", lambda: "http://127.0.0.1:47821/api/control/mcp/"
+    )
+    monkeypatch.setattr(jarvis_harness, "control_key", lambda: "test-placeholder")
+    args = dict(
+        prompt="Use the browser",
+        cwd=tmp_path,
+        model="",
+        effort="low",
+        permission_mode="ask",
+        resume=resume,
+    )
+    identity = jarvis_harness.Identity(session_id, "identity", "identity")
+    plan = runner_cli.plan_codex(**args, identity=identity)
+    assert "--ignore-user-config" in plan.argv
+    assert "--ignore-rules" in plan.argv
+    assert "browser_use" in plan.argv and "plugins" in plan.argv
+    assert 'mcp_servers.jarvis.tools.society_browser.approval_mode="approve"' in plan.argv
+    assert "mcp_servers.jarvis.required=true" in plan.argv
+    coding = runner_cli.plan_codex(**args)
+    assert "--ignore-user-config" not in coding.argv
+    assert "browser_use" not in coding.argv
