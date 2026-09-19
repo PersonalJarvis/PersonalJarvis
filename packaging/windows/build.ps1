@@ -4,6 +4,10 @@
     Build the Windows installer for Personal Jarvis.
 
 .DESCRIPTION
+    Prepare an isolated build environment with:
+        python -m pip install -e ".[desktop,dev,swarm-distributed]"
+    The shared spec rejects missing Swarm drivers before freezing.
+
     One command from a clean checkout to a shippable installer:
 
         1. build the React frontend when jarvis/ui/web/dist is missing,

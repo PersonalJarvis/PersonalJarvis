@@ -11,6 +11,102 @@ Every command below is available on four surfaces backed by the SAME endpoint an
 
 Commands marked **requires confirmation** never run on a bare voice request — Jarvis asks first (two-turn confirm); the CLI needs `--yes`.
 
+## `swarm-list` — List independent Swarm teams
+
+List the user's explicitly created Swarm teams and their saved status.
+
+- **Endpoint:** `GET /api/swarm/teams`
+- **Arguments:** `limit` (integer; optional); `offset` (integer; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `ultra-swarm`
+- **Voice example (EN):** "show my swarm teams"
+
+## `swarm-create` — Create an explicitly requested Swarm team
+
+Create a separate team only when the user explicitly asks for a Swarm. Supply only their selected goal, acceptance criteria and authorized inputs; never copy conversation history, personal notes or credentials. Reuse the same request_key when retrying the same creation. Budgets use exact decimal strings. This begins clarification only. Ask the returned questions, submit the user's answers with swarm-plan, and show the saved plan before requesting explicit approval for swarm-launch. Never infer plan approval from the initial goal.
+
+- **Endpoint:** `POST /api/swarm/preparations`
+- **Arguments:** `preparation_required` (boolean; optional); `name` (string; required); `goal` (string; required); `acceptance` (string; optional); `limits` (any; optional); `policy` (any; optional); `tasks` (array; optional); `request_key` (string; required); `mode` (string; optional)
+- **Requires confirmation:** yes
+- **Desktop UI section:** `ultra-swarm`
+- **Voice example (EN):** "create a swarm to research this topic"
+
+## `swarm-preparation` — Read the selected Swarm's preparation
+
+Read saved questions, answers and the exact plan revision/digest; this never runs work.
+
+- **Endpoint:** `GET /api/swarm/teams/{team_id}/preparation`
+- **Arguments:** `team_id` (string; required)
+- **Requires confirmation:** no
+- **Desktop UI section:** `ultra-swarm`
+
+## `swarm-clarify` — Begin or retry goal clarification for an unlaunched team when the owner requests it.
+
+Begin or retry goal clarification for an unlaunched team when the owner requests it.
+
+- **Endpoint:** `POST /api/swarm/teams/{team_id}/preparation`
+- **Arguments:** `team_id` (string; required); `expected_storage_generation` (string; required); `request_key` (string; required)
+- **Requires confirmation:** yes
+- **Desktop UI section:** `ultra-swarm`
+
+## `swarm-plan` — Submit only the user's actual answers or their explicit delegation; generate a saved plan for review without launching workers.
+
+Submit only the user's actual answers or their explicit delegation; generate a saved plan for review without launching workers.
+
+- **Endpoint:** `POST /api/swarm/teams/{team_id}/preparation/answers`
+- **Arguments:** `team_id` (string; required); `expected_revision` (integer; required); `expected_storage_generation` (string; required); `answers` (object; required); `request_key` (string; required)
+- **Requires confirmation:** yes
+- **Desktop UI section:** `ultra-swarm`
+
+## `swarm-launch` — Launch only after the owner has reviewed and explicitly approved this saved plan revision. Send its exact digest, revision and storage generation; never invent approval or replacement tasks.
+
+Launch only after the owner has reviewed and explicitly approved this saved plan revision. Send its exact digest, revision and storage generation; never invent approval or replacement tasks.
+
+- **Endpoint:** `POST /api/swarm/teams/{team_id}/launch`
+- **Arguments:** `team_id` (string; required); `expected_revision` (integer; required); `expected_storage_generation` (string; required); `digest` (string; required); `request_key` (string; required)
+- **Requires confirmation:** yes
+- **Desktop UI section:** `ultra-swarm`
+
+## `swarm-show` — Inspect one Swarm team
+
+Read one selected team's actual saved state, limits and accounting.
+
+- **Endpoint:** `GET /api/swarm/teams/{team_id}`
+- **Arguments:** `team_id` (string; required)
+- **Requires confirmation:** no
+- **Desktop UI section:** `ultra-swarm`
+- **Voice example (EN):** "show this swarm's status"
+
+## `swarm-control` — Control a selected Swarm team
+
+Start, pause, resume, stop, cancel or archive the selected team as explicitly requested. Use its actual team_id, latest version and storage_generation from the selected snapshot. An empty generation identifies legacy storage. Starting or resuming authorizes the trusted scheduler to run within the team's saved limits. A preparation requires explicit plan approval through swarm-launch; start cannot bypass that review. Report the server's resulting state; never create another team as a retry.
+
+- **Endpoint:** `POST /api/swarm/teams/{team_id}/{action}`
+- **Arguments:** `team_id` (string; required); `action` (one of: start, pause, resume, stop, cancel, archive; required); `expected_version` (integer; optional); `expected_storage_generation` (string; optional)
+- **Requires confirmation:** yes
+- **Desktop UI section:** `ultra-swarm`
+- **Voice example (EN):** "pause this swarm"
+
+## `swarm-world` — Inspect a Swarm's live work projection
+
+Read a bounded team-local snapshot of workers, groups, work and activity.
+
+- **Endpoint:** `GET /api/swarm/teams/{team_id}/world`
+- **Arguments:** `team_id` (string; required); `group` (string; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `ultra-swarm`
+- **Voice example (EN):** "what are this swarm's workers doing"
+
+## `swarm-records` — Inspect selected Swarm records
+
+Read a bounded page of evidence or work records from one selected team.
+
+- **Endpoint:** `GET /api/swarm/teams/{team_id}/{kind}`
+- **Arguments:** `team_id` (string; required); `kind` (one of: tasks, agents, messages, events, artifacts, reputation, publications, decisions, checkpoints; required); `limit` (integer; optional); `offset` (integer; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `ultra-swarm`
+- **Voice example (EN):** "show this swarm's evidence"
+
 ## `society-create-agent` — Create a persistent team agent
 
 Create an agent in the user's existing Agents team, only when requested. This creates a roster profile and starts no work. Responsibilities derive capabilities through the same service as the Agents UI. Read the returned agent and created flag: an existing name is adopted, never duplicated. Use society-switch-agent-model only if a specific provider is requested.
@@ -96,7 +192,7 @@ Switch the speech-to-text provider. Takes effect on the next voice-pipeline star
 Switch which realtime voice engine (speech-to-speech) is active, including subscription- and API-backed providers. Experimental transports require explicit acknowledgement.
 
 - **Endpoint:** `POST /api/realtime/switch`
-- **Arguments:** `provider` (one of: gemini-live, local-realtime, openai-realtime, vertex-live; required); `persist` (boolean; optional); `accept_experimental` (boolean; optional)
+- **Arguments:** `provider` (one of: gemini-live, local-realtime, openai-live, vertex-live; required); `persist` (boolean; optional); `accept_experimental` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the realtime model to gemini"
@@ -146,7 +242,7 @@ List all configured providers and which ones are active.
 Test connectivity and authentication for one provider.
 
 - **Endpoint:** `POST /api/providers/{provider_id}/test`
-- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, elevenlabs, faster-whisper, gemini, gemini-api, gemini-flash-tts, gemini-live, gemini-polish, grok, grok-build, grok-voice, groq-api, groq-polish, inworld, local-openai, local-realtime, nemotron-local, nvidia, ollama, ollama-polish, openai, openai-api, openai-polish, openai-realtime, openrouter, openrouter-polish, openrouter-stt, openrouter-tts, piper-local, vertex, vertex-live, vertex-stt, vertex-tts; required)
+- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, claude-cli, codex, elevenlabs, faster-whisper, gemini, gemini-api, gemini-flash-tts, gemini-live, gemini-polish, grok, grok-build, grok-voice, groq-api, groq-polish, inworld, local-openai, local-realtime, nemotron-local, nvidia, ollama, ollama-polish, openai, openai-api, openai-live, openai-polish, openrouter, openrouter-polish, openrouter-stt, openrouter-tts, piper-local, vertex, vertex-live, vertex-stt, vertex-tts; required)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "test the openai provider"

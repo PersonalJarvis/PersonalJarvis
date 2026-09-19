@@ -96,6 +96,12 @@ const SocietyView = lazyView(() =>
     default: m.SocietyView,
   })),
 );
+// Swarm is loaded only on demand; disabled mode has no Swarm initialization.
+const UltraSwarmView = lazy(() =>
+  import("@/views/swarm/UltraSwarmView").then((m) => ({
+    default: m.UltraSwarmView,
+  })),
+);
 const WikiView = lazyView(() =>
   import("@/views/WikiView").then((m) => ({ default: m.WikiView })),
 );
@@ -476,6 +482,8 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <ChatsSurface />;
     case "agents":
       return <SocietyView />;
+    case "ultra-swarm":
+      return <UltraSwarmView />;
     // CLIs list + CLI Test Hub are merged behind the "CLIs" entry.
     case "clis":
     case "cli-test-hub":

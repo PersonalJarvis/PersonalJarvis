@@ -399,6 +399,7 @@ class WebServer:
         from .socials_routes import router as socials_router
         from .society_routes import router as society_router
         from .society_browser_routes import router as society_browser_router
+        from .swarm_routes import router as swarm_router
         from .society_figure_routes import router as society_figure_router
         from .starter_plan_routes import router as starter_plan_router
         from .sub_agents_routes import router as sub_agents_router
@@ -593,6 +594,9 @@ class WebServer:
         set_society_factory(self._build_society_runtime)
         app.include_router(society_router)
         app.include_router(society_browser_router)
+        app.state.swarm = None
+        app.state.swarm_factory = self._build_swarm_runtime
+        app.include_router(swarm_router)
         app.include_router(society_figure_router)
         app.include_router(drop_router)
         # Default: no recorder wired up — _init_session_stack() in start()
@@ -2830,6 +2834,9 @@ class WebServer:
             except Exception:
                 logger.debug("Browser preparation deferred after failure", exc_info=True)
         self._browser_prepare_task = asyncio.create_task(prepare_browser(), name="browser-prepare")
+        self._swarm_recovery_task = asyncio.create_task(
+            self._recover_swarms_after_ready(), name="deferred-swarm-recovery"
+        )
 
     async def _init_screenshot_retention(self) -> None:
         """Auto-delete captured screenshot blobs older than the configured
@@ -3654,6 +3661,30 @@ class WebServer:
             await runtime.ensure_started()
         return await run_owned_routine(runtime, task_id, tags, prompt, cancel)
 
+    def _build_swarm_runtime(self) -> Any:
+        from jarvis.swarm.runtime import build_service
+
+        service = getattr(self.app.state, "swarm", None)
+        if service is None:
+            service = build_service(self.cfg, control_bus=self.bus)
+            from jarvis.society.swarm_port import SocietySwarmProfiles
+
+            service.profiles = SocietySwarmProfiles(self._build_society_runtime)
+            self.app.state.swarm = service
+        return service
+
+    async def _recover_swarms_after_ready(self) -> None:
+        from jarvis.swarm.runtime import prepare_install, recovery_needed
+
+        await asyncio.sleep(0)
+        try:
+            if not await asyncio.to_thread(recovery_needed, self.cfg):
+                return
+            await asyncio.to_thread(prepare_install, self.cfg)
+            await self._build_swarm_runtime().start()
+        except Exception as exc:  # noqa: BLE001 - in-app recovery remains available
+            logger.opt(exception=exc).error("Swarm recovery needs attention in Ultra Agent Swarm")
+
     def _build_society_runtime(self) -> Any:
         """Build the agent-society runtime on first use (see society_routes).
 
@@ -3721,6 +3752,7 @@ class WebServer:
             task_services=lambda: (
                 getattr(state, "task_store", None), getattr(state, "task_scheduler", None)
             ),
+            swarm_requests=self._build_swarm_runtime,
         )
         def browser_brain(agent: Any) -> Any:
             from jarvis.brain.resolver import resolve_browser_brain
@@ -3762,6 +3794,13 @@ class WebServer:
         society = getattr(self.app.state, "society", None)
         if society is not None:
             await society.browser.close()
+        swarm_recovery = getattr(self, "_swarm_recovery_task", None)
+        if swarm_recovery is not None:
+            swarm_recovery.cancel()
+            await asyncio.gather(swarm_recovery, return_exceptions=True)
+        swarm = getattr(self.app.state, "swarm", None)
+        if swarm is not None:
+            await swarm.stop()
         self._mic_level_sessions.clear()
         self._stop_mic_level_bridge()
 

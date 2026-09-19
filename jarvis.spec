@@ -26,14 +26,17 @@
 # ruff: noqa
 
 import re
+import runpy
 import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import (
     collect_data_files,
+    collect_dynamic_libs,
     collect_submodules,
     copy_metadata,
 )
+from PyInstaller.utils import hooks as bundle_hooks
 
 
 PROJECT_ROOT = Path(SPECPATH).resolve()  # noqa: F821  (SPECPATH is PyInstaller-injected)
@@ -144,6 +147,17 @@ if profiles_dir.exists():
 # entry-point plugins in the frozen layout.
 datas += copy_metadata("personal-jarvis")
 
+# Wasmtime loads its platform library through ctypes and a package-relative
+# path. Preserve that layout in frozen installs; the pinned QuickJS WASM and
+# license are already included by the runtime package-data collection above.
+# Optional runtime clients are mandatory build inputs: users cannot install
+# Python extras into a frozen app. The same manifest serves all native targets.
+swarm_bundle = runpy.run_path(str(PROJECT_ROOT / "packaging" / "swarm_bundle.py"))[
+    "collect_swarm_bundle"
+](bundle_hooks)
+swarm_binaries = swarm_bundle["binaries"]
+datas += swarm_bundle["datas"]
+
 # Legacy optional data packages are collected only when installed.
 for pkg in ("chromadb", "sentence_transformers"):
     try:
@@ -155,6 +169,7 @@ for pkg in ("chromadb", "sentence_transformers"):
 # --- Hidden imports ---------------------------------------------------------
 
 hiddenimports: list[str] = []
+hiddenimports += swarm_bundle["hiddenimports"]
 
 # Entry-point-loaded Jarvis plugins and channels are invisible to static import
 # analysis and must be collected explicitly.
@@ -252,7 +267,7 @@ block_cipher = None
 a = Analysis(
     ["jarvis/__main__.py"],
     pathex=[str(PROJECT_ROOT)],
-    binaries=[],
+    binaries=swarm_binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     # Outranks pyinstaller-hooks-contrib (HOOK_PRIORITY_USER_HOOKS); see the

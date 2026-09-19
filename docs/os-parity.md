@@ -84,6 +84,45 @@ Windows tests, a single-key Gemini run with isolated stores, and real Chrome
 light/dark UI checks passed. Physical macOS/Linux execution and a clean OS
 installation remain unverified. See [hook configuration](routines.md#webhooks-and-integration-event-hooks).
 
+## Ultra Agent Swarm (2026-09-10)
+
+**T3 contract.** Local teams use the same lazy SQLite/JSON implementation and
+bundled Wasmtime/QuickJS sandbox on Windows, macOS and Linux, including headless
+installs. `WasmSandbox.capability()` checks the runtime and interpreter integrity;
+an unavailable sandbox reports an error and never falls back to a host shell.
+No GPU, microphone, container daemon, PostgreSQL, Redis or object service is
+required by local mode. The UI provides a flat map when WebGL is unavailable.
+
+Distributed mode uses the shared PostgreSQL/Redis/S3 adapter on all three OSes.
+Source installs keep its drivers in the optional `swarm-distributed` extra;
+authenticated in-app setup can install them. Frozen desktop builds include the
+drivers because a frozen Python environment cannot install extras. All native
+installer jobs use `packaging/swarm_bundle.py`, which requires the client
+metadata, binary libpq dependencies, Wasmtime library, TLS roots and S3 service
+models. Missing build inputs fail the build. Bundling clients starts no services
+and does not enable distributed mode.
+
+`tests/contract/test_swarm_packaging.py` verifies the three platform library
+layouts, release-job wiring and source/frozen dependency separation.
+`tests/contract/test_swarm_sandbox.py` exercises the real bundled interpreter;
+storage and distributed contracts live beside it. Windows contract tests have
+run locally. A real Windows PyInstaller probe using the shared manifest loaded
+binary libpq, Redis, S3 service models and TLS roots, created a local team, and
+computed `49` in the bundled Wasm interpreter. This is an offline frozen-runtime
+probe, not a full installer or remote-service acceptance run.
+An actual base-wheel installation in a fresh `python:3.11-slim` Linux container
+also passed 402 Swarm tests and booted the headless web server. The unmodified
+Stage-2 installer entry ran for fresh setup and upgrade preparation; ordinary
+memory, Society data and configuration hashes stayed unchanged while a legacy
+Swarm schema migrated once and retained its identities. The integration tests
+used one synthetic model provider and the real bundled Wasm interpreter; no
+live provider credential was used. Wheel dependency installation was performed
+before invoking the installer entry.
+Native signed macOS execution, Linux AppImage execution and full public
+installer download/upgrade acceptance remain separate verification requirements;
+platform-layout emulation is not evidence that those native installers ran.
+See [operation and verification boundaries](ultra-agent-swarm.md).
+
 ## Calendar routines (2026-09-08)
 
 Windows, macOS and Linux use the same lazy `zoneinfo` calendar implementation

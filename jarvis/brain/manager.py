@@ -8471,6 +8471,12 @@ class BrainManager:
         t = (user_text or "").strip()
         if not t:
             return False
+        from jarvis.commands.registry import is_swarm_owner_request
+
+        if is_swarm_owner_request(t):
+            # Explicit Swarm commands need their own owner confirmation and team
+            # limits. The generic mission shortcut cannot substitute a worker.
+            return False
         from jarvis.society.lead_card import society_owns_task
 
         if society_owns_task(t):
