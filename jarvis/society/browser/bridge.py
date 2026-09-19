@@ -108,8 +108,18 @@ async def execute_live(
     provider = caller.provider or _default_provider(runtime)
     key = get_jarvis_agent_secret(provider)
     overrides = {provider: key} if key else {}
-    with override_provider_secrets(overrides):
-        brain = await asyncio.to_thread(live.model_resolver, caller)
+    try:
+        with override_provider_secrets(overrides):
+            brain = await asyncio.to_thread(live.model_resolver, caller)
+    except LookupError:
+        # A chat-only CLI can be connected without an inference implementation.
+        # Do not silently move its browser work to an API-billed provider.
+        return ToolResult(
+            False,
+            None,
+            "This agent's selected model connection cannot currently drive the browser. "
+            "Choose another connected model in its Model menu.",
+        )
     if brain is None or not callable(getattr(brain, "complete", None)):
         return ToolResult(False, None, "This agent has no browser-capable model connection")
     usage_total = {"input_tokens": 0, "output_tokens": 0, "cache_hit_tokens": 0}

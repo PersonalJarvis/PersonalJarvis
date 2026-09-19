@@ -458,3 +458,32 @@ async def test_completed_chat_cancels_only_its_pending_browser(tmp_path, monkeyp
         rt.browser.live.sessions.clear()
         other.run_lock.release()
         await rt.close()
+
+
+async def test_chat_only_model_has_actionable_browser_failure_without_paid_fallback(
+    tmp_path, monkeypatch
+):
+    from jarvis.society.browser.bridge import execute_live
+    from jarvis.society.browser.live import LiveSessions
+
+    live = LiveSessions(tmp_path)
+    live.executor = object()
+    calls = []
+
+    def unavailable(caller):
+        calls.append(caller.provider)
+        raise KeyError("No inference implementation")
+
+    live.model_resolver = unavailable
+    monkeypatch.setattr("jarvis.core.config.get_jarvis_agent_secret", lambda _: None)
+    result = await execute_live(
+        SimpleNamespace(data_dir=tmp_path),
+        SimpleNamespace(agent_id="test", provider="chat-only"),
+        SimpleNamespace(live=live),
+        {"task": "Read"},
+        SimpleNamespace(trace_id="one", config={}),
+    )
+    assert not result.success
+    assert "Model menu" in result.error
+    assert calls == ["chat-only"]
+    assert live.sessions == {}
