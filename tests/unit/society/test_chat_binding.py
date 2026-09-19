@@ -76,6 +76,17 @@ async def test_ensure_session_is_deterministic_and_reseats(world):
     assert reseated.session_id == "society:scout"
 
 
+async def test_ensure_session_clears_legacy_effort(world):
+    rt, svc, cfg = world
+    scout, _ = await rt.roster.create(
+        name="Scout", provider="antigravity", model="gemini-3.8-flash", effort="high"
+    )
+    first = ensure_session(svc, cfg, scout)
+    assert first.effort == ""
+    svc.store.update_session(first.session_id, effort="low")
+    assert ensure_session(svc, cfg, scout).effort == ""
+
+
 async def test_ceiling_maps_to_stance(world):
     rt, svc, cfg = world
     safe, _ = await rt.roster.create(name="Reader", provider="openai", permission_ceiling="safe")

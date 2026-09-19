@@ -772,3 +772,38 @@ async def test_large_catalog_fits_rtc_and_remains_fully_discoverable(ledger):
         "last-tool", "call_tool", {"name": names[-1], "arguments_json": "{}"}, 0
     )
     assert result["success"]
+
+
+@pytest.mark.asyncio
+async def test_live_usage_keeps_the_calls_model_after_a_settings_change(ledger):
+    async def send(event):
+        return None
+
+    cfg = SimpleNamespace(
+        brain=SimpleNamespace(reply_language="en"),
+        live=LiveConfig(configured=True, backend_model="next-call-model"),
+    )
+    session = LiveVoiceSession(
+        session_id="s",
+        send_json=send,
+        send_binary=send,
+        config=cfg,
+        providers=[SimpleNamespace(name="test")],
+    )
+    session._ledger = ledger
+    session._tools = LiveTools(
+        Gateway(), ledger, "s", language="en", backend_model="starting-model"
+    )
+    await session._event(
+        {
+            "type": "response.event",
+            "delegation_id": "d",
+            "event": {
+                "type": "response.completed",
+                "response": {"id": "usage", "usage": {"input_tokens": 3}},
+            },
+        }
+    )
+    assert ledger._db.execute("SELECT model FROM live_backend_usage").fetchone() == (
+        "starting-model",
+    )

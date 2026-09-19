@@ -468,9 +468,9 @@ class LiveVoiceSession:
                 return
             self._completed.add(rid)
             usage = response.get("usage") or {}
-            profile = getattr(self._config, "live", LiveConfig())
+            backend_model = self._tools.backend_model
             await asyncio.to_thread(
-                self._ledger.backend_usage, self.session_id, rid, profile.backend_model, usage
+                self._ledger.backend_usage, self.session_id, rid, backend_model, usage
             )
             if self._bus is not None:
                 from jarvis.brain.cost import calculate_cost_usd
@@ -482,13 +482,11 @@ class LiveVoiceSession:
                 await self._bus.publish(
                     BrainTurnCompleted(
                         provider="openai",
-                        model=profile.backend_model,
+                        model=backend_model,
                         tokens_in=tokens_in,
                         tokens_out=tokens_out,
                         tokens_cached=cached,
-                        cost_usd=calculate_cost_usd(
-                            profile.backend_model, tokens_in, tokens_out, cached
-                        ),
+                        cost_usd=calculate_cost_usd(backend_model, tokens_in, tokens_out, cached),
                         finish_reason="live_delegation",
                     )
                 )
