@@ -193,7 +193,7 @@ def test_cannot_evaluate_unseen_lesson_or_promote_turn_success(tmp_path):
 
 
 def test_real_brain_prompt_does_not_read_jarvis_memory_or_global_skills():
-    from jarvis.brain.manager import BrainManager, _TURN_OVERRIDE
+    from jarvis.brain.manager import _TURN_OVERRIDE, BrainManager
     from jarvis.brain.turn_override import TurnOverride
 
     manager = BrainManager.__new__(BrainManager)
@@ -219,7 +219,7 @@ def test_real_brain_prompt_does_not_read_jarvis_memory_or_global_skills():
 
 
 def test_missing_private_briefing_cannot_fall_back_to_jarvis():
-    from jarvis.brain.manager import BrainManager, _TURN_OVERRIDE
+    from jarvis.brain.manager import _TURN_OVERRIDE, BrainManager
     from jarvis.brain.turn_override import TurnOverride
 
     token = _TURN_OVERRIDE.set(
@@ -296,6 +296,33 @@ async def test_failed_turn_learns_without_model_and_cannot_claim_verified_succes
     learned = rt.experience_for("mail").context("Create email draft")
     assert "recipient is missing" in learned and "no remedy is verified" in learned
     assert not rt.experience_for("other").context("email_draft")
+
+
+async def test_unexecuted_user_correction_becomes_feedback_not_verified_skill(world):
+    rt, _, _ = world
+    quote = "Always validate the email recipient before creating a draft."
+
+    async def reviewer(*args):
+        return {
+            "memories": [],
+            "lessons": [],
+            "skill": {
+                "goal": "Create email drafts",
+                "evidence": quote,
+                "steps": ["Invented successful step"],
+                "outcome": "Invented verified outcome",
+            },
+        }
+
+    rt.turn_reviewer = reviewer
+    session = SimpleNamespace(session_id="society:mail", surface="society")
+    await rt.turn_completed(session, completion(session.session_id, quote))
+    await rt.recover_reviews()
+    context = rt.experience_for("mail").context("Create email drafts")
+    assert quote in context and "feedback" in context
+    assert "Invented" not in context
+    assert not rt.skills_for("mail").summaries()
+    assert not rt.conversations.pending_reviews()
 
 
 async def test_slow_agent_does_not_block_another_agents_review(world):
