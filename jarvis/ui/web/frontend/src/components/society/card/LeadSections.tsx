@@ -48,7 +48,6 @@ export function LeadBrain() {
         <Badge variant="secondary" className="font-mono text-[11px]">
           {draft.model || t("society.chat.model_provider_default")}
         </Badge>
-        {draft.effort ? <Badge variant="outline">{draft.effort}</Badge> : null}
         <Badge variant="outline">{t("society.tier.lead")}</Badge>
       </div>
       <p className="text-[11px] text-muted-foreground">{t("society.card.brain_shared_hint")}</p>

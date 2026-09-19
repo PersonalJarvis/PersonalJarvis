@@ -528,9 +528,10 @@ def plan_grok(
     return CliPlan(argv, env, None, "claude", sid)
 
 
-#: agy's own model ids as of 1.1.19, for a box where ``agy models`` cannot be
+#: agy's model ids verified on 2026-09-19, for a box where ``agy models`` cannot be
 #: read (the live list is account-dependent and wins whenever it answers).
 AGY_FALLBACK_MODELS: Final[tuple[tuple[str, str, tuple[str, ...]], ...]] = (
+    ("gemini-3.8-flash", "Gemini 3.8 Flash", ("low", "medium", "high")),
     ("gemini-3.7-flash", "Gemini 3.7 Flash", ("low", "medium", "high")),
     ("gemini-3.6-flash", "Gemini 3.6 Flash", ("low", "medium", "high")),
     ("gemini-3.5-flash", "Gemini 3.5 Flash", ("low", "medium", "high")),
@@ -612,10 +613,28 @@ def agy_model_args(
         return ["--effort", effort] if effort in _AGY_EFFORT_SUFFIXES else []
     row = by_id.get(model)
     if row is None:
-        # A suffixed or unknown id: pass it through untouched.
+        # A new Gemini base may arrive before our fallback catalog updates.
+        # agy rejects that base without --effort even when discovery failed.
+        if model.startswith("gemini-") and not model.endswith(
+            tuple("-" + level for level in _AGY_EFFORT_SUFFIXES)
+        ):
+            return [
+                "--model",
+                model,
+                "--effort",
+                effort if effort in _AGY_EFFORT_SUFFIXES else "medium",
+            ]
+        # A suffixed or other unknown id passes through untouched.
         return ["--model", model]
     ladder = list(row.get("efforts") or [])
     if not ladder:
+        if model.startswith("gemini-"):
+            return [
+                "--model",
+                model,
+                "--effort",
+                effort if effort in _AGY_EFFORT_SUFFIXES else "medium",
+            ]
         return ["--model", model]
     if ladder == ["medium"] and model.startswith("gpt-oss"):
         # gpt-oss-120b: the bare id runs; ``-medium`` is the only suffix.
@@ -2604,6 +2623,16 @@ async def _run_cli_once(
     chat_ref = approval_ref(session.session_id)
     cwd = _resolved_cwd(session.cwd or Path.home())
     effort = normalize_effort(session.provider, session.effort)
+    if getattr(session, "surface", "") == "society":
+        from .effort import automatic_society_effort
+
+        # agy requires a value; Codex and Grok accept the same three common
+        # levels. Other CLIs retain native adaptive thinking or model defaults.
+        effort = (
+            automatic_society_effort(user_text)
+            if runner in {"agy-cli", "codex-cli", "grok-cli"}
+            else ""
+        )
     planner = _PLANNERS[runner]
     status = "done"
     error_text: str | None = None

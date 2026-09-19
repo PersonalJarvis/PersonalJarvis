@@ -10,6 +10,7 @@ import pytest
 
 from jarvis.agent_chat import permissions, runner_cli
 from jarvis.agent_chat.catalog import CODEX_FALLBACK_MODELS, provider_row
+from jarvis.agent_chat.effort import automatic_society_effort
 from jarvis.agent_chat.runner_cli import (
     _AgyState,
     agy_model_args,
@@ -22,6 +23,45 @@ from jarvis.agent_chat.runner_cli import (
 from jarvis.plugins.brain._anthropic_base import _is_reasoning_model, reasoning_kwargs
 
 # ------------------------------------------------------------ permissions
+
+
+def test_society_effort_follows_the_current_task():
+    assert automatic_society_effort("Hi") == "low"
+    assert (
+        automatic_society_effort("Summarize the changes and explain their impact for the team.")
+        == "low"
+    )
+    assert (
+        automatic_society_effort(
+            "Please review the implementation and identify the likely cause "
+            "before proposing a fix with tests."
+        )
+        == "medium"
+    )
+    assert (
+        automatic_society_effort(
+            "1. Inspect the logs\n2. Find the regression\n3. Fix and verify it"
+        )
+        == "high"
+    )
+    assert (
+        automatic_society_effort("Scheduled routine abc. Follow instructions.\n\nReply OK.")
+        == "low"
+    )
+
+
+def test_new_agy_gemini_base_keeps_required_effort_without_a_catalog():
+    stale = [{"id": "gemini-3.7-flash", "efforts": ["low", "medium", "high"]}]
+    assert agy_model_args("gemini-3.8-flash", "", stale) == [
+        "--model",
+        "gemini-3.8-flash",
+        "--effort",
+        "medium",
+    ]
+    assert agy_model_args(
+        "gemini-3.8-flash", "high", [{"id": "gemini-3.8-flash", "efforts": []}]
+    ) == ["--model", "gemini-3.8-flash", "--effort", "high"]
+    assert agy_model_args("gemini-3.8-flash-high", "", []) == ["--model", "gemini-3.8-flash-high"]
 
 
 async def test_agy_cold_chat_resolves_catalog_before_building_command(tmp_path, monkeypatch):
@@ -51,6 +91,35 @@ async def test_agy_cold_chat_resolves_catalog_before_building_command(tmp_path, 
     result = await runner_cli._run_cli_once(handle, "Read a page", "agy-cli", None)
     assert result.status == "error"
     assert result.error == "stop before process launch"
+
+
+@pytest.mark.parametrize("runner", ["agy-cli", "codex-cli", "grok-cli"])
+async def test_society_cli_effort_is_chosen_for_each_turn(tmp_path, monkeypatch, runner):
+    seen = []
+
+    def planner(**kwargs):
+        seen.append(kwargs["effort"])
+        raise runner_cli.CliUnavailable("stop before process launch")
+
+    monkeypatch.setitem(runner_cli._PLANNERS, runner, planner)
+    if runner == "agy-cli":
+        monkeypatch.setattr(runner_cli, "read_agy_models", lambda: [])
+    handle = SimpleNamespace(
+        session=SimpleNamespace(
+            session_id="society:scout",
+            surface="society",
+            cwd=str(tmp_path),
+            provider="antigravity" if runner == "agy-cli" else "openai-codex",
+            model="",
+            effort="high",
+            permission_mode="plan",
+        )
+    )
+    await runner_cli._run_cli_once(handle, "Hi", runner, None)
+    await runner_cli._run_cli_once(
+        handle, "1. Inspect the logs\n2. Find the cause\n3. Fix and verify it", runner, None
+    )
+    assert seen == ["low", "high"]
 
 
 def test_every_runner_has_a_ladder_with_its_default_on_it():
@@ -295,7 +364,7 @@ def test_agy_model_catalog_folds_suffixed_ids():
     assert by_id["claude-sonnet-4-6"]["efforts"] == []
     assert by_id["gpt-oss-120b"]["efforts"] == ["medium"]
     # No list at all -> the fallback table.
-    assert agy_model_catalog(None)[0]["id"] == "gemini-3.7-flash"
+    assert agy_model_catalog(None)[0]["id"] == "gemini-3.8-flash"
 
 
 # ------------------------------------------------------------ agy translation
@@ -474,7 +543,7 @@ def test_catalog_rows_carry_per_model_efforts_for_cli_runners():
     agy = provider_row("antigravity")
     assert agy is not None
     models = agy.to_dict()["curated_models"]
-    assert models[0]["id"] == "gemini-3.7-flash" and models[0]["efforts"] == [
+    assert models[0]["id"] == "gemini-3.8-flash" and models[0]["efforts"] == [
         "low",
         "medium",
         "high",
