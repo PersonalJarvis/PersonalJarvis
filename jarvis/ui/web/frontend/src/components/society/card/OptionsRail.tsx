@@ -9,8 +9,10 @@ import { useEffect, useRef, useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 
 import { useT } from "@/i18n";
+import { useEventStore } from "@/store/events";
 
-import type { SocietyAgent } from "../data";
+import { encodeAgentPortrait } from "../agentPortrait";
+import { useUpdateAgentPortrait, type SocietyAgent } from "../data";
 import { AgentBrowserPreview } from "./AgentBrowserPreview";
 import { AgentRoutinesList } from "./AgentRoutinesList";
 import { JarvisHistoryRail } from "../chat/JarvisHistoryRail";
@@ -27,7 +29,38 @@ export function OptionsRail({ agent, onRetired, sample = false }: OptionsRailPro
   const t = useT();
   const [more, setMore] = useState(false);
   const [routineOpen, setRoutineOpen] = useState(false);
+  const [portraitBusy, setPortraitBusy] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
+  const portraitInputRef = useRef<HTMLInputElement>(null);
+  const updatePortrait = useUpdateAgentPortrait();
+  const pushToast = useEventStore((s) => s.pushToast);
+
+  const savePortrait = async (portrait: string | null) => {
+    setPortraitBusy(true);
+    try {
+      await updatePortrait(agent, portrait);
+      pushToast("success", t(portrait ? "society.card.portrait_updated" : "society.card.portrait_removed"));
+      setMore(false);
+    } catch {
+      pushToast("error", t("society.card.portrait_save_failed"));
+    } finally {
+      setPortraitBusy(false);
+    }
+  };
+
+  const onPortraitChosen = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      const portrait = await encodeAgentPortrait(file);
+      await savePortrait(portrait);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const key = message === "portrait_too_large" ? "portrait_too_large" : "portrait_invalid_file";
+      pushToast("error", t(`society.card.${key}`));
+    }
+  };
 
   useEffect(() => {
     setMore(false);
@@ -55,6 +88,14 @@ export function OptionsRail({ agent, onRetired, sample = false }: OptionsRailPro
       aria-label={t("society.card.options")}
       data-testid="agent-card-options"
     >
+      <input
+        ref={portraitInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        aria-label={t("society.card.portrait_change")}
+        onChange={(event) => { void onPortraitChosen(event); }}
+      />
       <header className="flex shrink-0 items-center justify-between gap-2 px-3 pb-1 pt-3">
         <h2 className="font-display text-sm font-semibold tracking-tight text-foreground">
           {t("society.card.options")}
@@ -76,6 +117,32 @@ export function OptionsRail({ agent, onRetired, sample = false }: OptionsRailPro
               role="menu"
               className="absolute right-0 top-full z-10 mt-1 w-56 rounded-md border border-border bg-popover p-3 shadow-float"
             >
+              {!sample ? (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={portraitBusy}
+                    className="block w-full rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-secondary disabled:opacity-50"
+                    onClick={() => portraitInputRef.current?.click()}
+                    data-testid="agent-portrait-change"
+                  >
+                    {t("society.card.portrait_change")}
+                  </button>
+                  {agent.figure?.portrait ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={portraitBusy}
+                      className="block w-full rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-secondary disabled:opacity-50"
+                      onClick={() => { void savePortrait(null); }}
+                      data-testid="agent-portrait-remove"
+                    >
+                      {t("society.card.portrait_remove")}
+                    </button>
+                  ) : null}
+                </>
+              ) : null}
               <RetireButton agent={agent} onRetired={onRetired} variant="rail" />
             </div>
           ) : null}

@@ -102,7 +102,7 @@ describe("OptionsRail", () => {
           ],
         });
       }
-      if (path.includes("/api/society/agents")) return json({ agents: [] });
+      if (path.includes("/api/society/agents")) return json({ agent: { avatar: { contract: 1, archetype: "biped", base: "rogue", parts: {} } }, agents: [] });
       return json({});
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -129,6 +129,21 @@ describe("OptionsRail", () => {
     expect(retire.dataset.armed).toBe("true");
     expect(onRetired).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === "DELETE")).toHaveLength(0);
+  });
+
+  test("removing a portrait preserves the world figure recipe", async () => {
+    const figure = { contract: 1 as const, archetype: "biped" as const, base: "rogue", parts: {}, portrait: "bot-creator" };
+    mount(agent({ figure }));
+    fireEvent.click(screen.getByTestId("agent-card-options-more"));
+    expect(screen.getByTestId("agent-portrait-change")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("agent-portrait-remove"));
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find((call) => (call[1] as RequestInit | undefined)?.method === "PATCH");
+      expect(patch).toBeTruthy();
+      const body = JSON.parse((patch?.[1] as RequestInit).body as string) as { avatar: typeof figure };
+      expect(body.avatar.base).toBe("rogue");
+      expect(body.avatar.portrait).toBeUndefined();
+    });
   });
 
   test("switching agent swaps the caption and the routines list", async () => {
