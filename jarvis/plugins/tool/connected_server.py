@@ -25,6 +25,14 @@ from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 from .connected_operations import BASES, OPERATIONS, Operation
 
 
+class ConnectorHTTPError(RuntimeError):
+    """A resource failure with a status code but no provider payload."""
+
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        super().__init__(f"Provider resource request returned HTTP {status_code}")
+
+
 def operation_schema(operation: Operation) -> dict[str, Any]:
     fields = [field for _, field, _, _ in Formatter().parse(operation.path) if field]
     properties: dict[str, Any] = {
@@ -182,19 +190,9 @@ class ConnectedRestClient:
                 f"{self.plugin_id}: request failed ({type(exc).__name__}); "
                 "outcome may be unknown, check before retrying a write"
             ) from None
-        if response.status_code in {401, 403}:
-            raise RuntimeError(
-                f"{self.plugin_id}: HTTP {response.status_code}; "
-                "reconnect in Plugins or check account permissions"
-            )
-        if response.status_code == 429:
-            raise RuntimeError(f"{self.plugin_id}: provider rate limit; retry later")
         if not 200 <= response.status_code < 300:
             # Provider bodies may echo submitted secrets; never propagate them.
-            raise RuntimeError(
-                f"{self.plugin_id}: HTTP {response.status_code}; "
-                "check resource IDs and request fields"
-            )
+            raise ConnectorHTTPError(response.status_code)
         if response.status_code == 204 or not response.content:
             return {"accepted": True, "http_status": response.status_code}
         if "json" in response.headers.get("content-type", ""):

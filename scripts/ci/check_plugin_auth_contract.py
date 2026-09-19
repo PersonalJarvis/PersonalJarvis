@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -225,6 +224,16 @@ def main() -> int:
                 "confidential secrets never ship in the repo"
             )
 
+        if auth.get("client_kind") == "broker":
+            if pl.get("browser_flow") != "hosted":
+                findings.append(f"{pid}: confidential client must use hosted broker flow")
+            broker_url = auth.get("broker_url")
+            if broker_url and not str(broker_url).startswith("https://"):
+                findings.append(f"{pid}: broker must use HTTPS")
+        family = pl.get("oauth_client_family")
+        if family and f"publisher_{family}_oauth_client_secret" in secret_keys:
+            findings.append(f"{pid}: confidential publisher secret exposed in desktop settings")
+
         # 2. DCR discovery must be a usable absolute URL with a host.
         if mode == "hosted_mcp_oauth_dcr":
             disc = str(auth.get("discovery_url", ""))
@@ -242,7 +251,7 @@ def main() -> int:
             else:
                 # 4. Family needs BYO + publisher secret slots.
                 for prefix in (f"{family}_oauth_client_", f"publisher_{family}_oauth_client_"):
-                    for suffix in ("id", "secret"):
+                    for suffix in ("id",) if prefix.startswith("publisher_") else ("id", "secret"):
                         slot = f"{prefix}{suffix}"
                         if slot not in secret_keys:
                             findings.append(
@@ -357,18 +366,17 @@ def main() -> int:
                         f"mirror {mirror_dir.name}: fallback_auth mode drifts from seed"
                     )
 
-    # No invented-client guard: the repo must never contain a hardcoded
-    # looking real client id where a placeholder belongs. (Publisher ids
-    # travel via secrets/env, never via tracked files.)
-    hexish = re.compile(r"^[A-Za-z0-9\-_]{16,}$")
+    # Public client identifiers are deliberately shipped; they are not secrets.
+    # Confidential registrations belong to the broker, never desktop manifests.
     for pl in plugins:
         auth = pl.get("auth", {})
         if isinstance(auth, dict) and auth.get("mode") == "oauth_pkce_loopback":
             cid = str(auth.get("client_id", ""))
-            if not is_placeholder(cid) and hexish.match(cid) and len(cid) >= 24:
+            if not is_placeholder(cid) and (
+                auth.get("client_kind", "public") != "public" or not pl.get("publisher_managed")
+            ):
                 findings.append(
-                    f"{pl.get('id')}: catalog client_id looks like a real shipped "
-                    "secret-bearing id — publisher ids travel via secrets, not the repo"
+                    f"{pl.get('id')}: shipped client ID must declare publisher-managed public PKCE"
                 )
 
     if findings:

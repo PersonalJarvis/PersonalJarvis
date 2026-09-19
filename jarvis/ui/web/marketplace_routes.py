@@ -22,7 +22,7 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -57,6 +57,7 @@ from jarvis.marketplace.auth import (
     get_registry,
     sanitize_provider_error,
 )
+from jarvis.marketplace.auth.base import AuthHandler
 from jarvis.marketplace.catalog import (
     CATEGORY_ORDER,
     HostedMcpOAuthDcrAuth,
@@ -155,6 +156,7 @@ class _PluginStatusMeta:
     # then says "unknown" rather than inventing a cause.
     reauth_reason: str | None = None
     reauth_at: str | None = None
+    capability_state: str = "unknown"
 
 
 def _plugin_status_meta(plugin_id: str, store: TokenStore) -> _PluginStatusMeta:
@@ -177,6 +179,7 @@ def _plugin_status_meta(plugin_id: str, store: TokenStore) -> _PluginStatusMeta:
         return _PluginStatusMeta("not_connected")
     return _PluginStatusMeta(
         status="needs_reauth" if tokens.needs_reauth else "connected",
+        capability_state=tokens.extra.get("capability_state", "unknown"),
         expires_at=tokens.expires_at.isoformat() if tokens.expires_at else None,
         last_refreshed=tokens.extra.get("last_refreshed") or None,
         reauth_reason=tokens.reauth_reason if tokens.needs_reauth else None,
@@ -241,6 +244,18 @@ def _auth_standard_payload(spec: Any) -> dict[str, Any] | None:
     auth = getattr(spec, "auth", None)
     if not isinstance(auth, (OAuthPkceLoopbackAuth, OAuthDeviceFlowAuth)):
         return None
+    if isinstance(auth, OAuthPkceLoopbackAuth) and auth.client_kind == "broker":
+        from jarvis.core.config import get_secret
+
+        ready = bool(
+            auth.broker_url
+            or get_secret("publisher_oauth_broker_url", "PUBLISHER_OAUTH_BROKER_URL")
+        )
+        return {
+            "ready": ready,
+            "source": "broker" if ready else "missing",
+            "fallback": spec.fallback_auth is not None,
+        }
     try:
         from jarvis.marketplace.publisher_clients import resolve_publisher_client
 
@@ -379,6 +394,7 @@ async def list_plugins(response: Response) -> dict[str, Any]:
         item["last_refreshed"] = meta.last_refreshed
         item["reauth_reason"] = meta.reauth_reason
         item["reauth_at"] = meta.reauth_at
+        item["capability_state"] = meta.capability_state
         item["unavailable_reason"] = None
         if spec.id == "amd_gpu" and spec.auth.mode == "local":
             from jarvis.marketplace.amd_mcp import amd_unavailable_reason
@@ -405,9 +421,11 @@ async def list_plugins(response: Response) -> dict[str, Any]:
         standard = _auth_standard_payload(spec)
         if standard is not None:
             item["auth_standard"] = standard
-            if isinstance(spec.auth, OAuthDeviceFlowAuth):
+            if isinstance(spec.auth, OAuthDeviceFlowAuth) or (
+                isinstance(spec.auth, OAuthPkceLoopbackAuth) and spec.auth.client_kind == "broker"
+            ):
                 item["oauth_client_configured"] = standard["ready"]
-        if isinstance(getattr(spec, "fallback_auth", None), PatPasteAuth):
+        if isinstance(spec.fallback_auth, PatPasteAuth):
             item["fallback_auth"] = spec.fallback_auth.model_dump(mode="json")
         mcp = spec.mcp_server or {}
         mcp_live, runtime_missing = _mcp_live(mcp, plugin_id=spec.id, status=status)
@@ -421,7 +439,13 @@ async def list_plugins(response: Response) -> dict[str, Any]:
                 native_live = spec.native_tool in ROUTER_TOOLS
             except Exception:  # noqa: BLE001
                 native_live = False
-        item["live_callable"] = mcp_live or native_live
+        item["live_callable"] = (mcp_live or native_live) and meta.capability_state not in {
+            "checking",
+            "limited",
+            "rate_limited",
+            "unavailable",
+            "unauthorized",
+        }
         if status == "connected":
             connected += 1
         enriched.append(item)
@@ -678,6 +702,7 @@ async def connect_start(
     if spec is None:
         raise HTTPException(status_code=404, detail=f"plugin {plugin_id!r} not in catalog")
 
+    handler: AuthHandler
     if isinstance(spec.auth, InstanceBrowserAuth):
         from jarvis.marketplace.auth.home_assistant import HomeAssistantHandler
 
@@ -732,6 +757,20 @@ async def connect_start(
                 scopes=list(spec.auth.scopes),
             )
         )
+    elif isinstance(spec.auth, OAuthPkceLoopbackAuth) and spec.auth.client_kind == "broker":
+        from jarvis.core.config import get_secret
+        from jarvis.marketplace.auth.oauth_broker import OAuthBrokerHandler
+
+        broker_url = spec.auth.broker_url or get_secret(
+            "publisher_oauth_broker_url", "PUBLISHER_OAUTH_BROKER_URL"
+        )
+        if not broker_url:
+            raise HTTPException(
+                409,
+                "Publisher browser sign-in is pending service setup. "
+                "No developer setup is required from you.",
+            )
+        handler = OAuthBrokerHandler(plugin_id, broker_url)
     elif isinstance(spec.auth, OAuthPkceLoopbackAuth):
         # Resolve the effective client from secrets so a reconnect uses the
         # operator's real Google client, not the catalog placeholder (the same
@@ -775,6 +814,7 @@ async def connect_start(
                 # marks a plugin user-scopes-only, route the param.
                 scope_param_name=("user_scope" if spec.auth.user_scopes_only else "scope"),
                 callback_path=spec.auth.callback_path,
+                redirect_host=spec.auth.redirect_host,
                 resource=spec.auth.resource,
                 offline_access=spec.auth.offline_access,
                 client_auth_method=spec.auth.client_auth_method,
@@ -834,17 +874,16 @@ async def connect_start(
                 log.info("plugin %s connect flow cancelled", plugin_id)
                 return
             if result.tokens is not None:
-                try:
-                    await verify_connection(spec, result.tokens)
-                except ConnectionVerificationError as exc:
-                    log.info("plugin %s resource verification failed", plugin_id)
-                    if registry.get(session.flow_id) is slot:
-                        slot.result = FlowResult(
-                            tokens=None, error=str(exc), error_code="provider_unreachable"
-                        )
-                    return
-                if registry.get(session.flow_id) is not slot:
-                    return
+                # A successful exchange owns a valid grant independently of API access.
+                # Persist before the network probe so outages cannot discard a login.
+                result = replace(
+                    result,
+                    tokens=replace(
+                        result.tokens,
+                        extra={**result.tokens.extra, "capability_state": "checking"},
+                    ),
+                )
+                assert result.tokens is not None
                 # Persist BEFORE publishing the result: connect_poll reads
                 # `slot.result` to decide "connected" vs "pending", so setting
                 # it before the save actually lands let a poll (or a crash
@@ -860,8 +899,51 @@ async def connect_start(
                         error_code=ERROR_UNKNOWN,
                     )
                     return
+                capability = "live"
+                try:
+                    await verify_connection(spec, result.tokens)
+                except ConnectionVerificationError as exc:
+                    capability = exc.capability
+                    log.info("plugin %s capability check: %s", plugin_id, capability)
+                if registry.get(session.flow_id) is not slot:
+                    return
+                # A disconnect/reconnect during the probe must not resurrect or
+                # overwrite another grant. The first save remains durable.
+                try:
+                    current = TokenStore().load(plugin_id)
+                except RuntimeError:
+                    slot.result = FlowResult(
+                        tokens=None,
+                        error="Stored connection could not be read. Retry.",
+                        error_code=ERROR_UNKNOWN,
+                    )
+                    return
+                if current != result.tokens:
+                    slot.result = FlowResult(
+                        tokens=None,
+                        error="Connection changed during verification. Retry.",
+                        error_code=ERROR_UNKNOWN,
+                    )
+                    return
+                checked = replace(
+                    result.tokens,
+                    extra={**result.tokens.extra, "capability_state": capability},
+                    needs_reauth=capability == "unauthorized",
+                    reauth_reason="provider_rejected" if capability == "unauthorized" else None,
+                )
+                try:
+                    TokenStore().save(plugin_id, checked)
+                except Exception as exc:
+                    log.warning("plugin %s health save failed (%s)", plugin_id, type(exc).__name__)
+                    slot.result = FlowResult(
+                        tokens=None,
+                        error="Connection saved; health update failed. Retry.",
+                        error_code=ERROR_UNKNOWN,
+                    )
+                    return
+                result = replace(result, tokens=checked)
                 _refresh_plugin_in_live_registry(plugin_id)
-                log.info("plugin %s connected via DCR", plugin_id)
+                log.info("plugin %s authorization saved", plugin_id)
             slot.result = result
 
     asyncio.create_task(_drive(), name=f"oauth-drive:{plugin_id}:{session.flow_id}")
@@ -930,7 +1012,17 @@ async def connect_poll(plugin_id: str, flow_id: str) -> dict[str, Any]:
         }
 
     registry.drop(flow_id)
-    return {"state": "connected", "flow_id": flow_id, "plugin_id": plugin_id}
+    return {
+        "state": "error" if slot.result.tokens.needs_reauth else "connected",
+        "flow_id": flow_id,
+        "plugin_id": plugin_id,
+        "capability_state": slot.result.tokens.extra.get("capability_state", "unknown"),
+        **(
+            {"error": "Authorization was rejected. Connect again.", "error_code": "denied"}
+            if slot.result.tokens.needs_reauth
+            else {}
+        ),
+    }
 
 
 # ----------------------------------------------------------------------
@@ -976,6 +1068,33 @@ async def oauth_callback(code: str = "", state: str = "", error: str = "") -> HT
 # ----------------------------------------------------------------------
 # Disconnect
 # ----------------------------------------------------------------------
+
+
+@router.post("/plugins/{plugin_id}/verify")
+async def verify_plugin_access(plugin_id: str) -> dict[str, Any]:
+    """Run a bounded read-only access check without restarting authorization."""
+    from jarvis.marketplace.connection_verification import (
+        has_resource_probe,
+        refresh_capability_state,
+    )
+
+    if load_catalog().by_id(plugin_id) is None:
+        raise HTTPException(404, "Unknown plugin")
+    store = TokenStore()
+    try:
+        tokens = store.load(plugin_id)
+        if tokens is None:
+            raise HTTPException(409, "Connect this plugin first")
+        checked = await refresh_capability_state(plugin_id, store, tokens)
+        if store.load(plugin_id) != checked:
+            raise HTTPException(409, "Connection changed during the check. Retry.")
+    except RuntimeError:
+        raise HTTPException(503, "Connection state could not be saved. Retry.") from None
+    return {
+        "status": "needs_reauth" if checked.needs_reauth else "connected",
+        "capability_state": checked.extra.get("capability_state", "unknown"),
+        "resource_read": has_resource_probe(plugin_id),
+    }
 
 
 @router.delete("/plugins/{plugin_id}")

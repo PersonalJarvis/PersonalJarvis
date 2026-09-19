@@ -119,6 +119,7 @@ async def test_connect_poll_reports_connected_when_save_succeeds(
         saved[plugin_id] = tokens
 
     monkeypatch.setattr(mr.TokenStore, "save", _recording_save)
+    monkeypatch.setattr(mr.TokenStore, "load", lambda self, pid: saved.get(pid))
     monkeypatch.setattr(mr, "_refresh_plugin_in_live_registry", lambda plugin_id: None)
 
     plugin_id, flow_id = await _start_and_drain(monkeypatch, _capture_background_tasks)
@@ -129,18 +130,20 @@ async def test_connect_poll_reports_connected_when_save_succeeds(
 
 
 @pytest.mark.asyncio
-async def test_failed_resource_verification_never_saves_or_reports_connected(
+async def test_failed_resource_verification_preserves_authentication(
     monkeypatch, _capture_background_tasks
 ):
-    saved = []
-    monkeypatch.setattr(mr.TokenStore, "save", lambda *args: saved.append(args))
+    saved = {}
+    monkeypatch.setattr(mr.TokenStore, "save", lambda self, pid, tokens: saved.update({pid: tokens}))
+    monkeypatch.setattr(mr.TokenStore, "load", lambda self, pid: saved.get(pid))
+    monkeypatch.setattr(mr, "_refresh_plugin_in_live_registry", lambda pid: None)
     plugin_id, flow_id = await _start_and_drain(
         monkeypatch, _capture_background_tasks, verification_error=True
     )
     result = await mr.connect_poll(plugin_id, flow_id)
-    assert result["state"] == "error"
-    assert result["error"] == "Provider resource access was denied."
-    assert saved == []
+    assert result["state"] == "connected"
+    assert result["capability_state"] == "unavailable"
+    assert saved[plugin_id].access == "tok-123"
 
 
 @pytest.mark.asyncio

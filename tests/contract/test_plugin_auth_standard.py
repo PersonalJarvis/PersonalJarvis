@@ -122,7 +122,7 @@ def test_publisher_client_beats_catalog_placeholder(monkeypatch):
     cid, sec, source = resolve_publisher_client("outlook", "REPLACE_WITH_YOUR_CLIENT_ID", None)
     assert (cid, sec, source) == (
         "publisher-provided-id",
-        "publisher-provided-secret",
+        None,
         "publisher",
     )
 

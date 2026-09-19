@@ -387,12 +387,11 @@ describe("PkceConnectDialog own-client + production hint", () => {
       (screen.getByRole("button", { name: /^continue$/i }) as HTMLButtonElement)
         .disabled,
     ).toBe(true);
-    // Publisher-pending setup is expanded up front: the client form is the
-    // way to connect today, not a hidden expert override.
-    expect(screen.getByLabelText(/client id/i)).toBeDefined();
+    expect(screen.queryByLabelText(/client id/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /use your own oauth client/i }).getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("guides a publisher-pending provider through console, redirect URI and client", async () => {
+  it("keeps publisher setup out of the normal flow and exposes only an optional expert override", async () => {
     const slack = {
       ...gmail,
       id: "slack",
@@ -418,21 +417,10 @@ describe("PkceConnectDialog own-client + production hint", () => {
       <PkceConnectDialog plugin={slack} onClose={() => {}} onProceed={() => {}} />,
     );
 
-    // Step 1 opens the provider app console in the browser.
-    fireEvent.click(
-      screen.getByRole("button", { name: /open the slack app console/i }),
-    );
-    await waitFor(() =>
-      expect(
-        calls.some(
-          (c) =>
-            c.url === "/api/settings/open-external" &&
-            c.body.includes("https://api.slack.com/apps"),
-        ),
-      ).toBe(true),
-    );
-    // The exact redirect URI to register, and the client field, are visible
-    // without opening any collapsed section first.
+    expect(screen.queryByLabelText(/client id/i)).toBeNull();
+    expect(calls).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: /use your own oauth client/i }));
+    expect(screen.getByRole("link", { name: "console" }).getAttribute("href")).toBe("https://api.slack.com/apps");
     expect(
       screen.getByText("http://127.0.0.1:3118/oauth/callback"),
     ).toBeDefined();

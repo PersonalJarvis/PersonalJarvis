@@ -1,5 +1,23 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Publisher OAuth and capability state (RUB-99, T3, acceptance pending)
+
+Public PKCE, the confidential broker client, callback validation and the
+auth/capability split share portable Python and HTTP implementations on
+Windows, macOS and Linux. Availability is determined by publisher client/service
+configuration, not the host OS. Loopback listeners bind IPv4 loopback only;
+the registered redirect can advertise `localhost` for Microsoft's native client.
+Existing OS credential-store adapters persist the grant and its issuing client.
+No new native API or SQL desktop credential table is introduced.
+
+Windows regression tests and Linux container contracts passed, including real
+loopback HTTP, encrypted broker restart and Google 401/403/429/503/network states.
+Native macOS browser/keychain acceptance remains unverified. Windows browser
+observations, provider-account restrictions and incomplete lifecycle stages are
+recorded in the marketplace E2E audit. The standalone broker needs a verified
+publisher HTTPS deployment before confidential-provider release qualification.
+See [the broker protocol and deployment contract](marketplace/oauth-broker.md).
+
 ## Prepaid search hop (2026-09-17, T2)
 
 `search_web` may use an optional Apifare HTTP hop

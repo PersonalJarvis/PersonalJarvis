@@ -83,8 +83,7 @@ _field = render.field
 
 _BLURBS = {
     "skill": (
-        "A written instruction sheet for the assistant. It adds no server and "
-        "no login of its own."
+        "A written instruction sheet for the assistant. It adds no server and no login of its own."
     ),
     "plugin": (
         "A connector to an outside service. Installing it only puts it on your "
@@ -270,9 +269,7 @@ def install(
         # Non-destructive today, so the gate waves it through — but routing it
         # through the same gate every other mutation uses means a later risk
         # reclassification of this path applies here without a code change.
-        if not safety.gate_request(
-            "POST", path, assume_yes=yes or human, as_json=json_out
-        ):
+        if not safety.gate_request("POST", path, assume_yes=yes or human, as_json=json_out):
             return
         try:
             result = client.request("POST", path)
@@ -331,6 +328,22 @@ def browse() -> None:
 def list_plugins() -> None:
     """List marketplace plugins + their connection status."""
     invoke.run("GET", "/api/marketplace/plugins")
+
+
+@app.command("verify")
+def verify_access(
+    plugin_id: str = typer.Argument(...),
+    dry_run: bool = options.dry_opt(),
+) -> None:
+    """Run a read-only plugin access check and report authentication separately."""
+    from urllib.parse import quote
+
+    invoke.run(
+        "POST",
+        f"/api/marketplace/plugins/{quote(plugin_id, safe='')}/verify",
+        body={},
+        dry_run=dry_run,
+    )
 
 
 @app.command("connect-pat")

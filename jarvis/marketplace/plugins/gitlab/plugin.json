@@ -18,7 +18,7 @@
         "authorization_url": "https://gitlab.com/oauth/authorize",
         "token_url": "https://gitlab.com/oauth/token",
         "revocation_url": "https://gitlab.com/oauth/revoke",
-        "client_id": "REPLACE_WITH_JARVIS_GITLAB_CLIENT_ID",
+        "client_id": "eb412713df7e5147c42a07edcfc3ace45d1268d736897250d45fefb179ba9a45",
         "callback_port": 3126,
         "callback_path": "/oauth/callback",
         "scopes": [
@@ -48,8 +48,10 @@
         },
         "risk_tier": "ask"
       },
-      "post_install_hint_md": "Connect signs you in at GitLab.com in the browser — no token to copy. If the publisher OAuth client is not provisioned yet, the dialog offers the token fallback instead. Self-managed GitLab is not supported by this bundled connector.",
-      "longevity_note": "Browser login renews automatically. Pasted tokens expire on the date selected at creation."
+      "post_install_hint_md": "Connect opens GitLab sign-in and consent for the Personal Jarvis public PKCE application. No developer registration or copied token is needed.",
+      "longevity_note": "Browser login renews automatically. Pasted tokens expire on the date selected at creation.",
+      "publisher_managed": true,
+      "browser_flow": "publisher_pkce"
     }
   }
 }

@@ -138,6 +138,7 @@ interface CatalogPlugin {
   auth_standard?: { ready: boolean; source: string; fallback: boolean } | null;
   status: PluginStatus;
   live_callable?: boolean;
+  capability_state?: string;
   unavailable_reason?: string | null;
   /** Why the connection is flagged, and since when. Only set while
    *  `status === "needs_reauth"`; `null` when it died before Jarvis recorded
@@ -233,6 +234,7 @@ export interface Plugin {
   status: PluginStatus;
   featured?: boolean;
   liveCallable?: boolean;
+  capabilityState?: string;
   unavailableReason?: string;
   longevity: Longevity;
   longevityNote?: string;
@@ -240,6 +242,7 @@ export interface Plugin {
   reauthReason?: ReauthReason | string;
   reauthAt?: string;
   oauthClientConfigured: boolean;
+  clientSource?: string;
   /** Expert token fallback (browser-primary plugins only). */
   fallbackAuth?: PatPasteAuthDetail | null;
   /** True when the browser flow can start with no user setup. Optional so
@@ -269,6 +272,7 @@ function adapt(p: CatalogPlugin): Plugin {
     status: p.status,
     featured: p.featured ?? false,
     liveCallable: p.live_callable ?? false,
+    capabilityState: p.capability_state,
     unavailableReason: p.unavailable_reason ?? undefined,
     longevity: p.longevity ?? "self_renewing",
     longevityNote: p.longevity_note ?? undefined,
@@ -276,6 +280,7 @@ function adapt(p: CatalogPlugin): Plugin {
     reauthReason: p.reauth_reason ?? undefined,
     reauthAt: p.reauth_at ?? undefined,
     oauthClientConfigured: p.oauth_client_configured ?? false,
+    clientSource: p.auth_standard?.source,
     fallbackAuth:
       p.fallback_auth != null && typeof p.fallback_auth === "object"
         ? (p.fallback_auth as unknown as PatPasteAuthDetail)
@@ -471,11 +476,13 @@ function loopbackRedirectUri(plugin: Plugin): string | undefined {
   const auth = plugin.authConfig as {
     callback_port?: unknown;
     callback_path?: unknown;
+    redirect_host?: unknown;
   };
   const port = typeof auth?.callback_port === "number" ? auth.callback_port : 0;
   if (!port) return undefined;
   const path = typeof auth?.callback_path === "string" ? auth.callback_path : "/oauth/callback";
-  return `http://127.0.0.1:${port}${path}`;
+  const host = auth.redirect_host === "localhost" ? "localhost" : "127.0.0.1";
+  return `http://${host}:${port}${path}`;
 }
 
 type FilterId = "all" | Category;
@@ -1351,6 +1358,7 @@ function PluginWindowCatalog({
                       <span className="block truncate text-[15px] font-medium leading-6 text-foreground-strong">{plugin.name}</span>
                       <span className="block truncate text-[13px] leading-5 text-muted-foreground" title={plugin.description}>{plugin.description}</span>
                       {plugin.unavailableReason && <span className="block text-xs text-muted-foreground" title={plugin.unavailableReason}>Unsupported on this device</span>}
+                      {plugin.status === "connected" && plugin.capabilityState && !["live", "unknown"].includes(plugin.capabilityState) && <span className="block text-xs text-warning">{statusLabel(plugin)}</span>}
                       {plugin.status === "needs_reauth" && <span className="block text-xs text-warning"><ReauthExplanation plugin={plugin} inline /></span>}
                     </span>
                   </button>
@@ -1415,6 +1423,13 @@ function statusLabel(plugin: Plugin): string {
   if (plugin.unavailableReason) return "Unsupported on this device";
   switch (plugin.status) {
     case "connected":
+      if (plugin.capabilityState && plugin.capabilityState !== "live" && plugin.capabilityState !== "unknown") {
+        const labels: Record<string, string> = {
+          checking: "Checking access", limited: "Limited access",
+          rate_limited: "Rate limited", unavailable: "Temporarily unavailable",
+        };
+        return `${translate("plugins_view.status_connected")} · ${labels[plugin.capabilityState] ?? "Check access"}`;
+      }
       return plugin.liveCallable
         ? `${translate("plugins_view.status_connected")} · ${translate("plugins_view.status_live")}`
         : translate("plugins_view.status_connected");
@@ -1565,6 +1580,26 @@ async function fetchPluginFiles(pluginId: string): Promise<{ files: CardFile[] }
 }
 
 function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & ConnectHandlers) {
+  const queryClient = useQueryClient();
+  const [checkingAccess, setCheckingAccess] = useState(false);
+  const [checkMessage, setCheckMessage] = useState<string | null>(null);
+  const checkAccess = async () => {
+    setCheckingAccess(true);
+    setCheckMessage(null);
+    try {
+      const response = await fetch(`/api/marketplace/plugins/${encodeURIComponent(plugin.id)}/verify`, { method: "POST" });
+      if (!response.ok) throw new Error("Access check unavailable. Try again.");
+      const result = await response.json();
+      setCheckMessage(result.capability_state === "live"
+        ? result.resource_read ? "Read-only check passed" : "Connection check passed; resource read not verified"
+        : "Access is restricted or temporarily unavailable. See the connection status.");
+      await queryClient.invalidateQueries({ queryKey: ["marketplace-plugins"] });
+    } catch {
+      setCheckMessage("Access check unavailable. Try again.");
+    } finally {
+      setCheckingAccess(false);
+    }
+  };
   const { busy, run } = useConnectLock(() => onConnect(plugin));
   const filesQuery = useQuery({
     queryKey: ["marketplace-plugin-files", plugin.id],
@@ -1634,6 +1669,9 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
                 <Check className="h-3.5 w-3.5" />
                 {translate("plugins_view.status_connected")}
               </span>
+              <SoftButton onClick={() => void checkAccess()} disabled={checkingAccess}>
+                {checkingAccess ? "Checking access…" : "Check access"}
+              </SoftButton>
               <SoftButton onClick={() => void run()} disabled={busy || Boolean(plugin.unavailableReason)}>
                 {translate("plugins_view.reconnect")}
               </SoftButton>
@@ -1678,6 +1716,7 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
       />
 
       {plugin.unavailableReason && <p className="mt-3 text-sm text-muted-foreground">{plugin.unavailableReason}</p>}
+      {checkMessage && <p role="status" className="mt-3 text-sm text-muted-foreground">{checkMessage}</p>}
       {plugin.status === "needs_reauth" ? (
         <div className="mt-4 rounded-md bg-secondary px-3 py-2.5 text-xs">
           <ReauthExplanation plugin={plugin} />
@@ -1714,7 +1753,9 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
                 label: translate("plugins_view.fact_oauth_client"),
                 value: family
                   ? plugin.oauthClientConfigured
-                    ? fill(translate("plugins_view.oauth_client_own"), { family: family.label })
+                    ? plugin.clientSource === "own"
+                      ? fill(translate("plugins_view.oauth_client_own"), { family: family.label })
+                      : plugin.clientSource === "broker" ? "Publisher-managed browser sign-in" : "Publisher public client"
                     : "Browser sign-in is pending publisher setup. No developer setup is required from you."
                   : null,
               },
@@ -2492,9 +2533,8 @@ export function PkceConnectDialog({
   const fam = oauthClientFamily(plugin);
   const clientRequired = !(plugin.browserReady ?? plugin.oauthClientConfigured);
   const redirectUri = loopbackRedirectUri(plugin);
-  // Publisher-pending flows open expanded: the client form IS the way to
-  // connect today, not an expert override. Ready flows keep it collapsed.
-  const [showClient, setShowClient] = useState(clientRequired);
+  // Publisher provisioning never becomes end-user developer setup.
+  const [showClient, setShowClient] = useState(false);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2575,25 +2615,13 @@ export function PkceConnectDialog({
           {clientRequired ? (
             <div className="rounded-md bg-secondary px-3 py-2 text-micro text-foreground">
               <p>
-                Browser sign-in is pending publisher setup. Connect today with
-                your own free {fam?.label ?? "provider"} app — a few minutes,
-                no code. Continue opens the real {plugin.name} login in your
-                browser once the client below is filled in.
+                Browser sign-in is pending publisher setup. No developer account,
+                client registration or copied credentials are required from you.
               </p>
-              {fam && OAUTH_CLIENT_CONSOLE[fam.family] && (
-                <button
-                  type="button"
-                  onClick={() => void openExternalUrl(OAUTH_CLIENT_CONSOLE[fam.family])}
-                  className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1 text-micro font-semibold text-primary-foreground transition-all hover:bg-primary/90"
-                >
-                  Step 1 — open the {fam.label} app console
-                  <ExternalLink className="h-3 w-3" />
-                </button>
-              )}
             </div>
           ) : null}
 
-          {fam && (
+          {fam && plugin.authConfig.client_kind !== "broker" && (
             <div>
               <button
                 type="button"
@@ -2601,42 +2629,21 @@ export function PkceConnectDialog({
                 aria-expanded={showClient}
                 className="text-micro font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
               >
-                {clientRequired ? "Your OAuth client" : "Use your own OAuth client (advanced)"}
+                Use your own OAuth client (advanced)
               </button>
               {showClient && (
                 <div className="mt-2 space-y-2">
                   <p className="text-micro text-muted-foreground">
-                    {clientRequired ? (
-                      <>
-                        Step 2 — paste the client from the app you just
-                        created{fam.family === "google" &&
-                          ". One client covers Gmail, Drive, Calendar and YouTube Music"}
-                        .
-                      </>
-                    ) : (
-                      <>
-                        Optional expert override. Paste a client from your own{" "}
-                        {fam.label}{" "}
-                        {OAUTH_CLIENT_CONSOLE[fam.family] && (
-                          <a
-                            href={OAUTH_CLIENT_CONSOLE[fam.family]}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="underline underline-offset-2 hover:text-foreground"
-                          >
-                            console
-                          </a>
-                        )}
-                        .{" "}
-                        {fam.family === "google" &&
-                          "One client covers Gmail, Drive, Calendar and YouTube Music."}
-                      </>
-                    )}
+                    Optional expert override. Use a client from your own {fam.label}{" "}
+                    {OAUTH_CLIENT_CONSOLE[fam.family] && (
+                      <a href={OAUTH_CLIENT_CONSOLE[fam.family]} target="_blank" rel="noreferrer"
+                        className="underline underline-offset-2 hover:text-foreground">console</a>
+                    )}.
                   </p>
                   {redirectUri && (
                     <div className="rounded-md border border-border bg-background px-2.5 py-2">
                       <p className="text-micro text-muted-foreground">
-                        {clientRequired ? "Step 3 — while" : "While"} creating the app, register this as its{" "}
+                        While creating the app, register this as its{" "}
                         <span className="font-medium text-foreground">
                           redirect URI
                         </span>
@@ -2646,9 +2653,7 @@ export function PkceConnectDialog({
                         {redirectUri}
                       </code>
                       <p className="mt-1 text-micro text-muted-foreground">
-                        It must be the numeric address, not{" "}
-                        <code className="text-micro">localhost</code>, and
-                        carry no trailing slash.
+                        Use exactly the displayed host, port and path.
                       </p>
                     </div>
                   )}

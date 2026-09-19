@@ -5,6 +5,7 @@ tests pin the REPORTING as tightly as the request: what the terminal is told
 after a skill, a plugin, an unknown name, and a broken install, plus the exit
 code that a script keys on.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -15,6 +16,15 @@ from typer.testing import CliRunner
 from jarvis.cli_ctl.__main__ import app
 
 runner = CliRunner()
+
+
+def test_verify_access_calls_read_only_probe_without_confirmation(capture_api):
+    result = runner.invoke(app, ["marketplace", "verify", "google_cloud"])
+    assert result.exit_code == 0, result.output
+    assert capture_api["calls"][0]["method"] == "POST"
+    assert capture_api["calls"][0]["path"] == "/api/marketplace/plugins/google_cloud/verify"
+    assert capture_api["calls"][0]["body"] == {}
+
 
 _INDEX = {
     "status": "fresh",
@@ -73,9 +83,10 @@ def _out(res: Any) -> str:
 
 
 def test_piped_install_sends_one_post_and_prints_the_payload(capture_api) -> None:
-    capture_api["routes"][
-        ("POST", "/api/marketplace/community/install/three-point-check")
-    ] = (200, _SKILL_RESULT)
+    capture_api["routes"][("POST", "/api/marketplace/community/install/three-point-check")] = (
+        200,
+        _SKILL_RESULT,
+    )
     res = runner.invoke(app, ["marketplace", "install", "three-point-check"])
     assert res.exit_code == 0
     # No index lookup, no prompt — exactly one request, the install itself.
@@ -100,12 +111,11 @@ def test_dry_run_previews_without_sending(capture_api) -> None:
 
 def test_skill_install_reports_it_as_ready(capture_api, terminal) -> None:
     capture_api["routes"][("GET", "/api/marketplace/community")] = (200, _INDEX)
-    capture_api["routes"][
-        ("POST", "/api/marketplace/community/install/three-point-check")
-    ] = (200, _SKILL_RESULT)
-    res = runner.invoke(
-        app, ["marketplace", "install", "three-point-check", "--yes"]
+    capture_api["routes"][("POST", "/api/marketplace/community/install/three-point-check")] = (
+        200,
+        _SKILL_RESULT,
     )
+    res = runner.invoke(app, ["marketplace", "install", "three-point-check", "--yes"])
     assert res.exit_code == 0
     out = _out(res)
     assert "three point check" in out
@@ -116,9 +126,7 @@ def test_skill_install_reports_it_as_ready(capture_api, terminal) -> None:
 
 def test_plugin_install_says_it_is_not_connected_yet(capture_api, terminal) -> None:
     capture_api["routes"][("GET", "/api/marketplace/community")] = (200, _INDEX)
-    capture_api["routes"][
-        ("POST", "/api/marketplace/community/install/todo-fox")
-    ] = (
+    capture_api["routes"][("POST", "/api/marketplace/community/install/todo-fox")] = (
         200,
         {
             "ok": True,
@@ -140,13 +148,9 @@ def test_plugin_install_says_it_is_not_connected_yet(capture_api, terminal) -> N
     assert "connect-start" in out
 
 
-def test_broken_skill_install_exits_nonzero_and_names_the_problem(
-    capture_api, terminal
-) -> None:
+def test_broken_skill_install_exits_nonzero_and_names_the_problem(capture_api, terminal) -> None:
     capture_api["routes"][("GET", "/api/marketplace/community")] = (200, _INDEX)
-    capture_api["routes"][
-        ("POST", "/api/marketplace/community/install/three-point-check")
-    ] = (
+    capture_api["routes"][("POST", "/api/marketplace/community/install/three-point-check")] = (
         200,
         {
             **_SKILL_RESULT,
@@ -156,18 +160,14 @@ def test_broken_skill_install_exits_nonzero_and_names_the_problem(
             "next_action": "repair",
         },
     )
-    res = runner.invoke(
-        app, ["marketplace", "install", "three-point-check", "--yes"]
-    )
+    res = runner.invoke(app, ["marketplace", "install", "three-point-check", "--yes"])
     assert res.exit_code == 1
     out = _out(res)
     assert "not usable" in out
     assert "pattern" in out
 
 
-def test_unknown_name_suggests_the_closest_and_installs_nothing(
-    capture_api, terminal
-) -> None:
+def test_unknown_name_suggests_the_closest_and_installs_nothing(capture_api, terminal) -> None:
     capture_api["routes"][("GET", "/api/marketplace/community")] = (200, _INDEX)
     res = runner.invoke(app, ["marketplace", "install", "three-point-chek", "--yes"])
     assert res.exit_code == 1
@@ -177,9 +177,7 @@ def test_unknown_name_suggests_the_closest_and_installs_nothing(
     assert "browse" in out
 
 
-def test_already_installed_skill_reports_its_current_state(
-    capture_api, terminal
-) -> None:
+def test_already_installed_skill_reports_its_current_state(capture_api, terminal) -> None:
     index = {
         **_INDEX,
         "skills": [{**_INDEX["skills"][0], "installed": True}],
@@ -189,9 +187,7 @@ def test_already_installed_skill_reports_its_current_state(
         200,
         {"name": "three-point-check", "state": "active", "error": None},
     )
-    res = runner.invoke(
-        app, ["marketplace", "install", "three-point-check", "--yes"]
-    )
+    res = runner.invoke(app, ["marketplace", "install", "three-point-check", "--yes"])
     assert res.exit_code == 0
     assert all(c["method"] == "GET" for c in capture_api["calls"])
     out = _out(res)
@@ -201,9 +197,7 @@ def test_already_installed_skill_reports_its_current_state(
 
 def test_declining_the_prompt_installs_nothing(capture_api, terminal) -> None:
     capture_api["routes"][("GET", "/api/marketplace/community")] = (200, _INDEX)
-    res = runner.invoke(
-        app, ["marketplace", "install", "three-point-check"], input="n\n"
-    )
+    res = runner.invoke(app, ["marketplace", "install", "three-point-check"], input="n\n")
     assert res.exit_code == 1
     assert all(c["method"] == "GET" for c in capture_api["calls"])
     assert "cancelled" in _out(res)

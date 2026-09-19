@@ -56,6 +56,7 @@ class _StubPkceHandler:
 
 
 async def test_connect_start_rejects_placeholder_client(monkeypatch):
+    monkeypatch.setattr("jarvis.core.config.get_secret", lambda *args: None)
     spec = _pkce_spec("REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID")
     monkeypatch.setattr(mr, "load_catalog", lambda: _Catalog([spec]))
     with pytest.raises(HTTPException) as exc_info:

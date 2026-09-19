@@ -13,16 +13,14 @@ Precedence for one ``<family>`` (e.g. ``microsoft``):
   1. Expert override: ``<family>_oauth_client_id`` / ``<family>_oauth_client_secret``
      secrets (the long-standing bring-your-own-client escape hatch). Wins so
      an expert's explicit choice is never silently displaced.
-  2. Publisher client: ``publisher_<family>_oauth_client_id`` /
-     ``publisher_<family>_oauth_client_secret`` secrets, provisioned with the
-     distribution (env fallback ``PUBLISHER_<FAMILY>_OAUTH_CLIENT_*``). This
-     is the STANDARD path — set once by the publisher, used by every user
-     with zero manual setup.
+  2. Publisher public client: ``publisher_<family>_oauth_client_id``.
+     Confidential publisher secrets are NEVER resolved by desktop clients;
+     those providers use the remote publisher OAuth broker.
   3. Catalog value: the ``client_id`` shipped in ``seed_catalog.json`` (or a
      user's ``data/`` override). Only used when it is a real client id, never
      a ``REPLACE_WITH_*`` placeholder.
 
-A publisher client SECRET is confidential: it lives only in the backend
+A publisher client SECRET is confidential: it lives only in the remote broker
 secret store, never in the repo, the frontend payload, or the desktop
 bundle. The connect dialog only ever learns ``source`` (``publisher``,
 ``own``, ``catalog``, ``missing``) plus a boolean — never the id/secret.
@@ -87,7 +85,7 @@ def resolve_publisher_client(
         # never reach here; static non-family clients stay untouched).
         if is_placeholder_client_id(catalog_client_id):
             return catalog_client_id, catalog_client_secret, "missing"
-        return catalog_client_id, catalog_client_secret, "catalog"
+        return catalog_client_id, None, "catalog"
 
     from jarvis.core.config import get_secret
 
@@ -98,19 +96,18 @@ def resolve_publisher_client(
         f"{family}_oauth_client_secret", f"{family.upper()}_OAUTH_CLIENT_SECRET"
     )
     if own_id and not is_placeholder_client_id(own_id):
-        return own_id, own_secret or catalog_client_secret, "own"
+        return own_id, own_secret, "own"
 
     # 2. Publisher-provisioned shared client (the standard path).
     pub_id_key, pub_id_env = publisher_secret_names(family)
-    pub_sec_key, pub_sec_env = publisher_secret_names_secret(family)
     pub_id = get_secret(pub_id_key, pub_id_env)
     if pub_id and not is_placeholder_client_id(pub_id):
-        pub_secret = get_secret(pub_sec_key, pub_sec_env)
-        return pub_id, pub_secret or catalog_client_secret, "publisher"
+        # Confidential publisher credentials belong only to the remote broker.
+        return pub_id, None, "publisher"
 
     # 3. Catalog value, if real.
     if not is_placeholder_client_id(catalog_client_id):
-        return catalog_client_id, catalog_client_secret, "catalog"
+        return catalog_client_id, None, "catalog"
 
     return catalog_client_id, catalog_client_secret, "missing"
 

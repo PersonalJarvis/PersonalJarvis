@@ -154,6 +154,7 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis marketplace disconnect <plugin_id> --yes --dry-run` — Disconnect a plugin.
 - `jarvis marketplace install <item_id> --yes --dry-run` — Install a marketplace entry by name — skill, plugin or wallpaper — and report it.
 - `jarvis marketplace list` — List marketplace plugins + their connection status.
+- `jarvis marketplace verify <plugin_id> --dry-run` — Run a read-only plugin access check and report authentication separately.
 
 ## mcps
 

@@ -148,6 +148,7 @@ def make_callback_server(
     timeout_seconds: float = 300.0,
     fixed_port: int | None = None,
     callback_path: str | None = None,
+    redirect_host: str = "127.0.0.1",
 ) -> HostedCallbackServer | OAuthCallbackServer:
     """Return a hosted callback server when a public base URL is configured,
     else the loopback server (the desktop power-user path).
@@ -168,4 +169,6 @@ def make_callback_server(
     }
     if callback_path is not None:
         loopback_kwargs["callback_path"] = callback_path
+    if redirect_host != "127.0.0.1":
+        loopback_kwargs["redirect_host"] = redirect_host
     return OAuthCallbackServer(**loopback_kwargs)

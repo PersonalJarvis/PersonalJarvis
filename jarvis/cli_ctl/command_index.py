@@ -164,6 +164,7 @@ COMMAND_INDEX: dict[str, tuple[str, ...]] = {
         "connect-pat",
         "connect-start",
         "connect-poll",
+        "verify <id>",
         "disconnect <id>",
     ),
     "mcps": (

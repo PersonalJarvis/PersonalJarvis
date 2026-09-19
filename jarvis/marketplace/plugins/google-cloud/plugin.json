@@ -40,7 +40,7 @@
         },
         "risk_tier": "ask"
       },
-      "post_install_hint_md": "Use your Google desktop OAuth client. Enable Cloud Resource Manager, Storage, Cloud Billing and BigQuery APIs. Actual spend requires an existing BigQuery billing export, dataset read access and permission to run queries. Query processing can incur charges; specify maximumBytesBilled.",
+      "post_install_hint_md": "Connect opens Google sign-in. Authorization is saved independently of Cloud API availability. Limited access means your account or project needs the corresponding API enabled or permissions granted. Billing queries require an existing export and may incur provider query charges.",
       "oauth_client_family": "google",
       "longevity_note": "Google OAuth apps in Testing may lose refresh access after seven days; production apps follow account policy."
     }

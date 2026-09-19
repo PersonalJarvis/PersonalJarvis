@@ -16,7 +16,7 @@
         "mode": "oauth_pkce_loopback",
         "authorization_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
         "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "client_id": "3d9a5802-a0c2-4fd8-84b5-8d33c540aea4",
         "callback_port": 43891,
         "callback_path": "/oauth/callback",
         "scopes": [
@@ -25,7 +25,8 @@
           "Notes.ReadWrite"
         ],
         "scope_separator": "space",
-        "refresh_supported": true
+        "refresh_supported": true,
+        "redirect_host": "localhost"
       },
       "mcp_server": {
         "transport": "stdio",
@@ -40,8 +41,10 @@
         },
         "risk_tier": "ask"
       },
-      "post_install_hint_md": "Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration.  Permissions: offline_access, User.Read, Notes.ReadWrite.",
-      "oauth_client_family": "microsoft"
+      "post_install_hint_md": "Connect opens the official provider sign-in. Approve the requested permissions and return to Personal Jarvis. Organizational policy may require administrator approval.",
+      "oauth_client_family": "microsoft",
+      "publisher_managed": true,
+      "browser_flow": "publisher_pkce"
     }
   }
 }

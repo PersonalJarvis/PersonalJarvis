@@ -1,5 +1,17 @@
 # Plugin authentication and end-to-end audit
 
+## RUB-99 update (2026-09-19)
+
+Current full-journey totals: **46 plugins / 1 PASS / 45 BLOCKED**. GitLab completed
+its real Windows UI OAuth, resource read, disconnect/reconnect and restart
+journey. Slack and Google Cloud have new real UI resource-read evidence; their
+full distribution/lifecycle qualification remains separate. Microsoft family
+results and confidential-provider deployment/account blockers are recorded in
+[the RUB-99 evidence](rub-99-auth-evidence.md) and the machine-readable audit.
+The older matrix below is historical; its earlier totals are not current.
+RUB-99 and its parent are not complete while the remaining acceptance is open.
+
+
 RUB-94, observed 2026-09-12. **Acceptance incomplete: 46 plugins attempted through the real UI, 0 full PASS, 46 BLOCKED, 0 unexplained FAIL.** Every plugin has a final PASS/BLOCKED classification for the current attempt, but the complete connection and lifecycle acceptance criteria are not satisfied. Do not close the ticket on this evidence.
 
 This inventory supersedes earlier claims that mocked DCR checks proved working logins. Source configuration is `jarvis/marketplace/seed_catalog.json`; the companion [machine-readable audit](plugin-e2e-audit.json) binds each row to its current auth and execution configuration using `config_fingerprint` from `scripts/ci/check_plugin_auth_contract.py`.
