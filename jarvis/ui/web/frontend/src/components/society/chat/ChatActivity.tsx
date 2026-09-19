@@ -26,7 +26,7 @@ export function ChatActivity({ label, icon, children, failed = false }: {
 
 /** Recognize only the scheduler's complete envelope; ordinary messages stay intact. */
 export function routineTask(text: string): string | null {
-  const envelope = /^Scheduled routine [^\s.]+\. Follow your CURRENT standing instructions and permissions\.\r?\nUse your memory and conversation archive for prior results\. For information watches, check sources and dates, remember last-seen items, and report only meaningful new findings\.\r?\n\r?\n/;
+  const envelope = /^Scheduled routine [^\s.]+\. Follow your CURRENT standing instructions(?: and permissions)?\.\r?\n(?:This execution has its own background chat with bypass permissions\.\r?\n)?Use your memory and conversation archive for prior results\. For information watches, check sources and dates, remember last-seen items, and report only meaningful new findings\.\r?\n\r?\n/;
   const match = envelope.exec(text);
   return match ? text.slice(match[0].length).trim() : null;
 }

@@ -1,6 +1,12 @@
 {
   "society": {
     "routine_detail": {
+      "latest_chat": "Letzten Chat öffnen",
+      "open_chat": "Chat öffnen",
+      "background_chat": "Hintergrund-Ausführung",
+      "follow_up": "Zu dieser Ausführung nachfragen…",
+      "stop_run": "Ausführung stoppen",
+      "send": "Senden",
       "test_started": "Testlauf gestartet.",
       "active": "Aktiv",
       "delete": "Löschen",

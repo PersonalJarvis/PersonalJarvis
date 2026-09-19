@@ -14,6 +14,8 @@ it("folds only a full scheduler envelope, preserving ordinary user messages", ()
   expect(routineTask(envelope + "Check the inbox.\nSummarize changes.")).toBe("Check the inbox.\nSummarize changes.");
   expect(routineTask("Scheduled routine task-123. Please explain this.")).toBeNull();
   expect(routineTask("Please quote:\n" + envelope)).toBeNull();
+  const background = envelope.replace(" and permissions.\n", ".\nThis execution has its own background chat with bypass permissions.\n");
+  expect(routineTask(background + "Check the inbox.")).toBe("Check the inbox.");
   render(<RoutineActivity task={"Check the inbox.\nSummarize changes."} original={envelope + "Check the inbox.\nSummarize changes."} />);
   expect(screen.queryByText("Summarize changes.")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Routine check · Check the inbox." }));
