@@ -179,6 +179,9 @@ const VisualizationView = lazyView(() =>
     default: m.VisualizationView,
   })),
 );
+const CopilotView = lazyView(() =>
+  import("@/views/CopilotView").then((m) => ({ default: m.CopilotView })),
+);
 const MarketplaceView = lazyView(() =>
   import("@/views/MarketplaceView").then((m) => ({
     default: m.MarketplaceView,
@@ -585,6 +588,8 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     // place, installable without leaving the app.
     case "marketplace":
       return <MarketplaceView />;
+    case "copilot":
+      return <CopilotView />;
     // Deliberately nothing: the coding workspace is rendered by the STICKY
     // branch in `MainView` above, which keeps it mounted across section
     // changes. This switch is not rendered at all while one of those ids is

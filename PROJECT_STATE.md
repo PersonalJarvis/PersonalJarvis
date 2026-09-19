@@ -446,7 +446,7 @@ Minimal, additive. Backup: tag `pre-three-features` (313e517).
   delete, shutdown, install, web calls, HKLM writes) are commented out
   deterministically. Jarvis never runs it: the human reviews and runs it.
   VERIFIED live: 184-line draft, mail send left commented.
-- Not done: a dedicated mode dashboard UI.
+- Dashboard: sidebar "Copilot" section (views/CopilotView.tsx, /api/copilot/{overview,run,open}); tabs Material / Teacher / Workflow, buttons send the same commands as speech. VERIFIED live in the app.
 
 ## Changelog
 
