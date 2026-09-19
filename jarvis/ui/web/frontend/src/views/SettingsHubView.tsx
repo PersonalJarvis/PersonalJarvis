@@ -1,16 +1,16 @@
 import { lazy, Suspense, useMemo, useState, type ComponentType, type LazyExoticComponent } from "react";
-import { Loader2, Settings as SettingsIcon } from "lucide-react";
+import { ArrowLeft, Loader2, Search, Settings as SettingsIcon, X } from "lucide-react";
 import {
   NAV_FOOTER_ITEMS,
   NAV_GROUPS,
   resolveNavLabel,
   type NavItem,
 } from "@/components/layout/navGroups";
-import { InlineSearch } from "@/components/extensions/primitives";
 import { useEventStore } from "@/store/events";
 import { useSectionHealth } from "@/hooks/useProviders";
-import { useT } from "@/i18n";
+import { useT, useUiLanguage } from "@/i18n";
 import { ViewHeader } from "@/views/ChatsView";
+import { searchSettingsOptions, searchSettingsPages } from "@/views/settings/settingsSearch";
 import { cn } from "@/lib/utils";
 
 /**
@@ -187,9 +187,11 @@ function HubLoadingFallback() {
 
 export function SettingsHubView() {
   const t = useT();
+  const language = useUiLanguage();
   const active = useEventStore((s) => s.activeSection);
   const setActive = useEventStore((s) => s.setActiveSection);
   const [query, setQuery] = useState("");
+  const [searchTarget, setSearchTarget] = useState<string | null>(null);
   const { health: sectionHealth } = useSectionHealth();
 
   const { content, highlight } = resolveHubTab(active);
@@ -204,6 +206,11 @@ export function SettingsHubView() {
     ...group,
     items: group.ids.map(findNavItem).filter(matches),
   })).filter((group) => group.items.length > 0);
+  const optionMatches = searchSettingsOptions(language, query, t);
+  const pageMatches = searchSettingsPages(language, query, t)
+    .filter((match) => !visibleGroups.some((group) =>
+      group.items.some((item) => item.id === match.id)))
+    .map((match) => ({ ...match, label: resolveNavLabel(t, findNavItem(match.id)) }));
 
   // The same two health signals the sidebar rows used to carry, now on the
   // hub's own nav: a hard provider error on API Keys, a failing or
@@ -231,7 +238,11 @@ export function SettingsHubView() {
         <button
           type="button"
           data-testid={`settings-hub-nav-${item.id}`}
-          onClick={() => setActive(item.id)}
+          onClick={() => {
+            setQuery("");
+            setSearchTarget(null);
+            setActive(item.id);
+          }}
           title={hint}
           aria-current={isActive ? "page" : undefined}
           className={cn(
@@ -271,46 +282,113 @@ export function SettingsHubView() {
   };
 
   return (
-    <div data-testid="settings-hub" className="flex h-full flex-col">
-      <ViewHeader
-        icon={<SettingsIcon className="h-4 w-4 text-foreground" />}
-        title={t("nav.settings")}
-        subtitle={t("settings_hub.subtitle")}
-        right={
-          <div className="w-64 max-w-full">
-            <InlineSearch
-              value={query}
-              onChange={setQuery}
+    <div data-testid="settings-hub" className="flex h-full min-h-0 flex-col md:flex-row">
+      <aside
+        data-testid="settings-hub-sidebar"
+        className="flex max-h-72 w-full shrink-0 flex-col border-b border-border bg-sidebar md:max-h-none md:w-72 md:border-b-0 md:border-r"
+      >
+        <div className="border-b border-border px-3 py-3">
+          <button type="button" onClick={() => setActive("chats")}
+            className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-base font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden />
+            {t("settings_hub.back_to_app")}
+          </button>
+        </div>
+        <div className="px-3 pb-2 pt-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            <input type="text" role="searchbox" value={query} onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => { if (event.key === "Escape") setQuery(""); }}
               placeholder={t("settings_hub.search_placeholder")}
+              aria-label={t("settings_hub.search_placeholder")}
+              className="h-9 w-full rounded-md border border-border bg-input pl-9 pr-9 text-base text-foreground placeholder:text-foreground-faint focus:border-accent focus:outline-none focus:ring-2 focus:ring-ring"
             />
+            {query && <button type="button" onClick={() => setQuery("")}
+              aria-label={t("settings_hub.clear_search")}
+              className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <X className="h-4 w-4" aria-hidden />
+            </button>}
           </div>
-        }
-      />
-      <div className="flex min-h-0 flex-1 flex-col gap-4 px-8 pb-8 md:flex-row">
-        <nav
-          aria-label={t("nav.settings")}
-          className="shrink-0 overflow-x-auto scrollbar-jarvis md:w-60 md:overflow-y-auto lg:w-64"
-        >
-          {/* Narrow screens stack the nav above the content as one horizontal
-              strip; from `md` up it is the fixed left column of the page. */}
-          <ul className="flex gap-1 md:flex-col md:gap-0">
+        </div>
+        <nav aria-label={t("nav.settings")}
+          className="min-h-0 flex-1 overflow-y-auto px-3 pb-5 scrollbar-jarvis">
+          <ul className="space-y-1">
             {visibleGroups.map((group) => (
-              <li key={group.labelKey} className="flex shrink-0 gap-1 md:block md:shrink md:gap-0">
-                <p className="hidden px-3 pb-1 pt-4 text-sm font-medium uppercase tracking-wide text-foreground-faint md:block">
+              <li key={group.labelKey}>
+                <p className="px-3 pb-1 pt-4 text-sm font-medium uppercase tracking-wide text-foreground-faint">
                   {t(group.labelKey)}
                 </p>
-                <ul className="flex gap-1 md:block md:space-y-0.5 md:gap-0">
-                  {group.items.map(renderNavItem)}
-                </ul>
+                <ul className="space-y-0.5">{group.items.map(renderNavItem)}</ul>
               </li>
             ))}
           </ul>
+          {pageMatches.length > 0 && (
+            <div data-testid="settings-hub-page-results">
+              <p className="px-3 pb-1 pt-5 text-sm font-medium uppercase tracking-wide text-foreground-faint">
+                {t("settings_hub.search_pages")}
+              </p>
+              <ul className="space-y-0.5">
+                {pageMatches.map((match) => (
+                  <li key={match.id}>
+                    <button type="button" data-testid={`settings-hub-page-${match.id}`}
+                      onClick={() => {
+                        setSearchTarget(null);
+                        setQuery("");
+                        setActive(match.id);
+                      }}
+                      className="flex w-full flex-col rounded-md px-3 py-2 text-left transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      <span className="text-base font-medium text-foreground">{match.label}</span>
+                      {match.detail && <span className="w-full truncate text-sm text-muted-foreground" title={match.detail}>{match.detail}</span>}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {optionMatches.length > 0 && (
+            <div data-testid="settings-hub-option-results">
+              <p className="px-3 pb-1 pt-5 text-sm font-medium uppercase tracking-wide text-foreground-faint">
+                {t("settings_hub.search_results")}
+              </p>
+              <ul className="space-y-0.5">
+                {optionMatches.map((match) => (
+                  <li key={match.id}>
+                    <button type="button" data-testid={`settings-hub-option-${match.id}`}
+                      onClick={() => {
+                        setSearchTarget(match.id);
+                        setQuery("");
+                        setActive("settings");
+                      }}
+                      className="flex w-full flex-col rounded-md px-3 py-2 text-left transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      <span className="text-base font-medium text-foreground">{match.label}</span>
+                      {match.detail && <span className="w-full truncate text-sm text-muted-foreground" title={match.detail}>{match.detail}</span>}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {needle && visibleGroups.length === 0 && pageMatches.length === 0 && optionMatches.length === 0 && (
+            <p role="status" className="px-3 py-5 text-base text-muted-foreground">
+              {t("settings_hub.no_results")}
+            </p>
+          )}
         </nav>
-        <div
-          data-testid="settings-hub-content"
-          className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis"
-        >
-          <Suspense fallback={<HubLoadingFallback />}>{<Content />}</Suspense>
+      </aside>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <ViewHeader
+          icon={<SettingsIcon className="h-4 w-4 text-foreground" />}
+          title={t("nav.settings")}
+          subtitle={t("settings_hub.subtitle")}
+        />
+        <div data-testid="settings-hub-content" className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis">
+          <div className="h-full w-full max-w-[2000px]">
+            <Suspense fallback={<HubLoadingFallback />}>
+              {content === "settings"
+                ? <SettingsTab searchTarget={searchTarget} onSearchTargetHandled={() => setSearchTarget(null)} />
+                : <Content />}
+            </Suspense>
+          </div>
         </div>
       </div>
     </div>

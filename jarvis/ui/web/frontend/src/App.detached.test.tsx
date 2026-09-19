@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "@/App";
@@ -37,7 +37,12 @@ vi.mock("@/components/layout/PaneResizer", () => ({
   PaneResizer: () => <div data-testid="sidebar-resizer" />,
 }));
 vi.mock("@/components/layout/TopBar", () => ({
-  TopBar: () => <div data-testid="topbar" />,
+  TopBar: ({ settingsNavigation }: { settingsNavigation?: { open: boolean; onToggle: () => void } }) => (
+    <div data-testid="topbar">
+      {settingsNavigation && <button data-testid="settings-sidebar-toggle" onClick={settingsNavigation.onToggle}
+        aria-expanded={settingsNavigation.open}>Toggle navigation</button>}
+    </div>
+  ),
 }));
 vi.mock("@/components/layout/MainView", () => ({
   MainView: () => <div data-testid="main-view" />,
@@ -53,6 +58,10 @@ vi.mock("@/components/layout/VoiceWarmingBanner", () => ({
 }));
 vi.mock("@/components/voice/SubscriptionRealtimeTransportBroker", () => ({
   SubscriptionRealtimeTransportBroker: () => null,
+}));
+vi.mock("@/components/voice/BrowserRealtimeControl", () => ({
+  BrowserRealtimeControl: () => null,
+  hasEmbeddedDesktopBridge: () => false,
 }));
 vi.mock("@/components/ToastLayer", () => ({ ToastLayer: () => null }));
 vi.mock("@/components/EditContextMenu", () => ({ EditContextMenu: () => null }));
@@ -81,6 +90,27 @@ afterEach(() => {
 });
 
 describe("App shell around detached coding views", () => {
+  it("hides the main sidebar on each Settings visit and lets it be reopened", () => {
+    render(<App />);
+    expect(screen.getByTestId("sidebar")).toBeTruthy();
+
+    act(() => useEventStore.setState({ activeSection: "profile" }));
+    expect(screen.queryByTestId("sidebar")).toBeNull();
+    expect(screen.queryByTestId("sidebar-resizer")).toBeNull();
+    const toggle = screen.getByTestId("settings-sidebar-toggle");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(toggle);
+    expect(screen.getByTestId("sidebar")).toBeTruthy();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    act(() => useEventStore.setState({ activeSection: "apikeys" }));
+    expect(screen.getByTestId("sidebar")).toBeTruthy();
+
+    act(() => useEventStore.setState({ activeSection: "tasks" }));
+    act(() => useEventStore.setState({ activeSection: "profile" }));
+    expect(screen.queryByTestId("sidebar")).toBeNull();
+  });
+
   it("renders the desktop wallpaper behind normal app sections", () => {
     render(<App />);
 
