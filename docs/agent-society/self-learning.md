@@ -98,6 +98,10 @@ live probe demonstrates one controlled project-specific planning improvement.
 - Frontend verification passed all 4,338 tests and the production build. Stale
   composer, folded-trace and GPT-Live fixtures were updated; themed dropdowns
   retain required-choice validation. CLI gates and their 317 focused tests pass.
+- The rebuilt entry bundle is 1,086.6 KB against the unchanged 1,350 KB budget.
+  Portrait rendering and inactive chat surfaces load on demand; the selected UI
+  language and its fallback are ready before the first render. Cold locale loading,
+  rapid language selection and deferred portrait lifecycles have focused tests.
 - The portable install gate passes all 24 advertised CPython/OS/architecture
   cells. `uv.lock` matches the existing project version and declared dependency
   constraints, including the PDF version already pinned in `requirements.txt`.
