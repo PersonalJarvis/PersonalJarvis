@@ -72,7 +72,10 @@ interface SettingRow {
   value?: string;
 }
 
-export function SettingsView() {
+export function SettingsView({ searchTarget, onSearchTargetHandled }: {
+  searchTarget?: string | null;
+  onSearchTargetHandled?: () => void;
+} = {}) {
   const t = useT();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [activeSection, setActiveSection] = useState<string>(SECTIONS[0].id);
@@ -104,6 +107,14 @@ export function SettingsView() {
     setActiveSection(id);
     document.getElementById(`settings-${id}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
   }, []);
+
+  useEffect(() => {
+    if (!searchTarget) return;
+    const target = document.getElementById(`settings-${searchTarget}`);
+    if (!target) return;
+    target.scrollIntoView?.({ block: "start", behavior: "smooth" });
+    onSearchTargetHandled?.();
+  }, [searchTarget, onSearchTargetHandled]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">

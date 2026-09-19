@@ -25,6 +25,7 @@ vi.mock("@/i18n", () => ({
   // Identity translator: labels resolve to their keys (or the English
   // fallback where the nav item defines one), so assertions match keys.
   useT: () => (key: string) => key,
+  useUiLanguage: () => "en",
 }));
 
 vi.mock("@/hooks/useProviders", async (importOriginal) => {
@@ -62,7 +63,11 @@ function stub(testid: string) {
   return () => <div data-testid={testid}>{testid}</div>;
 }
 
-vi.mock("@/views/SettingsView", () => ({ SettingsView: stub("TAB_SETTINGS") }));
+vi.mock("@/views/SettingsView", () => ({
+  SettingsView: ({ searchTarget }: { searchTarget?: string }) => (
+    <div data-testid="TAB_SETTINGS" data-search-target={searchTarget} />
+  ),
+}));
 vi.mock("@/views/ProfileView", () => ({ ProfileView: stub("TAB_PROFILE") }));
 vi.mock("@/views/AgentInstructionsView", () => ({
   AgentInstructionsView: stub("TAB_INSTRUCTIONS"),
@@ -111,6 +116,14 @@ afterEach(() => {
 });
 
 describe("SettingsHubView header and navigation", () => {
+  it("separates the navigation from the content and returns to the app", async () => {
+    render(<SettingsHubView />);
+    await screen.findByTestId("TAB_SETTINGS");
+    expect(screen.getByTestId("settings-hub-sidebar").className).toContain("bg-sidebar");
+    fireEvent.click(screen.getByRole("button", { name: "settings_hub.back_to_app" }));
+    expect(mockState.setActiveSection).toHaveBeenCalledWith("chats");
+  });
+
   it("renders exactly one header titled from nav.settings", async () => {
     render(<SettingsHubView />);
 
@@ -201,6 +214,39 @@ describe("SettingsHubView tab resolution", () => {
 });
 
 describe("SettingsHubView search", () => {
+  it("finds a field on another Settings page", async () => {
+    render(<SettingsHubView />);
+    await screen.findByTestId("TAB_SETTINGS");
+    fireEvent.change(screen.getByPlaceholderText("settings_hub.search_placeholder"), {
+      target: { value: "What is it?" },
+    });
+    fireEvent.click(screen.getByTestId("settings-hub-page-feedback"));
+    expect(mockState.setActiveSection).toHaveBeenCalledWith("feedback");
+  });
+
+  it("finds an option inside Settings and opens its group", async () => {
+    render(<SettingsHubView />);
+    await screen.findByTestId("TAB_SETTINGS");
+
+    fireEvent.change(screen.getByPlaceholderText("settings_hub.search_placeholder"), {
+      target: { value: "Microphone" },
+    });
+    fireEvent.click(screen.getByTestId("settings-hub-option-audio-devices"));
+
+    expect(mockState.setActiveSection).toHaveBeenCalledWith("settings");
+    expect(screen.getByTestId("TAB_SETTINGS").getAttribute("data-search-target"))
+      .toBe("audio-devices");
+  });
+
+  it("reports when neither pages nor options match", async () => {
+    render(<SettingsHubView />);
+    await screen.findByTestId("TAB_SETTINGS");
+    fireEvent.change(screen.getByPlaceholderText("settings_hub.search_placeholder"), {
+      target: { value: "zzz-unmatched-setting" },
+    });
+    expect(screen.getByRole("status").textContent).toBe("settings_hub.no_results");
+  });
+
   it("filters the nav entries by label", async () => {
     mockState.activeSection = "settings";
     render(<SettingsHubView />);

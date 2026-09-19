@@ -2247,6 +2247,11 @@
   "settings_hub": {
     "subtitle": "Todo sobre ti, tus claves y esta aplicación, en un lugar.",
     "search_placeholder": "Buscar ajustes...",
+    "back_to_app": "Volver a la aplicación",
+    "search_results": "Opciones de ajustes",
+    "search_pages": "Páginas de ajustes",
+    "no_results": "No se encontraron ajustes",
+    "clear_search": "Borrar búsqueda",
     "group_general": "General",
     "group_system": "Sistema",
     "group_activity": "Actividad"
