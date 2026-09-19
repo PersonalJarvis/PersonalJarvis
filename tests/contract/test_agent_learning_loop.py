@@ -185,6 +185,59 @@ def test_cannot_evaluate_unseen_lesson_or_promote_turn_success(tmp_path):
     assert book.read()["lessons"][identity]["helped"] == 0
 
 
+def test_real_brain_prompt_does_not_read_jarvis_memory_or_global_skills():
+    from jarvis.brain.manager import BrainManager, _TURN_OVERRIDE
+    from jarvis.brain.turn_override import TurnOverride
+
+    manager = BrainManager.__new__(BrainManager)
+    manager._reply_language_directive = lambda: "Reply in English."
+    manager._pending_forced_skill = ("private-jarvis-skill", "private content", "voice")
+    override = TurnOverride(
+        provider="any",
+        tool_context={"tool_origin": "society"},
+        system_extra="Only this agent's private learning and role.",
+    )
+    token = _TURN_OVERRIDE.set(override)
+    try:
+        # No global memory attributes are installed. Accessing any would fail.
+        prompt = manager._build_system_prompt()
+        assert "this agent's private learning" in prompt
+        assert "private-jarvis-skill" not in prompt
+        assert manager._build_turn_context() == ""
+        assert manager._match_skill_for_turn("private-jarvis-skill") is None
+        manager._consume_pending_skill_trigger("anything")
+        assert manager._pending_forced_skill[0] == "private-jarvis-skill"
+    finally:
+        _TURN_OVERRIDE.reset(token)
+
+
+def test_missing_private_briefing_cannot_fall_back_to_jarvis():
+    from jarvis.brain.manager import BrainManager, _TURN_OVERRIDE
+    from jarvis.brain.turn_override import TurnOverride
+
+    token = _TURN_OVERRIDE.set(
+        TurnOverride(provider="any", tool_context={"tool_origin": "society"})
+    )
+    try:
+        with pytest.raises(RuntimeError, match="refusing shared context"):
+            BrainManager.__new__(BrainManager)._build_system_prompt()
+    finally:
+        _TURN_OVERRIDE.reset(token)
+
+
+async def test_cli_missing_private_briefing_cannot_fall_back(world, monkeypatch):
+    from jarvis.agent_chat.runner_cli import _surface_identity
+    from jarvis.society import surface
+
+    async def unavailable(*args):
+        raise OSError("private storage unavailable")
+
+    monkeypatch.setattr(surface, "society_system_extra", unavailable)
+    with pytest.raises(RuntimeError, match="Private agent briefing"):
+        await _surface_identity(SimpleNamespace(surface="society", session_id="society:mail"))
+    assert await _surface_identity(SimpleNamespace(surface="jarvis")) is None
+
+
 @pytest.fixture
 async def world(tmp_path):
     cfg = SimpleNamespace(

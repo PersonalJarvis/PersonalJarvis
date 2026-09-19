@@ -2441,7 +2441,10 @@ async def _surface_identity(session: Any) -> str | None:
     briefing) hands that text over; ``None`` keeps Jarvis' own layers."""
     from jarvis.agent_chat.surface_kits import kit_for
 
-    kit = kit_for(getattr(session, "surface", "") or "")
+    surface = getattr(session, "surface", "") or ""
+    if surface == "jarvis":
+        return None  # Its normal full identity already includes its private learning cache.
+    kit = kit_for(surface)
     if kit.session_system_extra is None:
         return None
     try:
@@ -2450,9 +2453,13 @@ async def _surface_identity(session: Any) -> str | None:
         brain = brain_manager()
         cfg = getattr(brain, "_config", None)
         text = await kit.session_system_extra(cfg, brain, session)
-    except Exception:  # noqa: BLE001 — the CLI then runs with Jarvis' layers, never fails
+    except Exception:  # noqa: BLE001 — private identity must never fall back to shared memory
         log.warning("agent chat: surface identity unavailable this turn", exc_info=True)
+        if surface == "society":
+            raise RuntimeError("Private agent briefing unavailable") from None
         return None
+    if surface == "society" and not text:
+        raise RuntimeError("Private agent briefing unavailable")
     return text or None
 
 
