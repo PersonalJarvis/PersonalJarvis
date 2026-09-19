@@ -251,6 +251,8 @@ jobs:
 
       - name: pytest (JUnit XML)
         shell: bash
+        env:
+          PYTHONHASHSEED: "0"
         run: |
           # Exit code deliberately non-blocking: the suite still carries the
           # pre-existing env/platform backlog (Windows-only tests on the Linux
@@ -265,7 +267,9 @@ jobs:
               --ignore=tests/unit/realtime/test_session_self_echo.py
             )
           fi
-          python -m pytest tests/ "${extra_pytest_args[@]}" -q -p no:cacheprovider \
+          # Keep each file's stateful fixtures together while distributing the
+          # complete suite; serial execution exceeds the unchanged job timeout.
+          python -m pytest tests/ "${extra_pytest_args[@]}" -n 4 --dist loadfile -q -p no:cacheprovider \
             -o faulthandler_timeout=300 \
             -m "not skip_ci and not slow and not openclaw_live and not voice_latency and not eval" \
             --continue-on-collection-errors \
