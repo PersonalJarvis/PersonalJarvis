@@ -715,3 +715,60 @@ def test_browser_audio_does_not_wait_for_a_legacy_desktop_offer(monkeypatch):
     assert response.status_code == 200
     assert response.json()["browser_audio"] is True
     assert response.json()["transport_offer_detail"] is None
+
+
+@pytest.mark.asyncio
+async def test_sdp_keeps_its_terminal_crlf_through_validation_and_broker():
+    from jarvis.realtime.offer_broker import (
+        RealtimeTransportOfferBroker,
+        validate_webrtc_offer_sdp,
+    )
+
+    offer = "v=0\r\no=- 123 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n"
+    answer = offer.replace("123", "456")
+    assert validate_webrtc_offer_sdp(offer) == offer
+    broker = RealtimeTransportOfferBroker()
+    registration = await broker.register("roundtrip", offer)
+    lease = await broker.acquire(timeout_s=0.1)
+    assert lease is not None
+    assert lease.offer_sdp == offer
+    await lease.answer(answer)
+    assert (await registration.wait()).answer_sdp == answer
+    await registration.cancel()
+
+
+@pytest.mark.asyncio
+async def test_large_catalog_fits_rtc_and_remains_fully_discoverable(ledger):
+    import json
+
+    class LargeGateway(Gateway):
+        def catalog(self):
+            return tuple(
+                SupervisorToolDescriptor(
+                    f"service/tool_{index:03d}",
+                    "Description " * 120,
+                    {"type": "object", "properties": {"text": {"type": "string"}}},
+                    "safe",
+                )
+                for index in range(90)
+            )
+
+    runtime = LiveTools(LargeGateway(), ledger, "s", language="en", backend_model="chosen")
+    assert len(json.dumps(runtime.declarations()).encode()) <= 24_000
+    offset, names = 0, []
+    while True:
+        result = await runtime.execute(
+            f"page-{offset}", "discover_tools", {"query": "", "offset": offset}, 0
+        )
+        assert len(json.dumps(result).encode()) < 25_000
+        names.extend(tool["name"] for tool in result["tools"])
+        if result["next_offset"] is None:
+            break
+        assert result["next_offset"] > offset
+        offset = result["next_offset"]
+    assert names == [tool.name for tool in runtime.catalog()]
+    assert len(set(names)) == 90
+    result = await runtime.execute(
+        "last-tool", "call_tool", {"name": names[-1], "arguments_json": "{}"}, 0
+    )
+    assert result["success"]

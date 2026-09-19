@@ -17,6 +17,12 @@ Text chat and background work follow the active Agents selection. The OpenAI
 voice thinking model is also used for voice-triggered computer control without
 another model key. Connected services retain their own credentials.
 
+Voice setup is a single provider panel with a shared credential, conversation
+settings and thinking/tool settings. Inspecting a provider does not activate it;
+the Live profile saves its provider and model together. The separate Tool Model
+tab and inline computer-control model pickers are removed. Saving only refreshes
+the affected voice queries and preserves a draft when a key becomes available.
+
 ## Execution and media
 
 The `jarvis/live` package separates the provider connection, transcript stream,
@@ -46,6 +52,17 @@ Transcripts keep their original fragments and timestamps. The legacy archive
 stores one compatibility group at close, not a fabricated provider turn boundary.
 Voice duration updates are cumulative snapshots. Backend completion, generated
 speech and actual playback are separate states.
+
+## WebRTC wire limits
+
+SDP offers and answers retain their terminal CRLF through browser and server
+validation. Trimming an otherwise valid offer was reproduced as HTTP 400 from
+Live, while the unchanged offer was accepted.
+
+The initial tool declarations have both a count and a 24 KB JSON budget. A count
+limit alone allowed large imported schemas to overflow a 64 KiB RTC data-channel
+message before `session.started`. Discovery returns pages with `next_offset`;
+the full catalog remains reachable through discovery and `call_tool`.
 
 ## Qualification
 
@@ -82,6 +99,12 @@ test uses the continuous session contract and waits for `session.started`;
 browser-owned media no longer waits for the legacy desktop offer broker.
 The separate Live profile owns model and voice selection without duplicate
 legacy pickers on the provider card.
+
+A synthetic check through the running application's authenticated `/ws/audio`
+route now establishes WebRTC, receives `session.started`, completes the real
+read-only `describe-app-settings` tool through the gateway and receives spoken
+confirmation as non-silent RTP audio. It captures no microphone or screen data.
+The transport checks do not replace physical device and acoustic-echo tests.
 
 References: [OpenAI architecture](https://developers.openai.com/api/docs/guides/live),
 [delegation](https://developers.openai.com/api/docs/guides/live-delegation),

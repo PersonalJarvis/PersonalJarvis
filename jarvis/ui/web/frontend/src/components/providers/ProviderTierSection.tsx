@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertCircle, Bot, Brain, Check, ChevronDown, Copy, Cpu, Download, HardDrive, Loader2, LogIn, LogOut, Mic, Play, PlugZap, Radio, Search, Sparkles, Square, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { OpenRouterTtsControls } from "@/components/OpenRouterTtsVoicePicker";
-import { CuModelSelector } from "@/components/CuModelSelector";
 import { RealtimeOptionsControl } from "@/components/RealtimeOptionsControl";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useRowGestures } from "@/components/providers/rowGestures";
@@ -337,7 +336,7 @@ export function EngineModeSwitch({
                 "relative z-10 inline-flex h-7 items-center justify-center gap-1.5 rounded-control px-3 text-xs font-medium transition-colors",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 isSelected
-                  ? "text-primary-foreground"
+                  ? "text-foreground"
                   : needsKey
                     ? "text-muted-foreground hover:text-muted-foreground"
                     : "text-muted-foreground hover:text-foreground",
@@ -352,7 +351,7 @@ export function EngineModeSwitch({
                   aria-hidden="true"
                   className={cn(
                     "h-1.5 w-1.5 rounded-full",
-                    isSelected ? "bg-primary-foreground/80" : "bg-foreground/70",
+                    isSelected ? "bg-foreground/80" : "bg-foreground/70",
                   )}
                 />
               )}
@@ -992,6 +991,7 @@ export function ProviderCard({
   health,
   expanded = true,
   onToggleExpanded,
+  configuration,
 }: {
   descriptor: ProviderDescriptor;
   onChanged: () => void;
@@ -1007,6 +1007,8 @@ export function ProviderCard({
   expanded?: boolean;
   /** Toggles `expanded`; absent means the row is not collapsible. */
   onToggleExpanded?: () => void;
+  /** Provider-owned setup shares the existing credential and verification controls. */
+  configuration?: ReactNode;
 }) {
   const t = useT();
   const [activating, setActivating] = useState(false);
@@ -1084,6 +1086,8 @@ export function ProviderCard({
   }
 
   async function activate(assumeConfigured = false) {
+    // The Live profile saves the voice provider and thinking model together.
+    if (descriptor.configuration_surface === "live") return;
     if (descriptor.active) return;
     if (!isBrainSwitchable) {
       pushToast(
@@ -1443,6 +1447,7 @@ export function ProviderCard({
             {t("apikeys_view.local_models_open")}
           </button>
         )}
+        {descriptor.configuration_surface !== "live" && (
         <ActiveControl
           descriptor={
             isCodexBrain
@@ -1466,6 +1471,7 @@ export function ProviderCard({
           }
         />
 
+        )}
         {collapsible && (
           <ChevronDown
             aria-hidden="true"
@@ -1502,11 +1508,14 @@ export function ProviderCard({
             </div>
           )}
 
-          <AuthWidget
-            descriptor={descriptor}
-            onChanged={onChanged}
-            onSavedActivate={handleSavedActivate}
-          />
+          {configuration && descriptor.configured ? (
+            <details className="rounded-lg border border-border px-3 py-2.5">
+              <summary className="cursor-pointer text-sm font-medium">{t("live.shared_key_ready")}</summary>
+              <div className="pt-3"><AuthWidget descriptor={descriptor} onChanged={onChanged} onSavedActivate={handleSavedActivate} /></div>
+            </details>
+          ) : <AuthWidget descriptor={descriptor} onChanged={onChanged} onSavedActivate={handleSavedActivate} />}
+
+          {configuration}
 
           {!isBrainSwitchable && (
             <p className="rounded-control bg-secondary px-3 py-2 text-xs leading-relaxed text-foreground">
@@ -1558,25 +1567,6 @@ export function ProviderCard({
               <p className="text-xs text-muted-foreground">
                 {t("apikeys_view.model_picker_activate_hint")}
               </p>
-            )}
-
-          {/* Phase 3: a dedicated Computer-Use model, selectable per brain provider
-              (defaults to the provider's main model — no automatic escalation).
-              Also shown under the Computer-Use tab (synthetic "computer-use"
-              tier, same underlying brain id) — but never the plain
-              BrainModelSelector above, which stays Brain-tab-only. */}
-          {(descriptor.tier === "brain" || descriptor.tier === "computer-use") &&
-            descriptor.configured &&
-            isBrainSwitchable && (
-              <CuModelSelector
-                providerId={descriptor.id}
-                recommendedModel={descriptor.recommended_model}
-                healthActive={
-                  descriptor.tier === "computer-use"
-                    ? descriptor.active
-                    : Boolean(descriptor.computer_use_active)
-                }
-              />
             )}
 
           {/* Realtime needs BOTH a model AND a voice pinned per provider — a
@@ -3714,7 +3704,8 @@ export function AuthWidget({
               dashboardUrl={descriptor.dashboard_url}
               configured={Boolean(descriptor.secrets_set[k])}
               effectiveConfigured={Boolean(descriptor.secrets_effective?.[k])}
-              coveredNote={descriptor.credential_note ?? null}
+              coveredNote={descriptor.configuration_surface === "live" ? t("live.shared_key_help") : descriptor.credential_note ?? null}
+              coveredEditLabel={descriptor.configuration_surface === "live" ? t("live.manage_key") : undefined}
               sharedWith={descriptor.secret_shared_with?.[k] ?? []}
               credentialHelp={descriptor.credential_help}
               onChanged={onChanged}
@@ -3738,7 +3729,8 @@ export function AuthWidget({
               dashboardUrl={descriptor.dashboard_url}
               configured={Boolean(descriptor.secrets_set[k])}
               effectiveConfigured={Boolean(descriptor.secrets_effective?.[k])}
-              coveredNote={descriptor.credential_note ?? null}
+              coveredNote={descriptor.configuration_surface === "live" ? t("live.shared_key_help") : descriptor.credential_note ?? null}
+              coveredEditLabel={descriptor.configuration_surface === "live" ? t("live.manage_key") : undefined}
               sharedWith={descriptor.secret_shared_with?.[k] ?? []}
               credentialHelp={descriptor.credential_help}
               // A pasted key is checked right away — the dictation polish
