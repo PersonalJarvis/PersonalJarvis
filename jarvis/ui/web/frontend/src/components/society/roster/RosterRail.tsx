@@ -153,7 +153,7 @@ export function RosterRail({
                   <span
                     aria-label={t("society.roster.unread")}
                     title={t("society.roster.unread")}
-                    className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full bg-success ring-2 ring-sidebar"
+                    className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full bg-sky-400 ring-2 ring-sidebar"
                   />
                 ) : null}
               </span>
@@ -233,7 +233,7 @@ function RowStatus({ agent, hasUnread }: { agent: SocietyAgent; hasUnread: boole
     const label = t("society.roster.unread");
     return (
       <span
-        className="h-2 w-2 shrink-0 rounded-full bg-success"
+        className="h-2 w-2 shrink-0 rounded-full bg-sky-400"
         title={label}
         aria-label={label}
       />
