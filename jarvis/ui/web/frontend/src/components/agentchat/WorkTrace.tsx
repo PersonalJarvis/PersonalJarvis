@@ -75,8 +75,9 @@ export function groupConversationTrace(blocks: TurnBlock[]): Group[] {
 
 /**
  * The last assistant reply stays in the conversation. Narration between
- * tools, and every tool or thought before that reply, is foldable work.
- * Failures after the reply stay after it.
+ * tools, every tool or thought before that reply, and every tool or thought
+ * after it is foldable work — including failures and interruptions. Only
+ * pending approvals stay out: they ask the person to act.
  */
 export function splitConversationTurn(blocks: TurnBlock[]): { work: TurnBlock[]; answer: TextBlock[]; after: TurnBlock[] } {
   let lastText = -1;
@@ -97,13 +98,16 @@ export function splitConversationTurn(blocks: TurnBlock[]): { work: TurnBlock[];
   };
 }
 
-function isAttentionBlock(block: TurnBlock): block is ToolBlock {
-  return block.kind === "tool" && attention(block);
+function isPendingApproval(block: TurnBlock): block is ToolBlock {
+  return block.kind === "tool" && Boolean(block.approval && block.approval.decision === null);
 }
 
 function hasFoldableWork(blocks: TurnBlock[]): boolean {
   return blocks.some((block) => {
-    if (isAttentionBlock(block)) return false;
+    // Only a pending approval keeps its row outside the fold — it asks the
+    // person to act. Failures and interruptions fold like any other work:
+    // the finished conversation shows the reply, the toggle reveals the rest.
+    if (isPendingApproval(block)) return false;
     return block.kind !== "text" || Boolean(block.text.trim());
   });
 }
@@ -355,22 +359,46 @@ export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDeci
   const live = status === "running";
   const elapsed = useClock(startedMs, live);
   const split = useMemo(() => conversation && !live ? splitConversationTurn(blocks) : null, [blocks, conversation, live]);
-  const fold = split && hasFoldableWork(split.work) ? split : null;
-  const groups = useMemo(() => conversation ? groupConversationTrace(fold ? fold.work : blocks) : groupActivityTrace(blocks), [blocks, conversation, fold]);
-  const restGroups = useMemo(() => fold ? groupConversationTrace([...fold.answer, ...fold.after]) : null, [fold]);
+  // A finished conversation turn shows the reply and nothing else. All work
+  // — tools, thoughts, intermediate replies, failures, interruptions, and
+  // post-reply work — folds behind the "Thought for …" toggle. Pending
+  // approvals stay outside the fold wherever they happened: they need a tap.
+  const fold = useMemo(() => {
+    if (!split) return null;
+    const foldBlocks = [
+      ...split.work.filter((block) => !isPendingApproval(block)),
+      ...split.after.filter((block) => !isPendingApproval(block)),
+    ];
+    if (!hasFoldableWork(foldBlocks)) return null;
+    return {
+      answer: split.answer,
+      foldBlocks,
+      approvals: split.work.filter(isPendingApproval),
+      afterApprovals: split.after.filter(isPendingApproval),
+    };
+  }, [split]);
+  const groups = useMemo(() => conversation ? groupConversationTrace(fold ? fold.foldBlocks : blocks) : groupActivityTrace(blocks), [blocks, conversation, fold]);
+  const restGroups = useMemo(() => fold ? groupConversationTrace([...fold.answer, ...fold.afterApprovals]) : null, [fold]);
   const pending = blocks.some(block => block.kind === "tool" && block.approval?.decision === null);
   const outcome = pending ? "approval" : live ? "working" : status === "error" ? "failed" : status === "cancelled" ? "stopped" : "done";
   const Icon = pending ? ShieldQuestion : live ? CircleDashed : status === "error" ? CircleAlert : Check;
   const groupProps = { live, status, onDecide, renderText, conversation };
+  // A turn-level error next to a reply folds with the work — it stays one
+  // tap away behind the toggle. With no reply the error IS the outcome, so
+  // it stays out where it always was.
+  const answered = fold ? fold.answer.length > 0 : blocks.some((block) => block.kind === "text" && block.text.trim());
+  const foldedError = fold && answered && error ? error : null;
+  const visibleError = error && !foldedError ? error : null;
   return <div className={cn("min-w-0 space-y-0.5", conversation && "w-full max-w-xl self-start", className)} data-testid="work-trace" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
-    {fold ? <ConversationWorkFold durationMs={durationMs} attention={fold.work.filter(isAttentionBlock).map(block =>
+    {fold ? <ConversationWorkFold durationMs={durationMs} attention={fold.approvals.map(block =>
       <div key={block.callId} className="w-full py-1 text-xs [&_button]:text-xs">
         <TraceTool block={block} status={status} onDecide={onDecide} />
       </div>)}>
       <TraceGroups groups={groups} {...groupProps} />
+      {foldedError ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{foldedError}</p> : null}
     </ConversationWorkFold> : <TraceGroups groups={groups} {...groupProps} />}
     {restGroups ? <TraceGroups groups={restGroups} {...groupProps} /> : null}
-    {error ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{error}</p> : null}
+    {visibleError ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{visibleError}</p> : null}
     <div role="status" aria-live="polite" className={cn("flex flex-wrap items-center gap-2 text-xs text-muted-foreground", conversation ? "px-1 pb-2 pt-1" : "border-t border-border pt-3", status === "error" && "text-destructive")}>
       <Icon aria-hidden className={cn("h-3.5 w-3.5", live && !pending && "motion-safe:animate-spin")} />
       <span>{outcome === "done" && completionLabel ? completionLabel : t(`work_trace.${outcome}`)}</span>
