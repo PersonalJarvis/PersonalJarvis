@@ -1,4 +1,4 @@
-import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, memo, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Brain, Check, ChevronRight, CircleAlert, CircleDashed, FilePenLine, FileText, FolderSearch, ShieldQuestion, Terminal } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -142,15 +142,25 @@ function pretty(value: unknown): string {
 const rowButton = "group/trace flex w-full min-w-0 items-start gap-2.5 rounded-md py-2 text-left text-[13px] leading-6 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:text-foreground";
 const iconClass = "mt-0.5 h-4 w-4 shrink-0";
 
+/**
+ * While a conversation work fold is open, every disclosure inside it starts
+ * open — one tap on "Thought for …" reveals the whole chain, not one more
+ * level of chevrons. The sequence counts fold openings (0 = no open fold
+ * above): reopening the fold resets inner rows to open, while a row the
+ * person toggled by hand keeps its choice until then.
+ */
+const FoldExpandContext = createContext(0);
+
 function Disclosure({ label, children, forced = false, initiallyOpen = false, icon, trailing, tone, summary, resetKey = "" }: {
   label: ReactNode; children?: ReactNode; forced?: boolean; initiallyOpen?: boolean;
   icon: ReactNode; trailing?: ReactNode; tone?: string; summary?: ReactNode; resetKey?: string;
 }) {
   const id = useId();
+  const foldSeq = useContext(FoldExpandContext);
   // A manual choice during a live turn must not prevent completion folding.
-  const phase = `${initiallyOpen}:${resetKey}`;
+  const phase = `${initiallyOpen}:${resetKey}:${foldSeq}`;
   const [choice, setChoice] = useState<{ phase: string; open: boolean } | null>(null);
-  const open = forced || (choice?.phase === phase ? choice.open : initiallyOpen);
+  const open = forced || (choice?.phase === phase ? choice.open : foldSeq > 0 || initiallyOpen);
   return (
     <div className={cn("min-w-0 text-muted-foreground", tone)}>
       <button type="button" className={rowButton} aria-expanded={children ? open : undefined}
@@ -307,6 +317,8 @@ function ConversationWorkFold({ durationMs, attention, children }: {
   const t = useT();
   const id = useId();
   const [open, setOpen] = useState(false);
+  // Counts openings so inner disclosures expand all at once, every time.
+  const [seq, setSeq] = useState(0);
   const label = durationMs !== null && durationMs > 0
     ? t("work_trace.thought_for").replace("{duration}", traceDuration(durationMs))
     : t("work_trace.thought");
@@ -314,11 +326,14 @@ function ConversationWorkFold({ durationMs, attention, children }: {
     <div className="min-w-0" data-testid="conversation-work-fold" data-open={open ? "true" : "false"}>
       <button type="button" aria-expanded={open} aria-controls={id}
         className="group/fold mb-1 inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-1 text-left text-xs leading-5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        onClick={() => setOpen(!open)}>
+        onClick={() => {
+          if (!open) setSeq((s) => s + 1);
+          setOpen(!open);
+        }}>
         <ChevronRight aria-hidden className={cn("h-3 w-3 shrink-0 opacity-70 transition-transform group-hover/fold:opacity-100", open && "rotate-90")} />
         <span className="truncate">{label}</span>
       </button>
-      {open ? <div id={id}>{children}</div> : attention}
+      {open ? <div id={id}><FoldExpandContext.Provider value={seq}>{children}</FoldExpandContext.Provider></div> : attention}
     </div>
   );
 }
@@ -362,23 +377,20 @@ export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDeci
   // A finished conversation turn shows the reply and nothing else. All work
   // — tools, thoughts, intermediate replies, failures, interruptions, and
   // post-reply work — folds behind the "Thought for …" toggle. Pending
-  // approvals stay outside the fold wherever they happened: they need a tap.
+  // approvals stay visible both ways: beside the toggle while it is closed
+  // (they need a tap) and inside the open chain.
   const fold = useMemo(() => {
     if (!split) return null;
-    const foldBlocks = [
-      ...split.work.filter((block) => !isPendingApproval(block)),
-      ...split.after.filter((block) => !isPendingApproval(block)),
-    ];
-    if (!hasFoldableWork(foldBlocks)) return null;
+    const workAll = [...split.work, ...split.after];
+    if (!hasFoldableWork(workAll.filter((block) => !isPendingApproval(block)))) return null;
     return {
       answer: split.answer,
-      foldBlocks,
-      approvals: split.work.filter(isPendingApproval),
-      afterApprovals: split.after.filter(isPendingApproval),
+      workAll,
+      approvals: workAll.filter(isPendingApproval),
     };
   }, [split]);
-  const groups = useMemo(() => conversation ? groupConversationTrace(fold ? fold.foldBlocks : blocks) : groupActivityTrace(blocks), [blocks, conversation, fold]);
-  const restGroups = useMemo(() => fold ? groupConversationTrace([...fold.answer, ...fold.afterApprovals]) : null, [fold]);
+  const groups = useMemo(() => conversation ? groupConversationTrace(fold ? fold.workAll : blocks) : groupActivityTrace(blocks), [blocks, conversation, fold]);
+  const restGroups = useMemo(() => fold ? groupConversationTrace(fold.answer) : null, [fold]);
   const pending = blocks.some(block => block.kind === "tool" && block.approval?.decision === null);
   const outcome = pending ? "approval" : live ? "working" : status === "error" ? "failed" : status === "cancelled" ? "stopped" : "done";
   const Icon = pending ? ShieldQuestion : live ? CircleDashed : status === "error" ? CircleAlert : Check;
