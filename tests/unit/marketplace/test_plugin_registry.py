@@ -138,6 +138,22 @@ async def test_refresh_reconnect_publishes_connected_event():
 
 
 @pytest.mark.asyncio
+async def test_refresh_already_connected_publishes_event():
+    catalog = PluginCatalog(version=1, schema_version="1", plugins=[_calendar_plugin()])
+    store = _store_with_calendar()
+    bus = _RecordingBus()
+    reg = PluginToolRegistry(catalog=catalog, token_store=store,
+                             client_factory=_FakeClient, bus=bus)
+    await reg.bootstrap()
+    assert reg.active_tools()
+    bus.events.clear()
+    await reg.refresh_plugin("google-calendar")
+    assert reg.active_tools()
+    reasons = [getattr(e, "reason", "") for e in bus.events]
+    assert "plugin_connected:google-calendar" in reasons
+
+
+@pytest.mark.asyncio
 async def test_concurrent_bootstrap_and_refresh_no_corruption():
     """bootstrap() and refresh_plugin() fired concurrently (server start vs a
     REST connect during boot) must not double-register tools or leak clients —
