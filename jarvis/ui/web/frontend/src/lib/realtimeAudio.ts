@@ -55,6 +55,13 @@ const OUTPUT_TAP_TTL_MS = 600;
 /** Historical fixed budget for one realtime start attempt. */
 const DEFAULT_START_BUDGET_MS = 20_000;
 
+/**
+ * Consecutive quiet analyser frames before the WebRTC voice tap reports
+ * listening (~700 ms at 60 fps). Word gaps must not flip the Jarvis bar
+ * back to listening mid-sentence.
+ */
+const REMOTE_SILENCE_HANGOVER_FRAMES = 42;
+
 /** Bounded startup pre-roll, mirroring the desktop's 30 s replay window.
  *
  * Captured microphone PCM used to be DISCARDED until the backend answered
@@ -397,11 +404,18 @@ export class RealtimeAudioClient {
   private mediaFrame = 0;
   private remoteSource: MediaStreamAudioSourceNode | null = null;
   private lastPlaybackActive = false;
+  private remoteSilenceFrames = 0;
 
   private observeRemoteAudio(stream: MediaStream): void {
     if (!this.ctx) return;
+    // A suspended context measures only zeros: the assistant would talk
+    // while the bar keeps showing listening. The call started from a user
+    // gesture, so resuming here is allowed and makes the tap truthful.
+    void this.ctx.resume().catch(() => undefined);
     cancelAnimationFrame(this.mediaFrame);
     this.remoteSource?.disconnect();
+    this.lastPlaybackActive = false;
+    this.remoteSilenceFrames = 0;
     const analyser = this.ctx.createAnalyser();
     analyser.fftSize = 256;
     this.remoteSource = this.ctx.createMediaStreamSource(stream);
@@ -412,11 +426,23 @@ export class RealtimeAudioClient {
       const rms = Math.sqrt(samples.reduce((sum, x) => sum + x * x, 0) / samples.length);
       this.cb.onOutputLevel?.(this.outputMeter.push(rms));
       const active = rms > 0.004;
-      if (active !== this.lastPlaybackActive) {
-        this.lastPlaybackActive = active;
-        if (active) this.cb.onAudio?.();
-        this.cb.onStatus?.(active ? "speaking" : "listening", {});
-        if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "playback_state", active }));
+      if (active) {
+        this.remoteSilenceFrames = 0;
+        if (!this.lastPlaybackActive) {
+          this.lastPlaybackActive = true;
+          this.cb.onAudio?.();
+          this.cb.onStatus?.("speaking", {});
+          if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "playback_state", active: true }));
+        }
+      } else if (this.lastPlaybackActive) {
+        // Word gaps are silence too: only report listening after the tail
+        // of the reply is really over, or the bar flickers mid-sentence.
+        this.remoteSilenceFrames += 1;
+        if (this.remoteSilenceFrames >= REMOTE_SILENCE_HANGOVER_FRAMES) {
+          this.lastPlaybackActive = false;
+          this.cb.onStatus?.("listening", {});
+          if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "playback_state", active: false }));
+        }
       }
       this.mediaFrame = requestAnimationFrame(measure);
     };
@@ -795,6 +821,8 @@ export class RealtimeAudioClient {
     cancelAnimationFrame(this.mediaFrame);
     this.remoteSource?.disconnect();
     this.remoteSource = null;
+    this.lastPlaybackActive = false;
+    this.remoteSilenceFrames = 0;
     const socket = this.ws;
     this.ws = null;
     this.ready = false;

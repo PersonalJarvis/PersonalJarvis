@@ -536,3 +536,139 @@ async def test_late_transcript_cannot_reopen_tool_execution_after_close(ledger):
         }
     )
     assert not session._tools.accepting
+@pytest.mark.asyncio
+async def test_live_drives_jarvis_bar_indicators(ledger):
+    """Thinking while the model works, speaking while it talks — on both transports."""
+    import base64
+
+    json_frames: list[dict] = []
+    binary_frames: list[bytes] = []
+
+    async def send_json(event):
+        json_frames.append(event)
+
+    async def send_binary(data):
+        binary_frames.append(data)
+
+    def make_session(*, webrtc: bool):
+        cfg = SimpleNamespace(brain=SimpleNamespace(reply_language="en"))
+        session = LiveVoiceSession(
+            session_id="s",
+            send_binary=send_binary,
+            send_json=send_json,
+            providers=[SimpleNamespace(name="test")],
+            config=cfg,
+        )
+        session._ledger = ledger
+        session._tools = LiveTools(Gateway(), ledger, "s", language="en", backend_model="chosen")
+        session._connection = SimpleNamespace(send=send_json, answer_sdp="answer" if webrtc else "")
+        return session
+
+    async def response_created(session):
+        await session._event(
+            {
+                "type": "response.event",
+                "delegation_id": "d",
+                "event": {"type": "response.created", "response": {"id": "r"}},
+            }
+        )
+
+    async def response_completed(session):
+        await session._event(
+            {
+                "type": "response.event",
+                "delegation_id": "d",
+                "event": {"type": "response.completed", "response": {"id": "r"}},
+            }
+        )
+
+    pcm = base64.b64encode(b"\x00\x01" * 160).decode("ascii")
+
+    # WebRTC (ChatGPT Live): audio travels over RTP, but the speaking
+    # signal must still reach the bar — without it the bar never leaves
+    # listening while Jarvis talks.
+    session = make_session(webrtc=True)
+    await response_created(session)
+    assert {"type": "thinking"} in json_frames
+    assert session.phase == "thinking"
+    await session._event(
+        {
+            "type": "session.output_audio.delta",
+            "delta": pcm,
+            "start_ms": 0,
+            "end_ms": 100,
+        }
+    )
+    assert {"type": "tts_start"} in json_frames
+    assert {"type": "speaking"} in json_frames
+    assert binary_frames == []
+    assert session.phase == "speaking"
+    await response_completed(session)
+    types = [frame["type"] for frame in json_frames]
+    assert "tts_end" in types
+    assert "turn_complete" in types
+    assert session.phase == "listening"
+
+    # PCM transport: the same signals plus the forwarded audio itself.
+    json_frames.clear()
+    binary_frames.clear()
+    session = make_session(webrtc=False)
+    await response_created(session)
+    assert {"type": "thinking"} in json_frames
+    await session._event(
+        {
+            "type": "session.output_audio.delta",
+            "delta": pcm,
+            "start_ms": 0,
+            "end_ms": 100,
+        }
+    )
+    assert {"type": "speaking"} in json_frames
+    assert len(binary_frames) == 1
+    await response_completed(session)
+    assert session.phase == "listening"
+
+    # A barge-in returns the bar to listening instead of freezing on speaking.
+    json_frames.clear()
+    session = make_session(webrtc=True)
+    await response_created(session)
+    await session._event(
+        {"type": "session.output_audio.delta", "delta": pcm, "start_ms": 0, "end_ms": 10}
+    )
+    assert session.phase == "speaking"
+    await session.handle_control({"type": "barge_in"})
+    assert {"type": "tts_cancel"} in json_frames
+    assert session.phase == "listening"
+
+
+@pytest.mark.asyncio
+async def test_live_assistant_transcript_keeps_thinking_visible(ledger):
+    json_frames: list[dict] = []
+
+    async def send(event):
+        json_frames.append(event)
+
+    cfg = SimpleNamespace(brain=SimpleNamespace(reply_language="en"))
+    session = LiveVoiceSession(
+        session_id="s",
+        send_binary=send,
+        send_json=send,
+        providers=[SimpleNamespace(name="test")],
+        config=cfg,
+    )
+    session._ledger = ledger
+    session._tools = LiveTools(Gateway(), ledger, "s", language="en", backend_model="chosen")
+    session._connection = SimpleNamespace(send=send, answer_sdp="answer")
+    for index, delta in enumerate(["Hel", "lo"]):
+        await session._event(
+            {
+                "type": "session.output_transcript.delta",
+                "event_id": f"e-{index}",
+                "delta": delta,
+                "start_ms": index * 80,
+                "end_ms": index * 80 + 80,
+            }
+        )
+    thinking = [frame for frame in json_frames if frame["type"] == "thinking"]
+    assert len(thinking) == 1
+    assert session.phase == "thinking"

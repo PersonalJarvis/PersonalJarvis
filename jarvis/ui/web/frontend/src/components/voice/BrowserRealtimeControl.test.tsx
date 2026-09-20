@@ -152,6 +152,32 @@ describe("BrowserRealtimeControl", () => {
     expect(useEventStore.getState().voiceState).toBe("thinking");
   });
 
+  it("shows speaking on the live tts_start frame without binary audio", async () => {
+    // GPT-Live talks over WebRTC: no PCM sideband, no onAudio â€” the
+    // backend's explicit frame is the only speaking signal the bar gets.
+    render(<BrowserRealtimeControl />);
+    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+
+    act(() => fakes.callbacks?.onStatus?.("thinking", {}));
+    expect(useEventStore.getState().voiceState).toBe("thinking");
+
+    act(() => fakes.callbacks?.onStatus?.("tts_start", {}));
+    expect(useEventStore.getState().voiceState).toBe("speaking");
+  });
+
+  it("returns to listening when the live session clears audio on barge-in", async () => {
+    render(<BrowserRealtimeControl />);
+    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+
+    act(() => fakes.callbacks?.onStatus?.("speaking", {}));
+    expect(useEventStore.getState().voiceState).toBe("speaking");
+
+    act(() => fakes.callbacks?.onStatus?.("audio_clear", {}));
+    expect(useEventStore.getState().voiceState).toBe("listening");
+  });
+
   it("keeps thinking after a progress surface line finishes speaking", async () => {
     render(<BrowserRealtimeControl />);
     fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));

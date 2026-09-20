@@ -72,6 +72,8 @@ class LiveVoiceSession:
         self._delegation_responses: dict[str, str] = {}
         self._voice_seconds = 0.0
         self.playback_active = False
+        self._speaking = False
+        self._thinking = False
         self._active_model = ""
         self._archive_turn_id = str(uuid4())
         self._parent_owned = False
@@ -113,6 +115,54 @@ class LiveVoiceSession:
     @property
     def is_active(self) -> bool:
         return self._connection is not None and not self._closing
+
+    @property
+    def phase(self) -> str:
+        """The surface indicator state: speaking, thinking or listening."""
+        if self._speaking or self.playback_active:
+            return "speaking"
+        if self._thinking:
+            return "thinking"
+        return "listening"
+
+    async def _emit_indicator(self, message: dict) -> None:
+        """Send a speaking/thinking indicator without breaking the session.
+
+        Indicators are best-effort UI hints: a closing socket must never turn
+        them into a session failure.
+        """
+        if self._closing:
+            return
+        try:
+            await self._send_json(message)
+        except Exception:  # noqa: BLE001 â€” indicators must not kill voice
+            log.debug("Live indicator frame could not be sent", exc_info=True)
+
+    async def _note_thinking(self) -> None:
+        if self._thinking or self._speaking or self._closing:
+            return
+        self._thinking = True
+        await self._emit_indicator({"type": "thinking"})
+
+    async def _note_speaking(self) -> None:
+        if self._closing:
+            return
+        first = not self._speaking
+        self._speaking = True
+        self._thinking = False
+        if first:
+            await self._emit_indicator({"type": "tts_start"})
+            await self._emit_indicator({"type": "speaking"})
+
+    async def _note_turn_end(self) -> None:
+        if self._closing:
+            return
+        ended_speech = self._speaking
+        self._speaking = False
+        self._thinking = False
+        if ended_speech:
+            await self._emit_indicator({"type": "tts_end"})
+        await self._emit_indicator({"type": "turn_complete"})
 
     async def wait_finished(self) -> None:
         await self._closed.wait()
@@ -172,7 +222,10 @@ class LiveVoiceSession:
             await self._connection.send({"type": "response.create"})
         elif kind == "barge_in":
             # GPT-Live hears interruptions in the continuous input stream.
+            self._speaking = False
+            self._thinking = False
             await self._send_json({"type": "audio_clear"})
+            await self._emit_indicator({"type": "tts_cancel"})
 
     async def _start(self, message: dict) -> None:
         self._adopt_desktop_session()
@@ -388,8 +441,17 @@ class LiveVoiceSession:
                     "end_ms": fragment.end_ms,
                 }
             )
-        elif kind == "session.output_audio.delta" and not self._connection.answer_sdp:
-            await self._send_binary(base64.b64decode(event["delta"]))
+            if role == "assistant" and current:
+                await self._note_thinking()
+        elif kind == "session.output_audio.delta":
+            # The sideband carries this event on every transport, including
+            # WebRTC where the media itself travels over RTP. The binary
+            # forwarding below stays PCM-only, but the speaking signal must
+            # reach the surfaces on both paths â€” otherwise the Jarvis bar
+            # never leaves listening while GPT-Live talks.
+            await self._note_speaking()
+            if not self._connection.answer_sdp:
+                await self._send_binary(base64.b64decode(event["delta"]))
         elif kind in {"session.usage.updated", "session.closed"}:
             self._wire_seconds = max(
                 self._wire_seconds, float(event.get("usage", {}).get("seconds", self._wire_seconds))
@@ -450,6 +512,7 @@ class LiveVoiceSession:
             self._response_revisions[self._response_id] = self._tools.revision
             self._delegation_responses[delegation] = self._response_id
             self._responses.setdefault(self._response_id, [])
+            await self._note_thinking()
         elif kind == "response.output_item.done":
             item = event.get("item", {})
             if item.get("type") == "function_call":
@@ -466,6 +529,7 @@ class LiveVoiceSession:
             if rid in self._completed:
                 return
             self._completed.add(rid)
+            await self._note_turn_end()
             usage = response.get("usage") or {}
             profile = getattr(self._config, "live", LiveConfig())
             await asyncio.to_thread(

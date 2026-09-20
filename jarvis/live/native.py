@@ -206,6 +206,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
     async def _native_event(self, event: Any) -> None:
         assert self._tools is not None and self._ledger is not None
         if event.type == "audio_delta" and event.audio is not None:
+            await self._note_speaking()
             await self._send_binary(event.audio.pcm)
         elif event.type in {"input_transcript", "output_transcript_delta"}:
             role: Literal["user", "assistant"] = (
@@ -258,9 +259,11 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             self._jobs.add(task)
             task.add_done_callback(self._jobs.discard)
         elif event.type in {"interrupted", "speech_started"}:
+            self._speaking = False
+            self._thinking = False
             await self._send_json({"type": "tts_cancel"})
         elif event.type == "turn_complete":
-            await self._send_json({"type": "tts_end"})
+            await self._note_turn_end()
         elif event.type == "usage":
             usage = event.usage or {}
             await asyncio.to_thread(

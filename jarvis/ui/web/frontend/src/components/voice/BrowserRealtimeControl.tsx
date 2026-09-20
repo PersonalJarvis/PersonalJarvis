@@ -255,6 +255,10 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
             setVoice("thinking");
           } else if (status === "speaking" || status === "listening") {
             setVoice(status);
+          } else if (status === "tts_start") {
+            // GPT-Live emits speaking state explicitly because its WebRTC
+            // audio never reaches the binary playback path (no onAudio).
+            setVoice("speaking");
           } else if (status === "turn_complete" || status === "tts_end") {
             if (
               status === "tts_end" &&
@@ -266,7 +270,9 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
               resumeThinkingAfterSpeechRef.current = false;
               setVoice("listening");
             }
-          } else if (status === "tts_cancel") {
+          } else if (status === "tts_cancel" || status === "audio_clear") {
+            // audio_clear is the live session's barge-in flush: the user
+            // interrupted, so the assistant is no longer speaking.
             setVoice("listening");
           } else if (
             status === "tts_browser_unavailable" ||
