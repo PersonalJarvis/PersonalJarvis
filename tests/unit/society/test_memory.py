@@ -228,3 +228,27 @@ async def test_overview_lists_shared_agents_and_queue(rt: SocietyRuntime, tmp_pa
     await rt.memory.promote(got["knowledge_id"], root=vault)
     view = await rt.memory.overview(root=vault)
     assert view["shared"][0]["title"] == "Maps"
+
+
+def test_build_memory_diff_paints_red_green():
+    from jarvis.society.memory import build_memory_diff
+
+    before = "line one\nline two\n"
+    after = "line one\nline TWO\nline three\n"
+    diff = build_memory_diff(before, after)
+    text = "\n".join(diff)
+    assert "-line two" in text and "+line TWO" in text and "+line three" in text
+
+
+async def test_remember_digest_carries_before_after_and_diff(rt: SocietyRuntime, tmp_path: Path):
+    vault = tmp_path / "vault"
+    scout = await rt.roster.get("scout")
+    await rt.memory.remember(scout, "First fact.", root=vault)
+    before = await rt.store.last_seq()
+    await rt.memory.remember(scout, "Second fact.", root=vault)
+    events = [e for e in await rt.store.events_since(before) if e.msg_type is MsgType.DIGEST]
+    assert len(events) == 1
+    payload = events[0].payload
+    assert payload["op"] == "remember" and payload["path"] == "society/scout/memory.md"
+    assert "First fact." in payload["before"] and "Second fact." in payload["after"]
+    assert any(line.startswith("+") and "Second fact." in line for line in payload["diff"])

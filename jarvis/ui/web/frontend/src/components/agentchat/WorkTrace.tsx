@@ -9,7 +9,7 @@ import type { ReasoningBlock, TextBlock, ToolBlock, TurnBlock, TurnItem, TurnSta
 import { ChatMarkdown } from "./ChatMarkdown";
 import { toolDiff } from "./toolDiff";
 import { formatTokens, outputTokens } from "./toolView";
-import { activityParts, traceToolIdentity } from "./traceActivity";
+import { activityParts, traceToolIdentity, traceToolName } from "./traceActivity";
 import { ToolChoiceIcon } from "./ToolChoiceChips";
 import { toolIdentityStyle } from "./toolIdentity";
 import "./WorkTrace.css";
@@ -214,21 +214,75 @@ export function ReasoningTrace({ block, turnLive, compact = false }: { block: Re
 
 function ToolDetails({ block }: { block: ToolBlock }) {
   const t = useT();
-  const diff = useMemo(() => toolDiff(block.name, block.input), [block.name, block.input]);
+  const diff = useMemo(() => toolDiff(block.name, block.input, block.output), [block.name, block.input, block.output]);
+  const memoryFile = useMemo(() => memoryFileFromBlock(block), [block]);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   return <div className="space-y-3 py-1 text-xs">
     <Detail label={t("work_trace.tool")} text={block.name} />
     {block.input !== undefined && block.input !== null ? <Detail label={t("work_trace.input")} text={pretty(block.input)} /> : null}
     {diff ? <div aria-label={t("work_trace.diff")} className="max-h-72 overflow-auto font-mono text-xs">
       {diff.map((file, i) => <div key={i} className="mb-2">
-        <p className="mb-1 [overflow-wrap:anywhere]">{file.path}</p>
+        <div className="mb-1 flex items-center gap-2 [overflow-wrap:anywhere]">
+          <p className="min-w-0 flex-1">{file.path}</p>
+          {memoryFile && file.path === memoryFile.path ? <button
+            type="button"
+            onClick={() => setMemoryOpen(true)}
+            className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >{t("society.chat.memory_open_file")}</button> : null}
+        </div>
         {file.lines.map((line, n) => <div key={n} className={cn("whitespace-pre-wrap [overflow-wrap:anywhere]", line.kind === "add" && "diff-line-add", line.kind === "del" && "diff-line-del")}>
           {line.kind === "add" ? "+ " : line.kind === "del" ? "− " : "  "}{line.text}
         </div>)}
         {file.truncated > 0 ? <p>{t("work_trace.truncated").replace("{count}", String(file.truncated))}</p> : null}
       </div>)}
     </div> : null}
+    {memoryFile && !diff ? <button
+      type="button"
+      onClick={() => setMemoryOpen(true)}
+      className="rounded-md border border-border px-2 py-1 text-[11px] text-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >{t("society.chat.memory_open_file")}: {memoryFile.path}</button> : null}
     {block.output !== null ? <Detail label={t(block.isError ? "work_trace.error" : "work_trace.output")} text={block.output || t("work_trace.empty_output")} /> : null}
+    {memoryOpen && memoryFile ? <MemoryFileDialog path={memoryFile.path} before={memoryFile.before} after={memoryFile.after} onClose={() => setMemoryOpen(false)} /> : null}
   </div>;
+}
+
+function memoryFileFromBlock(block: ToolBlock): { path: string; before?: string; after?: string } | null {
+  const key = traceToolName(block.name).toLowerCase().replace(/[-_]/g, "");
+  if (!/^(societywikinote|societymemoryrecall|remember|societymemory)$/.test(key)) return null;
+  const out = parseToolOutput(block.output);
+  const inputPath = typeof block.input === "object" && block.input !== null
+    ? String((block.input as Record<string, unknown>).path ?? "") : "";
+  const path = out?.path || inputPath;
+  if (!path || !path.startsWith("society/")) return null;
+  return { path, before: out?.before, after: out?.after };
+}
+
+function parseToolOutput(output: string | null): { path?: string; before?: string; after?: string } | null {
+  if (!output || !output.trim().startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(output) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object") return null;
+    const path = typeof parsed.path === "string" ? parsed.path : undefined;
+    const before = typeof parsed.before === "string" ? parsed.before : undefined;
+    const after = typeof parsed.after === "string" ? parsed.after : undefined;
+    if (!path && before === undefined && after === undefined) return null;
+    return { path, before, after };
+  } catch {
+    return null;
+  }
+}
+
+function MemoryFileDialog({ path, before, after, onClose }: { path: string; before?: string; after?: string; onClose: () => void }) {
+  const [Viewer, setViewer] = useState<React.ComponentType<{ path: string; before?: string; after?: string; onClose: () => void }> | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void import("@/components/society/chat/MemoryFileViewer").then((mod) => {
+      if (alive) setViewer(() => mod.MemoryFileViewer);
+    });
+    return () => { alive = false; };
+  }, []);
+  if (!Viewer) return null;
+  return <Viewer path={path} before={before} after={after} onClose={onClose} />;
 }
 
 function Detail({ label, text }: { label: string; text: string }) {
@@ -253,7 +307,7 @@ export const TraceTool = memo(function TraceTool({ block, status, onDecide }: { 
   const detail = description.detail || (typeof block.input === "object" && block.input !== null
     ? String((block.input as Record<string, unknown>).file_path ?? (block.input as Record<string, unknown>).path ?? "") : "");
   const state = pending ? "approval" : denied ? "denied" : block.isError ? "failed" : running ? "running" : block.output === null ? "interrupted" : "completed";
-  const ActionIcon = action === "command" ? Terminal : action === "edit" || action === "write" ? FilePenLine
+  const ActionIcon = action === "command" ? Terminal : action === "edit" || action === "write" || action === "memory" ? FilePenLine
     : action === "read" ? FileText : action === "search" || action === "list" ? FolderSearch : view.identity.Glyph;
   const Icon = pending ? ShieldQuestion : block.isError ? CircleAlert : ActionIcon;
   const decide = async (decision: ApprovalDecision) => {
@@ -306,7 +360,7 @@ function ActivityIcon({ blocks, live }: { blocks: TurnBlock[]; live: boolean }) 
   const first = activityParts(blocks.filter((block): block is ToolBlock => block.kind === "tool"))[0];
   if (first?.row) return <span className={cn("tool-identity mt-1 shrink-0", live && "motion-safe:animate-pulse")} style={toolIdentityStyle(first.row)}><ToolChoiceIcon row={first.row} size={16} /></span>;
   const Icon = live ? CircleDashed : first?.key === "activity_command" ? Terminal
-    : first?.key === "activity_edit" || first?.key === "activity_write" ? FilePenLine : first ? FileText : Brain;
+    : first?.key === "activity_edit" || first?.key === "activity_write" || first?.key === "activity_memory" ? FilePenLine : first ? FileText : Brain;
   return <Icon aria-hidden className={cn(iconClass, "mt-1", live && "motion-safe:animate-spin")} />;
 }
 

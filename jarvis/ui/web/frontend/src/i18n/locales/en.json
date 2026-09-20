@@ -577,6 +577,7 @@
     "navigate": "Opening",
     "app": "Opening app",
     "memory": "Remembering",
+    "memory_update": "Updating Memory",
     "profile": "Updating profile",
     "contact": "Looking up contact",
     "call": "Calling",
@@ -5604,6 +5605,7 @@
     "activity_read": "Read files",
     "activity_list": "Listed files",
     "activity_search": "Searched files",
+    "activity_memory": "Updated Memory",
     "activity_tools": "Used tools",
     "live_integration_used": "Using {service}",
     "live_activity_command": "Running commands",
@@ -5612,6 +5614,7 @@
     "live_activity_read": "Reading files",
     "live_activity_list": "Listing files",
     "live_activity_search": "Searching files",
+    "live_activity_memory": "Updating Memory",
     "live_activity_tools": "Using tools",
     "thought": "Thought",
     "thinking_for": "Thinking for {duration}",
@@ -5644,7 +5647,8 @@
     "done": "Done",
     "command": "Run command",
     "edit": "Edit file",
-    "write": "Write file"
+    "write": "Write file",
+    "memory": "Updating Memory"
   },
   "chat_media": {
     "unavailable": "This media cannot be loaded or played. You can still open the file.",

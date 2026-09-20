@@ -359,6 +359,26 @@ def test_memory_overview_recall_and_promotion_through_approvals(memory_client):
     assert c.post("/api/society/memory/999/dismiss").status_code == 404
 
 
+def test_memory_file_serves_society_page_and_refuses_escape(memory_client):
+    c, vault = memory_client
+    c.post("/api/society/agents", json={"name": "Scout"})
+    import asyncio
+
+    runtime: SocietyRuntime = c.app.state.society
+    scout = asyncio.run(runtime.roster.get("scout"))
+    rel = asyncio.run(runtime.memory.remember(scout, "Loves maps.", root=vault))
+    assert rel == "society/scout/memory.md"
+    got = c.get("/api/society/memory/file", params={"path": rel}).json()
+    assert got["path"] == rel and got["agent_id"] == "scout"
+    assert "Loves maps." in got["content"]
+    # Outside society/ is never served, even with traversal.
+    assert c.get("/api/society/memory/file", params={"path": "jarvis.toml"}).status_code == 404
+    traversal = c.get("/api/society/memory/file", params={"path": "society/../jarvis.toml"})
+    assert traversal.status_code == 404
+    missing = c.get("/api/society/memory/file", params={"path": "society/scout/missing.md"})
+    assert missing.status_code == 404
+
+
 def test_bind_agent_chat_creates_the_canonical_session(tmp_path: Path):
     from jarvis.agent_chat.store import AgentChatStore
 

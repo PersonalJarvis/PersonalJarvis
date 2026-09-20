@@ -244,6 +244,17 @@ class WikiNoteTool:
         title = str(args.get("title") or "")
         try:
             if kind == "memory":
+                from .memory import build_memory_diff
+
+                # Capture the file before the write so the chat can paint
+                # red/green without a second read. Failures fall back to "".
+                before_text = ""
+                try:
+                    vault = rt.memory.root(self._vault_root)
+                    mem_path = rt.memory.namespace(vault, caller.agent_id) / "memory.md"
+                    before_text = mem_path.read_text(encoding="utf-8") if mem_path.is_file() else ""
+                except OSError:
+                    before_text = ""
                 rel = await rt.memory.remember(
                     caller,
                     text,
@@ -255,8 +266,23 @@ class WikiNoteTool:
                     old_text=str(args.get("old_text") or ""),
                     importance=int(args.get("importance", 8)),
                 )
+                after_text = ""
+                try:
+                    vault = rt.memory.root(self._vault_root)
+                    after_text = (vault / rel).read_text(encoding="utf-8")
+                except OSError:
+                    after_text = before_text
                 return ToolResult(
-                    success=True, output={"path": rel, "kind": kind, "reviewed": False}
+                    success=True,
+                    output={
+                        "path": rel,
+                        "kind": kind,
+                        "reviewed": False,
+                        "operation": str(args.get("operation") or "add"),
+                        "before": before_text[-20_000:],
+                        "after": after_text[-20_000:],
+                        "diff": build_memory_diff(before_text, after_text),
+                    },
                 )
             if kind == "shared":
                 return _failure(
@@ -271,7 +297,24 @@ class WikiNoteTool:
             )
         except MemoryRefused as exc:
             return _failure(FailureReason.BLOCKED_BY_POLICY, str(exc))
-        return ToolResult(success=True, output={"path": rel, "kind": "note", "reviewed": False})
+        try:
+            from .memory import build_memory_diff as _build_diff
+
+            vault = rt.memory.root(self._vault_root)
+            after_page = (vault / rel).read_text(encoding="utf-8")
+        except OSError:
+            after_page = text
+        return ToolResult(
+            success=True,
+            output={
+                "path": rel,
+                "kind": "note",
+                "reviewed": False,
+                "before": "",
+                "after": after_page[-20_000:],
+                "diff": _build_diff("", after_page),
+            },
+        )
 
 
 class MemoryRecallTool:

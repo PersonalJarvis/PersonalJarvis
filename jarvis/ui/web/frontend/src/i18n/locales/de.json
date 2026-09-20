@@ -577,6 +577,7 @@
     "navigate": "Öffnet",
     "app": "Öffnet App",
     "memory": "Merkt sich",
+    "memory_update": "Updating Memory",
     "profile": "Aktualisiert Profil",
     "contact": "Sucht Kontakt",
     "call": "Ruft an",
@@ -5571,6 +5572,7 @@
     "activity_read": "Dateien gelesen",
     "activity_list": "Dateien aufgelistet",
     "activity_search": "Dateien durchsucht",
+    "activity_memory": "Updating Memory",
     "activity_tools": "Werkzeuge verwendet",
     "live_integration_used": "{service} wird verwendet",
     "live_activity_command": "Befehle werden ausgeführt",
@@ -5579,6 +5581,7 @@
     "live_activity_read": "Dateien werden gelesen",
     "live_activity_list": "Dateien werden aufgelistet",
     "live_activity_search": "Dateien werden durchsucht",
+    "live_activity_memory": "Updating Memory",
     "live_activity_tools": "Werkzeuge werden verwendet",
     "thought": "Nachgedacht",
     "thinking_for": "Denkt seit {duration}",
@@ -5611,7 +5614,8 @@
     "done": "Fertig",
     "command": "Befehl ausführen",
     "edit": "Datei bearbeiten",
-    "write": "Datei schreiben"
+    "write": "Datei schreiben",
+    "memory": "Updating Memory"
   },
   "chat_media": {
     "unavailable": "Dieses Medium kann nicht geladen oder abgespielt werden. Du kannst die Datei weiterhin öffnen.",

@@ -25,6 +25,7 @@ ordinary agents. Deliberate user-wiki access uses the separately granted wiki to
 from __future__ import annotations
 
 import datetime as _dt
+import difflib as _difflib
 import logging
 import os
 import re
@@ -45,6 +46,7 @@ __all__ = [
     "MemoryHit",
     "SocietyMemory",
     "atomic_write",
+    "build_memory_diff",
     "resolve_society_vault",
 ]
 
@@ -64,6 +66,29 @@ _KV_RE = re.compile(r"^([A-Za-z_][\w-]*):\s*(.*)$", re.MULTILINE)
 _TOKEN_RE = re.compile(r"[\w][\w'-]{2,}", re.UNICODE)
 _FRONTMATTER_SAFE = re.compile(r"[\"\r\n]+")
 _SCOPE_BOOST: Final[dict[str, float]] = {"own": 0.30, "shared": 0.20, "user": 0.10, "other": 0.0}
+
+#: Characters of before/after kept in a memory digest so the chat can paint
+#: a red/green diff without a second file read. Large pages are clipped.
+_DIFF_TEXT_CHARS: Final[int] = 20_000
+#: Unified-diff lines kept in the digest payload.
+_DIFF_MAX_LINES: Final[int] = 200
+
+
+def build_memory_diff(before: str, after: str, *, context: int = 3) -> list[str]:
+    """Unified diff lines (no file headers) for a memory write, bounded."""
+    before_lines = str(before or "").splitlines()
+    after_lines = str(after or "").splitlines()
+    diff = list(_difflib.unified_diff(before_lines, after_lines, n=context, lineterm=""))
+    # Drop the ---/+++ headers; the payload carries the path separately.
+    diff = [line for line in diff if not line.startswith(("---", "+++"))]
+    return diff[:_DIFF_MAX_LINES]
+
+
+def _clip_diff_text(text: str) -> str:
+    clipped = str(text or "")
+    if len(clipped) > _DIFF_TEXT_CHARS:
+        return clipped[-_DIFF_TEXT_CHARS:]
+    return clipped
 
 
 class MemoryRefused(ValueError):
@@ -271,10 +296,22 @@ class SocietyMemory:
             )
         except (ValueError, KeyError, TypeError) as exc:
             raise MemoryRefused(str(exc)) from exc
-        atomic_write(path, prefix + "\n" + render(entries))
+        after = prefix + "\n" + render(entries)
+        atomic_write(path, after)
         rel = path.relative_to(vault).as_posix()
         await self._stage(agent, rel, self._origin(origin), trace, text[:280])
-        await self._touch(agent, "remember", {"path": rel, "scope": "own"})
+        await self._touch(
+            agent,
+            "remember",
+            {
+                "path": rel,
+                "scope": "own",
+                "operation": operation,
+                "before": _clip_diff_text(existing),
+                "after": _clip_diff_text(after),
+                "diff": build_memory_diff(existing, after),
+            },
+        )
         return rel
 
     async def note(
@@ -314,7 +351,18 @@ class SocietyMemory:
         row_id = await self._stage(
             agent, rel, self._origin(origin), trace, f"{title}: {text[:220]}"
         )
-        await self._touch(agent, "note", {"path": rel, "scope": "own", "title": title})
+        await self._touch(
+            agent,
+            "note",
+            {
+                "path": rel,
+                "scope": "own",
+                "title": title,
+                "before": "",
+                "after": _clip_diff_text(page),
+                "diff": build_memory_diff("", page),
+            },
+        )
         return rel, row_id
 
     async def propose_shared(

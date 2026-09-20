@@ -23,7 +23,7 @@ from jarvis.society.events import MsgType
 from jarvis.society.failure_reasons import FailureReason, retry_action
 from jarvis.society.memory import MEMORY_SHARE_CAPABILITY, MemoryRefused
 from jarvis.society.rooms import RoomError
-from jarvis.society.roster import RosterError
+from jarvis.society.roster import AgentRecord, RosterError
 from jarvis.society.runtime import SocietyRuntime
 
 log = logging.getLogger(__name__)
@@ -166,13 +166,36 @@ async def list_agents(request: Request, include_archived: bool = False) -> dict[
     return {"agents": rows, "total": len(rows)}
 
 
+async def _creator_from_request(request: Request, rt: SocietyRuntime) -> AgentRecord | None:
+    """The live society agent making this request, or ``None`` for the UI/CLI."""
+    from jarvis.society.inherit import caller_session_id, session_agent_id
+
+    session_id = (request.headers.get("x-jarvis-chat-session") or "").strip() or caller_session_id()
+    agent_id = session_agent_id(session_id)
+    if not agent_id:
+        return None
+    agent = await rt.roster.get(agent_id)
+    if agent is None or str(agent.state) != "active":
+        return None
+    return agent
+
+
 @router.post("/agents")
 async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any]:
     rt = await _runtime(request)
     fields = body.model_dump(exclude_none=True, exclude={"name", "title", "description", "tier"})
+    creator = await _creator_from_request(request, rt)
+    if creator is not None:
+        from jarvis.society.inherit import inherit_creator_fields
+
+        fields = inherit_creator_fields(fields, creator)
     derived_focus, derived_rules = rt.derive(body.title, body.description)
     if body.focus is None and derived_focus:
         fields["focus"] = derived_focus
+    if str(fields.get("grant_mode") or "") == "allowlist":
+        allowed = set(fields.get("grants") or [])
+        if allowed and "focus" in fields:
+            fields["focus"] = [cap for cap in fields["focus"] if cap in allowed]
     if body.approval_rules is None and derived_rules["require_approval"]:
         fields["approval_rules"] = derived_rules
     try:
@@ -725,6 +748,12 @@ class RoutineBody(BaseModel):
     plugin_grants: list[dict[str, str]] = Field(default_factory=list)
     announce_on_success: str | None = None
     parent_task_id: str | None = None
+    # Optional model seat for this routine. Omitted = pin the owner's current
+    # seat at creation; explicit values win. "" on update = follow the owner.
+    provider: str | None = None
+    model: str | None = None
+    effort: str | None = None
+    account_id: str | None = None
 
 
 def _task_store(request: Request) -> Any:
@@ -783,6 +812,10 @@ async def create_agent_routine(
             schedule=body.schedule,
             plugin_grants=body.plugin_grants,
             announce_on_success=body.announce_on_success,
+            provider=body.provider,
+            model=body.model,
+            effort=body.effort,
+            account_id=body.account_id,
         )
         if parent_spec is not None:
             if spec.trigger.type not in ("calendar", "cron", "every"):
@@ -816,7 +849,17 @@ async def create_agent_routine(
             )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    return {"id": task_id, "title": spec.title, "tags": list(spec.tags)}
+    seat = (
+        {
+            "provider": spec.action.provider,
+            "model": spec.action.model,
+            "effort": spec.action.effort,
+            "account_id": spec.action.account_id,
+        }
+        if spec.action.kind == "agent"
+        else None
+    )
+    return {"id": task_id, "title": spec.title, "tags": list(spec.tags), "seat": seat}
 
 
 class RoutineUpdateBody(BaseModel):
@@ -824,6 +867,10 @@ class RoutineUpdateBody(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     prompt: str = Field(min_length=1, max_length=16_000)
     schedule: dict[str, Any]
+    provider: str | None = None
+    model: str | None = None
+    effort: str | None = None
+    account_id: str | None = None
 
 
 @router.patch("/agents/{agent_id}/routines/{task_id}")
@@ -1094,6 +1141,56 @@ async def memory_dismiss(knowledge_id: int, request: Request) -> dict[str, Any]:
             404, {"reason": str(FailureReason.TARGET_UNKNOWN), "detail": str(exc)}
         ) from exc
     return {"id": knowledge_id, "reviewed": True}
+
+
+@router.get("/memory/file")
+async def memory_file(request: Request, path: str = "") -> dict[str, Any]:
+    """Read one society memory file for the Updating Memory editor.
+
+    Sandboxed to ``society/`` inside the vault: ``memory.md`` per agent and
+    the agent's dated notes. Shared pages are readable, everything outside
+    ``society/`` is refused. The editor shows the file and scrolls to the
+    change the chat's red/green diff describes.
+    """
+    from pathlib import Path
+
+    rt = await _runtime(request)
+    rel = str(path or "").strip().replace("\\", "/").lstrip("/")
+    if not rel.startswith("society/") or ".." in rel.split("/"):
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    if not rel.endswith(".md"):
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    vault = rt.memory.root()
+    target = vault / rel
+    try:
+        base = (vault / "society").resolve()
+        resolved = target.resolve()
+        if base != resolved and base not in resolved.parents:
+            raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — unreadable path reads as missing
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)}) from exc
+    if not target.is_file():
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    try:
+        content = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)}) from exc
+    if len(content) > 200_000:
+        content = content[-200_000:]
+    try:
+        updated_ms = int(target.stat().st_mtime * 1000)
+    except OSError:
+        updated_ms = 0
+    parts = Path(rel).parts
+    agent_id = parts[1] if len(parts) >= 3 else ""
+    return {
+        "path": rel,
+        "agent_id": agent_id,
+        "content": content,
+        "updated_ms": updated_ms,
+    }
 
 
 # ----------------------------------------------------------------- controls

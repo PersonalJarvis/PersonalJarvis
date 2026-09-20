@@ -64,8 +64,10 @@ const MAX_LINES = 400;
 const MATCH_CAP = 1200;
 
 export function isDiffTool(name: string): boolean {
+  const raw = (name ?? "").trim();
+  if (/^(society_wiki_note|society_memory|society_memory_recall|remember)$/i.test(raw)) return true;
   return /^(edit|multi_?edit|write|create_?file|write_?file|apply_?patch|str_replace(_based_edit_tool)?|notebook_?edit|update_?file|patch_?file)$/i.test(
-    (name ?? "").trim(),
+    raw,
   );
 }
 
@@ -81,6 +83,53 @@ function str(obj: Record<string, unknown>, ...keys: string[]): string | null {
     const v = obj[key];
     if (typeof v === "string") return v;
   }
+  return null;
+}
+
+/** Parse a JSON-stringified tool result without ever throwing. */
+function parseOutput(output: unknown): Record<string, unknown> | null {
+  if (!output) return null;
+  if (typeof output === "object" && !Array.isArray(output)) return output as Record<string, unknown>;
+  if (typeof output === "string" && output.trim().startsWith("{")) {
+    try {
+      const parsed: unknown = JSON.parse(output);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * A society memory write → the file it changed, ready to paint red/green.
+ *
+ * The result carries `{path, before, after}` (the digest carries the same).
+ * `before`/`after` are the whole `memory.md`/note page, so the shared
+ * line matcher renders only what moved — exactly like a code edit.
+ */
+export function memoryDiff(name: string, input: unknown, output?: unknown): DiffFile[] | null {
+  if (!/^(society_wiki_note|society_memory|society_memory_recall|remember)$/i.test((name ?? "").trim())) {
+    return null;
+  }
+  const out = parseOutput(output);
+  const path = (out && str(out, "path")) ?? "";
+  const before = out ? str(out, "before") : null;
+  const after = out ? str(out, "after") : null;
+  if (before !== null || after !== null) {
+    if (before === null && after === null) return null;
+    const created = !before?.trim();
+    return [build(path, before ?? "", after ?? "", created)];
+  }
+  // No result yet (running call): fall back to the requested text so the
+  // row still says what is being remembered.
+  const obj = typeof input === "object" && input !== null && !Array.isArray(input)
+    ? (input as Record<string, unknown>)
+    : null;
+  const text = obj ? str(obj, "text") : null;
+  if (text !== null) return [build(path, "", text, true)];
   return null;
 }
 
@@ -256,10 +305,17 @@ export function parsePatchText(patch: string): DiffFile[] {
  * `null` is the honest answer for a call that edits nothing, and also for an
  * edit whose arguments did not survive the transport — a row falling back to
  * its plain summary is right, inventing an empty diff is not.
+ *
+ * `output` is the JSON-stringified tool result when the runner kept it. A
+ * society memory write (`society_wiki_note`) carries its red/green change
+ * there as `{path, before, after, diff}` — the file the chat's Updating
+ * Memory row opens in the editor.
  */
-export function toolDiff(name: string, input: unknown): DiffFile[] | null {
+export function toolDiff(name: string, input: unknown, output?: unknown): DiffFile[] | null {
   const raw = (name ?? "").trim();
   if (!isDiffTool(raw)) return null;
+  const memory = memoryDiff(raw, input, output);
+  if (memory) return memory;
   if (typeof input === "string") {
     const files = parsePatchText(input);
     return files.length ? files : null;

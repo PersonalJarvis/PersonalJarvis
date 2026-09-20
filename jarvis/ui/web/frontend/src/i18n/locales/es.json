@@ -577,6 +577,7 @@
     "navigate": "Abriendo",
     "app": "Abriendo la app",
     "memory": "Recordando",
+    "memory_update": "Updating Memory",
     "profile": "Actualizando el perfil",
     "contact": "Buscando contacto",
     "call": "Llamando",
@@ -5571,6 +5572,7 @@
     "activity_read": "Leyó archivos",
     "activity_list": "Listó archivos",
     "activity_search": "Buscó archivos",
+    "activity_memory": "Updating Memory",
     "activity_tools": "Usó herramientas",
     "live_integration_used": "Usando {service}",
     "live_activity_command": "Ejecutando comandos",
@@ -5579,6 +5581,7 @@
     "live_activity_read": "Leyendo archivos",
     "live_activity_list": "Listando archivos",
     "live_activity_search": "Buscando archivos",
+    "live_activity_memory": "Updating Memory",
     "live_activity_tools": "Usando herramientas",
     "thought": "Razonamiento",
     "thinking_for": "Pensando durante {duration}",
@@ -5611,7 +5614,8 @@
     "done": "Listo",
     "command": "Ejecutar comando",
     "edit": "Editar archivo",
-    "write": "Escribir archivo"
+    "write": "Escribir archivo",
+    "memory": "Updating Memory"
   },
   "chat_media": {
     "unavailable": "No se puede cargar o reproducir este archivo. Puedes abrirlo directamente.",
