@@ -98,6 +98,32 @@ describe("BrowserRealtimeControl", () => {
     expect(await screen.findByRole("link", { name: "live.open_browser" })).toBeTruthy();
   });
 
+  it("parks a wake start while hidden and fires it when the tab returns", async () => {
+    fakes.browserAudio = true;
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      const { unmount } = render(<BrowserRealtimeControl />);
+      act(() => {
+        useEventStore.setState({ events: [{
+          id: "wake-hidden", name: "BrowserVoiceRequested", ts: Date.now(),
+          payload: { action: "start" },
+        }] });
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      expect(fakes.connect).not.toHaveBeenCalled();
+      visibility.mockReturnValue("visible");
+      act(() => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+      unmount();
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
   it("is hidden in the desktop shell to prevent a second microphone", () => {
     fakes.native = true;
     (window as unknown as { pywebview?: unknown }).pywebview = { api: {} };
@@ -153,7 +179,7 @@ describe("BrowserRealtimeControl", () => {
   });
 
   it("shows speaking on the live tts_start frame without binary audio", async () => {
-    // GPT-Live talks over WebRTC: no PCM sideband, no onAudio â€” the
+    // GPT-Live talks over WebRTC: no PCM sideband, no onAudio — the
     // backend's explicit frame is the only speaking signal the bar gets.
     render(<BrowserRealtimeControl />);
     fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));

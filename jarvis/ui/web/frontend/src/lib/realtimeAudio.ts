@@ -142,7 +142,8 @@ export class RealtimeWebRtcTransport {
     await waitForIceGathering(peer);
     if (this.peer !== peer) return null;
     const sdp = peer.localDescription?.sdp ?? offer.sdp ?? "";
-    return sdp.trim() || null;
+    // SDP is a wire format: the terminal CRLF is required by Live's parser.
+    return sdp.trim() ? sdp : null;
   }
 
   async applyAnswer(sdp: string): Promise<void> {
@@ -482,10 +483,16 @@ export class RealtimeAudioClient {
       if (!this.ctx.audioWorklet) {
         throw new RealtimeAudioSupportError("audio_worklet_unavailable");
       }
-      await this.ctx.audioWorklet.addModule(pcmWorkletUrl);
-      await this.ctx.resume();
-
-      this.stream = await navigator.mediaDevices.getUserMedia({
+      // The worklet load, the microphone open, the one-time WS ticket and
+      // the shared connect-budget turn are independent: acquiring them
+      // concurrently keeps three disk/network waits off the wake path
+      // instead of stacked end to end. The WebRTC offer still needs the
+      // microphone stream, so it is built once the mic resolves below.
+      const setupStartedAt = performance.now();
+      const workletReady = this.ctx.audioWorklet
+        .addModule(pcmWorkletUrl)
+        .then(() => this.ctx?.resume());
+      const micReady = navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: { ideal: 1 },
           echoCancellation: true,
@@ -493,6 +500,13 @@ export class RealtimeAudioClient {
           autoGainControl: true,
         },
       });
+      const ticketReady = mintWsTicket();
+      const turnReady = new Promise<void>((resolve) => requestConnect(resolve));
+      this.stream = await micReady;
+      if (this.intentionalClose) throw new Error("Voice start cancelled");
+      await workletReady;
+      if (this.intentionalClose) throw new Error("Voice start cancelled");
+      const setupMs = Math.round(performance.now() - setupStartedAt);
       const source = this.ctx.createMediaStreamSource(this.stream);
       this.captureNode = new AudioWorkletNode(this.ctx, "pcm-capture");
       this.playbackNode = new AudioWorkletNode(this.ctx, "pcm-playback");
@@ -539,8 +553,12 @@ export class RealtimeAudioClient {
       // session cookie to a WS handshake (BUG-065). Minting over plain HTTP
       // first works on every engine; on a mint failure (e.g. older backend)
       // fall back to the cookie-only handshake, which Chromium still accepts.
-      const ticket = await mintWsTicket();
-      await new Promise<void>((resolve) => requestConnect(resolve));
+      // The ticket was minted concurrently with the microphone setup above,
+      // and the budget turn was queued there too, so both are (nearly) free
+      // by now instead of two more serial waits on the wake path.
+      const ticket = await ticketReady;
+      await turnReady;
+      console.info(`Voice start setup took ${setupMs} ms (mic/worklet/ticket).`);
       if (this.intentionalClose) throw new Error("Voice start cancelled");
       this.ws = new WebSocket(buildAudioSocketUrl(ticket));
       this.ws.binaryType = "arraybuffer";

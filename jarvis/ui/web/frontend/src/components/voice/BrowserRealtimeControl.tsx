@@ -107,6 +107,10 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
   const clientRef = useRef<RealtimeAudioClient | null>(null);
   const events = useEventStore((store) => store.events);
   const handledRequest = useRef<string | null>(null);
+  // A wake that lands while the tab is hidden must not be consumed: the
+  // desktop is already waiting for this call, and dropping the request
+  // leaves it waiting out the full handshake budget for nothing.
+  const pendingStart = useRef<{ id: string; ts: number } | null>(null);
   const connectionGenerationRef = useRef(0);
   // A progress/preamble surface line is not the end of the turn. After the
   // browser finishes speaking it, tts_end must restore thinking — not
@@ -331,12 +335,43 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
 
   useEffect(() => {
     if (!browserAudio) return;
+    const onVisible = () => {
+      const pending = pendingStart.current;
+      if (document.visibilityState !== "visible" || !pending) return;
+      if (Date.now() - pending.ts > 45_000) {
+        pendingStart.current = null;
+        return;
+      }
+      pendingStart.current = null;
+      handledRequest.current = pending.id;
+      void start();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [browserAudio, start]);
+
+  useEffect(() => {
+    if (!browserAudio) return;
     const event = [...events].reverse().find(e => e.name === "BrowserVoiceRequested");
     if (!event || event.id === handledRequest.current || Date.now() - event.ts > 45_000) return;
-    handledRequest.current = event.id;
     const action = (event.payload as { action?: string })?.action;
-    if (action === "start" && document.visibilityState === "visible") void start();
-    if (action === "stop") void stop();
+    if (action === "start") {
+      if (document.visibilityState === "visible") {
+        handledRequest.current = event.id;
+        pendingStart.current = null;
+        void start();
+      } else {
+        // Parked, not handled: firing when the tab returns keeps a
+        // background wake from dying silently on the desktop side.
+        pendingStart.current = { id: event.id, ts: event.ts };
+      }
+      return;
+    }
+    if (action === "stop") {
+      handledRequest.current = event.id;
+      pendingStart.current = null;
+      void stop();
+    }
   }, [events, browserAudio, start, stop]);
 
   useEffect(() => {

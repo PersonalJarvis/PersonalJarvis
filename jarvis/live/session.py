@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import random
+import time
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -135,7 +136,7 @@ class LiveVoiceSession:
             return
         try:
             await self._send_json(message)
-        except Exception:  # noqa: BLE001 â€” indicators must not kill voice
+        except Exception:  # noqa: BLE001 — indicators must not kill voice
             log.debug("Live indicator frame could not be sent", exc_info=True)
 
     async def _note_thinking(self) -> None:
@@ -189,7 +190,7 @@ class LiveVoiceSession:
         elif kind == "audio_stop":
             await self.end(reason="client_stop")
         elif kind == "cancel_work" and self._tools is not None:
-            self._tools.cancel_token.cancel("user_cancelled")
+            await self._tools.cancel_work()
         elif kind == "text_input" and self._connection is not None:
             text = str(message.get("text", ""))[:32000]
             if self._tools is not None:
@@ -197,7 +198,8 @@ class LiveVoiceSession:
                 self._tools.revision += 1
                 if not self._recovering:
                     self._resume_needs_input = False
-                    self._tools.accepting = True
+                    self._tools.accept_new_input()
+                    self._reconnect_attempts = 0
             preview = text.encode("utf-8")[:192].decode("utf-8", errors="ignore")
             await self._connection.send(
                 {
@@ -229,6 +231,7 @@ class LiveVoiceSession:
 
     async def _start(self, message: dict) -> None:
         self._adopt_desktop_session()
+        started_at = time.monotonic()
         profile = getattr(self._config, "live", LiveConfig())
         self._active_model = profile.model
         # Validate before acquiring devices, a durable store or a billed connection.
@@ -237,8 +240,21 @@ class LiveVoiceSession:
         if gateway is None:
             raise RuntimeError("Jarvis tools are still starting. Try voice again shortly.")
         root = user_data_dir()
-        await asyncio.to_thread(root.mkdir, parents=True, exist_ok=True)
-        self._ledger = await asyncio.to_thread(LiveLedger, root / "live.sqlite3")
+
+        async def _open_ledger() -> LiveLedger:
+            await asyncio.to_thread(root.mkdir, parents=True, exist_ok=True)
+            return await asyncio.to_thread(LiveLedger, root / "live.sqlite3")
+
+        async def _take_permit() -> None:
+            from jarvis.live.recovery import connection_permit
+
+            await connection_permit()
+
+        # The durable store and the shared connection budget are independent:
+        # opening them concurrently keeps the permit's quarter-second budget
+        # off the wake path instead of stacked after a cold-disk sqlite open.
+        self._ledger, _ = await asyncio.gather(_open_ledger(), _take_permit())
+        setup_ms = (time.monotonic() - started_at) * 1000.0
         self._tools = LiveTools(
             gateway,
             self._ledger,
@@ -257,15 +273,21 @@ class LiveVoiceSession:
             from jarvis.live.runtime import claim
 
             claim(self.session_id)
-            from jarvis.live.recovery import connection_permit, seed_messages
+            from jarvis.live.recovery import seed_messages
 
             self._initial_seed = self._take_initial_context()
             if self._initial_seed:
                 config["input"] = seed_messages(self._initial_seed, [])
 
-            await connection_permit()
+            open_started_at = time.monotonic()
             self._connection = await self._provider.open_session(
                 ContinuousVoiceStart(session=config, offer_sdp=offer)
+            )
+            open_ms = (time.monotonic() - open_started_at) * 1000.0
+            log.info(
+                "Live session opening: setup %.0f ms, provider open %.0f ms.",
+                setup_ms,
+                open_ms,
             )
             if not offer:
                 async with asyncio.timeout(25):
@@ -427,7 +449,7 @@ class LiveVoiceSession:
                 self._tools.revision += 1
                 if not self._closing and not self._recovering:
                     self._resume_needs_input = False
-                    self._tools.accepting = True
+                    self._tools.accept_new_input()
                     self._reconnect_attempts = 0
             await self._send_json(
                 {
@@ -447,7 +469,7 @@ class LiveVoiceSession:
             # The sideband carries this event on every transport, including
             # WebRTC where the media itself travels over RTP. The binary
             # forwarding below stays PCM-only, but the speaking signal must
-            # reach the surfaces on both paths â€” otherwise the Jarvis bar
+            # reach the surfaces on both paths — otherwise the Jarvis bar
             # never leaves listening while GPT-Live talks.
             await self._note_speaking()
             if not self._connection.answer_sdp:
@@ -531,9 +553,9 @@ class LiveVoiceSession:
             self._completed.add(rid)
             await self._note_turn_end()
             usage = response.get("usage") or {}
-            profile = getattr(self._config, "live", LiveConfig())
+            backend_model = self._tools.backend_model
             await asyncio.to_thread(
-                self._ledger.backend_usage, self.session_id, rid, profile.backend_model, usage
+                self._ledger.backend_usage, self.session_id, rid, backend_model, usage
             )
             if self._bus is not None:
                 from jarvis.brain.cost import calculate_cost_usd
@@ -545,13 +567,11 @@ class LiveVoiceSession:
                 await self._bus.publish(
                     BrainTurnCompleted(
                         provider="openai",
-                        model=profile.backend_model,
+                        model=backend_model,
                         tokens_in=tokens_in,
                         tokens_out=tokens_out,
                         tokens_cached=cached,
-                        cost_usd=calculate_cost_usd(
-                            profile.backend_model, tokens_in, tokens_out, cached
-                        ),
+                        cost_usd=calculate_cost_usd(backend_model, tokens_in, tokens_out, cached),
                         finish_reason="live_delegation",
                     )
                 )
