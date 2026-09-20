@@ -5279,7 +5279,9 @@
       "create": "Neu",
       "search": "Agenten suchen",
       "loading": "Agenten werden geladen…",
-      "empty": "Kein Agent passt."
+      "empty": "Kein Agent passt.",
+      "thinking": "Denkt nach…",
+      "unread": "Neues Ergebnis — öffnen zum Lesen"
     },
     "tier": {
       "lead": "Leitung",

@@ -16,7 +16,7 @@
  * from the grid cell — same rows, same sizes, only the divider swaps sides.
  */
 import { useMemo, useState } from "react";
-import { Plus, Search } from "lucide-react";
+import { Loader2, Plus, Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 
 import { AgentSwatch } from "../AgentSwatch";
 import type { AgentRunState, SocietyAgent } from "../data";
+import { useRosterUnread } from "./useRosterUnread";
 
 const STATE_DOT: Record<AgentRunState, string> = {
   idle: "bg-muted-foreground/50",
@@ -60,6 +61,7 @@ export function RosterRail({
 }: RosterRailProps) {
   const t = useT();
   const [query, setQuery] = useState("");
+  const unread = useRosterUnread(agents, activeAgentId);
 
   const lead = useMemo(() => agents.find((a) => a.tier === "lead") ?? null, [agents]);
 
@@ -136,7 +138,25 @@ export function RosterRail({
                 lead.agentId === activeAgentId && "bg-secondary",
               )}
             >
-              <AgentSwatch agent={lead} size={56} />
+              <span className="relative">
+                <AgentSwatch agent={lead} size={56} />
+                {lead.state === "working" ? (
+                  <span
+                    role="status"
+                    aria-label={t("society.roster.thinking")}
+                    title={t("society.roster.thinking")}
+                    className="absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full bg-sidebar ring-2 ring-sidebar"
+                  >
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden />
+                  </span>
+                ) : unread.has(lead.agentId) ? (
+                  <span
+                    aria-label={t("society.roster.unread")}
+                    title={t("society.roster.unread")}
+                    className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full bg-success ring-2 ring-sidebar"
+                  />
+                ) : null}
+              </span>
               <span className="flex max-w-full items-center justify-center gap-1.5">
                 <span className="truncate text-sm font-medium text-foreground">{lead.name}</span>
                 <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-xs">
@@ -179,16 +199,51 @@ export function RosterRail({
                   </span>
                   <span className="block truncate text-xs text-muted-foreground">{agent.title}</span>
                 </span>
-                <span
-                  className={cn("h-2 w-2 shrink-0 rounded-full", STATE_DOT[agent.state])}
-                  title={t(`society.state.${agent.state}`)}
-                  aria-label={t(`society.state.${agent.state}`)}
-                />
+                <RowStatus agent={agent} hasUnread={unread.has(agent.agentId)} />
               </button>
             </li>
           ))}
         </ul>
       </ScrollArea>
     </aside>
+  );
+}
+
+/**
+ * The three states the roster dot can be in: thinking (a loading spinner
+ * while `state` is working), fresh results (green until the row is opened),
+ * or the plain backend state (grey idle, amber waiting, faint paused).
+ */
+function RowStatus({ agent, hasUnread }: { agent: SocietyAgent; hasUnread: boolean }) {
+  const t = useT();
+  if (agent.state === "working") {
+    const label = t("society.roster.thinking");
+    return (
+      <span
+        role="status"
+        aria-label={label}
+        title={label}
+        className="grid h-4 w-4 shrink-0 place-items-center"
+      >
+        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" aria-hidden />
+      </span>
+    );
+  }
+  if (hasUnread) {
+    const label = t("society.roster.unread");
+    return (
+      <span
+        className="h-2 w-2 shrink-0 rounded-full bg-success"
+        title={label}
+        aria-label={label}
+      />
+    );
+  }
+  return (
+    <span
+      className={cn("h-2 w-2 shrink-0 rounded-full", STATE_DOT[agent.state])}
+      title={t(`society.state.${agent.state}`)}
+      aria-label={t(`society.state.${agent.state}`)}
+    />
   );
 }

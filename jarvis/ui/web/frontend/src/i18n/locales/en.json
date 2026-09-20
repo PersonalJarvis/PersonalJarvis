@@ -5312,7 +5312,9 @@
       "create": "New",
       "search": "Search agents",
       "loading": "Loading agents…",
-      "empty": "No agent matches."
+      "empty": "No agent matches.",
+      "thinking": "Thinking…",
+      "unread": "New results — open to read"
     },
     "tier": {
       "lead": "Lead",

@@ -5279,7 +5279,9 @@
       "create": "Nuevo",
       "search": "Buscar agentes",
       "loading": "Cargando agentes…",
-      "empty": "Ningún agente coincide."
+      "empty": "Ningún agente coincide.",
+      "thinking": "Pensando…",
+      "unread": "Nuevos resultados — abre para leer"
     },
     "tier": {
       "lead": "Líder",
