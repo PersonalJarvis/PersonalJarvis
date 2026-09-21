@@ -1,6 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { useSocietyShell } from "@/store/societyShell";
 import { setMapFullscreen } from "@/lib/mapFullscreen";
 import { LAST_AGENT_STORAGE_KEY } from "./lastAgent";
 import { SocietyView } from "./SocietyView";
@@ -12,11 +11,12 @@ vi.mock("@/components/society/data", () => ({ useSocietyRoster: () => ({ data: {
   { agentId: "lead", name: "Lead", tier: "lead", state: "idle" },
   { agentId: "specialist", name: "Specialist", tier: "specialist", state: "idle" },
 ] }, isLoading: false }) }));
-vi.mock("@/views/JarvisAgentsView", () => ({ JarvisAgentsView: ({ onSelectAgent, onOpenAgents }: any) => (
-  <div data-testid="map"><button onClick={() => onSelectAgent("specialist")}>Map specialist</button><button onClick={onOpenAgents}>Map fallback</button></div>
+vi.mock("@/views/JarvisAgentsView", () => ({ JarvisAgentsView: ({ onSelectAgent, onOpenAgents, topRight }: any) => (
+  <div data-testid="map">{topRight}<button onClick={() => onSelectAgent("specialist")}>Map specialist</button><button onClick={onOpenAgents}>Map fallback</button></div>
 ) }));
-vi.mock("@/components/society/card/AgentCardOverlay", () => ({ AgentCardOverlay: ({ agent, embedded, onSelectAgent, onCreate }: any) => (
+vi.mock("@/components/society/card/AgentCardOverlay", () => ({ AgentCardOverlay: ({ agent, embedded, onSelectAgent, onCreate, railHeader }: any) => (
   <div data-testid="workspace" data-embedded={String(embedded)}>
+    {railHeader}
     <span>{agent.name}</span><input aria-label="Draft" />
     <button onClick={() => onSelectAgent("specialist")}>Select specialist</button>
     <button onClick={onCreate}>Create agent</button>
@@ -77,13 +77,24 @@ it("opens map selections in Agents and keeps creation available", async () => {
 });
 
 
-it("starts with sections hidden and toggles them independently of the agent roster", () => {
+it("floats the Map/Agents switch over the map instead of a second header bar", async () => {
   render(<SocietyView />);
-  expect(useSocietyShell.getState().navigationOpen).toBe(false);
-  fireEvent.click(screen.getByRole("button", { name: "society.world.toggle_sections" }));
-  expect(useSocietyShell.getState().navigationOpen).toBe(true);
-  fireEvent.click(screen.getByRole("button", { name: "society.world.toggle_sections" }));
-  expect(useSocietyShell.getState().navigationOpen).toBe(false);
+  fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
+  const map = await screen.findByTestId("map");
+  // The section header bar (with "Back to app") is gone in Map mode: the
+  // canvas starts directly under the window caption.
+  expect(screen.queryByRole("button", { name: "settings_hub.back_to_app" })).toBeNull();
+  // The switch itself rides along into the map HUD, so Map stays closable.
+  expect(within(map).getByRole("tab", { name: "society.roster.title" })).toBeTruthy();
+  fireEvent.click(within(map).getByRole("tab", { name: "society.roster.title" }));
+  expect(screen.queryByTestId("map")).toBeNull();
+  expect(screen.getByRole("button", { name: "settings_hub.back_to_app" })).toBeTruthy();
+});
+
+it("offers a way back to the app instead of a sections toggle", () => {
+  render(<SocietyView />);
+  expect(screen.queryByRole("button", { name: "society.world.toggle_sections" })).toBeNull();
+  expect(screen.getByRole("button", { name: "settings_hub.back_to_app" })).toBeTruthy();
 });
 
 it("requests fullscreen for Map and leaves it on Escape", async () => {

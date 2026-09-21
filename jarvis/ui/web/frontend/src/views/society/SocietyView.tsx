@@ -109,7 +109,7 @@ export function SocietyView() {
   }, []);
 
   const modeSwitch = (
-    <div role="tablist" aria-label={t("society.world.mode_label")} className="flex items-center gap-0.5 rounded-md border border-border/60 p-0.5">
+    <div role="tablist" aria-label={t("society.world.mode_label")} className="flex items-center gap-0.5 rounded-md border border-border/60 bg-background/80 p-0.5 backdrop-blur-sm">
       {(["world", "agents"] as const).map((value) => {
         return <button key={value} type="button" role="tab" aria-selected={mode === value}
           onClick={() => switchMode(value)}
@@ -123,17 +123,19 @@ export function SocietyView() {
   return (
     <div className={mode === "world" ? "fixed inset-x-0 bottom-0 top-8 z-30 flex flex-col bg-background" : "flex h-full min-h-0 w-full flex-col"} data-testid="society-view">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {mode === "agents" && (
         <div className="relative flex h-8 shrink-0 items-center px-2">
-          {mode === "agents" && backToApp}
+          {backToApp}
           <div className="absolute left-1/2 -translate-x-1/2">{modeSwitch}</div>
         </div>
+        )}
         {fullscreenError && <p role="alert" className="bg-card px-4 py-2 text-sm text-destructive">{t("society.world.fullscreen_failed")}</p>}
         {mode === "world" ? (
         <div className="relative flex min-h-0 flex-1">
           <div className="min-w-0 flex-1">
             <CanvasActivity.Provider value={!openPlace && !creating}>
               <Suspense fallback={null}>
-                <JarvisAgentsBoard onSelectAgent={onIslandSelect} onSelectPlace={onIslandPlace} onOpenAgents={() => switchMode("agents")} />
+                <JarvisAgentsBoard onSelectAgent={onIslandSelect} onSelectPlace={onIslandPlace} onOpenAgents={() => switchMode("agents")} topRight={modeSwitch} />
               </Suspense>
             </CanvasActivity.Provider>
           </div>
