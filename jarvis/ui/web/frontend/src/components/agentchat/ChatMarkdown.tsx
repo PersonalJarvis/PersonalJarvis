@@ -1,11 +1,13 @@
 import { Children, createContext, lazy, Suspense, useContext, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AlertCircle, Download, Maximize2, X } from "lucide-react";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { openExternalUrl } from "@/lib/openExternal";
+import { openLocalPath } from "@/lib/openLocalPath";
 import { readFence, visualFenceLanguage } from "@/lib/visualFence";
+import { chatLinkAction, chatUrlTransform, localPathFromChatHref } from "./chatLinks";
 import { parseToolResult, ToolResultCard } from "./ToolResultCard";
 import * as Dialog from "@radix-ui/react-dialog";
 
@@ -144,18 +146,31 @@ export function MediaPreview({ src, label, kind }: { src: string; label: string;
 
 const ImageKeysContext = createContext<ReadonlySet<string>>(new Set());
 
+// A file or folder address must not be loaded in this window: an empty href
+// reloads the page, and a relative name is served back as the app itself.
+function onChatLinkClick(event: { preventDefault(): void }, href: string) {
+  const action = chatLinkAction(href);
+  if (action.type === "allow") return;
+  event.preventDefault();
+  if (action.type === "local") void openLocalPath(action.path);
+  else if (action.type === "external") void openExternalUrl(action.url);
+}
+
 // Stable component identities are essential: changing these on each streamed
 // token would unmount videos, reset playback and discard image error state.
 const MARKDOWN_COMPONENTS: Components = {
-  img: ({ src = "", alt = "image" }) => <MediaPreview src={src} label={alt || "image"} kind={mediaKind(src) ?? "image"} />,
+  img: ({ src = "", alt = "image" }) => {
+    const local = localPathFromChatHref(src);
+    if (local) return <a href={src} title={local} onClick={event => onChatLinkClick(event, src)}>{alt || local}</a>;
+    return <MediaPreview src={src} label={alt || "image"} kind={mediaKind(src) ?? "image"} />;
+  },
   a: function MediaLink({ href = "", children }) {
     const imageKeys = useContext(ImageKeysContext);
     const kind = mediaKind(href);
     const label = Children.toArray(children).filter(child => typeof child === "string").join("") || kind || "media";
     if (kind && !imageKeys.has(assetKey(href))) return <MediaPreview src={href} label={label} kind={kind} />;
-    return <a href={href} onClick={event => {
-      if (/^https?:\/\//i.test(href)) { event.preventDefault(); void openExternalUrl(href); }
-    }}>{children}</a>;
+    const local = localPathFromChatHref(href);
+    return <a href={href} title={local || undefined} onClick={event => onChatLinkClick(event, href)}>{children}</a>;
   },
   pre: ({ children, node: _node, ...props }) => {
     const fence = readFence(children);
@@ -176,7 +191,7 @@ export function ChatMarkdown({ text, className }: { text: string; className?: st
   const imageKeys = useMemo(() => new Set(Array.from(body.matchAll(/!\[[^\]]*\]\(<?([^)>]+)>?\)/g), match => assetKey(match[1]))), [body]);
   return <div className={cn("min-w-0 [overflow-wrap:anywhere]", className)}>
     <ImageKeysContext.Provider value={imageKeys}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={url => url.startsWith("data:") ? safeMediaUrl(url) ?? "" : defaultUrlTransform(url)} components={MARKDOWN_COMPONENTS}>{body}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={url => url.startsWith("data:") ? safeMediaUrl(url) ?? "" : chatUrlTransform(url)} components={MARKDOWN_COMPONENTS}>{body}</ReactMarkdown>
     </ImageKeysContext.Provider>
   </div>;
 }

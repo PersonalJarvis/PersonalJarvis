@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatMarkdown, mediaKind, normalizeMediaMarkup, safeMediaUrl } from "./ChatMarkdown";
 
 afterEach(cleanup);
@@ -123,5 +123,43 @@ describe("shared chat media", () => {
   it.each(["javascript:alert(1)", "file:///private/image.png", "C:\\private\\image.png", "data:text/html;base64,PHNjcmlwdD4=", "https://user:password@example.test/image.png"])("rejects unsafe or unarchived media URL %s", url => {
     expect(safeMediaUrl(url)).toBeNull();
     expect(mediaKind(url)).toBeNull();
+  });
+
+  it("opens a local file link on this computer instead of navigating", () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ opened: true }) }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ChatMarkdown text="[Clip](C:/Users/me/Downloads/Clip.mp4)" />);
+    const link = screen.getByRole("link", { name: "Clip" });
+    expect(link.getAttribute("href")).toBe("#jarvis-local=" + encodeURIComponent("C:/Users/me/Downloads/Clip.mp4"));
+    fireEvent.click(link);
+    expect(fetchMock).toHaveBeenCalledWith("/api/settings/open-path", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ path: "C:/Users/me/Downloads/Clip.mp4" }),
+    }));
+    vi.unstubAllGlobals();
+  });
+
+  it("does not let a bare filename navigate the window", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ChatMarkdown text="[Clip](Clip.mp4)" />);
+    const link = screen.getByRole("link", { name: "Clip" });
+    const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+    link.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("still opens a web link outside the window", () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ opened: true }) }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ChatMarkdown text="[Notes](https://example.test/notes)" />);
+    fireEvent.click(screen.getByRole("link", { name: "Notes" }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/settings/open-external", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ url: "https://example.test/notes" }),
+    }));
+    vi.unstubAllGlobals();
   });
 });

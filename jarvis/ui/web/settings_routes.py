@@ -2616,6 +2616,33 @@ async def open_external(body: OpenExternalBody) -> dict[str, object]:
     return {"opened": bool(opened)}
 
 
+class OpenPathBody(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+
+
+@router.post("/open-path")
+async def open_local_path(body: OpenPathBody, request: Request) -> dict[str, object]:
+    """Open a local file or folder from a chat link with the OS default app.
+
+    The desktop window is a web view. Following a file or folder address there
+    reloads the app, so chat asks this route to open it instead. Only an
+    existing file or folder on this computer is opened. Programs and scripts
+    are refused. A headless host has no native file actions and returns 404.
+    """
+    if not bool(getattr(request.app.state, "native_file_actions", False)):
+        raise HTTPException(status_code=404, detail="native-file-actions-disabled")
+    from jarvis.platform.open_path import ChatOpenRejected, open_file, prepare_chat_open
+
+    try:
+        target = prepare_chat_open(body.path)
+    except ChatOpenRejected as exc:
+        status = 404 if exc.reason == "not-found" else 400
+        raise HTTPException(status_code=status, detail=exc.reason) from exc
+    opened = await asyncio.to_thread(open_file, target)
+    log.info("open-path: opened=%s path=%s", opened, target)
+    return {"opened": bool(opened)}
+
+
 # ---------------------------------------------------------------------------
 # Taskbar section toggles: "Show bar at all times" (bar_persistent, live) and
 # "Mute music while dictating" (ducking.enabled, live). Both persist to
