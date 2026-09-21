@@ -1,12 +1,11 @@
 import { lazy, Suspense, useCallback, useMemo, useState, useEffect } from "react";
 
-import { PanelLeft } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
+import { useEventStore } from "@/store/events";
 import { useSocietyShell } from "@/store/societyShell";
 import { setMapFullscreen } from "@/lib/mapFullscreen";
 import { inDesktopShell } from "@/lib/nativeDrop";
 import { useLocaleChunk, useT } from "@/i18n";
-import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
-import { TopBarActions } from "@/components/layout/TopBar";
 import { AgentCardOverlay } from "@/components/society/card/AgentCardOverlay";
 import { BuildingCardOverlay } from "@/components/society/card/BuildingCardOverlay";
 import { isBuildingPlace, type BuildingPlace } from "@/components/society/card/buildingCards";
@@ -55,8 +54,14 @@ export function SocietyView() {
     setCreating(false);
   }, []);
 
-  const navigationOpen = useSocietyShell((s) => s.navigationOpen);
-  const toggleNavigation = useSocietyShell((s) => s.toggleNavigation);
+  const setActive = useEventStore((s) => s.setActiveSection);
+  const backToApp = (
+    <button type="button" onClick={() => setActive("chats")}
+      className="relative z-10 flex h-6 items-center gap-1.5 rounded-md px-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden />
+      {t("settings_hub.back_to_app")}
+    </button>
+  );
   const [fullscreenError, setFullscreenError] = useState(false);
   const switchMode = useCallback((next: "agents" | "world") => {
     setMode(next);
@@ -108,7 +113,7 @@ export function SocietyView() {
       {(["world", "agents"] as const).map((value) => {
         return <button key={value} type="button" role="tab" aria-selected={mode === value}
           onClick={() => switchMode(value)}
-          className={`inline-flex h-6 items-center justify-center rounded px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${mode === value ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+          className={`inline-flex h-5 items-center justify-center rounded px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${mode === value ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
           {t(value === "world" ? "society.world.mode_map" : "society.roster.title")}
         </button>;
       })}
@@ -116,25 +121,12 @@ export function SocietyView() {
   );
 
   return (
-    <div className={mode === "world" ? "fixed inset-0 z-30 flex flex-col bg-background" : "flex h-full min-h-0 w-full flex-col"} data-testid="society-view">
+    <div className={mode === "world" ? "fixed inset-x-0 bottom-0 top-8 z-30 flex flex-col bg-background" : "flex h-full min-h-0 w-full flex-col"} data-testid="society-view">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="jarvis-shell-surface flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-          {mode === "agents" && <button type="button" onClick={toggleNavigation} aria-expanded={navigationOpen}
-            aria-label={t("society.world.toggle_sections")} title={t("society.world.toggle_sections")}
-            className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
-            <PanelLeft className="h-4 w-4" aria-hidden />
-          </button>}
-            <span data-testid="topbar-view-title" className="truncate text-base font-medium text-foreground">
-              {t("nav.agents")}
-            </span>
-          </div>
-          {modeSwitch}
-          <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
-            <CodingModeBadge />
-            <TopBarActions />
-          </div>
-        </header>
+        <div className="relative flex h-8 shrink-0 items-center px-2">
+          {mode === "agents" && backToApp}
+          <div className="absolute left-1/2 -translate-x-1/2">{modeSwitch}</div>
+        </div>
         {fullscreenError && <p role="alert" className="bg-card px-4 py-2 text-sm text-destructive">{t("society.world.fullscreen_failed")}</p>}
         {mode === "world" ? (
         <div className="relative flex min-h-0 flex-1">
@@ -155,7 +147,8 @@ export function SocietyView() {
             onClose={() => setOpenAgentId(null)} />
         ) : (
           <RosterRail agents={agents} loading={roster.isLoading} sample={sample}
-            activeAgentId={null} onOpen={selectAgent} onCreate={() => setCreating(true)} side="left" />
+            activeAgentId={null} onOpen={selectAgent} onCreate={() => setCreating(true)} side="left"
+            className="w-full border-0 jarvis-nav-surface" />
         )}
         </div>
       </div>
