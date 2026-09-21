@@ -1537,11 +1537,23 @@
       "logo_color": "95BF47",
       "featured": false,
       "longevity": "self_renewing",
+      "oauth_client_family": "shopify",
       "auth": {
-        "mode": "hosted_mcp_oauth_dcr",
-        "discovery_url": "https://setup.shopify.com/.well-known/oauth-protected-resource",
-        "mcp_url": "https://setup.shopify.com/mcp",
-        "refresh_supported": true
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://setup.shopify.com/oauth/authorize",
+        "token_url": "https://setup.shopify.com/oauth/token",
+        "client_id": "REPLACE_WITH_JARVIS_SHOPIFY_CLIENT_ID",
+        "callback_port": 3130,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "read_products",
+          "read_orders",
+          "read_customers",
+          "read_discounts"
+        ],
+        "scope_separator": "comma",
+        "refresh_supported": true,
+        "resource": "https://setup.shopify.com/mcp"
       },
       "mcp_server": {
         "transport": "http",
@@ -1549,7 +1561,7 @@
         "auth_header_template": "Authorization: Bearer $plugin_shopify_access_token",
         "risk_tier": "ask"
       },
-      "post_install_hint_md": "Sign in with the Shopify account that owns the store. Jarvis captures the callback and verifies the connection automatically. Available products, orders and customers follow your staff permissions and Shopify plan."
+      "post_install_hint_md": "Connect signs you in at Shopify in the browser with read access to products, orders, customers and discounts. If the shared sign-in is not provisioned yet, register your own Shopify app and enter its client ID through the dialog's expert option instead."
     }
   ]
 }
