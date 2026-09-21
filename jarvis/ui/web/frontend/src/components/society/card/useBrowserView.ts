@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mintWsTicket } from "@/lib/ws";
 import { jitteredDelay, requestConnect } from "@/lib/connectBudget";
-import type { BrowserPointerState } from "./BrowserPointer";
+import type { BrowserPointerState } from "./browserPointerState";
 
 export interface BrowserViewState {
   connected: boolean;
