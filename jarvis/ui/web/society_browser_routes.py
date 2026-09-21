@@ -108,12 +108,18 @@ async def cancel_agent_browser(agent_id: str, request: Request) -> dict[str, Any
     if session is None or session.closed:
         return {"cancelled": False}
     running = session.run_lock.locked()
-    # The viewer Stop button sends this header and ends the planner too.
-    # A bare POST only releases the browser. The agent calls that bare URL
-    # when a tool client has already given up; ending the chat there is the
-    # turn dying in the middle of the task.
+    # The viewer Stop button ends the planner too. A bare POST only releases
+    # the browser: the agent calls that URL when a tool client has already
+    # given up, and ending the chat there is the turn dying mid-task.
+    # The desktop fetch sets Sec-Fetch-Site; a shell call does not.
     headers = getattr(request, "headers", None)
-    stop_chat = bool(headers and headers.get("x-jarvis-stop-chat") == "1")
+    stop_chat = bool(
+        headers
+        and (
+            headers.get("x-jarvis-stop-chat") == "1"
+            or str(headers.get("sec-fetch-site") or "").lower() == "same-origin"
+        )
+    )
     await rt.browser.live.cancel(session, end_turn=stop_chat)
     chat = getattr(request.app.state, "agent_chat", None)
     if running and stop_chat and chat is not None:

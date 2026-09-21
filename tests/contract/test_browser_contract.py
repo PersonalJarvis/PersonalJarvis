@@ -179,12 +179,48 @@ async def test_agent_cancel_releases_the_browser_without_stopping_the_chat(monke
         )
 
     request = SimpleNamespace(
-        headers={},
+        headers={"origin": "http://127.0.0.1:47821"},
         app=SimpleNamespace(state=SimpleNamespace(agent_chat=SimpleNamespace(cancel=cancel_chat))),
     )
     monkeypatch.setattr(routes, "_runtime", runtime)
     assert await routes.cancel_agent_browser("test-bot", request) == {"cancelled": True}
     assert seen == [False]
+
+
+async def test_desktop_fetch_stop_still_ends_the_chat(monkeypatch):
+    import asyncio
+
+    from jarvis.ui.web import society_browser_routes as routes
+
+    seen = []
+    lock = asyncio.Lock()
+    await lock.acquire()
+    session = SimpleNamespace(closed=False, run_lock=lock, active_chat="society:test-bot")
+
+    async def cancel_browser(value, *, end_turn=True):
+        seen.append(end_turn)
+
+    async def cancel_chat(value):
+        seen.append(value)
+
+    async def resolve(_):
+        return SimpleNamespace(agent_id="test-bot")
+
+    async def runtime(_):
+        return SimpleNamespace(
+            roster=SimpleNamespace(resolve=resolve),
+            browser=SimpleNamespace(
+                live=SimpleNamespace(sessions={"test-bot": session}, cancel=cancel_browser)
+            ),
+        )
+
+    request = SimpleNamespace(
+        headers={"origin": "http://127.0.0.1:47821", "sec-fetch-site": "same-origin"},
+        app=SimpleNamespace(state=SimpleNamespace(agent_chat=SimpleNamespace(cancel=cancel_chat))),
+    )
+    monkeypatch.setattr(routes, "_runtime", runtime)
+    assert await routes.cancel_agent_browser("test-bot", request) == {"cancelled": True}
+    assert seen == [True, "society:test-bot"]
 
 
 async def test_same_chat_replaces_an_abandoned_browser_run():
