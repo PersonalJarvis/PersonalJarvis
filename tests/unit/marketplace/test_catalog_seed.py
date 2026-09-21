@@ -434,6 +434,23 @@ def test_higgsfield_is_dcr_one_click_with_http_mcp() -> None:
     assert spec.native_tool is None
 
 
+def test_shopify_is_dcr_one_click_with_http_mcp() -> None:
+    spec = _seed().by_id("shopify")
+    assert spec is not None
+    assert spec.display_name == "Shopify"
+    assert spec.category == "Knowledge & Reading"
+    assert spec.auth.mode == "hosted_mcp_oauth_dcr"
+    assert spec.auth.discovery_url == (
+        "https://setup.shopify.com/.well-known/oauth-protected-resource"
+    )
+    assert spec.auth.mcp_url == "https://setup.shopify.com/mcp"
+    assert spec.auth.refresh_supported is True
+    assert spec.mcp_server is not None
+    assert spec.mcp_server["transport"] == "http"
+    assert spec.mcp_server["url"] == "https://setup.shopify.com/mcp"
+    assert spec.native_tool is None
+
+
 def test_youtube_music_joins_the_google_client_family_as_native_tool() -> None:
     # 2026-08-18: Google publishes no YouTube Music API, so the plugin rides the
     # official YouTube Data API v3 through the SHARED Google OAuth client (one
