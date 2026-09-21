@@ -18,7 +18,15 @@ export interface SectionTab {
  * `useState`), so a Preview / Files / Run switch inside one view draws the
  * same bar as the section switch above it.
  */
-export function SectionTabBar({ tabs }: { tabs: readonly SectionTab[] }) {
+export function SectionTabBar({
+  tabs,
+  align = "start",
+  className,
+}: {
+  tabs: readonly SectionTab[];
+  align?: "start" | "center";
+  className?: string;
+}) {
   const t = useT();
   const active = useEventStore((s) => s.activeSection);
   const setActive = useEventStore((s) => s.setActiveSection);
@@ -28,6 +36,8 @@ export function SectionTabBar({ tabs }: { tabs: readonly SectionTab[] }) {
       tabs={tabs.map((tab) => ({ id: tab.id, label: t(tab.labelKey) }))}
       active={active}
       onChange={(id) => setActive(id as SectionId)}
+      align={align}
+      className={className}
     />
   );
 }
@@ -44,14 +54,22 @@ export function TabBar({
   active,
   onChange,
   className,
+  align = "start",
 }: {
   tabs: readonly TabBarItem[];
   active: string;
   onChange: (id: string) => void;
   className?: string;
+  align?: "start" | "center";
 }) {
   return (
-    <div className={cn("flex items-center gap-6 border-b border-border", className)}>
+    <div
+      className={cn(
+        "flex items-center gap-6 border-b border-border",
+        align === "center" ? "justify-center" : "justify-start",
+        className,
+      )}
+    >
       {tabs.map((tab) => {
         const isActive = active === tab.id;
         return (
