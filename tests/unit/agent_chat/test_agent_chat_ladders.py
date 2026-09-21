@@ -470,6 +470,53 @@ def test_read_codex_models_reads_the_account_cache(monkeypatch, tmp_path: Path):
     assert CODEX_FALLBACK_MODELS[0].id == "gpt-5.6-sol"
 
 
+def test_read_grok_models_reads_the_account_cache(monkeypatch, tmp_path: Path):
+    home = tmp_path / "grok-home"
+    home.mkdir()
+    (home / "models_cache.json").write_text(
+        json.dumps(
+            {
+                "models": {
+                    "grok-4.7": {
+                        "info": {
+                            "id": "grok-4.7",
+                            "name": "Grok 4.7",
+                            "description": "SpaceXAI's latest frontier model",
+                            "hidden": False,
+                            "reasoning_efforts": [
+                                {"value": "xhigh"},
+                                {"value": "high"},
+                                {"value": "low"},
+                            ],
+                        }
+                    },
+                    "grok-4.7-build-fast": {
+                        "info": {
+                            "id": "grok-4.7-build-fast",
+                            "name": "Grok 4.7 Fast",
+                            "description": "Fast variant. 2x the price.",
+                            "hidden": False,
+                            "reasoning_efforts": [{"value": "high"}],
+                        }
+                    },
+                    "retired": {"info": {"id": "grok-old", "name": "Old", "hidden": True}},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner_cli, "_account_env", lambda platform: {"GROK_HOME": str(home)})
+    rows = runner_cli.read_grok_models()
+    assert rows is not None
+    assert [row["id"] for row in rows] == ["grok-4.7", "grok-4.7-build-fast"]
+    assert rows[0]["label"] == "Grok 4.7"
+    assert rows[0]["efforts"] == ["", "low", "high", "xhigh"]
+    assert rows[0]["note"] == "SpaceXAI's latest frontier model"
+    assert rows[1]["note"] == "Fast variant. 2x the price."
+    monkeypatch.setattr(runner_cli, "_account_env", lambda platform: {"GROK_HOME": str(tmp_path)})
+    assert runner_cli.read_grok_models() is None
+
+
 def test_catalog_rows_carry_per_model_efforts_for_cli_runners():
     agy = provider_row("antigravity")
     assert agy is not None

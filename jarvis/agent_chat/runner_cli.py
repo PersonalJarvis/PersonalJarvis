@@ -70,7 +70,7 @@ from typing import Any, Final
 
 from jarvis.agent_chat import jarvis_harness
 from jarvis.agent_chat.approval_bridge import approval_ref
-from jarvis.agent_chat.effort import normalize_effort, snap_to_ladder
+from jarvis.agent_chat.effort import ORDER, normalize_effort, snap_to_ladder
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import normalize_permission
 from jarvis.agent_chat.runner_api import TurnHandle
@@ -752,6 +752,66 @@ def read_codex_models() -> list[dict[str, Any]] | None:
         )
     rows.sort(key=lambda r: r[0])
     return [r[1] for r in rows] or None
+
+
+def read_grok_models() -> list[dict[str, Any]] | None:
+    """Grok Build's account catalog from ``$GROK_HOME/models_cache.json``.
+
+    The CLI refreshes that file itself. It is the same list the Grok Build
+    picker shows for this login (verified against grok 1.0.40: a dict of
+    model id to ``{info: {id, name, hidden, reasoning_efforts}}``). ``None``
+    when the file is missing or unreadable — the caller keeps
+    ``GROK_BUILD_MODELS``.
+    """
+    env = _account_env("grok-build")
+    home = Path(env.get("GROK_HOME") or Path.home() / ".grok")
+    path = home / "models_cache.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        log.debug("agent chat: grok models cache unreadable at %s: %s", path, exc)
+        return None
+    models = data.get("models") if isinstance(data, dict) else None
+    if isinstance(models, dict):
+        entries = list(models.values())
+    elif isinstance(models, list):
+        entries = models
+    else:
+        return None
+    rows: list[dict[str, Any]] = []
+    for entry in entries:
+        info = entry.get("info") if isinstance(entry, dict) else None
+        if not isinstance(info, dict):
+            info = entry if isinstance(entry, dict) else None
+        if not isinstance(info, dict) or info.get("hidden") is True:
+            continue
+        slug = str(info.get("id") or info.get("model") or "").strip()
+        if not slug:
+            continue
+        seen: list[str] = []
+        for level in info.get("reasoning_efforts") or []:
+            if isinstance(level, dict):
+                value = str(level.get("value") or level.get("id") or "")
+            else:
+                value = str(level)
+            value = value.strip().lower()
+            if value and value not in seen:
+                seen.append(value)
+        ordered = [level for level in ORDER if level in seen]
+        ordered += [level for level in seen if level not in ordered]
+        # "" stays the "leave the CLI's own effort alone" choice. The levels
+        # after it are the ones this model actually accepts.
+        efforts = [""] + ordered if ordered else []
+        row: dict[str, Any] = {
+            "id": slug,
+            "label": str(info.get("name") or slug),
+            "efforts": efforts,
+        }
+        note = str(info.get("description") or "").strip()
+        if note:
+            row["note"] = note
+        rows.append(row)
+    return rows or None
 
 
 _AGY_CATALOG: dict[str, Any] = {"at": 0.0, "rows": None}

@@ -60,10 +60,11 @@ _LADDERS: Final[dict[str, tuple[tuple[str, ...], str]]] = {
     "antigravity": (("low", "medium", "high"), "medium"),
     # OpenRouter forwards reasoning.effort to whatever sits behind the slug.
     "openrouter": (("", "none", "low", "medium", "high", "xhigh"), ""),
-    # xAI reasoning_effort: grok-4.6 low..xhigh, grok-4.5 low..high; "" leaves
-    # a model that reasons on its own alone.
+    # xAI reasoning_effort: grok-4.7 and grok-4.6 take low..xhigh (their own
+    # default is high). grok-4.5 stops at high and treats xhigh as high.
+    # "" leaves the model's own default alone.
     "grok": (("", "low", "medium", "high", "xhigh"), ""),
-    "grok-build": (("", "low", "medium", "high"), ""),
+    "grok-build": (("", "low", "medium", "high", "xhigh"), ""),
     # No knob to offer: OpenCode's ``--variant`` names are the model's own
     # and differ per provider, Kimi sets effort in its config, GLM's endpoint
     # takes no effort flag and the DeepSeek harness has none — so the pick

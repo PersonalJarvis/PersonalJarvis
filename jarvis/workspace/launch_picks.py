@@ -227,9 +227,9 @@ async def live_models() -> dict[str, list[dict[str, Any]]]:
     """The model lists the installed CLIs publish, keyed by runner.
 
     ``agy`` answers ``agy models`` and OpenCode ``opencode models`` (each a
-    ~2 s subprocess, cached ten minutes in the runner module); Codex keeps
-    ``models_cache.json`` in its home. All are read off the event loop, and a
-    failure simply leaves the curated fallback standing.
+    ~2 s subprocess, cached ten minutes in the runner module); Codex and
+    Grok Build keep ``models_cache.json`` in their home. All are read off
+    the event loop, and a failure simply leaves the curated fallback standing.
 
     One reader for both surfaces on purpose: the chat composer and a workspace
     pane offer the same CLI, so a list either of them read alone would be a
@@ -241,6 +241,7 @@ async def live_models() -> dict[str, list[dict[str, Any]]]:
     from jarvis.agent_chat.runner_cli import (
         read_agy_models,
         read_codex_models,
+        read_grok_models,
         read_opencode_models,
     )
 
@@ -258,6 +259,14 @@ async def live_models() -> dict[str, list[dict[str, Any]]]:
             rows = None
         if rows:
             out["codex-cli"] = rows
+    if _installed("grok-cli"):
+        try:
+            rows = await asyncio.to_thread(read_grok_models)
+        except Exception as exc:  # noqa: BLE001 — the fallback list stands in
+            _log.debug("launch picks: grok model list unavailable: %s", exc)
+            rows = None
+        if rows:
+            out["grok-cli"] = rows
     if _installed("opencode-cli"):
         # ``opencode models`` — the providers this install configured.
         try:
@@ -387,9 +396,17 @@ def offered(agent: str, live: Mapping[str, list[dict[str, Any]]] | None = None) 
     handing it rows it already knows how to draw is what keeps the two
     surfaces from growing two different model pickers.
     """
+    picks = picks_for(agent)
+    default_model = ""
+    if picks is not None and picks.provider:
+        from jarvis.agent_chat.catalog import provider_row
+
+        row = provider_row(picks.provider)
+        if row is not None:
+            default_model = row.default_model
     return {
         "models": offered_models(agent, live),
-        "default_model": "",
+        "default_model": default_model,
         "effort_levels": list(effort_levels(agent)),
         "default_effort": default_effort(agent),
         "permission_modes": permission_modes(agent),

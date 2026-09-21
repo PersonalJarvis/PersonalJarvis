@@ -30,6 +30,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
+from jarvis.brain.model_catalog import GROK_BUILD_MODELS
 from jarvis.grok_build_auth import grok_home, prepare_worker_home
 
 from .capabilities import WorkerCapabilityInventory
@@ -42,7 +43,7 @@ _DEFAULT_TIMEOUT_S: float = 1200.0
 _DEFAULT_FIRST_OUTPUT_TIMEOUT_S: float = 120.0
 _STREAM_READLINE_LIMIT: int = 8 * 1024 * 1024
 _HARDCAP_GRACE_S: float = 30.0
-_DEFAULT_GROK_BUILD_MODEL: str = "grok-4.6"
+_DEFAULT_GROK_BUILD_MODEL: str = GROK_BUILD_MODELS[0][0]
 
 _DROP_ENV: tuple[str, ...] = ("XAI_API_KEY", "GROK_API_KEY")
 
