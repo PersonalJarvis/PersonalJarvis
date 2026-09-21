@@ -24,6 +24,7 @@ import json
 import logging
 import re
 import shutil
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
@@ -576,6 +577,7 @@ class AgentChatService:
         )
 
         async def _body() -> None:
+            started = time.monotonic()
             origin = ChatTurn(
                 session_id,
                 turn_id,
@@ -646,7 +648,7 @@ class AgentChatService:
                         {
                             "turn_id": turn_id,
                             "status": "cancelled",
-                            "duration_ms": 0,
+                            "duration_ms": int((time.monotonic() - started) * 1000),
                             "usage": {},
                             "error": None,
                         },

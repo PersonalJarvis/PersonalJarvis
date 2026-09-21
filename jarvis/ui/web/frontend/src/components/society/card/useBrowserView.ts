@@ -217,7 +217,7 @@ export function useBrowserView(agentId: string) {
   const control = useCallback((op: string, args: Record<string, unknown> = {}) => {
     if (op === "cancel") {
       void fetch("/api/society/agents/" + encodeURIComponent(agentId) + "/browser/cancel",
-        { method: "POST" }).then((res) => {
+        { method: "POST", headers: { "X-Jarvis-Stop-Chat": "1" } }).then((res) => {
           if (!res.ok) setState((s) => ({ ...s, error: "Browser stop failed: " + res.status }));
         }).catch(() => setState((s) => ({ ...s, error: "Browser stop could not connect" })));
       return;

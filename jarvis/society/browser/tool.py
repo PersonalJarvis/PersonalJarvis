@@ -109,7 +109,9 @@ class BrowserTool:
         "first. This is the live browser shown in your Options rail. Use this tool "
         "when the user selects Browser or asks to operate the visible browser, and "
         "for web tasks without a suitable connected API. Otherwise prefer a connected "
-        "plugin or CLI when one exists for the service."
+        "plugin or CLI when one exists for the service. If your own earlier call is "
+        "still finishing, call this tool again: that run is replaced. If it is waiting "
+        "for approval, leave it running. Do not cancel the browser over HTTP."
     )
     schema: dict[str, Any] = {
         "type": "object",

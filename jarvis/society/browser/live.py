@@ -21,6 +21,12 @@ from . import install
 log = logging.getLogger(__name__)
 RPC = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 MAX_LINE = 8 * 1024 * 1024
+_BUSY = "This browser is busy or under manual control"
+_PAUSED = (
+    "This browser is paused until you allow the action in the browser panel. "
+    "It is still working. Leave it running and call society_browser again after "
+    "it is allowed. Do not cancel the browser over HTTP."
+)
 
 
 class LiveUpdates:
@@ -225,6 +231,51 @@ class LiveSession:
         self.closed = True
 
 
+async def claim_browser(session: LiveSession, chat_session_id: str) -> None:
+    """Reserve the browser, replacing this chat's own unfinished run.
+
+    A client that stops waiting (the three-minute tool deadline) leaves the
+    run holding the lock. The same chat's next call is that abandoned run,
+    so it takes over. A person at the controls, another chat, or a run that
+    is paused for approval stays as it is.
+    """
+    if session.control_owner:
+        raise RuntimeError(_BUSY)
+    if not session.run_lock.locked():
+        return
+    same_chat = bool(chat_session_id) and session.active_chat == chat_session_id
+    if same_chat and "approval" in session.attention:
+        raise RuntimeError(_PAUSED)
+    if same_chat:
+        await _replace_owned_run(session)
+        return
+    if not session.active_chat:
+        # The owner is already leaving; wait out the hand-off instead of
+        # telling the caller the browser is busy.
+        try:
+            async with asyncio.timeout(5):
+                async with session.run_lock:
+                    pass
+        except TimeoutError:
+            raise RuntimeError(_BUSY) from None
+        return
+    raise RuntimeError(_BUSY)
+
+
+async def _replace_owned_run(session: LiveSession) -> None:
+    if not session.closed:
+        try:
+            await session.command("cancel", timeout=5)
+        except Exception:
+            log.warning("Could not stop the chat's previous browser task", exc_info=True)
+    try:
+        async with asyncio.timeout(15):
+            async with session.run_lock:
+                pass
+    except TimeoutError:
+        raise RuntimeError(_BUSY) from None
+
+
 class LiveSessions:
     def __init__(self, data_dir: Path) -> None:
         self.data_dir = data_dir
@@ -242,8 +293,13 @@ class LiveSessions:
             while len(self.stopped_turns) > 512:
                 self.stopped_turns.pop(next(iter(self.stopped_turns)))
 
-    async def cancel(self, session: LiveSession) -> dict:
-        self.stop_turn(session.agent_id, session.active_trace)
+    async def cancel(self, session: LiveSession, *, end_turn: bool = True) -> dict:
+        # end_turn is the viewer's Stop button. A bare cancel only releases the
+        # browser, so the agent can keep working after its own recovery call.
+        if end_turn:
+            self.stop_turn(session.agent_id, session.active_trace)
+        if session.closed:
+            return {}
         return await session.command("cancel")
 
     def release_when_idle(self, session: LiveSession) -> None:
@@ -424,8 +480,9 @@ class LiveSessions:
         chat_session_id: str = "",
     ) -> dict:
         session = await self.ensure(agent)
+        await claim_browser(session, chat_session_id)
         if session.run_lock.locked() or session.control_owner:
-            raise RuntimeError("This browser is busy or under manual control")
+            raise RuntimeError(_BUSY)
         async with session.run_lock:
             session.rpc = {"llm": llm, "action": action}
             session.rpc_context = contextvars.copy_context()
