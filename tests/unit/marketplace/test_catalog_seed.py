@@ -434,17 +434,30 @@ def test_higgsfield_is_dcr_one_click_with_http_mcp() -> None:
     assert spec.native_tool is None
 
 
-def test_shopify_is_dcr_one_click_with_http_mcp() -> None:
+def test_shopify_is_pkce_loopback_with_resource_and_http_mcp() -> None:
+    # 2026-09-21: Shopify publishes no DCR registration_endpoint, so the
+    # first (DCR) attempt failed at connect with "provider request failed".
+    # The plugin uses Authorization Code + PKCE loopback against the
+    # publisher-shared app, with the RFC 8707 resource indicator the MCP
+    # server requires.
     spec = _seed().by_id("shopify")
     assert spec is not None
     assert spec.display_name == "Shopify"
     assert spec.category == "Knowledge & Reading"
-    assert spec.auth.mode == "hosted_mcp_oauth_dcr"
-    assert spec.auth.discovery_url == (
-        "https://setup.shopify.com/.well-known/oauth-protected-resource"
-    )
-    assert spec.auth.mcp_url == "https://setup.shopify.com/mcp"
+    assert spec.oauth_client_family == "shopify"
+    assert spec.auth.mode == "oauth_pkce_loopback"
+    assert spec.auth.authorization_url == "https://setup.shopify.com/oauth/authorize"
+    assert spec.auth.token_url == "https://setup.shopify.com/oauth/token"
+    assert spec.auth.callback_port == 3130
+    assert spec.auth.scopes == [
+        "read_products",
+        "read_orders",
+        "read_customers",
+        "read_discounts",
+    ]
+    assert spec.auth.resource == "https://setup.shopify.com/mcp"
     assert spec.auth.refresh_supported is True
+    assert spec.fallback_auth is None
     assert spec.mcp_server is not None
     assert spec.mcp_server["transport"] == "http"
     assert spec.mcp_server["url"] == "https://setup.shopify.com/mcp"

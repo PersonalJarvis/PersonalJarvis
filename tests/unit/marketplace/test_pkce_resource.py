@@ -80,6 +80,28 @@ def test_core_pkce_params_always_present():
     assert p["code_challenge_method"] == "S256"
 
 
+def test_shopify_authorize_params_carry_resource_and_comma_scopes():
+    """Regression: Shopify publishes no DCR registration_endpoint, so the
+    plugin must go through PKCE loopback with the RFC 8707 resource
+    indicator and comma-joined read scopes — never back to DCR."""
+    from jarvis.marketplace.auth.oauth_pkce_loopback import PkceLoopbackHandler
+    from jarvis.marketplace.connect_helpers import build_handler_from_catalog
+
+    handler = build_handler_from_catalog("shopify")
+    assert isinstance(handler, PkceLoopbackHandler)
+    params = handler._authorize_params(  # noqa: SLF001
+        redirect_uri="http://127.0.0.1:3130/oauth/callback",
+        state="s",
+        challenge="c",
+    )
+    assert params["resource"] == "https://setup.shopify.com/mcp"
+    assert params["scope"] == (
+        "read_products,read_orders,read_customers,read_discounts"
+    )
+    assert params["code_challenge_method"] == "S256"
+    assert params["redirect_uri"] == "http://127.0.0.1:3130/oauth/callback"
+
+
 @pytest.mark.asyncio
 async def test_exchange_includes_client_secret_when_configured(
     monkeypatch: pytest.MonkeyPatch,
