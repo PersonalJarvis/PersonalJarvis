@@ -1527,6 +1527,29 @@
         "env_template": {}
       },
       "post_install_hint_md": "Requires AMD SMI on a compatible AMD host. The connect button checks actual device data before enabling. Native Windows and macOS telemetry are unavailable; the base app remains usable without AMD tooling."
+    },
+    {
+      "id": "shopify",
+      "display_name": "Shopify",
+      "description": "Products, orders, customers and discounts through the official Shopify MCP server",
+      "category": "Knowledge & Reading",
+      "logo_slug": "shopify",
+      "logo_color": "95BF47",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://setup.shopify.com/.well-known/oauth-protected-resource",
+        "mcp_url": "https://setup.shopify.com/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://setup.shopify.com/mcp",
+        "auth_header_template": "Authorization: Bearer $plugin_shopify_access_token",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Sign in with the Shopify account that owns the store. Jarvis captures the callback and verifies the connection automatically. Available products, orders and customers follow your staff permissions and Shopify plan."
     }
   ]
 }

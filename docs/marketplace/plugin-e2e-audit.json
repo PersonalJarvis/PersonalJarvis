@@ -2275,6 +2275,55 @@
         "next_action": "Run the no-login connection and real telemetry read on a supported Linux AMD host, then verify lifecycle.",
         "evidence": "Plugins\nSkills\nPlugins\nMCPs\nPlugins\nAMD GPU Status\n\nUnsupported on this device\n· Home & Devices\n\nConnect\n\nAMD GPU telemetry is unavailable on this operating system. This connector requires a compatible Linux AMD host with AMD SMI.\n\nRead AMD GPU utilization, temperature and driver data through AMD SMI\n\nStatus\nUnsupported on this device\nSign-in\nLocal device\nConnection\nStays connected\n—\n0 files\namd_gpu\nLoading…"
       }
+    },
+    {
+      "plugin_id": "shopify",
+      "result": "BLOCKED",
+      "config_fingerprint": "fef79e6ed1eb84a93f0e23536302e7dab4ee4862b329947889e5f8549c069fdb",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Entry added 2026-09-21; no Plugins UI run has been observed yet. The catalog entry is browser-primary (official hosted MCP with Dynamic Client Registration), so the first run is expected to open the official Shopify sign-in with no publisher or developer setup.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. A store-owner sign-in at the official Shopify authorization page has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. A store-owner sign-in at the official Shopify authorization page has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. A store-owner sign-in at the official Shopify authorization page has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. No live read-only Shopify action has been attested with a real grant; the DCR protected-resource metadata (resource https://setup.shopify.com/mcp) was verified over the network, which is endpoint evidence, not a grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. A store-owner sign-in at the official Shopify authorization page has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. A store-owner sign-in at the official Shopify authorization page has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "No store-owner sign-in has been completed; the official hosted MCP with browser OAuth is implemented and needs no publisher or developer setup.",
+        "owner": "Provider account holder",
+        "next_action": "Click Connect on the Shopify card, sign in with the Shopify account that owns the store, then verify all seven stages with a real read-only plugin action.",
+        "evidence": "Entry added 2026-09-21 with DCR discovery https://setup.shopify.com/.well-known/oauth-protected-resource verified live; no grant, callback or action observed yet."
+      }
     }
   ]
 }

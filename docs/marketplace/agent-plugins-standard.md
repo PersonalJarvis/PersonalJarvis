@@ -59,10 +59,11 @@ jarvis/marketplace/plugins/<name>/
 
 ## Migration audit — status as of 2026-08-08
 
-**No plugin conforms yet.** All 21 catalog entries live inline in
-`seed_catalog.json`; none is a directory with a `plugin.json`. Every plugin
-therefore needs the **baseline migration** (create the directory, write
-`plugin.json`, move Jarvis-specific fields into the extension namespace).
+**Shopify (2026-09-21) is the first plugin packaged this way from day one.**
+All older catalog entries still live inline in `seed_catalog.json`; none
+is a directory with a `plugin.json`. Every older plugin therefore needs the
+**baseline migration** (create the directory, write `plugin.json`, move
+Jarvis-specific fields into the extension namespace).
 The table below marks what EACH plugin needs on top of that baseline.
 
 Legend: ☐ = needs update (nothing is migrated yet) · **rename** = the id
@@ -93,6 +94,7 @@ violates the spec's name constraints and changes for the standard package
 | Airtable | ☐ needs update | `mcp.json` (`streamable-http`, `https://mcp.airtable.com`) |
 | Cal.com | ☐ needs update · **rename** `cal_com` → `cal-com` | `mcp.json` (`streamable-http`, `https://mcp.cal.com/mcp`) |
 | Home Assistant | ☐ needs update · **rename** `home_assistant` → `home-assistant` | Extension-only (native tool; the instance URL is user data and can never be packaged) |
+| Shopify | ☑ ships packaged | Agent Plugins dir (`plugin.json` + `mcp.json` with `streamable-http` `https://setup.shopify.com/mcp`) ships alongside the seed entry from day one — no migration needed beyond seed aggregation |
 
 Tally: 15 plugins gain a portable `mcp.json`; 7 are extension-only
 (Vercel, Discord, Telegram, Google Drive, Gmail, Google Calendar,

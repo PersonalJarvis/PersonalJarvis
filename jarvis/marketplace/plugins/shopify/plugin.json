@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "shopify",
+  "version": "1.0.0",
+  "description": "Products, orders, customers and discounts through the official Shopify MCP server",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Shopify",
+      "category": "Knowledge & Reading",
+      "logo_slug": "shopify",
+      "logo_color": "95BF47",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://setup.shopify.com/.well-known/oauth-protected-resource",
+        "mcp_url": "https://setup.shopify.com/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://setup.shopify.com/mcp",
+        "auth_header_template": "Authorization: Bearer $plugin_shopify_access_token",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Sign in with the Shopify account that owns the store. Jarvis captures the callback and verifies the connection automatically. Available products, orders and customers follow your staff permissions and Shopify plan."
+    }
+  }
+}
