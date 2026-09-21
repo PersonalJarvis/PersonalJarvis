@@ -422,7 +422,7 @@
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. The native verification probe (GET /users/@me expecting id) is implemented, but no live grant has passed it yet.",
+          "detail": "Connected completion was not verified in this audit. The native verification probe (Discord current-user endpoint, expecting id) is implemented, but no live grant has passed it yet.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
@@ -1202,45 +1202,45 @@
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect Outlook Mail & Calendar\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "detail": "Connect Outlook Mail & Calendar\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue Later live check: Live plugin list reports auth_standard ready with source publisher. connect-start returned Microsoft's authorize address for the shared public client, redirect http://127.0.0.1:43891/oauth/callback and this plugin's scopes. The flow was cancelled before account approval.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Browser completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Callback completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Connected completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Smoke completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Reconnect completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Restart completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect Outlook Mail & Calendar\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+        "reason": "Shared Microsoft sign-in is installed, but account approval was not completed.",
+        "owner": "Provider account holder",
+        "next_action": "Click Connect, approve the Microsoft page once, then verify a real read, reconnect and restart.",
+        "evidence": "Live plugin list reports auth_standard ready with source publisher. connect-start returned Microsoft's authorize address for the shared public client, redirect http://127.0.0.1:43891/oauth/callback and this plugin's scopes. The flow was cancelled before account approval."
       }
     },
     {
@@ -1251,45 +1251,45 @@
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect OneDrive\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "detail": "Connect OneDrive\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue Later live check: Live plugin list reports auth_standard ready with source publisher. connect-start returned Microsoft's authorize address for the shared public client, redirect http://127.0.0.1:43891/oauth/callback and this plugin's scopes. The flow was cancelled before account approval.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Browser completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Callback completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Connected completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Smoke completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Reconnect completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Restart completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect OneDrive\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+        "reason": "Shared Microsoft sign-in is installed, but account approval was not completed.",
+        "owner": "Provider account holder",
+        "next_action": "Click Connect, approve the Microsoft page once, then verify a real read, reconnect and restart.",
+        "evidence": "Live plugin list reports auth_standard ready with source publisher. connect-start returned Microsoft's authorize address for the shared public client, redirect http://127.0.0.1:43891/oauth/callback and this plugin's scopes. The flow was cancelled before account approval."
       }
     },
     {
@@ -1300,45 +1300,45 @@
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect Microsoft Teams\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "detail": "Connect Microsoft Teams\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue Later live check: Live plugin list reports auth_standard ready with source publisher. connect-start returned Microsoft's authorize address for the shared public client, redirect http://127.0.0.1:43891/oauth/callback and this plugin's scopes. The flow was cancelled before account approval.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Browser completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Callback completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Connected completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Smoke completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Reconnect completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Restart completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect Microsoft Teams\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+        "reason": "Shared Microsoft sign-in is installed, but account approval was not completed.",
+        "owner": "Provider account holder",
+        "next_action": "Click Connect, approve the Microsoft page once, then verify a real read, reconnect and restart.",
+        "evidence": "Live plugin list reports auth_standard ready with source publisher. connect-start returned Microsoft's authorize address for the shared public client, redirect http://127.0.0.1:43891/oauth/callback and this plugin's scopes. The flow was cancelled before account approval."
       }
     },
     {
@@ -1349,45 +1349,45 @@
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect SharePoint\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "detail": "Connect SharePoint\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue Later live check: Live plugin list reports auth_standard ready with source publisher. connect-start returned Microsoft's authorize address for the shared public client, redirect http://127.0.0.1:43891/oauth/callback and this plugin's scopes. The flow was cancelled before account approval.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Browser completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Callback completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Connected completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Smoke completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Reconnect completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Restart completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect SharePoint\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+        "reason": "Shared Microsoft sign-in is installed, but account approval was not completed.",
+        "owner": "Provider account holder",
+        "next_action": "Click Connect, approve the Microsoft page once, then verify a real read, reconnect and restart.",
+        "evidence": "Live plugin list reports auth_standard ready with source publisher. connect-start returned Microsoft's authorize address for the shared public client, redirect http://127.0.0.1:43891/oauth/callback and this plugin's scopes. The flow was cancelled before account approval."
       }
     },
     {
@@ -1398,45 +1398,45 @@
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect OneNote\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "detail": "Connect OneNote\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue Later live check: Live plugin list reports auth_standard ready with source publisher. connect-start returned Microsoft's authorize address for the shared public client, redirect http://127.0.0.1:43891/oauth/callback and this plugin's scopes. The flow was cancelled before account approval.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Browser completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Callback completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Connected completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Smoke completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Reconnect completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Restart completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect OneNote\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+        "reason": "Shared Microsoft sign-in is installed, but account approval was not completed.",
+        "owner": "Provider account holder",
+        "next_action": "Click Connect, approve the Microsoft page once, then verify a real read, reconnect and restart.",
+        "evidence": "Live plugin list reports auth_standard ready with source publisher. connect-start returned Microsoft's authorize address for the shared public client, redirect http://127.0.0.1:43891/oauth/callback and this plugin's scopes. The flow was cancelled before account approval."
       }
     },
     {
@@ -1447,45 +1447,45 @@
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect Microsoft To Do\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "detail": "Connect Microsoft To Do\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue Later live check: Live plugin list reports auth_standard ready with source publisher. connect-start returned Microsoft's authorize address for the shared public client, redirect http://127.0.0.1:43891/oauth/callback and this plugin's scopes. The flow was cancelled before account approval.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Browser completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Callback completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Connected completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Smoke completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Reconnect completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Restart completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect Microsoft To Do\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+        "reason": "Shared Microsoft sign-in is installed, but account approval was not completed.",
+        "owner": "Provider account holder",
+        "next_action": "Click Connect, approve the Microsoft page once, then verify a real read, reconnect and restart.",
+        "evidence": "Live plugin list reports auth_standard ready with source publisher. connect-start returned Microsoft's authorize address for the shared public client, redirect http://127.0.0.1:43891/oauth/callback and this plugin's scopes. The flow was cancelled before account approval."
       }
     },
     {
@@ -1545,45 +1545,45 @@
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Connect Microsoft Azure\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue",
+          "detail": "Connect Microsoft Azure\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue Later live check: Live plugin list reports auth_standard ready with source publisher. connect-start returned Microsoft's authorize address for the shared public client, redirect http://127.0.0.1:43891/oauth/callback and this plugin's scopes. The flow was cancelled before account approval.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Browser completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Callback completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Connected completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Smoke completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Reconnect completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Restart completion was not verified in this pass. The shared sign-in is installed and connect-start returns Microsoft's authorize address. Account approval was cancelled before it finished.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
-        "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect Microsoft Azure\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+        "reason": "Shared Microsoft sign-in is installed, but account approval was not completed.",
+        "owner": "Provider account holder",
+        "next_action": "Click Connect, approve the Microsoft page once, then verify a real read, reconnect and restart.",
+        "evidence": "Live plugin list reports auth_standard ready with source publisher. connect-start returned Microsoft's authorize address for the shared public client, redirect http://127.0.0.1:43891/oauth/callback and this plugin's scopes. The flow was cancelled before account approval."
       }
     },
     {

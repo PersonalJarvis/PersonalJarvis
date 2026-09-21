@@ -13,12 +13,13 @@ Precedence for one ``<family>`` (e.g. ``microsoft``):
   1. Expert override: ``<family>_oauth_client_id`` / ``<family>_oauth_client_secret``
      secrets (the long-standing bring-your-own-client escape hatch). Wins so
      an expert's explicit choice is never silently displaced.
-  2. Publisher client: ``publisher_<family>_oauth_client_id`` /
-     ``publisher_<family>_oauth_client_secret`` secrets, provisioned with the
-     distribution (env fallback ``PUBLISHER_<FAMILY>_OAUTH_CLIENT_*``). This
-     is the STANDARD path — set once by the publisher, used by every user
-     with zero manual setup.
-  3. Catalog value: the ``client_id`` shipped in ``seed_catalog.json`` (or a
+  2. Publisher secret: ``publisher_<family>_oauth_client_id`` /
+     ``publisher_<family>_oauth_client_secret`` secrets (env fallback
+     ``PUBLISHER_<FAMILY>_OAUTH_CLIENT_*``). Lets a distribution rotate the
+     shared client without a code change.
+  3. Shipped public client: ``SHIPPED_PUBLIC_CLIENT_IDS``. A public client id
+     built into the app, used by every install with zero setup. Not a secret.
+  4. Catalog value: the ``client_id`` shipped in ``seed_catalog.json`` (or a
      user's ``data/`` override). Only used when it is a real client id, never
      a ``REPLACE_WITH_*`` placeholder.
 
@@ -30,7 +31,8 @@ bundle. The connect dialog only ever learns ``source`` (``publisher``,
 Until a publisher registers a real app for a family, the standard flow for
 that family's plugins is EXTERNALLY BLOCKED (see
 ``docs/marketplace/plugin-auth-audit.md``). The code reports that honestly
-instead of inventing a client id.
+instead of inventing a client id. A family listed in
+``SHIPPED_PUBLIC_CLIENT_IDS`` is registered and standard-ready.
 """
 
 from __future__ import annotations
@@ -48,6 +50,15 @@ ClientSource = Literal["publisher", "own", "catalog", "missing"]
 ``catalog`` — a real client id shipped in the catalog entry itself.
 ``missing`` — only a placeholder is available; standard flow is blocked.
 """
+
+# Public OAuth client ids built into the app. They are not confidential:
+# every sign-in address contains them. Client secrets never belong here.
+# Microsoft is one Entra public client named "Personal Jarvis": personal and
+# work/school accounts, loopback PKCE on http://127.0.0.1:43891/oauth/callback,
+# no client secret. One id serves every plugin in the family.
+SHIPPED_PUBLIC_CLIENT_IDS: dict[str, str] = {
+    "microsoft": "1986efcb-f871-4ffa-8df7-64c04dd3ab56",
+}
 
 
 def publisher_secret_names(family: str) -> tuple[str, str]:
@@ -70,11 +81,11 @@ def resolve_publisher_client(
 ) -> tuple[str, str | None, ClientSource]:
     """Resolve the effective ``(client_id, client_secret, source)``.
 
-    Precedence: expert BYO secret > publisher shared client > catalog value.
-    An unset/empty secret never displaces a better value. A placeholder
-    catalog id with no secret anywhere resolves to ``("...", None,
-    "missing")`` with the catalog placeholder preserved so callers can keep
-    reporting the honest 409.
+    Precedence: expert BYO secret > publisher secret > shipped public client
+    > catalog value. An unset/empty secret never displaces a better value.
+    A placeholder catalog id with nothing provisioned resolves to
+    ``("...", None, "missing")`` with the catalog placeholder preserved so
+    callers can keep reporting the honest 409.
     """
     from jarvis.marketplace.connect_helpers import (
         is_placeholder_client_id,
@@ -108,7 +119,12 @@ def resolve_publisher_client(
         pub_secret = get_secret(pub_sec_key, pub_sec_env)
         return pub_id, pub_secret or catalog_client_secret, "publisher"
 
-    # 3. Catalog value, if real.
+    # 3. Public client id built into the app. No secret is paired with it.
+    shipped = SHIPPED_PUBLIC_CLIENT_IDS.get(family, "")
+    if shipped and not is_placeholder_client_id(shipped):
+        return shipped, None, "publisher"
+
+    # 4. Catalog value, if real.
     if not is_placeholder_client_id(catalog_client_id):
         return catalog_client_id, catalog_client_secret, "catalog"
 
@@ -127,6 +143,7 @@ def is_standard_ready(
 
 __all__ = [
     "ClientSource",
+    "SHIPPED_PUBLIC_CLIENT_IDS",
     "is_standard_ready",
     "publisher_secret_names",
     "publisher_secret_names_secret",

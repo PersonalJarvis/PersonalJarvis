@@ -7,8 +7,8 @@ honesty of the flow, never a live provider verification.
 
 What they prove per plugin (parametrized over the real seed catalog):
   * DCR discovery URLs carry a host (Apollo/Granola regression).
-  * A placeholder catalog client is NEVER standard-ready and keeps its
-    expert-override family mapping.
+  * A placeholder catalog client stays not-ready unless that family ships a
+    public client id, and it keeps its expert-override family mapping.
   * Publisher > catalog precedence; expert BYO > publisher.
   * Cancel drops the pending callback listener (no leaked socket / late
     completion).
@@ -90,6 +90,7 @@ def test_placeholder_pkce_plugin_declares_expert_family(plugin):
 @pytest.mark.parametrize("plugin", _pkce_plugins(), ids=lambda p: p.id)
 def test_placeholder_is_not_standard_ready_without_secrets(plugin, monkeypatch):
     from jarvis.marketplace.publisher_clients import (
+        SHIPPED_PUBLIC_CLIENT_IDS,
         is_standard_ready,
         resolve_publisher_client,
     )
@@ -98,7 +99,13 @@ def test_placeholder_is_not_standard_ready_without_secrets(plugin, monkeypatch):
     _cid, _sec, source = resolve_publisher_client(
         plugin.id, plugin.auth.client_id, plugin.auth.client_secret
     )
-    if is_placeholder_client_id(plugin.auth.client_id):
+    family = oauth_client_family(plugin.id) or ""
+    if is_placeholder_client_id(plugin.auth.client_id) and family in SHIPPED_PUBLIC_CLIENT_IDS:
+        assert source == "publisher", f"{plugin.id}: shipped client resolved as {source!r}"
+        assert _cid == SHIPPED_PUBLIC_CLIENT_IDS[family]
+        assert _sec is None
+        assert is_standard_ready(plugin.id, plugin.auth.client_id)
+    elif is_placeholder_client_id(plugin.auth.client_id):
         assert source == "missing", f"{plugin.id}: placeholder resolved as {source!r}"
         assert not is_standard_ready(plugin.id, plugin.auth.client_id)
 
@@ -682,6 +689,9 @@ async def test_list_plugins_exposes_fallback_and_device_standard(monkeypatch):
     outlook = by_id["outlook"]
     assert outlook["fallback_auth"] is None
     assert outlook["auth_standard"]["fallback"] is False
+    assert outlook["auth_standard"]["ready"] is True
+    assert outlook["auth_standard"]["source"] == "publisher"
+    assert outlook["oauth_client_configured"] is True
 
 
 def test_new_families_resolve_publisher_precedence(monkeypatch):

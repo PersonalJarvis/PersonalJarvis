@@ -16,7 +16,7 @@ an original brand asset and an in-app connection flow.
 
 | Plugin | Implemented operations | Account/setup requirements and limits |
 |---|---|---|
-| Outlook Mail & Calendar | Read, send, reply; list/create/update events | Microsoft delegated Graph consent; own Entra public client |
+| Outlook Mail & Calendar | Read, send, reply; list/create/update events | Microsoft delegated Graph consent; shared browser sign-in |
 | OneDrive | List/search files, upload bytes, create sharing links | Files.ReadWrite; uploads through this connector up to 20 MiB |
 | Teams | List chats/messages, send chat messages, create meetings | Work/school account; returns meeting join links, does not ring participants |
 | SharePoint | Search sites/documents, read libraries/lists/items | Work/school account; Sites.Read.All and Files.Read.All; tenant consent |
