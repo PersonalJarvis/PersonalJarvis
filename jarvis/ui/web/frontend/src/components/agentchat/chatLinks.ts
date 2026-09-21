@@ -30,13 +30,33 @@ function pathFromFileUri(value: string): string | null {
   return /^\/[A-Za-z]:\//.test(decoded) ? decoded.slice(1) : decoded || null;
 }
 
+function stripAngles(raw: string): string {
+  const text = raw.trim();
+  if (text.length >= 2 && text.startsWith("<") && text.endsWith(">")) return text.slice(1, -1).trim();
+  return text;
+}
+
+/**
+ * A linked name such as `notes.md`, `photo.png` or `folder/clip.mp4`.
+ * Web addresses and app downloads are not files on this computer.
+ */
+export function looksLikeLocalFile(raw: string): boolean {
+  const text = stripAngles(raw);
+  if (!text || text.length > 240 || /[\u0000\r\n]/.test(text)) return false;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(text)) return false;
+  if (text.startsWith("/api/") || text === "/api" || text.startsWith("//")) return false;
+  const parts = text.replace(/\\/g, "/").split("/");
+  if (parts.some(part => part === ".." || part === "")) return false;
+  const name = parts[parts.length - 1] ?? "";
+  return /^[^\\/:*?"<>|]+\.[A-Za-z0-9]{1,12}$/.test(name);
+}
+
 /**
  * Absolute local path written in a chat link, or null when the address is
  * something else (a web URL, a relative name, an app download).
  */
 export function nativePathFromMarkdownUrl(raw: string): string | null {
-  let text = raw.trim();
-  if (text.length >= 2 && text.startsWith("<") && text.endsWith(">")) text = text.slice(1, -1).trim();
+  let text = stripAngles(raw);
   if (!text || /[\u0000\r\n]/.test(text)) return null;
   const lower = text.toLowerCase();
   if (
@@ -60,9 +80,14 @@ export function nativePathFromMarkdownUrl(raw: string): string | null {
   return null;
 }
 
+/** Full path when the link has one, otherwise a bare filename worth opening. */
+export function openableLinkTarget(raw: string): string | null {
+  return nativePathFromMarkdownUrl(raw) || (looksLikeLocalFile(raw) ? stripAngles(raw) : null);
+}
+
 /** Keep a local path on a hash so the desktop window cannot navigate to it. */
 export function chatUrlTransform(url: string): string {
-  const local = nativePathFromMarkdownUrl(url);
+  const local = openableLinkTarget(url);
   if (local) return LOCAL_PREFIX + encodeURIComponent(local);
   return defaultUrlTransform(url);
 }
@@ -79,11 +104,13 @@ export function localPathFromChatHref(href: string): string | null {
  * `stay` means: do not load this address in the window. An empty href reloads
  * the current page, and a relative file name is served back as the app itself.
  */
-export function chatLinkAction(href: string): ChatLinkAction {
-  const local = localPathFromChatHref(href);
+export function chatLinkAction(href: string, label = ""): ChatLinkAction {
+  const local = localPathFromChatHref(href) || openableLinkTarget(href);
   if (local) return { type: "local", path: local };
   if (/^https?:\/\//i.test(href)) return { type: "external", url: href };
   if (href.startsWith("//")) return { type: "external", url: `https:${href}` };
   if (href.startsWith("mailto:") || href.startsWith("/api/")) return { type: "allow" };
+  const named = openableLinkTarget(label);
+  if (named) return { type: "local", path: named };
   return { type: "stay" };
 }

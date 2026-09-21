@@ -139,15 +139,21 @@ describe("shared chat media", () => {
     vi.unstubAllGlobals();
   });
 
-  it("does not let a bare filename navigate the window", () => {
-    const fetchMock = vi.fn();
+  it.each([
+    ["[Clip](file:///C:/Users/Administrator/Downloads/Clip.mp4)", "C:/Users/Administrator/Downloads/Clip.mp4"],
+    ["[notes.md](notes.md)", "notes.md"],
+    ["[shot.png](shot.png)", "shot.png"],
+  ])("opens %s on this computer", (markdown, path) => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ opened: true }) }));
     vi.stubGlobal("fetch", fetchMock);
-    render(<ChatMarkdown text="[Clip](Clip.mp4)" />);
-    const link = screen.getByRole("link", { name: "Clip" });
+    render(<ChatMarkdown text={markdown} />);
     const event = new MouseEvent("click", { bubbles: true, cancelable: true });
-    link.dispatchEvent(event);
+    screen.getByRole("link").dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith("/api/settings/open-path", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }));
     vi.unstubAllGlobals();
   });
 

@@ -148,8 +148,8 @@ const ImageKeysContext = createContext<ReadonlySet<string>>(new Set());
 
 // A file or folder address must not be loaded in this window: an empty href
 // reloads the page, and a relative name is served back as the app itself.
-function onChatLinkClick(event: { preventDefault(): void }, href: string) {
-  const action = chatLinkAction(href);
+function onChatLinkClick(event: { preventDefault(): void }, href: string, label = "") {
+  const action = chatLinkAction(href, label);
   if (action.type === "allow") return;
   event.preventDefault();
   if (action.type === "local") void openLocalPath(action.path);
@@ -161,7 +161,7 @@ function onChatLinkClick(event: { preventDefault(): void }, href: string) {
 const MARKDOWN_COMPONENTS: Components = {
   img: ({ src = "", alt = "image" }) => {
     const local = localPathFromChatHref(src);
-    if (local) return <a href={src} title={local} onClick={event => onChatLinkClick(event, src)}>{alt || local}</a>;
+    if (local) return <a href={src} title={local} onClick={event => onChatLinkClick(event, src, alt || local)}>{alt || local}</a>;
     return <MediaPreview src={src} label={alt || "image"} kind={mediaKind(src) ?? "image"} />;
   },
   a: function MediaLink({ href = "", children }) {
@@ -170,7 +170,7 @@ const MARKDOWN_COMPONENTS: Components = {
     const label = Children.toArray(children).filter(child => typeof child === "string").join("") || kind || "media";
     if (kind && !imageKeys.has(assetKey(href))) return <MediaPreview src={href} label={label} kind={kind} />;
     const local = localPathFromChatHref(href);
-    return <a href={href} title={local || undefined} onClick={event => onChatLinkClick(event, href)}>{children}</a>;
+    return <a href={href} title={local || undefined} onClick={event => onChatLinkClick(event, href, label)}>{children}</a>;
   },
   pre: ({ children, node: _node, ...props }) => {
     const fence = readFence(children);

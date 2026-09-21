@@ -69,8 +69,34 @@ def test_prepare_misses_a_path_that_is_not_there(tmp_path: Path) -> None:
     assert caught.value.reason == "not-found"
 
 
-def test_prepare_rejects_a_relative_name(tmp_path: Path) -> None:
-    del tmp_path
+def test_prepare_rejects_a_word_that_is_not_a_file() -> None:
     with pytest.raises(ChatOpenRejected) as caught:
-        prepare_chat_open("clip.mp4")
+        prepare_chat_open("just a sentence")
     assert caught.value.reason == "not-a-local-path"
+
+
+def test_a_filename_opens_from_downloads_whatever_the_type(tmp_path: Path, monkeypatch) -> None:
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    notes = downloads / "notes.md"
+    notes.write_text("hello", encoding="utf-8")
+    picture = downloads / "shot.png"
+    picture.write_bytes(b"png")
+    monkeypatch.setattr(
+        "jarvis.platform.open_path._user_file_roots", lambda: [downloads]
+    )
+    assert prepare_chat_open("notes.md") == notes.resolve()
+    assert prepare_chat_open("shot.png") == picture.resolve()
+
+
+def test_a_full_path_wins_over_another_file_with_the_same_name(tmp_path: Path, monkeypatch) -> None:
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    other = downloads / "clip.mp4"
+    other.write_bytes(b"other")
+    exact = tmp_path / "clip.mp4"
+    exact.write_bytes(b"exact")
+    monkeypatch.setattr(
+        "jarvis.platform.open_path._user_file_roots", lambda: [downloads]
+    )
+    assert prepare_chat_open(str(exact)) == exact.resolve()

@@ -536,35 +536,115 @@ def chat_link_path(raw: str) -> str | None:
     return None
 
 
+def _user_file_roots() -> list[Path]:
+    """Folders a bare filename from chat may be found in."""
+    home = Path.home()
+    roots: list[Path] = []
+    for name in ("Downloads", "Desktop", "Documents"):
+        folder = home / name
+        if folder.is_dir():
+            roots.append(folder)
+    return roots
+
+
+def _relative_file_name(raw: str) -> Path | None:
+    """``notes.md`` or ``shots/photo.png``, never a path that climbs upward."""
+    text = raw.strip()
+    if len(text) >= 2 and text[0] == "<" and text[-1] == ">":
+        text = text[1:-1].strip()
+    if not text or any(ch in text for ch in "\x00\r\n"):
+        return None
+    lowered = text.lower()
+    if lowered.startswith(("http://", "https://", "javascript:", "data:", "mailto:", "file:")):
+        return None
+    if text.startswith(("\\\\", "//", "~/")) or re.match(r"^[A-Za-z]:[\\/]", text):
+        return None
+    parts = [part for part in text.replace("\\", "/").split("/") if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        return None
+    suffix = Path(parts[-1]).suffix
+    if not re.fullmatch(r"\.[A-Za-z0-9]{1,12}", suffix):
+        return None
+    return Path(*parts)
+
+
+def _inside(root: Path, candidate: Path) -> bool:
+    try:
+        resolved_root = root.resolve()
+        resolved = candidate.resolve()
+    except OSError:
+        return False
+    return resolved == resolved_root or resolved_root in resolved.parents
+
+
+def _find_named_file(raw: str) -> Path | None:
+    """Newest file of this name under Downloads, Desktop or Documents."""
+    relative = _relative_file_name(raw)
+    if relative is None:
+        return None
+    names = [relative]
+    if len(relative.parts) > 1:
+        names.append(Path(relative.name))
+    found: list[Path] = []
+    for root in _user_file_roots():
+        for name in names:
+            candidate = root / name
+            if _inside(root, candidate) and candidate.is_file():
+                found.append(candidate)
+    if not found:
+        return None
+    found.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return found[0]
+
+
+def _refuse_program(target: Path) -> None:
+    suffix = target.suffix.lower()
+    if (target.is_file() and suffix in _REFUSED_CHAT_SUFFIXES) or (
+        target.is_dir() and suffix == ".app"
+    ):
+        raise ChatOpenRejected("refused-program")
+
+
+def _existing_absolute(native: str) -> Path | None:
+    """Resolve an absolute local path, or None when it is not on this computer."""
+    if native.startswith("~"):
+        native = str(Path(native).expanduser())
+    drive = re.match(r"^[A-Za-z]:[\\/]", native) is not None
+    if drive and os.name != "nt":
+        return None
+    path = Path(native)
+    if not path.is_absolute():
+        return None
+    try:
+        target = path.resolve()
+    except OSError:
+        return None
+    if target.exists() and (target.is_file() or target.is_dir()):
+        return target
+    return None
+
+
 def prepare_chat_open(raw: str) -> Path:
     """Existing local file or folder a chat link may open.
+
+    A full path opens that exact file, whatever its type: video, picture,
+    markdown or anything else the system can open. A bare filename is looked
+    up in Downloads, Desktop and Documents. Programs and scripts are refused.
 
     Raises :class:`ChatOpenRejected`. A Windows drive path is only accepted
     on Windows, so resolving it cannot land inside another operating system's
     working directory.
     """
     native = chat_link_path(raw)
-    if native is None:
-        raise ChatOpenRejected("not-a-local-path")
-    if native.startswith("~"):
-        native = str(Path(native).expanduser())
-    drive = re.match(r"^[A-Za-z]:[\\/]", native) is not None
-    if drive and os.name != "nt":
+    target = _existing_absolute(native) if native is not None else None
+    if target is None:
+        named = Path(native).name if native else raw
+        target = _find_named_file(named)
+    if target is None:
+        if native is None and _relative_file_name(raw) is None:
+            raise ChatOpenRejected("not-a-local-path")
         raise ChatOpenRejected("not-found")
-    path = Path(native)
-    if not path.is_absolute():
-        raise ChatOpenRejected("not-a-local-path")
-    try:
-        target = path.resolve()
-    except OSError as exc:
-        raise ChatOpenRejected("invalid-path") from exc
-    if not target.exists() or not (target.is_file() or target.is_dir()):
-        raise ChatOpenRejected("not-found")
-    suffix = target.suffix.lower()
-    if (target.is_file() and suffix in _REFUSED_CHAT_SUFFIXES) or (
-        target.is_dir() and suffix == ".app"
-    ):
-        raise ChatOpenRejected("refused-program")
+    _refuse_program(target)
     return target
 
 

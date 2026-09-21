@@ -16,13 +16,17 @@ describe("chat file links", () => {
   });
 
   it.each([
-    "clip.mp4",
     "https://example.test/clip.mp4",
     "javascript:alert(1)",
     "file://server/share/clip.mp4",
     "/api/outputs/run/files/clip.mp4/download",
   ])("does not treat %s as a local file", raw => {
     expect(nativePathFromMarkdownUrl(raw)).toBeNull();
+  });
+
+  it.each(["notes.md", "shot.png", "folder/clip.mp4"])("opens a linked filename %s", name => {
+    expect(chatUrlTransform(name)).toBe("#jarvis-local=" + encodeURIComponent(name));
+    expect(chatLinkAction(chatUrlTransform(name))).toEqual({ type: "local", path: name });
   });
 
   it("opens a preserved local path and still sends web links out", () => {
@@ -34,9 +38,9 @@ describe("chat file links", () => {
     });
   });
 
-  it("refuses to navigate the window for an empty or relative link", () => {
+  it("uses the visible filename when the address itself was emptied", () => {
+    expect(chatLinkAction("", "photo.png")).toEqual({ type: "local", path: "photo.png" });
     expect(chatLinkAction("")).toEqual({ type: "stay" });
-    expect(chatLinkAction("Clip.mp4")).toEqual({ type: "stay" });
     expect(chatLinkAction("javascript:alert(1)")).toEqual({ type: "stay" });
     expect(chatLinkAction("/api/outputs/run/download")).toEqual({ type: "allow" });
   });
