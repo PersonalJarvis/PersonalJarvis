@@ -11,8 +11,8 @@ vi.mock("@/components/society/data", () => ({ useSocietyRoster: () => ({ data: {
   { agentId: "lead", name: "Lead", tier: "lead", state: "idle" },
   { agentId: "specialist", name: "Specialist", tier: "specialist", state: "idle" },
 ] }, isLoading: false }) }));
-vi.mock("@/views/JarvisAgentsView", () => ({ JarvisAgentsView: ({ onSelectAgent, onOpenAgents, topRight }: any) => (
-  <div data-testid="map">{topRight}<button onClick={() => onSelectAgent("specialist")}>Map specialist</button><button onClick={onOpenAgents}>Map fallback</button></div>
+vi.mock("@/views/JarvisAgentsView", () => ({ JarvisAgentsView: ({ onSelectAgent, onOpenAgents }: any) => (
+  <div data-testid="map"><button onClick={() => onSelectAgent("specialist")}>Map specialist</button><button onClick={onOpenAgents}>Map fallback</button></div>
 ) }));
 vi.mock("@/components/society/card/AgentCardOverlay", () => ({ AgentCardOverlay: ({ agent, embedded, onSelectAgent, onCreate, railHeader }: any) => (
   <div data-testid="workspace" data-embedded={String(embedded)}>
@@ -77,22 +77,22 @@ it("opens map selections in Agents and keeps creation available", async () => {
 });
 
 
-it("floats the Map/Agents switch without a second header bar", async () => {
+it("keeps the Map/Agents switch in the caption in both modes", async () => {
   render(<SocietyView />);
-  // Agents mode carries the switch in the window caption: no second bar, no
-  // "Back to app" — the workspace expands straight under the caption.
+  // Agents mode: no second bar, no "Back to app" — the workspace expands
+  // straight under the caption, the switch rides centered in it.
   expect(screen.queryByRole("button", { name: "settings_hub.back_to_app" })).toBeNull();
-  const captionSwitch = screen.getByTestId("agents-mode-switch");
+  const captionSwitch = screen.getByTestId("mode-switch");
   expect(within(captionSwitch).getByRole("tab", { name: "society.world.mode_map" })).toBeTruthy();
   fireEvent.click(within(captionSwitch).getByRole("tab", { name: "society.world.mode_map" }));
-  const map = await screen.findByTestId("map");
-  // The switch rides along into the map HUD, so Map stays closable.
-  expect(screen.queryByTestId("agents-mode-switch")).toBeNull();
+  await screen.findByTestId("map");
+  // Map mode takes the native window fullscreen: the switch stays in the
+  // caption instead of shrinking into the map HUD, so Agents stays reachable.
+  expect(screen.getByTestId("mode-switch")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "settings_hub.back_to_app" })).toBeNull();
-  expect(within(map).getByRole("tab", { name: "society.roster.title" })).toBeTruthy();
-  fireEvent.click(within(map).getByRole("tab", { name: "society.roster.title" }));
+  fireEvent.click(screen.getByRole("tab", { name: "society.roster.title" }));
   expect(screen.queryByTestId("map")).toBeNull();
-  expect(screen.getByTestId("agents-mode-switch")).toBeTruthy();
+  expect(screen.getByTestId("mode-switch")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "settings_hub.back_to_app" })).toBeNull();
 });
 
@@ -101,7 +101,7 @@ it("navigates back through the window caption instead of a sections toggle", () 
   expect(screen.queryByRole("button", { name: "society.world.toggle_sections" })).toBeNull();
   expect(screen.queryByRole("button", { name: "settings_hub.back_to_app" })).toBeNull();
   // The caption sidebar toggle (owned by TopBar) is the way back to the app.
-  expect(screen.getByTestId("agents-mode-switch")).toBeTruthy();
+  expect(screen.getByTestId("mode-switch")).toBeTruthy();
 });
 
 it("requests fullscreen for Map and leaves it on Escape", async () => {

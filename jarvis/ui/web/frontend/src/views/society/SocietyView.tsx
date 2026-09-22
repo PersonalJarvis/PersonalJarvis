@@ -113,18 +113,20 @@ export function SocietyView() {
   return (
     <div className={mode === "world" ? "fixed inset-x-0 bottom-0 top-8 z-30 flex flex-col bg-background" : "flex h-full min-h-0 w-full flex-col"} data-testid="society-view">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {mode === "agents" && (
-        <div className="pointer-events-none fixed inset-x-0 top-0 z-[130] flex h-8 items-center justify-center" data-testid="agents-mode-switch">
+        {/* Map mode takes the native window fullscreen, so the switch cannot
+            live inside the map HUD: it would shrink into the corner and strand
+            the user on the island. It rides in the window caption in BOTH
+            modes — one switch, always centered, always a way back. */}
+        <div className="pointer-events-none fixed inset-x-0 top-0 z-[130] flex h-8 items-center justify-center" data-testid="mode-switch">
           <div className="pointer-events-auto">{modeSwitch}</div>
         </div>
-        )}
         {fullscreenError && <p role="alert" className="bg-card px-4 py-2 text-sm text-destructive">{t("society.world.fullscreen_failed")}</p>}
         {mode === "world" ? (
         <div className="relative flex min-h-0 flex-1">
           <div className="min-w-0 flex-1">
             <CanvasActivity.Provider value={!openPlace && !creating}>
               <Suspense fallback={null}>
-                <JarvisAgentsBoard onSelectAgent={onIslandSelect} onSelectPlace={onIslandPlace} onOpenAgents={() => switchMode("agents")} topRight={modeSwitch} />
+                <JarvisAgentsBoard onSelectAgent={onIslandSelect} onSelectPlace={onIslandPlace} onOpenAgents={() => switchMode("agents")} />
               </Suspense>
             </CanvasActivity.Provider>
           </div>
