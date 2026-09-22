@@ -77,24 +77,31 @@ it("opens map selections in Agents and keeps creation available", async () => {
 });
 
 
-it("floats the Map/Agents switch over the map instead of a second header bar", async () => {
+it("floats the Map/Agents switch without a second header bar", async () => {
   render(<SocietyView />);
-  fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
-  const map = await screen.findByTestId("map");
-  // The section header bar (with "Back to app") is gone in Map mode: the
-  // canvas starts directly under the window caption.
+  // Agents mode carries the switch in the window caption: no second bar, no
+  // "Back to app" — the workspace expands straight under the caption.
   expect(screen.queryByRole("button", { name: "settings_hub.back_to_app" })).toBeNull();
-  // The switch itself rides along into the map HUD, so Map stays closable.
+  const captionSwitch = screen.getByTestId("agents-mode-switch");
+  expect(within(captionSwitch).getByRole("tab", { name: "society.world.mode_map" })).toBeTruthy();
+  fireEvent.click(within(captionSwitch).getByRole("tab", { name: "society.world.mode_map" }));
+  const map = await screen.findByTestId("map");
+  // The switch rides along into the map HUD, so Map stays closable.
+  expect(screen.queryByTestId("agents-mode-switch")).toBeNull();
+  expect(screen.queryByRole("button", { name: "settings_hub.back_to_app" })).toBeNull();
   expect(within(map).getByRole("tab", { name: "society.roster.title" })).toBeTruthy();
   fireEvent.click(within(map).getByRole("tab", { name: "society.roster.title" }));
   expect(screen.queryByTestId("map")).toBeNull();
-  expect(screen.getByRole("button", { name: "settings_hub.back_to_app" })).toBeTruthy();
+  expect(screen.getByTestId("agents-mode-switch")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "settings_hub.back_to_app" })).toBeNull();
 });
 
-it("offers a way back to the app instead of a sections toggle", () => {
+it("navigates back through the window caption instead of a sections toggle", () => {
   render(<SocietyView />);
   expect(screen.queryByRole("button", { name: "society.world.toggle_sections" })).toBeNull();
-  expect(screen.getByRole("button", { name: "settings_hub.back_to_app" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "settings_hub.back_to_app" })).toBeNull();
+  // The caption sidebar toggle (owned by TopBar) is the way back to the app.
+  expect(screen.getByTestId("agents-mode-switch")).toBeTruthy();
 });
 
 it("requests fullscreen for Map and leaves it on Escape", async () => {

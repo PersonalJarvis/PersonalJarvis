@@ -1,7 +1,5 @@
 import { lazy, Suspense, useCallback, useMemo, useState, useEffect } from "react";
 
-import { ArrowLeft } from "lucide-react";
-import { useEventStore } from "@/store/events";
 import { useSocietyShell } from "@/store/societyShell";
 import { setMapFullscreen } from "@/lib/mapFullscreen";
 import { inDesktopShell } from "@/lib/nativeDrop";
@@ -54,14 +52,6 @@ export function SocietyView() {
     setCreating(false);
   }, []);
 
-  const setActive = useEventStore((s) => s.setActiveSection);
-  const backToApp = (
-    <button type="button" onClick={() => setActive("chats")}
-      className="relative z-10 flex h-6 items-center gap-1.5 rounded-md px-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-      <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden />
-      {t("settings_hub.back_to_app")}
-    </button>
-  );
   const [fullscreenError, setFullscreenError] = useState(false);
   const switchMode = useCallback((next: "agents" | "world") => {
     setMode(next);
@@ -124,9 +114,8 @@ export function SocietyView() {
     <div className={mode === "world" ? "fixed inset-x-0 bottom-0 top-8 z-30 flex flex-col bg-background" : "flex h-full min-h-0 w-full flex-col"} data-testid="society-view">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {mode === "agents" && (
-        <div className="relative flex h-8 shrink-0 items-center px-2">
-          {backToApp}
-          <div className="absolute left-1/2 -translate-x-1/2">{modeSwitch}</div>
+        <div className="pointer-events-none fixed inset-x-0 top-0 z-[130] flex h-8 items-center justify-center" data-testid="agents-mode-switch">
+          <div className="pointer-events-auto">{modeSwitch}</div>
         </div>
         )}
         {fullscreenError && <p role="alert" className="bg-card px-4 py-2 text-sm text-destructive">{t("society.world.fullscreen_failed")}</p>}
