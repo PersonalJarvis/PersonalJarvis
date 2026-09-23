@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppWindow, Download, RotateCw } from "lucide-react";
+import { AppWindow, Download, PanelLeftClose, PanelLeftOpen, RotateCw } from "lucide-react";
 
 import { useEventStore, type SectionId } from "@/store/events";
 import { NAV_FOOTER_ITEMS, NAV_GROUPS, resolveNavLabel } from "@/components/layout/navGroups";
@@ -98,7 +98,10 @@ function useViewTitle(activeSection: SectionId): string {
   return item ? resolveNavLabel(t, item) : "";
 }
 
-export function TopBar() {
+export function TopBar({ settingsNavigation }: {
+  settingsNavigation?: { open: boolean; onToggle: () => void };
+} = {}) {
+  const t = useT();
   const activeSection = useEventStore((s) => s.activeSection);
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
@@ -142,6 +145,19 @@ export function TopBar() {
     // app-chrome actions.
     <div className="jarvis-shell-surface flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
       <div className="mr-auto flex min-w-0 items-center gap-3">
+        {settingsNavigation && (
+          <button
+            type="button"
+            data-testid="settings-sidebar-toggle"
+            onClick={settingsNavigation.onToggle}
+            aria-expanded={settingsNavigation.open}
+            aria-label={t(settingsNavigation.open ? "sidebar.collapse" : "sidebar.expand")}
+            title={t(settingsNavigation.open ? "sidebar.collapse" : "sidebar.expand")}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {settingsNavigation.open ? <PanelLeftClose className="h-4 w-4" aria-hidden /> : <PanelLeftOpen className="h-4 w-4" aria-hidden />}
+          </button>
+        )}
         {viewTitle && (
           <span
             data-testid="topbar-view-title"
