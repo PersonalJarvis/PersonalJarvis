@@ -529,7 +529,9 @@ class LiveVoiceSession:
                         "item": {
                             "type": "function_call_output",
                             "call_id": item["call_id"],
-                            "output": json.dumps(result, default=str),
+                            "output": json.dumps(
+                                result, ensure_ascii=False, separators=(",", ":"), default=str
+                            ),
                         },
                     }
                 )
