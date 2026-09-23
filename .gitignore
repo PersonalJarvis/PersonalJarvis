@@ -185,6 +185,8 @@ wiki/wiki-backups/
 scripts/_*.png
 scripts/_*.json
 scripts/_flow_in_browser.png
+jarvis/assets/browser/wheels/
+jarvis/assets/browser/requirements-bundled.lock
 
 # IDE / OS
 .vscode/

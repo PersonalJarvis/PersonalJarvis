@@ -39,7 +39,20 @@ def runner_path() -> Path:
 
 
 def requirements_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "assets" / "browser" / "requirements.lock"
+    assets = Path(__file__).resolve().parents[2] / "assets" / "browser"
+    bundled = assets / "requirements-bundled.lock"
+    if getattr(sys, "frozen", False) and bundled.is_file():
+        return bundled
+    return assets / "requirements.lock"
+
+
+def bundled_wheel_args() -> list[str]:
+    """A native package can carry compiler-built wheels with a matching lock."""
+    lock = requirements_path()
+    wheels = lock.with_name("wheels")
+    if lock.name == "requirements-bundled.lock" and wheels.is_dir():
+        return ["--find-links", str(wheels), "--only-binary", "cryptography"]
+    return []
 
 
 def managed_python_request(system: str, machine: str) -> str:
@@ -272,6 +285,7 @@ def ensure_installed(
                     "install",
                     "--disable-pip-version-check",
                     "--require-hashes",
+                    *bundled_wheel_args(),
                     "-r",
                     str(requirements_path()),
                 ],

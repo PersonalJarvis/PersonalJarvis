@@ -128,6 +128,9 @@ else
   run "${PYTHON}" "${SCRIPT_DIR}/make_icns.py"
 fi
 
+log "preparing compiler-free browser dependencies"
+run "${PYTHON}" "${REPO_ROOT}/scripts/prepare_browser_wheelhouse.py"
+
 log "running PyInstaller"
 (
   cd "${REPO_ROOT}"
