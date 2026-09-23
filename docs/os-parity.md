@@ -758,3 +758,26 @@ stored trace intervals survived retrieval after restart. Both light and dark
 voice-stage rendering were inspected. The fresh Linux backend installation
 passed all seven conversation contracts; physical macOS/Linux audio behavior
 is not inferred from these checks.
+
+
+## Startup audio catch-up (T2)
+
+The existing WebRTC input worklet now repays startup audio delay with bounded
+waveform-aligned overlap-add processing. It no longer depends on digitally
+silent microphone samples, which left the previous queue permanently behind
+in rooms with background noise. Quiet input is retained without an amplitude
+speech gate. After catch-up, microphone samples pass through unchanged.
+The native prefix shares the existing memory bound; reconnection clears both
+queued audio and a partly rendered overlap grain. Assistant playback is not
+processed by this input queue.
+
+This changes the shared Web Audio implementation on Windows, macOS and Linux;
+Gemini/local PCM adapters and headless boot are unchanged. No provider session,
+credential setting or always-on billed connection is added. Tests cover 16,
+24, 44.1 and 48 kHz, low amplitudes, waveform gain/pitch, noise/hum, prefix
+ordering and cancellation. An actual Chrome AudioWorklet comparison with the
+same two-second setup delay and background noise removed the old two-second
+steady input lag. Paired GPT-Live probes retained the same recognized words in
+German and English, including a quieter English sample. First response text
+arrived 0.4–1.4 seconds earlier in those three comparisons; these small
+synthetic comparisons are not a physical-device latency guarantee.
