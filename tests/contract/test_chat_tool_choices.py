@@ -294,6 +294,22 @@ def test_discovery_route_serves_catalog_and_openapi_metadata(tmp_path, monkeypat
     assert operation["tags"] and operation["summary"] and operation["x-jarvis-readonly"]
 
 
+async def test_artifact_row_is_bilingual_and_searchable():
+    """The Add-menu pin for artifacts is found via DE and EN words."""
+    rows = build_catalog(
+        {"create_artifact": tool("create_artifact", "Build an ARTIFACT page", "monitor")}
+    )
+    by_id = {row.id: row for row in rows}
+    row = by_id["tool:create_artifact"]
+    assert row.brand == "artifact"
+    assert "artefakt" in row.label.lower()
+    assert "artifact" in row.label.lower()
+    found_de, _ = await search_catalog(rows, "artefakt")
+    assert [r.id for r in found_de] == ["tool:create_artifact"]
+    found_en, _ = await search_catalog(rows, "artifact")
+    assert [r.id for r in found_en] == ["tool:create_artifact"]
+
+
 @pytest.mark.parametrize("card_pin", [False, True])
 async def test_subscription_turn_receives_browser_selection_only_for_current_turn(
     tmp_path, monkeypatch, card_pin

@@ -290,6 +290,14 @@ class AgentAction(BaseModel):
     prompt: str = Field(min_length=1, max_length=16_384)
     plugin_grants: tuple[PluginGrant, ...] = Field(default_factory=tuple)
     model_tier: Literal["fast", "deep", "auto"] = "auto"
+    # Pinned model seat for a society routine (``provider`` empty = follow
+    # the owning agent's live seat). Snapshot at creation so the routine
+    # stays on the model the owner used then — never silently rerouted onto
+    # an API-key chain — unless the person picks another seat for it.
+    provider: str = Field(default="", max_length=64)
+    model: str = Field(default="", max_length=256)
+    effort: str = Field(default="", max_length=64)
+    account_id: str = Field(default="", max_length=256)
 
 
 class WorkflowAction(BaseModel):

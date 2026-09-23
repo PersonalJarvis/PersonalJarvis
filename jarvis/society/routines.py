@@ -42,6 +42,7 @@ __all__ = [
     "create_routine",
     "is_agent_routine",
     "list_routines",
+    "routine_seat",
 ]
 
 ROUTINE_TAG: Final[str] = "society"
@@ -131,6 +132,10 @@ def build_task_spec(
     plugin_grants: list[dict[str, str]] | None = None,
     announce_on_success: str | None = None,
     workflow_id: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    effort: str | None = None,
+    account_id: str | None = None,
 ) -> TaskSpec:
     grants = tuple(
         PluginGrant(plugin_id=str(g["plugin_id"]), scope=g.get("scope", "read"))  # type: ignore[arg-type]
@@ -138,18 +143,62 @@ def build_task_spec(
         if g.get("plugin_id")
     )
     clean_title = " ".join(title.split())[:200] or "routine"
+    # Pin the owner's current seat onto the routine: the default run uses
+    # exactly the model the agent runs on now, and stays there until the
+    # person picks another seat for this routine. An explicit choice wins.
+    seat = {
+        "provider": str(provider).strip().lower()
+        if provider is not None
+        else str(getattr(agent, "provider", "") or ""),
+        "model": str(model).strip()
+        if model is not None
+        else str(getattr(agent, "model", "") or ""),
+        "effort": str(effort).strip()
+        if effort is not None
+        else str(getattr(agent, "effort", "") or ""),
+        "account_id": str(account_id).strip()
+        if account_id is not None
+        else str(getattr(agent, "account_id", "") or ""),
+    }
     return TaskSpec(
         title=f"[agent:{agent.name}] {clean_title}",
         trigger=_trigger(schedule),
         action=(
             WorkflowAction(workflow_id=UUID(workflow_id))
             if workflow_id
-            else AgentAction(prompt=_routine_prompt(agent, prompt), plugin_grants=grants)
+            else AgentAction(
+                prompt=_routine_prompt(agent, prompt),
+                plugin_grants=grants,
+                provider=seat["provider"],
+                model=seat["model"],
+                effort=seat["effort"],
+                account_id=seat["account_id"],
+            )
         ),
         created_by="society",
         tags=(ROUTINE_TAG, agent_tag(agent.agent_id)),
         announce_on_success=announce_on_success,
     )
+
+
+def routine_seat(spec: TaskSpec | dict[str, Any]) -> dict[str, str]:
+    """The pinned model seat of a routine spec (empty strings = legacy row)."""
+    action = spec.action if isinstance(spec, TaskSpec) else (spec.get("action") or {})
+    if isinstance(action, AgentAction):
+        return {
+            "provider": action.provider,
+            "model": action.model,
+            "effort": action.effort,
+            "account_id": action.account_id,
+        }
+    if isinstance(action, dict):
+        return {
+            "provider": str(action.get("provider") or ""),
+            "model": str(action.get("model") or ""),
+            "effort": str(action.get("effort") or ""),
+            "account_id": str(action.get("account_id") or ""),
+        }
+    return {"provider": "", "model": "", "effort": "", "account_id": ""}
 
 
 def agent_id_from_tags(tags: Sequence[str]) -> str | None:
@@ -186,6 +235,7 @@ def _summary(row: dict[str, Any]) -> dict[str, Any]:
             spec = json.loads(raw) if isinstance(raw, str) else dict(raw)
         except ValueError:
             spec = {}
+    action = spec.get("action") or {}
     return {
         "id": row.get("id"),
         "title": row.get("title") or spec.get("title"),
@@ -194,11 +244,15 @@ def _summary(row: dict[str, Any]) -> dict[str, Any]:
         "webhook_path": f"/api/tasks/hooks/{row.get('id')}"
         if (spec.get("trigger") or {}).get("type") == "webhook"
         else None,
-        "prompt": str((spec.get("action") or {}).get("prompt") or "").partition("\nRoutine:\n")[2],
+        "prompt": str(action.get("prompt") or "").partition("\nRoutine:\n")[2],
         "announce_on_success": spec.get("announce_on_success"),
         "due_at_ns": row.get("due_at_ns"),
         "last_run_ns": row.get("started_at_ns") or row.get("last_run_ns"),
         "tags": list(_tags_of(row)),
+        "provider": str(action.get("provider") or ""),
+        "model": str(action.get("model") or ""),
+        "effort": str(action.get("effort") or ""),
+        "account_id": str(action.get("account_id") or ""),
     }
 
 
@@ -234,6 +288,19 @@ async def manage_routine(
     operation = payload["operation"]
     if operation == "update":
         old = await task_store.get_spec(tid)
+        old_seat = routine_seat(old)
+        # A title/prompt/schedule edit keeps the routine's pinned seat; only
+        # an explicit seat in the payload moves it ("" = follow the owner).
+        seat_override: dict[str, str] = {
+            key: (
+                str(payload[key]).strip().lower()
+                if key == "provider"
+                else str(payload[key]).strip()
+            )
+            for key in ("provider", "model", "effort", "account_id")
+            if key in payload and payload[key] is not None
+        }
+        seat = {**old_seat, **seat_override}
         spec = build_task_spec(
             agent,
             title=payload["title"],
@@ -243,16 +310,24 @@ async def manage_routine(
             workflow_id=payload.get("workflow_id")
             or (str(old.action.workflow_id) if old.action.kind == "workflow" else None),
             announce_on_success=payload.get("announce_on_success"),
+            **seat,
         )
-        changes = {
-            "title": spec.title,
-            "trigger": spec.trigger,
-            "action": (
-                old.action.model_copy(update={"prompt": spec.action.prompt})
-                if old.action.kind == "agent" and spec.action.kind == "agent"
-                else spec.action
-            ),
-        }
+        if old.action.kind == "agent" and spec.action.kind == "agent":
+            action_update: dict[str, Any] = {"prompt": spec.action.prompt}
+            for key in ("provider", "model", "effort", "account_id"):
+                if key in seat_override:
+                    action_update[key] = seat[key]
+            changes = {
+                "title": spec.title,
+                "trigger": spec.trigger,
+                "action": old.action.model_copy(update=action_update),
+            }
+        else:
+            changes = {
+                "title": spec.title,
+                "trigger": spec.trigger,
+                "action": spec.action,
+            }
         if "announce_on_success" in payload:
             changes["announce_on_success"] = payload["announce_on_success"]
         await scheduler.update_task(tid, old.model_copy(update=changes))

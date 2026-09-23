@@ -81,9 +81,13 @@ describe("BrowserRealtimeControl", () => {
     setBrowserVoiceInputOwnership(false);
     delete (window as unknown as { pywebview?: unknown }).pywebview;
     useEventStore.setState({
+      events: [],
       voiceState: "idle",
       transcription: "",
       transcriptionFinal: true,
+      solo: false,
+      activeSection: "chats",
+      detachedViews: [],
     });
   });
 
@@ -102,7 +106,7 @@ describe("BrowserRealtimeControl", () => {
     fakes.browserAudio = true;
     const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     try {
-      const { unmount } = render(<BrowserRealtimeControl />);
+      const { unmount } = render(<BrowserRealtimeControl controlOnly />);
       act(() => {
         useEventStore.setState({ events: [{
           id: "wake-hidden", name: "BrowserVoiceRequested", ts: Date.now(),
@@ -129,6 +133,65 @@ describe("BrowserRealtimeControl", () => {
     (window as unknown as { pywebview?: unknown }).pywebview = { api: {} };
     render(<BrowserRealtimeControl />);
     expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("starts a desktop wake immediately even when the WebView is hidden", async () => {
+    fakes.native = true;
+    fakes.browserAudio = true;
+    (window as unknown as { pywebview?: unknown }).pywebview = { api: {} };
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      render(<BrowserRealtimeControl controlOnly />);
+      act(() => useEventStore.getState().pushEvent({
+        id: "background-wake", name: "BrowserVoiceRequested", ts: Date.now(),
+        payload: { action: "start" },
+      }));
+      await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
+  it("handles the latest stop and a second wake without replaying the first", async () => {
+    fakes.browserAudio = true;
+    render(<BrowserRealtimeControl controlOnly />);
+    const request = (id: string, action: string) => act(() => useEventStore.getState().pushEvent({
+      id, name: "BrowserVoiceRequested", ts: Date.now(), payload: { action },
+    }));
+    request("start-1", "start");
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+    request("stop-1", "stop");
+    await waitFor(() => expect(fakes.disconnect).toHaveBeenCalledTimes(1));
+    request("start-2", "start");
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not consume a wake before the provider becomes available", async () => {
+    fakes.browserAudio = true;
+    fakes.available = false;
+    const view = render(<BrowserRealtimeControl controlOnly />);
+    act(() => useEventStore.getState().pushEvent({
+      id: "early-wake", name: "BrowserVoiceRequested", ts: Date.now(), payload: { action: "start" },
+    }));
+    expect(fakes.connect).not.toHaveBeenCalled();
+    fakes.available = true;
+    view.rerender(<BrowserRealtimeControl controlOnly />);
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+  });
+
+  it.each([false, true])("keeps other desktop windows from claiming the microphone (embedded=%s)", async embedded => {
+    fakes.native = true;
+    fakes.browserAudio = true;
+    if (embedded) {
+      (window as unknown as { pywebview?: unknown }).pywebview = { api: {} };
+      useEventStore.setState({ solo: true, activeSection: "settings" });
+    }
+    render(<BrowserRealtimeControl controlOnly />);
+    act(() => useEventStore.getState().pushEvent({
+      id: "wrong-owner", name: "BrowserVoiceRequested", ts: Date.now(), payload: { action: "start" },
+    }));
+    await act(async () => undefined);
+    expect(fakes.connect).not.toHaveBeenCalled();
   });
 
   it("stays visible in external Chrome connected to the desktop backend", () => {

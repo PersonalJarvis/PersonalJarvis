@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
@@ -41,6 +41,33 @@ router = APIRouter(prefix="/api/window", tags=["window"])
 
 class DetachBody(BaseModel):
     view: str = Field(min_length=1, max_length=64)
+
+
+class BackgroundBody(BaseModel):
+    enabled: bool = Field(strict=True)
+
+
+@router.get("/background", operation_id="background_status")
+async def window_background_status(request: Request) -> dict[str, Any]:
+    """Read the explicit window-close background policy and native availability."""
+    desktop = getattr(request.app.state, "desktop_app", None)
+    getter = getattr(desktop, "get_background_status", None)
+    if not callable(getter):
+        return {
+            "available": False, "reason": "headless_host", "enabled": True,
+            "mode": "background", "window_open": False,
+        }
+    return await asyncio.to_thread(getter)
+
+
+@router.post("/background", operation_id="background_set")
+async def window_background_set(body: BackgroundBody, request: Request) -> dict[str, Any]:
+    """Opt into background work for this session; explicit Quit still stops the app."""
+    desktop = getattr(request.app.state, "desktop_app", None)
+    setter = getattr(desktop, "set_background_mode", None)
+    if not callable(setter):
+        return await window_background_status(request)
+    return await asyncio.to_thread(setter, body.enabled)
 
 
 def _solo_url_path(view: str) -> str:
@@ -122,6 +149,48 @@ async def window_reattach(body: DetachBody, request: Request) -> dict[str, Any]:
 
 class FullscreenBody(BaseModel):
     enabled: bool
+
+
+class WindowCommandBody(BaseModel):
+    action: Literal["minimize", "maximize", "close"]
+    view: str | None = Field(default=None, max_length=64)
+
+
+@router.get("/chrome", operation_id="chrome")
+async def window_chrome(request: Request) -> dict[str, Any]:
+    """Whether this window draws its own minimize, maximize and close.
+
+    A browser tab and a headless server answer ``frameless: false`` so the
+    page does not invent window buttons that do nothing. The desktop shell
+    answers from the live window.
+    """
+    desktop = getattr(request.app.state, "desktop_app", None)
+    fn = getattr(desktop, "window_chrome_snapshot", None)
+    if not callable(fn):
+        return {"ok": True, "frameless": False, "platform": "headless", "controls": "none"}
+    try:
+        return await asyncio.to_thread(fn)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("window chrome failed: %s: %s", type(exc).__name__, exc)
+        return {"ok": False, "frameless": False, "controls": "none", "reason": type(exc).__name__}
+
+
+@router.post("/command", operation_id="command")
+async def window_command(body: WindowCommandBody, request: Request) -> dict[str, Any]:
+    """Minimize, maximize or close the window the page is showing.
+
+    ``view`` names a detached window. Omitted, the main window is used.
+    Closing follows the same path as the window's own close button.
+    """
+    desktop = getattr(request.app.state, "desktop_app", None)
+    fn = getattr(desktop, "window_command", None)
+    if not callable(fn):
+        return {"ok": False, "reason": "no_desktop_shell"}
+    try:
+        return await asyncio.to_thread(fn, body.action, body.view or None)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("window command failed: %s: %s", type(exc).__name__, exc)
+        return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
 
 
 @router.post("/fullscreen", operation_id="fullscreen")

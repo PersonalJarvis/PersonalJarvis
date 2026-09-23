@@ -319,6 +319,13 @@ class RegistryCommandTool:
         key = self._runtime.control_key()
         if key:
             headers["Authorization"] = f"Bearer {key}"
+        from jarvis.society.inherit import caller_session_id
+
+        session_id = caller_session_id()
+        if session_id:
+            from jarvis.agent_chat.jarvis_harness import HEADER_NAME
+
+            headers[HEADER_NAME] = session_id
         try:
             async with httpx.AsyncClient(
                 # The request stays in-process through ASGITransport. Use a

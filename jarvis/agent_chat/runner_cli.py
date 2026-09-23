@@ -63,6 +63,7 @@ import shutil
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -70,6 +71,7 @@ from typing import Any, Final
 
 from jarvis.agent_chat import jarvis_harness
 from jarvis.agent_chat.approval_bridge import approval_ref
+from jarvis.agent_chat.cli_catalog import CatalogCache, catalog_key, discover_codex_models
 from jarvis.agent_chat.effort import ORDER, normalize_effort, snap_to_ladder
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import normalize_permission
@@ -227,21 +229,79 @@ def cursor_argv_prefix() -> list[str]:
 ACCOUNT_OVERRIDE: ContextVar[str] = ContextVar("agent_chat.account_override", default="")
 
 
+_CATALOG_IGNORE_CONFIG: ContextVar[bool] = ContextVar("cli_catalog.ignore_config", default=False)
+_CATALOG_CWD: ContextVar[Path | None] = ContextVar("cli_catalog.cwd", default=None)
+_ACCOUNT_ENVS: ContextVar[dict[str, dict[str, str]] | None] = ContextVar(
+    "cli_catalog.envs", default=None
+)
+_PREPARED_MODELS: ContextVar[dict[str, list[dict[str, Any]] | None] | None] = ContextVar(
+    "cli_catalog.models", default=None
+)
+
+
+@contextmanager
+def cli_catalog_scope(
+    *, account_id: str | None = None, cwd: Path | None = None, ignore_user_config: bool = False
+):
+    """One request/turn uses one account environment for discovery and spawning."""
+    account_token = ACCOUNT_OVERRIDE.set(account_id) if account_id is not None else None
+    config_token = _CATALOG_IGNORE_CONFIG.set(ignore_user_config)
+    cwd_token = _CATALOG_CWD.set(cwd)
+    env_token = _ACCOUNT_ENVS.set({})
+    model_token = _PREPARED_MODELS.set({})
+    try:
+        yield
+    finally:
+        _PREPARED_MODELS.reset(model_token)
+        _ACCOUNT_ENVS.reset(env_token)
+        _CATALOG_CWD.reset(cwd_token)
+        _CATALOG_IGNORE_CONFIG.reset(config_token)
+        if account_token is not None:
+            ACCOUNT_OVERRIDE.reset(account_token)
+
+
+def _catalog_cwd() -> Path:
+    return _CATALOG_CWD.get() or Path.home()
+
+
+def _remember_models(runner: str, rows: list[dict[str, Any]] | None) -> None:
+    prepared = _PREPARED_MODELS.get()
+    if prepared is not None:
+        prepared[runner] = rows
+
+
 def _account_env(platform: str) -> dict[str, str]:
     """The child environment for the subscription seat of ``platform`` — the
     turn's pinned account when its session names one, else the active one."""
+    snapshot = _ACCOUNT_ENVS.get()
+    if snapshot is not None and platform in snapshot:
+        return dict(snapshot[platform])
+    pinned_platform: str | None = None
     try:
         from jarvis import agent_accounts
 
-        pinned = agent_accounts.resolve(ACCOUNT_OVERRIDE.get() or None)
+        requested = ACCOUNT_OVERRIDE.get()
+        pinned = agent_accounts.resolve(requested or None)
+        if requested and pinned is None:
+            raise CliUnavailable(
+                "The selected subscription account no longer exists. Choose an account and retry."
+            )
+        pinned_platform = pinned.platform if pinned is not None else None
         if pinned is not None and pinned.platform == platform:
             account = pinned
         else:
             account = agent_accounts.active_account(platform)  # type: ignore[arg-type]
         env = agent_accounts.spawn_env(platform, account.id, base=os.environ)  # type: ignore[arg-type]
-    except Exception:  # noqa: BLE001 — no account layer for this platform → plain env
+    except CliUnavailable:
+        raise
+    except Exception as exc:  # noqa: BLE001 — unsupported platforms use native credentials
+        if ACCOUNT_OVERRIDE.get() and pinned_platform in (None, platform):
+            raise CliUnavailable("The selected subscription account could not be loaded.") from exc
+        log.debug("CLI account layer unavailable for %s (%s)", platform, type(exc).__name__)
         env = dict(os.environ)
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    if snapshot is not None:
+        snapshot[platform] = dict(env)
     return env
 
 
@@ -696,62 +756,23 @@ def plan_agy(
     return CliPlan(argv, env, prompt, "agy", resume)
 
 
-def read_codex_models() -> list[dict[str, Any]] | None:
-    """Codex's account catalog from ``$CODEX_HOME/models_cache.json``.
+_CODEX_CATALOG = CatalogCache()
 
-    The CLI refreshes that file itself (TTL 5 min, ETag) on every run; it is
-    the same list the Codex TUI's model picker shows for this login. Rows:
-    ``{id, label, efforts, note}`` for ``visibility: list`` models, ordered
-    by the catalog's ``priority``. ``None`` when the file is missing or
-    unreadable (the caller falls back to the bundled list).
-    """
+
+def read_codex_models(*, required_model: str = "") -> list[dict[str, Any]] | None:
+    """Ask the installed CLI, never trust another client's models_cache.json."""
     env = _account_env("codex")
-    home = Path(env.get("CODEX_HOME") or Path.home() / ".codex")
-    path = home / "models_cache.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        log.debug("agent chat: codex models cache unreadable at %s: %s", path, exc)
-        return None
-    models = data.get("models") if isinstance(data, dict) else None
-    if not isinstance(models, list):
-        return None
-    rows: list[tuple[int, dict[str, Any]]] = []
-    for m in models:
-        if not isinstance(m, dict):
-            continue
-        if str(m.get("visibility") or "list") != "list":
-            continue
-        slug = str(m.get("slug") or m.get("id") or "").strip()
-        if not slug:
-            continue
-        levels = m.get("supported_reasoning_levels") or []
-        efforts = [
-            str(lvl.get("effort") if isinstance(lvl, dict) else lvl)
-            for lvl in levels
-            if (lvl.get("effort") if isinstance(lvl, dict) else lvl)
-        ]
-        note = ""
-        upgrade = m.get("upgrade")
-        if isinstance(upgrade, dict) and upgrade.get("retirement_at"):
-            note = f"retires {str(upgrade['retirement_at'])[:10]}"
-        try:
-            prio = int(m.get("priority") or 0)
-        except (TypeError, ValueError):
-            prio = 0
-        rows.append(
-            (
-                prio,
-                {
-                    "id": slug,
-                    "label": str(m.get("display_name") or slug),
-                    "efforts": efforts,
-                    "note": note,
-                },
-            )
-        )
-    rows.sort(key=lambda r: r[0])
-    return [r[1] for r in rows] or None
+    argv = codex_argv_prefix()
+    if _CATALOG_IGNORE_CONFIG.get():
+        argv = [*argv, "--ignore-user-config", "--ignore-rules"]
+    cwd = _catalog_cwd()
+    rows = _CODEX_CATALOG.read(
+        catalog_key(argv, env, cwd),
+        lambda: discover_codex_models(argv, env, cwd),
+        required_model=required_model,
+    )
+    _remember_models("codex-cli", rows)
+    return rows
 
 
 def read_grok_models() -> list[dict[str, Any]] | None:
@@ -819,11 +840,15 @@ _AGY_CATALOG_TTL_S: Final[float] = 600.0
 
 
 def _agy_catalog_cached() -> list[dict[str, Any]] | None:
-    rows = _AGY_CATALOG.get("rows")
+    prepared = _PREPARED_MODELS.get()
+    if prepared is not None and "agy-cli" in prepared:
+        return prepared["agy-cli"]
+    key = catalog_key(agy_argv_prefix(), _account_env("antigravity"), _catalog_cwd())
+    rows = _AGY_CATALOG.get("rows") if _AGY_CATALOG.get("key") == key else None
     return rows if isinstance(rows, list) else None
 
 
-def read_agy_models(timeout_s: float = 8.0) -> list[dict[str, Any]]:
+def read_agy_models(timeout_s: float = 8.0, *, required_model: str = "") -> list[dict[str, Any]]:
     """``agy --output-format json models`` -> the folded catalog (cached 10 min).
 
     Blocking (a ~2 s subprocess) — call it off the event loop. Any failure
@@ -832,19 +857,26 @@ def read_agy_models(timeout_s: float = 8.0) -> list[dict[str, Any]]:
     """
     import subprocess
 
+    env = _account_env("antigravity")
+    argv = agy_argv_prefix()
+    cwd = _catalog_cwd()
+    key = catalog_key(argv, env, cwd)
     now = time.monotonic()
-    if _AGY_CATALOG["rows"] is not None and now - _AGY_CATALOG["at"] < _AGY_CATALOG_TTL_S:
-        return list(_AGY_CATALOG["rows"])
+    cached = _agy_catalog_cached()
+    model_known = not required_model or any(row["id"] == required_model for row in cached or [])
+    if cached is not None and model_known and now - _AGY_CATALOG["at"] < _AGY_CATALOG_TTL_S:
+        _remember_models("agy-cli", cached)
+        return list(cached)
     raw: list[dict[str, Any]] | None = None
     try:
-        argv = [*agy_argv_prefix(), "--output-format", "json", "models"]
-        env = dict(os.environ)
+        argv = [*argv, "--output-format", "json", "models"]
         env.setdefault("AGY_CLI_HIDE_LOGO", "1")
         proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
             argv,
             capture_output=True,
             timeout=timeout_s,
             env=env,
+            cwd=str(cwd),
             creationflags=NO_WINDOW_CREATIONFLAGS,
         )
         text = proc.stdout.decode("utf-8", errors="replace")
@@ -861,8 +893,8 @@ def read_agy_models(timeout_s: float = 8.0) -> list[dict[str, Any]]:
     except (CliUnavailable, OSError, ValueError, subprocess.SubprocessError) as exc:
         log.debug("agent chat: agy models unavailable: %s", exc)
     rows = agy_model_catalog(raw)
-    _AGY_CATALOG["rows"] = rows
-    _AGY_CATALOG["at"] = now
+    _AGY_CATALOG.update(rows=rows, at=now, key=key)
+    _remember_models("agy-cli", rows)
     return list(rows)
 
 
@@ -923,8 +955,14 @@ def plan_codex(
         # The account's catalog says which levels THIS model takes (5.5 stops
         # at xhigh, terra goes to ultra); an unsupported level is snapped
         # rather than sent for the server to reject.
-        for row in read_codex_models() or []:
-            if row.get("id") == model and row.get("efforts"):
+        prepared = _PREPARED_MODELS.get()
+        models = (
+            prepared.get("codex-cli")
+            if prepared is not None and "codex-cli" in prepared
+            else read_codex_models()
+        )
+        for row in models or []:
+            if row.get("id") == model and "efforts" in row:
                 effort = snap_to_ladder(effort, list(row["efforts"]))
                 break
     if effort:
@@ -955,21 +993,26 @@ def read_opencode_models(timeout_s: float = 20.0) -> list[dict[str, Any]]:
     """
     import subprocess
 
+    env = _registry_env("opencode", _account_env("opencode"))
+    prefix = opencode_argv_prefix()
+    cwd = _catalog_cwd()
+    key = catalog_key(prefix, env, cwd)
     now = time.monotonic()
     if (
-        _OPENCODE_CATALOG["rows"] is not None
+        _OPENCODE_CATALOG.get("key") == key
+        and _OPENCODE_CATALOG["rows"] is not None
         and now - _OPENCODE_CATALOG["at"] < _OPENCODE_CATALOG_TTL_S
     ):
         return list(_OPENCODE_CATALOG["rows"])
     rows: list[dict[str, Any]] = []
     try:
-        argv = [*opencode_argv_prefix(), "models"]
-        env = _registry_env("opencode", dict(os.environ))
+        argv = [*prefix, "models"]
         proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
             argv,
             capture_output=True,
             timeout=timeout_s,
             env=env,
+            cwd=str(cwd),
             creationflags=NO_WINDOW_CREATIONFLAGS,
         )
         for line in proc.stdout.decode("utf-8", errors="replace").splitlines():
@@ -980,8 +1023,7 @@ def read_opencode_models(timeout_s: float = 20.0) -> list[dict[str, Any]]:
             rows.append({"id": mid, "label": model, "note": provider})
     except (CliUnavailable, OSError, ValueError, subprocess.SubprocessError) as exc:
         log.debug("agent chat: opencode models unavailable: %s", exc)
-    _OPENCODE_CATALOG["rows"] = rows
-    _OPENCODE_CATALOG["at"] = now
+    _OPENCODE_CATALOG.update(rows=rows, at=now, key=key)
     return list(rows)
 
 
@@ -2687,46 +2729,65 @@ async def _run_cli_once(
     vendor_session: str | None = None
 
     try:
-        if runner == "agy-cli":
-            # A chat can start before the model picker has loaded its catalog.
-            # Resolve the installed CLI's effort ladder off the event loop so
-            # newly available models keep the required model/effort pairing.
-            await asyncio.to_thread(read_agy_models)
-        plan: CliPlan = planner(
-            prompt=user_text,
+        with cli_catalog_scope(
             cwd=cwd,
-            model=session.model,
-            effort=effort,
-            permission_mode=session.permission_mode,
-            resume=resume,
-            identity=identity,
-        )
-        if getattr(handle, "tools_disabled", False):
-            from .native_control import disable_cli_tools
-
-            disable_cli_tools(plan, runner)
-        if getattr(handle, "gateway_only", False):
-            if runner == "claude-cli":
-                plan.argv += ["--tools", "", "--strict-mcp-config"]
-            elif runner == "codex-cli":
-                plan.argv += ["--ignore-user-config", "--ignore-rules"]
-                for feature in (
-                    "shell_tool",
-                    "apps",
-                    "hooks",
-                    "multi_agent",
-                    "browser_use",
-                    "web_search_request",
-                    "goals",
-                    "memories",
-                    "plugins",
-                    "computer_use",
-                    "image_generation",
-                    "multi_agent_v2",
+            ignore_user_config=identity is not None or bool(getattr(handle, "gateway_only", False)),
+        ):
+            if runner == "codex-cli":
+                models = await asyncio.to_thread(read_codex_models, required_model=session.model)
+                if session.model and (
+                    models is None or not any(row["id"] == session.model for row in models)
                 ):
-                    plan.argv += ["--disable", feature]
-            else:
-                raise CliUnavailable("The selected runner cannot isolate task tools.")
+                    raise CliUnavailable(
+                        "The selected model could not be confirmed for this Codex "
+                        "installation and account. "
+                        "Refresh the model list, check the selected account, or update Codex "
+                        "in the CLIs page, then retry."
+                    )
+                for row in models or []:
+                    if row["id"] == session.model:
+                        effort = snap_to_ladder(session.effort, list(row.get("efforts", [])))
+                        break
+            if runner == "agy-cli":
+                # A chat can start before the model picker has loaded its catalog.
+                # Resolve the installed CLI's effort ladder off the event loop so
+                # newly available models keep the required model/effort pairing.
+                await asyncio.to_thread(read_agy_models, required_model=session.model)
+            plan: CliPlan = planner(
+                prompt=user_text,
+                cwd=cwd,
+                model=session.model,
+                effort=effort,
+                permission_mode=session.permission_mode,
+                resume=resume,
+                identity=identity,
+            )
+            if getattr(handle, "tools_disabled", False):
+                from .native_control import disable_cli_tools
+
+                disable_cli_tools(plan, runner)
+            if getattr(handle, "gateway_only", False):
+                if runner == "claude-cli":
+                    plan.argv += ["--tools", "", "--strict-mcp-config"]
+                elif runner == "codex-cli":
+                    plan.argv += ["--ignore-user-config", "--ignore-rules"]
+                    for feature in (
+                        "shell_tool",
+                        "apps",
+                        "hooks",
+                        "multi_agent",
+                        "browser_use",
+                        "web_search_request",
+                        "goals",
+                        "memories",
+                        "plugins",
+                        "computer_use",
+                        "image_generation",
+                        "multi_agent_v2",
+                    ):
+                        plan.argv += ["--disable", feature]
+                else:
+                    raise CliUnavailable("The selected runner cannot isolate task tools.")
     except CliUnavailable as exc:
         return _Outcome("error", str(exc), {}, None, None)
 

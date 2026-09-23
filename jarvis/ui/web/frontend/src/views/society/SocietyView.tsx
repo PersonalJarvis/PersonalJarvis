@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useMemo, useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 
 import { useSocietyShell } from "@/store/societyShell";
 import { setMapFullscreen } from "@/lib/mapFullscreen";
@@ -19,11 +20,18 @@ const JarvisAgentsBoard = lazy(() =>
   import("@/views/JarvisAgentsView").then((m) => ({ default: m.JarvisAgentsView })),
 );
 
+const MarsStationPanel = lazy(() => import("@/components/society/mars/MarsStationPanel").then((m) => ({ default: m.MarsStationPanel })));
+
+function isProtectedMarsInteraction(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(target.closest("[data-mars-ui], [data-mars-mode=\'player\'], [data-mars-mode=\'follow\']"));
+}
+
 export function SocietyView() {
   useModelMenuData();
   const t = useT();
   useLocaleChunk("society");
   const [mode, setMode] = useState<"agents" | "world">("agents");
+  const [marsStationOpen, setMarsStationOpen] = useState(false);
   const roster = useSocietyRoster();
   const agents = useMemo(() => roster.data?.agents ?? [], [roster.data]);
   const sample = roster.data?.sample ?? true;
@@ -56,7 +64,7 @@ export function SocietyView() {
   const switchMode = useCallback((next: "agents" | "world") => {
     setMode(next);
     setFullscreenError(false);
-    void setMapFullscreen(next === "world").catch(() => setFullscreenError(true));
+    if (inDesktopShell()) void setMapFullscreen(next === "world").catch(() => setFullscreenError(true));
   }, []);
 
   useEffect(() => {
@@ -72,10 +80,10 @@ export function SocietyView() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && mode === "world" && !openPlace && !creating) switchMode("agents");
+      if (event.key === "Escape" && !event.defaultPrevented && !isProtectedMarsInteraction(event.target) && mode === "world" && !openPlace && !creating) switchMode("agents");
     };
     const onFullscreen = () => {
-      if (!document.fullscreenElement && !inDesktopShell()) setMode("agents");
+      if (!document.fullscreenElement && !inDesktopShell() && !isProtectedMarsInteraction(document.activeElement)) setMode("agents");
     };
     document.addEventListener("keydown", onKey);
     document.addEventListener("fullscreenchange", onFullscreen);
@@ -111,15 +119,18 @@ export function SocietyView() {
   );
 
   return (
-    <div className={mode === "world" ? "fixed inset-x-0 bottom-0 top-8 z-30 flex flex-col bg-background" : "flex h-full min-h-0 w-full flex-col"} data-testid="society-view">
+    <div className={mode === "world" ? "fixed inset-x-0 bottom-0 top-8 z-30 flex flex-col bg-background" : "relative flex h-full min-h-0 w-full flex-col"} data-testid="society-view">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Map mode takes the native window fullscreen, so the switch cannot
             live inside the map HUD: it would shrink into the corner and strand
             the user on the island. It rides in the window caption in BOTH
             modes — one switch, always centered, always a way back. */}
-        <div className="pointer-events-none fixed inset-x-0 top-0 z-[130] flex h-8 items-center justify-center" data-testid="mode-switch">
-          <div className="pointer-events-auto">{modeSwitch}</div>
-        </div>
+        {createPortal(
+          <div className="pointer-events-none fixed inset-x-0 top-0 z-[140] flex h-8 items-center justify-center" data-testid="mode-switch">
+            <div className="pointer-events-auto flex items-center gap-2">{modeSwitch}{mode === "agents" && <button type="button" onClick={() => setMarsStationOpen(true)} className="rounded border border-border bg-background px-2 py-1 text-xs text-foreground">{t("society.mars.station_title")}</button>}</div>
+          </div>,
+          document.body,
+        )}
         {fullscreenError && <p role="alert" className="bg-card px-4 py-2 text-sm text-destructive">{t("society.world.fullscreen_failed")}</p>}
         {mode === "world" ? (
         <div className="relative flex min-h-0 flex-1">
@@ -153,6 +164,7 @@ export function SocietyView() {
           setCreating(true);
         }}
       />
+      {mode === "agents" && marsStationOpen && <div className="absolute right-4 top-14 z-40 max-h-[calc(100%-4rem)] w-[min(26rem,calc(100%-2rem))] overflow-auto" data-mars-ui><Suspense fallback={null}><MarsStationPanel onClose={() => setMarsStationOpen(false)} onOpenAgent={(id) => { selectAgent(id); setMarsStationOpen(false); }} /></Suspense></div>}
       <CreateAgentDialog open={creating} onClose={() => setCreating(false)} onCreated={onCreated} />
     </div>
   );

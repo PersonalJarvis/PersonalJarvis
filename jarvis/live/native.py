@@ -109,6 +109,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             self._resampler = StreamingPcm16Resampler(int(message.get("sample_rate", 48000)), rate)
             register(self)
             self._pump_task = asyncio.create_task(self._pump(), name="native-live-events")
+            await self._take_startup_input(message)
             await self._send_json(
                 {
                     "type": "audio_ready",
@@ -216,9 +217,16 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                 self._tools.user_text = event.text or ""
                 if event.is_final:
                     self._tools.revision += 1
+                    if self._bus is not None:
+                        from jarvis.core.events import BrainTurnStarted
+
+                        await self._bus.publish(BrainTurnStarted(
+                            source_layer="live.native", trace_id=self._indicator_trace_id,
+                            provider=self.active_provider, model=self._active_model,
+                        ))
                     if not self._closing and not self._recovering:
                         self._resume_needs_input = False
-                        self._tools.accepting = True
+                        self._tools.accept_new_input()
                         self._reconnect_attempts = 0
                     from jarvis.core.turn_language import resolve_output_language
 
@@ -254,15 +262,27 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                     "is_final": event.is_final,
                 }
             )
+            stamp = time.monotonic_ns() // 1_000_000
+            caption = self._transcript.feed(
+                session_id=self.session_id, trace_id=self._indicator_trace_id,
+                event_id=str(uuid4()), role=role, text=event.text or "",
+                start_ms=stamp, end_ms=stamp, snapshot=role == "user",
+            )
+            if self._bus is not None:
+                await self._bus.publish(caption)
+            if role == "user" and event.is_final:
+                self._transcript.finish("user")
         elif event.type == "tool_call":
+            await self._note_thinking()
             task = asyncio.create_task(self._call(event, self._tools.revision))
             self._jobs.add(task)
             task.add_done_callback(self._jobs.discard)
         elif event.type in {"interrupted", "speech_started"}:
             self._speaking = False
             self._thinking = False
-            await self._send_json({"type": "tts_cancel"})
+            await self._emit_indicator({"type": "tts_cancel"})
         elif event.type == "turn_complete":
+            self._transcript.finish("assistant")
             await self._note_turn_end()
         elif event.type == "usage":
             usage = event.usage or {}
@@ -338,7 +358,8 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                 self._tools.revision += 1
                 if not self._recovering:
                     self._resume_needs_input = False
-                    self._tools.accepting = True
+                    self._tools.accept_new_input()
+                    self._reconnect_attempts = 0
             await self._connection.send_text(str(message.get("text", "")))
         else:
             await super().handle_control(message)
@@ -353,7 +374,9 @@ class NativeLiveVoiceSession(LiveVoiceSession):
         if self._ended:
             return
         self._ended = True
+        self._clear_media_levels()
         self._closing = True
+        await self._publish_phase("idle")
         self._hangup_reason = reason
         unregister(self.session_id)
         if self._tools is not None:

@@ -6,8 +6,6 @@ import {
   MoreHorizontal,
   Store,
   UserCircle2,
-  PanelLeftClose,
-  PanelLeftOpen,
   Plus,
 } from "lucide-react";
 import {
@@ -112,8 +110,6 @@ export interface SidebarProps {
    * the window is for. Left optional so the sidebar still renders standalone.
    */
   collapsed?: boolean;
-  /** Toggle `collapsed`. Absent = the toggle button is not offered. */
-  onToggleCollapsed?: () => void;
 }
 
 /** Width the sidebar was designed at, and the one a double-click restores.
@@ -168,7 +164,6 @@ export const SIDEBAR_RAIL_AT_WIDTH = 168;
 export function Sidebar({
   width = SIDEBAR_DEFAULT_WIDTH,
   collapsed = false,
-  onToggleCollapsed,
 }: SidebarProps = {}) {
   const t = useT();
   const active = useEventStore((s) => s.activeSection);
@@ -270,7 +265,7 @@ export function Sidebar({
   // every unconfigured section would light up and the bar would never be calm.
   const { health: sectionHealth } = useSectionHealth();
   const apikeysHasError = useMemo(
-    () => Object.values(sectionHealth).some((h) => h?.status === "error"),
+    () => Object.entries(sectionHealth).some(([section, health]) => section !== "computer-use" && health?.status === "error"),
     [sectionHealth],
   );
   // The footer card IS the button that opens API Keys, so its dot carries that
@@ -380,7 +375,7 @@ export function Sidebar({
       style={{ width: railed ? SIDEBAR_RAIL_WIDTH : width }}
       data-testid="sidebar"
       data-railed={railed ? "true" : "false"}
-      className="jarvis-nav-surface relative isolate z-20 flex h-full shrink-0 flex-col"
+      className="jarvis-nav-surface relative isolate z-20 flex h-full shrink-0 flex-col pt-8"
     >
       {/* One 8px gutter down the whole column — header, navigation and footer
           share it, so the rows, the "+ New" button and the brain card all line
@@ -465,32 +460,6 @@ export function Sidebar({
                 aria-hidden
               />
             ))}
-          {onToggleCollapsed && (
-            <button
-              type="button"
-              data-testid="sidebar-collapse-toggle"
-              onClick={onToggleCollapsed}
-              aria-expanded={!railed}
-              title={railed ? t("sidebar.expand") : t("sidebar.collapse")}
-              aria-label={railed ? t("sidebar.expand") : t("sidebar.collapse")}
-              className={cn(
-                "flex shrink-0 items-center justify-center rounded-md text-muted-foreground",
-                // Hover goes UP the surface ladder. It used to be
-                // `hover:bg-background/20`, which composites the PAGE colour
-                // over the rail — on near-black that is darker than rest, so
-                // the control dimmed under the pointer.
-                "transition-colors hover:bg-secondary hover:text-foreground",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                railed ? "h-7 w-7" : "-mr-1 h-7 w-7",
-              )}
-            >
-              {railed ? (
-                <PanelLeftOpen className="h-4 w-4" aria-hidden />
-              ) : (
-                <PanelLeftClose className="h-4 w-4" aria-hidden />
-              )}
-            </button>
-          )}
         </div>
 
       </div>

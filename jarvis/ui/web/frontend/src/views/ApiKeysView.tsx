@@ -1,8 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, Brain, KeyRound, Mic, Phone, Radio, SlidersHorizontal, Terminal, Volume2, Wand2 } from "lucide-react";
+import {
+  Bot,
+  Brain,
+  KeyRound,
+  Mic,
+  Phone,
+  Radio,
+  SlidersHorizontal,
+  Volume2,
+  Wand2,
+} from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { JarvisAgentSection } from "@/components/JarvisAgentSection";
-import { LiveProfile } from "@/components/providers/LiveProfile";
+import { VoiceProviderSettings } from "@/components/providers/VoiceProviderSettings";
 import { TelephonyPanel } from "@/views/TelephonyView";
 import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
 import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
@@ -13,19 +23,14 @@ import { TeamProxyGroup } from "@/views/settings/TeamProxyGroup";
 import {
   CategoryHero,
   EngineModeSwitch,
-  GuidancePanel,
   LocalModeSwitch,
   makeProviderCategories,
   ProviderCategory,
   useTierHealth,
-  VoiceEngineContext,
-  type CategoryMeta,
   type LucideIcon,
-  type RecommendationTab,
   type VoiceEngineMode,
 } from "@/components/providers/ProviderTierSection";
 import {
-  type ProviderDescriptor,
   type ProviderTier,
   type SectionHealth,
   useProviders,
@@ -35,24 +40,13 @@ import { useLocalMode } from "@/lib/localMode";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
-// The view is organised around exactly five primary categories — Brain, Voice
-// Output (TTS), Voice Input (STT), Realtime and Subagents — surfaced as a
-// segmented tab bar. The per-install Control Key gets its OWN de-emphasized
-// tab ("jarvis-key", labelled "<Name> Key" after the configured wake word) so
-// a user hunting for the key the lock screen asks about finds a section named
-// like their assistant. Everything else (team key proxy, telephony, Wiki)
-// lives in the "Advanced" tab so it never competes with the core categories.
-type CategoryKey = ProviderTier | "subagents" | "jarvis-key" | "advanced";
+// Voice owns its thinking backend. Text and background work use the Agents selection.
+type CategoryKey =
+  | Exclude<ProviderTier, "computer-use">
+  | "subagents"
+  | "jarvis-key"
+  | "advanced";
 
-// Realtime replaces STT+Brain+TTS with one full-duplex model, so those three
-// tiers don't apply in Realtime mode — that's the whole reason for the split.
-// "computer-use" is GLOBAL (not mode-specific — Computer-Use is one engine for
-// the whole app), so it appears right after the main chat-model tab in BOTH
-// tab sets.
-// "dictation" sits right behind "stt" because that is the order the text
-// travels in: speech becomes a transcript, then the optional wording pass
-// tidies it. It rides with the Pipeline tab set for the same reason "stt"
-// does — it only ever works on a transcript that tier produced.
 const PIPELINE_TABS: CategoryKey[] = [
   "brain",
   "tts",
@@ -71,7 +65,8 @@ const REALTIME_TABS: CategoryKey[] = [
 
 export function ApiKeysView() {
   const t = useT();
-  const { providers, loading, error, refetch, setActiveOptimistic } = useProviders();
+  const { providers, loading, error, refetch, setActiveOptimistic } =
+    useProviders();
   // Per-tab health (amber = the active provider isn't set up, red = it's set up
   // but failing a live check). Best-effort and off the render-blocking path.
   const health = useTierHealth(providers);
@@ -84,18 +79,6 @@ export function ApiKeysView() {
   const {
     mode: liveMode,
     realtimeAvailable,
-    statusKnown,
-    connecting,
-    requiresWebRtcOffer,
-    transportOfferReady,
-    transportOfferDetail,
-    transportIssue,
-    sessionActive,
-    activeSessionMode,
-    activeSessionProvider,
-    activeSessionModel,
-    transitioning,
-    lastStartError,
     setMode: setVoiceMode,
     isLoading: liveModeLoading,
   } = useVoiceMode();
@@ -123,14 +106,6 @@ export function ApiKeysView() {
 
   const modeTabs = engineMode === "realtime" ? REALTIME_TABS : PIPELINE_TABS;
 
-  // A recommendation row navigates to the tab it talks about. This is VIEW
-  // navigation only: opening the Realtime tab set here never persists
-  // `[voice].mode` (only the segmented switch does that, key-gated).
-  function openRecommendedTab(tab: RecommendationTab) {
-    if (tab === "realtime") setEngineMode("realtime");
-    setActive(tab);
-  }
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ViewHeader
@@ -151,84 +126,57 @@ export function ApiKeysView() {
         }
       />
 
-      <CategoryTabs active={active} onSelect={setActive} health={health} tabs={modeTabs} />
+      <CategoryTabs
+        active={active}
+        onSelect={setActive}
+        health={health}
+        tabs={modeTabs}
+      />
 
       <div
         data-testid="api-keys-provider-scroll"
         className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-6 py-3"
       >
-        <VoiceEngineContext
-          mode={engineMode}
-          realtimeAvailable={realtimeAvailable}
-          statusKnown={statusKnown}
-          connecting={connecting}
-          requiresWebRtcOffer={requiresWebRtcOffer}
-          transportOfferReady={transportOfferReady}
-          transportOfferDetail={transportOfferDetail}
-          transportIssue={transportIssue}
-          sessionActive={sessionActive}
-          activeSessionMode={activeSessionMode}
-          activeSessionProvider={activeSessionProvider}
-          activeSessionModel={activeSessionModel}
-          transitioning={transitioning}
-          lastStartError={lastStartError}
-          liveMode={liveMode}
-          onOpenRecommendedTab={openRecommendedTab}
-        />
         {/* Readability: the provider cards used to stretch across the full
             window width (2000px+ on wide screens). One centered measure keeps
             every card scannable; the key prop re-runs the rise animation on
             each tab/mode change (respects prefers-reduced-motion). */}
-        <div key={`${engineMode}-${active}`} className="profile-rise mx-auto w-full max-w-4xl">
-        {(active === "brain" ||
-          active === "tts" ||
-          active === "stt" ||
-          active === "dictation") && (
-          <ProviderCategory
-            meta={categories[active]}
-            tier={active}
-            providers={providers}
-            loading={loading}
-            error={error}
-            onChanged={refetch}
-            onActivateOptimistic={setActiveOptimistic}
-            health={health[active]}
-            localMode={localMode}
-            onDisableLocalMode={() => setLocalMode(false)}
-          />
-        )}
-        {active === "realtime" && (
-          <>
-          {!localMode && <LiveProfile />}
-          <RealtimeCategory
-            meta={categories.realtime}
-            providers={providers}
-            loading={loading}
-            error={error}
-            onChanged={refetch}
-            onActivateOptimistic={setActiveOptimistic}
-            health={health.realtime}
-            localMode={localMode}
-            onDisableLocalMode={() => setLocalMode(false)}
-          />
-          </>
-        )}
-        {active === "computer-use" && (
-          <ComputerUseCategory
-            meta={categories["computer-use"]}
-            providers={providers}
-            loading={loading}
-            error={error}
-            onChanged={refetch}
-            onActivateOptimistic={setActiveOptimistic}
-            health={health["computer-use"]}
-            localMode={localMode}
-            onDisableLocalMode={() => setLocalMode(false)}
-          />
-        )}
-        {active === "subagents" && <SubagentCategory />}
-        {active === "jarvis-key" && <JarvisKeyCategory />}
-        {active === "advanced" && <AdvancedCategory />}
+        <div
+          key={`${engineMode}-${active}`}
+          className="profile-rise w-full max-w-5xl"
+        >
+          {(active === "brain" ||
+            active === "tts" ||
+            active === "stt" ||
+            active === "dictation") && (
+            <ProviderCategory
+              meta={categories[active]}
+              tier={active}
+              providers={providers}
+              loading={loading}
+              error={error}
+              onChanged={refetch}
+              onActivateOptimistic={setActiveOptimistic}
+              health={health[active]}
+              localMode={localMode}
+              onDisableLocalMode={() => setLocalMode(false)}
+            />
+          )}
+          {active === "realtime" && (
+            <VoiceProviderSettings
+              providers={providers}
+              loading={loading}
+              error={error}
+              onChanged={refetch}
+              onActivateOptimistic={setActiveOptimistic}
+              health={health.realtime}
+              localMode={localMode}
+              onDisableLocalMode={() => setLocalMode(false)}
+            />
+          )}
+          {active === "subagents" && <SubagentCategory />}
+          {active === "jarvis-key" && <JarvisKeyCategory />}
+          {active === "advanced" && <AdvancedCategory />}
         </div>
       </div>
     </div>
@@ -262,7 +210,6 @@ function CategoryTabs({
     tts: { label: t("apikeys_view.tab_tts"), icon: Volume2 },
     stt: { label: t("apikeys_view.tab_stt"), icon: Mic },
     realtime: { label: t("apikeys_view.tab_realtime"), icon: Radio },
-    "computer-use": { label: t("apikeys_view.tab_computer_use"), icon: Terminal },
     dictation: { label: t("apikeys_view.tab_dictation"), icon: Wand2 },
     subagents: { label: t("apikeys_view.tab_subagents"), icon: Bot },
   };
@@ -279,7 +226,10 @@ function CategoryTabs({
       {/* Underline tabs on the header's own rule — no pill group inside a
           frame inside a bar. The core tabs and the two secondary ones share
           one baseline; a hairline separates them. */}
-      <div role="tablist" className="flex min-w-max flex-nowrap items-center gap-1">
+      <div
+        role="tablist"
+        className="flex min-w-max flex-nowrap items-center gap-1"
+      >
         {coreTabs.map((key) => (
           <TabButton
             key={key}
@@ -393,123 +343,6 @@ function TabButton({
       {label}
       {indicator && <span className="sr-only">{` (${statusLabel})`}</span>}
     </button>
-  );
-}
-
-/**
- * The Realtime category (Feature B): the two realtime provider cards, via the
- * SAME `ProviderCategory` used for brain/tts/stt (unchanged). Realtime
- * speech-to-speech models can't see the screen, so Computer-Use during a
- * realtime turn runs on the dedicated Computer-Use provider (or the active
- * Brain provider, until one is picked) — now its own "Computer-Use" tab
- * (see `ComputerUseCategory` below) rather than a panel embedded here. This
- * wrapper mirrors `SubagentCategory` below: it owns nothing itself, it just
- * composes the existing tier section.
- */
-function RealtimeCategory({
-  meta,
-  providers,
-  loading,
-  error,
-  onChanged,
-  onActivateOptimistic,
-  health,
-  localMode = false,
-  onDisableLocalMode,
-}: {
-  meta: CategoryMeta;
-  providers: ProviderDescriptor[];
-  loading: boolean;
-  error: string | null;
-  onChanged: () => void;
-  onActivateOptimistic: (tier: ProviderTier, id: string) => void;
-  health?: SectionHealth;
-  localMode?: boolean;
-  onDisableLocalMode?: () => void;
-}) {
-  const t = useT();
-  return (
-    <ProviderCategory
-      meta={meta}
-      tier="realtime"
-      providers={providers}
-      loading={loading}
-      error={error}
-      onChanged={onChanged}
-      onActivateOptimistic={onActivateOptimistic}
-      health={health}
-      localMode={localMode}
-      onDisableLocalMode={onDisableLocalMode}
-      intro={
-        <GuidancePanel
-          title={t("apikeys_view.guide_realtime_title")}
-          body={t("apikeys_view.guide_realtime_body")}
-        />
-      }
-    />
-  );
-}
-
-/**
- * The Computer-Use tab: an OVERLAY over the brain-tier provider cards
- * (Claude/OpenAI/OpenRouter/Gemini), NOT a new provider tier. Reuses the SAME
- * `ProviderCategory`/`TierSection`/`ProviderCard` machinery as Brain/TTS/STT
- * by mapping every brain-switchable provider to a synthetic `"computer-use"`
- * tier descriptor whose `active` mirrors `computer_use_active` — a SEPARATE
- * selection from the Brain tab's `active`/`brain.primary`. The synthetic
- * `tier` value forks the shared machinery cleanly: the radio group's
- * `name="active-computer-use"` never collides with `name="active-brain"`,
- * and `ProviderCard.activate()` routes to `switchComputerUseProvider` instead
- * of `switchBrainProvider`. The CU provider is GLOBAL (one engine for the
- * whole app), so this tab renders identically in Pipeline and Realtime mode —
- * it replaces the old `RealtimeComputerUsePanel`, which only displayed the
- * delegation without letting the user pick a provider.
- */
-function ComputerUseCategory({
-  meta,
-  providers,
-  loading,
-  error,
-  onChanged,
-  onActivateOptimistic,
-  health,
-  localMode = false,
-  onDisableLocalMode,
-}: {
-  meta: CategoryMeta;
-  providers: ProviderDescriptor[];
-  loading: boolean;
-  error: string | null;
-  onChanged: () => void;
-  onActivateOptimistic: (tier: ProviderTier, id: string) => void;
-  health?: SectionHealth;
-  localMode?: boolean;
-  onDisableLocalMode?: () => void;
-}) {
-  const t = useT();
-  const cuProviders: ProviderDescriptor[] = providers
-    .filter((p) => p.tier === "brain" && p.brain_switchable !== false)
-    .map((p) => ({ ...p, tier: "computer-use", active: !!p.computer_use_active }));
-
-  return (
-    <ProviderCategory
-      meta={meta}
-      tier="computer-use"
-      providers={cuProviders}
-      loading={loading}
-      error={error}
-      onChanged={onChanged}
-      onActivateOptimistic={onActivateOptimistic}
-      health={health}
-      localMode={localMode}
-      onDisableLocalMode={onDisableLocalMode}
-      intro={
-        <GuidancePanel
-          title={t("apikeys_view.guide_computer_use_title")}
-          body={t("apikeys_view.guide_computer_use_body")}
-        />
-      }
-    />
   );
 }
 

@@ -44,7 +44,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
 
   const chatCatalog = useAgentChat((state) => state.surface === "society" ? state.catalog : null);
   const chatConnections = useAgentChat((state) => state.connections);
-  const { options, providers, live, loading, refreshing, failed, refresh: refreshData } = useModelMenuData(chatCatalog, chatConnections);
+  const { options, providers, live, loading, refreshing, failed, refresh: refreshData } = useModelMenuData(chatCatalog, chatConnections, { [agent.provider]: agent.accountId ?? "", ...accounts });
   const defaultModelLabel = t("agent_chat.model_default");
   const seats = useMemo(() => modelSeats(options, providers ?? [], live, defaultModelLabel), [options, providers, live, defaultModelLabel]);
   const currentAccount = (seat: BrainSeat) => accounts[seat.provider.id] ?? (agent.provider === seat.provider.id ? agent.accountId ?? "" : "");

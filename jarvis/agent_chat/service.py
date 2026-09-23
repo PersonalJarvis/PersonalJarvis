@@ -106,6 +106,49 @@ def resolve_runner(provider: str, *, surface: str = "agent") -> str:
 _CLI_SEATS_RETIRED: Final[int] = 1
 
 
+def stop_cli_at_cwd(cwd: str) -> int:
+    """Stop a leftover chat CLI whose working folder is exactly ``cwd``.
+
+    Used when the stop button finds no in-memory turn. The match is one
+    command-line argument, not a substring of the prompt, so a mention of
+    the folder inside the task text does not count.
+    """
+    root = Path(cwd).expanduser()
+    try:
+        root = root.resolve()
+    except OSError:
+        return 0
+    if not root.is_dir():
+        return 0
+    needles = {str(root).rstrip("\\/"), str(root).replace("\\", "/").rstrip("/")}
+    if all(len(item) < 16 for item in needles):
+        return 0
+    try:
+        import psutil
+    except ImportError:
+        log.warning("agent chat: cannot stop a leftover CLI without psutil")
+        return 0
+    import os
+
+    me = {os.getpid(), os.getppid()}
+    stopped = 0
+    for proc in psutil.process_iter(["pid", "cmdline"]):
+        pid = proc.info.get("pid")
+        if pid in me:
+            continue
+        parts = [str(part).rstrip("\\/") for part in (proc.info.get("cmdline") or [])]
+        if not any(needle in parts for needle in needles):
+            continue
+        try:
+            for child in proc.children(recursive=True):
+                child.terminate()
+            proc.terminate()
+            stopped += 1
+        except Exception:
+            log.warning("agent chat: could not stop leftover CLI %s", pid, exc_info=True)
+    return stopped
+
+
 class _Running:
     __slots__ = ("task", "cancel", "turn_id")
 
@@ -268,6 +311,52 @@ class AgentChatService:
     def is_running(self, session_id: str) -> bool:
         run = self._running.get(session_id)
         return bool(run and run.task and not run.task.done())
+
+    async def seal_stopped_turn(self, session_id: str) -> bool:
+        """Close a turn the stop button can still see after its runner is gone.
+
+        A restart keeps the transcript and drops the in-memory task. The CLI
+        can still be working. Stop has to end that turn, or the button does
+        nothing and the chat stays on Working.
+        """
+        if self.is_running(session_id):
+            return False
+        events = self.store.list_events(session_id)
+        turn_id = ""
+        started_ms = 0
+        for event in reversed(events):
+            kind = event["kind"]
+            payload = event.get("payload") or {}
+            if kind == "turn_finished":
+                return False
+            if kind == "turn_started":
+                turn_id = str(payload.get("turn_id") or "")
+                started_ms = int(event.get("ts_ms") or 0)
+                break
+        if not turn_id:
+            return False
+        now_ms = int(time.time() * 1000)
+        await self._emit(
+            session_id,
+            make_event(
+                "turn_finished",
+                {
+                    "turn_id": turn_id,
+                    "status": "cancelled",
+                    "duration_ms": max(0, now_ms - started_ms) if started_ms else 0,
+                    "usage": {},
+                    "error": None,
+                },
+            ),
+        )
+        session = self.store.get_session(session_id)
+        if session is not None and session.cwd:
+            await asyncio.to_thread(stop_cli_at_cwd, session.cwd)
+        if session is not None and session.surface in ("jarvis", "society"):
+            from jarvis.society.browser.tool import stop_chat_browser
+
+            await stop_chat_browser(session_id)
+        return True
 
     def pending_approvals(self, session_id: str) -> list[str]:
         return [aid for aid, sid in self._approval_session.items() if sid == session_id]
@@ -794,10 +883,13 @@ class AgentChatService:
         )
         return turn_id
 
-    def signal_cancel(self, session_id: str) -> bool:
+    def signal_cancel(self, session_id: str, *, expected_turn_id: str | None = None) -> bool:
         """Stop planning synchronously before releasing an in-flight tool reply."""
         run = self._running.get(session_id)
         if run is None or run.task is None or run.task.done():
+            return False
+        # A resumed station must never cancel a newer unrelated conversation turn.
+        if expected_turn_id is not None and run.turn_id != expected_turn_id:
             return False
         run.cancel.set()
         for aid in self.pending_approvals(session_id):
@@ -806,9 +898,9 @@ class AgentChatService:
                 fut.set_result("cancel")
         return True
 
-    async def cancel(self, session_id: str) -> bool:
+    async def cancel(self, session_id: str, *, expected_turn_id: str | None = None) -> bool:
         run = self._running.get(session_id)
-        if not self.signal_cancel(session_id):
+        if not self.signal_cancel(session_id, expected_turn_id=expected_turn_id):
             return False
         assert run is not None and run.task is not None
         try:

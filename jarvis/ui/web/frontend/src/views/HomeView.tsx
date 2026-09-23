@@ -6,8 +6,7 @@ import { ChatStage } from "@/components/home/ChatStage";
 /**
  * The front page — the "chats" section.
  *
- * One header that carries the app chrome (the shell TopBar steps aside here,
- * same rule as the IDE), and under it one of two stages chosen by the
+ * One header for who is talking, and under it one of two stages chosen by the
  * `Voice | Chat` switch at the top of the sidebar (store/home.ts):
  *
  *   Voice — the Jarvis bar, centred, with the live transcript above it.

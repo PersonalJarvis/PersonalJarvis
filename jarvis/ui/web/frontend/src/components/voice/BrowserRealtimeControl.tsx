@@ -23,6 +23,7 @@ import {
 import {
   clearVoiceOutputLevel,
   setBrowserVoiceOutputOwnership,
+  setBrowserPlaybackActive,
   setVoiceOutputLevel,
 } from "@/lib/voiceOutputLevel";
 
@@ -106,6 +107,16 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
   const levelRef = useRef(0);
   const clientRef = useRef<RealtimeAudioClient | null>(null);
   const events = useEventStore((store) => store.events);
+  const solo = useEventStore((store) => store.solo);
+  const activeSection = useEventStore((store) => store.activeSection);
+  const detachedViews = useEventStore((store) => store.detachedViews);
+  const embedded = hasEmbeddedDesktopBridge();
+  // Match the desktop's media owner across main and detached windows. An
+  // external tab must never compete with the desktop for a wake request.
+  const wakeOwner = controlOnly && (embedded
+    ? (solo ? activeSection === "chats" : !detachedViews.includes("chats"))
+    : capabilities.data?.native_file_actions === false);
+  const canStartInBackground = embedded && wakeOwner;
   const handledRequest = useRef<string | null>(null);
   // A wake that lands while the tab is hidden must not be consumed: the
   // desktop is already waiting for this call, and dropping the request
@@ -155,20 +166,15 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
   }, [setVoice]);
 
   const start = useCallback(async () => {
-    if (!realtimeAvailable || state === "connecting") return;
+    if (!realtimeAvailable || clientRef.current || state === "connecting") return;
     const generation = connectionGenerationRef.current + 1;
     connectionGenerationRef.current = generation;
-    const previousClient = clientRef.current;
-    clientRef.current = null;
     setState("connecting");
     setError("");
     setEffectiveProvider("");
     levelRef.current = 0;
     clearVoiceInputLevel("browser");
     clearVoiceOutputLevel("browser");
-    await previousClient?.disconnect();
-    if (connectionGenerationRef.current !== generation) return;
-
     let client: RealtimeAudioClient;
     const isCurrent = () =>
       connectionGenerationRef.current === generation && clientRef.current === client;
@@ -176,6 +182,9 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
       {
         onTranscript: (text, isFinal, role) => {
           if (!isCurrent()) return;
+          // Live adapters project all speaker snapshots onto the shared bus.
+          // Keeping a second local caption would overwrite the conversation.
+          if (browserAudio) return;
           if (role === "user") setTranscription(text, isFinal);
           if (role === "user" && isFinal) setVoice("thinking");
         },
@@ -183,6 +192,9 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
           if (!isCurrent()) return;
           setError("");
           setVoice("speaking");
+        },
+        onPlaybackState: (active) => {
+          if (isCurrent()) setBrowserPlaybackActive(active);
         },
         onInputLevel: (value) => {
           if (!isCurrent()) return;
@@ -334,10 +346,10 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
   ]);
 
   useEffect(() => {
-    if (!browserAudio) return;
+    if (!browserAudio || !wakeOwner) return;
     const onVisible = () => {
       const pending = pendingStart.current;
-      if (document.visibilityState !== "visible" || !pending) return;
+      if ((!canStartInBackground && document.visibilityState !== "visible") || !pending || !realtimeAvailable) return;
       if (Date.now() - pending.ts > 45_000) {
         pendingStart.current = null;
         return;
@@ -348,15 +360,18 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [browserAudio, start]);
+  }, [browserAudio, wakeOwner, canStartInBackground, realtimeAvailable, start]);
 
   useEffect(() => {
-    if (!browserAudio) return;
-    const event = [...events].reverse().find(e => e.name === "BrowserVoiceRequested");
+    if (!browserAudio || !wakeOwner) return;
+    // EventStore prepends events. Reversing picked the oldest request and
+    // swallowed every subsequent start/stop until it aged out of the store.
+    const event = events.find(e => e.name === "BrowserVoiceRequested");
     if (!event || event.id === handledRequest.current || Date.now() - event.ts > 45_000) return;
     const action = (event.payload as { action?: string })?.action;
     if (action === "start") {
-      if (document.visibilityState === "visible") {
+      if (!realtimeAvailable) return;
+      if (canStartInBackground || document.visibilityState === "visible") {
         handledRequest.current = event.id;
         pendingStart.current = null;
         void start();
@@ -372,7 +387,7 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
       pendingStart.current = null;
       void stop();
     }
-  }, [events, browserAudio, start, stop]);
+  }, [events, browserAudio, wakeOwner, canStartInBackground, realtimeAvailable, start, stop]);
 
   useEffect(() => {
     // This surface owns BOTH directions while it is live: it holds the

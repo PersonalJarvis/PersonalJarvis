@@ -5,6 +5,19 @@ to an agent, appears in its Routines rail and in Automations, and executes
 through that agent's canonical chat with its current instructions and permissions.
 Creating a routine never grants additional plugin permissions.
 
+## Model seat
+
+A routine is pinned to a model seat at creation: by default the seat its owner
+runs on at that moment (provider, model, effort, subscription account). The run
+stays on that seat — it is never silently rerouted onto another provider chain
+(such as an API-key chain) when the seat has trouble. A failed seat fails the
+run honestly with a readable error instead of billing a different credential.
+
+The seat is part of the routine and can be changed afterwards: the routine
+editor has a Model section (provider, model, effort, account) with a "follow
+the agent" choice that clears the pin so the routine tracks the owner's live
+seat again. Title, prompt or schedule edits keep the pinned seat untouched.
+
 ## Configuring routines by chat
 
 Examples of supported requests:

@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from jarvis.agent_chat import permissions, runner_cli
-from jarvis.agent_chat.catalog import CODEX_FALLBACK_MODELS, provider_row
+from jarvis.agent_chat.catalog import provider_row
 from jarvis.agent_chat.runner_cli import (
     _AgyState,
     agy_model_args,
@@ -27,7 +27,7 @@ from jarvis.plugins.brain._anthropic_base import _is_reasoning_model, reasoning_
 async def test_agy_cold_chat_resolves_catalog_before_building_command(tmp_path, monkeypatch):
     seen = []
 
-    def catalog():
+    def catalog(**kwargs):
         seen.append("catalog")
         return []
 
@@ -51,6 +51,50 @@ async def test_agy_cold_chat_resolves_catalog_before_building_command(tmp_path, 
     result = await runner_cli._run_cli_once(handle, "Read a page", "agy-cli", None)
     assert result.status == "error"
     assert result.error == "stop before process launch"
+
+
+def test_agy_refreshes_a_cached_fallback_missing_the_scheduled_model(monkeypatch):
+    import subprocess
+    import time
+
+    monkeypatch.setattr(
+        runner_cli,
+        "_AGY_CATALOG",
+        {
+            "at": time.monotonic(),
+            "rows": [{"id": "old-model", "efforts": []}],
+        },
+    )
+    monkeypatch.setattr(runner_cli, "agy_argv_prefix", lambda: ["agy"])
+    calls = []
+
+    def models(*args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "command": {
+                        "data": {
+                            "models": [
+                                {"id": "current-model-low"},
+                                {"id": "current-model-high"},
+                            ]
+                        }
+                    }
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(subprocess, "run", models)
+    rows = runner_cli.read_agy_models(required_model="current-model")
+    assert agy_model_args("current-model", "high", rows) == [
+        "--model",
+        "current-model",
+        "--effort",
+        "high",
+    ]
+    runner_cli.read_agy_models(required_model="current-model")
+    assert len(calls) == 1
 
 
 def test_every_runner_has_a_ladder_with_its_default_on_it():
@@ -419,55 +463,27 @@ def test_translate_agy_line_reads_failure_from_result_status():
 # ------------------------------------------------------------ codex catalog
 
 
-def test_read_codex_models_reads_the_account_cache(monkeypatch, tmp_path: Path):
+def test_read_codex_models_uses_the_executing_cli_not_a_foreign_cache(monkeypatch, tmp_path: Path):
     home = tmp_path / "codex-home"
     home.mkdir()
     (home / "models_cache.json").write_text(
-        json.dumps(
-            {
-                "models": [
-                    {
-                        "slug": "gpt-5.5",
-                        "display_name": "GPT-5.5",
-                        "visibility": "list",
-                        "priority": 3,
-                        "supported_reasoning_levels": [{"effort": "low"}, {"effort": "high"}],
-                    },
-                    {
-                        "slug": "gpt-5.6-terra",
-                        "display_name": "GPT-5.6-Terra",
-                        "visibility": "list",
-                        "priority": 2,
-                        "supported_reasoning_levels": [{"effort": "medium"}, {"effort": "ultra"}],
-                        "upgrade": None,
-                    },
-                    {"slug": "codex-auto-review", "visibility": "hide", "priority": 1},
-                    {
-                        "slug": "gpt-5.4-mini",
-                        "display_name": "GPT-5.4-Mini",
-                        "visibility": "list",
-                        "priority": 9,
-                        "supported_reasoning_levels": [],
-                        "upgrade": {
-                            "model": "gpt-5.6-luna",
-                            "retirement_at": "2026-08-31T19:00:00Z",
-                        },
-                    },
-                ]
-            }
-        ),
+        json.dumps({"client_version": "future", "models": [{"slug": "unavailable"}]}),
         encoding="utf-8",
     )
     monkeypatch.setattr(runner_cli, "_account_env", lambda platform: {"CODEX_HOME": str(home)})
+    monkeypatch.setattr(runner_cli, "codex_argv_prefix", lambda: ["codex-test"])
+    calls = []
+
+    def discover(argv, env, cwd):
+        calls.append((argv, env))
+        return [{"id": "future-supported-model", "label": "Future", "efforts": ["high"]}]
+
+    monkeypatch.setattr(runner_cli, "discover_codex_models", discover)
     rows = runner_cli.read_codex_models()
-    assert rows is not None
-    assert [r["id"] for r in rows] == ["gpt-5.6-terra", "gpt-5.5", "gpt-5.4-mini"]
-    assert rows[0]["efforts"] == ["medium", "ultra"]
-    assert rows[2]["note"] == "retires 2026-08-31"
-    # No cache -> None, and the catalog's fallback carries the picker.
-    monkeypatch.setattr(runner_cli, "_account_env", lambda platform: {"CODEX_HOME": str(tmp_path)})
-    assert runner_cli.read_codex_models() is None
-    assert CODEX_FALLBACK_MODELS[0].id == "gpt-5.6-sol"
+    assert [row["id"] for row in rows] == ["future-supported-model"]
+    assert calls == [(["codex-test"], {"CODEX_HOME": str(home)})]
+    assert runner_cli.read_codex_models() == rows
+    assert len(calls) == 1
 
 
 def test_read_grok_models_reads_the_account_cache(monkeypatch, tmp_path: Path):

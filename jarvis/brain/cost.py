@@ -111,6 +111,11 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "gemini-live-2.5-flash-native-audio": (0.50, 2.0),
     # ── OpenAI (Frontier: GPT-5.5 + 5.5-pro, released 2026-04-23) ──
     "gpt-5.5": (5.0, 30.0),
+    # OpenAI standard short-context rates, verified 2026-09-23:
+    # https://developers.openai.com/api/docs/pricing
+    "gpt-5.6-terra": (2.0, 12.0),
+    "gpt-5.6-sol": (4.0, 20.0),
+    "gpt-5.6-luna": (0.20, 1.20),
     # Not a vendor model: Codex's review pass, which runs on the session's own
     # model. Tracks gpt-5.6-sol, the default that pass runs on.
     "codex-auto-review": (2.0, 10.0),

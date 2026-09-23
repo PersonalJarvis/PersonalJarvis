@@ -177,6 +177,7 @@ def test_the_rule_block_names_the_tools_and_buries_the_old_system():
     assert "never from the retired sub-agent or mission-worker system" in card
     assert "spawn_worker is only for heavy background work" in card
     assert "Agentic IDE" in card and "are NOT agents of this society" in card
+    assert "copies its own model seat and permission setup" in card
 
 
 async def test_society_agent_names_feed_the_realtime_path(rt: SocietyRuntime):

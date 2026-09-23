@@ -257,8 +257,7 @@ async def live_models() -> dict[str, list[dict[str, Any]]]:
         except Exception as exc:  # noqa: BLE001 — the fallback list stands in
             _log.debug("launch picks: codex model list unavailable: %s", exc)
             rows = None
-        if rows:
-            out["codex-cli"] = rows
+        out["codex-cli"] = rows or []
     if _installed("grok-cli"):
         try:
             rows = await asyncio.to_thread(read_grok_models)
@@ -274,8 +273,7 @@ async def live_models() -> dict[str, list[dict[str, Any]]]:
         except Exception as exc:  # noqa: BLE001 — no list is an empty picker, not an error
             _log.debug("launch picks: opencode model list unavailable: %s", exc)
             rows = []
-        if rows:
-            out["opencode-cli"] = rows
+        out["opencode-cli"] = rows
     return out
 
 
@@ -316,8 +314,8 @@ def offered_models(
     if row is None:
         return []
     # What THIS account can actually pick, when the CLI was asked and answered.
-    if live and (published := live.get(row.runner)):
-        return list(published)
+    if live is not None and row.runner in live:
+        return list(live[row.runner])
     # Claude Code takes its own ids and aliases rather than the Anthropic
     # API's catalog — the same exception the chat catalog route makes.
     if picks.provider == "claude-api":

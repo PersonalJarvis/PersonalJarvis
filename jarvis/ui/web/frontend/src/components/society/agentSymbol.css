@@ -1,0 +1,34 @@
+.society-agent-symbol .agent-symbol-thoughts {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Working replaces the face with three dots for the entire operation. */
+.society-agent-symbol[data-thinking="true"] .agent-symbol-character {
+  display: none;
+}
+
+.society-agent-symbol[data-thinking="true"] .agent-symbol-thoughts {
+  opacity: 1;
+}
+
+.society-agent-symbol[data-thinking="true"] .agent-symbol-thoughts circle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: agent-symbol-dot 0.9s ease-in-out infinite alternate;
+}
+
+.society-agent-symbol .agent-symbol-thoughts circle:nth-child(2) { animation-delay: -0.3s; }
+.society-agent-symbol .agent-symbol-thoughts circle:nth-child(3) { animation-delay: -0.6s; }
+
+@keyframes agent-symbol-dot {
+  from { transform: translateY(1px) scale(0.8); opacity: 0.45; }
+  to { transform: translateY(-1px) scale(1.1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .society-agent-symbol[data-thinking="true"] .agent-symbol-thoughts circle {
+    animation: none;
+    opacity: 1;
+  }
+}

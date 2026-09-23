@@ -791,6 +791,7 @@ jobs:
       - name: Blocking provider-neutral realtime contract
         run: >-
           python -m pytest
+          tests/contract/test_gpt_live.py
           tests/contract/test_realtime_provider_contract.py
           tests/contract/test_realtime_reliability_gate.py
           -q -p no:cacheprovider
@@ -827,6 +828,7 @@ jobs:
       - name: Blocking headless realtime degradation contract
         run: >-
           python -m pytest
+          tests/contract/test_gpt_live.py
           tests/contract/test_realtime_provider_contract.py
           tests/contract/test_realtime_reliability_gate.py
           -q -p no:cacheprovider

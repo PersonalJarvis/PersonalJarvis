@@ -106,6 +106,8 @@ class Worker:
         self.branding: asyncio.Task | None = None
         self.pointer: Any = None
         self.visual_action = False
+        self.cursor_on = False
+        self.cursor_jobs: set[asyncio.Task] = set()
 
     async def rpc(self, kind: str, payload: dict) -> dict:
         key = uuid.uuid4().hex
@@ -194,6 +196,12 @@ class Worker:
                         await asyncio.sleep(0.05)
             cdp_url = f"http://127.0.0.1:{port}"
         self.browser_args = {"cdp_url": cdp_url, "allowed_domains": args.get("allowed_domains")}
+        try:
+            from page_cursor import install_cursor  # type: ignore[import-not-found]
+
+            await install_cursor(self.context)
+        except Exception:
+            logging.getLogger(__name__).debug("Agent cursor could not be prepared", exc_info=True)
         self.context.on("page", self.page_opened)
         for page in self.context.pages:
             self.page_opened(page)
@@ -285,6 +293,33 @@ class Worker:
 
     def page_opened(self, page: Any) -> None:
         page.on("dialog", self.on_dialog)
+        page.on("framenavigated", self.cursor_navigated)
+
+    def cursor_navigated(self, frame: Any) -> None:
+        if not self.cursor_on or self.manual:
+            return
+        task = asyncio.create_task(self._arm_frame(frame))
+        self.cursor_jobs.add(task)
+        task.add_done_callback(self.cursor_jobs.discard)
+
+    async def _arm_frame(self, frame: Any) -> None:
+        from page_cursor import ARM_SOURCE, CURSOR_SCRIPT  # type: ignore[import-not-found]
+
+        try:
+            await frame.evaluate(CURSOR_SCRIPT)
+            await frame.evaluate(ARM_SOURCE, True)
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "Agent cursor could not follow a navigation", exc_info=True
+            )
+
+    async def show_page_cursor(self, armed: bool) -> None:
+        from page_cursor import arm_cursor  # type: ignore[import-not-found]
+
+        try:
+            await arm_cursor(self.context, armed)
+        except Exception:
+            logging.getLogger(__name__).debug("Agent cursor could not be updated", exc_info=True)
 
     def on_dialog(self, dialog: Any) -> None:
         self.dialog = dialog
@@ -552,6 +587,10 @@ class Worker:
             await self.agent_gate.wait()
             self.step_idle.clear()
 
+        visible = bool(self.native) or not self.owns_context
+        if visible:
+            self.cursor_on = True
+            await self.show_page_cursor(True)
         try:
             history = await self.agent.run(
                 max_steps=args.get("max_steps", 25), on_step_start=before_step, on_step_end=step
@@ -570,6 +609,9 @@ class Worker:
             }
         finally:
             self.agent = None
+            self.cursor_on = False
+            if visible:
+                await self.show_page_cursor(False)
             if self.pointer:
                 self.pointer.clear()
             self.step_idle.set()
@@ -615,6 +657,7 @@ class Worker:
                 self.manual = True
                 if self.pointer:
                     self.pointer.clear()
+                await self.show_page_cursor(False)
             else:
                 if self.native and self.manual:
                     await self.ensure_browser()
@@ -628,6 +671,8 @@ class Worker:
                         )
                 self.manual = False
                 self.agent_gate.set()
+                if self.cursor_on:
+                    await self.show_page_cursor(True)
             return {"manual": self.manual}
         if op == "run":
             if self.manual:

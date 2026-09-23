@@ -59,6 +59,11 @@ export interface LiveRoutine {
   lastRunMs: number | null;
   prompt?: string;
   members?: LiveRoutine[];
+  /** Pinned model seat ("", all empty = the routine follows its owner). */
+  provider?: string;
+  model?: string;
+  effort?: string;
+  account_id?: string;
 }
 
 /** Per-agent browser status from `GET /api/society/agents/{id}/browser`. */
@@ -204,6 +209,10 @@ export function useAgentRoutines(agentId: string | null) {
           last_run_ns?: number;
           prompt?: string;
           tags?: string[];
+          provider?: string;
+          model?: string;
+          effort?: string;
+          account_id?: string;
         }[];
       };
       const raw = body?.routines ?? [];
@@ -216,6 +225,10 @@ export function useAgentRoutines(agentId: string | null) {
         dueMs: nsToMs(r.due_at_ns),
         lastRunMs: nsToMs(r.last_run_ns),
         prompt: r.prompt ?? "",
+        provider: String(r.provider ?? ""),
+        model: String(r.model ?? ""),
+        effort: String(r.effort ?? ""),
+        account_id: String(r.account_id ?? ""),
       }));
       const groups = new Map<string, LiveRoutine[]>();
       mapped.forEach((row, i) => {

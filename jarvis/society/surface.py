@@ -37,6 +37,7 @@ from .agent_tools import (
 )
 from .capabilities import CapabilityKind, CapabilityRow, capability_id_for_tool, select_tools
 from .coding_tool import CodingSessionTool
+from .communication import COMMUNICATION_GUIDANCE
 from .conversation_tool import ConversationRecallTool, RoutineInvokeTool, RoutineListTool
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
@@ -173,10 +174,10 @@ your location, use these names."""
 
 
 def agent_id_of(session_id: str) -> str | None:
-    """``society:<agent_id>`` → ``agent_id``; ``None`` for any other session."""
+    """Resolve canonical and per-execution routine chats to their live owner."""
     if not session_id.startswith(_PREFIX):
         return None
-    agent_id = session_id[len(_PREFIX) :].strip()
+    agent_id = session_id[len(_PREFIX) :].split(":routine:", 1)[0].strip()
     return agent_id or None
 
 
@@ -286,7 +287,7 @@ async def tools_for_cli_session(
         or session.surface != SURFACE
         or agent is None
         or str(agent.state) != "active"
-        or agent.session_id != session_id
+        or agent_id_of(session_id) != agent.agent_id
     ):
         return {}
     rt.cache_agent(agent)
@@ -315,7 +316,9 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
     # kit's tools REPLACE the folder tools (runner_brain.build_override), so the
     # agent would otherwise have no file hands at all; and the plain folder tools
     # accept absolute paths, which its workspace rule forbids.
-    tools[CodingSessionTool.name] = cast(Tool, CodingSessionTool(rt, agent_id))
+    tools[CodingSessionTool.name] = cast(
+        Tool, CodingSessionTool(rt, agent_id, session_id=str(getattr(session, "session_id", "")))
+    )
     tools.update(_contained_folder_tools(workspace, getattr(session, "permission_mode", "")))
     tools.update(
         {
@@ -679,6 +682,7 @@ def build_briefing(
             lines.append(line)
         parts.append("\n".join(lines))
     parts.append(_ECOSYSTEM_CARD)
+    parts.append(COMMUNICATION_GUIDANCE)
 
     mates = [a for a in roster if a.agent_id != agent.agent_id and str(a.state) == "active"]
     if mates:

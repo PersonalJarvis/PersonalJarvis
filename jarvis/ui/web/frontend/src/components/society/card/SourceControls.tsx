@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocaleChunk, useT } from "@/i18n";
+import { BrandedSelect } from "@/components/ui/select";
 
 type Source = { kind: string; form_fields?: Record<string, { label: string; kind: string; required: boolean; choices: string[] }> };
 
@@ -48,7 +49,7 @@ function SourceInputs({ taskId, source }: { taskId: string; source: Source }) {
     </> : null}
     {open && !listener ? <form onSubmit={(event) => { event.preventDefault(); void send("invoke", "POST", { payload: values }); }} className="space-y-2">
       {Object.entries(source.form_fields ?? {}).map(([name, spec]) => <label className="block text-[11px]" key={name}>{spec.label}
-        {spec.kind === "choice" ? <select className={field} required={spec.required} value={String(values[name] ?? "")} onChange={(e) => setValues((v) => ({ ...v, [name]: e.target.value }))}><option value="">—</option>{spec.choices.map((choice) => <option key={choice}>{choice}</option>)}</select> : <input className={field} type={spec.kind === "boolean" ? "checkbox" : spec.kind === "number" ? "number" : "text"} required={spec.required && spec.kind !== "boolean"} onChange={(e) => setValues((v) => ({ ...v, [name]: spec.kind === "boolean" ? e.target.checked : spec.kind === "number" ? (e.target.value === "" ? null : Number(e.target.value)) : e.target.value }))} />}
+        {spec.kind === "choice" ? <BrandedSelect className={field} value={String(values[name] ?? "")} onValueChange={(value) => setValues((v) => ({ ...v, [name]: value }))} ariaLabel={spec.label} options={[{ value: "", label: "—" }, ...spec.choices.map((choice) => ({ value: choice, label: choice }))]} /> : <input className={field} type={spec.kind === "boolean" ? "checkbox" : spec.kind === "number" ? "number" : "text"} required={spec.required && spec.kind !== "boolean"} onChange={(e) => setValues((v) => ({ ...v, [name]: spec.kind === "boolean" ? e.target.checked : spec.kind === "number" ? (e.target.value === "" ? null : Number(e.target.value)) : e.target.value }))} />}
       </label>)}
       <button type="submit" className={button} disabled={busy}>{label("run")}</button>
     </form> : null}

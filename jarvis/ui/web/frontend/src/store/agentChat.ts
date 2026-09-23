@@ -268,9 +268,10 @@ function onLadder(value: string, ladder: readonly string[], fallback: string): s
 /** How many left-behind transcripts the store keeps for an instant switch-back. */
 const TIMELINE_CACHE_LIMIT = 24;
 
-export function createAgentChatStore(surface: AgentChatSurface) {
-  const DRAFT_KEY = draftKey(surface);
+export function createAgentChatStore(surface: AgentChatSurface, draftNamespace = "") {
+  const DRAFT_KEY = draftKey(surface) + (draftNamespace ? `:${draftNamespace}` : "");
 
+  let catalogRequest = 0;
   let socket: WebSocket | null = null;
   let socketSession: string | null = null;
   /** Cancels the reconnect waiting in the shared connect budget. */
@@ -351,6 +352,7 @@ export function createAgentChatStore(surface: AgentChatSurface) {
             draft: draftFromSession(frame.session, prev.draft),
           });
           writeDraft(DRAFT_KEY, get().draft);
+          if (prev.activeSession?.account_id !== frame.session.account_id) void get().loadCatalog();
           return;
         }
         if (frame.type === "event" && frame.event) get().ingest(frame.event);
@@ -401,11 +403,14 @@ export function createAgentChatStore(surface: AgentChatSurface) {
       lastError: null,
 
       loadCatalog: async () => {
+        const requestId = ++catalogRequest;
+        const sessionId = get().activeSessionId;
         try {
           const [raw, connections] = await Promise.all([
-            fetchAgentChatCatalog(surface),
+            fetchAgentChatCatalog(surface, { sessionId: sessionId ?? undefined, cwd: get().draft.cwd || undefined }),
             fetchAgentConnections().catch(() => [] as AgentConnectionRow[]),
           ]);
+          if (requestId !== catalogRequest || sessionId !== get().activeSessionId) return;
           // A backend older than this bundle (the app not yet restarted after
           // an update) may lack the newer arrays; an empty ladder is honest,
           // a crash is not — and the composer tells the person to restart.
@@ -479,7 +484,7 @@ export function createAgentChatStore(surface: AgentChatSurface) {
           }
           if (draft.provider) void get().loadModels(draft.provider);
         } catch (err) {
-          set({ catalogError: errorText(err) });
+          if (requestId === catalogRequest && sessionId === get().activeSessionId) set({ catalogError: errorText(err) });
         }
       },
 
@@ -589,13 +594,16 @@ export function createAgentChatStore(surface: AgentChatSurface) {
 
       newChat: () => {
         closeSocket();
+        ++catalogRequest;
         set({
           activeSessionId: null,
           activeSession: null,
           timeline: EMPTY_TIMELINE,
           socketState: "idle",
           lastError: null,
+          catalog: null,
         });
+        void get().loadCatalog();
       },
 
       openSession: (sessionId) => {
@@ -611,6 +619,7 @@ export function createAgentChatStore(surface: AgentChatSurface) {
           busy: false,
           lastError: null,
         });
+        void get().loadCatalog();
         connect(sessionId, 0);
       },
 

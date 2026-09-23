@@ -102,6 +102,22 @@ describe("tool visual identities", () => {
     },
   );
 
+  it("uses the Artifacts section mark for the artifact pin", async () => {
+    const artifact = toolIdentity(
+      row({
+        id: "tool:create_artifact",
+        label: "Artifact / Artefakt",
+        brand: "artifact",
+        group: "Artifact",
+        category: "system",
+      }),
+    );
+    expect(artifact.key).toBe("artifact");
+    expect(artifact.logo).toBeUndefined();
+    const { Shapes } = await import("lucide-react");
+    expect(artifact.Glyph).toBe(Shapes);
+  });
+
   it("uses distinct glyphs for unbranded documents and memory", () => {
     const pdf = toolIdentity(
       row({ id: "skill:pdf", label: "PDF", brand: "", group: "skills", category: "skills" }),

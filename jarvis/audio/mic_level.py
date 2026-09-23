@@ -105,6 +105,22 @@ class LevelNormalizer:
 
 
 _norm = LevelNormalizer()
+_external_owner: str | None = None
+
+
+def claim_external(owner: str) -> None:
+    """A browser session owns the meter while its measurements are fresh."""
+    global _external_owner
+    with _lock:
+        _external_owner = owner
+
+
+def release_external(owner: str) -> None:
+    """An older session cannot release a newer session's meter."""
+    global _external_owner
+    with _lock:
+        if _external_owner == owner:
+            _external_owner = None
 
 
 def subscribe(sink: Callable[[float], None]) -> Callable[[], None]:
@@ -131,8 +147,15 @@ def feed(rms: float) -> None:
     """Normalize a raw per-frame RMS (float, [0,1] scale) and publish the 0..1
     level to all sinks. Swallows sink errors so a bad UI handler never breaks
     audio capture."""
-    level = _norm.push(float(rms))
+    publish(_norm.push(float(rms)))
+
+
+def publish(level: float, *, owner: str | None = None) -> None:
+    """Publish an already normalized level from a browser-owned microphone."""
+    level = max(0.0, min(1.0, float(level)))
     with _lock:
+        if _external_owner != owner:
+            return
         sinks = tuple(_subscribers)
     for sink in sinks:
         try:
@@ -158,6 +181,8 @@ def reset() -> None:
 
 def reset_for_tests() -> None:
     """Test helper: drop all subscribers and reset the normalizer."""
+    global _external_owner
     with _lock:
         _subscribers.clear()
+        _external_owner = None
     _norm.reset()

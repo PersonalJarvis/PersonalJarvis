@@ -100,8 +100,10 @@ async def test_routine_question_and_result_stay_in_real_owner_chat(rig, tmp_path
     monkeypatch.setattr(runner_brain, "brain_manager", lambda: brain)
     monkeypatch.setattr(runner_brain, "_agent_secret", lambda *args: "synthetic-test-key")
 
+    routine_session_id = ""
+
     async def idle():
-        running = service._running.get(owner.session_id)
+        running = service._running.get(routine_session_id)
         if running is not None and running.task is not None:
             await asyncio.wait_for(asyncio.shield(running.task), timeout=5)
 
@@ -109,6 +111,8 @@ async def test_routine_question_and_result_stay_in_real_owner_chat(rig, tmp_path
         answer = await run_owned_routine(
             runtime, "routine-proof", ("society", agent_tag(owner.agent_id)), "Inspect the branch"
         )
+        routine_session_id = identities[0][0]
+        assert routine_session_id.startswith(f"{owner.session_id}:routine:")
         assert answer == "Assignment started under supervision."
         await idle()
         key = runtime.coding_supervision.key(opened)
@@ -120,11 +124,12 @@ async def test_routine_question_and_result_stay_in_real_owner_chat(rig, tmp_path
         await runtime.coding_supervision.tick(key)
         await idle()
         assert runtime.coding_supervision.rows[key]["state"] == "finished"
-        assert identities == [(owner.session_id, False)] * 3
-        events = service.store.list_events(owner.session_id)
+        assert identities == [(routine_session_id, False)] * 3
+        assert service.store.list_events(owner.session_id) == []
+        events = service.store.list_events(routine_session_id)
         assert len([e for e in events if e["kind"] == "agent_message"]) == 2
         assert len([e for e in events if e["kind"] == "turn_started"]) == 3
     finally:
-        await service.cancel(owner.session_id)
+        await service.cancel(routine_session_id)
         await idle()
         service.store.close()

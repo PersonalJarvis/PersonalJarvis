@@ -14,7 +14,7 @@
  * fixed width; inside the agent card it is the LEFT eighth and takes its width
  * from the grid cell — same rows, same sizes, only the divider swaps sides.
  */
-import { lazy, Suspense, useCallback, useMemo, useState, type MouseEvent } from "react";
+import { lazy, Suspense, useCallback, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import { Eye, Loader2, Plus, Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -60,6 +60,8 @@ export interface RosterRailProps {
   side?: "left" | "right";
   /** Replaces the fixed width when the rail is a grid cell rather than a flex sibling. */
   className?: string;
+  /** Sits above the title — the way back to the rest of the app. */
+  header?: ReactNode;
 }
 
 export function RosterRail({
@@ -71,6 +73,7 @@ export function RosterRail({
   onCreate,
   side = "right",
   className,
+  header,
 }: RosterRailProps) {
   const t = useT();
   const [query, setQuery] = useState("");
@@ -121,10 +124,11 @@ export function RosterRail({
       data-testid="society-roster-rail"
       className={cn(
         "flex h-full min-h-0 flex-col border-border bg-sidebar",
-        side === "left" ? "border-r" : "border-l",
+        side === "left" ? "border-r border-border" : "border-l border-border",
         className ?? "w-[300px] shrink-0",
       )}
     >
+      {header}
       <div className="flex items-center justify-between gap-2 px-3 pt-3">
         <div className="flex min-w-0 items-center gap-2">
           <h2 className="font-display text-sm font-semibold tracking-tight text-foreground">
@@ -226,7 +230,7 @@ export function RosterRail({
                 )}
               >
                 <button type="button" onClick={() => setProfileId(agent.agentId)} aria-label={t("society.profile_card.open").replace("{0}", agent.name)} className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                  <AgentSwatch agent={agent} size={34} />
+                  <AgentSwatch agent={agent} size={48} />
                 </button>
                 <button type="button" onClick={() => onOpen(agent.agentId)} aria-current={agent.agentId === activeAgentId ? "true" : undefined} className="flex min-w-0 flex-1 select-none items-center gap-2.5 rounded-md py-2 pl-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <span className="min-w-0 flex-1">

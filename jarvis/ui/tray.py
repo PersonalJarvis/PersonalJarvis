@@ -100,7 +100,17 @@ class JarvisTray:
         tray.stop()
     """
 
-    def __init__(self, on_command: Callable[[TrayCommand], None] | None = None) -> None:
+    def __init__(
+        self,
+        on_command: Callable[[TrayCommand], None] | None = None,
+        *,
+        native_presence: Callable[[Any], bool] | None = None,
+    ) -> None:
+        from jarvis.ui.desktop_background import (  # noqa: PLC0415
+            TrayPresenceProbe,
+            native_tray_present,
+        )
+
         self._on_command = on_command or (lambda _: None)
         self._state = JarvisState.IDLE
         self._icon: Any = None
@@ -109,6 +119,70 @@ class JarvisTray:
         # True when the darwin icon runs detached on the AppKit main thread;
         # icon mutations must then be marshaled via _call_on_main (BUG-056).
         self._darwin_detached = False
+        self._ready = threading.Event()
+        self._setup_complete = threading.Event()
+        self._presence_query = native_presence or native_tray_present
+        self._presence = TrayPresenceProbe(self._presence_query)
+        self._stopping = threading.Event()
+        self._background_mode: str | None = None
+
+    @property
+    def ready(self) -> bool:
+        """The visible icon has a working menu, including Open and Quit."""
+        if not self._setup_complete.is_set() or self._stopping.is_set():
+            return False
+        if not self._presence.check(self._icon) or self._stopping.is_set():
+            self._notify_unavailable()
+            return False
+        self._ready.set()
+        return True
+
+    def _setup_icon(self, icon: Any) -> None:
+        # pystray invokes setup only after its native message loop is ready.
+        # AppKit mutations still belong on its main thread, including this one.
+        def _show() -> None:
+            if self._stopping.is_set() or self._icon is not icon:
+                return
+            try:
+                icon.visible = True
+                if icon.visible and getattr(icon, "HAS_MENU", False):
+                    self._setup_complete.set()
+                    if self.ready:
+                        self._ready.set()
+            except Exception:  # noqa: BLE001
+                log.warning("Tray visibility setup failed", exc_info=True)
+                self._notify_unavailable()
+
+        self._call_on_main(_show)
+
+    def _notify_unavailable(self) -> None:
+        was_ready = self._ready.is_set()
+        self._ready.clear()
+        if was_ready and not self._stopping.is_set():
+            self._command_queue.put(TrayCommand(action="tray_unavailable"))
+
+    def set_background_mode(self, mode: str | None) -> None:
+        """Expose lifecycle independently of the voice activity indicator."""
+        self._background_mode = mode
+        icon = self._icon
+        if icon is None:
+            return
+
+        def _apply() -> None:
+            try:
+                icon.title = self._tooltip()
+                icon.update_menu()
+            except Exception:  # noqa: BLE001
+                log.warning("Tray lifecycle status update failed", exc_info=True)
+                self._notify_unavailable()
+
+        self._call_on_main(_apply)
+
+    def _tooltip(self) -> str:
+        state = self._state.value
+        if self._background_mode:
+            state = f"{self._background_mode}; {state}"
+        return f"{_TRAY_NAME} — {state}"
 
     def _build_menu(self) -> Any:
         from pystray import Menu, MenuItem  # type: ignore[import-untyped]
@@ -128,6 +202,10 @@ class JarvisTray:
             MenuItem("Open", _emit("open_ui"), default=True),
             Menu.SEPARATOR,
             MenuItem(lambda _: f"Status: {self._state.value}", None, enabled=False),
+            MenuItem(
+                lambda _: f"Application: {self._background_mode}", None,
+                enabled=False, visible=lambda _: self._background_mode is not None,
+            ),
             Menu.SEPARATOR,
             MenuItem("Pause", _emit("pause"),
                      checked=lambda _: self._state == JarvisState.PAUSED),
@@ -157,7 +235,7 @@ class JarvisTray:
                 title=f"{_TRAY_NAME} — idle",
                 menu=self._build_menu(),
             )
-            self._icon.run()
+            self._icon.run(setup=self._setup_icon)
         except ModuleNotFoundError as exc:
             log.warning(
                 "Tray not started: optional desktop dependency %r is unavailable. "
@@ -166,6 +244,7 @@ class JarvisTray:
                 exc.name or "unknown",
             )
             self._icon = None
+
         except Exception:  # noqa: BLE001 — a missing tray host must not die silently (AD-6)
             log.warning(
                 "Tray icon could not start (no notification-area / AppIndicator "
@@ -174,10 +253,16 @@ class JarvisTray:
             )
             # The thread exits normally after this; a later start() can re-arm.
             self._icon = None
+        finally:
+            self._notify_unavailable()
+            self._setup_complete.clear()
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return
+        if self._stopping.is_set():
+            self._presence.resume()
+        self._stopping.clear()
         if sys.platform == "darwin":
             # pystray's darwin backend builds an NSStatusItem in Icon.__init__;
             # AppKit allows UI objects on the MAIN thread only. Created from a
@@ -211,8 +296,8 @@ class JarvisTray:
                     menu=self._build_menu(),
                     darwin_nsapplication=nsapp,
                 )
-                self._icon.run_detached()
                 self._darwin_detached = True
+                self._icon.run_detached(setup=self._setup_icon)
             except Exception:  # noqa: BLE001 — a broken menu-bar host must not crash boot (AD-6)
                 log.warning(
                     "Tray not started: macOS menu-bar icon could not be "
@@ -240,8 +325,8 @@ class JarvisTray:
 
         macOS drives the NSStatusItem behind the icon on the main thread only
         (BUG-056), so mutations from worker threads are marshaled through
-        PyObjCTools.AppHelper.callAfter. Everywhere else (and as a last
-        resort when the marshal itself is unavailable) fn runs directly.
+        PyObjCTools.AppHelper.callAfter. Other backends run directly; a failed
+        AppKit marshal loses the tray capability instead of risking a native abort.
         """
         if not self._darwin_detached:
             fn()
@@ -250,10 +335,15 @@ class JarvisTray:
             from PyObjCTools import AppHelper  # type: ignore[import-not-found]
 
             AppHelper.callAfter(fn)
-        except Exception:  # noqa: BLE001 — AD-6: degrade to a direct call
-            fn()
+        except Exception:  # noqa: BLE001
+            log.warning("Tray main-thread dispatch unavailable", exc_info=True)
+            self._notify_unavailable()
 
     def stop(self) -> None:
+        self._stopping.set()
+        self._ready.clear()
+        self._setup_complete.clear()
+        self._presence.stop()
         if self._icon is not None:
             icon = self._icon
 
@@ -261,11 +351,18 @@ class JarvisTray:
                 try:
                     icon.stop()
                 except Exception:  # noqa: BLE001
-                    pass
+                    log.warning("Tray stop failed", exc_info=True)
 
             self._call_on_main(_do_stop)
         self._icon = None
         self._darwin_detached = False
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+            if thread.is_alive():
+                log.warning("Tray thread did not stop within two seconds")
+            else:
+                self._thread = None
 
     def set_state(self, state: JarvisState) -> None:
         """Thread-safe state update — re-renders the icon and tooltip."""
@@ -279,7 +376,7 @@ class JarvisTray:
         def _apply() -> None:
             try:
                 icon.icon = _make_icon(state)
-                icon.title = f"{_TRAY_NAME} — {state.value}"
+                icon.title = self._tooltip()
             except Exception:  # noqa: BLE001
                 pass
 

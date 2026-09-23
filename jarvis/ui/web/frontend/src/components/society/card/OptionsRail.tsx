@@ -5,7 +5,7 @@
  * from AgentCardOverlay so the overlay stays the layout and this file owns
  * what you can do to the agent.
  */
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 
 import { useT } from "@/i18n";
@@ -15,6 +15,7 @@ import { AgentBrowserPreview } from "./AgentBrowserPreview";
 import { AgentRoutinesList } from "./AgentRoutinesList";
 import { JarvisHistoryRail } from "../chat/JarvisHistoryRail";
 import { RetireButton } from "./RetireButton";
+const AgentAppearanceDialog = lazy(() => import("../companion/AgentAppearanceDialog").then(m => ({ default: m.AgentAppearanceDialog })));
 
 export interface OptionsRailProps {
   agent: SocietyAgent;
@@ -26,11 +27,13 @@ export interface OptionsRailProps {
 export function OptionsRail({ agent, onRetired, sample = false }: OptionsRailProps) {
   const t = useT();
   const [more, setMore] = useState(false);
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [routineOpen, setRoutineOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setMore(false);
+    setAppearanceOpen(false);
   }, [agent.agentId]);
 
   useEffect(() => {
@@ -82,6 +85,7 @@ export function OptionsRail({ agent, onRetired, sample = false }: OptionsRailPro
         </div>
       </header>
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-3 pb-3 pt-2">
+        <button type="button" onClick={() => setAppearanceOpen(true)} data-testid="edit-agent-appearance" className="shrink-0 rounded-lg border border-border px-3 py-2 text-left text-sm font-medium text-foreground hover:bg-secondary">{t("society.companion.appearance")}</button>
         <div className={routineOpen ? "hidden" : "contents"}>
           <AgentBrowserPreview agent={agent} />
           {agent.tier === "lead" ? <JarvisHistoryRail /> : null}
@@ -95,6 +99,7 @@ export function OptionsRail({ agent, onRetired, sample = false }: OptionsRailPro
           className="min-h-0 flex-1"
         />
       </div>
+      {appearanceOpen && <Suspense fallback={null}><AgentAppearanceDialog key={agent.agentId} agent={agent} sample={sample} onClose={() => setAppearanceOpen(false)} /></Suspense>}
     </aside>
   );
 }

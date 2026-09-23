@@ -198,11 +198,11 @@ describe("MissionDeckView — the three acts", { timeout: 15_000 }, () => {
     expect(requestVoiceCall).toHaveBeenCalledTimes(1);
   });
 
-  test("the header carries Gigi and the chrome actions — one row, not two", () => {
+  test("the header carries Gigi and leaves restart to the window caption", () => {
     render(<MissionDeckView />);
     expect(screen.getByTestId("deck-header-gigi")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^restart$/i })).toBeTruthy();
-    expect(screen.getByTestId("detach-view-button")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^restart$/i })).toBeNull();
+    expect(screen.queryByTestId("detach-view-button")).toBeNull();
   });
 
   test("a deck that mounts into a running session is simply the board — no reveal", () => {

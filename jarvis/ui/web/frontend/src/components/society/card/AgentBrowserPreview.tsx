@@ -92,7 +92,9 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
               control("key", { key: [...modifiers, e.key].join("+") });
             }
           }} />
-        <AgentCursor pointer={state.ready && state.connected && !state.manual ? state.pointer : undefined} />
+        {!state.fullWindow && (
+          <AgentCursor pointer={state.ready && state.connected && !state.manual ? state.pointer : undefined} />
+        )}
         {!state.ready && <div className="absolute inset-0 grid place-items-center bg-muted p-3 text-center text-xs text-muted-foreground">
           {install.data?.detail || status}
           {install.data?.running && <span>{install.data.percent}%</span>}
