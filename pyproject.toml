@@ -874,6 +874,12 @@ jarvis = [
     # install.py read them via Path(__file__)).
     "realtime/local_server/patches/*.patch",
     "realtime/local_server/pins/*.txt",
+    # Source for the optional native audio worker. Base installation does not
+    # compile or load it; release bundles provide platform-specific binaries.
+    "realtime/local_runtime/native/CMakeLists.txt",
+    "realtime/local_runtime/native/*.cpp",
+    "realtime/local_runtime/native/*.hpp",
+    "realtime/local_runtime/native/*.md",
 ]
 
 [tool.setuptools.data-files]

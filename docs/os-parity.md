@@ -24,7 +24,8 @@ provides the execution evidence; this does not claim physical audio-device testi
 | Data-only custom manifests and package checksums | Portable code; real filesystem tests | Same code; OS paths simulated | Same code; OS paths simulated |
 | CPU/CUDA/Metal eligibility and shared-memory accounting | CPU/CUDA contract fixtures | CPU/Metal contract fixtures | CPU/CUDA contract fixtures |
 | Verified acquisition/import and cancellation | Contract tests plus real four-file GGUF download | Portable implementation; device execution pending | Portable implementation; device execution pending |
-| Native audio, tools and wake-ready inference | Not qualified | Not qualified | Not qualified |
+| Native synthetic audio/context/cancellation | Real x64 CPU pipe-worker probe | Not qualified | Upstream HTTP runner exercised in a container; pipe worker not qualified |
+| Jarvis tools and wake-ready application integration | Not qualified | Not qualified | Not qualified |
 
 The new `realtime/local_runtime` package does not load inference libraries or
 start a server when imported. It does not replace the active voice provider yet.
@@ -33,6 +34,13 @@ a successful download is never a successful voice call. The first catalog
 candidate declares English audio and has no qualified tool channel. No native
 voice recommendation or physical Mac/Linux result is implied by these tests.
 See `local-realtime-redesign.md` for the remaining migration and acceptance work.
+
+The native worker uses portable C++ pipes and threads. Its Windows reference
+build uses LLVM-MinGW, no GPU offload and no network listener. The live verifier
+records executable and model hashes, synthetic audio/context/cancel outcomes
+and process exit. The source files are included in the Python wheel; executable
+distribution and automatic installation remain pending. No compiler is invoked
+on ordinary Jarvis installation or import.
 
 ## Prepaid search hop (2026-09-17, T2)
 

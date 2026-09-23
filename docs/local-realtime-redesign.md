@@ -1,7 +1,8 @@
 # Local voice: model-first redesign
 
-Assessment date: 2026-09-23. Status: investigation and first regression fix;
-the replacement runtime is **not implemented or qualified**.
+Assessment date: 2026-09-23. Status: diagnosis, model acquisition and a native
+pipe-worker prototype implemented. The application migration and full voice
+qualification are **not complete**.
 
 Scope: local reasoning, speech input/output, wake activation, realtime voice,
 model installation, custom models, hardware selection, and tool execution.
@@ -166,7 +167,7 @@ and prompt changes must not be described as having fine-tuned a model.
 | --- | --- | --- |
 | 1: Diagnosis | Reproducible findings, local-surface map and upstream feasibility assessment; regression for Mac rejection. | Initial assessment and Mac fix complete. |
 | 2: Runtime contract | Typed model/adapter selection; invalid or incompatible custom weights rejected; CPU/Metal/CUDA contract tests; no boot-time heavy imports. | Manifest, eligibility, verified acquisition/import and inspection CLI implemented. Actual engine adapter and application wiring remain pending. |
-| 3: Inference integration | Real audio in/out, tool request/result, interrupt, cancellation and two-turn context through the selected native model or agreed package. | Pending model/language/tool decision and real engine qualification. |
+| 3: Inference integration | Real audio in/out, tool request/result, interrupt, cancellation and two-turn context through the selected native model or agreed package. | Windows CPU pipe-worker proof covers synthetic English audio, context and cancellation. Tool execution and application integration remain pending. |
 | 4: App workflow | Choose/download/use/customize without server setup; progress/cancel/retry; settings migration and rollback; light/dark browser verification and frontend build. | Pending. |
 | 5: Wake and qualification | Cold app launch, first utterance preserved, warm wake latency measured, long-session recovery, real NVIDIA and Apple Silicon, CPU/headless base install and existing provider regression checks. | Pending; no Apple Silicon execution environment has been established. |
 
@@ -235,3 +236,43 @@ the host's unavailable symlink-creation capability and an existing optional
 installer test. Ruff and focused mypy checks passed. No native audio test,
 frontend build, fresh-install qualification or physical Mac/Linux test was
 performed for this package-only stage.
+
+## Native inference prototype
+
+The new C++ `native/worker.cpp` links the pinned LFM runner directly and keeps
+one model resident. The parent communicates over stdin/stdout; there is no HTTP
+server to configure. Requests have generation IDs, one in-flight inference slot,
+explicit cancellation and terminal events. Aborting a generation invalidates
+its context, and the next turn must reset. The worker never executes tools.
+
+The build produced a native Windows x64 CPU executable. A real run through
+`scripts/verify_local_native_audio.py` returned `LOCAL_NATIVE_AUDIO_OK`:
+
+- The model generated an English question as audio, consumed that WAV and
+  answered the arithmetic question with matching text and PCM.
+- A subsequent conversation retained the requested color across two turns.
+- Cancelling an active response produced `cancelled`; continuation with stale
+  context was refused, and a reset conversation produced speech again.
+- The owned process shut down and was reaped. The verifier checks that it opens
+  no network listener and records the runner SHA-256 with the evidence.
+
+The public, path-free record is
+[`reports/local-native-audio-2026-09-23.json`](reports/local-native-audio-2026-09-23.json).
+These are individual synthetic CPU observations with cached model files, not a
+PC cold-start benchmark, a microphone/wake test, a latency percentile or a
+semantic-accuracy benchmark. CUDA and Metal execution remain unverified.
+
+An earlier Linux-container run used the official upstream binary over HTTP.
+It established the audio format and exposed a compatibility difference:
+the pinned legacy binary emits float32 `audio_chunk` events while the newer
+source emits PCM16 `audio` events. `lfm.py` is the explicit-version diagnostic
+adapter for those upstream streams; the production direction is the private
+pipe worker. Unknown formats, truncated streams and unsolicited acoustic
+output for a text-only request are not silently accepted.
+
+The current model still declares neither native structured tool/result support
+nor full duplex. Producing one syntactically valid weather-call JSON in a probe
+is not enough to grant either capability. The remaining application work must
+connect a qualified tool protocol to ToolExecutor, preserve confirmations and
+receipts, then integrate model selection, runtime acquisition, wake residency
+and recovery. The main desktop still uses its existing voice provider.
