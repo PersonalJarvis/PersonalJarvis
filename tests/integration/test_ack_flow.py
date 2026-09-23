@@ -150,6 +150,7 @@ async def test_happy_path_announcement_handler_calls_tts_once() -> None:
         _output_language=lambda lang, text: lang,  # language resolver
         _emit_spoken=lambda *a, **kw: None,         # session-log hook
         _bcp47=lambda lang: lang,                   # BCP-47 converter
+        _is_agent_reply=SpeechPipeline._is_agent_reply,
         _deliver_announcement_via_realtime=_not_delivered_via_realtime,
         _realtime_session_owns_voice=lambda: False,
         _register_assistant_speech=lambda _text: None,
