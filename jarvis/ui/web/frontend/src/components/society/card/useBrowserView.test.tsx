@@ -2,8 +2,8 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { useBrowserView } from "./useBrowserView";
 
-const { connect } = vi.hoisted(() => ({ connect: vi.fn() }));
-vi.mock("@/lib/ws", () => ({ mintWsTicket: async () => "" }));
+const { connect, ticket } = vi.hoisted(() => ({ connect: vi.fn(), ticket: vi.fn(async () => "fresh-ticket") }));
+vi.mock("@/lib/ws", () => ({ mintWsTicket: ticket }));
 vi.mock("@/lib/connectBudget", () => ({
   requestConnect: connect, jitteredDelay: () => 1000,
 }));
@@ -13,14 +13,14 @@ class Socket {
   static current: Socket;
   readyState = 1;
   onopen?: () => void;
-  onclose?: () => void;
+  onclose?: (event: { code: number }) => void;
   onmessage?: (event: { data: string }) => void;
   send = vi.fn();
-  close = vi.fn(() => { this.readyState = 3; this.onclose?.(); });
-  constructor() { Socket.current = this; }
+  close = vi.fn(() => { this.readyState = 3; this.onclose?.({ code: 1000 }); });
+  constructor(public url: string) { Socket.current = this; }
 }
 
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); connect.mockReset(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); connect.mockReset(); ticket.mockClear(); });
 
 async function mount() {
   vi.useFakeTimers();
@@ -43,7 +43,7 @@ test("silent live connection becomes disconnected and pays the reconnect budget"
   expect(connect).toHaveBeenCalledTimes(2);
 });
 
-test("static page heartbeats preserve a healthy connection without new images", async () => {
+test("state heartbeats without first pixels recover instead of connecting forever", async () => {
   const hook = await mount();
   for (let n = 0; n < 4; n++) {
     act(() => {
@@ -51,8 +51,8 @@ test("static page heartbeats preserve a healthy connection without new images", 
       Socket.current.onmessage?.({ data: JSON.stringify({ kind: "state", url: "about:blank", tabs: [] }) });
     });
   }
-  expect(hook.result.current.state.connected).toBe(true);
-  expect(Socket.current.close).not.toHaveBeenCalled();
+  expect(hook.result.current.state.connected).toBe(false);
+  expect(Socket.current.close).toHaveBeenCalledOnce();
 });
 
 test("cold browser startup stays connected until pixels are available", async () => {
@@ -107,4 +107,14 @@ test("denied control never replays queued input", async () => {
 test("connect does not wait for a separate HTTP setup request", async () => {
   await mount();
   expect(fetch).not.toHaveBeenCalled();
+  expect(ticket).not.toHaveBeenCalled();
+});
+
+test("cookie rejection reconnects with a fresh ticket through the shared budget", async () => {
+  await mount();
+  act(() => Socket.current.onclose?.({ code: 4401 }));
+  expect(connect).toHaveBeenCalledTimes(2);
+  await act(async () => { connect.mock.calls[1][0](); });
+  expect(ticket).toHaveBeenCalledOnce();
+  expect(Socket.current.url).toContain("?ticket=fresh-ticket");
 });

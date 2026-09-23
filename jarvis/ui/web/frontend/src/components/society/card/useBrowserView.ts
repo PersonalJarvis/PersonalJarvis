@@ -33,6 +33,8 @@ export function useBrowserView(agentId: string) {
   useEffect(() => {
     let disposed = false;
     let attempt = 0;
+    let needsTicket = false;
+    let waitingForFrameSince = 0;
     let cancelConnect = () => {};
     let epoch = 0;
     let generation = "";
@@ -80,15 +82,20 @@ export function useBrowserView(agentId: string) {
     const connect = async () => {
       if (disposed) return;
       try {
-        const ticket = await mintWsTicket();
+        // Cookie-capable desktop engines can connect immediately. Only WebKit
+        // needs the HTTP ticket fallback after an authenticated 4401 rejection.
+        const ticket = needsTicket ? await mintWsTicket() : null;
         if (disposed) return;
         const protocol = location.protocol === "https:" ? "wss:" : "ws:";
         const path = "/api/society/agents/" + encodeURIComponent(agentId) + "/browser/live";
         const ws = new WebSocket(protocol + "//" + location.host + path +
           (ticket ? "?ticket=" + encodeURIComponent(ticket) : ""));
+        let opened = false;
         socket.current = ws;
         ws.onopen = () => {
+          opened = true;
           lastLiveEvent = Date.now();
+          waitingForFrameSince = 0;
           setState((s) => ({ ...s, connected: true, ready: false }));
         };
         ws.onmessage = (message) => {
@@ -99,6 +106,7 @@ export function useBrowserView(agentId: string) {
               if (typeof event.data !== "string" || typeof event.sequence !== "number") return;
               if (!Number.isFinite(event.timestamp)) return;
               lastLiveEvent = Date.now();
+              waitingForFrameSince = 0;
               attempt = 0;
               if (typeof event.full_window === "boolean") {
                 setState((s) => s.fullWindow === event.full_window ? s : { ...s, fullWindow: event.full_window });
@@ -127,6 +135,7 @@ export function useBrowserView(agentId: string) {
               setState((s) => ({ ...s, ready: false, error: event.error }));
             } else if (event.kind === "state") {
               lastLiveEvent = Date.now();
+              if (!renderedFrames && !waitingForFrameSince) waitingForFrameSince = Date.now();
               setState((s) => ({ ...s, manual: event.manual, running: event.running,
                 url: event.url, target: event.target, tabs: event.tabs ?? [], fullWindow: Boolean(event.full_window) }));
             } else if (event.kind === "control") {
@@ -157,9 +166,12 @@ export function useBrowserView(agentId: string) {
             setState((s) => ({ ...s, error: "Browser stream returned invalid data" }));
           }
         };
-        ws.onclose = () => {
+        ws.onclose = (event) => {
           if (disposed || socket.current !== ws) return;
+          // Rejection before accept is exposed as 1006 by browsers, not 4401.
+          if (event.code === 4401 || !opened) needsTicket = true;
           epoch++;
+          renderedFrames = 0;
           manual.current = false;
           claiming.current = false;
           inputs.current = [];
@@ -179,7 +191,10 @@ export function useBrowserView(agentId: string) {
     cancelConnect = requestConnect(() => void connect());
     // Static pages still send state heartbeats. A silent transport is not Live.
     const watchdog = setInterval(() => {
-      if (socket.current?.readyState === WebSocket.OPEN && Date.now() - lastLiveEvent > 7500) {
+      if (socket.current?.readyState === WebSocket.OPEN && (
+        Date.now() - lastLiveEvent > 7500 ||
+        (waitingForFrameSince > 0 && Date.now() - waitingForFrameSince > 7500)
+      )) {
         setState((s) => ({ ...s, connected: false, manual: false, controlPending: false }));
         socket.current.close(); // onclose reconnects through the shared jittered budget.
       }

@@ -116,7 +116,7 @@ class Ranker:
 async def test_semantics_can_find_no_word_overlap_without_tools():
     _, rows = inventory()
     ranker = Ranker('{"plugin:gmail": 0.95, "fabricated-id": 1}')
-    found, mode = await search_catalog(rows, "Posteingang aufräumen", ranker)  # i18n-allow
+    found, mode = await search_catalog(rows, "Posteingang aufrÃ¤umen", ranker)  # i18n-allow
     assert mode == "semantic"
     assert [row.id for row in found] == ["plugin:gmail"]
     assert ranker.requests[0].tools == ()
@@ -292,3 +292,60 @@ def test_discovery_route_serves_catalog_and_openapi_metadata(tmp_path, monkeypat
         )
     operation = app.openapi()["paths"]["/api/agent-chat/tools"]["get"]
     assert operation["tags"] and operation["summary"] and operation["x-jarvis-readonly"]
+
+
+@pytest.mark.parametrize("card_pin", [False, True])
+async def test_subscription_turn_receives_browser_selection_only_for_current_turn(
+    tmp_path, monkeypatch, card_pin
+):
+    from jarvis.agent_chat import service
+    from jarvis.agent_chat.events import make_event
+
+    rows = build_catalog({"society_browser": tool("society_browser")})
+    monkeypatch.setattr(tool_catalog, "live_catalog", lambda *_a, **_k: rows)
+    prompts = []
+
+    async def run(handle, prompt, runner, **kwargs):
+        prompts.append(prompt)
+        await handle.emit(
+            make_event("turn_finished", {"turn_id": handle.turn_id, "status": "done"})
+        )
+        return None
+
+    monkeypatch.setattr(service, "run_cli_turn", run)
+    svc = AgentChatService(AgentChatStore(":memory:"))
+    session = svc.store.create_session(
+        provider="openai-codex",
+        model="picked",
+        effort="low",
+        cwd=str(tmp_path),
+        surface="jarvis",
+        permission_mode="ask",
+    )
+    queue = svc.subscribe(session.session_id)
+    text = "Read the heading" + ("\n\n[tools: core:browser]" if card_pin else "")
+    try:
+        await svc.send(
+            session.session_id, text, tool_choices=None if card_pin else ["tool:society_browser"]
+        )
+        async with asyncio.timeout(5):
+            while (await queue.get())["kind"] != "turn_finished":
+                pass
+        assert "society_browser" in prompts[0]
+        assert "explicitly selected" in prompts[0]
+        await asyncio.sleep(0)
+        await svc.send(session.session_id, "Another question")
+        async with asyncio.timeout(5):
+            while (await queue.get())["kind"] != "turn_finished":
+                pass
+        assert "society_browser" not in prompts[1]
+        receipts = [
+            e["payload"]
+            for e in svc.store.list_events(session.session_id)
+            if e["kind"] == "user_message"
+        ]
+        assert receipts[0]["text"] == text
+        assert receipts[0]["tool_choices"][0]["id"] == "tool:society_browser"
+    finally:
+        await svc.cancel(session.session_id)
+        svc.store.close()

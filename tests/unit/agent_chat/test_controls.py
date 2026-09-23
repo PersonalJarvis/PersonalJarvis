@@ -320,7 +320,9 @@ def test_message_uses_executor_exact_text_sender_and_idempotency(monkeypatch: An
             return None
 
         runtime = SimpleNamespace(
-            conversations=SimpleNamespace(checkpoint=lambda _: (0, "")), turn_completed=completed
+            conversations=SimpleNamespace(checkpoint=lambda _: (0, "")),
+            turn_completed=completed,
+            browser=SimpleNamespace(live=SimpleNamespace(sessions={})),
         )
         monkeypatch.setattr("jarvis.society.runtime.current_runtime", lambda: runtime)
         monkeypatch.setattr("jarvis.society.agent_tools.MessageAgentTool", MessageTool)

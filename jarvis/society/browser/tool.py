@@ -32,6 +32,30 @@ BROWSER_TOOL_NAME: Final[str] = "society_browser"
 CAPABILITY_ID: Final[str] = "core:browser"
 
 
+async def stop_chat_browser(session_id: str) -> None:
+    """A disconnected planner cannot leave its browser running into the next turn."""
+    import asyncio
+
+    from ..runtime import current_runtime
+
+    runtime = current_runtime()
+    if runtime is None:
+        return
+    live = runtime.browser.live
+    for session in list(live.sessions.values()):
+        if session.active_chat != session_id or not session.run_lock.locked():
+            continue
+        try:
+            async with asyncio.timeout(5):
+                await live.cancel(session)
+                # Wait until the original tool has released its ownership; do
+                # not advertise an idle chat while its browser is still busy.
+                async with session.run_lock:
+                    pass
+        except Exception:
+            log.warning("Could not stop the completed chat's browser task", exc_info=True)
+
+
 def lead_browser_tools(session: Any = None, *, read_only: bool = False) -> dict[str, Any]:
     """The Jarvis root chat drives the same browser shown on the lead's card."""
     from ..runtime import current_runtime
@@ -82,7 +106,10 @@ class BrowserTool:
         "Give one clear task (what to achieve, where, what to return) and optionally the "
         "URL to start at. The run is capped (max_steps); it returns the final result, the "
         "pages visited and any errors. Tasks that send, buy, delete or publish ask the user "
-        "first. Prefer a connected plugin or CLI when one exists for the service."
+        "first. This is the live browser shown in your Options rail. Use this tool "
+        "when the user selects Browser or asks to operate the visible browser, and "
+        "for web tasks without a suitable connected API. Otherwise prefer a connected "
+        "plugin or CLI when one exists for the service."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -120,7 +147,10 @@ class BrowserTool:
         if read_only:
             self.risk_tier = "safe"
             self.is_action_tool = False
-            self.description = "Read-only agent browser: navigate, inspect and extract website content. Form input, clicks, uploads and file writes are blocked in this mode."
+            self.description = (
+                "Read-only agent browser: navigate, inspect and extract website content. "
+                "Form input, clicks, uploads and file writes are blocked in this mode."
+            )
 
     def risk_tier_for_args(self, args: dict[str, Any]) -> str | None:
         if self._jobs._python is None:
