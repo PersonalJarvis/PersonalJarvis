@@ -2,9 +2,8 @@
  * The fixed agents rail beside the stage (MASTERPLAN §4.1): the lead as a
  * compact centered master above the team — swatch and name in a small box —
  * then a search field and one row per remaining agent, plus the "+" that
- * opens the creator. One click on the master or a row opens the model card
- * (the row-click doctrine: open and activate in one click, never a
- * double-click split).
+ * opens the creator. Names open the chat; avatars open a compact profile
+ * dialog without switching the conversation.
  *
  * The layout follows the Chef Bot reference: the master is centered and
  * larger, the team stays a compact list below the search. The rail is app
@@ -15,7 +14,7 @@
  * fixed width; inside the agent card it is the LEFT eighth and takes its width
  * from the grid cell — same rows, same sizes, only the divider swaps sides.
  */
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { Loader2, Plus, Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +26,8 @@ import { cn } from "@/lib/utils";
 import { AgentSwatch } from "../AgentSwatch";
 import type { AgentRunState, SocietyAgent } from "../data";
 import { useRosterUnread } from "./useRosterUnread";
+
+const AgentProfileDialog = lazy(() => import("../card/AgentProfileDialog").then((module) => ({ default: module.AgentProfileDialog })));
 
 const STATE_DOT: Record<AgentRunState, string> = {
   idle: "bg-muted-foreground/50",
@@ -61,6 +62,8 @@ export function RosterRail({
 }: RosterRailProps) {
   const t = useT();
   const [query, setQuery] = useState("");
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const profile = agents.find((agent) => agent.agentId === profileId);
   const unread = useRosterUnread(agents, activeAgentId);
 
   const lead = useMemo(() => agents.find((a) => a.tier === "lead") ?? null, [agents]);
@@ -128,17 +131,14 @@ export function RosterRail({
       <ScrollArea className="mt-2 min-h-0 flex-1">
         {lead && leadVisible ? (
           <div className="flex justify-center px-2 pb-2">
-            <button
-              type="button"
-              onClick={() => onOpen(lead.agentId)}
-              aria-current={lead.agentId === activeAgentId ? "true" : undefined}
+            <div
               data-testid="society-lead-hero"
               className={cn(
                 "flex flex-col items-center gap-1.5 rounded-xl bg-secondary/50 px-5 py-3 text-center transition-colors hover:bg-secondary/80",
                 lead.agentId === activeAgentId && "bg-secondary",
               )}
             >
-              <span className="relative">
+              <button type="button" onClick={() => setProfileId(lead.agentId)} aria-label={t("society.profile_card.open").replace("{0}", lead.name)} className="relative rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <AgentSwatch agent={lead} size={56} />
                 {lead.state === "working" ? (
                   <span
@@ -156,14 +156,14 @@ export function RosterRail({
                     className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full bg-sky-400 ring-2 ring-sidebar"
                   />
                 ) : null}
-              </span>
-              <span className="flex max-w-full items-center justify-center gap-1.5">
+              </button>
+              <button type="button" onClick={() => onOpen(lead.agentId)} aria-current={lead.agentId === activeAgentId ? "true" : undefined} className="flex max-w-full items-center justify-center gap-1.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <span className="truncate text-sm font-medium text-foreground">{lead.name}</span>
                 <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-xs">
                   {t("society.tier.lead")}
                 </Badge>
-              </span>
-            </button>
+              </button>
+            </div>
           </div>
         ) : null}
         {leadVisible ? (
@@ -178,16 +178,16 @@ export function RosterRail({
           ) : null}
           {rows.map((agent) => (
             <li key={agent.agentId}>
-              <button
-                type="button"
-                onClick={() => onOpen(agent.agentId)}
-                aria-current={agent.agentId === activeAgentId ? "true" : undefined}
+              <div
                 className={cn(
-                  "flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-secondary",
+                  "flex w-full items-center rounded-md px-2 text-left transition-colors hover:bg-secondary",
                   agent.agentId === activeAgentId && "bg-secondary",
                 )}
               >
-                <AgentSwatch agent={agent} size={34} />
+                <button type="button" onClick={() => setProfileId(agent.agentId)} aria-label={t("society.profile_card.open").replace("{0}", agent.name)} className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <AgentSwatch agent={agent} size={34} />
+                </button>
+                <button type="button" onClick={() => onOpen(agent.agentId)} aria-current={agent.agentId === activeAgentId ? "true" : undefined} className="flex min-w-0 flex-1 select-none items-center gap-2.5 rounded-md py-2 pl-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
                     <span className="truncate text-sm font-medium text-foreground">{agent.name}</span>
@@ -200,11 +200,13 @@ export function RosterRail({
                   <span className="block truncate text-xs text-muted-foreground">{agent.title}</span>
                 </span>
                 <RowStatus agent={agent} hasUnread={unread.has(agent.agentId)} />
-              </button>
+                </button>
+              </div>
             </li>
           ))}
         </ul>
       </ScrollArea>
+      {profile && <Suspense fallback={null}><AgentProfileDialog key={profile.agentId} agent={profile} sample={sample} onClose={() => setProfileId(null)} /></Suspense>}
     </aside>
   );
 }
