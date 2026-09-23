@@ -25,7 +25,8 @@
       "spotify"
     ],
     "hubspot_token_endpoint": "Migrated to the official 2026-03 form token endpoint; no new live authorization is claimed.",
-    "discord_redirect": "The official Discord OAuth2 settings persisted https://oauth.personaljarvis.ai/callback alongside the previous loopback URI. Publisher secret and shared bot operation are still pending; no OAuth journey is claimed."
+    "discord_redirect": "The official Discord OAuth2 settings persisted https://oauth.personaljarvis.ai/callback alongside the previous loopback URI. Publisher secret and shared bot operation are still pending; no OAuth journey is claimed.",
+    "discord_broker": "Deployed Worker requests advanced bot authorization with guild install context. Health returned 200; live Discord start returned 503 because publisher credentials are absent. Eight Worker and 33 Python broker tests passed; no provider journey was completed."
   },
   "scope": "Current 45-plugin built-in catalog: one full Windows GitLab PASS and 44 incomplete full journeys. Spotify and LinkedIn are user-retired from the default catalog; their historical evidence remains archived. Regression tests do not count as provider evidence.",
   "plugins": [

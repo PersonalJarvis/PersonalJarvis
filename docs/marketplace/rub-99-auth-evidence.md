@@ -19,6 +19,16 @@ recommended in its [v1 deprecation notice](https://developers.hubspot.com/change
 The previous v1 endpoint is scheduled for retirement; this configuration fix
 does not prove a successful HubSpot login or resource call.
 
+Discord's broker authorization URL now requests the official advanced bot
+authorization scopes (`bot` and `applications.commands`) together with the
+user read scopes, minimal permission bitfield and guild installation context.
+This fixes a missing scope in the deployed Worker; the Python broker is aligned.
+Eight Worker tests and 33 Python broker contract tests pass. Worker version
+`388da013-3769-4eec-8a93-5b3ff57ec264` is deployed: `/healthz` returned
+HTTP 200, while a real Discord `/start` still returned HTTP 503 because the
+confidential publisher credentials are not provisioned. No Discord login,
+installation or gateway operation is claimed.
+
 ## Continuation checkpoint (2026-09-23)
 
 The user reports completing the Microsoft ecosystem independently. Preserve
