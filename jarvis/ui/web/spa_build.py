@@ -32,6 +32,7 @@ poll.
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
@@ -119,6 +120,9 @@ def recover_conflicted_index(index_file: Path, dist_dir: Path) -> str | None:
             keepends=True
         )
     except OSError:
+        logging.getLogger(__name__).warning(
+            "Cannot inspect the conflicted frontend index at %s", index_file, exc_info=True
+        )
         return None
     if not any(line.startswith("<<<<<<< ") for line in lines):
         return None
