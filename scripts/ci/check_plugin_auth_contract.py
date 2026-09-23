@@ -41,11 +41,11 @@ E2E_AUDIT = ROOT / "docs" / "marketplace" / "plugin-e2e-audit.json"
 # never grant a new built-in plugin permission to ship without a real journey.
 LEGACY_PLUGIN_IDS = frozenset(
     """
-github vercel supabase notion slack linear stripe cloudflare discord telegram
-asana google_drive gmail google_calendar todoist clickup dropbox canva airtable
+github vercel supabase notion slack linear stripe cloudflare telegram
+google_drive gmail google_calendar todoist clickup dropbox canva airtable
 cal_com home_assistant spotify youtube_music higgsfield outlook onedrive teams
 sharepoint onenote microsoft_todo aws azure google_cloud gitlab agentmail x
-linkedin meta youtube_studio hubspot apollo salesforce granola zoom figma amd_gpu
+meta youtube_studio apollo granola amd_gpu
 """.split()
 )
 E2E_STAGES = ("ui", "browser", "callback", "connected", "smoke", "reconnect", "restart")

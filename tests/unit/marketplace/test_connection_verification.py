@@ -165,12 +165,26 @@ async def test_figma_token_modes(auth_type):
 
 @pytest.mark.parametrize("oauth", [True, False])
 def test_both_mcp_bridges_carry_figma_auth_mode(oauth):
-    from jarvis.marketplace.catalog import PluginCatalog
+    from jarvis.marketplace.catalog import PluginCatalog, PluginSpec
     from jarvis.marketplace.mcp_bridge import assemble_claude_mcp_servers
     from jarvis.marketplace.plugin_mcp import plugin_to_mcp_server_spec
 
     tokens = Tokens(access="t", extra={"client_id": "app"} if oauth else {})
-    spec = plugin("figma")
+    # The built-in card was retired; preserve the adapter contract for an
+    # explicitly configured Figma connector without advertising it by default.
+    spec = PluginSpec(
+        id="figma",
+        display_name="Figma",
+        description="Read Figma files",
+        category="Media & Creativity",
+        logo_slug="figma",
+        auth=plugin("shopify").auth,
+        mcp_server={
+            "transport": "stdio",
+            "install": ["python", "-m", "jarvis.plugins.tool.connected_server", "figma"],
+            "env_template": {"JARVIS_CONNECTOR_TOKEN": "$plugin_figma_access_token"},
+        },
+    )
 
     class Store:
         def load(self, plugin_id):

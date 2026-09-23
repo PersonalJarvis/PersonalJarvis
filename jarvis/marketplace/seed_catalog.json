@@ -259,45 +259,6 @@
       "post_install_hint_md": "Defaults to the read-only observability/analytics server. Pick read scopes on Cloudflare's consent screen."
     },
     {
-      "id": "discord",
-      "display_name": "Discord",
-      "description": "Chat with Jarvis from Discord — browser sign-in, your bot",
-      "category": "Messaging",
-      "logo_slug": "discord",
-      "logo_color": "5865F2",
-      "featured": false,
-      "longevity": "self_renewing",
-      "longevity_note": "OAuth tokens refresh automatically. A pasted bot token stays valid until you reset it in the Discord developer portal.",
-      "oauth_client_family": "discord",
-      "browser_flow": "hosted",
-      "auth": {
-        "mode": "oauth_pkce_loopback",
-        "authorization_url": "https://discord.com/oauth2/authorize",
-        "token_url": "https://discord.com/api/oauth2/token",
-        "revocation_url": "https://discord.com/api/oauth2/token/revoke",
-        "client_id": "REPLACE_WITH_JARVIS_DISCORD_APP_CLIENT_ID",
-        "callback_port": 3129,
-        "scopes": [
-          "identify",
-          "guilds",
-          "guilds.members.read",
-          "connections"
-        ],
-        "scope_separator": "space",
-        "refresh_supported": true,
-        "client_kind": "broker"
-      },
-      "fallback_auth": {
-        "mode": "pat_paste",
-        "auth_scheme": "bot",
-        "token_creation_url": "https://discord.com/developers/applications",
-        "token_prefix": "",
-        "validation_endpoint": "https://discord.com/api/v10/users/@me",
-        "instruction_md": "1. Open https://discord.com/developers/applications and click 'New Application'.\n2. Go to the 'Bot' page, click 'Reset Token', and copy it (shown once).\n3. Under 'Privileged Gateway Intents', enable 'Message Content Intent' so the bot can read message text.\n4. Invite the bot to your server: OAuth2 -> URL Generator -> scope 'bot' + the permissions you want (View Channels, Read Message History, Send Messages), open the link, pick your server, Authorize.\n5. Paste the bot token below, plus your numeric Discord user id (Developer Mode -> right-click yourself -> Copy User ID) so only you can command the bot."
-      },
-      "post_install_hint_md": "Browser login authorizes your Discord identity and installation of the Personal Jarvis bot. Identity OAuth alone does not run the bot gateway or enable messaging. The publisher must operate the shared bot service. A separately configured local bot token remains an expert-only option."
-    },
-    {
       "id": "telegram",
       "display_name": "Telegram",
       "description": "Chat with Jarvis from Telegram (your bot)",
@@ -316,36 +277,6 @@
         "instruction_md": "1. Open @BotFather in Telegram (https://t.me/BotFather).\n2. Send /newbot, pick a name and a username ending in 'bot'.\n3. Copy the token BotFather gives you (looks like 123456789:AAH...).\n4. Paste it below, then send /start to your new bot so it can reach you."
       },
       "post_install_hint_md": "This enables the Telegram channel — message your bot to talk to Jarvis. Outbound replies pass through the voice scrubber and your allowlist."
-    },
-    {
-      "id": "asana",
-      "display_name": "Asana",
-      "description": "Tasks, projects and workspaces",
-      "category": "Lists & Tasks",
-      "logo_slug": "asana",
-      "logo_color": "F06A6A",
-      "featured": false,
-      "longevity": "self_renewing",
-      "oauth_client_family": "asana",
-      "auth": {
-        "mode": "oauth_pkce_loopback",
-        "authorization_url": "https://app.asana.com/-/oauth_authorize",
-        "token_url": "https://app.asana.com/-/oauth_token",
-        "revocation_url": "https://app.asana.com/-/oauth_revoke",
-        "client_id": "REPLACE_WITH_JARVIS_ASANA_CLIENT_ID",
-        "callback_port": 3119,
-        "scopes": [],
-        "refresh_supported": true,
-        "resource": "https://mcp.asana.com/v2",
-        "client_kind": "broker"
-      },
-      "mcp_server": {
-        "transport": "http",
-        "url": "https://mcp.asana.com/v2/mcp",
-        "auth_header_template": "Authorization: Bearer ${plugin_asana_access_token}"
-      },
-      "post_install_hint_md": "Connect opens the official provider in your browser. Sign in and allow access, then return to Personal Jarvis. Publisher service setup is handled by the project; no developer account or copied credentials are required from you.",
-      "browser_flow": "hosted"
     },
     {
       "id": "google_drive",
@@ -1186,49 +1117,6 @@
       "oauth_client_family": "x"
     },
     {
-      "id": "linkedin",
-      "display_name": "LinkedIn",
-      "description": "Read your profile and publish posts; broader access requires partner approval",
-      "category": "Media & Creativity",
-      "logo_slug": "linkedin",
-      "logo_color": "0A66C2",
-      "featured": false,
-      "longevity": "provider_limited",
-      "auth": {
-        "mode": "oauth_pkce_loopback",
-        "authorization_url": "https://www.linkedin.com/oauth/v2/authorization",
-        "token_url": "https://www.linkedin.com/oauth/v2/accessToken",
-        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
-        "callback_port": 43891,
-        "callback_path": "/oauth/callback",
-        "scopes": [
-          "openid",
-          "profile",
-          "w_member_social"
-        ],
-        "scope_separator": "space",
-        "refresh_supported": false,
-        "client_kind": "broker"
-      },
-      "mcp_server": {
-        "transport": "stdio",
-        "install": [
-          "python",
-          "-m",
-          "jarvis.plugins.tool.connected_server",
-          "linkedin"
-        ],
-        "env_template": {
-          "JARVIS_CONNECTOR_TOKEN": "$plugin_linkedin_access_token"
-        },
-        "risk_tier": "ask"
-      },
-      "post_install_hint_md": "Connect opens the official provider in your browser. Sign in and allow access, then return to Personal Jarvis. Publisher service setup is handled by the project; no developer account or copied credentials are required from you.",
-      "oauth_client_family": "linkedin",
-      "longevity_note": "Standard LinkedIn access tokens expire; refresh tokens are restricted to approved partners. Reconnect when requested.",
-      "browser_flow": "hosted"
-    },
-    {
       "id": "meta",
       "display_name": "Meta (Facebook & Instagram)",
       "description": "Publish Facebook Page and Instagram professional content; read comments",
@@ -1304,56 +1192,6 @@
       "longevity_note": "Google OAuth apps in Testing may require reauthorization after seven days."
     },
     {
-      "id": "hubspot",
-      "display_name": "HubSpot",
-      "description": "Search contacts and inspect companies and deals in your CRM",
-      "category": "Knowledge & Reading",
-      "logo_slug": "hubspot",
-      "logo_color": "FF7A59",
-      "featured": false,
-      "longevity": "self_renewing",
-      "oauth_client_family": "hubspot",
-      "auth": {
-        "mode": "oauth_pkce_loopback",
-        "authorization_url": "https://app.hubspot.com/oauth/authorize",
-        "token_url": "https://api.hubapi.com/oauth/v1/token",
-        "client_id": "REPLACE_WITH_JARVIS_HUBSPOT_CLIENT_ID",
-        "callback_port": 3128,
-        "callback_path": "/oauth/callback",
-        "scopes": [
-          "crm.objects.contacts.read",
-          "crm.objects.companies.read",
-          "crm.objects.deals.read"
-        ],
-        "scope_separator": "space",
-        "refresh_supported": true,
-        "client_kind": "broker"
-      },
-      "fallback_auth": {
-        "mode": "pat_paste",
-        "token_creation_url": "https://app.hubspot.com/private-apps",
-        "token_prefix": "",
-        "validation_endpoint": "https://api.hubapi.com/crm/v3/objects/contacts?limit=1",
-        "instruction_md": "Create a private app with crm.objects.contacts.read, crm.objects.companies.read and crm.objects.deals.read. Paste its access token here.",
-        "auth_scheme": "bearer"
-      },
-      "mcp_server": {
-        "transport": "stdio",
-        "install": [
-          "python",
-          "-m",
-          "jarvis.plugins.tool.connected_server",
-          "hubspot"
-        ],
-        "env_template": {
-          "JARVIS_CONNECTOR_TOKEN": "$plugin_hubspot_access_token"
-        },
-        "risk_tier": "ask"
-      },
-      "post_install_hint_md": "Connect opens the official provider in your browser. Sign in and allow access, then return to Personal Jarvis. Publisher service setup is handled by the project; no developer account or copied credentials are required from you.",
-      "browser_flow": "hosted"
-    },
-    {
       "id": "apollo",
       "display_name": "Apollo.io",
       "description": "Find companies and contacts through the official Apollo MCP server",
@@ -1384,38 +1222,6 @@
       "post_install_hint_md": "Requires an Apollo account with access to the requested data. Enrichment consumes Apollo credits. Free accounts using a personal email may be restricted from search/enrichment. Follow Apollo requirements for model training settings."
     },
     {
-      "id": "salesforce",
-      "display_name": "Salesforce",
-      "description": "Read and manage CRM records through the official Salesforce MCP server",
-      "category": "Knowledge & Reading",
-      "logo_slug": "salesforce",
-      "logo_color": "00A1E0",
-      "featured": false,
-      "longevity": "self_renewing",
-      "auth": {
-        "mode": "oauth_pkce_loopback",
-        "authorization_url": "https://login.salesforce.com/services/oauth2/authorize",
-        "token_url": "https://login.salesforce.com/services/oauth2/token",
-        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
-        "callback_port": 43891,
-        "callback_path": "/oauth/callback",
-        "scopes": [
-          "mcp_api",
-          "refresh_token"
-        ],
-        "scope_separator": "space",
-        "refresh_supported": true
-      },
-      "mcp_server": {
-        "transport": "http",
-        "url": "https://api.salesforce.com/platform/mcp/v1/platform/sobject-all",
-        "auth_header_template": "Authorization: Bearer $plugin_salesforce_access_token",
-        "risk_tier": "ask"
-      },
-      "post_install_hint_md": "An admin must activate the sobject-all hosted MCP server in your production Salesforce org. Create an External Client App with mcp_api and refresh_token, allow the displayed callback, and enter its client credentials here. Sandbox and custom MCP server URLs are not covered by this entry.",
-      "oauth_client_family": "salesforce"
-    },
-    {
       "id": "granola",
       "display_name": "Granola",
       "description": "Search and read your meeting notes and transcripts",
@@ -1443,101 +1249,6 @@
         "risk_tier": "ask"
       },
       "post_install_hint_md": "Sign in to the Granola account containing your meeting notes. Available notes and transcripts follow your account permissions and plan."
-    },
-    {
-      "id": "zoom",
-      "display_name": "Zoom",
-      "description": "Create meetings and find cloud recordings and transcript links",
-      "category": "Messaging",
-      "logo_slug": "zoom",
-      "logo_color": "2D8CFF",
-      "featured": false,
-      "longevity": "self_renewing",
-      "auth": {
-        "mode": "oauth_pkce_loopback",
-        "authorization_url": "https://zoom.us/oauth/authorize",
-        "token_url": "https://zoom.us/oauth/token",
-        "revocation_url": "https://zoom.us/oauth/revoke",
-        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
-        "callback_port": 43891,
-        "callback_path": "/oauth/callback",
-        "scopes": [
-          "meeting:read:list_meetings",
-          "meeting:write:meeting",
-          "cloud_recording:read:list_user_recordings"
-        ],
-        "scope_separator": "space",
-        "refresh_supported": true,
-        "client_auth_method": "client_secret_basic"
-      },
-      "mcp_server": {
-        "transport": "stdio",
-        "install": [
-          "python",
-          "-m",
-          "jarvis.plugins.tool.connected_server",
-          "zoom"
-        ],
-        "env_template": {
-          "JARVIS_CONNECTOR_TOKEN": "$plugin_zoom_access_token"
-        },
-        "risk_tier": "ask"
-      },
-      "post_install_hint_md": "Create a user-managed Zoom General App with the listed granular scopes. Add http://127.0.0.1:43891/oauth/callback and enter client ID and client secret. Cloud transcripts require recording and transcription to have been enabled. Creating a meeting returns its join link; it does not start the desktop application.",
-      "oauth_client_family": "zoom"
-    },
-    {
-      "id": "figma",
-      "display_name": "Figma",
-      "description": "Find team projects and design files; read design content and comments",
-      "category": "Media & Creativity",
-      "logo_slug": "figma",
-      "logo_color": "F24E1E",
-      "featured": false,
-      "longevity": "self_renewing",
-      "oauth_client_family": "figma",
-      "auth": {
-        "mode": "oauth_pkce_loopback",
-        "authorization_url": "https://www.figma.com/oauth",
-        "token_url": "https://api.figma.com/v1/oauth/token",
-        "client_id": "REPLACE_WITH_JARVIS_FIGMA_CLIENT_ID",
-        "callback_port": 3127,
-        "callback_path": "/oauth/callback",
-        "scopes": [
-          "current_user:read",
-          "projects:read",
-          "file_content:read",
-          "file_comments:read"
-        ],
-        "scope_separator": "space",
-        "refresh_supported": true,
-        "client_kind": "broker",
-        "client_auth_method": "client_secret_basic"
-      },
-      "fallback_auth": {
-        "mode": "pat_paste",
-        "token_creation_url": "https://www.figma.com/settings",
-        "token_prefix": "",
-        "validation_endpoint": "https://api.figma.com/v1/me",
-        "instruction_md": "Generate a Figma personal access token with current_user:read, projects:read, file_content:read and file_comments:read. Paste it here. Team IDs and file keys can be copied from Figma URLs.",
-        "auth_scheme": "figma"
-      },
-      "mcp_server": {
-        "transport": "stdio",
-        "install": [
-          "python",
-          "-m",
-          "jarvis.plugins.tool.connected_server",
-          "figma"
-        ],
-        "env_template": {
-          "JARVIS_CONNECTOR_TOKEN": "$plugin_figma_access_token"
-        },
-        "risk_tier": "ask"
-      },
-      "post_install_hint_md": "Connect opens the official provider in your browser. Sign in and allow access, then return to Personal Jarvis. Publisher service setup is handled by the project; no developer account or copied credentials are required from you.",
-      "longevity_note": "Browser login renews automatically. Pasted tokens expire on the date chosen when you create them.",
-      "browser_flow": "hosted"
     },
     {
       "id": "amd_gpu",

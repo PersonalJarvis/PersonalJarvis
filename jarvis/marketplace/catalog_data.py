@@ -20,6 +20,13 @@ _DEFAULT_CATALOG_PATH = (
 # jarvis/clis/catalog, which ship their seed in-package.
 _PACKAGE_SEED_PATH = Path(__file__).parent / "seed_catalog.json"
 
+# RUB-99: retired publisher integrations are absent from fresh installs. A
+# locally configured client stays user-owned; only untouched placeholder copies
+# of the former built-ins are removed from the default catalog merge.
+_RETIRED_BUILTIN_IDS = frozenset(
+    {"hubspot", "salesforce", "discord", "zoom", "asana", "figma", "linkedin"}
+)
+
 
 _PORTABLE_MCP_MIGRATIONS: dict[str, tuple[dict[str, object], dict[str, object]]] = {
     "github": (
@@ -193,7 +200,7 @@ def _has_obsolete_publisher_auth(plugin: dict, seed_plugin: dict) -> bool:
     digest = hashlib.sha256(
         json.dumps(auth, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    return digest == _LEGACY_PUBLISHER_AUTH_DIGESTS.get(plugin.get("id")) and plugin.get(
+    return digest == _LEGACY_PUBLISHER_AUTH_DIGESTS.get(str(plugin.get("id", ""))) and plugin.get(
         "mcp_server"
     ) == seed_plugin.get("mcp_server")
 
@@ -253,6 +260,11 @@ def _merge_with_seed(override: object, seed: object) -> object:
             merged_plugins.append(plugin)
             continue
         plugin_id = str(plugin["id"])
+        if plugin_id in _RETIRED_BUILTIN_IDS:
+            auth = plugin.get("auth")
+            client = auth.get("client_id") if isinstance(auth, dict) else None
+            if isinstance(client, str) and client.startswith("REPLACE_WITH_"):
+                continue
         declared.add(plugin_id)
         seed_plugin = seed_by_id.get(plugin_id)
         if seed_plugin is None:

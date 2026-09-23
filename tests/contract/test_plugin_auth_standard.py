@@ -544,7 +544,7 @@ async def test_poll_error_reports_machine_code():
 
 
 def _migrated_dual_mode_ids():
-    return ["github", "gitlab", "figma", "hubspot"]
+    return ["github", "gitlab"]
 
 
 @pytest.mark.parametrize("plugin_id", _migrated_dual_mode_ids())
@@ -804,7 +804,7 @@ async def test_prefix_error_names_formats_without_double_underscore(monkeypatch)
 def test_new_pkce_plugins_use_staggered_ports():
     """New PKCE plugins stay off the crowded shared 43891 loopback port."""
     ports = {}
-    for pid in ("gitlab", "figma", "hubspot"):
+    for pid in ("gitlab",):
         spec = load_catalog().by_id(pid)
         assert spec is not None
         port = spec.auth.callback_port

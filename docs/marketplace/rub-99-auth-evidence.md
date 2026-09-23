@@ -1,5 +1,15 @@
 # RUB-99 observed authentication evidence
 
+## Catalog scope change (2026-09-23)
+
+Seven unconnected, incomplete publisher integrations are retired from the
+default built-in catalog: HubSpot, Salesforce, Discord, Zoom, Asana, Figma and
+LinkedIn. Spotify and Shopify remain. This removes unusable normal-user Connect
+entries; it does not retroactively qualify their OAuth flows. The historical
+provider observations below remain as evidence, and the machine-readable audit
+archives their BLOCKED rows under `retired_plugins`. The current built-in
+inventory is 40 / 1 full PASS / 39 BLOCKED.
+
 ## Continuation checkpoint (2026-09-23)
 
 The user reports completing the Microsoft ecosystem independently. Preserve
