@@ -17,10 +17,11 @@ describe("symbol gaze and thinking", () => {
     expect(container.querySelector(".agent-symbol-orbit")).toBeNull();
   });
 
-  it("keeps the face intact without decorative effects and stops when work ends", () => {
+  it("restores the dot interlude without a rainbow and stops when work ends", () => {
     const { container, rerender } = render(<AgentSymbol shape="cloud" color="#8b5cf6" size={48} thinking />);
     expect(container.querySelector("[data-thinking=true]")).not.toBeNull();
-    expect(container.querySelector(".agent-symbol-orbit, .agent-symbol-thoughts")).toBeNull();
+    expect(container.querySelector(".agent-symbol-orbit")).toBeNull();
+    expect(container.querySelectorAll(".agent-symbol-thoughts circle")).toHaveLength(3);
     expect(container.querySelector("[data-agent-body]")).not.toBeNull();
     expect(container.querySelectorAll("[data-agent-eyes] ellipse")).toHaveLength(2);
     rerender(<AgentSymbol shape="cloud" color="#8b5cf6" size={48} />);

@@ -4,37 +4,73 @@
 }
 
 .society-agent-symbol .agent-symbol-gaze,
-.society-agent-symbol .agent-symbol-lids {
+.society-agent-symbol .agent-symbol-lids,
+.society-agent-symbol [data-agent-eyes] ellipse {
   transform-box: fill-box;
   transform-origin: center;
 }
 
+.society-agent-symbol .agent-symbol-thoughts {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .society-agent-symbol[data-thinking="true"] .agent-symbol-character {
-  animation: agent-symbol-think 6s ease-in-out infinite;
+  animation: agent-symbol-think 24s ease-in-out infinite;
 }
 
 .society-agent-symbol[data-thinking="true"] .agent-symbol-gaze {
-  animation: agent-symbol-look 6s ease-in-out infinite;
+  animation: agent-symbol-look 24s ease-in-out infinite;
 }
 
 .society-agent-symbol[data-thinking="true"] .agent-symbol-lids {
   animation: agent-symbol-blink 6s linear infinite;
 }
 
-/* A quiet listen-and-consider pose. Keep the silhouette visible and at its
-   normal size throughout; pauses make the small eye movements readable. */
+.society-agent-symbol[data-thinking="true"] [data-agent-eyes] ellipse {
+  animation: agent-symbol-expression 24s ease-in-out infinite;
+}
+
+.society-agent-symbol[data-thinking="true"] .agent-symbol-thoughts {
+  animation: agent-symbol-thoughts 24s ease-in-out infinite;
+}
+
+.society-agent-symbol[data-thinking="true"] .agent-symbol-thoughts circle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: agent-symbol-dot 0.9s ease-in-out infinite alternate;
+}
+
+.society-agent-symbol .agent-symbol-thoughts circle:nth-child(2) { animation-delay: -0.3s; }
+.society-agent-symbol .agent-symbol-thoughts circle:nth-child(3) { animation-delay: -0.6s; }
+
+/* Eight readable beats, three seconds each including the short transition.
+   Keep the lively face and dot interlude, with no orbit or coloured props. */
 @keyframes agent-symbol-think {
-  0%, 12%, 100% { transform: translateY(0) rotate(0); }
-  24%, 38% { transform: translateY(-0.35px) rotate(-2deg); }
-  52%, 62% { transform: translateY(0) rotate(1.5deg); }
-  76%, 88% { transform: translateY(-0.2px) rotate(-1deg); }
+  0%, 10.5%, 100% { transform: translateY(0) rotate(-5deg) scale(1); opacity: 1; }
+  12.5%, 23% { transform: translateY(-0.8px) rotate(2deg) scale(1.02, 0.98); opacity: 1; }
+  25%, 35.5% { transform: translateY(0) rotate(7deg) scale(0.98, 1.02); opacity: 1; }
+  37.5%, 48% { transform: translateY(-1px) rotate(-7deg) scale(1); opacity: 1; }
+  50%, 60.5% { transform: translateY(1px) rotate(0) scale(0.72, 0.15); opacity: 0; }
+  62.5%, 73% { transform: translateY(-0.8px) rotate(5deg) scale(1.02); opacity: 1; }
+  75%, 85.5% { transform: translateY(0) rotate(-4deg) scale(0.98, 1.02); opacity: 1; }
+  87.5%, 98% { transform: translateY(-0.6px) rotate(1deg) scale(1); opacity: 1; }
 }
 
 @keyframes agent-symbol-look {
-  0%, 14%, 100% { transform: translate(0, 0); }
-  24%, 42% { transform: translate(-0.8px, -0.8px); }
-  54%, 68% { transform: translate(0.5px, -0.15px); }
-  80%, 90% { transform: translate(0, 0.15px); }
+  0%, 10.5%, 100% { transform: translate(-1.5px, -1.2px); }
+  12.5%, 23% { transform: translate(0.8px, -0.4px); }
+  25%, 35.5% { transform: translate(1.7px, 0.8px); }
+  37.5%, 48% { transform: translate(-2px, 0); }
+  50%, 60.5% { transform: translate(0, 0); }
+  62.5%, 73% { transform: translate(1.7px, -0.5px); }
+  75%, 85.5% { transform: translate(0.8px, 1.2px); }
+  87.5%, 98% { transform: translate(-1.2px, 0.8px); }
+}
+
+@keyframes agent-symbol-expression {
+  0%, 73%, 100% { transform: scale(1); }
+  75%, 98% { transform: scale(1.35, 0.75); }
 }
 
 @keyframes agent-symbol-blink {
@@ -42,10 +78,23 @@
   45%, 47%, 83%, 85% { transform: scaleY(0.15); }
 }
 
+@keyframes agent-symbol-thoughts {
+  0%, 48%, 62.5%, 100% { opacity: 0; }
+  50%, 60.5% { opacity: 1; }
+}
+
+@keyframes agent-symbol-dot {
+  from { transform: translateY(1px) scale(0.8); opacity: 0.45; }
+  to { transform: translateY(-1px) scale(1.1); opacity: 1; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .society-agent-symbol[data-thinking="true"] .agent-symbol-character,
   .society-agent-symbol[data-thinking="true"] .agent-symbol-gaze,
-  .society-agent-symbol[data-thinking="true"] .agent-symbol-lids {
+  .society-agent-symbol[data-thinking="true"] .agent-symbol-lids,
+  .society-agent-symbol[data-thinking="true"] [data-agent-eyes] ellipse,
+  .society-agent-symbol[data-thinking="true"] .agent-symbol-thoughts,
+  .society-agent-symbol[data-thinking="true"] .agent-symbol-thoughts circle {
     animation: none;
   }
 }

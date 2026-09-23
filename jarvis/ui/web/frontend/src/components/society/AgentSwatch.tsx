@@ -1,7 +1,7 @@
 import gigiCompanionMark from "@/assets/gigi-companion-avatar.png";
 import { cn } from "@/lib/utils";
 
-import { AgentSymbol } from "./AgentSymbol";
+import { AgentSymbol, SymbolThinkingDots } from "./AgentSymbol";
 import { resolveCompanion } from "./companion/appearance";
 import type { SocietyAgent } from "./data";
 
@@ -35,6 +35,7 @@ export function AgentSwatch({
       style={{ width: size, height: size }}
     >
       {isJarvis ? (
+        <>
         <img
           data-agent-mascot="gigi"
           src={gigiCompanionMark}
@@ -44,6 +45,8 @@ export function AgentSwatch({
           height={size}
           className="agent-symbol-character h-full w-full object-contain"
         />
+        {thinking && <svg aria-hidden viewBox="0 0 40 44" className="pointer-events-none absolute inset-0 h-full w-full"><SymbolThinkingDots color="#ffcf45" /></svg>}
+        </>
       ) : (
         <AgentSymbol {...appearance} size={size} thinking={thinking} />
       )}
