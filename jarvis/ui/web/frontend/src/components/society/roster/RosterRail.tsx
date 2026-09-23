@@ -167,7 +167,7 @@ export function RosterRail({
                   agent.agentId === activeAgentId && "bg-secondary",
                 )}
               >
-                <AgentSwatch agent={agent} size={34} />
+                <AgentSwatch agent={agent} size={48} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
                     <span className="truncate text-sm font-medium text-foreground">{agent.name}</span>

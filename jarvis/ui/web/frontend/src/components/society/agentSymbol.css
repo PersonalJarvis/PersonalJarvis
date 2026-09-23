@@ -1,0 +1,106 @@
+.society-agent-symbol .agent-symbol-character {
+  transform-box: view-box;
+  transform-origin: 50% 54%;
+}
+
+.society-agent-symbol .agent-symbol-gaze {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.society-agent-symbol .agent-symbol-lids {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.society-agent-symbol .agent-symbol-orbit,
+.society-agent-symbol .agent-symbol-thoughts {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.society-agent-symbol .agent-symbol-orbit {
+  transform-origin: 20px 11px;
+}
+
+.society-agent-symbol[data-thinking="true"] .agent-symbol-character {
+  animation: agent-symbol-think 8s ease-in-out infinite;
+}
+
+.society-agent-symbol[data-thinking="true"] .agent-symbol-gaze {
+  animation: agent-symbol-look 8s ease-in-out infinite;
+}
+
+.society-agent-symbol[data-thinking="true"] .agent-symbol-lids {
+  animation: agent-symbol-blink 8s linear infinite;
+}
+
+.society-agent-symbol[data-thinking="true"] .agent-symbol-orbit {
+  animation: agent-symbol-orbit 8s ease-in-out infinite;
+}
+
+.society-agent-symbol[data-thinking="true"] .agent-symbol-thoughts {
+  animation: agent-symbol-thoughts 8s linear infinite;
+}
+
+.society-agent-symbol[data-thinking="true"] .agent-symbol-thoughts circle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: agent-symbol-dot 0.8s ease-in-out infinite alternate;
+}
+
+.society-agent-symbol .agent-symbol-thoughts circle:nth-child(2) { animation-delay: -0.25s; }
+.society-agent-symbol .agent-symbol-thoughts circle:nth-child(3) { animation-delay: -0.5s; }
+
+@keyframes agent-symbol-think {
+  0%, 100% { transform: translateY(0) rotate(-5deg) scale(1); opacity: 1; }
+  12% { transform: translateY(-1px) rotate(5deg) scale(1.02, 0.98); }
+  26% { transform: translateY(0) rotate(-7deg) scale(0.98, 1.02); }
+  38% { transform: translateY(-0.8px) rotate(6deg) scale(1); opacity: 1; }
+  43%, 49% { transform: translateY(1px) rotate(0) scale(0.72, 0.15); opacity: 0; }
+  54% { transform: translateY(-1px) rotate(-5deg) scale(1.02); opacity: 1; }
+  70% { transform: translateY(0) rotate(7deg) scale(0.98, 1.02); }
+  86% { transform: translateY(-0.7px) rotate(-4deg) scale(1); }
+}
+
+@keyframes agent-symbol-look {
+  0%, 100% { transform: translate(0, 0); }
+  20% { transform: translate(-2px, -1.5px); }
+  35% { transform: translate(1px, 0.5px); }
+  58% { transform: translate(1.5px, -1px); }
+  78% { transform: translate(-1.5px, 1px); }
+}
+
+@keyframes agent-symbol-blink {
+  0%, 8%, 11%, 32%, 35%, 64%, 67%, 100% { transform: scaleY(1); }
+  9%, 10%, 33%, 34%, 65%, 66% { transform: scaleY(0.12); }
+}
+
+@keyframes agent-symbol-orbit {
+  0% { opacity: 0; transform: rotate(-22deg) scaleX(0.7); }
+  3%, 9% { opacity: 0.95; transform: rotate(18deg) scaleX(1); }
+  14%, 60% { opacity: 0; transform: rotate(35deg) scaleX(0.75); }
+  65%, 71% { opacity: 0.95; transform: rotate(-18deg) scaleX(1); }
+  77%, 100% { opacity: 0; transform: rotate(-35deg) scaleX(0.7); }
+}
+
+@keyframes agent-symbol-thoughts {
+  0%, 39%, 53%, 100% { opacity: 0; }
+  43%, 49% { opacity: 1; }
+}
+
+@keyframes agent-symbol-dot {
+  from { transform: translateY(1px) scale(0.8); opacity: 0.45; }
+  to { transform: translateY(-1px) scale(1.1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .society-agent-symbol[data-thinking="true"] .agent-symbol-character,
+  .society-agent-symbol[data-thinking="true"] .agent-symbol-gaze,
+  .society-agent-symbol[data-thinking="true"] .agent-symbol-lids,
+  .society-agent-symbol[data-thinking="true"] .agent-symbol-orbit,
+  .society-agent-symbol[data-thinking="true"] .agent-symbol-thoughts,
+  .society-agent-symbol[data-thinking="true"] .agent-symbol-thoughts circle {
+    animation: none;
+  }
+}

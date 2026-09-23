@@ -16,7 +16,11 @@ with sync_playwright() as playwright:
     outlines = {}
     for name, markup in shapes.items():
         page.set_content(markup)
-        outlines[name] = page.locator("svg > :first-child").evaluate(
+        outline = page.locator("[data-agent-body] > :first-child")
+        if outline.count() == 0:
+            # Retained authoring captures predate the animated SVG grouping.
+            outline = page.locator("svg > :first-child")
+        outlines[name] = outline.evaluate(
             """e => {
                 const length = e.getTotalLength();
                 return Array.from({length:96}, (_,i) => {

@@ -4,11 +4,12 @@
  * Source revision: 4a2bd7406ee3e09bd30a42cf9a7b970aac6edf9e.
  * Copyright (c) 2025 Nous Research. MIT license; see THIRD_PARTY_NOTICES.txt.
  *
- * Jarvis adaptation: stable ID-based appearance, static SVG, no SDK, face
- * clock, generated image, model download or WebGL context in the roster.
+ * Jarvis adaptation: stable ID-based appearance and state-driven CSS motion,
+ * without a SDK, JavaScript frame clock, model download or WebGL in the roster.
  */
 
 import { defaultCompanion, companionEyeColors, type SymbolShape } from "./companion/appearance";
+import "./agentSymbol.css";
 export type { SymbolShape } from "./companion/appearance";
 
 export function symbolAppearance(identity: string): { shape: SymbolShape; color: string } {
@@ -51,21 +52,38 @@ function SymbolBody({ shape, color }: { shape: SymbolShape; color: string }) {
   }
 }
 
-/** Two small eyes and their catchlights; no surrounding portrait disc. */
-export function AgentSymbol({ shape, color, size, eyes = "dots" }: { shape: SymbolShape; color: string; size: number; eyes?: "dots" | "lines" }) {
+/** Decorations are local SVG paths, not remote media or progress indicators. */
+export function SymbolThinkingAccents({ color }: { color: string }) {
+  return <>
+    <g className="agent-symbol-orbit" fill="none" strokeWidth={2.2} strokeLinecap="round">
+      <path d="M4 10 C9 3 31 3 36 10" stroke="#8bd5ee" />
+      <path d="M36 10 C37 15 20 17 9 13" stroke="#edb973" />
+      <path d="M9 13 C1 11 2 8 6 7" stroke="#c294ed" />
+    </g>
+    <g className="agent-symbol-thoughts" fill={color}>
+      <circle cx={10} cy={22} r={3} /><circle cx={20} cy={22} r={4} /><circle cx={30} cy={22} r={3} />
+    </g>
+  </>;
+}
+
+/** Plain ink eyes share one resting gaze; only a working agent moves. */
+export function AgentSymbol({ shape, color, size, eyes = "lines", thinking = false }: { shape: SymbolShape; color: string; size: number; eyes?: "dots" | "lines"; thinking?: boolean }) {
   const eyeY = shape === "cloud" || shape === "triangle" ? 23 : shape === "drop" ? 25 : 17.2;
   const ink = companionEyeColors(color);
   return (
-    <svg aria-hidden focusable="false" data-agent-symbol={shape} width={size} height={size} style={{ width: size, height: size, flexShrink: 0 }} viewBox="0 0 40 44" className="block">
-      <SymbolBody shape={shape} color={color} />
-      <g fill={ink.eye}>
-        <ellipse cx={15.4} cy={eyeY} rx={eyes === "lines" ? 1.3 : 2.2} ry={eyes === "lines" ? 3.2 : 2.3} />
-        <ellipse cx={24.6} cy={eyeY} rx={eyes === "lines" ? 1.3 : 2.2} ry={eyes === "lines" ? 3.2 : 2.3} />
+    <svg aria-hidden focusable="false" data-agent-symbol={shape} data-thinking={thinking ? "true" : undefined} width={size} height={size} style={{ width: size, height: size, flexShrink: 0 }} viewBox="0 0 40 44" className="society-agent-symbol block">
+      <g className="agent-symbol-character">
+        <g data-agent-body><SymbolBody shape={shape} color={color} /></g>
+        <g className="agent-symbol-gaze">
+          <g data-agent-eyes fill={ink.eye} transform={`translate(2 -0.6) rotate(-14 20 ${eyeY})`}>
+            <g className="agent-symbol-lids">
+              <ellipse cx={15.4} cy={eyeY} rx={eyes === "lines" ? 1.45 : 2} ry={eyes === "lines" ? 3.1 : 2.3} />
+              <ellipse cx={24.6} cy={eyeY} rx={eyes === "lines" ? 1.45 : 2} ry={eyes === "lines" ? 3.1 : 2.3} />
+            </g>
+          </g>
+        </g>
       </g>
-      <g fill={ink.highlight} opacity={eyes === "lines" ? 0 : 0.85}>
-        <circle cx={14.8} cy={eyeY - 0.7} r={0.65} />
-        <circle cx={24} cy={eyeY - 0.7} r={0.65} />
-      </g>
+      {thinking && <SymbolThinkingAccents color={color} />}
     </svg>
   );
 }

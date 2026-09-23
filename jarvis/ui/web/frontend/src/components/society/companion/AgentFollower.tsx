@@ -34,7 +34,7 @@ export function CompanionModel({ appearance, lead = false }: { appearance: Compa
         if (!mesh.isMesh) return;
         const name = mesh.name;
         mesh.castShadow = true;
-        mesh.visible = name.includes("Dots") ? appearance.eyes === "dots" : name.includes("Lines") ? appearance.eyes === "lines" : name.includes("Highlight") ? appearance.eyes === "dots" : true;
+        mesh.visible = name.includes("Dots") ? appearance.eyes === "dots" : name.includes("Lines") ? appearance.eyes === "lines" : !name.includes("Highlight");
         mesh.material = name.includes("Body") ? body : name.includes("Highlight") ? shine : eyes;
       });
     }

@@ -12,9 +12,10 @@ describe("the shared Python/JSON/TypeScript companion contract", () => {
     expect(resolveCompanion("research", { shape: "bad" })).toEqual(defaultCompanion("research"));
     expect(resolveCompanion("new-name", cases.valid[1]).shape).toBe("cloud");
   });
-  it("keeps eyes readable on custom dark colours", () => {
-    expect(companionEyeColors("#000000").eye).toBe("#f5ecd7");
-    expect(companionEyeColors("#ffffff").eye).toBe("#19171d");
+  it("keeps the requested plain black eyes on every body colour", () => {
+    expect(companionEyeColors("#000000").eye).toBe("#101014");
+    expect(companionEyeColors("#ffffff").eye).toBe("#101014");
+    expect(defaultCompanion("new-agent").eyes).toBe("lines");
   });
   it("standardizes earlier saved size and following-distance choices", () => {
     expect(resolveCompanion("research", cases.valid[1])).toMatchObject({ shape: "cloud", sizeM: 0.5, followDistanceM: 1 });

@@ -7,7 +7,7 @@ export const COMPANION_SIZE_M = 0.5;
 export const COMPANION_FOLLOW_DISTANCE_M = 1;
 export const companionSchema = z.object({
   shape: z.enum(COMPANION_SHAPES), color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-  eyes: z.enum(["dots", "lines"]).default("dots"), enabled: z.boolean().default(true),
+  eyes: z.enum(["dots", "lines"]).default("lines"), enabled: z.boolean().default(true),
   // Accept earlier saved slider values, but every presentation uses one scale.
   sizeM: z.number().finite().min(0.25).max(0.8).default(COMPANION_SIZE_M).transform(() => COMPANION_SIZE_M),
   followDistanceM: z.number().finite().min(0.5).max(2).default(COMPANION_FOLLOW_DISTANCE_M).transform(() => COMPANION_FOLLOW_DISTANCE_M),
@@ -24,7 +24,7 @@ export function defaultCompanion(identity: string): CompanionAppearance {
   return {
     shape: COMPANION_SHAPES[identityHash(`shape:${identity}`) % COMPANION_SHAPES.length]!,
     color: COMPANION_COLORS[identityHash(`color:${identity}`) % COMPANION_COLORS.length]!,
-    eyes: "dots", enabled: true, sizeM: COMPANION_SIZE_M, followDistanceM: COMPANION_FOLLOW_DISTANCE_M,
+    eyes: "lines", enabled: true, sizeM: COMPANION_SIZE_M, followDistanceM: COMPANION_FOLLOW_DISTANCE_M,
   };
 }
 
@@ -33,9 +33,7 @@ export function resolveCompanion(identity: string, stored?: unknown): CompanionA
   return parsed.success ? parsed.data : defaultCompanion(identity);
 }
 
-/** Preserve catchlight contrast even for a custom near-black body. */
-export function companionEyeColors(color: string): { eye: string; highlight: string } {
-  const value = Number.parseInt(color.slice(1), 16);
-  const dark = 0.2126 * ((value >> 16) & 255) + 0.7152 * ((value >> 8) & 255) + 0.0722 * (value & 255) < 110;
-  return dark ? { eye: "#f5ecd7", highlight: "#16151b" } : { eye: "#19171d", highlight: "#ffffff" };
+/** The same plain black ink in profiles and in the map, without catchlights. */
+export function companionEyeColors(_color: string): { eye: string; highlight: string } {
+  return { eye: "#101014", highlight: "#101014" };
 }

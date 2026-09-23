@@ -16,6 +16,7 @@ const result = await build({
     export default Object.fromEntries(COMPANION_SHAPES.map(shape => [shape, renderToStaticMarkup(createElement(AgentSymbol, { shape, color:'#ffffff', size:128 }))]));`,
     resolveDir: frontend, loader: "tsx" },
   bundle: true, platform: "node", format: "cjs", jsx: "automatic", write: false,
+  loader: { ".css": "empty" },
 });
 const module = { exports: {} };
 new Function("require", "module", "exports", result.outputFiles[0].text)(require, module, module.exports);

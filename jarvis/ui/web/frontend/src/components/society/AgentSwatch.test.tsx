@@ -15,6 +15,17 @@ const agent: Pick<SocietyAgent, "agentId" | "tier" | "figure" | "palette" | "nam
 };
 
 describe("agent vector identities", () => {
+  it("animates only a real working status, including the lead", () => {
+    const { container, rerender } = render(<AgentSwatch agent={{ ...agent, state: "working" }} />);
+    expect(container.querySelector("[data-thinking=true]")).not.toBeNull();
+    for (const state of ["idle", "waiting", "paused"] as const) {
+      rerender(<AgentSwatch agent={{ ...agent, state }} />);
+      expect(container.querySelector("[data-thinking=true]")).toBeNull();
+    }
+    rerender(<AgentSwatch agent={{ ...agent, tier: "lead", state: "working" }} />);
+    expect(container.querySelector("[data-agent-mascot=gigi]")).not.toBeNull();
+    expect(container.querySelector("[data-thinking=true]")).not.toBeNull();
+  });
   it("renders a symbol immediately without a portrait, image request or canvas", () => {
     const { container } = render(<AgentSwatch agent={agent} size={40} />);
     expect(container.querySelector("svg[data-agent-symbol]")).not.toBeNull();
