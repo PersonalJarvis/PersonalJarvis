@@ -495,6 +495,7 @@ label,
 
     /* --- The surface ladder ---------------------------------------------- */
     --background: 0 0% 100%; /* #FFFFFF — the room, every full-bleed region */
+    --society-chat-ground: 0 0% 100%; /* The agent conversation canvas */
     --sidebar: 0 0% 98%; /* #FAFAFA — the rail, standing chrome */
     --card: 0 0% 100%; /* #FFFFFF — an OBJECT: card, bubble, panel (edged by --border) */
     --card-foreground: 0 0% 9%;
@@ -695,6 +696,7 @@ label,
 
     /* --- The surface ladder ---------------------------------------------- */
     --background: 0 0% 4%; /* #0A0A0A — the room, every full-bleed region */
+    --society-chat-ground: 0 0% 7%; /* #121212 — a quieter, lighter conversation canvas */
     --sidebar: 0 0% 6%; /* #0F0F0F — the rail, one step up, with a visible edge */
     --card: 0 0% 9%; /* #171717 — an OBJECT: card, bubble, composer, panel */
     --card-foreground: 0 0% 98%;
