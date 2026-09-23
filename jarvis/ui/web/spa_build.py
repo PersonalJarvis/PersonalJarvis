@@ -116,9 +116,7 @@ def recover_conflicted_index(index_file: Path, dist_dir: Path) -> str | None:
     assets exist. The unresolved file remains available for the merge owner.
     """
     try:
-        lines = index_file.read_text(encoding="utf-8", errors="replace").splitlines(
-            keepends=True
-        )
+        lines = index_file.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
     except OSError:
         logging.getLogger(__name__).warning(
             "Cannot inspect the conflicted frontend index at %s", index_file, exc_info=True
