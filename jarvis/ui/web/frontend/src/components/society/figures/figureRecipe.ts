@@ -11,6 +11,7 @@
  */
 
 import { basesForStyle, catalogBaseFor } from "./figureRegistry";
+import type { CompanionAppearance } from "../companion/appearance";
 
 export const PALETTE_CELLS = [
   "skin",
@@ -37,6 +38,8 @@ export type Palette = Record<PaletteCell, string>;
 export type FigureArchetype = "biped" | "quadruped" | "spirit";
 
 export interface FigureRecipe {
+  /** Independent profile identity and world follower; older recipes derive defaults. */
+  companion?: CompanionAppearance;
   contract: 1;
   archetype: FigureArchetype;
   /** Catalog base id: "rogue" | "knight" | "mage" | "barbarian" …; an animal id for a quadruped. */
