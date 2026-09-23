@@ -33,6 +33,8 @@ _PLUGIN_PAIRED_SKILLS: tuple[str, ...] = (
     "plugin-notion",
     "plugin-slack",
     "plugin-linear",
+    "plugin-discord",
+    "plugin-asana",
     "plugin-supabase",
     "plugin-cloudflare",
     "plugin-google_calendar",

@@ -1,6 +1,5 @@
 """Broker regressions against a controlled transport, not live OAuth evidence."""
 
-from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -12,9 +11,6 @@ from jarvis.marketplace.auth.base import pkce_pair
 from jarvis.marketplace.broker_service import BrokerProvider, create_broker_app
 
 START_EXTRA = {"loopback_uri": "http://127.0.0.1:43891/oauth/broker", "client_state": "d" * 43}
-RETIRED_FIGMA_SPEC = SimpleNamespace(
-    auth=SimpleNamespace(authorization_url="https://www.figma.com/oauth")
-)
 
 
 @pytest.fixture
@@ -189,6 +185,7 @@ def test_rejects_insecure_deployment(broker):
 @pytest.mark.asyncio
 async def test_desktop_broker_protocol_persistence_and_client_binding(broker):
     from jarvis.marketplace.auth.oauth_broker import OAuthBrokerHandler
+    from jarvis.marketplace.catalog_data import load_catalog
     from jarvis.marketplace.token_store import InMemoryBackend, TokenStore
 
     config, _ = broker
@@ -197,7 +194,7 @@ async def test_desktop_broker_protocol_persistence_and_client_binding(broker):
     app = create_broker_app(**config)
     transport = httpx.ASGITransport(app=app)
     handler = OAuthBrokerHandler("figma", config["base_url"], transport=transport)
-    session = await handler.start(RETIRED_FIGMA_SPEC)
+    session = await handler.start(load_catalog().by_id("figma"))
     state = parse_qs(urlsplit(session.open_url).query)["state"][0]
     async with httpx.AsyncClient(transport=transport, base_url=config["base_url"]) as client:
         response = await client.get("/callback", params={"code": "test-code", "state": state})
@@ -222,6 +219,7 @@ async def test_desktop_broker_protocol_persistence_and_client_binding(broker):
 @pytest.mark.asyncio
 async def test_desktop_refuses_unexpected_authorization_origin():
     from jarvis.marketplace.auth.oauth_broker import OAuthBrokerHandler
+    from jarvis.marketplace.catalog_data import load_catalog
 
     def response(request):
         return httpx.Response(
@@ -233,7 +231,7 @@ async def test_desktop_refuses_unexpected_authorization_origin():
         "figma", "https://publisher.example", transport=httpx.MockTransport(response)
     )
     with pytest.raises(RuntimeError, match="unexpected authorization destination"):
-        await handler.start(RETIRED_FIGMA_SPEC)
+        await handler.start(load_catalog().by_id("figma"))
 
 
 @pytest.mark.asyncio
@@ -310,8 +308,10 @@ async def test_slow_refresh_does_not_block_other_flows_or_resurrect_disconnect(b
         "microsoft_todo",
         "azure",
         "slack",
+        "zoom",
         "gitlab",
         "spotify",
+        "salesforce",
         "google_cloud",
     ],
 )
@@ -333,10 +333,14 @@ def test_publisher_public_clients_never_resolve_confidential_secrets(monkeypatch
 
 
 @pytest.mark.parametrize("plugin", ["hubspot", "asana", "figma", "linkedin", "discord"])
-def test_retired_confidential_family_has_no_default_handler(plugin):
+def test_confidential_family_uses_broker_and_preserves_legacy_refresh(monkeypatch, plugin):
+    from jarvis.marketplace.auth.oauth_broker import OAuthBrokerHandler
     from jarvis.marketplace.connect_helpers import build_handler_from_catalog
 
-    assert build_handler_from_catalog(plugin) is None
+    monkeypatch.setattr("jarvis.core.config.get_secret", lambda *args: None)
+    handler = build_handler_from_catalog(plugin)
+    assert isinstance(handler, OAuthBrokerHandler)
+    assert handler.legacy_handler is not None
 
 
 @pytest.mark.asyncio

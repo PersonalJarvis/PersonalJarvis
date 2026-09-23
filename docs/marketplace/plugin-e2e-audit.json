@@ -6,26 +6,13 @@
     "date": "2026-09-23",
     "reference": "docs/marketplace/rub-99-auth-evidence.md#continuation-checkpoint-2026-09-23",
     "microsoft": "User-reported complete; excluded from this continuation. Historical agent evidence is retained without promoting any result.",
-    "remaining_providers": [
-      "spotify",
-      "slack",
-      "shopify"
-    ],
+    "remaining_providers": ["hubspot", "salesforce", "discord", "zoom", "asana", "figma", "linkedin", "spotify", "slack", "shopify"],
     "blocker": "Chrome automation cannot bootstrap: browser-service module is missing and official diagnostics report missing Windows native-host registration. Reinstall the Browser/Chrome plugin through the application UI before real provider work can resume.",
     "browser_control_restored_later": true,
     "broker_hosted_later": "https://oauth.personaljarvis.ai",
-    "new_completed_provider_journeys": false,
-    "retired_builtin_plugins": [
-      "asana",
-      "discord",
-      "figma",
-      "hubspot",
-      "linkedin",
-      "salesforce",
-      "zoom"
-    ]
+    "new_completed_provider_journeys": false
   },
-  "scope": "Current 40-plugin built-in catalog: one full Windows GitLab PASS and 39 incomplete full journeys. Seven user-retired RUB-99 plugins retain their historical evidence separately. Regression tests do not count as provider evidence.",
+  "scope": "RUB-94 inventory with RUB-99 observed updates. One complete Windows GitLab journey; all other full-plugin results remain blocked. Regression tests do not count as provider evidence.",
   "plugins": [
     {
       "plugin_id": "github",
@@ -426,6 +413,61 @@
       }
     },
     {
+      "plugin_id": "discord",
+      "result": "BLOCKED",
+      "config_fingerprint": "e3634cd5b08bd8d7fafa148d76270c910c6111e4da4974deada8a2109ce3554e",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        }
+      },
+      "blocker": {
+        "reason": "Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "provider_exception": {
+        "reason": "This local channel uses a bot credential. OAuth bot installation does not replace that runtime credential; this is not a claim that Discord lacks OAuth.",
+        "source": "https://docs.discord.com/developers/platform/oauth2-and-permissions"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
+    },
+    {
       "plugin_id": "telegram",
       "result": "BLOCKED",
       "config_fingerprint": "91c398318bb47d6742fd3dc38bb0ab7d228902ddbac384d4048c1299ddec146b",
@@ -477,6 +519,57 @@
         "reason": "This connector uses the Telegram Bot API, whose requests require a bot token; this is not a claim about every Telegram login product.",
         "source": "https://core.telegram.org/bots/api"
       }
+    },
+    {
+      "plugin_id": "asana",
+      "result": "BLOCKED",
+      "config_fingerprint": "c12cb20cb208ca2f4049e159074b0cf9235f84e7e25c9b73af414ec3913a8cb4",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        }
+      },
+      "blocker": {
+        "reason": "A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
       "plugin_id": "google_drive",
@@ -1727,6 +1820,57 @@
       }
     },
     {
+      "plugin_id": "linkedin",
+      "result": "BLOCKED",
+      "config_fingerprint": "682fa6c38f3db533a0bb89a8c384d0fc9c21886d7c63c1582923135fc299bb87",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        }
+      },
+      "blocker": {
+        "reason": "Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
+    },
+    {
       "plugin_id": "meta",
       "result": "BLOCKED",
       "config_fingerprint": "6e3ac480076fa13d6a0e90500308404b558a2cb0b8deb722a324eba0f8008048",
@@ -1825,361 +1969,6 @@
       }
     },
     {
-      "plugin_id": "apollo",
-      "result": "BLOCKED",
-      "config_fingerprint": "2e283fde4a91c896e5acd54fb64937ffe9ec503da177d1f65df00d2477d42feb",
-      "initial_state": "connect_attempt",
-      "evidence": {
-        "ui": {
-          "status": "PASS",
-          "detail": "Official app.apollo.io login reached; provider account sign-in required.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "browser": {
-          "status": "PASS",
-          "detail": "Official app.apollo.io login reached; provider account sign-in required.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "callback": {
-          "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "connected": {
-          "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "reconnect": {
-          "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "restart": {
-          "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        }
-      },
-      "blocker": {
-        "reason": "Provider account sign-in has not been completed.",
-        "owner": "Provider account holder",
-        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
-        "evidence": "Official app.apollo.io login reached; provider account sign-in required."
-      }
-    },
-    {
-      "plugin_id": "granola",
-      "result": "BLOCKED",
-      "config_fingerprint": "b492fc6ad8d1ee27ecefe7bba86f56d84ecfc370fba277b8aa844cd6a40398b6",
-      "initial_state": "connect_attempt",
-      "evidence": {
-        "ui": {
-          "status": "PASS",
-          "detail": "Official mcp-auth.granola.ai sign-in reached from real Connect; account sign-in required.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "browser": {
-          "status": "PASS",
-          "detail": "Official mcp-auth.granola.ai sign-in reached from real Connect; account sign-in required.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "callback": {
-          "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "connected": {
-          "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "reconnect": {
-          "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "restart": {
-          "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        }
-      },
-      "blocker": {
-        "reason": "Provider account sign-in has not been completed.",
-        "owner": "Provider account holder",
-        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
-        "evidence": "Official mcp-auth.granola.ai sign-in reached from real Connect; account sign-in required."
-      }
-    },
-    {
-      "plugin_id": "amd_gpu",
-      "result": "BLOCKED",
-      "config_fingerprint": "176b23334c1d06c2304fb0661ba33d8cb0c4fe951dc6815db32c44050e136b81",
-      "initial_state": "connect_attempt",
-      "evidence": {
-        "ui": {
-          "status": "PASS",
-          "detail": "Plugins\nSkills\nPlugins\nMCPs\nPlugins\nAMD GPU Status\n\nUnsupported on this device\n· Home & Devices\n\nConnect\n\nAMD GPU telemetry is unavailable on this operating system. This connector requires a compatible Linux AMD host with AMD SMI.\n\nRead AMD GPU utilization, temperature and driver data through AMD SMI\n\nStatus\nUnsupported on this device\nSign-in\nLocal device\nConnection\nStays connected\n—\n0 files\namd_gpu\nLoading…",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "browser": {
-          "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "callback": {
-          "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "connected": {
-          "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "reconnect": {
-          "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "restart": {
-          "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        }
-      },
-      "blocker": {
-        "reason": "Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
-        "owner": "Hardware test operator",
-        "next_action": "Run the no-login connection and real telemetry read on a supported Linux AMD host, then verify lifecycle.",
-        "evidence": "Plugins\nSkills\nPlugins\nMCPs\nPlugins\nAMD GPU Status\n\nUnsupported on this device\n· Home & Devices\n\nConnect\n\nAMD GPU telemetry is unavailable on this operating system. This connector requires a compatible Linux AMD host with AMD SMI.\n\nRead AMD GPU utilization, temperature and driver data through AMD SMI\n\nStatus\nUnsupported on this device\nSign-in\nLocal device\nConnection\nStays connected\n—\n0 files\namd_gpu\nLoading…"
-      }
-    },
-    {
-      "plugin_id": "shopify",
-      "result": "BLOCKED",
-      "config_fingerprint": "1d590b64b18618a2e164f2fd1718edc3e125c1baad9fa3b0d0bf5fdff4ed6324",
-      "initial_state": "connect_attempt",
-      "evidence": {
-        "ui": {
-          "status": "PASS",
-          "detail": "Shopify card renders in the Plugins dialog (47th entry) with its logo; Connect attempted 2026-09-21 and failed with the generic dialog (see blocker).",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "browser": {
-          "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. The first configuration (hosted MCP with Dynamic Client Registration) was wrong: Shopify publishes no DCR registration_endpoint, so the flow failed before any browser page opened. The entry now uses Authorization Code + PKCE loopback against the publisher-shared app; the shared app registration and the store-owner sign-in are both still pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "callback": {
-          "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. No authorization code has been issued yet; the shared app registration and the store-owner sign-in are still pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "connected": {
-          "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. No grant exists yet; the shared app registration and the store-owner sign-in are still pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "smoke": {
-          "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. No live read-only Shopify action has been attested with a real grant.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "reconnect": {
-          "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. No grant exists yet; the shared app registration and the store-owner sign-in are still pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "restart": {
-          "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. No grant exists yet; the shared app registration and the store-owner sign-in are still pending.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        }
-      },
-      "blocker": {
-        "reason": "No publisher-shared Shopify OAuth app is provisioned yet, so the browser flow reports its honest pending state; no store-owner sign-in has been completed either.",
-        "owner": "Project publisher",
-        "next_action": "Register the official shared Shopify app (redirect http://127.0.0.1:3130/oauth/callback, read scopes for products, orders, customers and discounts), provision publisher_shopify_oauth_client_id/secret, then repeat the full clean browser journey with a real read-only action.",
-        "evidence": "Connect on the Shopify card returned the generic failure dialog on 2026-09-21; live metadata shows setup.shopify.com serves OAuth discovery but no DCR registration endpoint."
-      }
-    }
-  ],
-  "retired_plugins": [
-    {
-      "plugin_id": "discord",
-      "result": "BLOCKED",
-      "config_fingerprint": "e3634cd5b08bd8d7fafa148d76270c910c6111e4da4974deada8a2109ce3554e",
-      "initial_state": "connect_attempt",
-      "evidence": {
-        "ui": {
-          "status": "PASS",
-          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "browser": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "callback": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "connected": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "smoke": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "reconnect": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "restart": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        }
-      },
-      "blocker": {
-        "reason": "Existing PersonalJarvis app and its OAuth configuration were inspected. Publisher broker callback and shared bot-operation verification remain missing; identity OAuth is not gateway messaging.",
-        "owner": "Project publisher and provider account operator",
-        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
-        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
-      },
-      "provider_exception": {
-        "reason": "This local channel uses a bot credential. OAuth bot installation does not replace that runtime credential; this is not a claim that Discord lacks OAuth.",
-        "source": "https://docs.discord.com/developers/platform/oauth2-and-permissions"
-      },
-      "observed_on": "2026-09-19",
-      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
-    },
-    {
-      "plugin_id": "asana",
-      "result": "BLOCKED",
-      "config_fingerprint": "c12cb20cb208ca2f4049e159074b0cf9235f84e7e25c9b73af414ec3913a8cb4",
-      "initial_state": "connect_attempt",
-      "evidence": {
-        "ui": {
-          "status": "PASS",
-          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "browser": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "callback": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "connected": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "smoke": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "reconnect": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "restart": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        }
-      },
-      "blocker": {
-        "reason": "A free Personal Jarvis MCP application was created. A stable publisher HTTPS broker deployment, exact callback and server-only credential provisioning are still missing.",
-        "owner": "Project publisher and provider account operator",
-        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
-        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
-      },
-      "observed_on": "2026-09-19",
-      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
-    },
-    {
-      "plugin_id": "linkedin",
-      "result": "BLOCKED",
-      "config_fingerprint": "682fa6c38f3db533a0bb89a8c384d0fc9c21886d7c63c1582923135fc299bb87",
-      "initial_state": "connect_attempt",
-      "evidence": {
-        "ui": {
-          "status": "PASS",
-          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "browser": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "callback": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "connected": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "smoke": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "reconnect": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "restart": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        }
-      },
-      "blocker": {
-        "reason": "Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
-        "owner": "Project publisher and provider account operator",
-        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
-        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
-      },
-      "observed_on": "2026-09-19",
-      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
-    },
-    {
       "plugin_id": "hubspot",
       "result": "BLOCKED",
       "config_fingerprint": "c05922a0962a3b8c992719c554c2e4bd3d65adf467eade6eafe6ebe72277794a",
@@ -2231,6 +2020,55 @@
       "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     },
     {
+      "plugin_id": "apollo",
+      "result": "BLOCKED",
+      "config_fingerprint": "2e283fde4a91c896e5acd54fb64937ffe9ec503da177d1f65df00d2477d42feb",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Official app.apollo.io login reached; provider account sign-in required.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Official app.apollo.io login reached; provider account sign-in required.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Provider account sign-in has not been completed.",
+        "owner": "Provider account holder",
+        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "evidence": "Official app.apollo.io login reached; provider account sign-in required."
+      }
+    },
+    {
       "plugin_id": "salesforce",
       "result": "BLOCKED",
       "config_fingerprint": "eb9374d8384d04ea3914a5d5da6a5686a3970feb5e1bab287cfdaeb3a7ab478f",
@@ -2280,6 +2118,55 @@
       },
       "observed_on": "2026-09-19",
       "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
+    },
+    {
+      "plugin_id": "granola",
+      "result": "BLOCKED",
+      "config_fingerprint": "b492fc6ad8d1ee27ecefe7bba86f56d84ecfc370fba277b8aa844cd6a40398b6",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Official mcp-auth.granola.ai sign-in reached from real Connect; account sign-in required.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Official mcp-auth.granola.ai sign-in reached from real Connect; account sign-in required.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Provider account sign-in has not been completed.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Provider account sign-in has not been completed.",
+        "owner": "Provider account holder",
+        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "evidence": "Official mcp-auth.granola.ai sign-in reached from real Connect; account sign-in required."
+      }
     },
     {
       "plugin_id": "zoom",
@@ -2382,6 +2269,104 @@
       },
       "observed_on": "2026-09-19",
       "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
+    },
+    {
+      "plugin_id": "amd_gpu",
+      "result": "BLOCKED",
+      "config_fingerprint": "176b23334c1d06c2304fb0661ba33d8cb0c4fe951dc6815db32c44050e136b81",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Plugins\nSkills\nPlugins\nMCPs\nPlugins\nAMD GPU Status\n\nUnsupported on this device\n· Home & Devices\n\nConnect\n\nAMD GPU telemetry is unavailable on this operating system. This connector requires a compatible Linux AMD host with AMD SMI.\n\nRead AMD GPU utilization, temperature and driver data through AMD SMI\n\nStatus\nUnsupported on this device\nSign-in\nLocal device\nConnection\nStays connected\n—\n0 files\namd_gpu\nLoading…",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "Real UI reports unsupported OS: this connector needs a compatible Linux AMD host with AMD SMI.",
+        "owner": "Hardware test operator",
+        "next_action": "Run the no-login connection and real telemetry read on a supported Linux AMD host, then verify lifecycle.",
+        "evidence": "Plugins\nSkills\nPlugins\nMCPs\nPlugins\nAMD GPU Status\n\nUnsupported on this device\n· Home & Devices\n\nConnect\n\nAMD GPU telemetry is unavailable on this operating system. This connector requires a compatible Linux AMD host with AMD SMI.\n\nRead AMD GPU utilization, temperature and driver data through AMD SMI\n\nStatus\nUnsupported on this device\nSign-in\nLocal device\nConnection\nStays connected\n—\n0 files\namd_gpu\nLoading…"
+      }
+    },
+    {
+      "plugin_id": "shopify",
+      "result": "BLOCKED",
+      "config_fingerprint": "1d590b64b18618a2e164f2fd1718edc3e125c1baad9fa3b0d0bf5fdff4ed6324",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Shopify card renders in the Plugins dialog (47th entry) with its logo; Connect attempted 2026-09-21 and failed with the generic dialog (see blocker).",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Browser completion was not verified in this audit. The first configuration (hosted MCP with Dynamic Client Registration) was wrong: Shopify publishes no DCR registration_endpoint, so the flow failed before any browser page opened. The entry now uses Authorization Code + PKCE loopback against the publisher-shared app; the shared app registration and the store-owner sign-in are both still pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Callback completion was not verified in this audit. No authorization code has been issued yet; the shared app registration and the store-owner sign-in are still pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Connected completion was not verified in this audit. No grant exists yet; the shared app registration and the store-owner sign-in are still pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Smoke completion was not verified in this audit. No live read-only Shopify action has been attested with a real grant.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Reconnect completion was not verified in this audit. No grant exists yet; the shared app registration and the store-owner sign-in are still pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Restart completion was not verified in this audit. No grant exists yet; the shared app registration and the store-owner sign-in are still pending.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      },
+      "blocker": {
+        "reason": "No publisher-shared Shopify OAuth app is provisioned yet, so the browser flow reports its honest pending state; no store-owner sign-in has been completed either.",
+        "owner": "Project publisher",
+        "next_action": "Register the official shared Shopify app (redirect http://127.0.0.1:3130/oauth/callback, read scopes for products, orders, customers and discounts), provision publisher_shopify_oauth_client_id/secret, then repeat the full clean browser journey with a real read-only action.",
+        "evidence": "Connect on the Shopify card returned the generic failure dialog on 2026-09-21; live metadata shows setup.shopify.com serves OAuth discovery but no DCR registration endpoint."
+      }
     }
   ]
 }

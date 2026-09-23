@@ -354,22 +354,17 @@ def test_cloudflare_is_dcr_one_click_with_http_mcp() -> None:
     assert spec.mcp_server["url"] == "https://observability.mcp.cloudflare.com/mcp"
 
 
-@pytest.mark.parametrize(
-    "plugin_id", ["hubspot", "salesforce", "discord", "zoom", "asana", "figma", "linkedin"]
-)
-def test_retired_publisher_plugins_are_not_in_fresh_catalog(plugin_id: str) -> None:
-    assert _seed().by_id(plugin_id) is None
-
-
-def test_retired_placeholder_override_is_removed_but_own_client_is_preserved() -> None:
-    seed = {"plugins": [{"id": "shopify"}]}
-    legacy = {"id": "asana", "auth": {"client_id": "REPLACE_WITH_JARVIS_ASANA_CLIENT_ID"}}
-    retired = catalog_data._merge_with_seed({"plugins": [legacy]}, seed)
-    assert [plugin["id"] for plugin in retired["plugins"]] == ["shopify"]
-
-    own_client = {"id": "asana", "auth": {"client_id": "my-own-asana-client"}}
-    preserved = catalog_data._merge_with_seed({"plugins": [own_client]}, seed)
-    assert [plugin["id"] for plugin in preserved["plugins"]] == ["asana", "shopify"]
+def test_discord_is_bot_pat_channel_no_mcp() -> None:
+    # AD-3 (2026-06-09): connecting Discord enables the in-repo bidirectional
+    # channel (like Telegram), not a competing mcp-discord server that would
+    # open a second Discord gateway over the same bot token.
+    spec = _seed().by_id("discord")
+    assert spec is not None
+    assert spec.display_name == "Discord"
+    assert spec.auth.mode == "oauth_pkce_loopback"
+    assert spec.auth.client_kind == "broker"
+    assert spec.fallback_auth.auth_scheme == "bot"
+    assert spec.mcp_server is None
 
 
 def test_telegram_is_pat_telegram_path_no_mcp() -> None:
@@ -381,6 +376,15 @@ def test_telegram_is_pat_telegram_path_no_mcp() -> None:
     assert "{token}" in spec.auth.validation_endpoint
     # Telegram reuses the in-repo channel, not an MCP server.
     assert spec.mcp_server is None
+
+
+def test_asana_is_pkce_loopback_with_resource_and_http_mcp() -> None:
+    spec = _seed().by_id("asana")
+    assert spec is not None
+    assert spec.display_name == "Asana"
+    assert spec.auth.mode == "oauth_pkce_loopback"
+    assert spec.auth.resource == "https://mcp.asana.com/v2"
+    assert spec.mcp_server["url"] == "https://mcp.asana.com/v2/mcp"
 
 
 def test_google_drive_uses_full_drive_scope_via_native_tool() -> None:

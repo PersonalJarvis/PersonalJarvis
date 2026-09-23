@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "salesforce": {
+      "type": "streamable-http",
+      "url": "https://api.salesforce.com/platform/mcp/v1/platform/sobject-all"
+    }
+  }
+}

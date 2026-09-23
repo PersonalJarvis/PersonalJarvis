@@ -1,0 +1,39 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "salesforce",
+  "version": "1.0.0",
+  "description": "Read and manage CRM records through the official Salesforce MCP server",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Salesforce",
+      "category": "Knowledge & Reading",
+      "logo_slug": "salesforce",
+      "logo_color": "00A1E0",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://login.salesforce.com/services/oauth2/authorize",
+        "token_url": "https://login.salesforce.com/services/oauth2/token",
+        "client_id": "REPLACE_WITH_YOUR_CLIENT_ID",
+        "callback_port": 43891,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "mcp_api",
+          "refresh_token"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://api.salesforce.com/platform/mcp/v1/platform/sobject-all",
+        "auth_header_template": "Authorization: Bearer $plugin_salesforce_access_token",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "An admin must activate the sobject-all hosted MCP server in your production Salesforce org. Create an External Client App with mcp_api and refresh_token, allow the displayed callback, and enter its client credentials here. Sandbox and custom MCP server URLs are not covered by this entry.",
+      "oauth_client_family": "salesforce"
+    }
+  }
+}

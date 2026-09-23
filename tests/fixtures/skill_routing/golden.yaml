@@ -246,6 +246,32 @@ skills:
         min_band: narrow
         source: authored
 
+  plugin-discord:
+    positives:
+      - text: "schreib das in den discord kanal"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "read the latest messages on my discord server"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-asana:
+    positives:
+      - text: "welche asana aufgaben stehen noch offen"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "assign that asana task to me"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
   plugin-cloudflare:
     positives:
       - text: "aendere den dns eintrag bei cloudflare"

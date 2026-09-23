@@ -1,16 +1,5 @@
 # Plugin authentication and end-to-end audit
 
-## RUB-99 catalog retirement (2026-09-23)
-
-At the user's request, HubSpot, Salesforce, Discord, Zoom, Asana, Figma and
-LinkedIn are removed from the default built-in catalog. Spotify and Shopify
-remain. The current inventory is **40 plugins / 1 full PASS / 39 BLOCKED**.
-The seven removed rows remain in the machine-readable audit's
-`retired_plugins` history; the older matrix below is historical evidence, not
-the current Plugins view. No removal is counted as an authentication PASS.
-Existing locally configured non-placeholder OAuth clients remain in the
-user-owned catalog override so a custom connection is not silently discarded.
-
 ## RUB-99 continuation (2026-09-23)
 
 Microsoft is user-reported complete and excluded from further changes in this

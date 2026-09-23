@@ -2,11 +2,6 @@
 
 ## Publisher OAuth and capability state (RUB-99, T3, acceptance pending)
 
-Seven incomplete publisher integrations were retired from the default catalog
-on 2026-09-23. Their per-provider functionality is not an OS parity claim.
-Spotify and Shopify remain in the catalog. An existing locally configured
-non-placeholder OAuth client can remain user-owned after catalog retirement.
-
 Public PKCE, the confidential broker client, callback validation and the
 auth/capability split share portable Python and HTTP implementations on
 Windows, macOS and Linux. Availability is determined by publisher client/service

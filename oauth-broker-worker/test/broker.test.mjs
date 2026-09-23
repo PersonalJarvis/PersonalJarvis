@@ -31,6 +31,8 @@ function setup() {
     DB: db,
     BROKER_BASE_URL: base,
     BROKER_ENCRYPTION_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64"),
+    PUBLISHER_ASANA_OAUTH_CLIENT_ID: "asana-test-client",
+    PUBLISHER_ASANA_OAUTH_CLIENT_SECRET: "asana-test-secret",
     PUBLISHER_SLACK_OAUTH_CLIENT_ID: "slack-test-client",
   };
   async function call(path, method = "POST", body) {
@@ -46,7 +48,7 @@ async function begin(call) {
   const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
   const challenge = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
   const response = await call("/start", "POST", {
-    provider: "slack", challenge, loopback_uri: "http://127.0.0.1:43123/oauth/broker",
+    provider: "asana", challenge, loopback_uri: "http://127.0.0.1:43123/oauth/broker",
     client_state: b64url(crypto.getRandomValues(new Uint8Array(32))),
   });
   return { response, verifier, data: await response.json() };
@@ -64,9 +66,9 @@ test("broker persists a browser-bound grant without redirecting credentials", as
     const started = await begin(call);
     assert.equal(started.response.status, 200);
     assert.equal(started.data.expires_in, 300);
-    assert.equal(JSON.stringify(started.data).includes("client_secret"), false);
+    assert.equal(JSON.stringify(started.data).includes("asana-test-secret"), false);
     const auth = new URL(started.data.authorization_url);
-    assert.equal(auth.hostname, "slack.com");
+    assert.equal(auth.hostname, "app.asana.com");
     assert.equal(auth.searchParams.get("redirect_uri"), `${base}/callback`);
     const callback = await call(`/callback?state=${auth.searchParams.get("state")}&code=dummy-code`, "GET");
     assert.equal(callback.status, 302);
@@ -88,15 +90,15 @@ test("broker persists a browser-bound grant without redirecting credentials", as
     const protectedRow = db.sqlite.prepare("SELECT payload FROM grants").get();
     assert.equal(protectedRow.payload.includes("dummy-refresh"), false);
     assert.equal((await call("/refresh", "POST", { provider: "discord", handle: grant.refresh_handle })).status, 403);
-    const refreshed = await call("/refresh", "POST", { provider: "slack", handle: grant.refresh_handle });
+    const refreshed = await call("/refresh", "POST", { provider: "asana", handle: grant.refresh_handle });
     assert.equal(refreshed.status, 200);
     assert.equal((await refreshed.json()).access_token, "dummy-access-2");
     assert.equal(tokenBodies[1].refresh_token, "dummy-refresh-1");
-    env.PUBLISHER_SLACK_OAUTH_CLIENT_ID = "replacement-client";
-    assert.equal((await call("/refresh", "POST", { provider: "slack", handle: grant.refresh_handle })).status, 409);
-    env.PUBLISHER_SLACK_OAUTH_CLIENT_ID = "slack-test-client";
-    assert.equal((await call("/disconnect", "POST", { provider: "slack", handle: grant.refresh_handle })).status, 200);
-    assert.equal((await call("/refresh", "POST", { provider: "slack", handle: grant.refresh_handle })).status, 401);
+    env.PUBLISHER_ASANA_OAUTH_CLIENT_ID = "replacement-client";
+    assert.equal((await call("/refresh", "POST", { provider: "asana", handle: grant.refresh_handle })).status, 409);
+    env.PUBLISHER_ASANA_OAUTH_CLIENT_ID = "asana-test-client";
+    assert.equal((await call("/disconnect", "POST", { provider: "asana", handle: grant.refresh_handle })).status, 200);
+    assert.equal((await call("/refresh", "POST", { provider: "asana", handle: grant.refresh_handle })).status, 401);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -110,7 +112,7 @@ test("invalid callbacks, cancellation and remote handoff URLs fail closed", asyn
   assert.equal((await call("/redeem", "POST", { flow_id: started.data.flow_id, verifier: started.verifier })).status, 410);
   const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
   const challenge = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
-  const bad = await call("/start", "POST", { provider: "slack", challenge, loopback_uri: "https://attacker.example/oauth/broker", client_state: verifier });
+  const bad = await call("/start", "POST", { provider: "asana", challenge, loopback_uri: "https://attacker.example/oauth/broker", client_state: verifier });
   assert.equal(bad.status, 422);
   assert.equal((await bad.text()).includes("attacker.example"), false);
 });
@@ -130,21 +132,20 @@ test("provider denial consumes state without minting a grant", async () => {
   assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS n FROM grants").get().n, 0);
 });
 
-test("retired registration and missing public client fail closed", async () => {
+test("registration and issuing-client binding fail closed", async () => {
   const { call, env } = setup();
   const started = await begin(call);
   assert.equal(started.response.status, 200);
-  delete env.PUBLISHER_SLACK_OAUTH_CLIENT_ID;
+  delete env.PUBLISHER_ASANA_OAUTH_CLIENT_SECRET;
   assert.equal((await begin(call)).response.status, 503);
-  assert.equal((await call("/refresh", "POST", { provider: "slack", handle: "x".repeat(64) })).status, 401);
-  assert.equal((await call("/start", "POST", { provider: "asana" })).status, 409);
+  assert.equal((await call("/refresh", "POST", { provider: "asana", handle: "x".repeat(64) })).status, 401);
 });
 
 test("unknown host, oversized request and provider error details are suppressed", async () => {
   const { call, env } = setup();
   const offHost = await worker.fetch(new Request("https://evil.example/healthz"), env);
   assert.equal(offHost.status, 400);
-  const oversized = await call("/start", "POST", { provider: "slack", padding: "A".repeat(5000) });
+  const oversized = await call("/start", "POST", { provider: "asana", padding: "A".repeat(5000) });
   assert.equal(oversized.status, 422);
   assert.equal((await oversized.text()).includes("A".repeat(100)), false);
 });

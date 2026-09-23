@@ -91,12 +91,6 @@ retains its issuing broker address even if current configuration changes.
 
 ## Provider choices
 
-The HubSpot, Salesforce, Discord, Zoom, Asana, Figma and LinkedIn rows below
-record the original RUB-99 design evaluation. These plugins were retired from
-the default built-in catalog on 2026-09-23 and are not advertised as active
-connections. The Worker rejects their `/start` requests after the catalog
-update. Retaining the protocol code does not make them release-qualified.
-
 | Provider family | Default architecture | Registration requirement |
 | --- | --- | --- |
 | Microsoft Graph and Azure | Public native PKCE, shared Microsoft client | Native `localhost` callback; tenant policy and publisher verification may limit consent |
