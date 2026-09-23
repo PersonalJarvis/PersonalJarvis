@@ -1,8 +1,9 @@
 import React from "react";
-import { AbsoluteFill, Easing, interpolate } from "remotion";
+import { Easing, interpolate } from "remotion";
 import { PhoneOff, Sparkles } from "lucide-react";
 import { GigiMark } from "@app/components/GigiMark";
-import { AppShell, useDemoFrame } from "./shared";
+import { useDemoFrame } from "./shared";
+import { DesktopFrame } from "./DesktopFrame";
 
 /**
  * Deterministic presentation of the shipped voice UI, with illustrative text.
@@ -97,12 +98,12 @@ const VoiceTape: React.FC<{ frame: number; phase: Phase }> = ({ frame, phase }) 
 
 const VoiceCard: React.FC<{ frame: number; phase: Phase }> = ({ frame, phase }) => {
   const active = phase !== "idle";
-  const hint = phase === "idle" ? "Tap the bar to start" : phase === "listening" ? "Listening…" : phase === "thinking" ? "Thinking…" : "Speaking…";
+  const hint = phase === "idle" ? 'Say “Hey George” or tap the bar' : phase === "listening" ? "Listening…" : phase === "thinking" ? "Thinking…" : "Speaking…";
   return (
-    <div style={{ width: "100%", padding: "16px 16px 10px", boxSizing: "border-box", borderRadius: 16, border: `1px solid ${active ? "rgba(250,250,250,0.5)" : UI.border}`, background: UI.card }}>
+    <div style={{ width: "100%", padding: "16px 12px 10px", boxSizing: "border-box", borderRadius: 16, border: `1px solid ${active ? "rgba(250,250,250,0.5)" : UI.border}`, background: UI.card }}>
       <VoiceTape frame={frame} phase={phase} />
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, height: 32 }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 4px", fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", color: active ? UI.primary : UI.muted }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 4px", fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: active ? UI.primary : UI.muted }}>
           <span style={{ width: 8, height: 8, borderRadius: "50%", background: active ? UI.primary : UI.faint, opacity: active ? 0.7 : 0.4 }} />
           {phase === "idle" ? "Ready" : phase}
         </span>
@@ -111,8 +112,8 @@ const VoiceCard: React.FC<{ frame: number; phase: Phase }> = ({ frame, phase }) 
           <Sparkles size={14} /><span>Prompt</span>
         </span>
         <span style={{ height: 32, display: "inline-flex", alignItems: "center", gap: 6, padding: "0 8px", color: UI.muted, fontSize: 12 }}>
-          <span style={{ color: UI.primary, fontWeight: 500 }}>OpenAI</span>
-          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10 }}>gpt-realtime</span>
+          <span style={{ color: UI.primary, fontWeight: 500 }}>OpenAI GPT-Live</span>
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10 }}>GPT-Live</span>
         </span>
         {active && <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "0 10px", height: 32, borderRadius: 8, border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.1)", color: UI.destructive, fontSize: 12, fontWeight: 500 }}><PhoneOff size={14} />End</span>}
       </div>
@@ -131,33 +132,33 @@ const Transcript: React.FC<{ who: string; text: string; live?: boolean; user?: b
 
 export const Orchestrator: React.FC = () => {
   const frame = useDemoFrame();
-  const reset = progress(frame, 418, 449);
-  const enterConversation = progress(frame, 32, 58) * (1 - reset);
-  const phase: Phase = frame < 32 || frame >= 437 ? "idle" : frame < 128 ? "listening" : frame < 158 ? "thinking" : frame < 286 ? "speaking" : "listening";
-  const userText = wordReveal("Jarvis, help me plan this project.", frame, 64, 8);
-  const assistantText = wordReveal("Let’s define the goal and choose the right agent.", frame, 166, 8);
+  const enterConversation = progress(frame, 85, 110);
+  const phase: Phase = frame < 65 ? "idle" : frame < 180 ? "listening" : frame < 210 ? "thinking" : frame < 340 ? "speaking" : "listening";
+  const userText = wordReveal("Help me plan a small project. Where should I start?", frame, 92, 7);
+  const assistantText = wordReveal("Start with the outcome. What would you like to build, and who is it for? Then we can choose the right agent.", frame, 212, 5);
+  const caption = frame < 25 ? "Your assistant, in your desktop workspace."
+    : frame < 65 ? <><span style={{ color: "#a1a1a1", fontSize: 12, letterSpacing: "0.12em", marginRight: 14 }}>WAKE PHRASE</span>“Hey George”</>
+    : frame < 92 ? "Wake phrase detected · Listening"
+    : frame < 180 ? "“Help me plan a small project. Where should I start?”"
+    : frame < 210 ? "George is thinking…"
+    : frame < 340 ? "“What would you like to build, and who is it for?”"
+    : "Keep talking. Your agents, tools, and knowledge are one sidebar away.";
 
   return (
-    <AbsoluteFill style={{ background: "#0A0A0A", fontFamily: "Inter, sans-serif", color: UI.primary }}>
-      <AppShell active="chat" voiceState={phase === "idle" ? "Ready" : phase}>
-        <div style={{ position: "relative", width: "75%", height: "75%", transform: "scale(1.3333333333)", transformOrigin: "0 0", overflow: "hidden" }}>
-          <div style={{ position: "absolute", inset: 0 }}>
-            <div style={{ position: "absolute", width: 760, left: "50%", top: interpolate(enterConversation, [0, 1], [218, 24]), transform: "translateX(-50%)", padding: "0 24px", boxSizing: "border-box" }}>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", opacity: 1 - 0.3 * enterConversation, transform: `scale(${1 - 0.12 * enterConversation})` }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 24, fontWeight: 600, color: "#FFFFFF" }}><GigiMark size={36} /><span>Good morning</span></div>
-                {enterConversation < 1 && <p style={{ margin: "8px 0 0", maxWidth: 448, fontSize: 16, color: UI.muted, opacity: 1 - enterConversation }}>Say your wake word or tap the bar — the conversation shows up here.</p>}
-              </div>
-              {userText && <div style={{ marginTop: 32, display: "flex", flexDirection: "column", gap: 20, opacity: 1 - reset }}>
-                <Transcript who="You" text={userText} user live={frame < 128} />
-                {assistantText && <Transcript who="Jarvis" text={assistantText} live={frame < 286} />}
-              </div>}
-            </div>
-            <div style={{ position: "absolute", width: 760, left: "50%", top: `calc(${enterConversation * 100}% + ${342 * (1 - enterConversation) - 144 * enterConversation}px)`, transform: "translateX(-50%)", padding: "0 24px", boxSizing: "border-box" }}>
-              <VoiceCard frame={frame * (1 - reset)} phase={phase} />
-            </div>
-          </div>
+    <DesktopFrame status={phase === "idle" ? "Ready" : phase.charAt(0).toUpperCase() + phase.slice(1)} caption={caption}>
+      <div style={{ position: "absolute", width: "100%", left: 0, top: interpolate(enterConversation, [0, 1], [166, 50]), padding: "0 48px", boxSizing: "border-box" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 28, fontWeight: 600, color: UI.primary }}><GigiMark size={38} /><span>Good afternoon</span></div>
+          <p style={{ margin: "10px 0 0", maxWidth: 580, fontSize: 15, lineHeight: 1.5, color: UI.muted, opacity: 1 - enterConversation }}>Say your wake word or tap the bar — the conversation shows up here.</p>
         </div>
-      </AppShell>
-    </AbsoluteFill>
+        {userText && <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 28 }}>
+          <Transcript who="You" text={userText} user live={frame < 180} />
+          {assistantText && <Transcript who="George" text={assistantText} live={frame < 340} />}
+        </div>}
+      </div>
+      <div style={{ position: "absolute", left: 0, right: 0, top: interpolate(enterConversation, [0, 1], [286, 422]), padding: "0 30px" }}>
+        <VoiceCard frame={frame} phase={phase} />
+      </div>
+    </DesktopFrame>
   );
 };

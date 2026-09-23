@@ -1,23 +1,28 @@
 # README interface films
 
-Three silent Remotion compositions explain the desktop workspace. Voice and
-Swarm run for nine seconds; Agents runs for fourteen seconds so its full chat
-turn has time to show a thinking trace and a streamed answer.
+Two silent Remotion compositions are featured in the main README. Voice runs
+for eighteen seconds; Agents runs for fourteen seconds so its full chat turn
+has time to show a thinking trace and a streamed answer. The older nine-second
+Swarm composition is retained as an unfeatured development-preview asset.
 They are deterministic UI recreations with sample data, not screen recordings,
 measured response times, or proof of successful agent executions.
-This public documentation generator uses synthetic data only; private captures
-and internal marketing projects are not inputs.
+The rendered content uses synthetic data only. A supplied desktop screenshot
+guided the voice composition's window framing and navigation; its private chat
+history and image pixels are not included in the exports or repository.
 
 | Composition | Interface sources | Still |
 |---|---|---|
-| JarvisOrchestrator | `components/home/VoiceStage.tsx`, `JarvisBar.tsx`, `Greeting.tsx`, `StageWaveform.tsx` | [Voice preview](../../assets/demo/readme-2026-09/jarvis-orchestrator-v3.png) |
+| JarvisOrchestrator | `components/home/VoiceStage.tsx`, `JarvisBar.tsx`, `Greeting.tsx`, `StageWaveform.tsx`, `components/layout/Sidebar.tsx` | [Voice preview](../../assets/demo/readme-2026-09/jarvis-orchestrator-v4.png) |
 | JarvisAgents | `components/society/card/AgentCardOverlay.tsx`, `roster/RosterRail.tsx`, `chat/AgentChatPanel.tsx`, `components/agentchat/WorkTrace.tsx` | [Agents preview](../../assets/demo/readme-2026-09/jarvis-agents-v4.png) |
 | UltraSwarm | `views/swarm/UltraSwarmView.tsx`, `components/swarm/`, `i18n/locales/swarm/en.json` | [Swarm preview](../../assets/demo/readme-2026-09/ultra-swarm-v3.png) |
 
 Paths in the middle column are relative to `jarvis/ui/web/frontend/src`.
-Each composition fills the frame with its section, with global navigation closed.
-The narrow native caption follows the app; the Agents roster and Options pane
-remain part of the section. No marketing border or extra title strip is added.
+Voice shows a windowed desktop with its native caption and open sidebar, following
+the supplied September 23 reference. It begins with a subtitle, “Hey George”,
+then animates a listening transition and a project-planning exchange. George is
+an example of a user-selected assistant name, not a default. Subtitle timing and
+the waveform are illustrative; no wake detector or microphone is exercised.
+Agents keeps its existing section framing, roster, and Options pane.
 GigiMark, Badge, and Button are imported from the application.
 Generated CSS uses the application's Tailwind configuration, theme tokens,
 and bundled fonts. Network-dependent views have pure visual adapters here;
@@ -65,17 +70,17 @@ npm run render -- --id=JarvisAgents
 
 The README exports are 1600-pixel GIFs at 25 fps with a full 256-color palette,
 1920 x 1044 MP4s at 60 fps, and still previews. GIF frames use an exact 40 ms
-cadence instead of uneven frame delays. Voice and Swarm return to their initial
-view at the loop boundary. Agents keeps its message, trace and final answer
-through the last frame; its GIF plays once instead of cutting back to an empty
-chat. The MP4 provides replay controls in the viewing application.
+cadence instead of uneven frame delays. Voice and Agents keep their conversation
+through the last frame; their GIFs play once instead of cutting back to an empty
+chat. Swarm retains its original loop. The MP4 provides replay controls in the
+viewing application.
 With FFmpeg installed, export them from the masters:
 
 ```bash
 node scripts/export.mjs
 ```
 
-Pass `--id=JarvisAgents` to export just the Agents composition.
+Pass `--id=JarvisAgents` or `--id=JarvisOrchestrator` to export just one composition.
 
 Export also writes explicitly BT.709-tagged `*-4k.mp4` masters into `out/`.
 
