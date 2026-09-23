@@ -71,6 +71,7 @@ class LiveTools:
         self._lock = asyncio.Lock()
         self._pending: dict[str, tuple[UUID, str, dict, int]] = {}
         self._names: dict[str, str] = {}
+        self._defer_catalog = False
         self.end_requested = False
         self.accepting = True
 
@@ -78,7 +79,8 @@ class LiveTools:
         read = getattr(self.gateway, "voice_catalog", self.gateway.catalog)
         return read()
 
-    def declarations(self) -> list[dict]:
+    def declarations(self, *, defer_catalog: bool = False) -> list[dict]:
+        self._defer_catalog = defer_catalog
         definitions = [
             function(
                 "end_call",
@@ -105,6 +107,20 @@ class LiveTools:
                 ["approval_id"],
             ),
         ]
+        if defer_catalog:
+            definitions[1]["description"] = (
+                "Find tools by intent using a few English keywords, or an exact canonical name. "
+                "Returns relevant complete input schemas. Reuse schemas already read; do not "
+                "inventory unrelated tools. Empty query browses all tools. Pass next_offset as "
+                "offset with the same query to read another page only if needed."
+            )
+            # A names-only index lets the same model choose an exact capability
+            # without asking lexical search to infer the user's intent.
+            definitions[1]["description"] += " Available tool names: " + ", ".join(
+                sorted(descriptor.name for descriptor in self.catalog())
+            )
+            definitions[1]["parameters"]["properties"]["offset"] = {"type": "integer", "minimum": 0}
+            return definitions
         # Stable ordering helps cache reuse. Discovery keeps the rest reachable.
         for descriptor in sorted(self.catalog(), key=lambda d: d.name)[:48]:
             alias = "jarvis_" + hashlib.sha256(descriptor.name.encode()).hexdigest()[:20]
@@ -178,6 +194,12 @@ class LiveTools:
         if self.cancel_token.is_cancelled():
             return {"success": False, "status": "cancelled"}
         if name == "discover_tools":
+            if self._defer_catalog:
+                from jarvis.live.discovery import discover
+
+                return discover(
+                    self.catalog(), str(args.get("query", "")), int(args.get("offset", 0))
+                )
             query = str(args.get("query", "")).casefold().split()
             return {
                 "tools": [
