@@ -194,7 +194,9 @@ class LiveVoiceSession:
             backend_model=profile.backend_model,
         )
         prompt_language = getattr(self._config.brain, "reply_language", "auto")
-        config = profile.session_config(language=prompt_language, tools=self._tools.declarations())
+        config = profile.session_config(
+            language=prompt_language, tools=self._tools.declarations(defer_catalog=True)
+        )
         self._base_session_config = config
         offer = str(message.get("webrtc_offer_sdp", ""))
         self._using_webrtc = bool(offer)
@@ -472,8 +474,8 @@ class LiveVoiceSession:
                 self._ledger.backend_usage, self.session_id, rid, profile.backend_model, usage
             )
             if self._bus is not None:
-                from jarvis.brain.cost import calculate_cost_usd
                 from jarvis.core.events import BrainTurnCompleted
+                from jarvis.live.cost import backend_cost_usd
 
                 cached = int((usage.get("input_tokens_details") or {}).get("cached_tokens", 0))
                 tokens_in = max(0, int(usage.get("input_tokens", 0)) - cached)
@@ -485,9 +487,7 @@ class LiveVoiceSession:
                         tokens_in=tokens_in,
                         tokens_out=tokens_out,
                         tokens_cached=cached,
-                        cost_usd=calculate_cost_usd(
-                            profile.backend_model, tokens_in, tokens_out, cached
-                        ),
+                        cost_usd=backend_cost_usd(profile.backend_model, usage),
                         finish_reason="live_delegation",
                     )
                 )
