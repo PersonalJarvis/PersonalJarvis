@@ -6,9 +6,9 @@ import { Agents } from "./Agents";
 import { UltraSwarm } from "./UltraSwarm";
 import settings from "../settings.json";
 
-const Root = () => <>
-  <Composition id="JarvisOrchestrator" component={Orchestrator} width={settings.width} height={settings.height} fps={settings.fps} durationInFrames={settings.durationInFrames}/>
-  <Composition id="JarvisAgents" component={Agents} width={settings.width} height={settings.height} fps={settings.fps} durationInFrames={settings.durationInFrames}/>
-  <Composition id="UltraSwarm" component={UltraSwarm} width={settings.width} height={settings.height} fps={settings.fps} durationInFrames={settings.durationInFrames}/>
-</>;
+const scenes = { JarvisOrchestrator: Orchestrator, JarvisAgents: Agents, UltraSwarm };
+const Root = () => <>{settings.compositions.map(scene =>
+  <Composition key={scene.id} id={scene.id} component={scenes[scene.id as keyof typeof scenes]}
+    width={settings.width} height={settings.height} fps={settings.fps} durationInFrames={scene.durationInFrames}/>
+)}</>;
 registerRoot(Root);

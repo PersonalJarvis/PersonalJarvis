@@ -32,9 +32,9 @@ the conversation and inspect what happens. You can type instead of speaking.
   </a>
 </p>
 
-These nine-second loops are **Remotion recreations of the app's UI**, with illustrative
+These short demos are **Remotion recreations of the app's UI**, with illustrative
 conversations and tasks. Each shows the relevant section with global navigation
-closed. Click a loop for the sharper 60 fps video, or open the
+closed. Click an animation for the sharper 60 fps video, or open the
 [still previews and reproducible source](scripts/readme-video/README.md).
 They explain the interface; they are not live recordings or speed benchmarks.
 
@@ -65,10 +65,12 @@ model or supported agent account for the work, and keep the conversations in
 one workspace.
 
 <p align="center">
-  <a href="assets/demo/readme-2026-09/jarvis-agents-v2.mp4">
-    <img src="assets/demo/readme-2026-09/jarvis-agents-v2.gif" alt="Agents workspace recreation: select an agent, write a brief, then edit a routine's instructions and schedule" width="1000" />
+  <a href="assets/demo/readme-2026-09/jarvis-agents-v3.mp4">
+    <img src="assets/demo/readme-2026-09/jarvis-agents-v3.gif" alt="Agents workspace recreation: send a brief, watch the live thinking trace, then read the streaming reply and completed plan" width="1000" />
   </a>
 </p>
+
+The Agents animation plays once and holds the finished reply. Click it to replay the video.
 
 - **Talk directly to a specialist.** Select an agent from the roster and continue its chat.
 - **Give it a standing brief.** Configure its instructions, model access, and tools.

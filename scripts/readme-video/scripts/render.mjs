@@ -16,15 +16,17 @@ const serveUrl = await bundle({
   webpackOverride: config => ({ ...config, resolve: { ...config.resolve, alias: { ...config.resolve?.alias, "@app": app, "@": app, react: path.join(modules, "react"), "react-dom": path.join(modules, "react-dom") }, modules: [modules, "node_modules"] } }),
 });
 const requested = process.argv.find(arg => arg.startsWith("--id="))?.slice(5);
+if (requested && !settings.compositions.some(item => item.id === requested)) throw new Error(`Unknown composition: ${requested}`);
 const browser = await openBrowser("chrome");
 try {
-for (const id of requested ? [requested] : settings.compositions.map(item => item.id)) {
+for (const scene of settings.compositions.filter(item => !requested || item.id === requested)) {
+  const { id } = scene;
   const composition = await selectComposition({ serveUrl, id, puppeteerInstance: browser });
-  for (const frame of settings.stills) {
+  for (const frame of scene.stills ?? settings.stills) {
     await renderStill({ serveUrl, composition, puppeteerInstance: browser, output: path.join(output, `${id}-${frame}.png`), frame, imageFormat: "png" });
   }
   if (process.argv.includes("--stills")) continue;
-  console.log(`Rendering ${id} (${settings.durationInFrames / settings.fps} seconds, ${settings.fps} fps, 4K master)`);
+  console.log(`Rendering ${id} (${composition.durationInFrames / composition.fps} seconds, ${composition.fps} fps, 4K master)`);
   let reported = -1;
   await renderMedia({ serveUrl, composition, puppeteerInstance: browser, codec: "h264", outputLocation: path.join(output, `${id}.mp4`), scale: settings.masterScale, crf: 14, imageFormat: "png", muted: true, colorSpace: "bt709", concurrency: 4, onProgress: ({ progress }) => { const bucket = Math.floor(progress * 10); if (bucket !== reported) { reported = bucket; console.log(`${id}: ${bucket * 10}%`); } } });
   console.log(`\nFinished ${id}`);
