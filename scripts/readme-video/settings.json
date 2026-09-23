@@ -1,0 +1,14 @@
+{
+  "width": 1920,
+  "height": 1044,
+  "fps": 60,
+  "masterScale": 2,
+  "gifWidth": 1600,
+  "gifFps": 25,
+  "stills": [0, 60, 150, 225, 325, 405, 490, 539],
+  "compositions": [
+    { "id": "JarvisOrchestrator", "file": "jarvis-orchestrator-v3", "poster": 325, "durationInFrames": 540 },
+    { "id": "JarvisAgents", "file": "jarvis-agents-v4", "poster": 720, "durationInFrames": 840, "gifLoop": false, "stills": [0, 60, 138, 210, 330, 450, 540, 660, 720, 839] },
+    { "id": "UltraSwarm", "file": "ultra-swarm-v3", "poster": 405, "durationInFrames": 540 }
+  ]
+}
