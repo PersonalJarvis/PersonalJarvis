@@ -78,6 +78,7 @@ export function AgentMemoryFiles({ agentId, sample }: { agentId: string; sample:
   const [selected, setSelected] = useState<string | null>(null);
   const query = useAgentKnowledge(agentId, sample);
   const files = query.data?.files ?? [];
+  const booksReady = files.some(file => file.name === "USER.md") && files.some(file => file.name === "MEMORY.md");
   const visible = files.filter((file) => file.path.toLowerCase().includes(search.toLowerCase()));
   const current = files.find((file) => file.path === selected) ?? files[0];
   const file = useQuery({
@@ -89,7 +90,7 @@ export function AgentMemoryFiles({ agentId, sample }: { agentId: string; sample:
       : `/api/society/agents/${encodeURIComponent(agentId)}/knowledge/file?path=${encodeURIComponent(current!.path)}`, signal),
   });
   return <div className="flex h-full min-h-0 flex-col">
-    <p className="mx-6 mb-3 text-xs leading-relaxed text-muted-foreground">{t(query.data?.legacy ? "society.profile_card.runtime_pending" : "society.profile_card.knowledge_hint")}</p>
+    <p className="mx-6 mb-3 text-xs leading-relaxed text-muted-foreground">{t(query.data && !booksReady ? "society.profile_card.runtime_pending" : "society.profile_card.knowledge_hint")}</p>
     <div className="mx-6 mb-3 flex items-center gap-2">
       <Search size={16} className="shrink-0 text-muted-foreground" aria-hidden />
       <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("society.profile_card.search")} aria-label={t("society.profile_card.search")} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" />
@@ -103,7 +104,7 @@ export function AgentMemoryFiles({ agentId, sample }: { agentId: string; sample:
         {visible.length === 0 && <p className="p-3 text-xs text-muted-foreground">{t("society.profile_card.no_results")}</p>}
         {visible.map((entry) => <button type="button" key={entry.path} aria-current={entry.path === current?.path ? "true" : undefined} onClick={() => setSelected(entry.path)} className={cn("mb-1 flex w-full select-none items-start gap-2 rounded-lg p-3 text-left text-sm hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", entry.path === current?.path && "bg-secondary")}>
           <FileText size={16} className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
-          <span className="min-w-0"><span className="block break-all font-medium">{entry.name}</span><span className="mt-1 block text-xs text-muted-foreground">{t(`society.profile_card.kind_${entry.kind}`)}</span></span>
+          <span className="min-w-0"><span className="block break-all font-medium">{entry.name}</span><span className="mt-1 block text-xs text-muted-foreground">{t(entry.name === "USER.md" ? "society.profile_card.user_book" : entry.name === "MEMORY.md" ? "society.profile_card.memory_book" : `society.profile_card.kind_${entry.kind}`)}</span></span>
         </button>)}
       </nav>
       <section aria-label={current?.path} className="min-w-0 overflow-auto p-5">

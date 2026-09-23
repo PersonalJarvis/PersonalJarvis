@@ -1,7 +1,7 @@
 """Editable memory entries inside the existing Markdown memory page.
 
-The page remains the source of truth. Stable ids survive corrections; old
-date-heading pages are read without a separate migration or a second notebook.
+Each Markdown notebook remains its source of truth. Stable ids survive
+corrections; legacy date-heading entries remain readable during migration.
 """
 
 from __future__ import annotations
@@ -108,21 +108,27 @@ def change(
     ]
 
 
-def briefing(entries: list[Entry], *, max_chars: int) -> str:
-    """Select whole entries by importance, then recency; never silently clip a fact."""
-    lines: list[str] = []
-    omitted: list[str] = []
+def select_entries(entries: list[Entry], *, max_chars: int) -> tuple[list[Entry], int]:
+    """Select whole entries by importance and recency; keep the remainder on disk."""
+    selected: list[Entry] = []
+    omitted = 0
     used = 0
     for entry in sorted(entries, key=lambda e: (-e.importance, -e.revision, e.id)):
         line = f"[{entry.id}] {entry.text}"
         if used + len(line) + 2 <= max_chars:
-            lines.append(line)
+            selected.append(entry)
             used += len(line) + 2
         else:
-            omitted.append(entry.id)
+            omitted += 1
+    return selected, omitted
+
+
+def briefing(entries: list[Entry], *, max_chars: int) -> str:
+    """Render complete entries within the prompt budget, without truncating facts."""
+    selected, omitted = select_entries(entries, max_chars=max_chars)
+    lines = [f"[{entry.id}] {entry.text}" for entry in selected]
     if omitted:
         lines.append(
-            f"{len(omitted)} more entries remain on disk; "
-            "use society_memory_recall to retrieve them."
+            f"{omitted} more entries remain on disk; use society_memory_recall to retrieve them."
         )
     return "\n\n".join(lines)

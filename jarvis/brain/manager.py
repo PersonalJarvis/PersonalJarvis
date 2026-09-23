@@ -4157,6 +4157,23 @@ class BrainManager:
         5. CoreMemory        — legacy JSON facts (transitional, kept for back-compat)
         6. Base-Prompt       — voice rules
         """
+        private = _TURN_OVERRIDE.get()
+        if private is not None and private.tool_context.get("tool_origin") == "society":
+            # An agent's own notebooks are its profile source. Do not append
+            # Jarvis' global USER.md, contacts, persona or ambient core memory.
+            parts = [
+                private.system_extra
+                or "Your private agent context is unavailable; do not invent it.",
+                _TOOL_ROUTING_RULES,
+                self._render_live_tool_block(),
+                getattr(self, "_evidence_directive", ""),
+                _WRITTEN_CHAT_STYLE,
+            ]
+            identity = getattr(self, "_active_turn_identity", None)
+            if identity:
+                parts.append(_provider_identity_directive(identity[0], identity[1], "this agent"))
+            parts.append(self._reply_language_directive())
+            return "\n\n".join(part for part in parts if part)
         parts: list[str] = []
 
         # Configurable assistant identity. Derived solely from the wake phrase
@@ -4597,6 +4614,9 @@ class BrainManager:
             f"[Current date and time: {_weekdays_en[_now.weekday()]}, "
             f"{_now.strftime('%Y-%m-%d %H:%M')}]"
         ]
+        private = _TURN_OVERRIDE.get()
+        if private is not None and private.tool_context.get("tool_origin") == "society":
+            return "\n\n".join(parts)
         if self._awareness_manager is not None:
             try:
                 snap = self._awareness_manager.state.snapshot_for_prompt(max_chars=4_000)
@@ -9864,7 +9884,10 @@ class BrainManager:
             text=response_text,
         )
 
-        if self._curator is not None:
+        if self._curator is not None and not (
+            (profile_override := _TURN_OVERRIDE.get()) is not None
+            and profile_override.tool_context.get("tool_origin") == "society"
+        ):
             try:
                 asyncio.create_task(
                     self._curator.process_turn(user_text, response_text),
@@ -11697,7 +11720,10 @@ class BrainManager:
         # _wiki_context_suffix is reset in the finally block at the end of
         # generate() to prevent stale context leaking into the next turn.
         try:
-            if self._wiki_injector is not None:
+            if self._wiki_injector is not None and not (
+                turn_override is not None
+                and turn_override.tool_context.get("tool_origin") == "society"
+            ):
                 base_prompt = self._build_system_prompt()
                 injected_prompt = await self._wiki_injector.maybe_inject(
                     user_text=user_text,
@@ -12503,7 +12529,10 @@ class BrainManager:
         # Fire-and-forget: the curator extracts personal facts from the turn
         # and merges them into USER.md / people/*.md in a controlled manner.
         # Runs async, does not block the response.
-        if self._curator is not None:
+        if self._curator is not None and not (
+            (profile_override := _TURN_OVERRIDE.get()) is not None
+            and profile_override.tool_context.get("tool_origin") == "society"
+        ):
             try:
                 asyncio.create_task(
                     self._curator.process_turn(user_text, response_text),

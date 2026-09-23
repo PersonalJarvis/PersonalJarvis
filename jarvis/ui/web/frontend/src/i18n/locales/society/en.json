@@ -1,6 +1,8 @@
 {
   "society": {
     "profile_card": {
+      "user_book": "Your profile & preferences",
+      "memory_book": "Knowledge & experience",
       "runtime_pending": "The learning update will be available after the next app start. Your existing memory files remain readable.",
       "learned_instructions": "Learned working instructions",
       "learned_hint": "AI reviews completed conversations for useful lessons. These rules improve the next run while your instructions and permissions stay in force.",
@@ -11,7 +13,7 @@
       "review_waiting": "Waiting for a completed conversation to review",
       "last_review": "Last review activity",
       "loading": "Loading…",
-      "knowledge_hint": "Current memory notes and learned skill files for this agent. Working rules live in memory.md. Conversation archives and old revisions are stored separately.",
+      "knowledge_hint": "Each agent maintains its own USER.md for your profile and preferences, and MEMORY.md for project knowledge and experience. Skills and conversation archives stay separate.",
       "kind_memory": "Memory",
       "kind_skills": "Learned skill · draft",
       "open": "Open profile of {0}",

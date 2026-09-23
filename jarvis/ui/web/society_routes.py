@@ -1227,6 +1227,15 @@ async def memory_file(request: Request, path: str = "") -> dict[str, Any]:
         raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
     vault = rt.memory.root()
     target = vault / rel
+    parts = rel.split("/")
+    if len(parts) == 3 and parts[-1].lower() in {"memory.md", "user.md"}:
+        import asyncio
+
+        agent = await rt.roster.get(parts[1])
+        if agent is not None:
+            books = await asyncio.to_thread(rt.memory.books, agent)
+            target = books["user" if parts[-1].lower() == "user.md" else "memory"]
+            rel = target.relative_to(vault.resolve()).as_posix()
     try:
         base = (vault / "society").resolve()
         resolved = target.resolve()

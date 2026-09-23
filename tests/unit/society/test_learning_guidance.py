@@ -148,7 +148,7 @@ async def test_inventory_contains_memory_and_private_skill_contents(rt):
     )
     (skills / "source-check" / ".history" / "old.md").write_text("Old revision", encoding="utf-8")
     files = list_files(rt, agent)
-    assert [f["path"] for f in files] == ["memory/memory.md", "skills/source-check/SKILL.md"]
+    assert [f["path"] for f in files] == ["memory/USER.md", "memory/MEMORY.md", "skills/source-check/SKILL.md"]
     assert "Check dates." in read_file(rt, agent, "skills/source-check/SKILL.md")["content"]
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(society=rt)))
     inventory = await agent_knowledge("scout", request)
@@ -257,7 +257,7 @@ async def test_memory_changes_post_one_notice_and_noop_posts_none(rt):
     await rt.memory.remember(agent, "", operation="remove", old_text="Use bullet lists.")
     assert len(notices) == 3
     assert all(
-        n["kind"] == "memory_updated" and n["path"] == "society/scout/memory.md" for n in notices
+        n["kind"] == "memory_updated" and n["path"] == "society/scout/MEMORY.md" for n in notices
     )
     assert "Use short paragraphs." in notices[1]["before"]
     assert "Use bullet lists." in notices[1]["after"]

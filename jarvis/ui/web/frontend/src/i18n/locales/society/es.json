@@ -1,6 +1,8 @@
 {
   "society": {
     "profile_card": {
+      "user_book": "Tu perfil y preferencias",
+      "memory_book": "Conocimientos y experiencia",
       "runtime_pending": "La actualización de aprendizaje estará disponible al volver a iniciar la aplicación. Los archivos de memoria actuales siguen disponibles.",
       "learned_instructions": "Instrucciones de trabajo aprendidas",
       "learned_hint": "La IA revisa las conversaciones terminadas para extraer lecciones útiles. Estas reglas mejoran la siguiente ejecución; tus instrucciones y permisos siguen vigentes.",
@@ -11,7 +13,7 @@
       "review_waiting": "Esperando una conversación terminada para revisar",
       "last_review": "Última actividad de aprendizaje",
       "loading": "Cargando…",
-      "knowledge_hint": "Notas actuales y archivos de habilidades aprendidas de este agente. Las reglas están en memory.md. Los archivos de conversaciones y versiones anteriores se guardan por separado.",
+      "knowledge_hint": "Cada agente mantiene su propio USER.md para tu perfil y preferencias, y MEMORY.md para conocimientos y experiencia. Las habilidades y los archivos de conversaciones quedan separados.",
       "kind_memory": "Memoria",
       "kind_skills": "Habilidad aprendida · borrador",
       "open": "Abrir perfil de {0}",

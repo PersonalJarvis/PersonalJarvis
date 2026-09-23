@@ -20,7 +20,8 @@ live under the scheduler and the voice router tool (M4) are not.
 | `approvals.py` | the unattended ask-queue: require > always-allow > tier vs ceiling; expiry parks, never drops |
 | `routines.py` | per-agent routines as tagged Automations tasks |
 | `surface.py` | the `society` chat surface: per-session hands (grant/focus/deny), the briefing, the ecosystem card |
-| `memory.py` | personal head and own-note recall for ordinary agents, remember, note; existing shared pages, promotion, dismissal and overview remain available for user management, without automatic agent access; every touch is a `DIGEST kind=memory` on the board |
+| `memory_books.py` | isolated USER.md and MEMORY.md notebooks, journaled legacy migration and locked atomic updates |
+| `memory.py` | personal profile and memory head and own-note recall for ordinary agents, remember, note; existing shared pages, promotion, dismissal and overview remain available for user management, without automatic agent access; every touch is a `DIGEST kind=memory` on the board |
 | `checkpoints.py` | where an agent IS on the island, derived from the board by trusted rules (paused, gate, meeting, archive after a memory touch with a 60 s hold, desk, idle); persists the roster row and publishes `SocietyCheckpointChanged` for the island |
 | `agent_tools.py` | `society_message_agent` (one typed envelope to ONE teammate), `society_wiki_note` (personal memory / note only), `society_memory_recall` (own notes only), `society_shell` (the agent's own contained shell); explicit user-wiki tasks use separately granted wiki tools |
 | `shell.py` | the shell backend seam: `LocalBackend` now (local by decision), path containment, caps |

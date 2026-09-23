@@ -87,10 +87,10 @@ async def test_wiki_note_writes_into_the_namespace_only(rt: SocietyRuntime, tmp_
     assert again.output["path"] != res.output["path"]
 
     # Memory appends to one page.
-    m1 = await tool.execute({"kind": "memory", "text": "The user prefers Hetzner."}, CTX)
+    m1 = await tool.execute({"kind": "memory", "target": "memory", "text": "The user prefers Hetzner."}, CTX)
     m2 = await tool.execute({"kind": "memory", "text": "Budget is 5 EUR/month."}, CTX)
-    assert m1.output["path"] == m2.output["path"] == "society/scout/memory.md"
-    memory = (vault / "society" / "scout" / "memory.md").read_text(encoding="utf-8")
+    assert m1.output["path"] == m2.output["path"] == "society/scout/MEMORY.md"
+    memory = (vault / "society" / "scout" / "MEMORY.md").read_text(encoding="utf-8")
     assert "Hetzner" in memory and "5 EUR" in memory and memory.count("<!-- memory-entry:") == 2
     assert not any(p.is_file() for p in vault.iterdir() if p.suffix == ".md")
 

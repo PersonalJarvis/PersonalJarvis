@@ -5,7 +5,7 @@ this service is the only code path an agent's memory goes through:
 
 * ``head``            the agent's own memory in the briefing
 * ``recall``          a ranked, bounded lookup in the agent's own notes only
-* ``remember``        append a durable fact to the agent's ``memory.md`` (own, free)
+* ``remember``        maintain the agent's private ``MEMORY.md`` or ``USER.md``
 * ``note``            a dated work note under ``society/<agent>/`` (own, free)
 * ``propose_shared``  a note plus an approval item "promote to shared knowledge"
 * ``promote``         the approved copy into ``society/shared/`` with ``reviewed: true``
@@ -212,7 +212,10 @@ class SocietyMemory:
             return Path(override)
         if self._vault_root is not None:
             return Path(self._vault_root())
-        return resolve_society_vault(self._runtime._get_cfg())  # noqa: SLF001 — the runtime owns its config getter
+        config = self._runtime._get_cfg()  # noqa: SLF001 — runtime-owned configuration
+        if config is None:
+            return Path(self._runtime._data_dir) / "wiki"  # noqa: SLF001 — standalone runtime isolation
+        return resolve_society_vault(config)
 
     @staticmethod
     def namespace(root: Path, agent_id: str) -> Path:
@@ -254,11 +257,16 @@ class SocietyMemory:
 
     # --------------------------------------------------------------- writes
 
-    async def remember(
+    async def remember(self, agent: AgentRecord, text: str, **options: Any) -> str:
+        """Persist an entry and return the agent-scoped notebook path."""
+        return str((await self.remember_receipt(agent, text, **options))["path"])
+
+    async def remember_receipt(
         self,
         agent: AgentRecord,
         text: str,
         *,
+        target: str | None = None,
         origin: str = "agent",
         trace: str = "",
         root: Path | None = None,
@@ -266,59 +274,56 @@ class SocietyMemory:
         entry_id: str = "",
         old_text: str = "",
         importance: int = 5,
-    ) -> str:
-        """Append one durable fact to the agent's memory page. Returns the vault-relative path."""
-        text = str(text or "").strip()[:_MAX_TEXT]
-        if not text and operation != "remove":
-            raise MemoryRefused("text is required")
+    ) -> dict[str, Any]:
+        """Write one notebook under its lock and return the actual before/after receipt."""
+        from filelock import Timeout
+
+        from .memory_books import PROMPT_BUDGETS, edit_book
+        from .notebook import readable_document
+
+        text = str(text or "").strip()
+        if (not text and operation != "remove") or len(text) > _MAX_TEXT:
+            raise MemoryRefused("Provide a non-empty, concise memory entry")
         if _contains_secret(text):
             raise MemoryRefused("memory never holds a secret")
-        vault = self.root(root)
-        path = self.namespace(vault, agent.agent_id) / "memory.md"
-        existing = path.read_text(encoding="utf-8") if path.is_file() else ""
-        if not existing:
-            existing = (
-                self._frontmatter(f"{agent.name} — memory", agent.agent_id, "agent", trace) + "\n"
-            )
-        from .notebook import change, parse, readable_document, render
-
-        _, body = _parse(existing)
-        prefix = existing[: len(existing) - len(body)] if body else existing
+        vault = self.root(root).resolve()
         try:
-            previous_entries = parse(body)
-            entries = change(
-                previous_entries,
+            result = edit_book(
+                vault,
+                agent,
                 text,
+                target=target,
                 operation=operation,
                 entry_id=entry_id,
                 old_text=old_text,
                 importance=max(0, min(10, int(importance))),
                 origin=self._origin(origin),
             )
-        except (ValueError, KeyError, TypeError) as exc:
+        except (ValueError, KeyError, TypeError, Timeout) as exc:
             raise MemoryRefused(str(exc)) from exc
-        if entries == previous_entries:
-            return path.relative_to(vault).as_posix()
-        after = prefix + "\n" + render(entries)
-        atomic_write(path, after)
-        rel = path.relative_to(vault).as_posix()
-        await self._stage(agent, rel, self._origin(origin), trace, text[:280])
-        await self._touch(
-            agent,
-            "remember",
-            {
-                "path": rel,
-                "scope": "own",
-                "operation": operation,
-                "before": _clip_diff_text(existing),
-                "after": _clip_diff_text(after),
-                "diff": build_memory_diff(existing, after),
-                "markdown_diff": build_memory_diff(
-                    readable_document(existing), readable_document(after)
-                ),
-            },
-        )
-        return rel
+        rel = result.path.relative_to(vault).as_posix()
+        receipt = {
+            "path": rel,
+            "target": result.target,
+            "kind": "memory",
+            "scope": "own",
+            "operation": operation,
+            "changed": result.changed,
+            "before": _clip_diff_text(result.before),
+            "after": _clip_diff_text(result.after),
+            "diff": build_memory_diff(result.before, result.after),
+            "markdown_diff": build_memory_diff(
+                readable_document(result.before), readable_document(result.after)
+            ),
+            "content_chars": len(readable_document(result.after)),
+            "prompt_budget_chars": PROMPT_BUDGETS[result.target],
+            "consolidation_recommended": len(readable_document(result.after))
+            > PROMPT_BUDGETS[result.target],
+        }
+        if result.changed:
+            await self._stage(agent, rel, self._origin(origin), trace, text[:280])
+            await self._touch(agent, "remember", receipt)
+        return receipt
 
     async def note(
         self,
@@ -440,55 +445,67 @@ class SocietyMemory:
 
     # ---------------------------------------------------------------- reads
 
-    def entries(self, agent: AgentRecord, *, root: Path | None = None) -> list[Any]:
-        """Read the complete current notebook, including facts outside the prompt budget."""
-        from .notebook import parse
+    def books(self, agent: AgentRecord, *, root: Path | None = None) -> dict[str, Path]:
+        """Ensure this agent's two notebooks exist and recover an interrupted migration."""
+        from .memory_books import ensure_books
 
-        path = self.namespace(self.root(root), agent.agent_id) / "memory.md"
-        if not path.is_file():
-            return []
-        _, body = _parse(path.read_text(encoding="utf-8"))
-        return parse(body)
+        return ensure_books(self.root(root), agent)
+
+    def notebooks(self, agent: AgentRecord, *, root: Path | None = None) -> dict[str, list[Any]]:
+        from .memory_books import read_books
+
+        return read_books(self.root(root), agent)
+
+    def entries(
+        self, agent: AgentRecord, *, target: str | None = None, root: Path | None = None
+    ) -> list[Any]:
+        """Read a selected notebook, or both for backward-compatible full-memory callers."""
+        books = self.notebooks(agent, root=root)
+        if target is not None:
+            if target not in books:
+                raise ValueError("Memory target must be memory or user")
+            return books[target]
+        return [*books["user"], *books["memory"]]
 
     def head(self, agent: AgentRecord, *, root: Path | None = None) -> str:
-        """The briefing's ``## Your memory`` section. Byte-stable between writes."""
-        vault = self.root(root)
-        page = self.namespace(vault, agent.agent_id) / "memory.md"
-        lines = ["## Your memory"]
-        if page.is_file():
-            _, body = _parse(page.read_text(encoding="utf-8"))
-            body = body.strip()
-            if body:
-                from .notebook import briefing, parse
-                from .working_rules import PREFIX, render_guidance
+        """Fresh, separately bounded profile and experience sections for every turn."""
+        from .memory_books import PROMPT_BUDGETS
+        from .notebook import briefing, select_entries
+        from .working_rules import PREFIX, render_guidance
 
-                entries = parse(body)
-                guidance = render_guidance(entries)
-                if guidance:
-                    lines.append(guidance)
-                lines.append(
-                    briefing(
-                        [e for e in entries if not e.text.startswith(PREFIX)], max_chars=_HEAD_CHARS
-                    )
-                )
-        if len(lines) == 1:
-            lines.append("Nothing remembered yet.")
+        books = self.notebooks(agent, root=root)
+        lines = []
+        for target, title in (("user", "Your user profile"), ("memory", "Your memory")):
+            selected, omitted = select_entries(books[target], max_chars=PROMPT_BUDGETS[target])
+            lines.append("## " + title)
+            lines.append(
+                "USER.md: preferences and facts about the person."
+                if target == "user"
+                else "MEMORY.md: project knowledge, environment facts and working methods."
+            )
+            if not books[target]:
+                lines.append("Nothing remembered yet.")
+            plain = [entry for entry in selected if not entry.text.startswith(PREFIX)]
+            if plain:
+                lines.append(briefing(plain, max_chars=PROMPT_BUDGETS[target]))
+            guidance = render_guidance(selected)
+            if guidance:
+                lines.append(guidance)
+            if omitted:
+                lines.append(f"{omitted} further entries remain on disk; recall them when needed.")
         lines.append(
-            "Recall your own notes with society_memory_recall; keep personal durable facts with "
-            "society_wiki_note (kind memory) and your findings as kind note. "
-            "Other agents' notes and shared knowledge are not part of your memory."
+            "Maintain USER.md with society_wiki_note(kind=memory, target=user) for user facts "
+            "and preferences; maintain MEMORY.md with target=memory for experience and project "
+            "knowledge. Consolidate overlapping entries with replace; remove obsolete entries "
+            "only with evidence. Read older details with society_memory_recall. Both notebooks "
+            "belong to you alone; other agents' profiles and notes are not included."
         )
         return "\n".join(lines)
 
-    def contains(self, agent: AgentRecord, text: str) -> bool:
-        """Check all current entries, including those outside the briefing budget."""
-        from .notebook import parse
-
-        path = self.namespace(self.root(), agent.agent_id) / "memory.md"
-        if not path.is_file():
-            return False
-        _, body = _parse(path.read_text(encoding="utf-8"))
-        return any(entry.text.strip() == text.strip() for entry in parse(body))
+    def contains(self, agent: AgentRecord, text: str, *, target: str | None = None) -> bool:
+        return any(
+            entry.text.strip() == text.strip() for entry in self.entries(agent, target=target)
+        )
 
     async def recall(
         self, agent: AgentRecord, query: str, *, k: int = 5, root: Path | None = None
@@ -497,6 +514,7 @@ class SocietyMemory:
         if not query:
             return []
         vault = self.root(root)
+        self.books(agent, root=vault)
         qtokens = _tokens(query)
         hits: list[MemoryHit] = []
         for page in self._pages(vault, agent_id=agent.agent_id):
@@ -548,15 +566,13 @@ class SocietyMemory:
         shared.sort(key=lambda s: -s["updated_ms"])
         agents = []
         for agent in await self._runtime.roster.list():
-            page = self.namespace(vault, agent.agent_id) / "memory.md"
-            body = ""
-            if page.is_file():
-                _, body = _parse(page.read_text(encoding="utf-8"))
+            entries = self.entries(agent, root=vault)
+            body = "\n\n".join(entry.text for entry in entries)
             notes = (
                 sum(
                     1
                     for p in self.namespace(vault, agent.agent_id).glob("*.md")
-                    if p.name != "memory.md"
+                    if p.name not in {"memory.md", "MEMORY.md", "USER.md"}
                 )
                 if self.namespace(vault, agent.agent_id).is_dir()
                 else 0
@@ -645,12 +661,12 @@ class SocietyMemory:
                 await self._runtime.post_chat_notice(
                     agent,
                     {
+                        **payload,
                         "kind": "memory_updated",
                         "agent_id": agent.agent_id,
                         "agent_name": agent.name,
                         "status": "done",
                         "text": "Memory updated",
-                        **payload,
                     },
                 )
             except Exception:  # noqa: BLE001 — a notice failure must not undo a durable write
@@ -671,12 +687,17 @@ class SocietyMemory:
         for path in sorted(folder.rglob("*.md")):
             if path.name.startswith(".") or path.name == "README.md":
                 continue
+            if not path.resolve().is_relative_to(folder.resolve()):
+                continue  # A note symlink must not expose another agent's private files.
             try:
                 raw = path.read_text(encoding="utf-8")
                 updated = int(path.stat().st_mtime * 1000)
             except OSError:
                 continue
             fm, body = _parse(raw)
+            from .notebook import readable_document
+
+            body = readable_document(body)
             pages.append(_Page(path, path.relative_to(vault).as_posix(), fm, body, updated))
         return pages
 

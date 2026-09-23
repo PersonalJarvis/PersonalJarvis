@@ -35,3 +35,20 @@ it("refreshes revised working instructions without presenting a pending review a
   await screen.findByText("Use dated sources.");
   expect(screen.queryByText("Check sources.")).toBeNull();
 });
+
+it("shows separate user and experience notebooks and loads each agent-qualified file", async () => {
+  const fetcher = vi.fn(async (url: string) => url.endsWith("/knowledge") ? json({
+    files: [
+      { path: "memory/USER.md", name: "USER.md", kind: "memory", updated_ms: 1, size: 50 },
+      { path: "memory/MEMORY.md", name: "MEMORY.md", kind: "memory", updated_ms: 2, size: 50 },
+    ], learned_instructions: [], reviews: { pending: 0, done: 0 }, last_review: null,
+  }) : json({ content: url.includes("USER.md") ? "Prefers concise replies." : "The project uses PostgreSQL." }));
+  vi.stubGlobal("fetch", fetcher);
+  render(<QueryClientProvider client={new QueryClient()}><AgentMemoryFiles agentId="scout" sample={false} /></QueryClientProvider>);
+  await screen.findByText("Prefers concise replies.");
+  expect(screen.getByRole("button", { name: "USER.md society.profile_card.user_book" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "MEMORY.md society.profile_card.memory_book" }));
+  await screen.findByText("The project uses PostgreSQL.");
+  expect(screen.queryByText("Prefers concise replies.")).toBeNull();
+  expect(fetcher).toHaveBeenCalledWith("/api/society/agents/scout/knowledge/file?path=memory%2FMEMORY.md", expect.anything());
+});

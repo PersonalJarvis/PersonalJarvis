@@ -64,7 +64,10 @@ _OWN_PREFIX: Final[str] = "society_"
 #: the wiki only through its namespaced note tool and runs commands only
 #: through its own contained shell (never the free-cwd shell tools).
 _SOCIETY_DENIED: Final[frozenset[str]] = frozenset(
-    {"wiki-ingest", "run-shell", "run_shell", "RunCommand"}
+    {
+        "wiki-ingest", "run-shell", "run_shell", "RunCommand",
+        "remember", "update_profile", "profile-update", "update-profile",
+    }
 )
 
 _ECOSYSTEM_CARD: Final[str] = """\
@@ -84,8 +87,10 @@ natural conversation, not a mandatory handoff checklist; mention only relevant d
 outside paths are refused). Destructive commands ask the user first.
 - Learning: after a finished task you may gain a learned skill of your own (listed \
 above when present); run it with society_run_skill when a task matches.
-- Memory: keep your own durable facts and findings with society_wiki_note (kind memory or \
-note), and search only your own notes with society_memory_recall. Other agents' notes and \
+- Memory: maintain your own USER.md (user profile and preferences, kind memory, target user) \
+and MEMORY.md (project knowledge and experience, kind memory, target memory) with \
+society_wiki_note. Keep dated findings as kind note. Consolidate rather than duplicate entries. \
+Search only your own notes with society_memory_recall. Other agents' notes and \
 shared knowledge are not automatically available. Use separately granted wiki tools only \
 when the task explicitly calls for the user's wiki. Never edit the user's own pages.
 - Routines: recurring work runs from the Automations section as tasks tagged with your name; \

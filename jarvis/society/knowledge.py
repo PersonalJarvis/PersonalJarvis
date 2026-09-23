@@ -33,6 +33,7 @@ def _contained(root: Path, relative: str) -> Path:
 
 
 def list_files(runtime: Any, agent: Any) -> list[dict[str, Any]]:
+    runtime.memory.books(agent)
     files = []
     for kind, root in _roots(runtime, agent).items():
         if not root.exists() or root.resolve() != root.absolute():
@@ -55,7 +56,8 @@ def list_files(runtime: Any, agent: Any) -> list[dict[str, Any]]:
                     "size": stat.st_size,
                 }
             )
-    return sorted(files, key=lambda f: (f["path"] != "memory/memory.md", f["kind"], f["name"]))
+    priority = {"memory/USER.md": 0, "memory/MEMORY.md": 1}
+    return sorted(files, key=lambda f: (priority.get(f["path"], 2), f["kind"], f["name"]))
 
 
 def read_file(runtime: Any, agent: Any, requested: str) -> dict[str, Any]:
@@ -63,6 +65,9 @@ def read_file(runtime: Any, agent: Any, requested: str) -> dict[str, Any]:
     roots = _roots(runtime, agent)
     if not separator or kind not in roots:
         raise ValueError("Unknown knowledge collection")
+    if kind == "memory" and relative.lower() in {"memory.md", "user.md"}:
+        runtime.memory.books(agent)
+        relative = relative.upper().replace(".MD", ".md")
     path = _contained(roots[kind], relative)
     content = path.read_text(encoding="utf-8")
     return {"path": requested, "content": content, "updated_ms": int(path.stat().st_mtime * 1000)}

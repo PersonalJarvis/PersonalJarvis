@@ -367,7 +367,12 @@ class LearningPass:
                 self._runtime, agent.agent_id, vault_root=_vault_root(self._runtime._get_cfg())
             )
             await tool.execute(
-                {"kind": "memory", "text": f"Learned skill `{slug}` ({name}).", "origin": "agent"},
+                {
+                    "kind": "memory",
+                    "target": "memory",
+                    "text": f"Learned skill `{slug}` ({name}).",
+                    "origin": "agent",
+                },
                 None,
             )
         except Exception:  # noqa: BLE001 — the wiki line is a courtesy

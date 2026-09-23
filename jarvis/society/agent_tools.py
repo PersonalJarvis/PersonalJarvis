@@ -14,7 +14,7 @@ resolves, and the kill switch is off. The tool runs under
 namespace ``society/<agent_id>/`` in the Obsidian vault — never anywhere
 else, by construction (there is no path argument) — with provenance
 frontmatter, and records the page in the knowledge staging table as
-unreviewed. The agent's durable notes live in ``memory.md`` of the same
+unreviewed. The agent's durable notes live in ``MEMORY.md`` and ``USER.md`` of the same
 folder.
 """
 
@@ -190,14 +190,25 @@ class WikiNoteTool:
     risk_tier: str = "monitor"
     description: str = (
         "Write into YOUR personal memory folder (society/<you>/). kind 'memory' appends "
-        "a durable fact about your role or the user to your memory page; kind 'note' files a "
+        "a durable entry. Set target='user' for the person's profile and communication preferences "
+        "(USER.md), or target='memory' for project facts, experience and working methods "
+        "(MEMORY.md). Use replace to consolidate overlapping entries and remove only obsolete "
+        "facts with evidence. kind 'note' files a "
         "finding as a dated page (give it a title). These notes are for your own context. "
+        "If consolidation_recommended is true, merge related entries with replace while "
+        "preserving useful facts; large original entries remain retrievable on disk. "
         "Never put secrets in memory."
     )
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
             "text": {"type": "string", "description": "Markdown body."},
+            "target": {
+                "type": "string",
+                "enum": ["memory", "user"],
+                "description": "For kind memory: memory=experience and projects; "
+                "user=profile and preferences. Omit to infer the target for legacy callers.",
+            },
             "operation": {"type": "string", "enum": ["add", "replace", "remove"]},
             "entry_id": {"type": "string", "description": "Stable memory id from your briefing."},
             "old_text": {
@@ -244,20 +255,10 @@ class WikiNoteTool:
         title = str(args.get("title") or "")
         try:
             if kind == "memory":
-                from .memory import build_memory_diff
-
-                # Capture the file before the write so the chat can paint
-                # red/green without a second read. Failures fall back to "".
-                before_text = ""
-                try:
-                    vault = rt.memory.root(self._vault_root)
-                    mem_path = rt.memory.namespace(vault, caller.agent_id) / "memory.md"
-                    before_text = mem_path.read_text(encoding="utf-8") if mem_path.is_file() else ""
-                except OSError:
-                    before_text = ""
-                rel = await rt.memory.remember(
+                receipt = await rt.memory.remember_receipt(
                     caller,
                     text,
+                    target=str(args["target"]) if args.get("target") is not None else None,
                     origin=origin,
                     trace=trace,
                     root=self._vault_root,
@@ -266,24 +267,7 @@ class WikiNoteTool:
                     old_text=str(args.get("old_text") or ""),
                     importance=int(args.get("importance", 8)),
                 )
-                after_text = ""
-                try:
-                    vault = rt.memory.root(self._vault_root)
-                    after_text = (vault / rel).read_text(encoding="utf-8")
-                except OSError:
-                    after_text = before_text
-                return ToolResult(
-                    success=True,
-                    output={
-                        "path": rel,
-                        "kind": kind,
-                        "reviewed": False,
-                        "operation": str(args.get("operation") or "add"),
-                        "before": before_text[-20_000:],
-                        "after": after_text[-20_000:],
-                        "diff": build_memory_diff(before_text, after_text),
-                    },
-                )
+                return ToolResult(success=True, output={**receipt, "reviewed": False})
             if kind == "shared":
                 return _failure(
                     FailureReason.BLOCKED_BY_POLICY,

@@ -502,6 +502,7 @@ def society_memory_refresh(text: str, *, compact: bool = False) -> str:
     headings = (
         "Standing instructions",
         "Your memory",
+        "Your user profile",
         "Learned working instructions",
         "Your learned skills (run one with society_run_skill)",
     )

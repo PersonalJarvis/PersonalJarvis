@@ -48,7 +48,7 @@ async def resolve_agent_reply_language(session_id: str, text: str, fallback: str
     if agent is None:
         return fallback
     try:
-        preference = stored_language(runtime.memory.entries(agent))
+        preference = stored_language(runtime.memory.entries(agent, target="user"))
     except (OSError, ValueError, KeyError, TypeError):
         log.warning("society: reply preference could not be read for %s", agent_id, exc_info=True)
         return fallback
