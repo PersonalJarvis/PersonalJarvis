@@ -39,8 +39,20 @@ def test_shopify_public_endpoint_does_not_exempt_credentials():
     path = "jarvis/marketplace/plugins/shopify/mcp.json"
     safe = manifest({"type": "streamable-http", "url": "https://setup.shopify.com/mcp"}, "shopify")
     assert gate.is_public_catalog_mcp(path, safe)
-    assert gate.forbidden_pushed_file(path, manifest({"type": "streamable-http", "url": "https://setup.shopify.com/mcp", "headers": {"Authorization": "private"}}, "shopify"), {"mcp.json"})
-    assert gate.forbidden_pushed_file(path, manifest({"type": "streamable-http", "url": "https://setup.shopify.com/mcp?token=private"}, "shopify"), {"mcp.json"})
+    with_credentials = manifest(
+        {
+            "type": "streamable-http",
+            "url": "https://setup.shopify.com/mcp",
+            "headers": {"Authorization": "private"},
+        },
+        "shopify",
+    )
+    with_query_token = manifest(
+        {"type": "streamable-http", "url": "https://setup.shopify.com/mcp?token=private"},
+        "shopify",
+    )
+    assert gate.forbidden_pushed_file(path, with_credentials, {"mcp.json"})
+    assert gate.forbidden_pushed_file(path, with_query_token, {"mcp.json"})
 
 
 @pytest.mark.parametrize(

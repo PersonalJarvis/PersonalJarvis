@@ -43,6 +43,34 @@ Personal Jarvis app is prepared under the existing team. App creation would
 accept Figma developer terms, so it remains pending explicit action-time consent.
 Neither provider is marked connected.
 
+Additional official-console observations on 2026-09-23: Salesforce offers a
+free Developer Edition with hosted MCP access; its registration form is filled
+but requires accepting three legal agreements before submission. Zoom's Google
+sign-in reached a free account signup that requires the user's birth year for
+age verification. HubSpot's free developer signup is available without a
+credit card but its continuation opts the account into product and marketing
+emails. LinkedIn's developer portal opened under the account, but application
+creation requires a permanently associated LinkedIn Page. No existing Personal
+Jarvis Page was found; creating a new public Page requires factual company
+details, representative authority and LinkedIn Page terms. These are pending
+user decisions or account data, not provider-complete flows. No paid trial,
+plan, credit or payment method was activated.
+
+Slack's public PKCE flow was started through the live HTTPS broker: it returned
+the official Slack authorization endpoint, the exact project callback,
+`user_scope` and S256, without credentials in the response. The official app
+console shows token rotation and the earlier loopback redirect. A new HTTPS
+redirect is entered but remains unsaved pending action-time permission. The
+existing Discord app is public and supports guild and user installation. Its
+HTTPS callback is likewise entered but unsaved. Neither console action proves
+consent, token exchange, resource access or shared-bot operation.
+
+Verification after adding Shopify and the Worker: six Worker protocol tests,
+121 focused Python auth/catalog/audit tests, 46 privacy-gate tests and 59
+frontend logo/OAuth tests passed. The production frontend build and Cloudflare
+bundle check passed. The structural release gate intentionally reports Shopify
+as incomplete because its full real UI journey has not passed.
+
 The current Chrome automation bootstrap fails before a browser can be selected:
 the installed runtime requests a missing browser-service module. The official
 plugin diagnostics confirm that Chrome is running and the extension is enabled,
