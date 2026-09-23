@@ -597,6 +597,47 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
 # ------------------------------------------------------------------ skills
 
 
+@router.get("/agents/{agent_id}/knowledge")
+async def agent_knowledge(agent_id: str, request: Request) -> dict[str, Any]:
+    """List this agent's current memory, learned skills, working rules and review status."""
+    import asyncio
+    import json
+
+    from jarvis.society.knowledge import list_files
+    from jarvis.society.working_rules import PREFIX, rules
+
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    files = await asyncio.to_thread(list_files, rt, agent)
+    entries = await asyncio.to_thread(rt.memory.entries, agent)
+    last = await rt.store.get_meta(f"review:last:{agent.agent_id}", "")
+    return {
+        "files": files,
+        "learned_instructions": [e.text[len(PREFIX):] for e in rules(entries)],
+        "reviews": rt.conversations.review_counts(agent.agent_id),
+        "last_review": json.loads(last) if last else None,
+    }
+
+
+@router.get("/agents/{agent_id}/knowledge/file")
+async def agent_knowledge_file(agent_id: str, request: Request, path: str) -> dict[str, Any]:
+    """Read one current Markdown file from this agent's memory or private skill namespace."""
+    import asyncio
+
+    from jarvis.society.knowledge import read_file
+
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    try:
+        return await asyncio.to_thread(read_file, rt, agent, path)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)}) from exc
+
+
 @router.get("/agents/{agent_id}/skills")
 async def list_agent_skills(agent_id: str, request: Request) -> dict[str, Any]:
     """The agent's own learned skills (active for the agent, drafts for Jarvis)."""

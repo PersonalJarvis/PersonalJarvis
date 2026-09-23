@@ -1,6 +1,19 @@
 {
   "society": {
     "profile_card": {
+      "runtime_pending": "The learning update will be available after the next app start. Your existing memory files remain readable.",
+      "learned_instructions": "Learned working instructions",
+      "learned_hint": "AI reviews completed conversations for useful lessons. These rules improve the next run while your instructions and permissions stay in force.",
+      "no_instructions": "No working rules learned yet. Useful facts and procedures may already be saved as memory or skills.",
+      "review_reviewing": "Learning review in progress",
+      "review_pending": "Reviews pending — retried after a new completed turn or restart",
+      "review_done": "Learning review completed",
+      "review_waiting": "Waiting for a completed conversation to review",
+      "last_review": "Last review activity",
+      "loading": "Loading…",
+      "knowledge_hint": "Current memory notes and learned skill files for this agent. Working rules live in memory.md. Conversation archives and old revisions are stored separately.",
+      "kind_memory": "Memory",
+      "kind_skills": "Learned skill · draft",
       "open": "Open profile of {0}",
       "subtitle": "Agent profile",
       "profile": "Profile & instructions",

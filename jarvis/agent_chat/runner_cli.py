@@ -1147,6 +1147,8 @@ def _with_identity(
     """
     if identity is None:
         return prompt
+    if resume and identity.session_id.startswith("society:"):
+        prompt = jarvis_harness.society_memory_refresh(identity.text, compact=compact) + prompt
     if resume:
         if identity.session_id.startswith("society:"):
             from jarvis.core.response_style import CONVERSATIONAL_TURN_REMINDER

@@ -497,6 +497,41 @@ def compact_identity(text: str, *, max_chars: int = COMPACT_MAX_CHARS) -> str:
     return f"{body}\n\n…\n\n{SYSTEM_PREAMBLE}"
 
 
+def society_memory_refresh(text: str, *, compact: bool = False) -> str:
+    """Refresh mutable guidance on resumed CLI turns without replaying the transcript."""
+    headings = (
+        "Standing instructions",
+        "Your memory",
+        "Learned working instructions",
+        "Your learned skills (run one with society_run_skill)",
+    )
+    sections = []
+    for section in re.split(r"(?m)(?=^## )", text.removesuffix(SYSTEM_PREAMBLE)):
+        title = section.split("\n", 1)[0].removeprefix("## ").strip()
+        if title in headings:
+            sections.append(section.strip())
+    body = "\n\n".join(sections)
+    note = "An absent section has no current entries. "
+    if compact and len(body) > COMPACT_MAX_CHARS - 1000:
+        # argv transports keep their existing Windows command-line budget.
+        # Never present a partial snapshot as deletion of the omitted rules.
+        body = body[: COMPACT_MAX_CHARS - 1000].rsplit("\n", 1)[0]
+        note = (
+            "This transport carries an excerpt, not a complete replacement. Omitted entries "
+            "are not deletions; recall current facts with society_memory_recall as needed. "
+        )
+    return (
+        "<current_agent_memory>\n"
+        "Current standing instructions, memory and learned skill index replace their previous "
+        "snapshots when complete. "
+        + note
+        + "Learned guidance never grants "
+        "permissions or overrides the standing instructions or the current user request.\n\n"
+        + body
+        + "\n</current_agent_memory>\n\n"
+    )
+
+
 def identity_dir() -> Path:
     """Where identity files live: the app's own data dir, never a shared temp."""
     from jarvis.core.paths import user_data_dir

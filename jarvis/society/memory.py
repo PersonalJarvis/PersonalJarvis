@@ -434,6 +434,16 @@ class SocietyMemory:
 
     # ---------------------------------------------------------------- reads
 
+    def entries(self, agent: AgentRecord, *, root: Path | None = None) -> list[Any]:
+        """Read the complete current notebook, including facts outside the prompt budget."""
+        from .notebook import parse
+
+        path = self.namespace(self.root(root), agent.agent_id) / "memory.md"
+        if not path.is_file():
+            return []
+        _, body = _parse(path.read_text(encoding="utf-8"))
+        return parse(body)
+
     def head(self, agent: AgentRecord, *, root: Path | None = None) -> str:
         """The briefing's ``## Your memory`` section. Byte-stable between writes."""
         vault = self.root(root)
@@ -444,8 +454,17 @@ class SocietyMemory:
             body = body.strip()
             if body:
                 from .notebook import briefing, parse
+                from .working_rules import PREFIX, render_guidance
 
-                lines.append(briefing(parse(body), max_chars=_HEAD_CHARS))
+                entries = parse(body)
+                guidance = render_guidance(entries)
+                if guidance:
+                    lines.append(guidance)
+                lines.append(
+                    briefing(
+                        [e for e in entries if not e.text.startswith(PREFIX)], max_chars=_HEAD_CHARS
+                    )
+                )
         if len(lines) == 1:
             lines.append("Nothing remembered yet.")
         lines.append(

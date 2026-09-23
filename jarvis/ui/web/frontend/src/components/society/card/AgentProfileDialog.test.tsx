@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { SAMPLE_ROSTER } from "../mockRoster";
-import { AgentProfileDialog, agentMemoryFiles } from "./AgentProfileDialog";
+import { AgentProfileDialog } from "./AgentProfileDialog";
 import { RosterRail } from "../roster/RosterRail";
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, useLocaleChunk: () => true }));
@@ -10,16 +10,17 @@ vi.mock("../AgentSwatch", () => ({ AgentSwatch: () => <span /> }));
 
 const agent = { ...SAMPLE_ROSTER[1], agentId: "research", name: "Research", title: "Researcher", description: "Check primary sources.", tier: "specialist" as const };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
-const row = { slug: "memory", title: "Memory", mtime: 1, size: 50 };
-const tree = { ok: true, folders: [
-  { name: "society/research", files: [row, { ...row, slug: "notes", title: "Notes", mtime: 2 }] },
-  { name: "society/research/nested", files: [{ ...row, slug: "nested" }] },
-  { name: "society/research-other", files: [row] },
-  { name: "society/other", files: [row] },
-] };
+const knowledge = { files: [
+  { path: "memory/memory.md", name: "memory.md", kind: "memory", updated_ms: 1, size: 50 },
+  { path: "memory/notes.md", name: "notes.md", kind: "memory", updated_ms: 2, size: 50 },
+  { path: "skills/check/SKILL.md", name: "check/SKILL.md", kind: "skills", updated_ms: 3, size: 50 },
+], learned_instructions: ["Check source dates."], reviews: { pending: 0, done: 1 }, last_review: { state: "done", updated_ms: 1000 } };
 
-function setup(options: { lead?: boolean; sample?: boolean; fetcher?: typeof fetch } = {}) {
-  const fetcher = vi.fn(options.fetcher ?? (async () => json({})));
+function setup(options: { lead?: boolean; sample?: boolean; fetcher?: typeof fetch; knowledgeFailure?: boolean } = {}) {
+  const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+    if (String(url).endsWith("/knowledge")) return json(knowledge, options.knowledgeFailure ? 500 : 200);
+    return options.fetcher ? options.fetcher(url, init) : json({});
+  });
   vi.stubGlobal("fetch", fetcher);
   const onClose = vi.fn();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -59,28 +60,31 @@ it("uses the shared instructions endpoint for the lead", async () => {
   fireEvent.click(screen.getByRole("button", { name: "society.card.save" }));
   await screen.findByText("society.profile_card.saved");
   expect(fetcher).toHaveBeenCalledWith("/api/settings/agent-instructions", expect.objectContaining({ method: "PUT", body: JSON.stringify({ content: "New shared rule" }) }));
-  expect(fetcher.mock.calls.some(([url]) => String(url).includes("/agents/jarvis"))).toBe(false);
+  expect(fetcher.mock.calls.some(([url, init]) => String(url).includes("/agents/jarvis") && init?.method === "PATCH")).toBe(false);
 });
 
-it("lists only this agent's files, including nested notes and memory.md first", () => {
-  expect(agentMemoryFiles(tree, agent.agentId).map((file) => file.path)).toEqual(["society/research/memory.md", "society/research/notes.md", "society/research/nested/nested.md"]);
+it("shows automatically learned instructions and review status separately from user instructions", async () => {
+  setup();
+  await screen.findByText("Check source dates.");
+  expect(screen.getByText("society.profile_card.review_done")).toBeTruthy();
+  expect((screen.getByLabelText("society.profile_card.instructions") as HTMLTextAreaElement).value).toBe(agent.description);
 });
 
 it("loads memory on demand, opens another file and filters filenames", async () => {
-  const { fetcher } = setup({ fetcher: async (url) => String(url).includes("/tree") ? json(tree) : json({ content: String(url).includes("notes.md") ? "Dated note" : "Durable memory" }) });
-  expect(fetcher).not.toHaveBeenCalled();
+  const { fetcher } = setup({ fetcher: async (url) => json({ content: String(url).includes("notes.md") ? "Dated note" : "Durable memory" }) });
+  expect(fetcher.mock.calls.every(([url]) => String(url).endsWith("/knowledge"))).toBe(true);
   fireEvent.mouseDown(screen.getByRole("tab", { name: "society.profile_card.memory" }), { button: 0, ctrlKey: false });
   await screen.findByText("Durable memory");
-  fireEvent.click(screen.getByRole("button", { name: "notes.md Notes" }));
+  fireEvent.click(screen.getByRole("button", { name: "notes.md society.profile_card.kind_memory" }));
   await screen.findByText("Dated note");
-  expect(fetcher).toHaveBeenCalledWith("/api/society/memory/file?path=society%2Fresearch%2Fnotes.md", expect.anything());
-  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "nested" } });
-  expect(screen.queryByRole("button", { name: "notes.md Notes" })).toBeNull();
-  expect(screen.getByRole("button", { name: "nested/nested.md Memory" })).toBeTruthy();
+  expect(fetcher).toHaveBeenCalledWith("/api/society/agents/research/knowledge/file?path=memory%2Fnotes.md", expect.anything());
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "skills" } });
+  expect(screen.queryByRole("button", { name: "notes.md society.profile_card.kind_memory" })).toBeNull();
+  expect(screen.getByRole("button", { name: "check/SKILL.md society.profile_card.kind_skills" })).toBeTruthy();
 });
 
 it("reports listing failures instead of presenting an empty memory", async () => {
-  setup({ fetcher: async () => json({ ok: false }) });
+  setup({ knowledgeFailure: true });
   fireEvent.mouseDown(screen.getByRole("tab", { name: "society.profile_card.memory" }), { button: 0, ctrlKey: false });
   await screen.findByRole("alert");
   expect(screen.queryByText("society.profile_card.empty")).toBeNull();
@@ -95,6 +99,7 @@ it("does not read live data or save a sample agent", async () => {
 });
 
 it("opens the avatar profile without selecting the chat and leaves name-click navigation intact", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => json(knowledge)));
   const onOpen = vi.fn();
   const client = new QueryClient();
   render(<QueryClientProvider client={client}><RosterRail agents={[agent]} sample={false} loading={false} activeAgentId={null} onOpen={onOpen} onCreate={() => undefined} /></QueryClientProvider>);

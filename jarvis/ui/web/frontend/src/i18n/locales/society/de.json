@@ -1,6 +1,19 @@
 {
   "society": {
     "profile_card": {
+      "runtime_pending": "Das Lern-Update wird nach dem nächsten App-Start verfügbar. Deine bisherigen Memory-Dateien bleiben lesbar.",
+      "learned_instructions": "Gelernte Arbeitsanweisungen",
+      "learned_hint": "Die KI prüft abgeschlossene Gespräche auf nützliche Erkenntnisse. Diese Regeln verbessern den nächsten Lauf; deine Anweisungen und Berechtigungen gelten weiterhin.",
+      "no_instructions": "Noch keine Arbeitsregeln gelernt. Nützliche Fakten und Abläufe können bereits als Memory oder Skills gespeichert sein.",
+      "review_reviewing": "Lernprüfung läuft",
+      "review_pending": "Lernprüfungen ausstehend — neuer Versuch nach dem nächsten abgeschlossenen Gespräch oder Neustart",
+      "review_done": "Lernprüfung abgeschlossen",
+      "review_waiting": "Wartet auf ein abgeschlossenes Gespräch zur Lernprüfung",
+      "last_review": "Letzte Lernaktivität",
+      "loading": "Wird geladen…",
+      "knowledge_hint": "Aktuelle Memory-Notizen und gelernte Skill-Dateien dieses Agenten. Arbeitsregeln stehen in memory.md. Gesprächsarchive und frühere Versionen werden separat gespeichert.",
+      "kind_memory": "Memory",
+      "kind_skills": "Gelernter Skill · Entwurf",
       "open": "Profil von {0} öffnen",
       "subtitle": "Agent-Profil",
       "profile": "Profil & Anweisungen",

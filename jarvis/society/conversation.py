@@ -167,6 +167,18 @@ class ConversationArchive:
                 "UPDATE reviews SET status='done' WHERE session=? AND turn_id=?", (session, turn_id)
             )
 
+    def review_counts(self, agent_id: str) -> dict[str, int]:
+        """Count direct chats and routine reviews without reading conversation contents."""
+        session = f"society:{agent_id}"
+        prefix = session + ":routine:"
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT status,count(*) AS n FROM reviews WHERE session=? OR "
+                "substr(session,1,?)=? GROUP BY status",
+                (session, len(prefix), prefix),
+            ).fetchall()
+        return {"pending": 0, "done": 0, **{r["status"]: r["n"] for r in rows}}
+
 
 async def prepare_history(
     runtime: Any,

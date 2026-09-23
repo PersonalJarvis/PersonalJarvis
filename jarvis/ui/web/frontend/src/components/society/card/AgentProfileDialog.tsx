@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, RefreshCw, Search, X } from "lucide-react";
+import { X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,7 @@ import { useLocaleChunk, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { AgentSwatch } from "../AgentSwatch";
 import type { SocietyAgent } from "../data";
+import { AgentMemoryFiles, LearnedInstructions } from "./AgentKnowledge";
 
 const fieldClass = "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60";
 
@@ -107,6 +108,7 @@ export function AgentProfileDialog({ agent, sample, onClose }: {
                 {instructions.isError ? <p role="alert" className="mb-2 text-sm text-destructive">{t("society.profile_card.load_error")} <Button variant="ghost" size="sm" onClick={() => void instructions.refetch()}>{t("society.profile_card.retry")}</Button></p> : null}
                 <textarea id="agent-profile-instructions" className={cn(fieldClass, "min-h-[220px] resize-y leading-relaxed")} value={content} onChange={(event) => lead ? setLeadDraft(event.target.value) : setDescription(event.target.value)} disabled={sample || save.isPending || (lead && !instructions.data)} placeholder={t("society.card.no_description")} />
               </div>
+              <LearnedInstructions agentId={agent.agentId} sample={sample} />
               <dl className="mt-5 grid gap-4 rounded-xl border border-border p-4 text-sm sm:grid-cols-2">
                 <div><dt className="text-xs text-muted-foreground">{t("society.profile_card.model")}</dt><dd className="mt-1 break-words">{lead || !agent.model ? t("society.card.default_brain") : `${agent.providerLabel || agent.provider} · ${agent.model}`}</dd></div>
                 <div><dt className="text-xs text-muted-foreground">{t("society.profile_card.access")}</dt><dd className="mt-1">{t(`society.profile_card.access_${agent.grantMode}`)}</dd></div>
@@ -133,64 +135,4 @@ export function AgentProfileDialog({ agent, sample, onClose }: {
       </Dialog.Portal>
     </Dialog.Root>
   );
-}
-
-interface WikiFile { slug: string; title: string; mtime: number; size: number }
-interface WikiTree { ok: boolean; folders: { name: string; files: WikiFile[] }[] }
-
-/** Folder-qualified filenames avoid collisions between agents' memory.md files. */
-export function agentMemoryFiles(tree: WikiTree, agentId: string) {
-  const namespace = `society/${agentId}`;
-  return tree.folders.filter((folder) => folder.name === namespace || folder.name.startsWith(`${namespace}/`))
-    .flatMap((folder) => folder.files.map((file) => ({ ...file, path: `${folder.name}/${file.slug}.md` })))
-    .sort((a, b) => Number(b.path === `${namespace}/memory.md`) - Number(a.path === `${namespace}/memory.md`) || b.mtime - a.mtime || a.path.localeCompare(b.path));
-}
-
-function AgentMemoryFiles({ agentId, sample }: { agentId: string; sample: boolean }) {
-  const t = useT();
-  const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
-  const tree = useQuery({
-    queryKey: ["society", "profile-memory-tree"],
-    enabled: !sample,
-    retry: false,
-    staleTime: 10_000,
-    queryFn: async ({ signal }) => {
-      const result = await readJson<WikiTree>("/api/wiki/tree", signal);
-      if (!result.ok) throw new Error("Memory listing unavailable");
-      return result;
-    },
-  });
-  const files = tree.data ? agentMemoryFiles(tree.data, agentId) : [];
-  const visible = files.filter((file) => `${file.path} ${file.title}`.toLowerCase().includes(search.toLowerCase()));
-  const path = selected && files.some((file) => file.path === selected) ? selected : files[0]?.path;
-  const file = useQuery({
-    queryKey: ["society", "profile-memory-file", agentId, path],
-    enabled: !sample && Boolean(path),
-    retry: false,
-    queryFn: ({ signal }) => readJson<{ path: string; content: string; updated_ms: number }>(`/api/society/memory/file?path=${encodeURIComponent(path!)}`, signal),
-  });
-  return <div className="flex h-full min-h-0 flex-col">
-    <div className="mx-6 mb-3 flex items-center gap-2">
-      <Search size={16} className="shrink-0 text-muted-foreground" aria-hidden />
-      <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("society.profile_card.search")} aria-label={t("society.profile_card.search")} className={fieldClass} />
-      <Button size="sm" variant="ghost" disabled={sample || tree.isFetching || file.isFetching} aria-label={t("society.profile_card.refresh")} onClick={() => { void tree.refetch(); if (path) void file.refetch(); }}><RefreshCw size={16} aria-hidden /></Button>
-    </div>
-    {sample || tree.isError || tree.isLoading || files.length === 0 ? <div className="px-6 py-4 text-sm text-muted-foreground" role={tree.isError ? "alert" : "status"}>
-      {t(sample ? "society.profile_card.sample_hint" : tree.isError ? "society.profile_card.load_error" : tree.isLoading ? "society.roster.loading" : "society.profile_card.empty")}
-      {tree.isError && <Button size="sm" variant="ghost" onClick={() => void tree.refetch()}>{t("society.profile_card.retry")}</Button>}
-    </div> : <div className="grid min-h-0 flex-1 grid-rows-[140px_minmax(0,1fr)] border-t border-border sm:grid-cols-[240px_minmax(0,1fr)] sm:grid-rows-1">
-      <nav aria-label={t("society.profile_card.memory")} className="overflow-y-auto border-b border-border bg-card p-2 sm:border-b-0 sm:border-r">
-        {visible.length === 0 && <p className="p-3 text-xs text-muted-foreground">{t("society.profile_card.no_results")}</p>}
-        {visible.map((entry) => <button type="button" key={entry.path} aria-current={entry.path === path ? "true" : undefined} onClick={() => setSelected(entry.path)} className={cn("mb-1 flex w-full select-none items-start gap-2 rounded-lg p-3 text-left text-sm hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", entry.path === path && "bg-secondary")}>
-          <FileText size={16} className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
-          <span className="min-w-0"><span className="block break-all font-medium">{entry.path.slice(`society/${agentId}/`.length)}</span><span className="mt-1 block truncate text-xs text-muted-foreground">{entry.title}</span></span>
-        </button>)}
-      </nav>
-      <section aria-label={path} className="min-w-0 overflow-auto p-5">
-        <div className="mb-4 border-b border-border pb-3"><p className="break-all font-mono text-xs">{path}</p><p className="mt-1 text-xs text-muted-foreground">{t("society.profile_card.read_only")}</p></div>
-        {file.isLoading ? <p role="status" className="text-sm text-muted-foreground">{t("society.roster.loading")}</p> : file.isError ? <p role="alert" className="text-sm text-destructive">{t("society.profile_card.load_error")} <Button variant="ghost" size="sm" onClick={() => void file.refetch()}>{t("society.profile_card.retry")}</Button></p> : <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-6">{file.data?.content || t("society.profile_card.empty_file")}</pre>}
-      </section>
-    </div>}
-  </div>;
 }
