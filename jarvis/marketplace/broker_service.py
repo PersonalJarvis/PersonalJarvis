@@ -249,6 +249,7 @@ def create_broker_app(
             params["resource"] = config.resource
         if config.bot_permissions is not None:
             params["permissions"] = str(config.bot_permissions)
+            params["integration_type"] = "0"
         flow = {
             "provider": body.provider,
             "client_id": config.client_id,

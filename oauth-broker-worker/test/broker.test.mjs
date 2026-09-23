@@ -35,6 +35,8 @@ function setup() {
     PUBLISHER_ASANA_OAUTH_CLIENT_SECRET: "asana-test-secret",
     PUBLISHER_HUBSPOT_OAUTH_CLIENT_ID: "hubspot-test-client",
     PUBLISHER_HUBSPOT_OAUTH_CLIENT_SECRET: "hubspot-test-secret",
+    PUBLISHER_DISCORD_OAUTH_CLIENT_ID: "discord-test-client",
+    PUBLISHER_DISCORD_OAUTH_CLIENT_SECRET: "discord-test-secret",
     PUBLISHER_SLACK_OAUTH_CLIENT_ID: "slack-test-client",
   };
   async function call(path, method = "POST", body) {
@@ -205,4 +207,21 @@ test("HubSpot uses the current form token endpoint with S256 provider PKCE", asy
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("Discord code flow includes guild bot installation with minimal permissions", async () => {
+  const { call } = setup();
+  const started = await begin(call, "discord");
+  assert.equal(started.response.status, 200);
+  const auth = new URL(started.data.authorization_url);
+  assert.equal(auth.hostname, "discord.com");
+  assert.equal(auth.searchParams.get("response_type"), "code");
+  assert.equal(auth.searchParams.get("redirect_uri"), `${base}/callback`);
+  assert.equal(auth.searchParams.get("integration_type"), "0");
+  assert.equal(auth.searchParams.get("permissions"), "68608");
+  assert.deepEqual(new Set(auth.searchParams.get("scope").split(" ")), new Set([
+    "identify", "guilds", "guilds.members.read", "connections", "bot", "applications.commands",
+  ]));
+  assert.equal(auth.searchParams.has("client_secret"), false);
+  assert.equal(started.data.authorization_url.includes("discord-test-secret"), false);
 });

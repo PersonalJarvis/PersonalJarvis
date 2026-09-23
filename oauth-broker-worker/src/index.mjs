@@ -201,13 +201,19 @@ async function start(request, env) {
   const state = random(32);
   const verifier = random(32);
   const params = new URLSearchParams({ response_type: "code", client_id: config.clientId, redirect_uri: redirect, state });
-  if (config.spec.auth.scopes.length) params.set(config.spec.auth.user_scopes_only ? "user_scope" : "scope", config.spec.auth.scopes.join(" "));
+  const scopes = name === "discord"
+    ? [...new Set([...config.spec.auth.scopes, "bot", "applications.commands"])]
+    : config.spec.auth.scopes;
+  if (scopes.length) params.set(config.spec.auth.user_scopes_only ? "user_scope" : "scope", scopes.join(" "));
   if (config.pkce) {
     params.set("code_challenge", await challenge(verifier));
     params.set("code_challenge_method", "S256");
   }
   if (config.spec.auth.resource) params.set("resource", config.spec.auth.resource);
-  if (name === "discord") params.set("permissions", "68608");
+  if (name === "discord") {
+    params.set("permissions", "68608");
+    params.set("integration_type", "0");
+  }
   const flow = { provider: name, client_id: config.clientId, challenge: clientChallenge, verifier, redirect, status: "pending", loopback: local, client_state: clientState };
   await env.DB.prepare("INSERT INTO flows(id, state, expires, payload) VALUES (?, ?, ?, ?)").bind(await digest(flowId), await digest(state), now() + 300, await seal(env, flow)).run();
   return json({ flow_id: flowId, authorization_url: `${config.spec.auth.authorization_url}?${params}`, expires_in: 300 });

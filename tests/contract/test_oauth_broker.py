@@ -182,6 +182,32 @@ def test_rejects_insecure_deployment(broker):
         create_broker_app(**{**config, "base_url": "http://publisher.example"})
 
 
+def test_discord_broker_requests_guild_install_and_user_identity(broker):
+    config, _ = broker
+    config["providers"]["discord"] = BrokerProvider(
+        "https://discord.com/oauth2/authorize",
+        "https://discord.com/api/oauth2/token",
+        "test-discord-client",
+        "discord_secret",
+        ("identify", "guilds", "bot", "applications.commands"),
+        bot_permissions=68608,
+    )
+    with TestClient(create_broker_app(**config)) as client:
+        _, challenge = pkce_pair()
+        response = client.post(
+            "/start",
+            json={**START_EXTRA, "provider": "discord", "challenge": challenge},
+        )
+    assert response.status_code == 200
+    query = parse_qs(urlsplit(response.json()["authorization_url"]).query)
+    assert set(query["scope"][0].split()) == {
+        "identify", "guilds", "bot", "applications.commands"
+    }
+    assert query["integration_type"] == ["0"]
+    assert query["permissions"] == ["68608"]
+    assert query["redirect_uri"] == ["https://publisher.example/oauth/callback"]
+
+
 @pytest.mark.asyncio
 async def test_desktop_broker_protocol_persistence_and_client_binding(broker):
     from jarvis.marketplace.auth.oauth_broker import OAuthBrokerHandler
