@@ -131,9 +131,7 @@ class TestBuildIsComplete:
         assert "index-incoming.js" in recovered
         assert "<<<<<<<" not in recovered
 
-    def test_an_unrecoverable_conflict_keeps_the_holding_page(
-        self, tmp_path: Path
-    ) -> None:
+    def test_an_unrecoverable_conflict_keeps_the_holding_page(self, tmp_path: Path) -> None:
         dist = _dist(tmp_path, assets=False)
         (dist / "index.html").write_text(_CONFLICTED_INDEX, encoding="utf-8")
         assert recover_conflicted_index(dist / "index.html", dist) is None
