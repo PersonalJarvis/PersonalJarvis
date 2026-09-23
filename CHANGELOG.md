@@ -11,6 +11,43 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [2.3.0] — 2026-09-23
+
+### Added
+
+- Continuous Live conversation history, startup audio buffering, media feedback,
+  and deferred tool discovery for the selected reasoning model.
+- Agent companions and vector avatars, persistent Mars outpost navigation,
+  routine conversations, and agent communication context.
+- Per-agent profiles and memory notebooks, roster actions, and clearer memory
+  change receipts.
+
+### Changed
+
+- Publish the current desktop runtime, settings, onboarding, and bundled web
+  interface together so source downloads match the local feature set.
+- Retain local runtime telemetry, planning material, test worktrees, and private
+  verification captures outside new commits.
+
+### Fixed
+
+- Voice startup, native window lifecycle, browser shutdown, and conversation
+  recovery paths accumulated since 2.2.1.
+- Shopify catalog manifest recognition in credential protection and explicit
+  withholding of private agent notebook routes from the remote MCP surface.
+- Runtime restart and announcement test fixtures now follow their current
+  lifecycle contracts.
+
+### Validation status
+
+- Production frontend build and 328 focused Live/realtime checks passed.
+- The broad non-slow Python suite has unresolved failures. Full-suite and
+  physical macOS/Linux audio qualification remain open; live API testing also
+  encountered exhausted provider quota. This release preserves the current
+  desktop feature set with these known validation limitations.
+
+---
+
 ## [2.2.1] — 2026-09-16
 
 ### Fixed
