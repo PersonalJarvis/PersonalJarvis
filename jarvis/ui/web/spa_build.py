@@ -38,6 +38,7 @@ from pathlib import Path
 __all__ = [
     "referenced_assets",
     "build_is_complete",
+    "recover_conflicted_index",
     "holding_page_html",
     "HOLDING_ATTRIBUTE",
     "HOLDING_MARKER",
@@ -88,6 +89,12 @@ def build_is_complete(index_file: Path, dist_dir: Path) -> bool:
         html = index_file.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
+    if any(line.startswith("<<<<<<< ") for line in html.splitlines()):
+        return False
+    return _assets_exist(html, dist_dir)
+
+
+def _assets_exist(html: str, dist_dir: Path) -> bool:
     for ref in referenced_assets(html):
         candidate = dist_dir / ref.lstrip("/")
         try:
@@ -96,6 +103,68 @@ def build_is_complete(index_file: Path, dist_dir: Path) -> bool:
         except OSError:
             return False
     return True
+
+
+def recover_conflicted_index(index_file: Path, dist_dir: Path) -> str | None:
+    """Serve an intact side of a Git-conflicted build without editing the merge.
+
+    ``dist/`` is tracked, so a merge can put conflict markers into index.html
+    while leaving one side's hashed assets on disk. The normal completeness
+    check then sees assets from both sides and holds the desktop on Updating
+    forever. Prefer the local side, then the incoming side, only when its entry
+    assets exist. The unresolved file remains available for the merge owner.
+    """
+    try:
+        lines = index_file.read_text(encoding="utf-8", errors="replace").splitlines(
+            keepends=True
+        )
+    except OSError:
+        return None
+    if not any(line.startswith("<<<<<<< ") for line in lines):
+        return None
+
+    variants = [[], []]
+    cursor = 0
+    conflicts = 0
+    while cursor < len(lines):
+        line = lines[cursor]
+        if not line.startswith("<<<<<<< "):
+            for variant in variants:
+                variant.append(line)
+            cursor += 1
+            continue
+
+        conflicts += 1
+        cursor += 1
+        sides = [[], []]
+        side = 0
+        while cursor < len(lines) and not lines[cursor].startswith(">>>>>>> "):
+            line = lines[cursor]
+            if line.startswith("||||||| "):
+                side = -1  # Ignore the diff3 base version.
+            elif line.rstrip("\r\n") == "=======":
+                side = 1
+            elif side >= 0:
+                sides[side].append(line)
+            cursor += 1
+        if cursor == len(lines) or side != 1:
+            return None
+        for variant, content in zip(variants, sides, strict=True):
+            variant.extend(content)
+        cursor += 1
+
+    if not conflicts:
+        return None
+    for variant in variants:
+        html = "".join(variant)
+        if (
+            html.lstrip("\ufeff\r\n ").lower().startswith("<!doctype html>")
+            and "</html>" in html
+            and referenced_assets(html)
+            and _assets_exist(html, dist_dir)
+        ):
+            return html
+    return None
 
 
 def holding_page_html() -> str:

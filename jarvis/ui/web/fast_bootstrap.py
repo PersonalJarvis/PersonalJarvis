@@ -29,7 +29,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-from .spa_build import build_is_complete, holding_page_html
+from .spa_build import build_is_complete, holding_page_html, recover_conflicted_index
 from .surface_security import SurfaceSecurity
 
 # The built React frontend lives next to this module (jarvis/ui/web/dist),
@@ -333,17 +333,26 @@ class FastBootstrap:
         target = self._resolve_static_file(scope.get("path", "/"))
         if target is None:
             return False
-        if target.name == "index.html" and not build_is_complete(target, self._dist_dir):
+        incomplete_index = target.name == "index.html" and not build_is_complete(
+            target, self._dist_dir
+        )
+        recovered = None
+        if incomplete_index:
+            recovered = recover_conflicted_index(target, self._dist_dir)
+        if incomplete_index and recovered is None:
             # A rebuild is between deleting dist/assets and writing the new
             # ones. Handing out this index.html gives the window a boot splash
             # whose entry bundle 404s — no React, no self-healing, and a
             # twenty-second wait before anything notices (see spa_build.py).
             await self._rebuilding(scope, send)
             return True
-        try:
-            data = await asyncio.to_thread(target.read_bytes)
-        except OSError:
-            return False
+        if recovered is not None:
+            data = recovered.encode("utf-8")
+        else:
+            try:
+                data = await asyncio.to_thread(target.read_bytes)
+            except OSError:
+                return False
         ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
         headers = [
             (b"content-type", ctype.encode("latin-1")),

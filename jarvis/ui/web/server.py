@@ -56,7 +56,7 @@ from .schema import (
     WSWelcome,
     event_to_ws_envelope,
 )
-from .spa_build import build_is_complete, holding_page_html
+from .spa_build import build_is_complete, holding_page_html, recover_conflicted_index
 from .surface_security import SurfaceSecurity, set_browser_login_required
 from .wallpapers import register_wallpaper_routes
 
@@ -2209,6 +2209,15 @@ class WebServer:
         if INDEX_FILE.is_file() and build_is_complete(INDEX_FILE, DIST_DIR):
             return FileResponse(
                 str(INDEX_FILE),
+                headers={
+                    "Cache-Control": "no-store, max-age=0",
+                    "Pragma": "no-cache",
+                },
+            )
+        recovered = recover_conflicted_index(INDEX_FILE, DIST_DIR)
+        if recovered is not None:
+            return HTMLResponse(
+                content=recovered,
                 headers={
                     "Cache-Control": "no-store, max-age=0",
                     "Pragma": "no-cache",

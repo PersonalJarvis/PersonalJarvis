@@ -30,6 +30,7 @@ from jarvis.ui.web.spa_build import (
     HOLDING_MARKER,
     build_is_complete,
     holding_page_html,
+    recover_conflicted_index,
     referenced_assets,
 )
 
@@ -37,6 +38,20 @@ _INDEX = (
     "<!doctype html><html><head>"
     '<script type="module" crossorigin src="/assets/index-abc123.js"></script>'
     '<link rel="stylesheet" href="/assets/index-def456.css">'
+    '</head><body><div id="root"></div></body></html>'
+)
+
+_CONFLICTED_INDEX = (
+    "<!doctype html><html><head>\n"
+    "<<<<<<< HEAD\n"
+    '<script type="module" src="/assets/index-abc123.js"></script>\n'
+    '<link rel="stylesheet" href="/assets/index-def456.css">\n'
+    "||||||| base\n"
+    '<script type="module" src="/assets/index-old.js"></script>\n'
+    "=======\n"
+    '<script type="module" src="/assets/index-incoming.js"></script>\n'
+    '<link rel="stylesheet" href="/assets/index-incoming.css">\n'
+    ">>>>>>> origin/main\n"
     '</head><body><div id="root"></div></body></html>'
 )
 
@@ -91,6 +106,37 @@ class TestBuildIsComplete:
         dist.mkdir()
         (dist / "index.html").write_text("<html><body>hi</body></html>", encoding="utf-8")
         assert build_is_complete(dist / "index.html", dist) is True
+
+    def test_a_merge_conflict_is_never_served_as_html(self, tmp_path: Path) -> None:
+        dist = _dist(tmp_path)
+        (dist / "index.html").write_text(_CONFLICTED_INDEX, encoding="utf-8")
+        for name in ("index-incoming.js", "index-incoming.css"):
+            (dist / "assets" / name).write_text("", encoding="utf-8")
+        assert build_is_complete(dist / "index.html", dist) is False
+        recovered = recover_conflicted_index(dist / "index.html", dist)
+        assert recovered is not None
+        assert "index-abc123.js" in recovered
+        assert "index-incoming.js" not in recovered
+        assert "<<<<<<<" not in recovered
+
+    def test_a_merge_can_use_the_incoming_side_when_local_assets_are_gone(
+        self, tmp_path: Path
+    ) -> None:
+        dist = _dist(tmp_path, assets=False)
+        (dist / "index.html").write_text(_CONFLICTED_INDEX, encoding="utf-8")
+        for name in ("index-incoming.js", "index-incoming.css"):
+            (dist / "assets" / name).write_text("", encoding="utf-8")
+        recovered = recover_conflicted_index(dist / "index.html", dist)
+        assert recovered is not None
+        assert "index-incoming.js" in recovered
+        assert "<<<<<<<" not in recovered
+
+    def test_an_unrecoverable_conflict_keeps_the_holding_page(
+        self, tmp_path: Path
+    ) -> None:
+        dist = _dist(tmp_path, assets=False)
+        (dist / "index.html").write_text(_CONFLICTED_INDEX, encoding="utf-8")
+        assert recover_conflicted_index(dist / "index.html", dist) is None
 
 
 class TestHoldingPage:
@@ -175,6 +221,16 @@ class TestFastBootstrapServesTheHoldingPage:
         # And crucially NOT the document whose script tag would 404.
         assert b"index-abc123.js" not in body
 
+    @pytest.mark.asyncio
+    async def test_a_conflicted_build_serves_the_complete_side(self, tmp_path: Path) -> None:
+        dist = _dist(tmp_path)
+        (dist / "index.html").write_text(_CONFLICTED_INDEX, encoding="utf-8")
+        sent = await _drive(FastBootstrap(dist_dir=dist)._asgi, _get())
+        body = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+        assert b"index-abc123.js" in body
+        assert b"<<<<<<<" not in body
+        assert HOLDING_MARKER.encode() not in body
+
 
 class TestTheRealAppServesTheHoldingPage:
     """The same rule on the route a running window actually hits.
@@ -214,6 +270,19 @@ class TestTheRealAppServesTheHoldingPage:
         assert isinstance(response, HTMLResponse)
         assert HOLDING_MARKER.encode() in response.body
         assert b"index-abc123.js" not in response.body
+
+    def test_a_conflicted_build_serves_the_complete_side(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.responses import HTMLResponse
+
+        dist = _dist(tmp_path)
+        (dist / "index.html").write_text(_CONFLICTED_INDEX, encoding="utf-8")
+        response = self._response(monkeypatch, dist)
+        assert isinstance(response, HTMLResponse)
+        assert b"index-abc123.js" in response.body
+        assert b"<<<<<<<" not in response.body
+        assert HOLDING_MARKER.encode() not in response.body
 
     def test_a_missing_build_still_gets_the_holding_page(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
