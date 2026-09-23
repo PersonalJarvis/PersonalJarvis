@@ -494,6 +494,35 @@
       "allow": "Erlauben",
       "deny": "Ablehnen",
       "repair": "Browser reparieren"
+    },
+    "companion": {
+      "title": "Dein Begleiter",
+      "hint": "Dein Profilbild folgt deinem Charakter auf der Map. Charakter und Begleiter kannst du getrennt gestalten.",
+      "appearance": "Charakter & Begleiter",
+      "character": "Charakter",
+      "companion": "Begleiter",
+      "shape": "Form",
+      "color": "Farbe",
+      "custom_color": "Eigene Farbe",
+      "eyes": "Augen",
+      "dots": "Runde Augen",
+      "lines": "Strichaugen",
+      "visible": "Auf der Map folgen",
+      "shapes": {
+        "circle": "Kreis",
+        "squircle": "Weiches Quadrat",
+        "pill": "Kapsel",
+        "triangle": "Dreieck",
+        "hexagon": "Sechseck",
+        "cloud": "Wolke",
+        "drop": "Tropfen"
+      }
+    },
+    "profile_card": {
+      "save_error": "Speichern fehlgeschlagen. Deine Änderungen bleiben erhalten.",
+      "unsaved": "Du hast ungespeicherte Änderungen.",
+      "keep_editing": "Weiter bearbeiten",
+      "discard": "Änderungen verwerfen"
     }
   }
 }

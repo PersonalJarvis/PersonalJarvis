@@ -8,25 +8,12 @@
  * clock, generated image, model download or WebGL context in the roster.
  */
 
-const SHAPES = ["circle", "squircle", "pill", "triangle", "hexagon", "cloud", "drop"] as const;
-export type SymbolShape = (typeof SHAPES)[number];
-
-// Identity colours carry their own eye contrast in either application theme.
-const COLORS = ["#8b5cf6", "#c5dfd4", "#f2a65a", "#7ab6ef", "#ed91aa", "#b7cb78", "#bba7ed", "#79c7c4"] as const;
-
-function identityHash(identity: string): number {
-  let hash = 2166136261;
-  for (const character of identity) {
-    hash = Math.imul(hash ^ character.charCodeAt(0), 16777619) >>> 0;
-  }
-  return hash;
-}
+import { defaultCompanion, companionEyeColors, type SymbolShape } from "./companion/appearance";
+export type { SymbolShape } from "./companion/appearance";
 
 export function symbolAppearance(identity: string): { shape: SymbolShape; color: string } {
-  return {
-    shape: SHAPES[identityHash(`shape:${identity}`) % SHAPES.length]!,
-    color: COLORS[identityHash(`color:${identity}`) % COLORS.length]!,
-  };
+  const { shape, color } = defaultCompanion(identity);
+  return { shape, color };
 }
 
 /** The upstream superellipse sampler keeps the square soft without a bevel. */
@@ -65,16 +52,17 @@ function SymbolBody({ shape, color }: { shape: SymbolShape; color: string }) {
 }
 
 /** Two small eyes and their catchlights; no surrounding portrait disc. */
-export function AgentSymbol({ shape, color, size }: { shape: SymbolShape; color: string; size: number }) {
+export function AgentSymbol({ shape, color, size, eyes = "dots" }: { shape: SymbolShape; color: string; size: number; eyes?: "dots" | "lines" }) {
   const eyeY = shape === "cloud" || shape === "triangle" ? 23 : shape === "drop" ? 25 : 17.2;
+  const ink = companionEyeColors(color);
   return (
-    <svg aria-hidden focusable="false" data-agent-symbol={shape} width={size} height={size} viewBox="0 0 40 44" className="block h-full w-full">
+    <svg aria-hidden focusable="false" data-agent-symbol={shape} width={size} height={size} style={{ width: size, height: size, flexShrink: 0 }} viewBox="0 0 40 44" className="block">
       <SymbolBody shape={shape} color={color} />
-      <g fill="#19171d">
-        <ellipse cx={15.4} cy={eyeY} rx={2.2} ry={2.3} />
-        <ellipse cx={24.6} cy={eyeY} rx={2.2} ry={2.3} />
+      <g fill={ink.eye}>
+        <ellipse cx={15.4} cy={eyeY} rx={eyes === "lines" ? 1.3 : 2.2} ry={eyes === "lines" ? 3.2 : 2.3} />
+        <ellipse cx={24.6} cy={eyeY} rx={eyes === "lines" ? 1.3 : 2.2} ry={eyes === "lines" ? 3.2 : 2.3} />
       </g>
-      <g fill="#fff" opacity={0.85}>
+      <g fill={ink.highlight} opacity={eyes === "lines" ? 0 : 0.85}>
         <circle cx={14.8} cy={eyeY - 0.7} r={0.65} />
         <circle cx={24} cy={eyeY - 0.7} r={0.65} />
       </g>

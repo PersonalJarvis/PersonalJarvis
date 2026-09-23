@@ -652,3 +652,28 @@ provider authorization may remain at the provider because revoking it could also
 invalidate a shared existing grant. Users can revoke it in the provider's app
 settings. The release audit separately requires a real safe action, disconnect,
 reconnect and persistence after restart.
+
+## Agent profile companions (T3)
+
+| Capability | Windows | macOS | Linux / headless |
+| --- | --- | --- | --- |
+| Companion settings in existing avatar JSON | Portable Pydantic + SQLite | Same implementation | Same; no GPU or credentials required |
+| Character and companion editor | Shared React UI | Same browser UI | Same browser UI |
+| In-map follower | Existing WebGL capability probe | Same capability probe | Available in a WebGL browser; headless API still works |
+| No WebGL / lost context | Profile stays SVG/PNG; existing context recovery | Same fallback | Same fallback |
+
+`avatar.companion` stores shape, colour, eye style and visibility independently
+of the preserved character recipe. Companions use a fixed 0.50 m size and 1 m
+following distance; earlier saved slider values normalize to these constants. No additional SQL
+column, provider setting, inference request or credential is required. Old avatars
+retain deterministic identity defaults. Per-agent settings survive reload and
+world changes; hidden followers still retain their profile identity.
+
+`tests/contract/test_agent_companion.py` exercises a fresh, credential-free,
+headless API/database through creation, edit, rejection and reopening. A shared
+JSON corpus is accepted/rejected by Python and TypeScript. Browser verification
+on Windows covers real creation, appearance editing and rendering; physical
+macOS/Linux verification is not inferred from this portable implementation.
+Follower tests cover route corners, following gaps, height changes, bounded
+history and background-tab catch-up. Existing WebGL lifecycle hooks own context
+release/recovery; each follower shares the map canvas and cached geometry.

@@ -494,6 +494,35 @@
       "allow": "Permitir",
       "deny": "Denegar",
       "repair": "Reparar navegador"
+    },
+    "companion": {
+      "title": "Tu compañero",
+      "hint": "Tu imagen de perfil sigue a tu personaje en el mapa. Personaliza el personaje y su compañero por separado.",
+      "appearance": "Personaje y compañero",
+      "character": "Personaje",
+      "companion": "Compañero",
+      "shape": "Forma",
+      "color": "Color",
+      "custom_color": "Color personalizado",
+      "eyes": "Ojos",
+      "dots": "Ojos redondos",
+      "lines": "Ojos de línea",
+      "visible": "Seguir en el mapa",
+      "shapes": {
+        "circle": "Círculo",
+        "squircle": "Cuadrado suave",
+        "pill": "Cápsula",
+        "triangle": "Triángulo",
+        "hexagon": "Hexágono",
+        "cloud": "Nube",
+        "drop": "Gota"
+      }
+    },
+    "profile_card": {
+      "save_error": "No se pudo guardar. Los cambios se conservan.",
+      "unsaved": "Hay cambios sin guardar.",
+      "keep_editing": "Seguir editando",
+      "discard": "Descartar cambios"
     }
   }
 }

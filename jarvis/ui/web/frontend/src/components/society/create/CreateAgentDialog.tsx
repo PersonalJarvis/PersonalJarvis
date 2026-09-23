@@ -58,6 +58,8 @@ import {
 } from "./brainPicker";
 import { modelSeats } from "../chat/modelChoices";
 import { useCreateAgent, type PermissionCeiling } from "../data";
+import { CompanionEditor } from "../companion/CompanionEditor";
+import { resolveCompanion } from "../companion/appearance";
 import { AgentFigureViewer } from "../figures/AgentFigureViewer";
 import {
   EDITABLE_CELLS,
@@ -118,6 +120,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [recipe, setRecipe] = useState<FigureRecipe>(() => defaultRecipe(DEFAULT_STYLE));
+  const [appearanceTab, setAppearanceTab] = useState<"character" | "companion">("character");
   const [style, setStyle] = useState<string>(DEFAULT_STYLE);
   const [providerId, setProviderId] = useState("");
   const [model, setModel] = useState("");
@@ -343,7 +346,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
         name,
         title: title.trim() || t("society.create.title_fallback"),
         description,
-        figure: recipe,
+        figure: { ...recipe, companion: resolveCompanion(name.trim(), recipe.companion) },
         palette: { primary: palette.primary, secondary: palette.secondary, accent: palette.accent },
         provider: seat?.provider.id ?? "",
         providerLabel: seat?.provider.label ?? t("society.create.provider_unknown"),
@@ -613,7 +616,11 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
             </ScrollArea>
 
             {/* ---- right: the character, live ---- */}
-            <div className="flex min-h-0 flex-col">
+            <div className="flex min-h-0 flex-col overflow-y-auto">
+              <div className="flex shrink-0 gap-2 border-b border-border p-3" role="tablist" aria-label={t("society.companion.appearance")}>
+                {(["character", "companion"] as const).map(tab => <button key={tab} type="button" role="tab" aria-selected={appearanceTab === tab} onClick={() => setAppearanceTab(tab)} className={`rounded-md px-3 py-2 text-sm ${appearanceTab === tab ? "bg-secondary text-foreground" : "text-muted-foreground"}`}>{t(`society.companion.${tab}`)}</button>)}
+              </div>
+              {appearanceTab === "companion" ? <CompanionEditor value={resolveCompanion(name.trim(), recipe.companion)} onChange={companion => setRecipe(r => ({ ...r, companion }))} disabled={submitting} /> : <>
               <div className="society-figure-column relative min-h-[240px] flex-1">
                 <AgentFigureViewer recipe={recipe} quiet />
               </div>
@@ -794,6 +801,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                   </div>
                 </div>
               </div>
+              </> }
             </div>
           </div>
         </Dialog.Content>

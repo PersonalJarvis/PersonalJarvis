@@ -1,7 +1,8 @@
-import gigiCompanionMark from "@/assets/gigi-companion-mark.svg";
+import gigiCompanionMark from "@/assets/gigi-companion-avatar.png";
 import { cn } from "@/lib/utils";
 
-import { AgentSymbol, symbolAppearance } from "./AgentSymbol";
+import { AgentSymbol } from "./AgentSymbol";
+import { resolveCompanion } from "./companion/appearance";
 import type { SocietyAgent } from "./data";
 
 type SwatchAgent = Pick<SocietyAgent, "figure" | "palette" | "name"> &
@@ -23,7 +24,7 @@ export function AgentSwatch({
   );
   // Real roster identities survive renames. Name-only historical participants
   // still get a deterministic symbol without fetching a roster or a 3D model.
-  const appearance = symbolAppearance(agent.agentId || agent.name);
+  const appearance = resolveCompanion(agent.agentId || agent.name, agent.figure?.companion);
 
   return (
     <span

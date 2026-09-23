@@ -494,6 +494,35 @@
       "allow": "Allow",
       "deny": "Deny",
       "repair": "Repair browser"
+    },
+    "companion": {
+      "title": "Your companion",
+      "hint": "Your profile picture follows your character on the map. Character and companion are customized separately.",
+      "appearance": "Character & companion",
+      "character": "Character",
+      "companion": "Companion",
+      "shape": "Shape",
+      "color": "Colour",
+      "custom_color": "Custom colour",
+      "eyes": "Eyes",
+      "dots": "Round eyes",
+      "lines": "Line eyes",
+      "visible": "Follow on the map",
+      "shapes": {
+        "circle": "Circle",
+        "squircle": "Soft square",
+        "pill": "Pill",
+        "triangle": "Triangle",
+        "hexagon": "Hexagon",
+        "cloud": "Cloud",
+        "drop": "Drop"
+      }
+    },
+    "profile_card": {
+      "save_error": "Could not save. Your changes are still here.",
+      "unsaved": "You have unsaved changes.",
+      "keep_editing": "Keep editing",
+      "discard": "Discard changes"
     }
   }
 }

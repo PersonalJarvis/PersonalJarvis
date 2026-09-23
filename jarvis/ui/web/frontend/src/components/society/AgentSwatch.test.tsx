@@ -1,6 +1,6 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import gigiCompanionMark from "@/assets/gigi-companion-mark.svg";
+import gigiCompanionMark from "@/assets/gigi-companion-avatar.png";
 
 import { AgentSwatch } from "./AgentSwatch";
 import { symbolAppearance } from "./AgentSymbol";
