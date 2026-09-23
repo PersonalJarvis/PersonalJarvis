@@ -478,6 +478,7 @@ class LiveVoiceSession:
             await self._publish_phase()
             if self._closing:
                 return
+            await self._take_startup_input(message)
             await self._send_json(
                 {
                     "type": "audio_ready",
@@ -516,6 +517,14 @@ class LiveVoiceSession:
         if parent_id and getattr(pipeline, "_active_voice_mode", None) == "realtime":
             self.session_id = str(parent_id)
             self._parent_owned = True
+
+    async def _take_startup_input(self, message: dict) -> None:
+        from jarvis.live.startup import take
+
+        if self._parent_owned:
+            prefix = await take(self.session_id, message.get("capture_started_at_ms"))
+            if prefix is not None:
+                await self._send_json(prefix)
 
     async def handle_audio_frame(self, pcm: bytes) -> None:
         if (

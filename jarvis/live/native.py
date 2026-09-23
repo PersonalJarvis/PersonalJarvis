@@ -109,6 +109,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             self._resampler = StreamingPcm16Resampler(int(message.get("sample_rate", 48000)), rate)
             register(self)
             self._pump_task = asyncio.create_task(self._pump(), name="native-live-events")
+            await self._take_startup_input(message)
             await self._send_json(
                 {
                     "type": "audio_ready",

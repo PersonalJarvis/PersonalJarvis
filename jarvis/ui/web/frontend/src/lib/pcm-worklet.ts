@@ -5,6 +5,7 @@
 // script these ambient declarations would otherwise leak into the rest of the
 // app's type-check).
 import { JitterBufferedPcm16Queue, Pcm16Packetizer } from "./pcmWorkletBuffer";
+import { StartupAudioQueue } from "./startupAudio";
 
 export {};
 
@@ -47,6 +48,39 @@ class PcmCapture extends AudioWorkletProcessor {
     return true;
   }
 }
+
+class StartupCapture extends AudioWorkletProcessor {
+  private queue = new StartupAudioQueue(sampleRate);
+  private failed = false;
+
+  constructor() {
+    super();
+    this.port.onmessage = (event: MessageEvent) => {
+      try {
+        if (event.data.type === "start") this.queue.start();
+        else if (event.data.type === "suspend") this.queue.suspend();
+        else if (event.data.type === "prefix") this.queue.prepend(event.data.samples);
+      } catch (error) { this.fail(error); }
+    };
+  }
+
+  private fail(error: unknown): void {
+    this.failed = true;
+    this.queue.suspend();
+    this.port.postMessage({ type: "error", message: String(error) });
+  }
+
+  process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+    const output = outputs[0]?.[0];
+    if (!output) return true;
+    if (this.failed) { output.fill(0); return true; }
+    try { this.queue.process(inputs[0]?.[0] ?? new Float32Array(output.length), output); }
+    catch (error) { this.fail(error); }
+    return true;
+  }
+}
+
+registerProcessor("pcm-startup", StartupCapture);
 
 class PcmPlayback extends AudioWorkletProcessor {
   private readonly queue = new JitterBufferedPcm16Queue(sampleRate);

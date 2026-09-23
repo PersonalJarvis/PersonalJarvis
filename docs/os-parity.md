@@ -676,3 +676,42 @@ and Python/TypeScript field parity without opening a device. Browser tests
 cover level forwarding, word-gap hysteresis and stale thinking messages.
 Physical macOS/Linux device verification remains pending; portable contracts
 and headless tests must not be reported as physical-device acceptance.
+
+
+## Wake-to-browser startup audio (T3)
+
+| Capability | Windows | macOS | Linux / headless |
+| --- | --- | --- | --- |
+| Wake microphone handoff | Existing capture lease, kept until browser capture | Same portable lease | Same; no native lease in headless mode |
+| Retained first sentence | Web Audio worklet feeds the negotiated RTP track | Same browser capability probe | Same browser path, including remote clients |
+| Gemini/local input | Prefix precedes existing PCM stream | Same adapter | Same adapter |
+| Missing Web Audio capability | Existing explicit unsupported-browser result | Same result | Same result |
+
+The one-use `input_prefix` message carries bounded mono PCM16 and its sample
+rate. Python validates its typed envelope; TypeScript decodes and resamples it
+before browser input. The desktop cuts the prefix at `capture_started_at_ms`,
+a wall-clock estimate of browser capture start, to exclude overlapping audio.
+Capture clocks are not sample-synchronized: device/graph latency can affect
+this boundary and requires physical-device acceptance. The source is released
+on its owning event loop. Audio is memory-only; no SQL, transcript or journal
+field is added. Closing or cancelling clears the offered lease, and no prefix
+or captured audio is retained through reconnection.
+
+GPT-Live input stays on RTP. The startup worklet emits silence until
+`session.started`, then drains retained speech once. Only excess near-digital
+silence is skipped to catch up; quiet speech is preserved. The native meter
+continues receiving wake levels during connection and browser levels before
+the RTP handshake completes. No billed idle session or extra provider call is
+introduced.
+
+`test_live_startup_audio.py`, `test_live_media_feedback.py`, capture-first
+pipeline tests and the browser audio tests cover overlap trimming, once-only
+consumption, cross-thread release, cancellation, PCM ordering and RTP startup.
+Windows Chrome verification supplied a synthetic sentence entirely before
+readiness with an extra three-second handshake delay: its complete transcript
+arrived and assistant playback followed. This does not establish physical
+wake/microphone acceptance or physical macOS/Linux acceptance.
+
+A fresh Linux wheel installation passed all eight startup handoff contracts and
+a one-key synthetic Live speech/tool proof (one tool receipt, spoken result, no
+session failure). This checks the installed package without native audio devices.

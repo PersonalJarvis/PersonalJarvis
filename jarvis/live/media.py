@@ -16,3 +16,12 @@ class MediaLevels(BaseModel):
     output_level: Level
     input_active: StrictBool
     playback_active: StrictBool
+
+
+class InputPrefix(BaseModel):
+    """One PCM16 wake prefix before browser audio, never stored in a ledger."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    type: Literal["input_prefix"] = "input_prefix"
+    sample_rate: Annotated[int, Field(strict=True, ge=8_000, le=192_000)]
+    audio: Annotated[str, Field(max_length=15_360_000)]

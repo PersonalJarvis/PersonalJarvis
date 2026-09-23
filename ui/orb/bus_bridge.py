@@ -171,7 +171,7 @@ _USER_SIDE_BUBBLE_STATES = frozenset(
 # it stays hidden until a genuine new ``VoiceSessionStarted`` (the user calls
 # "Hey Jarvis" again). See ``_on_session_ended`` / ``_on_session_started`` and
 # the guard at the top of ``_on_state``.
-_ACTIVE_VOICE_STATES = frozenset({"LISTENING", "THINKING", "SPEAKING"})
+_ACTIVE_VOICE_STATES = frozenset({"CONNECTING", "LISTENING", "THINKING", "SPEAKING"})
 
 # German public-broadcaster subtitle-credit boilerplate that German-language
 # STT sometimes hallucinates onto silence/noise (e.g. "Untertitelung des ZDF
@@ -1679,7 +1679,7 @@ class OrbBusBridge:
             "PAUSED",
         }
         if (
-            self._last_state != "LISTENING"
+            self._last_state not in {"LISTENING", "CONNECTING"}
             and not candidate_listening
             and not self._dictation_active
         ):

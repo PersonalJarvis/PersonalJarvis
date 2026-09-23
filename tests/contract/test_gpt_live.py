@@ -329,7 +329,7 @@ async def test_local_manual_response_does_not_block_receiving_audio(ledger):
 
 
 @pytest.mark.asyncio
-async def test_browser_audio_releases_the_native_wake_microphone(monkeypatch):
+async def test_browser_audio_keeps_wake_capture_until_the_browser_takes_over(monkeypatch):
     from jarvis.realtime import factory
     from jarvis.speech.pipeline import SpeechPipeline, _SessionInputBuffer
 
@@ -346,8 +346,14 @@ async def test_browser_audio_releases_the_native_wake_microphone(monkeypatch):
     pipeline._claim_wake_capture_for_session = claim
     monkeypatch.setattr(factory, "realtime_browser_audio", lambda cfg: True)
     async with pipeline._capture_first_session_input() as buffer:
+        assert not original._closed
+        assert buffer is original
+        from jarvis.live import startup
+
+        startup.offer("wake-capture", buffer)
+        await startup.take("wake-capture", None)
         assert original._closed
-        assert buffer.capture is None
+    assert original.released.is_set()
 
 
 def test_tool_text_is_redacted_without_corrupting_image_bytes():

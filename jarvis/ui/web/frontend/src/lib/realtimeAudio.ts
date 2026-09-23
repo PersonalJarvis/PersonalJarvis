@@ -372,6 +372,11 @@ export class RealtimeAudioClient {
   private captureSink: GainNode | null = null;
   private playbackNode: AudioWorkletNode | null = null;
   private stream: MediaStream | null = null;
+  private startupNode: AudioWorkletNode | null = null;
+  private rtcInput: MediaStreamAudioDestinationNode | null = null;
+  private captureStartedAtMs = 0;
+  private controlReady = false;
+  private receivedPrefix = false;
   private playbackResampler: StreamingPcm16Resampler | null = null;
   private connecting: Promise<void> | null = null;
   private ready = false;
@@ -413,7 +418,7 @@ export class RealtimeAudioClient {
   private lastMediaSendAt = Number.NEGATIVE_INFINITY;
 
   private sendMediaLevels(force = false): void {
-    if (!this.options.browserAudio || !this.ready || this.intentionalClose || this.ws?.readyState !== WebSocket.OPEN) return;
+    if (!this.options.browserAudio || !this.controlReady || this.intentionalClose || this.ws?.readyState !== WebSocket.OPEN) return;
     // Drop obsolete meter snapshots when the control transport stalls. The
     // next audio-clock tick sends current measurements after it drains.
     if (this.ws.bufferedAmount > 1024) return;
@@ -531,6 +536,9 @@ export class RealtimeAudioClient {
       const setupMs = Math.round(performance.now() - setupStartedAt);
       const source = this.ctx.createMediaStreamSource(this.stream);
       this.captureNode = new AudioWorkletNode(this.ctx, "pcm-capture");
+      // Install capture before any offer/ticket/network await. No opening
+      // frame may depend on the handshake finishing first.
+      this.captureNode.port.onmessage = (event) => this.handleCapture(event);
       this.playbackNode = new AudioWorkletNode(this.ctx, "pcm-playback");
       this.playbackNode.port.onmessage = (event: MessageEvent) => {
         // RTP is measured by pcm-level. The unused PCM queue produces zeros
@@ -548,10 +556,23 @@ export class RealtimeAudioClient {
       // node connected below and can remove it from captured audio.
       this.captureSink = this.ctx.createGain();
       this.captureSink.gain.value = 0;
+      this.captureStartedAtMs = Date.now();
       source.connect(this.captureNode);
       this.captureNode.connect(this.captureSink);
       this.captureSink.connect(this.ctx.destination);
       this.playbackNode.connect(this.ctx.destination);
+      if (this.options.browserAudio && this.options.requiresWebRtcOffer) {
+        this.startupNode = new AudioWorkletNode(this.ctx, "pcm-startup");
+        this.rtcInput = this.ctx.createMediaStreamDestination();
+        this.rtcInput.channelCount = 1;
+        source.connect(this.startupNode);
+        this.startupNode.connect(this.rtcInput);
+        this.startupNode.port.onmessage = (event: MessageEvent) => {
+          if (event.data?.type !== "error" || this.intentionalClose) return;
+          this.cb.onStatus?.("provider_error", { error: "Voice startup audio could not be retained. Please start again." });
+          void this.disconnect();
+        };
+      }
 
       // Required transport bootstrap for subscription-backed Realtime. API
       // providers do not set this option and continue to use the PCM socket
@@ -559,7 +580,7 @@ export class RealtimeAudioClient {
       // without its WebRTC peer, so this path fails closed.
       if (this.options.requiresWebRtcOffer) {
         const result = this.options.browserAudio
-          ? { sdp: await this.webRtcTransport.createOffer(this.stream), error: null }
+          ? { sdp: await this.webRtcTransport.createOffer(this.rtcInput?.stream ?? this.stream), error: null }
           : await webRtcOffer;
         if (result?.error) {
           this.webRtcTransport.close();
@@ -588,29 +609,30 @@ export class RealtimeAudioClient {
       if (this.intentionalClose) throw new Error("Voice start cancelled");
       this.ws = new WebSocket(buildAudioSocketUrl(ticket));
       this.ws.binaryType = "arraybuffer";
-      this.captureNode.port.onmessage = (event) => {
-        const data = event.data as ArrayBuffer | { type?: string; rms?: number };
-        if (data instanceof ArrayBuffer) {
-          if (this.options.browserAudio && this.options.requiresWebRtcOffer) return;
-          if (this.ready && this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(data);
-          } else if (!this.ready && !this.reconnecting) {
-            this.retainStartupFrame(data);
-          }
-          return;
-        }
-        if (data && data.type === "level" && typeof data.rms === "number") {
-          this.inputLevel = this.inputMeter.push(data.rms);
-          this.cb.onInputLevel?.(this.inputLevel);
-          const changed = this.inputActivity.update(data.rms);
-          this.sendMediaLevels(changed);
-        }
-      };
-
       await this.waitUntilReady(this.ws);
     } catch (error) {
       await this.teardown(false);
       throw error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  private handleCapture(event: MessageEvent): void {
+    if (this.intentionalClose) return;
+    const data = event.data as ArrayBuffer | { type?: string; rms?: number };
+    if (data instanceof ArrayBuffer) {
+      if (this.options.browserAudio && this.options.requiresWebRtcOffer) return;
+      if (this.ready && this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(data);
+      } else if (!this.ready && !this.reconnecting) {
+        this.retainStartupFrame(data);
+      }
+      return;
+    }
+    if (data && data.type === "level" && typeof data.rms === "number") {
+      this.inputLevel = this.inputMeter.push(data.rms);
+      this.cb.onInputLevel?.(this.inputLevel);
+      const changed = this.inputActivity.update(data.rms);
+      this.sendMediaLevels(changed);
     }
   }
 
@@ -645,6 +667,7 @@ export class RealtimeAudioClient {
           JSON.stringify({
             type: "audio_start",
             sample_rate: this.ctx?.sampleRate ?? 48_000,
+            capture_started_at_ms: this.captureStartedAtMs,
             ...(this.webRtcOfferSdp
               ? { webrtc_offer_sdp: this.webRtcOfferSdp }
               : {}),
@@ -680,6 +703,8 @@ export class RealtimeAudioClient {
         } else if (type === "reconnecting") {
           this.reconnecting = true;
           this.ready = false;
+          this.controlReady = false;
+          this.startupNode?.port.postMessage({ type: "suspend" });
           this.outputActivity.reset();
           this.inputActivity.reset();
           this.cb.onPlaybackState?.(false);
@@ -687,7 +712,7 @@ export class RealtimeAudioClient {
           this.startupPrerollBytes = 0;
           this.playbackNode?.port.postMessage({ type: "flush" });
         } else if (type === "reconnect_offer") {
-          void this.webRtcTransport.createOffer(this.stream ?? undefined).then(sdp => {
+          void this.webRtcTransport.createOffer(this.rtcInput?.stream ?? this.stream ?? undefined).then(sdp => {
             if (sdp && socket.readyState === WebSocket.OPEN && !this.intentionalClose) {
               socket.send(JSON.stringify({ type: "reconnect_offer", request_id: message.request_id, sdp }));
             }
@@ -696,6 +721,7 @@ export class RealtimeAudioClient {
             this.cb.onStatus?.("provider_error", { error: "Voice reconnection failed." });
           });
         } else if (type === "audio_stopping") {
+          this.startupNode?.port.postMessage({ type: "suspend" });
           this.webRtcTransport.muteOutput();
           this.stream?.getAudioTracks().forEach(track => { track.enabled = false; });
         } else if (type === "audio_closed") {
@@ -711,11 +737,23 @@ export class RealtimeAudioClient {
             this.cb.onPlaybackState?.(false);
             this.sendMediaLevels(true);
           }
+        } else if (type === "input_prefix") {
+          try { this.receiveInputPrefix(message); }
+          catch (error) {
+            fail(error instanceof Error ? error : new Error(String(error)));
+            socket.close();
+          }
+          return;
         } else if (type === "audio_ready") {
+          // The local control channel can already relay levels while RTP
+          // finishes its handshake. Native and browser bars share this input.
+          this.controlReady = true;
+          this.sendMediaLevels(true);
           this.setOutputRate(message.output_sample_rate);
           void this.finishAudioReady(message)
             .then(() => {
               this.ready = true;
+              this.startupNode?.port.postMessage({ type: "start" });
               this.reconnecting = false;
               this.sendMediaLevels(true);
               this.flushStartupPreroll();
@@ -767,6 +805,33 @@ export class RealtimeAudioClient {
     ) {
       const dropped = this.startupPreroll.shift();
       this.startupPrerollBytes -= dropped?.byteLength ?? 0;
+    }
+  }
+
+  private receiveInputPrefix(message: RealtimeStatusPayload): void {
+    if (this.ready || this.reconnecting || this.receivedPrefix || !this.ctx) {
+      throw new Error("Unexpected wake audio prefix");
+    }
+    const rate = message.sample_rate;
+    const encoded = message.audio;
+    if (typeof rate !== "number" || !Number.isInteger(rate) || rate < 8_000 || rate > 192_000 ||
+        typeof encoded !== "string" || encoded.length > rate * 2 * 30 * 4 / 3 + 4) {
+      throw new Error("Invalid wake audio prefix");
+    }
+    const raw = atob(encoded);
+    if (raw.length % 2) throw new Error("Invalid wake PCM16 prefix");
+    const bytes = Uint8Array.from(raw, char => char.charCodeAt(0));
+    const resampler = new StreamingPcm16Resampler(rate, this.ctx.sampleRate);
+    const pcm = resampler.process(bytes.buffer);
+    this.receivedPrefix = true;
+    if (this.startupNode) {
+      const samples = Float32Array.from(new Int16Array(pcm), value => value / 32768);
+      this.startupNode.port.postMessage({ type: "prefix", samples }, [samples.buffer]);
+    } else {
+      // Gemini/local use the existing PCM socket, with the same once-only
+      // prefix ahead of the browser's already retained opening.
+      this.startupPreroll.unshift(pcm);
+      this.startupPrerollBytes += pcm.byteLength;
     }
   }
 
@@ -893,6 +958,13 @@ export class RealtimeAudioClient {
     // opening into the next connection attempt.
     this.startupPreroll = [];
     this.startupPrerollBytes = 0;
+    this.controlReady = false;
+    this.receivedPrefix = false;
+    this.startupNode?.port.postMessage({ type: "suspend" });
+    this.startupNode?.disconnect();
+    this.rtcInput?.stream.getTracks().forEach(track => track.stop());
+    this.startupNode = null;
+    this.rtcInput = null;
     if (sendStop && socket?.readyState === WebSocket.OPEN) {
       try {
         socket.send(JSON.stringify({ type: "audio_stop" }));

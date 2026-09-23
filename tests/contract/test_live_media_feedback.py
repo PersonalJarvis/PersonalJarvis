@@ -69,6 +69,17 @@ def presentation(request):
 
 
 @pytest.mark.asyncio
+async def test_native_microphone_meter_remains_visible_while_connecting(presentation):
+    _session, surface, _frames, _events = presentation
+    bus = _session._bus
+    await bus.publish(SystemStateChanged(new_state="LISTENING", previous="IDLE"))
+    await bus.publish(SystemStateChanged(new_state="CONNECTING", previous="LISTENING"))
+    mic_level.publish(0.65)
+    assert surface.mode == "listen"
+    assert surface.level == pytest.approx(0.65)
+
+
+@pytest.mark.asyncio
 async def test_interim_speech_work_and_reply_reach_the_actual_surface(presentation):
     session, surface, frames, events = presentation
     await session.handle_control(snapshot(input_level=0.61, input_active=True))
