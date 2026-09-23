@@ -58,3 +58,7 @@ install/tuf/*.json           text eol=lf
 # language statistics. Contributors never commit it; the maintainer rebuilds
 # the bundle from HEAD's sources (see CONTRIBUTING.md, "Opening your PR").
 jarvis/ui/web/dist/**        linguist-generated=true
+
+# Vite preserves HTML line endings while injecting LF build tags; keep its
+# entry source canonical so Windows builds do not produce mixed-line output.
+jarvis/ui/web/frontend/index.html text eol=lf

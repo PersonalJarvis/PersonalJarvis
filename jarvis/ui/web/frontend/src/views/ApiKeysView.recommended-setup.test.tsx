@@ -1,3 +1,4 @@
+import { renderWithQueryClient as render } from "@/test/queryRender";
 /**
  * Component tests for the "Personal recommendation" panel in the voice-engine
  * scrollable engine context (RecommendedSetupPanel).
@@ -10,7 +11,7 @@
  * must never persist `[voice].mode` (only the key-gated segmented switch does).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 
 // Profile editing has its own QueryClient-backed component tests.
 vi.mock("@/components/providers/LiveProfile", () => ({ LiveProfile: () => null }));
@@ -71,7 +72,7 @@ describe("ApiKeysView recommended-setup panel", () => {
     expect(screen.queryByTestId("recommended-setup-panel")).toBeNull();
   });
 
-  it("lists the current maintainer picks once the Realtime tab set is viewed", () => {
+  it("lists the voice and agent picks once the Realtime tab set is viewed", () => {
     render(<ApiKeysView />);
     openRealtimeView();
     expect(
@@ -92,20 +93,11 @@ describe("ApiKeysView recommended-setup panel", () => {
     expect(screen.getAllByRole("button", { name: /^realtime/i })).toHaveLength(1);
   });
 
-  it("keeps the Tool Model tab reachable alongside the current recommendation rows", () => {
+  it("uses the shared thinking model instead of recommending a separate tool model", () => {
     render(<ApiKeysView />);
     openRealtimeView();
-    // GPT-Live has its own thinking-model settings. The global Computer-Use
-    // selection remains reachable without inventing a removed recommendation.
     expect(screen.queryByTestId("reco-row-computer-use")).toBeNull();
-    putVoiceMode.mockClear();
-    fireEvent.click(screen.getByRole("tab", { name: /tool model/i }));
-    expect(
-      (screen.getByRole("tab", { name: /tool model/i }) as HTMLElement).getAttribute(
-        "aria-selected",
-      ),
-    ).toBe("true");
-    expect(putVoiceMode).not.toHaveBeenCalled();
+    expect(panel().getAllByRole("button")).toHaveLength(2);
   });
 
   it("opens the agents tab from its recommendation row", () => {
@@ -125,7 +117,7 @@ describe("ApiKeysView recommended-setup panel", () => {
     render(<ApiKeysView />);
     openRealtimeView();
     // Wander off to another tab of the realtime set first.
-    fireEvent.click(screen.getByRole("tab", { name: /tool model/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /agents$/i }));
     putVoiceMode.mockClear();
 
     fireEvent.click(screen.getByTestId("reco-row-realtime"));

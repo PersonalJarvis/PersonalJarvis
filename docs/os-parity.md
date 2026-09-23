@@ -1,5 +1,22 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Private agent learning (2026-09-19, T3)
+
+Jarvis chat/voice and Society agents share a provider-independent learning loop
+with private files and independent review queues. All OSes use the same portable
+implementation; the existing `filelock` backend selects the OS lock implementation.
+No GPU, audio device, native UI or extra API key is required. An unavailable review
+provider leaves a durable retry receipt while deterministic failure warnings remain
+available. See [the design and proof](agent-society/self-learning.md).
+
+Windows contracts and a Linux container contract run passed, including real Linux
+symlink isolation. A fresh temporary workspace with one Grok key demonstrated
+learning across a full runtime restart and isolation from another agent. Native
+macOS CI also passed the realtime and private-learning contracts (55 passed,
+two capability skips) at `dc053c1d0`. The
+[native macOS job](https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/35435846490/job/105878237409)
+provides the execution evidence; this does not claim physical audio-device testing.
+
 ## Prepaid search hop (2026-09-17, T2)
 
 `search_web` may use an optional Apifare HTTP hop
@@ -84,14 +101,15 @@ Windows tests, a single-key Gemini run with isolated stores, and real Chrome
 light/dark UI checks passed. Physical macOS/Linux execution and a clean OS
 installation remain unverified. See [hook configuration](routines.md#webhooks-and-integration-event-hooks).
 
-## Ultra Agent Swarm (2026-09-10)
+## Ultra Agent Swarm (2026-09-23)
 
 **T3 contract.** Local teams use the same lazy SQLite/JSON implementation and
 bundled Wasmtime/QuickJS sandbox on Windows, macOS and Linux, including headless
 installs. `WasmSandbox.capability()` checks the runtime and interpreter integrity;
 an unavailable sandbox reports an error and never falls back to a host shell.
 No GPU, microphone, container daemon, PostgreSQL, Redis or object service is
-required by local mode. The UI provides a flat map when WebGL is unavailable.
+required by local mode. The UI uses a lightweight projection of real team events;
+headless execution does not depend on a map or WebGL.
 
 Distributed mode uses the shared PostgreSQL/Redis/S3 adapter on all three OSes.
 Source installs keep its drivers in the optional `swarm-distributed` extra;
@@ -118,9 +136,22 @@ Swarm schema migrated once and retained its identities. The integration tests
 used one synthetic model provider and the real bundled Wasm interpreter; no
 live provider credential was used. Wheel dependency installation was performed
 before invoking the installer entry.
-Native signed macOS execution, Linux AppImage execution and full public
-installer download/upgrade acceptance remain separate verification requirements;
-platform-layout emulation is not evidence that those native installers ran.
+The native installer workflow on candidate `9e99a8cce` subsequently installed
+and replaced the application on both macOS ARM64 and Intel, retaining team/lead
+identity and executing real bundled Wasm. Those rounds made zero provider calls.
+The same campaign exposed a missing Wasmtime shared library in the Linux bundle
+and a Windows cleanup failure after otherwise successful API/Wasm rounds. Both
+fixes are implemented; a fresh native campaign on the integrated candidate is
+still required. Historical successful rounds do not qualify a newer build.
+
+Public-release source updates and candidate update interruption/retry were also
+exercised through the normal updater, with configuration and ordinary memory
+hashes preserved. This is separate from native installer replacement and does
+not establish fresh single-key inference on every OS. The optional native
+single-key verifier remains disabled by default; no provider key has been
+uploaded to CI for that qualification.
+See the [integration evidence](verification/ultra-swarm-integration.md) and the
+[native workflow](https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/35436584111).
 See [operation and verification boundaries](ultra-agent-swarm.md).
 
 ## Calendar routines (2026-09-08)

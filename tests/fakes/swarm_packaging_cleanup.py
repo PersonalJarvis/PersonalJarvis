@@ -23,7 +23,8 @@ class CompletedSmoke:
         return root / "jarvis.exe"
 
     @contextmanager
-    def running_app(self, executable, root, env, log_path):
+    def running_app(self, executable, root, env, log_path, *, live=False):
+        assert not live, "Cleanup-only verification must not start provider requests"
         yield self
 
     def wait_ready(self, api, child):

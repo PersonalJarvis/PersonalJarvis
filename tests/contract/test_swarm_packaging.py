@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 import runpy
 import shutil
@@ -192,19 +193,24 @@ def test_native_smoke_refuses_installer_side_effects_outside_disposable_ci(monke
 
 
 def _assert_probe_stopped(pid_path):
-    pid = int(pid_path.read_text(encoding="utf-8"))
+    identity = json.loads(pid_path.read_text(encoding="utf-8"))
     try:
-        child = psutil.Process(pid)
-        state = child.status()
+        child = psutil.Process(identity["pid"])
+        if child.create_time() != identity["created"]:
+            return  # PID reuse must never terminate an unrelated process.
+        if child.status() == psutil.STATUS_ZOMBIE:
+            return
+        # Windows job accounting can reach zero before the exited process
+        # disappears from the process table. Require a bounded exit receipt.
+        child.wait(timeout=1)
     except psutil.NoSuchProcess:
         return
-    try:
-        assert state == psutil.STATUS_ZOMBIE, "The owned descendant survived teardown"
-    finally:
+    except psutil.TimeoutExpired as exc:
         # A failed regression must not itself leave a long-lived helper behind.
-        if state != psutil.STATUS_ZOMBIE and child.is_running():
+        if child.is_running():
             child.kill()
             child.wait(timeout=10)
+        raise AssertionError("The owned descendant survived teardown") from exc
 
 
 @pytest.mark.skipif(os.name not in {"nt", "posix"}, reason="Native process backend unavailable")
@@ -240,9 +246,35 @@ def test_native_app_context_reaps_child_after_exited_launcher(monkeypatch, tmp_p
         tmp_path / "application", tmp_path, dict(os.environ), tmp_path / "application.log"
     ) as launcher:
         assert launcher.wait(timeout=10) == 0
-        child = psutil.Process(int(pid_path.read_text(encoding="utf-8")))
+        child = psutil.Process(json.loads(pid_path.read_text(encoding="utf-8"))["pid"])
         assert child.is_running()
     _assert_probe_stopped(pid_path)
+
+
+@pytest.mark.skipif(os.name not in {"nt", "posix"}, reason="Native process backend unavailable")
+def test_stop_assertion_rejects_a_live_descendant(tmp_path):
+    pid_path = tmp_path / "child.pid"
+    with NATIVE_SMOKE["contained_process"](
+        descendant_probe(pid_path, parent_exits=True), env=dict(os.environ)
+    ) as launcher:
+        assert launcher.wait(timeout=10) == 0
+        with pytest.raises(AssertionError, match="survived teardown"):
+            _assert_probe_stopped(pid_path)
+
+
+@pytest.mark.skipif(os.name not in {"nt", "posix"}, reason="Native process backend unavailable")
+def test_stop_assertion_never_kills_a_reused_pid(tmp_path):
+    pid_path = tmp_path / "child.pid"
+    with NATIVE_SMOKE["contained_process"](
+        descendant_probe(pid_path, parent_exits=True), env=dict(os.environ)
+    ) as launcher:
+        assert launcher.wait(timeout=10) == 0
+        identity = json.loads(pid_path.read_text(encoding="utf-8"))
+        child = psutil.Process(identity["pid"])
+        identity["created"] -= 10
+        pid_path.write_text(json.dumps(identity), encoding="utf-8")
+        _assert_probe_stopped(pid_path)
+        assert child.is_running()
 
 
 def test_native_cleanup_failure_retains_workspace_instead_of_removing_live_files():

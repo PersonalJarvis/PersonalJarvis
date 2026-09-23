@@ -15,6 +15,7 @@ import os
 import secrets
 import sqlite3
 import tempfile
+import time
 from contextlib import closing
 from pathlib import Path
 
@@ -145,6 +146,23 @@ def validate_snapshot(root, namespace):
     return manifest
 
 
+def _publish_snapshot(staging: Path, target: Path) -> None:
+    """Expose a complete snapshot despite brief filesystem sharing locks."""
+    for delay in (0.0, 0.02, 0.05, 0.1, 0.2, 0.4):
+        if delay:
+            time.sleep(delay)
+        if target.exists() or target.is_symlink():
+            raise SwarmConflictError("Select a new snapshot directory")
+        try:
+            os.replace(staging, target)
+            return
+        except PermissionError:
+            if delay == 0.4:
+                raise
+            # Windows readers and virus scanners can briefly lock the directory.
+            # Retry only this failure; never expose or copy a partial snapshot.
+
+
 def backup(store, destination):
     requested = Path(destination)
     if requested.is_symlink():
@@ -212,7 +230,7 @@ def backup(store, destination):
             if copied != int(record["size_bytes"]) or digest.hexdigest() != record["sha256"]:
                 raise SwarmStoreError("Snapshot object failed content validation")
         # Atomic directory rename exposes only a completely written snapshot.
-        os.replace(staging, target)
+        _publish_snapshot(staging, target)
     return manifest
 
 

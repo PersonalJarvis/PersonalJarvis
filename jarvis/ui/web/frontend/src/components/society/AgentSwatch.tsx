@@ -15,7 +15,6 @@ import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
 import type { SocietyAgent } from "./data";
-import { faceCrop } from "./figures/faceCrop";
 import { recipeKey, resolvePalette, type FigureRecipe } from "./figures/figureRecipe";
 
 const crops = new Map<string, string>();
@@ -34,10 +33,14 @@ function useFaceCrop(figure: FigureRecipe | null): string | null {
       return;
     }
     let live = true;
-    void faceCrop(figure).then((data) => {
+    void import("./figures/faceCrop").then(({ faceCrop }) => live ? faceCrop(figure) : null).then((data) => {
       if (!live) return;
       if (data) crops.set(key, data);
       setUrl(data);
+    }).catch((error: unknown) => {
+      if (!live) return;
+      console.warn("[society] face crop module unavailable:", error);
+      setUrl(null);
     });
     return () => {
       live = false;

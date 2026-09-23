@@ -173,7 +173,12 @@ class SocietyRuntime:
         #: The society's one memory service; every touch moves the figure to the Memory House.
         self.memory = SocietyMemory(self, on_activity=self.checkpoints.note_memory_activity)
         self.conversations = ConversationArchive(self._data_dir / "society-conversations.db")
-        self._review_lock = asyncio.Lock()
+        self._review_locks: dict[str, asyncio.Lock] = {}
+        self._review_retries: dict[str, tuple[int, float]] = {}
+        self._learning_bus = app_bus
+        self._accept_learning_receipts = False
+        self._learning_receipts: set[asyncio.Task[Any]] = set()
+        self.lead_learning_context = ""
         #: The Quest Board: the person's jobs, routed to one taker, read back off the board.
         self.quests = Quests(self)
         #: Speech on the board, projected onto the island: two agents talking
@@ -276,10 +281,16 @@ class SocietyRuntime:
             # the first turn, not from the first REST listing.
             await self.roster.refresh()
             self._started = True
+            if self._learning_bus is not None:
+                from jarvis.core.events import VoiceTurnCompleted
+
+                self._learning_bus.subscribe(VoiceTurnCompleted, self._voice_learning)
+                self._accept_learning_receipts = True
             self._delivery_task = asyncio.create_task(self._deliver_pending())
             set_current_runtime(self)
             await self.coding_supervision.start()
             self.background(self.recover_reviews())
+            self.background(self.refresh_lead_learning())
             log.info("society runtime started (%s)", self.store.path)
             return self
 
@@ -420,11 +431,15 @@ class SocietyRuntime:
 
     async def _deliver_pending(self) -> None:
         """Recover committed messages and retry busy chats without opening sockets."""
+        next_review = asyncio.get_running_loop().time() + 30
         while True:
             try:
                 await self.scheduler.drain_deliveries()
             except Exception:  # noqa: BLE001 — one failed pass must not lose the queue
                 log.warning("society: delivery recovery failed", exc_info=True)
+            if asyncio.get_running_loop().time() >= next_review:
+                next_review = asyncio.get_running_loop().time() + 30
+                self.background(self.recover_reviews())
             await asyncio.sleep(1.0)
 
     @property
@@ -467,6 +482,21 @@ class SocietyRuntime:
 
     async def _close_owned(self) -> None:
         await self.quiesce()
+        # Voice owners finish during the server's drain. Keep their receipt path
+        # open until this final close, then stop admission before joining writers.
+        self._accept_learning_receipts = False
+        if self._learning_bus is not None:
+            from jarvis.core.events import VoiceTurnCompleted
+
+            self._learning_bus.unsubscribe(VoiceTurnCompleted, self._voice_learning)
+        if self._learning_receipts:
+            from .shutdown import QUIESCE_TIMEOUT_S
+
+            _, pending = await asyncio.wait(set(self._learning_receipts), timeout=QUIESCE_TIMEOUT_S)
+            if pending:
+                # These owners may be in filesystem threads: canceling the asyncio
+                # waiter would not prove its write stopped. Keep storage open.
+                raise RuntimeError("Society learning receipts did not drain; retry shutdown")
         if self._delivery_unsubscribe is not None:
             self._delivery_unsubscribe()
             self._delivery_unsubscribe = None
@@ -499,14 +529,12 @@ class SocietyRuntime:
     async def turn_completed(self, session: Any, completion: Any) -> None:
         import json
 
-        events = json.loads(completion.events_json)
+        from .experience import learning_events
+
+        events = learning_events(json.loads(completion.events_json))
         self.conversations.ingest(session.session_id, events)
         terminal = [e for e in events if e.get("kind") == "turn_finished"]
-        if not terminal or terminal[-1].get("payload", {}).get("status") not in {
-            "done",
-            "ok",
-            "completed",
-        }:
+        if not terminal:
             return
         names = {
             str(e.get("payload", {}).get("name") or "")
@@ -524,23 +552,108 @@ class SocietyRuntime:
                 completion.turn.turn_id,
                 events,
                 direct_user=completion.turn.direct_user,
+                owner=LEAD_AGENT_ID if getattr(session, "surface", "") == "jarvis" else "",
             )
             and not self._quiescing
         ):
             self.background(self.recover_reviews())
 
     async def recover_reviews(self) -> None:
-        from .review import review_turn
+        if self._quiescing:
+            return  # Durable reviews wait for a completed restart, never new inference.
+        from .surface import agent_id_of
 
-        async with self._review_lock:
+        owners = {
+            str(p.get("owner") or agent_id_of(p["session"]) or "")
+            for p in self.conversations.pending_reviews()
+        }
+        await asyncio.gather(*(self._review_agent(owner) for owner in owners if owner))
+
+    async def _review_agent(self, owner: str) -> None:
+        import random
+
+        from .experience import receipt_for
+        from .review import review_turn
+        from .surface import agent_id_of
+
+        async with self._review_locks.setdefault(owner, asyncio.Lock()):
             for pending in self.conversations.pending_reviews():
                 if self._quiescing:
                     return  # The durable review remains pending for a completed restart.
+                if (pending.get("owner") or agent_id_of(pending["session"])) != owner:
+                    continue
+                receipt = receipt_for(pending["session"], pending["turn_id"])
+                attempts, due = self._review_retries.get(receipt, (0, 0.0))
+                if asyncio.get_running_loop().time() < due:
+                    break  # Preserve correction order within this owner across retries.
+                finished = False
                 try:
                     if await review_turn(self, pending):
                         self.conversations.finish_review(pending["session"], pending["turn_id"])
+                        self._review_retries.pop(receipt, None)
+                        finished = True
                 except Exception:
                     log.exception("society review remains pending for %s", pending["turn_id"])
+                if not finished:
+                    self._review_retries[receipt] = (
+                        attempts + 1,
+                        asyncio.get_running_loop().time()
+                        + min(1800, 30 * 2 ** min(attempts, 6)) * random.uniform(0.8, 1.2),  # noqa: S311 - retry jitter, not a secret
+                    )
+                    break  # Another owner's loop remains free to make progress.
+            if owner == LEAD_AGENT_ID:
+                await self.refresh_lead_learning()
+
+    def experience_for(self, agent_id: str) -> Any:
+        from .experience import ExperienceNotebook
+
+        return ExperienceNotebook(self._data_dir, agent_id)
+
+    async def learning_context(self, agent_id: str, *, query: str = "", receipt: str = "") -> str:
+        return str(
+            await asyncio.to_thread(self.experience_for(agent_id).context, query, receipt=receipt)
+        )
+
+    async def refresh_lead_learning(self) -> None:
+        try:
+            agent = await self.roster.get(LEAD_AGENT_ID)
+            memory = await asyncio.to_thread(self.memory.head, agent) if agent is not None else ""
+            self.lead_learning_context = memory + "\n" + await self.learning_context(LEAD_AGENT_ID)
+        except Exception:
+            log.warning("society: lead learning context unavailable", exc_info=True)
+
+    async def _voice_learning(self, event: Any) -> None:
+        # The publisher must never wait for disk or a reviewer model.
+        if not self._accept_learning_receipts:
+            return
+        task = asyncio.create_task(self._record_voice_learning(event))
+        self._learning_receipts.add(task)
+        task.add_done_callback(self._learning_receipts.discard)
+
+    async def _record_voice_learning(self, event: Any) -> None:
+        from .experience import learning_events, receipt_for
+
+        try:
+            session = "voice:" + event.session_id
+            receipt = receipt_for(session, event.turn_id)
+            events = [
+                {"kind": "user_message", "payload": {"text": event.user_text}},
+                {"kind": "assistant_text", "payload": {"text": event.jarvis_text}},
+                {"kind": "turn_finished", "payload": {"status": "completed"}},
+            ]
+            events = learning_events(events)
+            # VoiceTurnCompleted has tool names, not verified tool results.
+            # Consequently voice can teach user corrections, never invented tool success.
+            queued = self.conversations.queue_review(
+                session, event.turn_id, events, direct_user=True, owner=LEAD_AGENT_ID
+            )
+            await asyncio.to_thread(
+                self.experience_for(LEAD_AGENT_ID).complete, receipt, "completed"
+            )
+            if queued and not self._quiescing:
+                self.background(self.recover_reviews())
+        except Exception:
+            log.exception("society: voice learning receipt could not be recorded")
 
     def background(self, coro: Any) -> asyncio.Task[Any]:
         """Run a coroutine as a tracked task (cancelled on close, AP-30: its

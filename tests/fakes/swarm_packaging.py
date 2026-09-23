@@ -57,8 +57,9 @@ class BinaryWheel:
 def descendant_probe(pid_path, *, parent_exits: bool) -> list[str]:
     """A harmless child survives its launcher unless the caller owns the tree."""
     child = (
-        "import os, sys, time; from pathlib import Path; "
-        "Path(sys.argv[1]).write_text(str(os.getpid()), encoding='utf-8'); time.sleep(60)"
+        "import json, os, psutil, sys, time; from pathlib import Path; "
+        "Path(sys.argv[1]).write_text(json.dumps({'pid': os.getpid(), "
+        "'created': psutil.Process().create_time()}), encoding='utf-8'); time.sleep(60)"
     )
     parent = f"""
 import subprocess, sys, time

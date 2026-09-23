@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
     dependencies=[Depends(require_control_key_or_session)],
     summary="List Jarvis trigger families and available listener drivers",
 )
-async def trigger_catalog() -> dict[str, Any]:
+def trigger_catalog() -> dict[str, Any]:
     from jarvis.tasks.event_catalog import event_catalog
     from jarvis.tasks.source_catalog import catalog
 

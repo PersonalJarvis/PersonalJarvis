@@ -315,6 +315,10 @@ class FakeToolBridge:
         self.closed = False
         self.has_pending_confirmation = False
 
+    @property
+    def has_pending_confirmation(self) -> bool:
+        return False
+
     def set_language(self, language):
         self.languages.append(language)
 
