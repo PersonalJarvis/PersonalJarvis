@@ -1,5 +1,27 @@
 {
   "local_models": {
+    "native": {
+      "tab": "Native voice",
+      "title": "One local voice model",
+      "subtitle": "Download an English audio model or import your own weights.",
+      "preview": "Preview: model downloads are available. Activation for Jarvis, wake word and tools is still being verified.",
+      "error": "The operation could not be completed. Refresh the list and try again.",
+      "acquiring": "Downloading and verifying",
+      "cancelling": "Cancelling",
+      "cancelled": "Cancelled. Verified files are kept for your next attempt.",
+      "failed": "The model files could not be verified or stored. Try again.",
+      "stored": "Files stored. Voice activation is not available yet.",
+      "missing": "Not downloaded",
+      "verify": "Verify files",
+      "download": "Download model",
+      "cancel": "Cancel",
+      "custom": "Your own model",
+      "custom_help": "Import a model manifest with its architecture, file checksums and pinned download source. Local weights can be copied from a folder on the Jarvis computer.",
+      "manifest": "Model manifest (.json)",
+      "folder": "Local source folder (optional for downloads)",
+      "invalid": "Choose a valid JSON manifest no larger than 1 MB.",
+      "import": "Import model"
+    },
     "jobs": {
       "chat_purpose": "Answers when you type.",
       "tools_screen_purpose": "Reads the screen and works the tools.",

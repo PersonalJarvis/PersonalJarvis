@@ -1,5 +1,27 @@
 {
   "local_models": {
+    "native": {
+      "tab": "Voz local",
+      "title": "Un modelo de voz local",
+      "subtitle": "Descarga un modelo de audio en inglés o importa tus propios archivos.",
+      "preview": "Vista previa: puedes descargar modelos. La activación en Jarvis, la palabra de activación y las herramientas siguen en verificación.",
+      "error": "No se pudo completar la operación. Actualiza la lista e inténtalo de nuevo.",
+      "acquiring": "Descargando y verificando",
+      "cancelling": "Cancelando",
+      "cancelled": "Cancelado. Los archivos verificados se conservan para el siguiente intento.",
+      "failed": "No se pudieron verificar o guardar los archivos. Inténtalo de nuevo.",
+      "stored": "Archivos guardados. La activación de voz aún no está disponible.",
+      "missing": "Sin descargar",
+      "verify": "Verificar archivos",
+      "download": "Descargar modelo",
+      "cancel": "Cancelar",
+      "custom": "Tu propio modelo",
+      "custom_help": "Importa un manifiesto con la arquitectura, las sumas de verificación y una fuente de descarga fija. Puedes copiar archivos locales desde una carpeta del equipo de Jarvis.",
+      "manifest": "Manifiesto del modelo (.json)",
+      "folder": "Carpeta local de origen (opcional para descargas)",
+      "invalid": "Selecciona un manifiesto JSON válido de hasta 1 MB.",
+      "import": "Importar modelo"
+    },
     "jobs": {
       "chat_purpose": "Responde cuando escribes.",
       "tools_screen_purpose": "Lee la pantalla y maneja las herramientas.",

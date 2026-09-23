@@ -731,6 +731,16 @@ def _probe_accelerator_gb() -> tuple[float, str]:
         log.debug("hardware: vendor-neutral accelerator probe failed", exc_info=True)
         vendor_gb, vendor_source = 0.0, ""
     if vendor_gb > 0:
+        # Preserve the accelerator family when Ollama supplies the better
+        # memory budget. Returning only "ollama-runtime" on Apple Silicon
+        # made the speech preflight reject a Metal device it can actually
+        # drive, solely because Ollama had already started.
+        if (
+            vendor_source == "ollama-runtime"
+            and sys.platform == "darwin"
+            and platform.machine() == "arm64"
+        ):
+            return vendor_gb, "apple-unified"
         return vendor_gb, vendor_source
     if sys.platform == "darwin" and platform.machine() == "arm64":
         try:

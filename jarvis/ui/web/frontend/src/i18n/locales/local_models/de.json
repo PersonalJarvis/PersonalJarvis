@@ -1,5 +1,27 @@
 {
   "local_models": {
+    "native": {
+      "tab": "Lokale Stimme",
+      "title": "Ein lokales Sprachmodell",
+      "subtitle": "Ein englisches Audiomodell herunterladen oder eigene Modelldateien importieren.",
+      "preview": "Vorschau: Modelle lassen sich herunterladen. Die Aktivierung für Jarvis, Wake-Word und Tools wird noch geprüft.",
+      "error": "Der Vorgang konnte nicht abgeschlossen werden. Liste aktualisieren und erneut versuchen.",
+      "acquiring": "Wird heruntergeladen und geprüft",
+      "cancelling": "Wird abgebrochen",
+      "cancelled": "Abgebrochen. Geprüfte Dateien bleiben für den nächsten Versuch erhalten.",
+      "failed": "Die Modelldateien konnten nicht geprüft oder gespeichert werden. Erneut versuchen.",
+      "stored": "Dateien gespeichert. Die Sprachaktivierung ist noch nicht verfügbar.",
+      "missing": "Noch nicht heruntergeladen",
+      "verify": "Dateien prüfen",
+      "download": "Modell herunterladen",
+      "cancel": "Abbrechen",
+      "custom": "Eigenes Modell",
+      "custom_help": "Ein Modellmanifest mit Architektur, Prüfsummen und festgelegter Downloadquelle importieren. Lokale Dateien können aus einem Ordner auf dem Jarvis-Rechner kopiert werden.",
+      "manifest": "Modellmanifest (.json)",
+      "folder": "Lokaler Quellordner (bei Downloads optional)",
+      "invalid": "Eine gültige JSON-Datei mit höchstens 1 MB auswählen.",
+      "import": "Modell importieren"
+    },
     "jobs": {
       "chat_purpose": "Antwortet, wenn du tippst.",
       "tools_screen_purpose": "Liest den Bildschirm und bedient die Werkzeuge.",

@@ -46,13 +46,14 @@ import { HuggingFacePanel } from "@/views/local-models/HuggingFacePanel";
 import { InventoryPanel } from "@/views/local-models/InventoryPanel";
 import { OverviewPanel } from "@/views/local-models/OverviewPanel";
 import { ServerPanel } from "@/views/local-models/ServerPanel";
+import { NativeVoicePanel } from "@/views/local-models/NativeVoicePanel";
 import { TuneSheet } from "@/views/local-models/TuneSheet";
 import { OllamaIcon } from "@/components/icons/OllamaIcon";
 import { useEventStore } from "@/store/events";
 import { useLocaleChunk, useT } from "@/i18n";
 
 export type LocalModelsTab =
-  "overview" | "models" | "catalogue" | "huggingface" | "server";
+  "overview" | "models" | "catalogue" | "huggingface" | "server" | "native-voice";
 
 /**
  * The Tune sheet opened from a role row. The sheet wants the inventory row
@@ -143,6 +144,7 @@ export function LocalModelsView() {
       [
         { id: "overview", label: t("local_models.tab_overview") },
         { id: "models", label: t("local_models.tab_models") },
+        { id: "native-voice", label: t("local_models.native.tab") },
         { id: "catalogue", label: t("local_models.tab_catalogue") },
         { id: "huggingface", label: t("local_models.tab_huggingface") },
         { id: "server", label: t("local_models.tab_server") },
@@ -185,13 +187,13 @@ export function LocalModelsView() {
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex w-full flex-col gap-5 px-8 py-6">
-          {loading && !providerId && (
+          {loading && !providerId && tab !== "native-voice" && (
             <p className="text-sm text-muted-foreground">
               {t("local_models.loading")}
             </p>
           )}
 
-          {!loading && !providerId && (
+          {!loading && !providerId && tab !== "native-voice" && (
             <Panel className="p-4">
               <p className="text-sm text-muted-foreground">
                 {t("local_models.no_provider")}
@@ -250,6 +252,7 @@ export function LocalModelsView() {
               <ServerPanel providerId={providerId} />
             </div>
           )}
+          {tab === "native-voice" && <NativeVoicePanel />}
         </div>
       </ScrollArea>
     </div>
