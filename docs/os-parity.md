@@ -14,8 +14,11 @@ Windows regression tests and Linux container contracts passed, including real
 loopback HTTP, encrypted broker restart and Google 401/403/429/503/network states.
 Native macOS browser/keychain acceptance remains unverified. Windows browser
 observations, provider-account restrictions and incomplete lifecycle stages are
-recorded in the marketplace E2E audit. The standalone broker needs a verified
-publisher HTTPS deployment before confidential-provider release qualification.
+recorded in the marketplace E2E audit. A separate Cloudflare Worker now serves
+the publisher HTTPS broker with D1 persistence; it is OS-neutral and never
+loads on desktop boot. Provider app registration, server-only secret provisioning
+and real browser/lifecycle checks remain pending. The standalone Python broker
+remains an alternate deployment, not an assertion of provider qualification.
 See [the broker protocol and deployment contract](marketplace/oauth-broker.md).
 
 ## Prepaid search hop (2026-09-17, T2)

@@ -8,11 +8,40 @@ does not replace the historical observations below with a new agent-observed
 PASS. GitLab's existing complete Windows attestation is unchanged.
 
 Remaining provider work: HubSpot, Salesforce, Discord, Zoom, Asana, Figma,
-LinkedIn and Spotify, plus Slack public distribution and its remaining lifecycle
+LinkedIn, Spotify and the newly added Shopify plugin, plus Slack public distribution and its remaining lifecycle
 checks. The confidential broker still needs a stable HTTPS publisher deployment,
 server-only credentials and real provider qualification. No deployed broker was
 established during this checkpoint; repository deployment guidance alone is not
 deployment evidence.
+
+Later on 2026-09-23, a Cloudflare Workers/D1 broker using Free-plan-eligible
+features was deployed at the
+project-owned `oauth.personaljarvis.ai` HTTPS domain. Its real `/healthz` request
+returned HTTP 200; an unconfigured Asana `/start` correctly returned HTTP 503.
+Its worker code has protocol regression tests, encrypted D1 persistence and
+server-only secret bindings. This resolves only the hosting prerequisite: no
+provider secret, consent, callback or resource read has been qualified yet.
+The earlier sentence above records the state at the initial checkpoint.
+
+Shopify was added to the main catalog on 2026-09-21 and has been included in
+this RUB-99 branch. A real unauthenticated MCP `tools/list` returned tool names,
+but a real read-only `get-shop-info` request returned HTTP 401 with an official
+OAuth resource-metadata pointer. The metadata confirms the configured authorize
+and token endpoints, PKCE S256, and `token_endpoint_auth_methods_supported =
+["none"]`, so a public PKCE client is appropriate. It does not publish Dynamic
+Client Registration. The four requested read scopes are absent from the current
+published `scopes_supported` list, so consent and resource access remain
+unverified. A free app registration is still pending.
+
+Chrome automation was restored later by correcting the local runtime mapping
+and native-host registration under the user's express instruction. The existing
+Asana app was opened in the official console; any-workspace distribution is
+selected, but no redirect is registered yet. Its console states that an MCP app
+automatically requests full access to all Asana resources and actions. The
+Figma account signed in using the requested Google identity, and a new
+Personal Jarvis app is prepared under the existing team. App creation would
+accept Figma developer terms, so it remains pending explicit action-time consent.
+Neither provider is marked connected.
 
 The current Chrome automation bootstrap fails before a browser can be selected:
 the installed runtime requests a missing browser-service module. The official

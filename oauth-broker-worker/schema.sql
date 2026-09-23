@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS flows (
+  id TEXT PRIMARY KEY,
+  state TEXT UNIQUE,
+  expires INTEGER NOT NULL,
+  payload TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS flows_expires ON flows(expires);
+
+CREATE TABLE IF NOT EXISTS grants (
+  id TEXT PRIMARY KEY,
+  payload TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0,
+  busy_until INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS start_limits (
+  id TEXT PRIMARY KEY,
+  window INTEGER NOT NULL,
+  count INTEGER NOT NULL
+);

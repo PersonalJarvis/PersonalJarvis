@@ -4,6 +4,24 @@ RUB-99 introduces a separate publisher service for confidential OAuth clients.
 It is not mounted by the desktop server. A local keyring is not a way to keep
 a distributed application's confidential publisher secret confidential.
 
+## Cloudflare Workers deployment
+
+A Workers/D1 deployment using Free-plan-eligible features now serves
+`https://oauth.personaljarvis.ai/healthz` and returns a healthy response. It has
+a dedicated encrypted D1 database, a Worker-only AES key, a fixed HTTPS domain
+and an inactive personal `workers.dev` route. Its source, schema, limits and
+deployment commands are in [`oauth-broker-worker/README.md`](../../oauth-broker-worker/README.md).
+The public base and D1 identifier are not credentials. No provider client
+credential has yet been qualified through this deployment, so `/start` currently
+fails closed for unconfigured providers and no provider gains an E2E PASS.
+
+This Worker implements the same desktop handoff protocol as the standalone
+Python service below, using Web Crypto AES-GCM and D1 instead of Fernet and
+local SQLite. Each deployed grant stays with its issuing service and encryption
+key; changing between these deployments does not migrate stored grants.
+Provider secrets remain in Cloudflare Worker secrets. Worker Observability is
+disabled so callback authorization codes are not retained in application logs.
+
 ## Deployment contract
 
 Run `python -m jarvis.marketplace.broker_service` on the publisher's private host,
@@ -76,10 +94,11 @@ retains its issuing broker address even if current configuration changes.
 | Provider family | Default architecture | Registration requirement |
 | --- | --- | --- |
 | Microsoft Graph and Azure | Public native PKCE, shared Microsoft client | Native `localhost` callback; tenant policy and publisher verification may limit consent |
-| Slack | Public PKCE, user scopes, fixed loopback, token rotation | PKCE and rotation enabled in the official app console; public distribution remains separate |
+| Slack | Public PKCE, user scopes, fixed loopback, token rotation; HTTPS broker protocol deployed but not yet selected by the catalog | Register the broker HTTPS callback and prove public distribution before switching new grants |
 | Zoom | Public Client PKCE | Enable the public-client option; confidential General OAuth is not interchangeable |
 | GitLab | Non-confidential PKCE | Register loopback and uncheck confidential client |
 | Spotify | Public PKCE | Premium developer account and provider access restrictions |
+| Shopify | Public PKCE; no provider DCR | Register a shared app, confirm its current scope contract, then complete a real store-owner journey |
 | Salesforce | Public PKCE when enabled for the application | Provider org and MCP entitlement/permissions |
 | HubSpot, Asana, Figma, LinkedIn | Confidential broker | Registered HTTPS callback and server-side credentials |
 | Discord | Broker identity plus official bot installation | Shared application, bot installation permissions, separately operated bot runtime |

@@ -9,6 +9,15 @@ remaining providers and the verified Chrome tooling blocker are recorded in
 The historical browser evidence and its totals remain unchanged; no live
 provider journey could be executed in this checkpoint.
 
+Later on the same date, browser control was restored and the free publisher
+OAuth broker was deployed under the project domain. Shopify's official OAuth
+metadata and the Asana/Figma consoles were inspected. There is still no new
+complete UI → browser → callback → resource-read → reconnect → restart PASS.
+Shopify brings the current inventory to **47 plugins / 1 full PASS / 46 BLOCKED**.
+The strict new-plugin E2E gate correctly rejects the Shopify row until a real
+full journey succeeds. See the later observations in
+[the evidence record](rub-99-auth-evidence.md#continuation-checkpoint-2026-09-23).
+
 ## RUB-99 update (2026-09-19)
 
 Current full-journey totals: **46 plugins / 1 PASS / 45 BLOCKED**. GitLab completed

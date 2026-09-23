@@ -1,0 +1,19 @@
+name = "personaljarvis-oauth-broker"
+main = "src/index.mjs"
+compatibility_date = "2026-09-23"
+workers_dev = false
+
+[[routes]]
+pattern = "oauth.personaljarvis.ai"
+custom_domain = true
+
+[vars]
+BROKER_BASE_URL = "https://oauth.personaljarvis.ai"
+
+[observability]
+enabled = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "personaljarvis-oauth-broker"
+database_id = "fc517ed0-3161-4c59-86af-0d9e7ecbf382"
