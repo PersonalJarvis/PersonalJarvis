@@ -11,6 +11,19 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [2.3.2] — 2026-09-23
+
+### Fixed
+
+- Raise the AnyIO and GitPython security floors and refresh both install locks.
+  The previous versions blocked the sign-installer workflow during its strict
+  dependency audit.
+- Preserve the v2.3.1 application and README while making the same source
+  available through the installer release pipeline. The validation limitations
+  noted for 2.3.0 still apply.
+
+---
+
 ## [2.3.1] — 2026-09-23
 
 ### Fixed

@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "2.3.1"
+version = "2.3.2"
 description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
@@ -59,6 +59,8 @@ dependencies = [
     "anthropic>=0.96",
     "openai>=1.30",  # 1.30+ is the minimum version required for stream_options (June 2024)
     "google-genai>=1.0",
+    # Async client and web-stack security fixes from AnyIO 4.14.2 onward.
+    "anyio>=4.14.2",
     # Lazy-imported by jarvis/brain/structured_output_parser.py to recover
     # malformed vision JSON; without it the repair path silently degrades on
     # every fresh install (found 2026-07-18, was never declared).
@@ -221,11 +223,9 @@ dependencies = [
     "num2words>=0.5.13",  # deterministic number->words for the voice path (spoken-safe)
     "jinja2>=3.1",
     "croniter>=6.0",
-    # Floor 3.1.51: three high-severity GitPython command-injection / unsafe-clone
-    # advisories (long-option prefix-abbreviation bypass of the CVE-2026-42215
-    # blocklist, joined-short-option gate bypass, argument-vector injection) are
-    # fixed in 3.1.51 — never resolve lower (Dependabot GitPython alerts).
-    "gitpython>=3.1.51",
+    # Floor 3.1.60 includes the earlier command-injection fixes and the fixes
+    # for PYSEC-2026-3982, PYSEC-2026-3983, and PYSEC-2026-3984.
+    "gitpython>=3.1.60",
     # Missing native observers degrade to the registries' existing no-op/polling
     # behavior instead of turning installation into a compiler exercise.
     "watchdog>=5.0; (sys_platform != 'darwin' or python_version < '3.14') and (sys_platform != 'win32' or platform_machine != 'ARM64')",
