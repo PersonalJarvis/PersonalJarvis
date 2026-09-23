@@ -16,25 +16,28 @@
 </p>
 
 **Personal Jarvis is an open-source AI ecosystem that runs on your own computer.**
-Jarvis connects voice and text conversations to [agents](#jarvis-agents),
-[coding sessions](#coding-workspace), desktop actions, and connected services.
-Ask a question, use a tool, or delegate work, then inspect the results.
-The desktop app keeps your conversations, team, and output together on
-Windows, macOS, and Linux.
+At its center is Jarvis, a voice orchestrator that connects a conversation to
+[agents](#jarvis-agents), [coding sessions](#coding-workspace), desktop actions,
+and the services you choose to connect. Speak naturally or type a message:
+Jarvis can answer, use a tool, or delegate work while you follow the conversation
+and inspect what happens. The desktop app brings those conversations, your team,
+and their results into one workspace on Windows, macOS, and Linux.
 
-Build persistent specialists with their own instructions and recurring routines.
-Use [Jarvis Voice](#jarvis-voice-dictation)
+The workspace extends beyond the conversation. Build persistent specialists with
+their own instructions and recurring routines. Use [Jarvis Voice](#jarvis-voice-dictation)
 to dictate into other apps. Connect [plugins, skills, and MCP servers](#plugins-skills-and-mcp),
 work alongside coding CLIs, keep knowledge in a [local Markdown wiki](#memory-and-knowledge),
 and open generated reports, pages, and files in [Artifacts](#artifacts-and-run-history).
-A request can start with your voice, continue with an agent, and produce a file
-you can use or edit.
+These are connected parts of the same application: a request can start with your
+voice, continue with an agent, and leave behind something you can read, use, or edit.
 
-**Choose hosted providers, [local models](#local-models), or a mixture.**
-Your provider supplies the intelligence; Jarvis manages state, tool access,
-approvals, and execution. Local speech and models can keep supported work on
-your hardware. Cloud models and connected services still receive the content
-needed for their requests. See [privacy and local data](docs/product/privacy-safety-and-support/privacy-and-local-data.md)
+**Choose the models and services that fit your work.** Jarvis supports hosted
+providers, [local models](#local-models), and mixed setups. Your selected provider
+supplies the intelligence; Jarvis manages application state, tool access,
+approvals, and execution. Local speech and model options can keep supported
+work on your hardware. Cloud models and connected services receive the content
+needed for their requests; running the app locally does not make every integration
+offline. See [privacy and local data](docs/product/privacy-safety-and-support/privacy-and-local-data.md)
 and [how the system fits together](#how-it-works).
 
 [Website](https://personaljarvis.ai) · [Getting started](#your-first-steps-in-the-desktop-app) ·
@@ -97,9 +100,10 @@ under Jarvis's control.
   <sub>“Hey George” → listening → conversation. The desktop window and navigation stay in view.</sub>
 </p>
 
-These demos are **Remotion recreations with illustrative conversations**,
-including the wake transition, not live recordings or speed benchmarks.
-Click a GIF for the 60 fps video, or open the
+The demos on this page are **Remotion recreations of the interface with
+illustrative conversations**, not live recordings or response-time benchmarks.
+The wake phrase and listening transition above are animated to explain the
+interaction. Click a GIF for its sharper 60 fps video, or use the
 [still previews and reproducible source](scripts/readme-video/README.md).
 
 [Voice conversations](docs/product/everyday-use/voice-conversations.md) ·
@@ -162,9 +166,10 @@ See the [headless deployment guide](docs/headless-vps-deployment.md).
 
 ## Jarvis Agents
 
-Build persistent specialists with their own identity, chat, instructions,
-and permitted tools. Assign a connected model or supported agent account,
-then return to each conversation as work continues.
+Build a team you can return to. Each agent has an identity, a direct conversation,
+standing instructions, and access to the tools you grant it. Pick a connected
+model or supported agent account for the work, and keep the conversations in
+one workspace.
 
 <br />
 
@@ -199,9 +204,11 @@ agent chat is not a new isolated worktree on every message.
 hands-free recording, then insert the transcript into the focused text field.
 Dictation is speech-to-text; Voice Chat is a conversation with Jarvis.
 
-**Jarvis Voice** combines history, dictionary, shortcuts, languages, and provider
-setup. Review past transcripts, enable cleanup or translation, or use Prompt Mode
-to structure dictated prompts.
+The **Jarvis Voice** section brings together dictation history, your dictionary,
+shortcuts, language settings, and speech-provider setup. Optional cleanup improves
+the transcript, translation writes into a selected language, and Prompt Mode can
+turn a dictation into a structured prompt. Review and recover entries in history
+when you need to revisit a transcript.
 
 Choose local speech recognition to process audio on your machine. Provider-backed
 cleanup or translation can still send text to the configured provider.
@@ -233,24 +240,28 @@ send the relevant work to those services.
 
 ## Coding workspace
 
-Open a project folder in **Agentic IDE** and work with supported coding CLIs,
-such as Claude Code or Codex, in live terminal and chat views.
-Each tool uses its supported account access.
+Bring supported coding CLIs into **Agentic IDE** with a project folder and live
+terminal panes. Work with tools such as Claude Code or Codex using the access
+supported by that tool, and keep their sessions visible alongside the rest of
+Jarvis. Terminal and chat views provide different ways to follow the work.
 
 Panes have call signs so you can address a particular session through Jarvis:
 *"Tell T1 to run the tests"* or *"What is T2 working on?"* Return to the workspace
 to inspect output, respond to a prompt, or take over manually. A terminal becoming
 idle is not proof that its result is correct; inspect its changes and validation.
 
-Manage and test non-interactive command-line tools separately in
-**CLIs & CLI Test Hub**.
+Ordinary command-line connections are managed separately from interactive coding
+panes. **CLIs & CLI Test Hub** helps discover, configure, and test those tools
+before you ask Jarvis to use them.
 
 [Agentic IDE](docs/product/extend-and-automate/agentic-ide.md) ·
 [CLI connections](docs/product/extend-and-automate/cli-connections.md)
 
 ## Plugins, skills, and MCP
 
-Extend Jarvis with three types of extension in **Plugins / Skills / MCP**:
+Connect the workspace to the tools you already use, and extend how Jarvis works
+without replacing the assistant. The **Plugins / Skills / MCP** hub separates
+three complementary kinds of extension:
 
 | Extension | What it adds | Learn more |
 |---|---|---|
@@ -266,12 +277,15 @@ integration. For a self-hosted example, see
 
 ## Memory and knowledge
 
-The **Knowledge Wiki** stores reusable facts and notes in a local Markdown
-vault with pages, links, and a visual memory map. Browse the context available
-for later work, or connect the vault to Obsidian.
+Keep reusable knowledge in the **Knowledge Wiki**, a local Markdown vault with
+pages, links, and a visual memory map. It gives facts and notes a place beyond a
+single conversation, and lets you browse the material that later work can use.
+You can also connect the vault to Obsidian.
 
-Edit your profile, contacts, and standing instructions to define preferences,
-people, and assistant behavior without repeating that background in every prompt.
+Profile information, contacts, and standing instructions add different kinds of
+context. Use them to describe preferences and people, and shape the assistant's
+behavior. They are editable parts of your workspace, so you do not need to repeat
+the same background in every prompt.
 
 [Wiki and memory](docs/product/knowledge-and-sharing/wiki-and-memory.md) ·
 [Obsidian](docs/product/knowledge-and-sharing/connect-obsidian.md) ·
@@ -280,8 +294,10 @@ people, and assistant behavior without repeating that background in every prompt
 
 ## Scheduled work and workflows
 
-Use agent routines for recurring briefs. The scheduling views expose task
-instructions, timing, and execution history so you can adjust and review the work.
+Recurring work belongs in a schedule. Use agent routines for a specialist's
+recurring brief and the scheduling views to manage tasks and inspect their run
+history. Instructions, timing, and previous executions stay visible so you can
+change the work as your needs change.
 
 Workflows and app commands provide additional ways to trigger supported actions.
 Scheduling depends on the relevant Jarvis runtime being available and the required
@@ -310,9 +326,10 @@ numbers, credentials, and webhooks.
 
 ## Artifacts and run history
 
-**Artifacts** collects generated reports, documents, pages, images, and other
-files for preview and download. Trace output to its source task or reuse it
-outside Jarvis.
+A conversation can produce something you keep. **Artifacts** brings generated
+reports, documents, pages, images, and other files together for preview and
+download. Follow the output back to the work that produced it, then open or reuse
+it outside Jarvis.
 
 Session history and **Run Inspector** help explain what happened: recorded turns,
 tool activity, timing, and errors. **Spend** shows recorded provider usage and
@@ -333,9 +350,10 @@ browser interface without the native desktop shell.
   <img src="assets/brand/how-personal-jarvis-works-v2.png" alt="Desktop, browser, voice, CLI, and channels feed the Jarvis core. It routes requests to model responses, protected tools, or delegated work, which feed live events, history, memory, and artifacts." width="1000" />
 </p>
 
-Jarvis routes requests by available capabilities: answer in the conversation,
-run a protected tool, or delegate work. Persistent agent chats and
-worktree-isolated coding missions have separate lifecycles.
+The execution path follows the request and available capabilities. A simple
+answer can stay in the conversation; a service action needs an available tool;
+longer work can run through an agent or mission lifecycle. Persistent agent chats
+and worktree-isolated missions remain distinct.
 
 | Boundary | Technical role |
 |---|---|
