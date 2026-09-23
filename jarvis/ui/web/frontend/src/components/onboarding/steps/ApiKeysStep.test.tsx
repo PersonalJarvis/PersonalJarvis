@@ -18,6 +18,13 @@ const providersState = vi.hoisted(() => ({
       body: JSON.stringify({ provider }),
     });
   }),
+  switchSubagentProvider: vi.fn(async (provider: string) => {
+    await fetch("/api/jarvis-agent/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider, persist: true }),
+    });
+  }),
 }));
 vi.mock("@/hooks/useProviders", () => ({
   useProviders: () => ({
@@ -27,6 +34,7 @@ vi.mock("@/hooks/useProviders", () => ({
     refetch: providersState.refetch,
   }),
   switchBrainProvider: providersState.switchBrainProvider,
+  switchSubagentProvider: providersState.switchSubagentProvider,
 }));
 // The real form is exercised by its own tests; here it is a probe that
 // reports which slot it was mounted for and lets a test "save" a key.
@@ -43,7 +51,7 @@ const plansState = vi.hoisted(() => ({
   selected: null as string | null,
   fail: false,
   selectStarterPlan: vi.fn(async () => undefined),
-  applyStarterPlan: vi.fn(async () => ({ applied: ["brain"], failed: [], modeSet: true })),
+  applyStarterPlan: vi.fn(async () => ({ applied: ["brain"], failed: [] as { surface: string; error: string }[], modeSet: true })),
 }));
 vi.mock("@/hooks/useStarterPlans", () => ({
   getStarterPlans: async () => {
@@ -56,19 +64,22 @@ vi.mock("@/hooks/useStarterPlans", () => ({
 vi.mock("@/components/ReadyCelebration", () => ({
   ReadyCelebration: () => <div data-testid="ready-celebration-stub" />,
 }));
+vi.mock("@/components/JarvisAgentSection", () => ({
+  JarvisAgentSection: () => <div data-testid="agent-connection-options" />,
+}));
 
 import { ApiKeysStep, planKeysComplete, providersForPlan, startableProviders } from "./ApiKeysStep";
 
 const GEMINI_PLAN = {
-  id: "gemini-pipeline",
-  label: "Pipeline with Gemini",
+  id: "gemini-live",
+  label: "Gemini Live",
   summary: "One key.",
-  mode: "pipeline" as const,
+  mode: "realtime" as const,
   recommended: true,
-  assignments: { brain: "gemini", tts: "gemini-flash-tts" },
+  assignments: { brain: "gemini", realtime: "gemini-live" },
   key_slots: [{ family: "gemini", slot: "gemini_api_key", label: "Google Gemini", present: false }],
   keys_complete: false,
-  ready_sections: ["brain", "computer-use", "tts", "stt"],
+  ready_sections: ["realtime", "computer-use", "subagents"],
 };
 
 afterEach(() => {
@@ -79,6 +90,7 @@ afterEach(() => {
   providersState.error = null;
   providersState.refetch.mockClear();
   providersState.switchBrainProvider.mockClear();
+  providersState.switchSubagentProvider.mockClear();
   plansState.plans = [];
   plansState.selected = null;
   plansState.fail = true;
@@ -114,7 +126,7 @@ function provider(overrides: Partial<ProviderDescriptor>): ProviderDescriptor {
 type ProbeShape = { source: string; models: { id: string }[] } | null;
 
 /** Stub fetch for the local-path probe (+ the brain switch and the engine pin). */
-function stubFetch(probe: ProbeShape) {
+function stubFetch(probe: ProbeShape, agentReady = false) {
   const calls: { url: string; init?: RequestInit }[] = [];
   vi.stubGlobal(
     "fetch",
@@ -124,7 +136,13 @@ function stubFetch(probe: ProbeShape) {
         if (probe === null) throw new Error("network down");
         return { ok: true, json: async () => probe } as Response;
       }
-      if (url === "/api/brain/switch" || url === "/api/settings/voice-mode") {
+      if (url === "/api/jarvis-agent/status") {
+        return { ok: true, json: async () => ({ mapping: [
+          { jarvis: "gemini", label: "Google Gemini", billing: "api", secret_key: "agent_gemini_key", is_active_brain: true, dedicated_key_set: agentReady },
+          { jarvis: "openai", label: "OpenAI", billing: "api", secret_key: "agent_openai_key", is_active_brain: false, dedicated_key_set: false },
+        ] }) } as Response;
+      }
+      if (url === "/api/brain/switch" || url === "/api/settings/voice-mode" || url === "/api/jarvis-agent/switch") {
         return { ok: true, json: async () => ({ ok: true }) } as Response;
       }
       throw new Error(`unexpected fetch: ${url}`);
@@ -252,10 +270,10 @@ it("preselects the recommended plan, filters the list to its key, and applies th
     provider({ id: "gemini", label: "Google Gemini", secret_keys: ["gemini_api_key"], secrets_set: { gemini_api_key: false } }),
     provider({ id: "b", label: "B" }),
   ];
-  stubFetch(null);
+  stubFetch(null, true);
   renderStep();
 
-  const row = await screen.findByTestId("onboarding-plan-gemini-pipeline");
+  const row = await screen.findByTestId("onboarding-plan-gemini-live");
   expect(row.getAttribute("aria-checked")).toBe("true");
   await waitFor(() => expect(screen.getByTestId("form-gemini_api_key")).toBeDefined());
   expect(screen.queryByTestId("form-X_API_KEY")).toBeNull();
@@ -270,11 +288,11 @@ it("preselects the recommended plan, filters the list to its key, and applies th
   const props = renderStep();
   await screen.findByTestId("onboarding-plan-applied");
   expect(plansState.applyStarterPlan).toHaveBeenCalledTimes(1);
-  expect(plansState.selectStarterPlan).toHaveBeenCalledWith("gemini-pipeline");
+  expect(plansState.selectStarterPlan).toHaveBeenCalledWith("gemini-live");
   expect(screen.getByTestId("ready-celebration-stub")).toBeDefined();
   expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(false);
   // The i18n mock echoes keys, so the plan label falls back to the catalog text.
-  expect(props.setSummary).toHaveBeenLastCalledWith("Pipeline with Gemini · Google Gemini");
+  expect(props.setSummary).toHaveBeenLastCalledWith("Gemini Live · Google Gemini");
 });
 
 it("'pick everything myself' restores the full list and the local path", async () => {
@@ -301,46 +319,46 @@ it("with Ollama running but empty, explains the missing model and shows no activ
   expect(screen.queryByRole("button", { name: "onboarding.api_keys.local_use_button" })).toBeNull();
 });
 
-it("reports a gap while a two-key plan still misses a key, and clears it once complete", async () => {
+it("shows subscription and API-key choices together for Jarvis Agents", async () => {
   plansState.fail = false;
-  plansState.plans = [
-    {
-      ...GEMINI_PLAN,
-      id: "gemini-openai-realtime",
-      label: "Gemini + OpenAI",
-      mode: "realtime",
-      recommended: false,
-      key_slots: [
-        { family: "gemini", slot: "gemini_api_key", label: "Google Gemini", present: true },
-        { family: "openai", slot: "openai_api_key", label: "OpenAI", present: false },
-      ],
-    },
-  ];
+  plansState.plans = [GEMINI_PLAN];
   providersState.providers = [
     provider({ id: "gemini", label: "Google Gemini", secret_keys: ["gemini_api_key"], secrets_set: { gemini_api_key: true }, configured: true }),
-    provider({ id: "openai", label: "OpenAI", secret_keys: ["openai_api_key"], secrets_set: { openai_api_key: false } }),
   ];
   stubFetch(null);
   const p = renderStep();
-  // Not recommended, so not preselected: pick it as a user would.
-  fireEvent.click(await screen.findByTestId("onboarding-plan-gemini-openai-realtime"));
-  // The picker says how many keys and which engine each plan needs.
-  expect(screen.getByTestId("onboarding-plan-gemini-openai-realtime").textContent).toContain(
-    "onboarding.api_keys.keys_n",
-  );
-  expect(screen.getByTestId("onboarding-plan-gemini-openai-realtime").textContent).toContain(
-    "onboarding.api_keys.mode_realtime",
-  );
-  await waitFor(() =>
-    expect(p.setGap).toHaveBeenLastCalledWith("onboarding.api_keys.gap_plan_partial"),
-  );
+  await screen.findByTestId("onboarding-plan-gemini-live");
+  await waitFor(() => expect(p.setGap).toHaveBeenLastCalledWith("onboarding.api_keys.gap_agents"));
+  expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByTestId("onboarding-agent-subscriptions")).toBeDefined();
+  expect(screen.getByTestId("agent-connection-options")).toBeDefined();
+  expect(screen.getByTestId("onboarding-agent-key-gemini")).toBeDefined();
+  expect(screen.getByTestId("onboarding-agent-key-openai")).toBeDefined();
+  expect(screen.getByTestId("form-agent_gemini_key")).toBeDefined();
+  fireEvent.click(screen.getByTestId("onboarding-agent-key-openai"));
+  expect(screen.getByTestId("form-agent_openai_key")).toBeDefined();
+  fireEvent.click(screen.getByTestId("form-agent_openai_key").querySelector("button")!);
+  await waitFor(() => expect(providersState.switchSubagentProvider).toHaveBeenCalledWith("openai"));
 
+  cleanup();
+  stubFetch(null, true);
+  const again = renderStep();
+  await waitFor(() => expect(again.setGap).toHaveBeenLastCalledWith(null));
+  await waitFor(() => expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(false));
+});
+
+it("does not mark a failed live activation ready", async () => {
+  plansState.fail = false;
+  plansState.plans = [GEMINI_PLAN];
+  plansState.applyStarterPlan.mockResolvedValueOnce({
+    applied: ["brain"], failed: [{ surface: "realtime", error: "unavailable" }], modeSet: false,
+  });
   providersState.providers = [
     provider({ id: "gemini", label: "Google Gemini", secret_keys: ["gemini_api_key"], secrets_set: { gemini_api_key: true }, configured: true }),
-    provider({ id: "openai", label: "OpenAI", secret_keys: ["openai_api_key"], secrets_set: { openai_api_key: true }, configured: true }),
   ];
-  cleanup();
-  const again = renderStep();
-  fireEvent.click(await screen.findByTestId("onboarding-plan-gemini-openai-realtime"));
-  await waitFor(() => expect(again.setGap).toHaveBeenLastCalledWith(null));
+  stubFetch(null, true);
+  renderStep();
+  await screen.findByTestId("onboarding-plan-partial");
+  expect(screen.queryByTestId("ready-celebration-stub")).toBeNull();
+  expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(true);
 });

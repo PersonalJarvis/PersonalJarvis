@@ -46,24 +46,22 @@ def _all_ok(names: tuple[str, ...]) -> _Snapshot:
 
 
 def test_starter_plans_report_which_keys_exist(server, state_path, secrets) -> None:
-    secrets["gemini_api_key"] = "AIza-1"
+    secrets["openai_api_key"] = "sk-test"
     with TestClient(server.app) as client:
         body = client.get("/api/setup/starter-plans").json()
     plans = {p["id"]: p for p in body["plans"]}
-    assert plans["gemini-pipeline"]["recommended"] is True
-    assert plans["gemini-pipeline"]["keys_complete"] is True
-    assert plans["gemini-pipeline"]["key_slots"][0]["slot"] == "gemini_api_key"
-    two = plans["gemini-openai-realtime"]
-    assert two["keys_complete"] is False
-    assert [s["present"] for s in two["key_slots"]] == [True, False]
+    assert plans["openai-live"]["recommended"] is True
+    assert plans["openai-live"]["keys_complete"] is True
+    assert plans["openai-live"]["key_slots"][0]["slot"] == "openai_api_key"
+    assert plans["gemini-live"]["keys_complete"] is False
     assert body["selected"] is None
 
 
 def test_select_starter_plan_persists_and_rejects_unknown(server, state_path) -> None:
     with TestClient(server.app) as client:
         assert client.post("/api/setup/starter-plans/nope").status_code == 404
-        assert client.post("/api/setup/starter-plans/gemini-pipeline").json()["selected"] == (
-            "gemini-pipeline"
+        assert client.post("/api/setup/starter-plans/openai-live").json()["selected"] == (
+            "openai-live"
         )
         assert client.post("/api/setup/starter-plans/custom").status_code == 200
         assert client.get("/api/setup/starter-plans").json()["selected"] == "custom"

@@ -1,9 +1,9 @@
 # Ultra Agent Swarm integration evidence
 
 Date: 2026-09-23. Scope: the Swarm candidate integrated with private agent learning,
-automatic effort routing and settings navigation from main revision `bf899713b`.
-The settings follow-up changes frontend sources only; backend evidence remains
-bound to production revision `2cdb52dee`. This is an interim
+automatic effort routing, settings navigation, isolated routine chats and revised
+onboarding from main revision `f4dfad6ea`. Individual measurements and native
+artifacts remain bound to their recorded revisions. This is an interim
 qualification report, not a declaration that every acceptance criterion passes.
 
 ## Executed checks
@@ -21,6 +21,7 @@ qualification report, not a declaration that every acceptance criterion passes.
 | Intake follow-up | 70 Swarm UI tests passed; full Linux frontend 4,427 passed; production builds passed | The new committed-frame regression fails before the fix; the complete Linux suite runs from exact revision `9d37206fa` in a clean Node 22 container |
 | Native diagnostic follow-up | 94 passed; 1 skipped | Persisted phase receipts, failure status, credential redaction, containment and a bounded verification-step timeout |
 | Further integration guards | 231 realtime tests and 7 WebGL guard tests passed | Removed a duplicate write to a read-only test property; the static guard now follows called relative lifecycle hooks and still rejects missing cleanup |
+| Routine/onboarding integration | 1,180 Python tests passed; 3 skipped; 13 further setup tests passed; 762 related frontend tests and 55 onboarding tests passed | New main changes integrated; production bundle rebuilt; these selections overlap earlier evidence |
 
 The process assertion now verifies process identity and waits for a bounded exit
 receipt. A live descendant still fails the assertion, and a reused PID is never

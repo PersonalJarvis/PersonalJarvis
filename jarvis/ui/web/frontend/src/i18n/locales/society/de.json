@@ -1,6 +1,16 @@
 {
   "society": {
     "routine_detail": {
+      "back_to_agent": "Zurück zum Agenten-Chat",
+      "saved_result": "Gespeichertes Ausführungsergebnis",
+      "historical_chat": "Diese ältere Ausführung wurde im Hauptchat des Agenten gespeichert. Hier siehst du nur diese Ausführung, schreibgeschützt.",
+      "trace_unavailable": "Für diese Ausführung ist kein passender Chatverlauf verfügbar. Falls vorhanden, wird unten ihr gespeichertes Ergebnis angezeigt.",
+      "latest_chat": "Letzten Chat öffnen",
+      "open_chat": "Chat öffnen",
+      "background_chat": "Hintergrund-Ausführung",
+      "follow_up": "Zu dieser Ausführung nachfragen…",
+      "stop_run": "Ausführung stoppen",
+      "send": "Senden",
       "test_started": "Testlauf gestartet.",
       "active": "Aktiv",
       "delete": "Löschen",

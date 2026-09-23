@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ExternalLink } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronDown, ExternalLink, Radio, Bot } from "lucide-react";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { Button, FOCUS_RING } from "@/components/agentic/controls";
 import {
@@ -21,6 +21,7 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { StepProps } from "../OnboardingFlow";
 import { ChoiceRow, StatusLine, StepFooter, StepSection } from "../primitives";
+import { AgentAccessList, type AgentAccessRow } from "../AgentAccessList";
 
 /** The "I'll pick everything myself" choice; mirrors the backend's custom id. */
 const CUSTOM_PLAN = "custom";
@@ -224,6 +225,7 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
   const [open, setOpen] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [localActive, setLocalActive] = useState(false);
+  const [agentRows, setAgentRows] = useState<AgentAccessRow[] | null>(null);
 
   // Starter plans: "one key and you are done". The recommended plan is
   // preselected; "custom" shows the whole catalog exactly as before.
@@ -241,7 +243,8 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
         setPlans(res.plans);
         setPlanId(
           (current) =>
-            current ?? res.selected ?? res.plans.find((p) => p.recommended)?.id ?? CUSTOM_PLAN,
+            current ?? (res.plans.some((p) => p.id === res.selected) ? res.selected : null) ??
+              res.plans.find((p) => p.recommended)?.id ?? CUSTOM_PLAN,
         );
       } catch {
         // No plan catalog (older backend) — the full list still works.
@@ -266,10 +269,36 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
   const configured = startable.filter(slotEffective);
   const hasKey = configured.length > 0;
   const planComplete = plan ? planKeysComplete(plan, allStartable) : false;
-  const planApplied = Boolean(plan && applied?.id === plan.id);
+  const planApplied = Boolean(plan && applied?.id === plan.id && applied.outcome.modeSet && applied.outcome.failed.length === 0);
 
-  // Once every key the plan needs is saved, point every surface at it —
-  // brain, tool model, agents, voice out, voice in, live voice, mode. Runs
+  const refreshAgentRows = useCallback(async () => {
+    try {
+      const response = await fetch("/api/jarvis-agent/status", { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const status = await response.json() as { mapping?: AgentAccessRow[] };
+      setAgentRows(Array.isArray(status.mapping) ? status.mapping : []);
+    } catch {
+      setAgentRows([]);
+    }
+  }, []);
+  const agentReady = Boolean(agentRows?.some((row) =>
+    row.is_active_brain && (row.dedicated_key_set || row.oauth_connected || row.keyless),
+  ));
+
+  useEffect(() => {
+    void refreshAgentRows();
+    const timer = window.setInterval(() => void refreshAgentRows(), 3000);
+    window.addEventListener("jarvis:agent-switched", refreshAgentRows);
+    window.addEventListener("jarvis:secret-configured", refreshAgentRows);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("jarvis:agent-switched", refreshAgentRows);
+      window.removeEventListener("jarvis:secret-configured", refreshAgentRows);
+    };
+  }, [refreshAgentRows]);
+
+  // Once the live key is saved, point voice and its thinking model at it. Agent
+  // access remains a separate choice below. Runs
   // once per plan; a re-render never re-applies.
   useEffect(() => {
     if (!plan || !planComplete || applying || applied?.id === plan.id) return;
@@ -305,10 +334,7 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasKey, localActive, planApplied, configured.map((p) => p.id).join(","), setSummary, t]);
 
-  // What this step leaves undone, for the finish step's disclaimer. A plan
-  // that still misses a key is the important one: with "Gemini + OpenAI" and
-  // only the Gemini key saved, chat works but live voice does not — the user
-  // must see that before pressing Start, not discover it by talking.
+  // Report missing live and agent credentials separately to the finish step.
   useEffect(() => {
     if (plan && !planComplete) {
       const missing = plan.key_slots
@@ -323,6 +349,10 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
             .replace("{1}", missing.join(", ")),
         );
       }
+    } else if (plan && applied?.id === plan.id && applied.outcome.failed.length > 0) {
+      setGap(t("onboarding.api_keys.plan_partial").replace("{0}", applied.outcome.failed.map((f) => f.surface).join(", ")));
+    } else if (plan && !agentReady) {
+      setGap(t("onboarding.api_keys.gap_agents"));
     } else if (!hasKey && !localActive) {
       setGap(t("onboarding.api_keys.gap_none"));
     } else if (!plan && hasKey) {
@@ -331,7 +361,7 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
       setGap(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan?.id, planComplete, hasKey, localActive, configured.map((p) => p.id).join(","), setGap, t]);
+  }, [plan?.id, planComplete, applied, hasKey, agentReady, localActive, configured.map((p) => p.id).join(","), setGap, t]);
 
   // Open the first row by default so a fresh install shows an input, not a
   // list of closed doors. Once anything is configured, everything stays shut.
@@ -368,78 +398,72 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
       });
   };
 
-  const canContinue = hasKey || localActive;
+  const canContinue = (plan ? planComplete && agentReady && planApplied && applied?.outcome.failed.length === 0 : hasKey) || localActive;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {plans.length > 0 && (
-        <StepSection label={t("onboarding.api_keys.plan_label")}>
+        <StepSection label={t("onboarding.api_keys.voice_label")}>
           <p className="text-sm leading-relaxed text-muted-foreground">
             {t("onboarding.api_keys.plan_explainer")}
           </p>
-          <div className="space-y-2" role="radiogroup" data-testid="onboarding-plan-picker">
+          <div className="mt-3 grid gap-2 sm:grid-cols-2" role="radiogroup" data-testid="onboarding-plan-picker">
             {plans.map((p) => {
-              const n = p.key_slots.length;
-              const keysLabel =
-                n === 1
-                  ? t("onboarding.api_keys.keys_one")
-                  : t("onboarding.api_keys.keys_n").replace("{0}", String(n));
-              const modeLabel =
-                p.mode === "realtime"
-                  ? t("onboarding.api_keys.mode_realtime")
-                  : t("onboarding.api_keys.mode_pipeline");
               return (
                 <ChoiceRow
                   key={p.id}
                   selected={planId === p.id}
                   title={planLabel(p)}
                   badge={p.recommended ? t("onboarding.api_keys.recommended") : null}
-                  body={`${planSummary(p)} ${t("onboarding.api_keys.plan_keys_from").replace(
-                    "{0}",
-                    p.key_slots.map((s) => s.label).join(" + "),
-                  )}`}
-                  meta={
-                    <>
-                      <span className={n === 1 ? "text-primary" : undefined}>{keysLabel}</span>
-                      <span className="px-1.5 text-muted-foreground/50">·</span>
-                      {modeLabel}
-                    </>
-                  }
+                  body={planSummary(p)}
+                  meta={t("onboarding.api_keys.mode_realtime")}
                   onSelect={() => void choosePlan(p.id)}
                   testId={`onboarding-plan-${p.id}`}
                 />
               );
             })}
-            <ChoiceRow
-              selected={planId === CUSTOM_PLAN}
-              title={t("onboarding.api_keys.plan_custom_title")}
-              body={t("onboarding.api_keys.plan_custom_body")}
-              meta={t("onboarding.api_keys.keys_several")}
-              onSelect={() => void choosePlan(CUSTOM_PLAN)}
-              testId="onboarding-plan-custom"
-            />
           </div>
-          <p className="text-sm leading-relaxed text-muted-foreground">
-            {t("onboarding.api_keys.mode_explainer")}
-          </p>
         </StepSection>
       )}
 
       <StepSection
         label={
           plan
-            ? t("onboarding.api_keys.plan_progress")
-                .replace("{0}", String(configured.length))
-                .replace("{1}", String(plan.key_slots.length))
+            ? t("onboarding.api_keys.voice_key_label")
             : t("onboarding.api_keys.providers_label")
         }
       >
+        {plan && <p className="mb-2 flex items-center gap-2 text-sm text-muted-foreground"><Radio className="h-4 w-4" />{t("onboarding.api_keys.voice_key_hint")}</p>}
         {loading && startable.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("onboarding.api_keys.loading")}</p>
         ) : error && startable.length === 0 ? (
           <StatusLine tone="warning">{t("onboarding.api_keys.load_failed")}</StatusLine>
         ) : (
-          <ol className="border-y border-border/70" data-testid="onboarding-provider-list">
+          <>
+          {plan && startable[0] && (() => {
+            const p = startable[0];
+            const slot = primarySlot(p);
+            return slot ? (
+              <div className="rounded-xl border border-border bg-card p-4" data-testid="onboarding-live-key">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <span className="text-sm font-semibold text-foreground">{p.label}</span>
+                  <span className="text-xs text-muted-foreground">{slotEffective(p) ? t("onboarding.api_keys.configured") : t("onboarding.api_keys.not_configured")}</span>
+                </div>
+                <ApiKeyForm
+                  secretKey={slot}
+                  dashboardUrl={p.dashboard_url}
+                  configured={slotConfigured(p)}
+                  effectiveConfigured={slotEffective(p)}
+                  credentialHelp={p.credential_help}
+                  coveredNote={p.credential_note ?? null}
+                  sharedWith={p.secret_shared_with?.[slot] ?? []}
+                  testAfterSave={{ id: p.id, label: p.label, section: p.tier, active: p.active }}
+                  onChanged={() => void refetch()}
+                />
+              </div>
+            ) : null;
+          })()}
+          {!plan && <ol className="border-y border-border/70" data-testid="onboarding-provider-list">
             {visible.map((p, index) => {
               const isOpen = open === p.id;
               const slot = primarySlot(p);
@@ -517,7 +541,8 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
                 </li>
               );
             })}
-          </ol>
+          </ol>}
+          </>
         )}
         {hidden > 0 && !expanded && (
           <button
@@ -547,7 +572,7 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
             {t("onboarding.api_keys.plan_applied").replace("{0}", planLabel(plan))}
           </StatusLine>
         )}
-        {plan && planApplied && applied && applied.outcome.failed.length > 0 && (
+        {plan && applied?.id === plan.id && applied.outcome.failed.length > 0 && (
           <StatusLine tone="warning" testId="onboarding-plan-partial">
             {t("onboarding.api_keys.plan_partial").replace(
               "{0}",
@@ -557,6 +582,26 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
         )}
         {plan && planApplied && <ReadyCelebration inline />}
       </StepSection>
+
+      {plan && (
+        <StepSection label={t("onboarding.api_keys.agents_label")}>
+          <div className="space-y-4">
+            <div className="flex items-start gap-3">
+              <Bot className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+              <div>
+                <p className="text-sm font-semibold text-foreground">{t("onboarding.api_keys.agents_title")}</p>
+                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{t("onboarding.api_keys.agents_hint")}</p>
+                <p className="mt-2 text-xs text-muted-foreground" data-testid="onboarding-agent-status">
+                  {agentReady ? t("onboarding.api_keys.agents_ready") : t("onboarding.api_keys.agents_missing")}
+                </p>
+              </div>
+            </div>
+            <AgentAccessList rows={agentRows} onChanged={refreshAgentRows} />
+          </div>
+        </StepSection>
+      )}
+
+      {plans.length > 0 && <button type="button" data-testid="onboarding-plan-custom" className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground" onClick={() => void choosePlan(CUSTOM_PLAN)}>{t("onboarding.api_keys.plan_custom_title")}</button>}
 
       {!plan && <LocalPath onActivated={() => setLocalActive(true)} />}
 

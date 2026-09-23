@@ -65,6 +65,22 @@ new requests but lets already reserved calls settle, which took 19.46 seconds
 in the separate measured run. These observations do not prove that remote
 computation or billing stops at disconnection. See the [measurements and limits](verification/ultra-swarm-cancellation.md).
 
+## Research reference
+
+OpenAI's September 2026 Navier-Stokes report describes communicating groups that
+explored different approaches, consolidated useful intermediate findings and
+used subsequent Lean formalization. It reports roughly 10,000 concurrent agents
+and 130 billion output tokens for that problem, using an internal model. These
+are OpenAI's reported research conditions, not measurements of Jarvis.
+[Source: OpenAI's research account](https://openai.com/index/navier-stokes-solution/).
+
+The design lesson applied here is to clarify the intended result, retain a
+reviewable plan, divide useful work, share scoped evidence and check results.
+Worker counts remain bounded by available capacity and the owner's budget.
+The bundled execution environment runs JavaScript; formal Lean checking would
+require a separately authorized compatible executor. Unverified conclusions
+must remain identifiable as such.
+
 ## Storage and recovery
 
 The [storage fault measurements](verification/ultra-swarm-storage-faults.md)
