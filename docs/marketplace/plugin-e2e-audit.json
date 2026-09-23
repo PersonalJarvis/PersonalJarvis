@@ -2,6 +2,14 @@
   "schema_version": 1,
   "issue": "RUB-94",
   "observed_on": "2026-09-19",
+  "continuation_checkpoint": {
+    "date": "2026-09-23",
+    "reference": "docs/marketplace/rub-99-auth-evidence.md#continuation-checkpoint-2026-09-23",
+    "microsoft": "User-reported complete; excluded from this continuation. Historical agent evidence is retained without promoting any result.",
+    "remaining_providers": ["hubspot", "salesforce", "discord", "zoom", "asana", "figma", "linkedin", "spotify", "slack"],
+    "blocker": "Chrome automation cannot bootstrap: browser-service module is missing and official diagnostics report missing Windows native-host registration. Reinstall the Browser/Chrome plugin through the application UI before real provider work can resume.",
+    "new_live_provider_observations": false
+  },
   "scope": "RUB-94 inventory with RUB-99 observed updates. One complete Windows GitLab journey; all other full-plugin results remain blocked. Regression tests do not count as provider evidence.",
   "plugins": [
     {

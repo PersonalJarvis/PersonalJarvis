@@ -1,5 +1,39 @@
 # RUB-99 observed authentication evidence
 
+## Continuation checkpoint (2026-09-23)
+
+The user reports completing the Microsoft ecosystem independently. Preserve
+those connections and exclude Microsoft from this continuation. This report
+does not replace the historical observations below with a new agent-observed
+PASS. GitLab's existing complete Windows attestation is unchanged.
+
+Remaining provider work: HubSpot, Salesforce, Discord, Zoom, Asana, Figma,
+LinkedIn and Spotify, plus Slack public distribution and its remaining lifecycle
+checks. The confidential broker still needs a stable HTTPS publisher deployment,
+server-only credentials and real provider qualification. No deployed broker was
+established during this checkpoint; repository deployment guidance alone is not
+deployment evidence.
+
+The current Chrome automation bootstrap fails before a browser can be selected:
+the installed runtime requests a missing browser-service module. The official
+plugin diagnostics confirm that Chrome is running and the extension is enabled,
+but its Windows native-host registration is missing. The plugin's documented
+recovery is reinstalling the Browser/Chrome plugin through the application UI;
+manual native-host repair is explicitly prohibited by its instructions.
+
+Consequently, no new provider login, consent, callback, resource read, reconnect
+or restart was observed on this date. No provider result or stage is promoted.
+This is a browser-tooling blocker, not evidence of a provider restriction.
+Resume provider provisioning and the real Plugins UI journeys after that
+connection is restored. Microsoft grants and the running desktop were untouched.
+
+Validation at this checkpoint: 112 focused broker, PKCE, client-family,
+capability-state, refresh, restart and audit-gate regression tests passed. The
+structural authentication gate passed for all 46 catalog plugins. These checks
+validate existing implementation behavior and audit structure, not live OAuth.
+
+## Earlier browser observations (2026-09-19)
+
 Observed on 2026-09-19 in Chrome, using the actual Personal Jarvis Plugins UI
 served by an isolated Windows development instance. Existing unrelated grants
 were retained. Target scope: 18 integrations, with one complete Windows PASS

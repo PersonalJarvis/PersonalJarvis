@@ -1,5 +1,14 @@
 # Plugin authentication and end-to-end audit
 
+## RUB-99 continuation (2026-09-23)
+
+Microsoft is user-reported complete and excluded from further changes in this
+continuation. No new agent-observed PASS is inferred from that report. The
+remaining providers and the verified Chrome tooling blocker are recorded in
+[the continuation checkpoint](rub-99-auth-evidence.md#continuation-checkpoint-2026-09-23).
+The historical browser evidence and its totals remain unchanged; no live
+provider journey could be executed in this checkpoint.
+
 ## RUB-99 update (2026-09-19)
 
 Current full-journey totals: **46 plugins / 1 PASS / 45 BLOCKED**. GitLab completed
