@@ -1,0 +1,38 @@
+{
+  "name": "personal-jarvis-readme-videos",
+  "private": true,
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "styles": "node scripts/styles.mjs",
+    "check": "tsc --noEmit",
+    "render": "node scripts/render.mjs",
+    "preview": "node scripts/render.mjs --stills"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource/jetbrains-mono": "5.3.0",
+    "@fontsource/pixelify-sans": "5.3.0",
+    "@radix-ui/react-slot": "1.1.0",
+    "@radix-ui/react-switch": "1.1.1",
+    "@remotion/bundler": "4.0.481",
+    "@remotion/renderer": "4.0.481",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "lucide-react": "0.445.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.481",
+    "tailwind-merge": "2.5.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/typography": "0.5.19",
+    "@types/node": "25.6.0",
+    "@types/react": "18.3.10",
+    "@types/react-dom": "18.3.0",
+    "tailwindcss": "3.4.17",
+    "tailwindcss-animate": "1.0.7",
+    "typescript": "5.9.3"
+  }
+}
