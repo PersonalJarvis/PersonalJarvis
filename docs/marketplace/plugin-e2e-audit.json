@@ -16,7 +16,7 @@
       "slack",
       "shopify"
     ],
-    "blocker": "Chrome automation cannot bootstrap: browser-service module is missing and official diagnostics report missing Windows native-host registration. Reinstall the Browser/Chrome plugin through the application UI before real provider work can resume.",
+    "blocker": "Browser control was restored after the initial checkpoint. Official provider app registration, account agreements or age verification, server-only credential provisioning and full real Plugins UI journeys remain pending for the affected providers.",
     "browser_control_restored_later": true,
     "broker_hosted_later": "https://oauth.personaljarvis.ai",
     "new_completed_provider_journeys": false,

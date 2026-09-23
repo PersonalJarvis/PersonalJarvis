@@ -27,11 +27,10 @@ does not replace the historical observations below with a new agent-observed
 PASS. GitLab's existing complete Windows attestation is unchanged.
 
 Remaining provider work: HubSpot, Salesforce, Discord, Zoom, Asana, Figma,
-LinkedIn, Spotify and the newly added Shopify plugin, plus Slack public distribution and its remaining lifecycle
-checks. The confidential broker still needs a stable HTTPS publisher deployment,
-server-only credentials and real provider qualification. No deployed broker was
-established during this checkpoint; repository deployment guidance alone is not
-deployment evidence.
+the newly added Shopify plugin, plus Slack public distribution and its remaining
+lifecycle checks. LinkedIn and Spotify are now retired by user instruction.
+At the first checkpoint, the confidential broker still lacked a stable HTTPS
+publisher deployment, server-only credentials and real provider qualification.
 
 Later on 2026-09-23, a Cloudflare Workers/D1 broker using Free-plan-eligible
 features was deployed at the
@@ -93,18 +92,17 @@ frontend logo/OAuth tests passed. The production frontend build and Cloudflare
 bundle check passed. The structural release gate intentionally reports Shopify
 as incomplete because its full real UI journey has not passed.
 
-The current Chrome automation bootstrap fails before a browser can be selected:
-the installed runtime requests a missing browser-service module. The official
-plugin diagnostics confirm that Chrome is running and the extension is enabled,
-but its Windows native-host registration is missing. The plugin's documented
-recovery is reinstalling the Browser/Chrome plugin through the application UI;
-manual native-host repair is explicitly prohibited by its instructions.
+The Chrome automation bootstrap initially failed before a browser could be selected:
+the installed runtime requested a missing browser-service module. The official
+plugin diagnostics confirmed that Chrome was running and the extension enabled,
+but its Windows native-host registration was missing. The user subsequently
+authorized local recovery, and Chrome browser control was restored.
 
-Consequently, no new provider login, consent, callback, resource read, reconnect
-or restart was observed on this date. No provider result or stage is promoted.
-This is a browser-tooling blocker, not evidence of a provider restriction.
-Resume provider provisioning and the real Plugins UI journeys after that
-connection is restored. Microsoft grants and the running desktop were untouched.
+After the browser connection was restored, the official provider consoles and
+Discord redirect were inspected as recorded above. No new provider consent,
+callback, resource read, reconnect or restart has been observed. No provider
+result or E2E stage is promoted. Microsoft grants and the primary desktop
+instance were untouched.
 
 Validation at this checkpoint: 112 focused broker, PKCE, client-family,
 capability-state, refresh, restart and audit-gate regression tests passed. The
