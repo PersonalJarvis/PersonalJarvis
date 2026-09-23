@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from jarvis.core.swarm_types import AgentRecord, TaskRecord, TeamRecord, WorldSnapshot
 from jarvis.ui.web.surface_security import SurfaceSecurity
 from jarvis.ui.web.swarm_routes import router
 from tests.fakes.swarm_runtime import runtime, terminal
@@ -51,6 +52,57 @@ def control(client, team, action, *, version=None):
     response = client.post(f"/api/swarm/teams/{team['id']}/{action}", json=body)
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def test_stored_records_survive_the_complete_browser_wire_projection(api):
+    client, service, _ = api
+    body = {
+        "name": "Record parity",
+        "goal": "Preserve exact records without starting inference",
+        "request_key": "all-record-fields",
+        "limits": {"token_budget": str(2**63 + 17), "monetary_limit_microusd": None},
+        "tasks": [
+            {
+                "id": "statistics",
+                "title": "Calculate statistics",
+                "description": "Use the supplied numbers",
+                "acceptance": "Return a verified JSON result",
+                "verification": "javascript",
+                "verification_script": "function main() { return true; }",
+            }
+        ],
+    }
+    response = client.post("/api/swarm/teams", json=body)
+    assert response.status_code == 200, response.text
+    team = response.json()
+    store = service.registry.open(team["id"])
+    with store._tx() as connection:
+        saved_team = json.loads(
+            connection.execute("SELECT record FROM team WHERE singleton=1").fetchone()[0]
+        )
+        saved_tasks = [json.loads(row[0]) for row in connection.execute("SELECT record FROM tasks")]
+        saved_agents = [
+            json.loads(row[0]) for row in connection.execute("SELECT record FROM agents")
+        ]
+    assert team == saved_team == TeamRecord.model_validate(saved_team).model_dump(mode="json")
+    snapshot = client.get(f"/api/swarm/teams/{team['id']}/world").json()
+    assert WorldSnapshot.model_validate(snapshot).model_dump(mode="json") == snapshot
+    assert snapshot["team"] == saved_team
+    for kind, saved, model in (
+        ("tasks", saved_tasks, TaskRecord),
+        ("agents", saved_agents, AgentRecord),
+    ):
+        assert {record["id"]: record for record in snapshot[kind]} == {
+            record["id"]: model.model_validate(record).model_dump(mode="json") for record in saved
+        }
+        assert all(
+            model.model_validate(record).model_dump(mode="json") == record for record in saved
+        )
+    assert snapshot["team"]["limits"]["token_budget"] == str(2**63 + 17)
+    assert snapshot["team"]["limits"]["monetary_limit_microusd"] is None
+    assert snapshot["team"]["started_at"] is None
+    assert snapshot["tasks"][0]["owner_id"] is None
+    assert all(agent["task_id"] is None for agent in snapshot["agents"])
 
 
 def test_create_list_controls_and_stale_version_are_durable(api):
