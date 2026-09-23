@@ -181,6 +181,66 @@ class NativeSmokeApi:
                 }
             )
 
+        self.input_bytes = b'{"values":[4,8,12,16]}'
+        source = SwarmActor(actor.team_id, "d" * 32, "offline-input-actor", "prepare-input", 1)
+        self.input_task = dict(
+            self.task,
+            id="prepare-input",
+            owner_id=source.agent_id,
+            evidence=[str(index) * 32 for index in (4, 5, 6)],
+        )
+        self.task["dependencies"] = ["prepare-input"]
+        self.task["evidence"].append("4" * 32)
+        self.agents = [
+            {"id": member.agent_id, "team_id": actor.team_id, "role": "worker"}
+            for member in (actor, source)
+        ]
+        self.artifacts.append(
+            {
+                "id": "4" * 32,
+                "name": "numbers.json",
+                "task_id": source.task_id,
+                "owner_id": source.agent_id,
+                "team_id": source.team_id,
+                "attempt_fence": 1,
+                "sha256": sha256(self.input_bytes).hexdigest(),
+                "provenance": {"origin": "worker-authored"},
+            }
+        )
+        for index, kind in enumerate(("execution", "verification"), 5):
+            payload = (
+                {
+                    "script": "function main() { return {values:[4,8,12,16]}; }",
+                    "inputs": {},
+                    "execution": {
+                        "output": {"values": [4, 8, 12, 16]},
+                        "stdout": "",
+                        "stderr": "",
+                        "exit_code": 0,
+                    },
+                }
+                if kind == "execution"
+                else {
+                    "kind": "javascript",
+                    "accepted": True,
+                    "verifier_id": "independent-verifier",
+                    "contract_hash": "0" * 64,
+                }
+            )
+            receipt = build_receipt(controller, source, kind, payload, ["4" * 32])
+            self.artifacts.append(
+                {
+                    "id": str(index) * 32,
+                    "name": kind,
+                    "task_id": source.task_id,
+                    "owner_id": source.agent_id,
+                    "team_id": source.team_id,
+                    "attempt_fence": 1,
+                    "sha256": sha256(canonical(receipt).encode()).hexdigest(),
+                    "provenance": provenance(receipt),
+                }
+            )
+
     def request(self, path, body=None):
         self.calls.append((path, deepcopy(body)))
         if path == "/api/swarm/capabilities":
@@ -222,6 +282,10 @@ class NativeSmokeApi:
             return deepcopy(self.teams[team_id])
         if path.endswith("/tasks/record/arithmetic"):
             return deepcopy(self.task)
+        if path.endswith("/tasks/record/prepare-input"):
+            return deepcopy(self.input_task)
+        if path.endswith("/agents?limit=10"):
+            return deepcopy(self.agents)
         if path.endswith("/artifacts?limit=200"):
             return deepcopy(self.artifacts)
         return deepcopy(self.teams[team_id])
@@ -229,6 +293,8 @@ class NativeSmokeApi:
     def download(self, path, *, maximum):
         assert maximum == 4096
         self.calls.append((path, None))
+        if path.endswith("/" + "4" * 32):
+            return self.input_bytes
         return self.artifact_bytes
 
 

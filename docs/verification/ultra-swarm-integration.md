@@ -22,6 +22,22 @@ qualification report, not a declaration that every acceptance criterion passes.
 | Native diagnostic follow-up | 94 passed; 1 skipped | Persisted phase receipts, failure status, credential redaction, containment and a bounded verification-step timeout |
 | Further integration guards | 231 realtime tests and 7 WebGL guard tests passed | Removed a duplicate write to a read-only test property; the static guard now follows called relative lifecycle hooks and still rejects missing cleanup |
 | Routine/onboarding integration | 1,180 Python tests passed; 3 skipped; 13 further setup tests passed; 762 related frontend tests and 55 onboarding tests passed | New main changes integrated; production bundle rebuilt; these selections overlap earlier evidence |
+| Two-worker live-proof contracts | 102 passed; 1 skipped | Distinct worker identities, accepted shared input, current-attempt execution/verification receipts and retained artifact hashes |
+
+## Two-worker source calibration
+
+The updated optional live verifier requires two distinct workers: one executes
+and saves `numbers.json`; a statistics worker consumes that accepted dependency
+and saves `statistics.json`. Both tasks require real execution and deterministic
+acceptance, and the verifier checks the shared input in the consumer's evidence.
+
+A real configured Grok/grok-4.3 source run passed in 19.89 seconds, using 10,636
+tokens and leaving zero token/cost reservations. The recorded cost was 26,591
+microUSD. The accepted result is count 4, sum 40 and mean 10; the complete
+[calibration evidence](ultra-swarm-two-worker-calibration.json) includes worker
+identities, artifact hashes and usage receipts. This uses the existing local
+profile and does not establish fresh native one-key isolation. The unchanged
+workflow budget is 60,000 tokens, with a 180-second task runtime bound.
 
 The process assertion now verifies process identity and waits for a bounded exit
 receipt. A live descendant still fails the assertion, and a reused PID is never

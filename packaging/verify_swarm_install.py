@@ -45,6 +45,7 @@ _CLEANUP_TIMEOUT_S = 10.0
 _LIVE_TIMEOUT_S = 180
 _LIVE_TOKEN_BUDGET = 60000
 _EXPECTED_RESULT = {"count": 4, "sum": 40, "mean": 10}
+_EXPECTED_INPUT = {"values": [4, 8, 12, 16]}
 
 
 class LiveVerificationError(RuntimeError):
@@ -98,7 +99,7 @@ def live_task_spec() -> dict[str, Any]:
             "token_budget": str(_LIVE_TOKEN_BUDGET),
             "runtime_seconds": _LIVE_TIMEOUT_S,
             "concurrency": 2,
-            "worker_limit": "1",
+            "worker_limit": "2",
             "max_attempts": 1,
             "max_output_tokens": 1024,
             "max_tool_calls": 6,
@@ -113,9 +114,13 @@ def live_task_spec() -> dict[str, Any]:
         "tasks": [
             {
                 "id": "arithmetic",
+                "domain": "statistics",
+                "dependencies": ["prepare-input"],
                 "title": "Compute and save summary statistics",
                 "description": (
-                    "Use run_javascript to calculate count, sum and mean of [4, 8, 12, 16]. "
+                    "Read the accepted numbers.json artifact from dependency prepare-input "
+                    "using read_artifact. Its JSON values array is the input. "
+                    "Use run_javascript to calculate its count, sum and mean. "
                     "Return that object from main(input), then write the same JSON object as "
                     "statistics.json using write_artifact with application/json. Finally reply "
                     "with only that exact JSON object, without Markdown."
@@ -133,7 +138,29 @@ def live_task_spec() -> dict[str, Any]:
                     "return {accepted: correct(input.result) && saved, "
                     "reason: 'Arithmetic and saved JSON check'}; }"
                 ),
-            }
+            },
+            {
+                "id": "prepare-input",
+                "domain": "input-preparation",
+                "title": "Prepare the shared numeric input",
+                "description": (
+                    "Use run_javascript to return {values:[4,8,12,16]}. Save that exact JSON "
+                    "object as numbers.json with application/json using write_artifact. "
+                    "Reply only with that JSON object. Another worker will read this artifact."
+                ),
+                "acceptance": "The executed and saved object has only values, exactly [4,8,12,16].",
+                "verification": "javascript",
+                "required_tools": ["run_javascript", "write_artifact"],
+                "verification_script": (
+                    "function main(input) { const correct = x => x && "
+                    "Object.keys(x).length === 1 && Array.isArray(x.values) && "
+                    "x.values.length === 4 && x.values.every((v,i) => v === [4,8,12,16][i]); "
+                    "const saved = input.artifacts.some(a => { if(a.name !== 'numbers.json') "
+                    "return false; try { return correct(JSON.parse(a.content)); } "
+                    "catch { return false; } }); "
+                    "return {accepted: correct(input.result) && saved}; }"
+                ),
+            },
         ],
     }
 
@@ -171,7 +198,56 @@ def verify_live_artifact(api: SwarmApi, team_id: str) -> dict[str, Any]:
         raise LiveVerificationError("The arithmetic artifact is not JSON") from None
     if value != _EXPECTED_RESULT or any(type(value[key]) not in {int, float} for key in value):
         raise LiveVerificationError("The saved arithmetic result is incorrect")
-    return {"artifact_id": artifact["id"], "sha256": artifact["sha256"], "result": value}
+    source = api.request(f"/api/swarm/teams/{team_id}/tasks/record/prepare-input")
+    workers = api.request(f"/api/swarm/teams/{team_id}/agents?limit=10")
+    worker_ids = {task.get("owner_id"), source.get("owner_id")}
+    available = {
+        worker["id"]
+        for worker in workers
+        if worker.get("role") == "worker" and worker.get("team_id") == team_id
+    }
+    if len(worker_ids) != 2 or None in worker_ids or not worker_ids <= available:
+        raise LiveVerificationError("The live proof did not execute with two distinct workers")
+    if (
+        source.get("state") != "succeeded"
+        or source.get("verification") != "javascript"
+        or task.get("dependencies") != ["prepare-input"]
+    ):
+        raise LiveVerificationError("The shared input dependency was not accepted")
+    source_evidence = [
+        item
+        for item in artifacts
+        if item.get("id") in source.get("evidence", [])
+        and item.get("task_id") == "prepare-input"
+        and item.get("owner_id") == source["owner_id"]
+        and item.get("attempt_fence") == source.get("fence")
+    ]
+    source_receipts = {
+        item["provenance"]["receipt_kind"] for item in source_evidence if is_runtime_receipt(item)
+    }
+    inputs = [item for item in source_evidence if item.get("name") == "numbers.json"]
+    if not {"execution", "verification"} <= source_receipts or len(inputs) != 1:
+        raise LiveVerificationError("The shared input lacks accepted execution evidence")
+    shared = inputs[0]
+    if shared["id"] not in evidence:
+        raise LiveVerificationError("The second worker did not consume the shared input")
+    raw_input = api.download(f"/api/swarm/teams/{team_id}/artifacts/{shared['id']}", maximum=4096)
+    if hashlib.sha256(raw_input).hexdigest() != shared.get("sha256"):
+        raise LiveVerificationError("The shared input artifact hash is incorrect")
+    try:
+        if json.loads(raw_input) != _EXPECTED_INPUT:
+            raise LiveVerificationError("The shared input values are incorrect")
+    except (ValueError, UnicodeError):
+        raise LiveVerificationError("The shared input is not valid JSON") from None
+    return {
+        "artifact_id": artifact["id"],
+        "sha256": artifact["sha256"],
+        "result": value,
+        "worker_ids": sorted(worker_ids),
+        "worker_count": len(worker_ids),
+        "shared_input_artifact_id": shared["id"],
+        "shared_input_sha256": shared["sha256"],
+    }
 
 
 def run_live_task(api: SwarmApi, provider: str) -> dict[str, Any]:

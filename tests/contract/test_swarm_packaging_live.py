@@ -117,6 +117,8 @@ def test_live_fresh_install_and_replacement_verify_accepted_artifact(live_setup,
     assert result["status"] == live["status"] == live["same_artifact_replacement"] == "pass"
     assert live["result"] == {"count": 4, "sum": 40, "mean": 10}
     assert live["credential_count"] == 1 and live["tokens_used"] == "900"
+    assert live["worker_count"] == 2 and len(set(live["worker_ids"])) == 2
+    assert live["shared_input_artifact_id"] == "4" * 32
     assert probe.live_output == [True, True]
     assert "FIXTURE_API_KEY" in probe.app_environments[0]
     assert "FIXTURE_API_KEY" not in probe.app_environments[1]
@@ -132,7 +134,10 @@ def test_live_task_uses_production_schema_and_bounded_non_network_tools():
     assert spec.limits.max_attempts == 1 and spec.limits.max_tool_calls == 6
     assert not spec.policy.internet and not spec.policy.allow_dependencies
     assert set(spec.policy.tools) == {"run_javascript", "write_artifact", "read_artifact"}
-    assert len(spec.tasks) == 1 and spec.tasks[0].verification == "javascript"
+    assert len(spec.tasks) == 2 and all(task.verification == "javascript" for task in spec.tasks)
+    assert spec.limits.worker_limit == "2"
+    assert spec.tasks[0].dependencies == [spec.tasks[1].id]
+    assert spec.tasks[0].domain != spec.tasks[1].domain
 
 
 @pytest.mark.asyncio
@@ -194,6 +199,44 @@ def test_live_proof_rejects_untrusted_or_incorrect_saved_results(mutation):
         api.artifacts[0]["sha256"] = hashlib.sha256(api.artifact_bytes).hexdigest()
     with pytest.raises(SMOKE["LiveVerificationError"]):
         SMOKE["verify_live_artifact"](api, "b" * 32)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["one-worker", "wrong-role", "unread", "stale-input", "unverified-input", "changed-input"],
+)
+def test_live_proof_requires_two_workers_and_verified_shared_input(mutation):
+    api = NativeSmokeApi()
+    if mutation == "one-worker":
+        api.input_task["owner_id"] = api.task["owner_id"]
+    elif mutation == "wrong-role":
+        api.agents[1]["role"] = "lead"
+    elif mutation == "unread":
+        api.task["evidence"].remove("4" * 32)
+    elif mutation == "stale-input":
+        api.input_task["fence"] = 2
+    elif mutation == "unverified-input":
+        api.artifacts[-1]["provenance"]["origin"] = "worker-authored"
+    else:
+        api.input_bytes = b'{"values":[4,8,12,99]}'
+        api.artifacts[3]["sha256"] = hashlib.sha256(api.input_bytes).hexdigest()
+    with pytest.raises(SMOKE["LiveVerificationError"]):
+        SMOKE["verify_live_artifact"](api, "b" * 32)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("values,accepted", [([4, 8, 12, 16], True), ([4, 8, 12, 99], False)])
+async def test_shared_input_is_executed_and_checked_in_real_wasm(values, accepted):
+    from jarvis.swarm.sandbox import WasmSandbox
+
+    spec = TeamCreate.model_validate(SMOKE["live_task_spec"]())
+    value = {"values": values}
+    result = await WasmSandbox().run(
+        spec.tasks[1].verification_script,
+        {"result": value, "artifacts": [{"name": "numbers.json", "content": json.dumps(value)}]},
+    )
+    assert result.exit_code == 0
+    assert result.output["accepted"] is accepted
 
 
 def test_live_timeout_cancels_owned_team_without_retry(monkeypatch):
