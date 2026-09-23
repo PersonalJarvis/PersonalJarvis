@@ -166,6 +166,7 @@ async def evaluate_goal(
             try:
                 data = json.loads(str(event["payload"].get("output") or "null"))
             except ValueError:
+                # Plain-text tool output contributes no structured background-task status.
                 continue
             if isinstance(data, dict):
                 status = str(data.get("status") or data.get("state") or "").lower()

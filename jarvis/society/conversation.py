@@ -139,12 +139,22 @@ class ConversationArchive:
             )
 
     def queue_review(
-        self, session: str, turn_id: str, events: list[dict[str, Any]], *, direct_user: bool = False
+        self,
+        session: str,
+        turn_id: str,
+        events: list[dict[str, Any]],
+        *,
+        direct_user: bool = False,
+        owner: str = "",
     ) -> bool:
         with self._lock, self._db:
             cursor = self._db.execute(
                 "INSERT OR IGNORE INTO reviews(session,turn_id,events) VALUES(?,?,?)",
-                (session, turn_id, json.dumps({"events": events, "direct_user": direct_user})),
+                (
+                    session,
+                    turn_id,
+                    json.dumps({"events": events, "direct_user": direct_user, "owner": owner}),
+                ),
             )
         return bool(cursor.rowcount)
 

@@ -84,6 +84,7 @@ async def run_browser_call(bus: Any, hangup: asyncio.Event, *, timeout_s: float 
         while active() and not hangup.is_set():
             await wait_change()
     except TimeoutError:
+        # The caller receives an explicit error outcome for this bounded wait.
         return "error"
     finally:
         _watchers.discard(watcher)

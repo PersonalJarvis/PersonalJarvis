@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useT } from "@/i18n";
 import { Button } from "@/components/ui/button";
+import { BrandedSelect } from "@/components/ui/select";
 
 export interface LiveProfileValue {
   model: string;
@@ -111,17 +112,13 @@ export function LiveProfile() {
         </label>
         <label className="text-sm">
           {t("live.voice")}
-          <select
+          <BrandedSelect
             className={field}
             value={value.voice}
-            onChange={(e) => update({ voice: e.target.value })}
-          >
-            {(options.data?.voices ?? [value.voice]).map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </select>
+            ariaLabel={t("live.voice")}
+            onValueChange={(voice) => update({ voice })}
+            options={(options.data?.voices ?? [value.voice]).map((voice) => ({ value: voice, label: voice }))}
+          />
         </label>
         <label className="text-sm">
           {t("live.thinking_model")}
@@ -143,19 +140,15 @@ export function LiveProfile() {
         </label>
         <label className="text-sm">
           {t("live.reasoning")}
-          <select
+          <BrandedSelect
             className={field}
             value={value.reasoning_effort}
-            onChange={(e) => update({ reasoning_effort: e.target.value })}
-          >
-            {(options.data?.efforts ?? ["", value.reasoning_effort]).map(
-              (e) => (
-                <option key={e} value={e}>
-                  {e || t("live.model_default")}
-                </option>
-              ),
+            ariaLabel={t("live.reasoning")}
+            onValueChange={(reasoning_effort) => update({ reasoning_effort })}
+            options={[...new Set(options.data?.efforts ?? ["", value.reasoning_effort])].map(
+              (effort) => ({ value: effort, label: effort || t("live.model_default") }),
             )}
-          </select>
+          />
         </label>
       </div>
       <label className="flex items-center gap-2 text-sm">

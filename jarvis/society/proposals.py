@@ -460,6 +460,7 @@ async def apply(
             try:
                 detail = await manage_routine(agent, payload, task_store, scheduler)
             except (ValueError, KeyError, RuntimeError) as exc:
+                # The proposal response displays the rejected operation to its caller.
                 return {"applied": False, "detail": str(exc), "kind": kind}
             return {"applied": True, "detail": detail, "kind": kind}
         if await count_routines(task_store, agent.agent_id) >= MAX_ROUTINES_PER_AGENT:
@@ -474,6 +475,7 @@ async def apply(
                 workflow_id=payload.get("workflow_id"),
             )
         except (ValueError, KeyError) as exc:
+            # Invalid routine specifications are reported in the structured proposal result.
             return {"applied": False, "detail": f"invalid routine: {exc}", "kind": kind}
         task_id = await create_routine(task_store, scheduler, spec)
         return {"applied": True, "detail": f"routine scheduled ({task_id})", "kind": kind}

@@ -74,6 +74,7 @@ def _read_pid_file(path: Path) -> int | None:
     try:
         return int(path.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
+        # An absent or malformed PID marker identifies no prior watchdog.
         return None
 
 
@@ -90,6 +91,7 @@ def _pid_is_live_watchdog(pid: int) -> bool:
     try:
         import psutil  # noqa: PLC0415 - optional at type-check time, required at runtime
     except ImportError:
+        # Without process inspection, conservatively avoid spawning a duplicate watchdog.
         return True
     try:
         proc = psutil.Process(pid)
@@ -133,6 +135,7 @@ def _clear_pid_file(path: Path) -> None:
                 return
             path.unlink()
     except OSError:
+        # Shutdown cleanup is best effort; the next startup probes any remaining PID marker.
         pass
 
 
@@ -142,6 +145,7 @@ async def _main() -> None:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
             sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
         except (AttributeError, OSError):
+            # Redirected or embedded streams may not support encoding reconfiguration.
             pass
 
     project_root = Path(__file__).resolve().parents[2]
