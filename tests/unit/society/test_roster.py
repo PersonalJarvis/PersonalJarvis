@@ -131,6 +131,29 @@ async def test_archive_hides_from_default_list(roster: Roster):
     assert [a.state for a in archived] == [AgentState.ARCHIVED]
 
 
+async def test_rename_keeps_identity_and_rejects_duplicate_name(roster: Roster):
+    scout, _ = await roster.create(name="Scout")
+    await roster.create(name="Planner")
+    renamed = await roster.update(scout.agent_id, {"name": "  Research Scout  "})
+    assert renamed.name == "Research Scout"
+    assert renamed.agent_id == "scout"
+    assert renamed.session_id == "society:scout"
+    assert (await roster.resolve("Research Scout")).agent_id == "scout"
+
+    with pytest.raises(RosterError) as duplicate:
+        await roster.update(scout.agent_id, {"name": "planner"})
+    assert duplicate.value.reason is FailureReason.BLOCKED_BY_POLICY
+    assert (await roster.get("scout")).name == "Research Scout"
+
+    with pytest.raises(RosterError):
+        await roster.update(scout.agent_id, {"name": "bad/name"})
+
+    await roster.create(name="Jarvis", tier=Tier.LEAD)
+    with pytest.raises(RosterError) as lead:
+        await roster.update("jarvis", {"name": "Other Lead"})
+    assert lead.value.reason is FailureReason.TIER_NOT_ALLOWED
+
+
 async def test_resolve_by_id_name_or_slug(roster: Roster):
     await roster.create(name="Mail Bot")
     assert (await roster.resolve("mail-bot")) is not None

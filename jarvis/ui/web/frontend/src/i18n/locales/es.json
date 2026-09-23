@@ -5349,7 +5349,21 @@
       "loading": "Cargando agentes…",
       "empty": "Ningún agente coincide.",
       "thinking": "Pensando…",
-      "unread": "Nuevos resultados — abre para leer"
+      "unread": "Nuevos resultados — abre para leer",
+      "menu": "Acciones del agente",
+      "rename": "Cambiar nombre del agente",
+      "rename_hint": "Elige un nombre nuevo. El chat y los archivos seguirán vinculados.",
+      "name": "Nombre del agente",
+      "rename_error": "No se pudo cambiar el nombre. Compruébalo o elige otro.",
+      "hide": "Ocultar de la barra lateral",
+      "show": "Mostrar en la barra lateral",
+      "show_hidden": "Mostrar agentes ocultos ({0})",
+      "hide_hidden": "Ocultar agentes ocultos ({0})",
+      "delete": "Eliminar",
+      "delete_confirm": "¿Eliminar a {0}? El agente dejará de aparecer en el equipo activo.",
+      "delete_error": "No se pudo eliminar al agente. Inténtalo de nuevo.",
+      "cancel": "Cancelar",
+      "save": "Guardar"
     },
     "tier": {
       "lead": "Líder",

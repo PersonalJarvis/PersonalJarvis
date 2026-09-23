@@ -5303,7 +5303,21 @@
       "loading": "Agenten werden geladen…",
       "empty": "Kein Agent passt.",
       "thinking": "Denkt nach…",
-      "unread": "Neues Ergebnis — öffnen zum Lesen"
+      "unread": "Neues Ergebnis — öffnen zum Lesen",
+      "menu": "Agentenaktionen",
+      "rename": "Agent umbenennen",
+      "rename_hint": "Gib dem Agenten einen neuen Namen. Chat und Dateien bleiben verknüpft.",
+      "name": "Agentenname",
+      "rename_error": "Der Agent konnte nicht umbenannt werden. Prüfe den Namen oder wähle einen anderen.",
+      "hide": "Aus der Seitenleiste ausblenden",
+      "show": "In der Seitenleiste anzeigen",
+      "show_hidden": "Ausgeblendete Agenten anzeigen ({0})",
+      "hide_hidden": "Ausgeblendete Agenten verbergen ({0})",
+      "delete": "Löschen",
+      "delete_confirm": "{0} löschen? Der Agent wird aus deinem aktiven Team entfernt.",
+      "delete_error": "Der Agent konnte nicht gelöscht werden. Versuche es erneut.",
+      "cancel": "Abbrechen",
+      "save": "Speichern"
     },
     "tier": {
       "lead": "Leitung",

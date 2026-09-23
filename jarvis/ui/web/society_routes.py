@@ -88,6 +88,7 @@ class CreateAgentBody(BaseModel):
 
 
 class PatchAgentBody(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=40)
     title: str | None = None
     description: str | None = None
     tier: str | None = None

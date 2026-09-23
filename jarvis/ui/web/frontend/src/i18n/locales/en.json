@@ -5336,7 +5336,21 @@
       "loading": "Loading agents…",
       "empty": "No agent matches.",
       "thinking": "Thinking…",
-      "unread": "New results — open to read"
+      "unread": "New results — open to read",
+      "menu": "Agent actions",
+      "rename": "Rename agent",
+      "rename_hint": "Choose a new name for this agent. Its chat and files stay linked.",
+      "name": "Agent name",
+      "rename_error": "Could not rename this agent. Check the name or try another one.",
+      "hide": "Hide from sidebar",
+      "show": "Show in sidebar",
+      "show_hidden": "Show hidden agents ({0})",
+      "hide_hidden": "Hide hidden agents ({0})",
+      "delete": "Delete",
+      "delete_confirm": "Delete {0}? This removes the agent from your active team.",
+      "delete_error": "Could not delete this agent. Try again.",
+      "cancel": "Cancel",
+      "save": "Save"
     },
     "tier": {
       "lead": "Lead",

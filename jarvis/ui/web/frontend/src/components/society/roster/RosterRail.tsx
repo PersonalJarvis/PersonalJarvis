@@ -14,8 +14,8 @@
  * fixed width; inside the agent card it is the LEFT eighth and takes its width
  * from the grid cell — same rows, same sizes, only the divider swaps sides.
  */
-import { lazy, Suspense, useMemo, useState } from "react";
-import { Loader2, Plus, Search } from "lucide-react";
+import { lazy, Suspense, useCallback, useMemo, useState, type MouseEvent } from "react";
+import { Eye, Loader2, Plus, Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,19 @@ import { cn } from "@/lib/utils";
 
 import { AgentSwatch } from "../AgentSwatch";
 import type { AgentRunState, SocietyAgent } from "../data";
+import { AgentRosterActions } from "./AgentRosterActions";
 import { useRosterUnread } from "./useRosterUnread";
+
+const HIDDEN_AGENTS_KEY = "society.roster.hidden-agent-ids";
+
+function readHiddenAgents(): string[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(HIDDEN_AGENTS_KEY) ?? "[]");
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
 
 const AgentProfileDialog = lazy(() => import("../card/AgentProfileDialog").then((module) => ({ default: module.AgentProfileDialog })));
 
@@ -63,16 +75,35 @@ export function RosterRail({
   const t = useT();
   const [query, setQuery] = useState("");
   const [profileId, setProfileId] = useState<string | null>(null);
+  const [hiddenIds, setHiddenIds] = useState(readHiddenAgents);
+  const [showHidden, setShowHidden] = useState(false);
+  const [menu, setMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
   const profile = agents.find((agent) => agent.agentId === profileId);
+  const menuAgent = agents.find((agent) => agent.agentId === menu?.agentId);
   const unread = useRosterUnread(agents, activeAgentId);
+
+  const setHidden = useCallback((agentId: string, hidden: boolean) => {
+    setHiddenIds((current) => {
+      const next = hidden ? [...new Set([...current, agentId])] : current.filter((id) => id !== agentId);
+      localStorage.setItem(HIDDEN_AGENTS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+  const closeMenu = useCallback(() => setMenu(null), []);
+  const openMenu = (event: MouseEvent, agentId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setMenu({ agentId, x: event.clientX, y: event.clientY });
+  };
 
   const lead = useMemo(() => agents.find((a) => a.tier === "lead") ?? null, [agents]);
 
   const { leadVisible, rows } = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const filtered = q
-      ? agents.filter((a) => `${a.name} ${a.title}`.toLowerCase().includes(q))
-      : agents;
+    const filtered = agents.filter((a) =>
+      (showHidden || !hiddenIds.includes(a.agentId)) &&
+      (!q || `${a.name} ${a.title}`.toLowerCase().includes(q)),
+    );
     const masterVisible = lead ? filtered.some((a) => a.agentId === lead.agentId) : false;
     // Orchestrators, then specialists; stable within a tier. The lead lives
     // in its own centered hero above and never repeats in the list.
@@ -81,7 +112,9 @@ export function RosterRail({
       .filter((a) => a.agentId !== lead?.agentId)
       .sort((a, b) => rank[a.tier] - rank[b.tier]);
     return { leadVisible: masterVisible, rows: rest };
-  }, [agents, lead, query]);
+  }, [agents, hiddenIds, lead, query, showHidden]);
+
+  const hiddenCount = agents.filter((agent) => hiddenIds.includes(agent.agentId)).length;
 
   return (
     <aside
@@ -128,11 +161,17 @@ export function RosterRail({
           className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong"
         />
       </label>
+      {hiddenCount > 0 && <button type="button" onClick={() => setShowHidden((value) => !value)}
+        className="mx-3 mt-2 flex items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <Eye className="h-3.5 w-3.5" aria-hidden />
+        {t(showHidden ? "society.roster.hide_hidden" : "society.roster.show_hidden").replace("{0}", String(hiddenCount))}
+      </button>}
       <ScrollArea className="mt-2 min-h-0 flex-1">
         {lead && leadVisible ? (
           <div className="flex justify-center px-2 pb-2">
             <div
               data-testid="society-lead-hero"
+              onContextMenu={(event) => openMenu(event, lead.agentId)}
               className={cn(
                 "flex flex-col items-center gap-1.5 rounded-xl bg-secondary/50 px-5 py-3 text-center transition-colors hover:bg-secondary/80",
                 lead.agentId === activeAgentId && "bg-secondary",
@@ -179,9 +218,11 @@ export function RosterRail({
           {rows.map((agent) => (
             <li key={agent.agentId}>
               <div
+                onContextMenu={(event) => openMenu(event, agent.agentId)}
                 className={cn(
                   "flex w-full items-center rounded-md px-2 text-left transition-colors hover:bg-secondary",
                   agent.agentId === activeAgentId && "bg-secondary",
+                  hiddenIds.includes(agent.agentId) && "opacity-60",
                 )}
               >
                 <button type="button" onClick={() => setProfileId(agent.agentId)} aria-label={t("society.profile_card.open").replace("{0}", agent.name)} className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -206,6 +247,8 @@ export function RosterRail({
           ))}
         </ul>
       </ScrollArea>
+      {menu && menuAgent && <AgentRosterActions key={menu.agentId} agent={menuAgent} roster={agents} sample={sample}
+        hidden={hiddenIds.includes(menu.agentId)} x={menu.x} y={menu.y} onVisibilityChange={setHidden} onDismiss={closeMenu} />}
       {profile && <Suspense fallback={null}><AgentProfileDialog key={profile.agentId} agent={profile} sample={sample} onClose={() => setProfileId(null)} /></Suspense>}
     </aside>
   );

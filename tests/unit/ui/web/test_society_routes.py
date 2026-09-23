@@ -98,6 +98,20 @@ def test_patch_rederives_focus_on_description_change(client):
     assert explicit["focus"] == []
 
 
+def test_rename_agent_keeps_chat_identity_and_rejects_duplicates(client):
+    c, _ = client
+    c.post("/api/society/agents", json={"name": "Scout"})
+    c.post("/api/society/agents", json={"name": "Planner"})
+    response = c.patch("/api/society/agents/scout", json={"name": "Research Scout"})
+    assert response.status_code == 200
+    agent = response.json()["agent"]
+    assert agent["agent_id"] == "scout"
+    assert agent["session_id"] == "society:scout"
+    assert agent["name"] == "Research Scout"
+    assert c.patch("/api/society/agents/scout", json={"name": "Planner"}).status_code == 409
+    assert c.patch("/api/society/agents/jarvis", json={"name": "Other Lead"}).status_code == 409
+
+
 def test_typed_errors(client):
     c, _ = client
     assert c.get("/api/society/agents/ghost").status_code == 404
