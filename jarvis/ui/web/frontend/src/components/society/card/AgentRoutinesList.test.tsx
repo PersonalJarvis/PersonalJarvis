@@ -91,6 +91,16 @@ describe("AgentRoutinesList", () => {
       .toBeGreaterThan(1);
   });
 
+  test("shows an empty list only after the routine request succeeds", async () => {
+    let respond!: (response: Response) => void;
+    fetchMock.mockImplementation(() => new Promise<Response>((resolve) => { respond = resolve; }));
+    mount();
+    expect(screen.getByText("Loading…")).toBeTruthy();
+    expect(screen.queryByText("No routines yet.")).toBeNull();
+    respond(json({ routines: [] }));
+    await screen.findByText("No routines yet.");
+  });
+
   test.each(["schedule", "next-run", "icon", "padding"])("opens the routine when clicking %s", async (area) => {
     routines[0].due_at_ns = Date.UTC(2026, 8, 13, 8) * 1e6;
     mount();
