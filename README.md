@@ -27,8 +27,8 @@ the conversation and inspect what happens. You can type instead of speaking.
 | **Ultra Agent Swarm** | Temporary teams for a shared goal: clarify, review a plan, then coordinate parallel work. [Development preview](#ultra-agent-swarm). |
 
 <p align="center">
-  <a href="assets/demo/readme-2026-09/jarvis-orchestrator-v2.mp4">
-    <img src="assets/demo/readme-2026-09/jarvis-orchestrator-v2.gif" alt="Jarvis interface recreation: a spoken request becomes a transcript, followed by a reply, with voice controls below" width="1000" />
+  <a href="assets/demo/readme-2026-09/jarvis-orchestrator-v3.mp4">
+    <img src="assets/demo/readme-2026-09/jarvis-orchestrator-v3.gif" alt="Jarvis interface recreation: a spoken request becomes a transcript, followed by a reply, with voice controls below" width="1000" />
   </a>
 </p>
 
@@ -65,8 +65,8 @@ model or supported agent account for the work, and keep the conversations in
 one workspace.
 
 <p align="center">
-  <a href="assets/demo/readme-2026-09/jarvis-agents-v3.mp4">
-    <img src="assets/demo/readme-2026-09/jarvis-agents-v3.gif" alt="Agents workspace recreation: send a brief, watch the live thinking trace, then read the streaming reply and completed plan" width="1000" />
+  <a href="assets/demo/readme-2026-09/jarvis-agents-v4.mp4">
+    <img src="assets/demo/readme-2026-09/jarvis-agents-v4.gif" alt="Agents workspace recreation: send a brief, watch the live thinking trace, then read the streaming reply and completed plan" width="1000" />
   </a>
 </p>
 
@@ -94,8 +94,8 @@ Its run history and storage are separate from persistent Jarvis Agents.
 > implementation and uses an illustrative team.
 
 <p align="center">
-  <a href="assets/demo/readme-2026-09/ultra-swarm-v2.mp4">
-    <img src="assets/demo/readme-2026-09/ultra-swarm-v2.gif" alt="Ultra Agent Swarm preview: enter a goal, clarify it, review a plan, and inspect parallel task assignments" width="1000" />
+  <a href="assets/demo/readme-2026-09/ultra-swarm-v3.mp4">
+    <img src="assets/demo/readme-2026-09/ultra-swarm-v3.gif" alt="Ultra Agent Swarm preview: enter a goal, clarify it, review a plan, and inspect parallel task assignments" width="1000" />
   </a>
 </p>
 

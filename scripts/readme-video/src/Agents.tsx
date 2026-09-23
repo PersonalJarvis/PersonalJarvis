@@ -1,13 +1,17 @@
 import React from "react";
-import { Easing, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
+import { Easing, Img, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import {
   Brain, Check, ChevronDown, ChevronRight, CircleDashed, Clock,
   Loader2, Maximize2, Mic, MoreHorizontal, MousePointer2, Plus, Search, Send, Square,
 } from "lucide-react";
 import { Badge } from "@app/components/ui/badge";
 import { Button } from "@app/components/ui/button";
-import { GigiMark } from "@app/components/GigiMark";
 import { AppShell } from "./shared";
+import { AgentSymbol } from "./identity/AgentSymbol";
+import { defaultCompanion } from "./identity/appearance";
+// Exact source asset: jarvis/ui/web/frontend/src/assets/gigi-companion-avatar.png.
+// SHA-256: 7B9E3128AD160644B5ECA8EA223D614EABD5BA029A8CD825D15898AC791E53E0.
+import gigiCompanionMark from "./assets/gigi-companion-avatar.png";
 
 /**
  * Deterministic visual adapter for the actual Agents workspace, not a second UI.
@@ -19,9 +23,9 @@ import { AppShell } from "./shared";
  * is an illustrative task-status summary, never private model reasoning.
  */
 const AGENTS = [
-  { name: "Jarvis", title: "Lead", primary: "#343338", secondary: "#737078", accent: "#d4b477" },
-  { name: "Atlas", title: "Planning & research", primary: "#1f2a44", secondary: "#f2f2ee", accent: "#c9a227" },
-  { name: "Nova", title: "Writing & review", primary: "#096153", secondary: "#b16f51", accent: "#e8c46b" },
+  { name: "Jarvis", title: "Lead", tier: "lead" },
+  { name: "Atlas", title: "Planning & research", tier: "specialist" },
+  { name: "Nova", title: "Writing & review", tier: "specialist" },
 ] as const;
 type DemoAgent = (typeof AGENTS)[number];
 
@@ -35,15 +39,15 @@ const typed = (text: string, frame: number, start: number, duration: number) =>
     extrapolateLeft: "clamp", extrapolateRight: "clamp",
   })));
 
-/** Exact figure-less fallback from society/AgentSwatch.tsx. */
-const Face: React.FC<{ agent: DemoAgent; size: number }> = ({ agent, size }) => (
-  <span className="relative inline-flex shrink-0 items-end justify-center overflow-hidden rounded-full border border-border"
-    style={{ width: size, height: size, background: `linear-gradient(170deg, ${agent.primary} 0%, ${agent.secondary} 135%)`, boxShadow: `inset 0 0 0 2px ${agent.accent}66` }}>
-    <span className="relative rounded-full" style={{ width: size * 0.64, height: size * 0.64, marginBottom: size * 0.08, background: "#f4b68f", boxShadow: `0 ${-size * 0.16}px 0 0 #9e5d47, inset 0 0 0 ${Math.max(1, size * 0.03)}px rgba(0,0,0,0.08)` }}>
-      <span className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2" style={{ gap: Math.max(3, size * 0.11), marginTop: size * 0.04 }}>
-        {[0, 1].map((eye) => <span key={eye} className="rounded-full" style={{ width: Math.max(2.5, size * 0.085), height: Math.max(2.5, size * 0.085) * 1.25, background: "#1b2427" }} />)}
-      </span>
-    </span>
+/**
+ * Current jarvis/ui/web/frontend/src/components/society/AgentSwatch.tsx structure.
+ * Uses the snapshotted vectors; Remotion Img waits for the source avatar to load.
+ */
+const AgentIdentity: React.FC<{ agent: DemoAgent; size: number }> = ({ agent, size }) => (
+  <span aria-hidden className="relative inline-flex shrink-0 items-center justify-center select-none" style={{ width: size, height: size }}>
+    {agent.tier === "lead"
+      ? <Img data-agent-mascot="gigi" src={gigiCompanionMark} alt="" draggable={false} width={size} height={size} className="h-full w-full object-contain" />
+      : <AgentSymbol {...defaultCompanion(agent.name)} size={size} />}
   </span>
 );
 
@@ -59,21 +63,23 @@ const Roster: React.FC<{ selected: string; busy: boolean; seconds: number }> = (
     </label>
     <div className="mt-2 min-h-0 flex-1">
       <div className="flex justify-center px-2 pb-2">
-        <button className="flex flex-col items-center gap-1.5 rounded-xl bg-secondary/50 px-5 py-3 text-center">
-          <GigiMark size={56} />
-          <span className="flex items-center justify-center gap-1.5"><span className="text-sm font-medium text-foreground">Jarvis</span><Badge variant="secondary" className="px-1.5 py-0 text-xs">Lead</Badge></span>
-        </button>
+        <div className="flex flex-col items-center gap-1.5 rounded-xl bg-secondary/50 px-5 py-3 text-center" data-testid="society-lead-hero">
+          <button type="button" aria-label="Open profile of Jarvis" className="relative rounded-full"><AgentIdentity agent={AGENTS[0]} size={56} /></button>
+          <button type="button" className="flex max-w-full items-center justify-center gap-1.5 rounded-md"><span className="truncate text-sm font-medium text-foreground">Jarvis</span><Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-xs">Lead</Badge></button>
+        </div>
       </div>
       <div className="mx-3 mb-1 border-t border-border/60" />
       <ul className="flex flex-col gap-0.5 px-2 pb-3">
         {AGENTS.slice(1).map((agent) => <li key={agent.name}>
-          <button className={`flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left ${selected === agent.name ? "bg-secondary" : ""}`}>
-            <Face agent={agent} size={34} />
+          <div className={`flex w-full items-center rounded-md px-2 text-left ${selected === agent.name ? "bg-secondary" : ""}`}>
+            <button type="button" aria-label={`Open profile of ${agent.name}`} className="shrink-0 rounded-full"><AgentIdentity agent={agent} size={34} /></button>
+            <button type="button" aria-current={selected === agent.name ? "true" : undefined} className="flex min-w-0 flex-1 select-none items-center gap-2.5 rounded-md py-2 pl-2.5 text-left">
             <span className="min-w-0 flex-1"><span className="block text-sm font-medium text-foreground">{agent.name}</span><span className="block truncate text-xs text-muted-foreground">{agent.title}</span></span>
             {selected === agent.name && busy
               ? <span className="grid h-4 w-4 shrink-0 place-items-center text-muted-foreground"><Loader2 className="h-3 w-3" style={{ transform: `rotate(${seconds * 300}deg)` }} /></span>
               : <span className="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/50" />}
-          </button>
+            </button>
+          </div>
         </li>)}
       </ul>
     </div>
@@ -107,7 +113,7 @@ const ANSWER_PARTS = [
 
 const UserMessage: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({ children, style }) =>
   <div className="flex min-w-0 max-w-[min(85%,42rem)] flex-col items-end gap-1 self-end" style={style}>
-    <div className="min-w-0 rounded-2xl rounded-br-md bg-secondary px-4 py-2.5 text-sm leading-relaxed text-foreground">{children}</div>
+    <div className="min-w-0 rounded-2xl rounded-br-md bg-secondary px-4 py-2.5 text-sm leading-relaxed text-foreground [overflow-wrap:anywhere]">{children}</div>
   </div>;
 
 /** The production Prose/TraceGroups answer shape with frame-driven text deltas. */
@@ -192,7 +198,7 @@ const Chat: React.FC<{ seconds: number; agent: DemoAgent }> = ({ seconds, agent 
       <div className="relative mx-auto flex w-full min-w-0 items-end gap-1 rounded-[24px] border border-border bg-secondary px-2 py-1.5">
         <button className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground"><Plus className="h-4 w-4" /></button>
         <div className="min-h-8 min-w-0 flex-1 whitespace-pre-wrap px-1 py-1.5 text-sm leading-5 text-foreground">{!submitted && draft ? <>{draft}<span style={{ opacity: Math.floor(seconds * 2.5) % 2 ? 0 : 1 }}>|</span></> : <span className="text-muted-foreground">Message {agent.name}</span>}</div>
-        <button className="flex h-8 min-w-0 shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-xs text-muted-foreground"><span className="truncate">Jarvis&apos; brain</span><ChevronDown className="h-3 w-3 shrink-0" /></button>
+        <div className="flex h-8 min-w-0 max-w-[40%] shrink-0 items-center"><button disabled={busy} className="flex max-w-full items-center gap-1.5 rounded-full px-2 py-1 text-xs text-muted-foreground disabled:opacity-50"><span className="truncate">Jarvis&apos; brain</span><ChevronDown className="h-3 w-3 shrink-0" /></button></div>
         <button className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground"><Mic className="h-4 w-4" /></button>
         {busy ? <button className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-foreground text-background" aria-label="Stop"><Square className="h-3.5 w-3.5" /></button>
           : <button className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground" style={{ opacity: !submitted && draft ? 1 : 0.4 }} aria-label="Send"><Send className="h-3.5 w-3.5" /></button>}
@@ -206,6 +212,7 @@ const Options: React.FC<{ name: string }> = ({ name }) => <aside className="flex
     <h2 className="font-display text-sm font-semibold tracking-tight text-foreground">Options</h2><button className="rounded-md p-1 text-muted-foreground"><MoreHorizontal className="h-4 w-4" /></button>
   </header>
   <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-3 pb-3 pt-2">
+    <button type="button" data-testid="edit-agent-appearance" className="shrink-0 rounded-lg border border-border px-3 py-2 text-left text-sm font-medium text-foreground">Character &amp; companion</button>
     <div className="shrink-0">
       <div className="mb-1 flex items-center justify-between gap-1 text-[10px] text-muted-foreground"><span>{name} · Connecting</span><button className="rounded px-2 py-1 text-xs"><Maximize2 size={14} /></button></div>
       <div className="relative flex aspect-[16/10] items-center justify-center overflow-hidden rounded-lg bg-muted p-3 text-center text-xs text-muted-foreground">Connecting</div>

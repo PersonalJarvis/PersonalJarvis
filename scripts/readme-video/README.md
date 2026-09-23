@@ -10,9 +10,9 @@ and internal marketing projects are not inputs.
 
 | Composition | Interface sources | Still |
 |---|---|---|
-| JarvisOrchestrator | `components/home/VoiceStage.tsx`, `JarvisBar.tsx`, `Greeting.tsx`, `StageWaveform.tsx` | [Voice preview](../../assets/demo/readme-2026-09/jarvis-orchestrator-v2.png) |
-| JarvisAgents | `components/society/card/AgentCardOverlay.tsx`, `roster/RosterRail.tsx`, `chat/AgentChatPanel.tsx`, `components/agentchat/WorkTrace.tsx` | [Agents preview](../../assets/demo/readme-2026-09/jarvis-agents-v3.png) |
-| UltraSwarm | `views/swarm/UltraSwarmView.tsx`, `components/swarm/`, `i18n/locales/swarm/en.json` | [Swarm preview](../../assets/demo/readme-2026-09/ultra-swarm-v2.png) |
+| JarvisOrchestrator | `components/home/VoiceStage.tsx`, `JarvisBar.tsx`, `Greeting.tsx`, `StageWaveform.tsx` | [Voice preview](../../assets/demo/readme-2026-09/jarvis-orchestrator-v3.png) |
+| JarvisAgents | `components/society/card/AgentCardOverlay.tsx`, `roster/RosterRail.tsx`, `chat/AgentChatPanel.tsx`, `components/agentchat/WorkTrace.tsx` | [Agents preview](../../assets/demo/readme-2026-09/jarvis-agents-v4.png) |
+| UltraSwarm | `views/swarm/UltraSwarmView.tsx`, `components/swarm/`, `i18n/locales/swarm/en.json` | [Swarm preview](../../assets/demo/readme-2026-09/ultra-swarm-v3.png) |
 
 Paths in the middle column are relative to `jarvis/ui/web/frontend/src`.
 Each composition fills the frame with its section, with global navigation closed.
@@ -23,8 +23,11 @@ Generated CSS uses the application's Tailwind configuration, theme tokens,
 and bundled fonts. Network-dependent views have pure visual adapters here;
 their markup and state are driven by the video frame.
 
-Voice and Agents were checked against the September 23 source. Ultra Swarm
-follows commit `8434ce9b6e107c0b28789c144243e4b2b784723a` in
+Voice and Agents were refreshed against the current September 23 desktop source:
+the retired voice header is absent, the caption is 32px high, and Agents uses
+the vector companion identities, updated Gigi avatar, and Character & companion control. Reproducible
+identity snapshots and their MIT attribution are in `src/identity/`.
+Ultra Swarm follows commit `9a7ee4cc8b1fca6f2457c2f3036501a6e3d7b48e` in
 [PR #186](https://github.com/PersonalJarvis/PersonalJarvis/pull/186). Keep its
 development-preview label until the feature reaches the default install.
 Re-check this mapping when the product UI changes.

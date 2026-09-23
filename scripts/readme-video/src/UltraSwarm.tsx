@@ -5,7 +5,7 @@ import { AppShell, useDemoFrame } from "./shared";
 /**
  * Source-faithful, deterministic presentation of an illustrative session.
  * UI provenance: codex/ultra-agent-swarm @
- * 8434ce9b6e107c0b28789c144243e4b2b784723a (not yet an ancestor of main).
+ * 9a7ee4cc8b1fca6f2457c2f3036501a6e3d7b48e (development preview; PR #186).
  * Source paths under jarvis/ui/web/frontend/src/:
  * views/swarm/UltraSwarmView.tsx; components/swarm/{CreateTeamForm,
  * SwarmPreparation,SwarmSimulation,SwarmInspector}.tsx; components/swarm/swarm.css;
@@ -13,6 +13,8 @@ import { AppShell, useDemoFrame } from "./shared";
  * The markup and class rules follow those components. Network calls and event
  * handlers are replaced with frame-driven illustrative inputs, never live work.
  * No successful task, accepted artifact, throughput, or measured usage is shown.
+ * Rechecked against the newer source: clarification-answer hydration changed;
+ * the displayed markup, labels, styles, lead/task layout and result UI did not.
  */
 
 const GOAL = "Compare three approaches for a local knowledge base.";
@@ -276,8 +278,8 @@ export const UltraSwarm: React.FC = () => {
   return <AppShell active="swarm">
     <style>{SOURCE_CSS}</style>
     {/* A uniform source-canvas scale keeps the actual app controls readable.
-        The 28px native caption is supplied by AppShell, outside this canvas. */}
-    <div style={{ position: "absolute", left: 0, top: 0, width: 1440, height: 762, transform: "scale(1.3333333333)", transformOrigin: "top left", overflow: "hidden" }}>
+        The 32px native caption is supplied by AppShell, outside this canvas. */}
+    <div style={{ position: "absolute", left: 0, top: 0, width: 1440, height: 758, transform: "scale(1.3333333333)", transformOrigin: "top left", overflow: "hidden" }}>
       {PHASES.map(({ phase, start, next }, index) => {
         if (frame < start || frame >= next + 12) return null;
         const enter = index === 0 ? 1 : glide(frame, start, start + 12);
