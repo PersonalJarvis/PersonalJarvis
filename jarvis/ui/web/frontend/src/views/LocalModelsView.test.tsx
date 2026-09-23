@@ -67,6 +67,9 @@ vi.mock("@/views/local-models/HuggingFacePanel", () => ({
 vi.mock("@/views/local-models/ServerPanel", () => ({
   ServerPanel: () => <div data-testid="server-panel" />,
 }));
+vi.mock("@/views/local-models/NativeVoicePanel", () => ({
+  NativeVoicePanel: () => <div data-testid="native-voice-panel" />,
+}));
 vi.mock("@/views/local-models/TuneSheet", () => ({
   TuneSheet: ({
     model,
@@ -115,6 +118,13 @@ afterEach(() => {
 });
 
 describe("LocalModelsView", () => {
+  it("opens native voice even when no Ollama provider is configured", () => {
+    mockProviders.providers = [];
+    render(<LocalModelsView />);
+    fireEvent.click(screen.getByRole("tab", { name: "local_models.native.tab" }));
+    expect(screen.getByTestId("native-voice-panel")).toBeDefined();
+    expect(screen.queryByText("local_models.no_provider")).toBeNull();
+  });
   it("renders the header, every tab and the overview by default", () => {
     render(<LocalModelsView />);
 

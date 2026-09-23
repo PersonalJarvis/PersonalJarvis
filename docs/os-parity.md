@@ -27,6 +27,7 @@ provides the execution evidence; this does not claim physical audio-device testi
 | Native synthetic audio/context/cancellation | Real x64 CPU pipe-worker probe | Not qualified | Upstream HTTP runner exercised in a container; pipe worker not qualified |
 | Resident controller, exclusive conversation and crash cleanup | Subprocess contracts and real CPU controller probe | Portable implementation; native execution pending | Portable implementation; native execution pending |
 | Nemotron community runtime | CUDA audio probe; tool qualification failed | Not qualified | Not qualified |
+| Model library API and preview UI | API/React contracts; Chrome light/dark and cancel checks | Portable code; device verification pending | Portable code; device verification pending |
 | Jarvis tools and wake-ready application integration | Not qualified | Not qualified | Not qualified |
 
 The new `realtime/local_runtime` package does not load inference libraries or

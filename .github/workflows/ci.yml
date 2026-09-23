@@ -798,6 +798,13 @@ jobs:
           tests/contract/test_realtime_provider_contract.py
           tests/contract/test_realtime_reliability_gate.py
           tests/contract/test_agent_learning_loop.py
+          tests/contract/test_local_voice_model_selection.py
+          tests/contract/test_local_voice_packages.py
+          tests/contract/test_local_voice_acquisition.py
+          tests/contract/test_local_voice_native_audio.py
+          tests/contract/test_local_voice_process.py
+          tests/contract/test_local_voice_runtime.py
+          tests/contract/test_local_voice_library.py
           -q -p no:cacheprovider
 
   realtime-slim:
@@ -835,6 +842,13 @@ jobs:
           tests/contract/test_realtime_provider_contract.py
           tests/contract/test_realtime_reliability_gate.py
           tests/contract/test_agent_learning_loop.py
+          tests/contract/test_local_voice_model_selection.py
+          tests/contract/test_local_voice_packages.py
+          tests/contract/test_local_voice_acquisition.py
+          tests/contract/test_local_voice_native_audio.py
+          tests/contract/test_local_voice_process.py
+          tests/contract/test_local_voice_runtime.py
+          tests/contract/test_local_voice_library.py
           -q -p no:cacheprovider
 
   realtime-soak:

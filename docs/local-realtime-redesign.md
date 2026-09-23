@@ -168,7 +168,7 @@ and prompt changes must not be described as having fine-tuned a model.
 | 1: Diagnosis | Reproducible findings, local-surface map and upstream feasibility assessment; regression for Mac rejection. | Initial assessment and Mac fix complete. |
 | 2: Runtime contract | Typed model/adapter selection; invalid or incompatible custom weights rejected; CPU/Metal/CUDA contract tests; no boot-time heavy imports. | Manifest, eligibility, verified acquisition/import, inspection CLI and resident process controller implemented. Application wiring and runtime distribution remain pending. |
 | 3: Inference integration | Real audio in/out, tool request/result, interrupt, cancellation and two-turn context through the selected native model or agreed package. | Windows CPU pipe-worker proof covers synthetic English audio, context and cancellation. Tool execution and application integration remain pending. |
-| 4: App workflow | Choose/download/use/customize without server setup; progress/cancel/retry; settings migration and rollback; light/dark browser verification and frontend build. | Pending. |
+| 4: App workflow | Choose/download/use/customize without server setup; progress/cancel/retry; settings migration and rollback; light/dark browser verification and frontend build. | Preview package library in Local models: catalog, download, verification, cancellation and custom manifest import. Voice activation, runtime installation and configuration migration remain pending. |
 | 5: Wake and qualification | Cold app launch, first utterance preserved, warm wake latency measured, long-session recovery, real NVIDIA and Apple Silicon, CPU/headless base install and existing provider regression checks. | Pending; no Apple Silicon execution environment has been established. |
 
 Terminal evidence must include targeted pytest and `tests/contract/` checks,
@@ -322,3 +322,41 @@ criterion. Completing the request still requires the in-app workflow,
 ToolExecutor integration, wake residency, runtime distribution and real device
 qualification described above. No experimental candidate has been activated as
 the user's current voice provider.
+
+## In-app package library
+
+Local models now has a Native voice tab independent of Ollama availability. It
+uses the mounted `/api/local-voice` API to list the catalog and stored manifests,
+download or import packages, show progress, cancel an operation and retry using
+verified files. One operation owns the download slot until cleanup finishes.
+Closing the app requests cancellation and waits for filesystem cleanup. Custom
+weights use a data-only JSON manifest plus an optional local source directory;
+model metadata cannot supply an executable or shell command.
+
+The preview explicitly says activation is unavailable. A package receipt and
+file sizes describe storage; activation still requires checksum and inference
+verification. The existing voice configuration is not changed by this tab.
+Runtime download/installation, provider activation and wake integration remain
+separate unfinished acceptance items.
+
+Verification on the Windows development host:
+
+- Targeted React tests pass; the production frontend build completes.
+- The mounted API accepts and stores an own five-byte fixture package. Library
+  contracts cover persistence, missing files, cancellation/cleanup, retry and
+  Python/TypeScript field parity. The CLI dynamically exposes all three API
+  operations; `jarvis api local-voice list-voice-models` returned the live list.
+- Chrome exercised the actual component against the actual package API in an
+  isolated preview: light/dark rendering, real GGUF checksum verification,
+  cancellation and refresh. No console or network errors occurred in that pass.
+  The browser extension refused automated file selection because file-URL access
+  was disabled. File selection/import has component and API evidence, not a
+  completed browser upload proof. The entire desktop workflow was not exercised.
+- The isolated startup-budget check passed: window 1,801 ms, application
+  interaction 12,839 ms and existing voice readiness 12,919 ms. These numbers
+  cover boot regression only, not native-model wake latency.
+
+The portable CI matrix now includes the new local-voice contracts on Windows,
+macOS, Linux and `python:3.11-slim`. The subprocess fixtures exercise ownership
+and failure recovery without model weights. Passing them must not be represented
+as physical GPU, microphone or Apple Silicon audio qualification.
