@@ -94,5 +94,30 @@ class PcmPlayback extends AudioWorkletProcessor {
   }
 }
 
+// A meter on the audio render thread keeps reporting while the WebView is
+// hidden. requestAnimationFrame stops in background windows and cannot own
+// the desktop's speaking/listening transitions.
+class PcmLevel extends AudioWorkletProcessor {
+  private sum = 0;
+  private count = 0;
+
+  process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+    const input = inputs[0]?.[0];
+    const size = input?.length ?? outputs[0]?.[0]?.length ?? 128;
+    if (input) {
+      for (const sample of input) this.sum += sample * sample;
+    }
+    this.count += size;
+    if (this.count >= sampleRate / 30) {
+      this.port.postMessage({ type: "level", rms: Math.sqrt(this.sum / this.count) });
+      this.sum = 0;
+      this.count = 0;
+    }
+    // Output remains silent; the HTML audio element owns audible playback.
+    return true;
+  }
+}
+
 registerProcessor("pcm-capture", PcmCapture);
 registerProcessor("pcm-playback", PcmPlayback);
+registerProcessor("pcm-level", PcmLevel);

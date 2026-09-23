@@ -311,11 +311,12 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     # Capability, not a provider id (AP-21): the surface must not call a start
     # attempt dead while the backend is still inside a budget it declared.
     handshake_budget_s = await asyncio.to_thread(_realtime_handshake_budget_s, cfg)
-    transport_offer_ready = await _realtime_transport_offer_ready(
-        requires_webrtc_offer
+    browser_audio = realtime_browser_audio(cfg)
+    transport_offer_ready = (
+        None if browser_audio else await _realtime_transport_offer_ready(requires_webrtc_offer)
     )
     transport_offer_detail: str | None = None
-    if requires_webrtc_offer:
+    if requires_webrtc_offer and not browser_audio:
         transport_offer_detail = str(
             getattr(request.app.state, "realtime_transport_broker_error", "")
             or (
@@ -356,7 +357,7 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
         "realtime_available": realtime_available,
         "realtime_availability_pending": realtime_availability_pending,
         "requires_webrtc_offer": requires_webrtc_offer,
-        "browser_audio": realtime_browser_audio(cfg),
+        "browser_audio": browser_audio,
         "handshake_budget_s": handshake_budget_s,
         "transport_offer_ready": transport_offer_ready,
         "transport_offer_detail": transport_offer_detail,

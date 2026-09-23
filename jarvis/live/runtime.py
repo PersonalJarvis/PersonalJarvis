@@ -75,9 +75,11 @@ async def run_browser_call(bus: Any, hangup: asyncio.Event, *, timeout_s: float 
             await asyncio.gather(*tasks, return_exceptions=True)
         changed.clear()
 
-    await bus.publish(BrowserVoiceRequested(action="start"))
-    # UI permission and device setup can take time. No background billed connection.
     try:
+        if hangup.is_set():
+            return "hotkey"
+        await bus.publish(BrowserVoiceRequested(action="start"))
+        # UI permission and device setup can take time. No idle billed connection.
         async with asyncio.timeout(timeout_s):
             while not active() and not hangup.is_set():
                 await wait_change()
@@ -88,7 +90,8 @@ async def run_browser_call(bus: Any, hangup: asyncio.Event, *, timeout_s: float 
         return "error"
     finally:
         _watchers.discard(watcher)
-        if hangup.is_set():
-            await bus.publish(BrowserVoiceRequested(action="stop"))
-            await close_all()
+        # Retract pending browser starts on timeout/cancellation too. Otherwise
+        # focusing a hidden window later starts a call whose owner already left.
+        await bus.publish(BrowserVoiceRequested(action="stop"))
+        await close_all()
     return "hotkey" if hangup.is_set() else "client_stop"

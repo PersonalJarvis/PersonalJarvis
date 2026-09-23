@@ -55,6 +55,13 @@ const OUTPUT_TAP_TTL_MS = 600;
 /** Historical fixed budget for one realtime start attempt. */
 const DEFAULT_START_BUDGET_MS = 20_000;
 
+/**
+ * Consecutive quiet analyser frames before the WebRTC voice tap reports
+ * listening (~700 ms at 30 Hz). Word gaps must not flip the Jarvis bar
+ * back to listening mid-sentence.
+ */
+const REMOTE_SILENCE_HANGOVER_FRAMES = 21;
+
 /** Bounded startup pre-roll, mirroring the desktop's 30 s replay window.
  *
  * Captured microphone PCM used to be DISCARDED until the backend answered
@@ -135,7 +142,8 @@ export class RealtimeWebRtcTransport {
     await waitForIceGathering(peer);
     if (this.peer !== peer) return null;
     const sdp = peer.localDescription?.sdp ?? offer.sdp ?? "";
-    return sdp.trim() || null;
+    // SDP is a wire format: the terminal CRLF is required by Live's parser.
+    return sdp.trim() ? sdp : null;
   }
 
   async applyAnswer(sdp: string): Promise<void> {
@@ -394,33 +402,52 @@ export class RealtimeAudioClient {
     this.webRtcTransport = new RealtimeWebRtcTransport(stream => this.observeRemoteAudio(stream));
   }
 
-  private mediaFrame = 0;
+  private remoteMeter: AudioWorkletNode | null = null;
   private remoteSource: MediaStreamAudioSourceNode | null = null;
   private lastPlaybackActive = false;
+  private remoteSilenceFrames = 0;
 
   private observeRemoteAudio(stream: MediaStream): void {
     if (!this.ctx) return;
-    cancelAnimationFrame(this.mediaFrame);
+    // A suspended context measures only zeros: the assistant would talk
+    // while the bar keeps showing listening. The call started from a user
+    // gesture, so resuming here is allowed and makes the tap truthful.
+    void this.ctx.resume().catch(error => console.warn("Voice meter could not resume", error));
+    this.remoteMeter?.disconnect();
+    if (this.remoteMeter) this.remoteMeter.port.onmessage = null;
     this.remoteSource?.disconnect();
-    const analyser = this.ctx.createAnalyser();
-    analyser.fftSize = 256;
+    this.lastPlaybackActive = false;
+    this.remoteSilenceFrames = 0;
+    const meter = new AudioWorkletNode(this.ctx, "pcm-level");
+    this.remoteMeter = meter;
     this.remoteSource = this.ctx.createMediaStreamSource(stream);
-    this.remoteSource.connect(analyser);
-    const samples = new Float32Array(analyser.fftSize);
-    const measure = () => {
-      analyser.getFloatTimeDomainData(samples);
-      const rms = Math.sqrt(samples.reduce((sum, x) => sum + x * x, 0) / samples.length);
+    this.remoteSource.connect(meter);
+    meter.connect(this.ctx.destination);
+    meter.port.onmessage = (event: MessageEvent) => {
+      if (this.remoteMeter !== meter || this.intentionalClose) return;
+      const rms = event.data?.rms;
+      if (event.data?.type !== "level" || typeof rms !== "number" || !Number.isFinite(rms)) return;
       this.cb.onOutputLevel?.(this.outputMeter.push(rms));
       const active = rms > 0.004;
-      if (active !== this.lastPlaybackActive) {
-        this.lastPlaybackActive = active;
-        if (active) this.cb.onAudio?.();
-        this.cb.onStatus?.(active ? "speaking" : "listening", {});
-        if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "playback_state", active }));
+      if (active) {
+        this.remoteSilenceFrames = 0;
+        if (!this.lastPlaybackActive) {
+          this.lastPlaybackActive = true;
+          this.cb.onAudio?.();
+          this.cb.onStatus?.("speaking", {});
+          if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "playback_state", active: true }));
+        }
+      } else if (this.lastPlaybackActive) {
+        // Word gaps are silence too: only report listening after the tail
+        // of the reply is really over, or the bar flickers mid-sentence.
+        this.remoteSilenceFrames += 1;
+        if (this.remoteSilenceFrames >= REMOTE_SILENCE_HANGOVER_FRAMES) {
+          this.lastPlaybackActive = false;
+          this.cb.onStatus?.("listening", {});
+          if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "playback_state", active: false }));
+        }
       }
-      this.mediaFrame = requestAnimationFrame(measure);
     };
-    measure();
   }
 
   connect(): Promise<void> {
@@ -456,10 +483,16 @@ export class RealtimeAudioClient {
       if (!this.ctx.audioWorklet) {
         throw new RealtimeAudioSupportError("audio_worklet_unavailable");
       }
-      await this.ctx.audioWorklet.addModule(pcmWorkletUrl);
-      await this.ctx.resume();
-
-      this.stream = await navigator.mediaDevices.getUserMedia({
+      // The worklet load, the microphone open, the one-time WS ticket and
+      // the shared connect-budget turn are independent: acquiring them
+      // concurrently keeps three disk/network waits off the wake path
+      // instead of stacked end to end. The WebRTC offer still needs the
+      // microphone stream, so it is built once the mic resolves below.
+      const setupStartedAt = performance.now();
+      const workletReady = this.ctx.audioWorklet
+        .addModule(pcmWorkletUrl)
+        .then(() => this.ctx?.resume());
+      const micReady = navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: { ideal: 1 },
           echoCancellation: true,
@@ -467,10 +500,20 @@ export class RealtimeAudioClient {
           autoGainControl: true,
         },
       });
+      const ticketReady = mintWsTicket();
+      const turnReady = new Promise<void>((resolve) => requestConnect(resolve));
+      this.stream = await micReady;
+      if (this.intentionalClose) throw new Error("Voice start cancelled");
+      await workletReady;
+      if (this.intentionalClose) throw new Error("Voice start cancelled");
+      const setupMs = Math.round(performance.now() - setupStartedAt);
       const source = this.ctx.createMediaStreamSource(this.stream);
       this.captureNode = new AudioWorkletNode(this.ctx, "pcm-capture");
       this.playbackNode = new AudioWorkletNode(this.ctx, "pcm-playback");
       this.playbackNode.port.onmessage = (event: MessageEvent) => {
+        // RTP is measured by pcm-level. The unused PCM queue produces zeros
+        // and must not erase the real output meter thirty times per second.
+        if (this.options.browserAudio && this.options.requiresWebRtcOffer) return;
         const data = event.data as { type?: string; rms?: number } | null;
         if (data && data.type === "level" && typeof data.rms === "number") {
           const live = performance.now() - this.lastPcmAt <= OUTPUT_TAP_TTL_MS;
@@ -513,8 +556,12 @@ export class RealtimeAudioClient {
       // session cookie to a WS handshake (BUG-065). Minting over plain HTTP
       // first works on every engine; on a mint failure (e.g. older backend)
       // fall back to the cookie-only handshake, which Chromium still accepts.
-      const ticket = await mintWsTicket();
-      await new Promise<void>((resolve) => requestConnect(resolve));
+      // The ticket was minted concurrently with the microphone setup above,
+      // and the budget turn was queued there too, so both are (nearly) free
+      // by now instead of two more serial waits on the wake path.
+      const ticket = await ticketReady;
+      await turnReady;
+      console.info(`Voice start setup took ${setupMs} ms (mic/worklet/ticket).`);
       if (this.intentionalClose) throw new Error("Voice start cancelled");
       this.ws = new WebSocket(buildAudioSocketUrl(ticket));
       this.ws.binaryType = "arraybuffer";
@@ -792,9 +839,13 @@ export class RealtimeAudioClient {
   }
 
   private async teardown(sendStop: boolean): Promise<void> {
-    cancelAnimationFrame(this.mediaFrame);
+    if (this.remoteMeter) this.remoteMeter.port.onmessage = null;
+    this.remoteMeter?.disconnect();
+    this.remoteMeter = null;
     this.remoteSource?.disconnect();
     this.remoteSource = null;
+    this.lastPlaybackActive = false;
+    this.remoteSilenceFrames = 0;
     const socket = this.ws;
     this.ws = null;
     this.ready = false;

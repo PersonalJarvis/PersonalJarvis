@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import random
+import time
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -72,6 +73,10 @@ class LiveVoiceSession:
         self._delegation_responses: dict[str, str] = {}
         self._voice_seconds = 0.0
         self.playback_active = False
+        self._speaking = False
+        self._thinking = False
+        self._indicator_phase = "idle"
+        self._indicator_trace_id = uuid4()
         self._active_model = ""
         self._archive_turn_id = str(uuid4())
         self._parent_owned = False
@@ -114,6 +119,75 @@ class LiveVoiceSession:
     def is_active(self) -> bool:
         return self._connection is not None and not self._closing
 
+    @property
+    def phase(self) -> str:
+        """The surface indicator state: speaking, thinking or listening."""
+        if self._speaking or self.playback_active:
+            return "speaking"
+        if self._thinking:
+            return "thinking"
+        return "listening"
+
+    async def _emit_indicator(self, message: dict) -> None:
+        """Send a speaking/thinking indicator without breaking the session.
+
+        Indicators are best-effort UI hints: a closing socket must never turn
+        them into a session failure.
+        """
+        if self._closing:
+            return
+        await self._publish_phase()
+        try:
+            await self._send_json(message)
+        except Exception:  # noqa: BLE001 — indicators must not kill voice
+            log.debug("Live indicator frame could not be sent", exc_info=True)
+
+    async def _publish_phase(self, phase: str | None = None) -> None:
+        """Mirror the media state to native and remote surfaces on the same bus."""
+        current = phase or self.phase
+        if self._closing and current != "idle":
+            return
+        if current == self._indicator_phase:
+            return
+        previous, self._indicator_phase = self._indicator_phase, current
+        if self._bus is not None:
+            from jarvis.core.events import SystemStateChanged
+
+            await self._bus.publish(
+                SystemStateChanged(
+                    source_layer="live.session",
+                    trace_id=self._indicator_trace_id,
+                    new_state=current.upper(),
+                    previous=previous.upper(),
+                )
+            )
+
+    async def _note_thinking(self) -> None:
+        if self._thinking or self._speaking or self._closing:
+            return
+        self._thinking = True
+        await self._emit_indicator({"type": "thinking"})
+
+    async def _note_speaking(self) -> None:
+        if self._closing:
+            return
+        first = not self._speaking
+        self._speaking = True
+        self._thinking = False
+        if first:
+            await self._emit_indicator({"type": "tts_start"})
+            await self._emit_indicator({"type": "speaking"})
+
+    async def _note_turn_end(self) -> None:
+        if self._closing:
+            return
+        ended_speech = self._speaking
+        self._speaking = False
+        self._thinking = False
+        if ended_speech:
+            await self._emit_indicator({"type": "tts_end"})
+        await self._emit_indicator({"type": "turn_complete"})
+
     async def wait_finished(self) -> None:
         await self._closed.wait()
 
@@ -133,13 +207,18 @@ class LiveVoiceSession:
             return
         if kind == "playback_state":
             self.playback_active = bool(message.get("active", False))
+            # RTP playback is authoritative, including conversations with no
+            # delegation and therefore no Responses/audio sideband events.
+            self._speaking = self.playback_active
+            self._thinking = bool(self._response_revisions or self._jobs)
+            await self._emit_indicator({"type": self.phase})
             return
         if kind == "audio_start" and self._connection is None:
             await self._start(message)
         elif kind == "audio_stop":
             await self.end(reason="client_stop")
         elif kind == "cancel_work" and self._tools is not None:
-            self._tools.cancel_token.cancel("user_cancelled")
+            await self._tools.cancel_work()
         elif kind == "text_input" and self._connection is not None:
             text = str(message.get("text", ""))[:32000]
             if self._tools is not None:
@@ -147,7 +226,8 @@ class LiveVoiceSession:
                 self._tools.revision += 1
                 if not self._recovering:
                     self._resume_needs_input = False
-                    self._tools.accepting = True
+                    self._tools.accept_new_input()
+                    self._reconnect_attempts = 0
             preview = text.encode("utf-8")[:192].decode("utf-8", errors="ignore")
             await self._connection.send(
                 {
@@ -172,10 +252,15 @@ class LiveVoiceSession:
             await self._connection.send({"type": "response.create"})
         elif kind == "barge_in":
             # GPT-Live hears interruptions in the continuous input stream.
+            self._speaking = False
+            self._thinking = False
+            self.playback_active = False
             await self._send_json({"type": "audio_clear"})
+            await self._emit_indicator({"type": "tts_cancel"})
 
     async def _start(self, message: dict) -> None:
         self._adopt_desktop_session()
+        started_at = time.monotonic()
         profile = getattr(self._config, "live", LiveConfig())
         self._active_model = profile.model
         # Validate before acquiring devices, a durable store or a billed connection.
@@ -184,8 +269,22 @@ class LiveVoiceSession:
         if gateway is None:
             raise RuntimeError("Jarvis tools are still starting. Try voice again shortly.")
         root = user_data_dir()
-        await asyncio.to_thread(root.mkdir, parents=True, exist_ok=True)
-        self._ledger = await asyncio.to_thread(LiveLedger, root / "live.sqlite3")
+
+        async def _open_ledger() -> LiveLedger:
+            await asyncio.to_thread(root.mkdir, parents=True, exist_ok=True)
+            return await asyncio.to_thread(LiveLedger, root / "live.sqlite3")
+
+        async def _take_permit() -> None:
+            from jarvis.live.recovery import connection_permit
+
+            await connection_permit()
+
+        # The durable store and the shared connection budget are independent:
+        # opening them concurrently keeps the permit's quarter-second budget
+        # off the wake path instead of stacked after a cold-disk sqlite open.
+        self._ledger, _ = await asyncio.gather(_open_ledger(), _take_permit())
+        assert self._ledger is not None
+        setup_ms = (time.monotonic() - started_at) * 1000.0
         self._tools = LiveTools(
             gateway,
             self._ledger,
@@ -204,15 +303,22 @@ class LiveVoiceSession:
             from jarvis.live.runtime import claim
 
             claim(self.session_id)
-            from jarvis.live.recovery import connection_permit, seed_messages
+            await self._publish_phase("connecting")
+            from jarvis.live.recovery import seed_messages
 
             self._initial_seed = self._take_initial_context()
             if self._initial_seed:
                 config["input"] = seed_messages(self._initial_seed, [])
 
-            await connection_permit()
+            open_started_at = time.monotonic()
             self._connection = await self._provider.open_session(
                 ContinuousVoiceStart(session=config, offer_sdp=offer)
+            )
+            open_ms = (time.monotonic() - open_started_at) * 1000.0
+            log.info(
+                "Live session opening: setup %.0f ms, provider open %.0f ms.",
+                setup_ms,
+                open_ms,
             )
             if not offer:
                 async with asyncio.timeout(25):
@@ -260,6 +366,9 @@ class LiveVoiceSession:
                         language=self._language,
                     )
                 )
+            await self._publish_phase()
+            if self._closing:
+                return
             await self._send_json(
                 {
                     "type": "audio_ready",
@@ -374,7 +483,7 @@ class LiveVoiceSession:
                 self._tools.revision += 1
                 if not self._closing and not self._recovering:
                     self._resume_needs_input = False
-                    self._tools.accepting = True
+                    self._tools.accept_new_input()
                     self._reconnect_attempts = 0
             await self._send_json(
                 {
@@ -388,8 +497,14 @@ class LiveVoiceSession:
                     "end_ms": fragment.end_ms,
                 }
             )
-        elif kind == "session.output_audio.delta" and not self._connection.answer_sdp:
-            await self._send_binary(base64.b64decode(event["delta"]))
+            if role == "assistant" and current:
+                await self._note_thinking()
+        elif kind == "session.output_audio.delta":
+            # With WebRTC, only measured RTP playback owns the speaking
+            # state. Sideband generation can lead playback or include silence.
+            if not self._connection.answer_sdp:
+                await self._note_speaking()
+                await self._send_binary(base64.b64decode(event["delta"]))
         elif kind in {"session.usage.updated", "session.closed"}:
             self._wire_seconds = max(
                 self._wire_seconds, float(event.get("usage", {}).get("seconds", self._wire_seconds))
@@ -450,6 +565,7 @@ class LiveVoiceSession:
             self._response_revisions[self._response_id] = self._tools.revision
             self._delegation_responses[delegation] = self._response_id
             self._responses.setdefault(self._response_id, [])
+            await self._note_thinking()
         elif kind == "response.output_item.done":
             item = event.get("item", {})
             if item.get("type") == "function_call":
@@ -466,10 +582,21 @@ class LiveVoiceSession:
             if rid in self._completed:
                 return
             self._completed.add(rid)
+            # A backend response completing is not a speech boundary. Its
+            # tool calls still need running and RTP can still be playing.
+            self._thinking = bool(
+                (kind == "response.completed" and self._responses.get(rid))
+                or any(other != rid for other in self._response_revisions)
+            )
+            if self._thinking or self.playback_active:
+                self._speaking = self.playback_active
+                await self._emit_indicator({"type": self.phase})
+            else:
+                await self._note_turn_end()
             usage = response.get("usage") or {}
-            profile = getattr(self._config, "live", LiveConfig())
+            backend_model = self._tools.backend_model
             await asyncio.to_thread(
-                self._ledger.backend_usage, self.session_id, rid, profile.backend_model, usage
+                self._ledger.backend_usage, self.session_id, rid, backend_model, usage
             )
             if self._bus is not None:
                 from jarvis.brain.cost import calculate_cost_usd
@@ -481,13 +608,11 @@ class LiveVoiceSession:
                 await self._bus.publish(
                     BrainTurnCompleted(
                         provider="openai",
-                        model=profile.backend_model,
+                        model=backend_model,
                         tokens_in=tokens_in,
                         tokens_out=tokens_out,
                         tokens_cached=cached,
-                        cost_usd=calculate_cost_usd(
-                            profile.backend_model, tokens_in, tokens_out, cached
-                        ),
+                        cost_usd=calculate_cost_usd(backend_model, tokens_in, tokens_out, cached),
                         finish_reason="live_delegation",
                     )
                 )
@@ -661,6 +786,7 @@ class LiveVoiceSession:
 
         unregister(self.session_id)
         self._closing = True
+        await self._publish_phase("idle")
         self._hangup_reason = reason
         if self._connection is not None:
             try:
