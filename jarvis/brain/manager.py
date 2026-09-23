@@ -1869,6 +1869,17 @@ def _evidence_unfulfilled_answer(*, lang: str, domain: str = "") -> str:
 # to a write ("not saved yet"), not a failed lookup. Static, no LLM (AP-11);
 # localized for every supported language, unknown code → default locale.
 _ACTION_UNFULFILLED_PHRASES: dict[str, dict[str, str]] = {
+    "society_propose_change": {
+        "de": (
+            "Die Routine wurde nicht erstellt. "  # i18n-allow: runtime output
+            "Der Speichervorgang wurde nicht ausgeführt."  # i18n-allow: runtime output
+        ),
+        "en": "The routine was not created. The save action did not run.",
+        "es": (
+            "La rutina no se creó. "  # i18n-allow: runtime output
+            "No se ejecutó la acción de guardarla."  # i18n-allow: runtime output
+        ),
+    },
     "contact-upsert": {
         "de": (
             "Ich hab den Kontakt noch nicht gespeichert — sag mir die Angaben "  # i18n-allow: German TTS
@@ -11575,6 +11586,27 @@ class BrainManager:
                     "Local-outcome guard: file/system intent — mandating %s this turn",
                     _local_mandate[0],
                 )
+
+        # A society model can describe a routine without ever calling its
+        # configuration tool. Make the write mandatory on explicit creation
+        # turns, including a short confirmation after the details were agreed.
+        # The live surface check keeps this guard out of other chat surfaces.
+        if not self._evidence_required_tool and "society_propose_change" in self._live_tool_names():
+            from jarvis.society.routine_intent import requests_routine_creation
+
+            if requests_routine_creation(user_text):
+                self._evidence_directive = (
+                    "MANDATORY THIS TURN: the user asked you to CREATE a routine. "
+                    "Read existing routines with society_routines, then call "
+                    "society_propose_change with kind=routine and mode=apply. "
+                    "Use the current request and agreed conversation details; "
+                    "do not invent missing requirements. Verify the saved routine. "
+                    "If a prerequisite prevents saving it, say that it was not created."
+                )
+                self._evidence_required_tool = "society_propose_change"
+                self._evidence_required_is_write = True
+                self._evidence_required_domain = "routine"
+                log.info("Society routine creation intent — mandating society_propose_change")
 
         # Phase 5 / ADR-0006: pre-call budget gate. Block rather than request
         # when cooldown is active or the task/daily budget is exhausted.

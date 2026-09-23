@@ -3,10 +3,11 @@
  * through the society route, and a new row appears after save.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { AgentRoutinesList } from "@/components/society/card/AgentRoutinesList";
+import { notifyRoutineChanged } from "@/components/society/cardData";
 
 vi.mock("./AgentRoutineDetail", () => ({ AgentRoutineDetail: () => <div data-testid="routine-opened" /> }));
 
@@ -73,6 +74,21 @@ describe("AgentRoutinesList", () => {
     mount();
     await waitFor(() => expect(screen.getByTestId("agent-routines").textContent).toContain("Morning inbox"));
     expect(screen.getByTestId("agent-routines").textContent).not.toContain("[agent:Mailbox]");
+  });
+
+  test("a routine created in chat appears immediately in the open card", async () => {
+    mount();
+    await screen.findByRole("button", { name: "Morning inbox" });
+    routines.push({
+      id: "r-chat",
+      title: "[agent:Mailbox] GitHub issues",
+      state: "scheduled",
+      trigger: { kind: "calendar", local_time: "08:00", timezone: "Europe/Berlin" },
+    });
+    act(() => notifyRoutineChanged("mailbox"));
+    await screen.findByRole("button", { name: "GitHub issues" });
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/routines")).length)
+      .toBeGreaterThan(1);
   });
 
   test.each(["schedule", "next-run", "icon", "padding"])("opens the routine when clicking %s", async (area) => {

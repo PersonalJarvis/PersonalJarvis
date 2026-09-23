@@ -23,6 +23,7 @@ import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentch
  * runner can drive. The header says so while voice is showing.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { notifyRoutineChanged } from "../cardData";
 import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 
@@ -187,6 +188,27 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
   const sessionId = agent.chatSessionId;
   const sessionReady = Boolean(sessionId) && activeSessionId === sessionId;
   const visibleItems = itemsForOpenSession(sessionId, activeSessionId, items);
+  const refreshedRoutineReceipts = useRef(new Set<string>());
+  useEffect(() => {
+    for (const item of visibleItems) {
+      if (item.type === "turn") {
+        for (const block of item.blocks) {
+          if (block.kind !== "tool" || block.name !== "society_propose_change" || block.output === null || block.isError) continue;
+          const input = block.input as { kind?: string; mode?: string } | null;
+          if (input?.kind !== "routine" || input.mode !== "apply") continue;
+          const key = `tool:${block.callId}`;
+          if (refreshedRoutineReceipts.current.has(key)) continue;
+          refreshedRoutineReceipts.current.add(key);
+          notifyRoutineChanged(agent.agentId);
+        }
+      } else if (item.type === "notice" && item.kind === "proposal" && item.resolved === "applied" && item.data.proposal_kind === "routine") {
+        const key = `proposal:${item.id}`;
+        if (refreshedRoutineReceipts.current.has(key)) continue;
+        refreshedRoutineReceipts.current.add(key);
+        notifyRoutineChanged(agent.agentId);
+      }
+    }
+  }, [visibleItems, agent.agentId]);
   const outgoing = useOutgoingMessages(sessionReady ? agent.agentId : null);
   const allItems = useMemo(() => mergeOutgoingMessages(
     visibleItems, outgoing, agent.agentId, agent.name,

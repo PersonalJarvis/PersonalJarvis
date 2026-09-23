@@ -337,6 +337,13 @@ def test_configuration_capability_does_not_unlock_actual_data_lookup():
     )
 
 
+def test_routine_creation_uses_the_configuration_tool_not_a_github_read_mandate():
+    from tests.unit.brain.test_evidence_gate import _gate
+
+    request = "Erstelle eine Routine für GitHub Issues."  # i18n-allow: input fixture
+    assert _gate(request, live_tools=("society_propose_change",)).kind == "pass"
+
+
 def test_live_capabilities_include_filtered_turn_tools():
     from jarvis.brain.manager import _TURN_OVERRIDE, BrainManager
     from jarvis.brain.turn_override import TurnOverride

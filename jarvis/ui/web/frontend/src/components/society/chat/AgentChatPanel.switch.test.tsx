@@ -15,6 +15,7 @@ import { useEventStore } from "@/store/events";
 import type { AgentChatEvent, AgentChatSession } from "@/lib/agentChatApi";
 import { useHomeStore } from "@/store/home";
 import { JarvisHistoryRail } from "./JarvisHistoryRail";
+import * as cardData from "../cardData";
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, fill: (text: string) => text }));
 vi.mock("./AgentModelPicker", () => ({ AgentModelPicker: () => null }));
@@ -137,6 +138,19 @@ it("hides another session's items until that session is the open one", () => {
   expect(itemsForOpenSession("society:gmail-agent", "society:visual-qa", visualItems)).toEqual([]);
   expect(itemsForOpenSession("society:gmail-agent", "society:gmail-agent", visualItems)).toEqual(visualItems);
   expect(itemsForOpenSession(null, "society:visual-qa", visualItems)).toEqual([]);
+});
+
+it("refreshes the agent's routines when a chat save succeeds", async () => {
+  const notify = vi.spyOn(cardData, "notifyRoutineChanged");
+  const timeline = reduceEvents(EMPTY_TIMELINE, [
+    ev("turn_started", { turn_id: "routine-turn", provider: "ollama", model: "local", runner: "brain" }),
+    ev("tool_call", { turn_id: "routine-turn", call_id: "save-routine", name: "society_propose_change", input: { kind: "routine", mode: "apply" } }),
+    ev("tool_result", { turn_id: "routine-turn", call_id: "save-routine", output: "routine scheduled", is_error: false }),
+  ]);
+  useSocietyChatStore.setState({ activeSessionId: visual.chatSessionId, timeline });
+  render(<AgentChatPanel agent={visual} roster={[visual]} />);
+  await waitFor(() => expect(notify).toHaveBeenCalledWith(visual.agentId));
+  notify.mockRestore();
 });
 
 it("does not paint the previous specialist's transcript after a click onto another agent", () => {
