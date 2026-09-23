@@ -32,14 +32,51 @@ describe("canonical Mars foundation", () => {
   it("connects every declared navigation node to the Outpost without changed endpoint heights", () => {
     const visited = new Set(["outpost-arrival"]);
     for (let pass = 0; pass < WORLD.navigation.nodes.length; pass++) {
-      for (const road of ROADS) {
-        if (visited.has(road.from)) visited.add(road.to);
-        if (visited.has(road.to)) visited.add(road.from);
-        expect(projectRoad(road.start[0], road.start[2], road).height).toBe(road.start[1]);
-        expect(projectRoad(road.end[0], road.end[2], road).height).toBe(road.end[1]);
+      for (const edge of WORLD.navigation.edges) {
+        if (visited.has(edge.from)) visited.add(edge.to);
+        if (visited.has(edge.to)) visited.add(edge.from);
       }
     }
     expect([...visited].sort()).toEqual(WORLD.navigation.nodes.map((node) => node.id).sort());
+    for (const road of ROADS) {
+      expect(projectRoad(road.start[0], road.start[2], road).height).toBe(road.start[1]);
+      expect(projectRoad(road.end[0], road.end[2], road).height).toBe(road.end[1]);
+    }
+  });
+
+  it("keeps server solid collision identical to the complete authored runtime collision", () => {
+    const canonical = WORLD.navigation.collision.solid_boxes;
+    const expected = BUILDING_COLLIDERS.filter((collider) => collider.id.startsWith("outpost:"));
+    expect(canonical.map((box) => box.id).sort()).toEqual(expected.map((box) => box.id).sort());
+    for (const collider of expected) {
+      const projected = canonical.find((box) => box.id === collider.id)!;
+      for (let axis = 0; axis < 3; axis++) {
+        expect(projected.min[axis], `${collider.id}/min/${axis}`).toBeCloseTo(collider.min[axis], 10);
+        expect(projected.max[axis], `${collider.id}/max/${axis}`).toBeCloseTo(collider.max[axis], 10);
+      }
+    }
+  });
+
+  it("keeps docks, boarding and both exits on the actual authored deck without creating new roads", () => {
+    expect(ROADS.map((road) => road.id)).toEqual(WORLD.navigation.surface_edges.map((edge) => edge.id));
+    expect(ROADS.some((road) => road.from.startsWith("rover-") || road.to.startsWith("rover-"))).toBe(false);
+    const support = WORLD.navigation.collision.support_surfaces.find((row) => row.id === "outpost:route-05")!;
+    const inside = (x: number, z: number) => support.polygon.every(([ax, az], i, polygon) => {
+      const [bx, bz] = polygon[(i + 1) % polygon.length];
+      return (bx - ax) * (z - az) - (bz - az) * (x - ax) >= -1e-7;
+    });
+    for (const dock of WORLD.navigation.rover_docks) {
+      const ids = [dock.node_id, ...[dock.boarding_station_id, ...dock.exit_station_ids].map((id) => WORLD.navigation.destinations.find((row) => row.id === id)!.anchor)];
+      for (const id of ids) {
+        const [x, y, z] = WORLD.navigation.nodes.find((node) => node.id === id)!.position;
+        expect(inside(x, z), id).toBe(true);
+        const projectedHeight = support.plane[0] * x + support.plane[1] * z + support.plane[2];
+        expect(projectedHeight, id).toBeCloseTo(58.006, 8);
+        expect(surfaceHeight(x, z), id).toBeCloseTo(projectedHeight, 8);
+        expect(Math.abs(y - projectedHeight), id).toBeLessThan(0.081);
+        expect(isPositionClear([x, projectedHeight, z]), id).toBe(true);
+      }
+    }
   });
 
   it("keeps shared nodes within the authored/proxy deck seam tolerance", () => {

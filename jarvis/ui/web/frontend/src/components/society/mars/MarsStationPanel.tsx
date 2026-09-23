@@ -111,7 +111,7 @@ export function MarsStationPanel({ onClose, onOpenAgent }: {
         {t(attempt.current ? "society.mars.retry_same" : "society.mars.prepare_draft")}
       </button>
       {failed && <p role="alert" className="text-sm">{t(credentialInput ? "society.mars.credential_input" : attempt.current ? "society.mars.uncertain" : "society.mars.request_failed")}</p>}
-      <MarsNavigationPanel agentId={selectedAgent} />
+      <MarsNavigationPanel agentId={selectedAgent} active={roster.isSuccess && !roster.isError && roster.fetchStatus !== "paused" && activeAgents.some((agent) => agent.agent_id === selectedAgent)} />
       <h3 className="text-sm font-semibold">{t("society.mars.recorded_work")}</h3>
       {snapshot.isError && <p role="status" className="text-sm">{t("society.mars.offline")}</p>}
       {!snapshot.isError && (snapshot.data?.commands ?? []).slice(0, 12).map((command) => (

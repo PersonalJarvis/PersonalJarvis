@@ -7,6 +7,8 @@ import math
 from importlib.resources import files
 from typing import Any
 
+from .mobility_geometry import MobilityGeometry
+
 
 def validate_definition(data: dict[str, Any]) -> None:
     """Reject inconsistent layout/route identities before either client uses them."""
@@ -126,6 +128,82 @@ def validate_definition(data: dict[str, Any]) -> None:
             or set(destination) != {"id", "name", "anchor", "capacity"}
         ):
             raise ValueError("invalid visit-only destination")
+    for row in [*nodes.values(), *edges.values()]:
+        resources = row.get("resource_ids", [])
+        if (
+            not isinstance(resources, list)
+            or len(resources) > 16
+            or len(set(resources)) != len(resources)
+            or any(not isinstance(key, str) or not key or len(key) > 128 for key in resources)
+        ):
+            raise ValueError("invalid shared physical resource identities")
+    rovers = index(navigation.get("rovers", []))
+    docks = index(navigation.get("rover_docks", []))
+    if bool(rovers) != bool(docks) or len(rovers) > 8 or len(docks) > 16:
+        raise ValueError("invalid bounded rover catalog")
+    if rovers:
+        geometry = MobilityGeometry(data)
+        visits = {**stations, **destinations}
+        surface_edges = index(navigation["surface_edges"])
+        for edge in surface_edges.values():
+            if edge["from"] not in nodes or edge["to"] not in nodes:
+                raise ValueError("unknown authored road endpoint")
+        for dock in docks.values():
+            if dock["node_id"] not in nodes or dock["boarding_station_id"] not in visits:
+                raise ValueError("invalid rover dock location")
+            yaw = dock["yaw"]
+            if isinstance(yaw, bool) or not isinstance(yaw, (float, int)) or not math.isfinite(yaw):
+                raise ValueError("invalid rover dock orientation")
+            exits = dock["exit_station_ids"]
+            if not 2 <= len(exits) <= 4 or len(set(exits)) != len(exits):
+                raise ValueError("rover dock requires distinct alternative exits")
+            anchors = [dock["boarding_station_id"], *exits]
+            if len(set(anchors)) != len(anchors):
+                raise ValueError("rover boarding and exit anchors must be distinct")
+            center = nodes[dock["node_id"]]["position"]
+            for station in anchors:
+                if station not in destinations:
+                    raise ValueError("rover access must use visit-only destinations")
+                point = nodes[visits[station]["anchor"]]["position"]
+                if not 2.3 <= math.dist(center, point) <= 3 or not geometry.capsule_clear(point):
+                    raise ValueError("rover access lacks adjacent supported clearance")
+        for rover in rovers.values():
+            if (
+                rover["home_dock_id"] not in docks
+                or type(rover["seat_capacity"]) is not int
+                or rover["seat_capacity"] != 1
+            ):
+                raise ValueError("invalid rover home or seat capacity")
+            dimensions = [rover[key] for key in ("width_m", "length_m", "height_m", "speed_m_s")]
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or not 0 < value <= 10
+                for value in dimensions
+            ):
+                raise ValueError("invalid rover physical dimensions")
+            for dock in docks.values():
+                if not geometry.vehicle_clear(
+                    nodes[dock["node_id"]]["position"], dock["yaw"], *dimensions[:3]
+                ):
+                    raise ValueError("rover dock lacks complete supported clearance")
+                center = nodes[dock["node_id"]]["position"]
+                anchors = [dock["boarding_station_id"], *dock["exit_station_ids"]]
+                points = [nodes[visits[anchor]["anchor"]]["position"] for anchor in anchors]
+                sine, cosine = math.sin(dock["yaw"]), math.cos(dock["yaw"])
+                for i, point in enumerate(points):
+                    dx, dz = point[0] - center[0], point[2] - center[2]
+                    across = abs(dx * cosine - dz * sine)
+                    along = abs(dx * sine + dz * cosine)
+                    clearance = math.hypot(
+                        max(0, across - dimensions[0] / 2),
+                        max(0, along - dimensions[1] / 2),
+                    )
+                    if clearance < 0.6:
+                        raise ValueError("rover access overlaps the vehicle body")
+                    if any(math.dist(point, previous) < 1.2 for previous in points[:i]):
+                        raise ValueError("rover access anchors overlap each other")
     position(data["spawn"]["position"])
 
 

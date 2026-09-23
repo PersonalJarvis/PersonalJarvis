@@ -226,13 +226,11 @@ async def test_route_replans_at_safe_node_around_new_block(tmp_path):
 
 
 async def test_rover_cannot_reach_pedestrian_only_console(runtime):
-    service, clock, _ = runtime
-    record = await service.submit("first", request(mode=TravelMode.ROVER))
-    await tick(service, clock)
-    failed = await service.store.get(record.command_id)
-    assert failed.state is NavigationState.UNREACHABLE
-    assert failed.reason == "navigation_route_unreachable"
-    assert failed.position == (0, 0, 0)
+    service, _, _ = runtime
+    assert service.graph.path("a", "destination", TravelMode.ROVER) is None
+    with pytest.raises(StationError, match="rover_ride_required"):
+        await service.submit("first", request(mode=TravelMode.ROVER))
+    assert (await service.snapshot()).commands == ()
 
 
 async def test_deadline_bounds_station_queue_and_no_progress(runtime):
@@ -299,7 +297,9 @@ async def test_graph_content_change_refuses_teleport_or_silent_reinterpretation(
     await recovered.start()
     try:
         await recovered.advance()
-        assert (await recovered.store.get(record.command_id)).reason == "navigation_graph_changed"
+        assert (
+            await recovered.store.get(record.command_id)
+        ).reason == "navigation_location_graph_changed"
         with pytest.raises(StationError, match="navigation_location_graph_changed"):
             await recovered.submit("agent", request("new"))
     finally:
@@ -449,7 +449,7 @@ async def test_spawn_queue_is_explicit_and_actor_capacity_never_discards_a_body(
     assert {body.agent_id for body in (await service.snapshot()).occupancies} == {"first"}
 
 
-async def test_canceled_waiter_can_change_mode_before_entering_reserved_edge(runtime):
+async def test_canceled_waiter_cannot_claim_rover_and_retains_pose_for_pedestrian_retry(runtime):
     service, clock, _ = runtime
     await service.submit("first", request(station="middle"))
     waiter = await service.submit("waiter", request())
@@ -458,10 +458,10 @@ async def test_canceled_waiter_can_change_mode_before_entering_reserved_edge(run
     assert waiting.presence == "spawn_queue"
     assert waiting.edge_id == "ab" and waiting.edge_progress == 0
     await service.cancel("waiter", waiter.command_id)
-    changed = await service.submit(
-        "waiter", request("rover", station="middle", mode=TravelMode.ROVER)
-    )
-    assert changed.mode is TravelMode.ROVER
+    with pytest.raises(StationError, match="rover_ride_required"):
+        await service.submit("waiter", request("rover", station="middle", mode=TravelMode.ROVER))
+    changed = await service.submit("waiter", request("retry", station="middle"))
+    assert changed.mode is TravelMode.PEDESTRIAN
     assert changed.position == waiting.position
     assert changed.current_node == waiting.current_node
     assert changed.edge_id is None and changed.next_node is None

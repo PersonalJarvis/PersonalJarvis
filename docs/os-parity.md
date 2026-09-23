@@ -87,6 +87,15 @@ parity, active-task cancellation in that installed-wheel run, and final visual
 acceptance remain separate checks.
 See [the Mars runtime](agent-society/mars-runtime.md) for current support boundaries.
 
+The route-driven rover increment uses the same SQLite/asyncio owner on Windows,
+macOS and Linux. It requires packaged collision/dock data and an explicit rover
+authorization callback; pedestrian authority alone grants no seat. Agent rides
+need no renderer, GPU, audio or native API. Portable contracts cover exclusive
+seats, safe exits, interrupted travel, graph migration and authenticated HTTP/CLI
+actions. The installed-wheel results above precede this rover increment and do
+not constitute its fresh-install acceptance. Final rover art, player control and
+native cross-platform presentation remain unverified.
+
 Physical pedestrian visits use the same bounded SQLite/asyncio graph controller
 on Windows, macOS and Linux, with no native graphics requirement. The existing
 world owner resumes either station or navigation journals after boot; no-client

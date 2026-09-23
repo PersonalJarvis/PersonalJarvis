@@ -8,6 +8,7 @@ import json
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
@@ -24,6 +25,8 @@ from .navigation_models import (
     NavigationRecord,
     NavigationSnapshot,
     NavigationState,
+    RoverRideRecord,
+    VehicleRecord,
 )
 from .sqlite_transaction import atomic_transaction
 
@@ -41,12 +44,37 @@ CREATE TABLE IF NOT EXISTS navigation_commands (
     record TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS navigation_agent ON navigation_commands(agent_id, ordinal);
+CREATE TABLE IF NOT EXISTS navigation_motion_owners (command_id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS navigation_leases (
     resource_id TEXT PRIMARY KEY,
-    command_id TEXT NOT NULL REFERENCES navigation_commands(command_id),
+    command_id TEXT NOT NULL REFERENCES navigation_motion_owners(command_id),
     record TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS rover_vehicles (
+    vehicle_id TEXT PRIMARY KEY, record TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS rover_rides (
+    ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
+    ride_id TEXT UNIQUE NOT NULL, agent_id TEXT NOT NULL, vehicle_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN
+        ('approaching','ready_to_board','boarded','traveling','arrived','stopped',
+         'exit_blocked','completed','canceled')), record TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS rover_rider ON rover_rides(agent_id, ordinal);
+CREATE TABLE IF NOT EXISTS rover_actions (
+    action_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, ride_id TEXT NOT NULL
+);
 """
+
+
+@dataclass
+class NavigationWorld:
+    records: dict[str, NavigationRecord]
+    leases: dict[str, NavigationLease]
+    vehicles: dict[str, VehicleRecord]
+    rides: dict[str, RoverRideRecord]
+    fingerprints: dict[str, str]
+    actions: dict[str, tuple[str, str]] = field(default_factory=dict)
 
 
 class MarsNavigationStore:
@@ -94,7 +122,27 @@ class MarsNavigationStore:
                 await conn.execute("PRAGMA foreign_keys=ON")
                 await conn.executescript(_SCHEMA)
                 row = await self._one(conn, "SELECT version FROM navigation_meta WHERE id=1")
-                if row[0] != 1:
+                if row[0] == 1:
+                    async with atomic_transaction(conn):
+                        await conn.execute(
+                            "INSERT OR IGNORE INTO navigation_motion_owners SELECT command_id "
+                            "FROM navigation_commands"
+                        )
+                        # SQLite cannot alter the FK target in place. Keep all
+                        # leases and migrate their owner registry atomically.
+                        await conn.execute("ALTER TABLE navigation_leases RENAME TO legacy_leases")
+                        await conn.execute(
+                            "CREATE TABLE navigation_leases (resource_id TEXT PRIMARY KEY, "
+                            "command_id TEXT NOT NULL "
+                            "REFERENCES navigation_motion_owners(command_id), "
+                            "record TEXT NOT NULL)"
+                        )
+                        await conn.execute(
+                            "INSERT INTO navigation_leases SELECT * FROM legacy_leases"
+                        )
+                        await conn.execute("DROP TABLE legacy_leases")
+                        await conn.execute("UPDATE navigation_meta SET version=2 WHERE id=1")
+                elif row[0] != 2:
                     raise StationError("unsupported_navigation_storage_version", 503)
                 self._conn, self._owner = conn, owner
             except BaseException:
@@ -161,6 +209,14 @@ class MarsNavigationStore:
                 if duplicate["fingerprint"] != fingerprint:
                     raise StationError("idempotency_payload_mismatch", 409)
                 return NavigationRecord.model_validate_json(duplicate["record"])
+            ride = await self._one(
+                conn,
+                "SELECT ride_id FROM rover_rides WHERE agent_id=? "
+                "AND state NOT IN ('completed','canceled') LIMIT 1",
+                (agent_id,),
+            )
+            if ride is not None:
+                raise StationError("agent_has_rover_reservation", 409)
             active = await self._one(
                 conn,
                 "SELECT COUNT(*) FROM navigation_commands "
@@ -228,6 +284,9 @@ class MarsNavigationStore:
                     "DELETE FROM navigation_leases WHERE command_id=?", (prior.command_id,)
                 )
             await conn.execute(
+                "INSERT INTO navigation_motion_owners(command_id) VALUES(?)", (command_id,)
+            )
+            await conn.execute(
                 "INSERT INTO navigation_commands(command_id,agent_id,fingerprint,state,record) "
                 "VALUES(?,?,?,?,?)",
                 (command_id, agent_id, fingerprint, record.state.value, record.model_dump_json()),
@@ -244,75 +303,164 @@ class MarsNavigationStore:
                 raise StationError("navigation_command_not_found", 404)
             return NavigationRecord.model_validate_json(row[0])
 
-    async def mutate(
-        self,
-        operation: Callable[[dict[str, NavigationRecord], dict[str, NavigationLease], int], None],
-        *,
-        include_id: str | None = None,
-    ) -> None:
-        """Commit bounded travel state and all its physical leases atomically."""
+    async def _load_world(self, conn, include_id=None) -> NavigationWorld:
+        async with conn.execute(
+            "SELECT command_id,record,fingerprint FROM navigation_commands "
+            "WHERE state NOT IN ('arrived','unreachable','canceled') "
+            "OR command_id IN (SELECT command_id FROM navigation_leases) "
+            "OR ordinal IN (SELECT MAX(ordinal) FROM navigation_commands GROUP BY agent_id) "
+            "OR command_id=? ORDER BY ordinal",
+            (include_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        async with conn.execute("SELECT resource_id,record FROM navigation_leases") as cursor:
+            leases = {
+                row[0]: NavigationLease.model_validate_json(row[1])
+                for row in await cursor.fetchall()
+            }
+        async with conn.execute("SELECT vehicle_id,record FROM rover_vehicles") as cursor:
+            vehicles = {
+                row[0]: VehicleRecord.model_validate_json(row[1]) for row in await cursor.fetchall()
+            }
+        async with conn.execute(
+            "SELECT ride_id,record FROM rover_rides WHERE state NOT IN ('completed','canceled') "
+            "OR ordinal IN (SELECT ordinal FROM rover_rides ORDER BY ordinal DESC LIMIT 64) "
+            "OR ordinal IN (SELECT MAX(ordinal) FROM rover_rides GROUP BY agent_id) "
+            "ORDER BY ordinal"
+        ) as cursor:
+            rides = {
+                row[0]: RoverRideRecord.model_validate_json(row[1])
+                for row in await cursor.fetchall()
+            }
+        return NavigationWorld(
+            {row[0]: NavigationRecord.model_validate_json(row[1]) for row in rows},
+            leases,
+            vehicles,
+            rides,
+            {row[0]: row[2] for row in rows},
+        )
+
+    async def mutate(self, operation, *, include_id: str | None = None) -> None:
+        """Compatibility wrapper for pedestrian-only administrative updates."""
+        await self.mutate_world(
+            lambda world, now: operation(world.records, world.leases, now), include_id=include_id
+        )
+
+    async def mutate_world(self, operation, *, include_id: str | None = None) -> None:
+        """Commit bodies, riders, seats and shared resource leases in one transaction."""
         async with self.transaction() as conn:
-            async with conn.execute(
-                "SELECT command_id,record FROM navigation_commands "
-                "WHERE state NOT IN ('arrived','unreachable','canceled') "
-                "OR command_id IN (SELECT command_id FROM navigation_leases) "
-                "OR ordinal IN (SELECT MAX(ordinal) FROM navigation_commands GROUP BY agent_id) "
-                "OR command_id=? ORDER BY ordinal",
-                (include_id,),
-            ) as cursor:
-                records = {
-                    row[0]: NavigationRecord.model_validate_json(row[1])
-                    for row in await cursor.fetchall()
-                }
-            async with conn.execute("SELECT resource_id,record FROM navigation_leases") as cursor:
-                leases = {
-                    row[0]: NavigationLease.model_validate_json(row[1])
-                    for row in await cursor.fetchall()
-                }
-            before = (records.copy(), leases.copy())
-            operation(records, leases, self.clock())
-            if before == (records, leases):
+            world = await self._load_world(conn, include_id)
+            before = repr(world)
+            operation(world, self.clock())
+            if before == repr(world):
                 return
-            for record in records.values():
+            for record in [*world.records.values(), *world.vehicles.values()]:
                 await conn.execute(
-                    "UPDATE navigation_commands SET state=?,record=? WHERE command_id=?",
-                    (record.state.value, record.model_dump_json(), record.command_id),
+                    "INSERT OR IGNORE INTO navigation_motion_owners(command_id) VALUES(?)",
+                    (record.command_id,),
+                )
+            for record in world.records.values():
+                await conn.execute(
+                    "INSERT INTO navigation_commands(command_id,agent_id,fingerprint,state,record) "
+                    "VALUES(?,?,?,?,?) ON CONFLICT(command_id) DO UPDATE SET "
+                    "state=excluded.state,record=excluded.record",
+                    (
+                        record.command_id,
+                        record.agent_id,
+                        world.fingerprints[record.command_id],
+                        record.state.value,
+                        record.model_dump_json(),
+                    ),
+                )
+            for vehicle in world.vehicles.values():
+                await conn.execute(
+                    "INSERT INTO rover_vehicles VALUES(?,?) ON CONFLICT(vehicle_id) "
+                    "DO UPDATE SET record=excluded.record",
+                    (vehicle.vehicle_id, vehicle.model_dump_json()),
+                )
+            for ride in world.rides.values():
+                await conn.execute(
+                    "INSERT INTO rover_rides(ride_id,agent_id,vehicle_id,state,record) "
+                    "VALUES(?,?,?,?,?) "
+                    "ON CONFLICT(ride_id) DO UPDATE SET "
+                    "state=excluded.state,record=excluded.record",
+                    (
+                        ride.ride_id,
+                        ride.agent_id,
+                        ride.vehicle_id,
+                        ride.state.value,
+                        ride.model_dump_json(),
+                    ),
+                )
+            for action_id, (fingerprint, ride_id) in world.actions.items():
+                await conn.execute(
+                    "INSERT INTO rover_actions VALUES(?,?,?)", (action_id, fingerprint, ride_id)
                 )
             await conn.execute("DELETE FROM navigation_leases")
             await conn.executemany(
                 "INSERT INTO navigation_leases(resource_id,command_id,record) VALUES(?,?,?)",
                 [
                     (lease.resource_id, lease.command_id, lease.model_dump_json())
-                    for lease in leases.values()
+                    for lease in world.leases.values()
                 ],
             )
             await conn.execute("UPDATE navigation_meta SET seq=seq+1 WHERE id=1")
 
+    async def get_ride(self, ride_id: str) -> RoverRideRecord:
+        async with self.transaction() as conn:
+            row = await self._one(
+                conn, "SELECT record FROM rover_rides WHERE ride_id=?", (ride_id,)
+            )
+            if row is None:
+                raise StationError("rover_ride_not_found", 404)
+            return RoverRideRecord.model_validate_json(row[0])
+
+    async def duplicate_action(self, action_id: str, fingerprint: str) -> RoverRideRecord | None:
+        async with self.transaction() as conn:
+            row = await self._one(
+                conn,
+                "SELECT fingerprint,ride_id FROM rover_actions WHERE action_id=?",
+                (action_id,),
+            )
+            if row is None:
+                return None
+            if row[0] != fingerprint:
+                raise StationError("idempotency_payload_mismatch", 409)
+            ride = await self._one(
+                conn, "SELECT record FROM rover_rides WHERE ride_id=?", (row[1],)
+            )
+            return RoverRideRecord.model_validate_json(ride[0])
+
     async def snapshot(self, graph: NavigationGraph) -> NavigationSnapshot:
         async with self.transaction() as conn:
             seq = await self._one(conn, "SELECT seq FROM navigation_meta WHERE id=1")
+            world = await self._load_world(conn)
+            # SQL ordinal, rather than a wall-clock tie, determines the latest
+            # body when multiple commands were accepted within one clock tick.
             async with conn.execute(
-                "SELECT record FROM navigation_commands "
+                "SELECT command_id,record FROM navigation_commands "
                 "WHERE state NOT IN ('arrived','unreachable','canceled') "
-                "OR command_id IN (SELECT command_id FROM navigation_leases) OR ordinal IN "
-                "(SELECT ordinal FROM navigation_commands ORDER BY ordinal DESC LIMIT 64) "
+                "OR command_id IN (SELECT command_id FROM navigation_leases) "
+                "OR ordinal IN (SELECT ordinal FROM navigation_commands "
+                "ORDER BY ordinal DESC LIMIT 64) "
                 "OR ordinal IN (SELECT MAX(ordinal) FROM navigation_commands GROUP BY agent_id) "
                 "ORDER BY ordinal"
             ) as cursor:
-                records = tuple(
-                    NavigationRecord.model_validate_json(row[0]) for row in await cursor.fetchall()
-                )
-            async with conn.execute(
-                "SELECT record FROM navigation_leases ORDER BY resource_id"
-            ) as cursor:
-                leases = tuple(
-                    NavigationLease.model_validate_json(row[0]) for row in await cursor.fetchall()
-                )
+                world.records = {
+                    row[0]: NavigationRecord.model_validate_json(row[1])
+                    for row in await cursor.fetchall()
+                }
             return NavigationSnapshot(
                 graph_version=graph.version,
                 graph_signature=graph.signature,
                 seq=seq[0],
-                commands=records,
-                leases=leases,
-                occupancies=graph.occupancies(list(records)),
+                commands=tuple(world.records.values()),
+                leases=tuple(sorted(world.leases.values(), key=lambda r: r.resource_id)),
+                occupancies=graph.occupancies(
+                    list(world.records.values()),
+                    list(world.vehicles.values()),
+                    list(world.rides.values()),
+                ),
+                vehicles=tuple(world.vehicles.values()),
+                rides=tuple(world.rides.values()),
             )

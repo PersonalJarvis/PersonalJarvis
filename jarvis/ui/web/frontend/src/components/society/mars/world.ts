@@ -16,7 +16,8 @@ export const OUTPOST = WORLD.districts.find((d) => d.id === "communications-outp
 const OUTPOST_ORIGIN = outpostContract.world_translation;
 const WALK_SURFACES = outpostContract.walk_surfaces;
 const nodes = new Map(WORLD.navigation.nodes.map((node) => [node.id, node]));
-export const ROADS = WORLD.navigation.edges.map((edge) => ({
+// Logical docking/shoulder segments do not redraw or regrade authored roads.
+export const ROADS = WORLD.navigation.surface_edges.map((edge) => ({
   ...edge,
   start: [...nodes.get(edge.from)!.position] as Vec3,
   end: [...nodes.get(edge.to)!.position] as Vec3,

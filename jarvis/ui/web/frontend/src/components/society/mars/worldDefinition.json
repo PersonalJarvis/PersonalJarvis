@@ -536,6 +536,9 @@
           268,
           58,
           68
+        ],
+        "resource_ids": [
+          "corridor:route05-lead"
         ]
       },
       {
@@ -560,6 +563,9 @@
           325,
           58,
           96
+        ],
+        "resource_ids": [
+          "corridor:route05-tail"
         ]
       },
       {
@@ -689,9 +695,654 @@
           48,
           109
         ]
+      },
+      {
+        "id": "rover-a-dock",
+        "position": [
+          285.1,
+          58,
+          76.4
+        ],
+        "resource_ids": [
+          "clearance:rover-a"
+        ]
+      },
+      {
+        "id": "rover-a-board",
+        "position": [
+          283.05767024317663,
+          58,
+          78.51633862233665
+        ]
+      },
+      {
+        "id": "rover-a-exit",
+        "position": [
+          284.673268030764,
+          58,
+          79.30996560571289
+        ]
+      },
+      {
+        "id": "rover-a-alternate",
+        "position": [
+          286.3345308630297,
+          58,
+          73.88684788597524
+        ],
+        "resource_ids": [
+          "corridor:route05-lead"
+        ]
+      },
+      {
+        "id": "rover-a-shoulder",
+        "position": [
+          279.37769750478327,
+          58,
+          76.70863271575743
+        ]
+      },
+      {
+        "id": "rover-a-alternate-shoulder",
+        "position": [
+          281.8467592308427,
+          58,
+          71.6823284877079
+        ],
+        "resource_ids": [
+          "corridor:route05-lead"
+        ]
+      },
+      {
+        "id": "rover-b-dock",
+        "position": [
+          313.6,
+          58,
+          90.4
+        ],
+        "resource_ids": [
+          "clearance:rover-b"
+        ]
+      },
+      {
+        "id": "rover-b-board",
+        "position": [
+          311.55767024317663,
+          58,
+          92.51633862233665
+        ]
+      },
+      {
+        "id": "rover-b-exit",
+        "position": [
+          313.173268030764,
+          58,
+          93.30996560571289
+        ]
+      },
+      {
+        "id": "rover-b-alternate",
+        "position": [
+          314.8345308630297,
+          58,
+          87.88684788597524
+        ]
+      },
+      {
+        "id": "rover-b-shoulder",
+        "position": [
+          316.85324076915737,
+          58,
+          95.1176715122921
+        ]
+      },
+      {
+        "id": "rover-b-alternate-shoulder",
+        "position": [
+          319.3223024952168,
+          58,
+          90.09136728424258
+        ]
       }
     ],
     "edges": [
+      {
+        "id": "route-01",
+        "from": "hub-east",
+        "to": "outpost-west",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-02",
+        "from": "outpost-west",
+        "to": "outpost-arrival",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-03",
+        "from": "outpost-arrival",
+        "to": "console-approach",
+        "width": 4,
+        "kind": "footpath",
+        "modes": [
+          "pedestrian"
+        ],
+        "stage": "blockout",
+        "resource_ids": [
+          "corridor:route05-lead"
+        ]
+      },
+      {
+        "id": "route-04",
+        "from": "console-approach",
+        "to": "console",
+        "width": 2.4,
+        "kind": "interior",
+        "modes": [
+          "pedestrian"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-06",
+        "from": "outpost-south",
+        "to": "gardens-east",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-07",
+        "from": "hub-south",
+        "to": "gardens-north",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-08",
+        "from": "gardens-north",
+        "to": "gardens-east",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-09",
+        "from": "harbor-east",
+        "to": "gardens-north",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-10",
+        "from": "hub-west",
+        "to": "water-east",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-11",
+        "from": "hub-west",
+        "to": "workshop-south",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-12",
+        "from": "hub-north",
+        "to": "solar-south",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-13",
+        "from": "solar-south",
+        "to": "foundry-south",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-14",
+        "from": "foundry-south",
+        "to": "mine-south",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-15",
+        "from": "hub-east",
+        "to": "memory-west",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-16",
+        "from": "memory-west",
+        "to": "mine-south",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-17",
+        "from": "hub-west",
+        "to": "harbor-east",
+        "width": 10,
+        "kind": "bridge",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-18",
+        "from": "hub-west",
+        "to": "central-northwest",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-19",
+        "from": "hub-north",
+        "to": "central-northeast",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-20",
+        "from": "hub-east",
+        "to": "central-southeast",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-21",
+        "from": "hub-south",
+        "to": "central-southwest",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-22",
+        "from": "central-northwest",
+        "to": "hub-north",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-23",
+        "from": "central-northeast",
+        "to": "hub-east",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-24",
+        "from": "central-southeast",
+        "to": "hub-south",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "route-25",
+        "from": "central-southwest",
+        "to": "hub-west",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout"
+      },
+      {
+        "id": "rover-a-access-1",
+        "from": "outpost-arrival",
+        "to": "rover-a-shoulder",
+        "width": 1.2,
+        "kind": "footpath",
+        "modes": [
+          "pedestrian"
+        ],
+        "stage": "blockout",
+        "surface_id": "route-05",
+        "render": false,
+        "resource_ids": [
+          "corridor:route05-lead"
+        ]
+      },
+      {
+        "id": "rover-a-access-2",
+        "from": "rover-a-shoulder",
+        "to": "rover-a-board",
+        "width": 1.2,
+        "kind": "footpath",
+        "modes": [
+          "pedestrian"
+        ],
+        "stage": "blockout",
+        "surface_id": "route-05",
+        "render": false
+      },
+      {
+        "id": "rover-a-access-3",
+        "from": "rover-a-board",
+        "to": "rover-a-exit",
+        "width": 1.2,
+        "kind": "footpath",
+        "modes": [
+          "pedestrian"
+        ],
+        "stage": "blockout",
+        "surface_id": "route-05",
+        "render": false
+      },
+      {
+        "id": "rover-a-access-4",
+        "from": "outpost-arrival",
+        "to": "rover-a-alternate-shoulder",
+        "width": 1.2,
+        "kind": "footpath",
+        "modes": [
+          "pedestrian"
+        ],
+        "stage": "blockout",
+        "surface_id": "route-05",
+        "render": false,
+        "resource_ids": [
+          "corridor:route05-lead"
+        ]
+      },
+      {
+        "id": "rover-a-access-5",
+        "from": "rover-a-alternate-shoulder",
+        "to": "rover-a-alternate",
+        "width": 1.2,
+        "kind": "footpath",
+        "modes": [
+          "pedestrian"
+        ],
+        "stage": "blockout",
+        "surface_id": "route-05",
+        "render": false,
+        "resource_ids": [
+          "corridor:route05-lead"
+        ]
+      },
+      {
+        "id": "rover-b-access-1",
+        "from": "outpost-south",
+        "to": "rover-b-shoulder",
+        "width": 1.2,
+        "kind": "footpath",
+        "modes": [
+          "pedestrian"
+        ],
+        "stage": "blockout",
+        "surface_id": "route-05",
+        "render": false,
+        "resource_ids": [
+          "corridor:route05-tail"
+        ]
+      },
+      {
+        "id": "rover-b-access-2",
+        "from": "rover-b-shoulder",
+        "to": "rover-b-exit",
+        "width": 1.2,
+        "kind": "footpath",
+        "modes": [
+          "pedestrian"
+        ],
+        "stage": "blockout",
+        "surface_id": "route-05",
+        "render": false
+      },
+      {
+        "id": "rover-b-access-3",
+        "from": "rover-b-board",
+        "to": "rover-b-exit",
+        "width": 1.2,
+        "kind": "footpath",
+        "modes": [
+          "pedestrian"
+        ],
+        "stage": "blockout",
+        "surface_id": "route-05",
+        "render": false
+      },
+      {
+        "id": "rover-b-access-4",
+        "from": "outpost-south",
+        "to": "rover-b-alternate-shoulder",
+        "width": 1.2,
+        "kind": "footpath",
+        "modes": [
+          "pedestrian"
+        ],
+        "stage": "blockout",
+        "surface_id": "route-05",
+        "render": false,
+        "resource_ids": [
+          "corridor:route05-tail"
+        ]
+      },
+      {
+        "id": "rover-b-access-5",
+        "from": "rover-b-alternate-shoulder",
+        "to": "rover-b-alternate",
+        "width": 1.2,
+        "kind": "footpath",
+        "modes": [
+          "pedestrian"
+        ],
+        "stage": "blockout",
+        "surface_id": "route-05",
+        "render": false
+      },
+      {
+        "id": "route-05-lead",
+        "from": "outpost-arrival",
+        "to": "rover-a-dock",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout",
+        "surface_id": "route-05",
+        "resource_ids": [
+          "corridor:route05-lead",
+          "clearance:rover-a"
+        ]
+      },
+      {
+        "id": "route-05-ride",
+        "from": "rover-a-dock",
+        "to": "rover-b-dock",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout",
+        "surface_id": "route-05",
+        "resource_ids": [
+          "clearance:rover-a",
+          "clearance:rover-b"
+        ]
+      },
+      {
+        "id": "route-05-tail",
+        "from": "rover-b-dock",
+        "to": "outpost-south",
+        "width": 10,
+        "kind": "road",
+        "modes": [
+          "pedestrian",
+          "rover"
+        ],
+        "stage": "blockout",
+        "surface_id": "route-05",
+        "resource_ids": [
+          "corridor:route05-tail",
+          "clearance:rover-b"
+        ]
+      }
+    ],
+    "destinations": [
+      {
+        "id": "outpost-approach",
+        "name": "Outpost approach",
+        "anchor": "console-approach",
+        "capacity": 1
+      },
+      {
+        "id": "outpost-bridge-staging",
+        "name": "Outpost bridge staging",
+        "anchor": "outpost-west",
+        "capacity": 1
+      },
+      {
+        "id": "rover-a-board",
+        "name": "Rover A board",
+        "anchor": "rover-a-board",
+        "capacity": 1
+      },
+      {
+        "id": "rover-a-exit",
+        "name": "Rover A exit",
+        "anchor": "rover-a-exit",
+        "capacity": 1
+      },
+      {
+        "id": "rover-a-alternate",
+        "name": "Rover A alternate",
+        "anchor": "rover-a-alternate",
+        "capacity": 1
+      },
+      {
+        "id": "rover-b-board",
+        "name": "Rover B board",
+        "anchor": "rover-b-board",
+        "capacity": 1
+      },
+      {
+        "id": "rover-b-exit",
+        "name": "Rover B exit",
+        "anchor": "rover-b-exit",
+        "capacity": 1
+      },
+      {
+        "id": "rover-b-alternate",
+        "name": "Rover B alternate",
+        "anchor": "rover-b-alternate",
+        "capacity": 1
+      }
+    ],
+    "surface_edges": [
       {
         "id": "route-01",
         "from": "hub-east",
@@ -991,20 +1642,1707 @@
         "stage": "blockout"
       }
     ],
-    "destinations": [
+    "graph_migrations": [
       {
-        "id": "outpost-approach",
-        "name": "Outpost approach",
-        "anchor": "console-approach",
-        "capacity": 1
+        "source_signature": "9cfc77d4978d54f23b6d97d815fe5e1afcb309f328b78016f919a9ef66d186a5",
+        "source_descriptor": {
+          "navigation": {
+            "version": 1,
+            "nodes": [
+              {
+                "id": "hub-east",
+                "position": [
+                  125,
+                  48,
+                  40
+                ]
+              },
+              {
+                "id": "outpost-west",
+                "position": [
+                  256,
+                  58,
+                  50
+                ]
+              },
+              {
+                "id": "outpost-arrival",
+                "position": [
+                  268,
+                  58,
+                  68
+                ]
+              },
+              {
+                "id": "console-approach",
+                "position": [
+                  294,
+                  58,
+                  75
+                ]
+              },
+              {
+                "id": "console",
+                "position": [
+                  294,
+                  58,
+                  64
+                ]
+              },
+              {
+                "id": "outpost-south",
+                "position": [
+                  325,
+                  58,
+                  96
+                ]
+              },
+              {
+                "id": "gardens-east",
+                "position": [
+                  185,
+                  36,
+                  300
+                ]
+              },
+              {
+                "id": "hub-south",
+                "position": [
+                  0,
+                  48,
+                  109
+                ]
+              },
+              {
+                "id": "gardens-north",
+                "position": [
+                  80,
+                  36,
+                  234
+                ]
+              },
+              {
+                "id": "harbor-east",
+                "position": [
+                  -137,
+                  25,
+                  240
+                ]
+              },
+              {
+                "id": "hub-west",
+                "position": [
+                  -128,
+                  48,
+                  20
+                ]
+              },
+              {
+                "id": "water-east",
+                "position": [
+                  -251,
+                  42,
+                  -10
+                ]
+              },
+              {
+                "id": "workshop-south",
+                "position": [
+                  -230,
+                  66,
+                  -111
+                ]
+              },
+              {
+                "id": "hub-north",
+                "position": [
+                  0,
+                  48,
+                  -110
+                ]
+              },
+              {
+                "id": "solar-south",
+                "position": [
+                  -25,
+                  58,
+                  -129
+                ]
+              },
+              {
+                "id": "foundry-south",
+                "position": [
+                  -30,
+                  92,
+                  -220
+                ]
+              },
+              {
+                "id": "mine-south",
+                "position": [
+                  150,
+                  80,
+                  -180
+                ]
+              },
+              {
+                "id": "memory-west",
+                "position": [
+                  185,
+                  70,
+                  -160
+                ]
+              },
+              {
+                "id": "central-northwest",
+                "position": [
+                  -128,
+                  48,
+                  -110
+                ]
+              },
+              {
+                "id": "central-northeast",
+                "position": [
+                  125,
+                  48,
+                  -110
+                ]
+              },
+              {
+                "id": "central-southeast",
+                "position": [
+                  125,
+                  48,
+                  109
+                ]
+              },
+              {
+                "id": "central-southwest",
+                "position": [
+                  -128,
+                  48,
+                  109
+                ]
+              }
+            ],
+            "edges": [
+              {
+                "id": "route-01",
+                "from": "hub-east",
+                "to": "outpost-west",
+                "width": 10,
+                "kind": "bridge",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-02",
+                "from": "outpost-west",
+                "to": "outpost-arrival",
+                "width": 10,
+                "kind": "road",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-03",
+                "from": "outpost-arrival",
+                "to": "console-approach",
+                "width": 4,
+                "kind": "footpath",
+                "modes": [
+                  "pedestrian"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-04",
+                "from": "console-approach",
+                "to": "console",
+                "width": 2.4,
+                "kind": "interior",
+                "modes": [
+                  "pedestrian"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-05",
+                "from": "outpost-arrival",
+                "to": "outpost-south",
+                "width": 10,
+                "kind": "road",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-06",
+                "from": "outpost-south",
+                "to": "gardens-east",
+                "width": 10,
+                "kind": "bridge",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-07",
+                "from": "hub-south",
+                "to": "gardens-north",
+                "width": 10,
+                "kind": "road",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-08",
+                "from": "gardens-north",
+                "to": "gardens-east",
+                "width": 10,
+                "kind": "road",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-09",
+                "from": "harbor-east",
+                "to": "gardens-north",
+                "width": 10,
+                "kind": "bridge",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-10",
+                "from": "hub-west",
+                "to": "water-east",
+                "width": 10,
+                "kind": "bridge",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-11",
+                "from": "hub-west",
+                "to": "workshop-south",
+                "width": 10,
+                "kind": "bridge",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-12",
+                "from": "hub-north",
+                "to": "solar-south",
+                "width": 10,
+                "kind": "road",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-13",
+                "from": "solar-south",
+                "to": "foundry-south",
+                "width": 10,
+                "kind": "bridge",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-14",
+                "from": "foundry-south",
+                "to": "mine-south",
+                "width": 10,
+                "kind": "road",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-15",
+                "from": "hub-east",
+                "to": "memory-west",
+                "width": 10,
+                "kind": "bridge",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-16",
+                "from": "memory-west",
+                "to": "mine-south",
+                "width": 10,
+                "kind": "bridge",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-17",
+                "from": "hub-west",
+                "to": "harbor-east",
+                "width": 10,
+                "kind": "bridge",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-18",
+                "from": "hub-west",
+                "to": "central-northwest",
+                "width": 10,
+                "kind": "road",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-19",
+                "from": "hub-north",
+                "to": "central-northeast",
+                "width": 10,
+                "kind": "road",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-20",
+                "from": "hub-east",
+                "to": "central-southeast",
+                "width": 10,
+                "kind": "road",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-21",
+                "from": "hub-south",
+                "to": "central-southwest",
+                "width": 10,
+                "kind": "road",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-22",
+                "from": "central-northwest",
+                "to": "hub-north",
+                "width": 10,
+                "kind": "road",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-23",
+                "from": "central-northeast",
+                "to": "hub-east",
+                "width": 10,
+                "kind": "road",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-24",
+                "from": "central-southeast",
+                "to": "hub-south",
+                "width": 10,
+                "kind": "road",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              },
+              {
+                "id": "route-25",
+                "from": "central-southwest",
+                "to": "hub-west",
+                "width": 10,
+                "kind": "road",
+                "modes": [
+                  "pedestrian",
+                  "rover"
+                ],
+                "stage": "blockout"
+              }
+            ],
+            "destinations": [
+              {
+                "id": "outpost-approach",
+                "name": "Outpost approach",
+                "anchor": "console-approach",
+                "capacity": 1
+              },
+              {
+                "id": "outpost-bridge-staging",
+                "name": "Outpost bridge staging",
+                "anchor": "outpost-west",
+                "capacity": 1
+              }
+            ]
+          },
+          "stations": [
+            {
+              "id": "communications-console",
+              "district_id": "communications-outpost",
+              "building_id": "operations",
+              "checkpoint": "hub:comms",
+              "capability": "communication-draft",
+              "capacity": 1,
+              "anchor": "console"
+            }
+          ],
+          "spawn": {
+            "position": [
+              268,
+              58,
+              68
+            ],
+            "yaw": 1.5707963267948966
+          }
+        },
+        "edge_splits": {
+          "route-05": [
+            "route-05-lead",
+            "route-05-ride",
+            "route-05-tail"
+          ]
+        }
+      }
+    ],
+    "rover_docks": [
+      {
+        "id": "outpost-a",
+        "name": "Operations approach",
+        "node_id": "rover-a-dock",
+        "boarding_station_id": "rover-a-board",
+        "exit_station_ids": [
+          "rover-a-exit",
+          "rover-a-alternate"
+        ],
+        "yaw": 1.1141908549024027
       },
       {
-        "id": "outpost-bridge-staging",
-        "name": "Outpost bridge staging",
-        "anchor": "outpost-west",
-        "capacity": 1
+        "id": "outpost-b",
+        "name": "South overlook",
+        "node_id": "rover-b-dock",
+        "boarding_station_id": "rover-b-board",
+        "exit_station_ids": [
+          "rover-b-exit",
+          "rover-b-alternate"
+        ],
+        "yaw": 1.1141908549024027
       }
-    ]
+    ],
+    "rovers": [
+      {
+        "id": "outpost-rover",
+        "home_dock_id": "outpost-a",
+        "seat_capacity": 1,
+        "width_m": 3.4,
+        "length_m": 4.8,
+        "height_m": 2.6,
+        "speed_m_s": 4
+      }
+    ],
+    "collision": {
+      "version": 1,
+      "source_sha256": "ce64fbcbf1815245e9352f35b0cd6c2b3148acc747bca2e9d53808130e2a0ace",
+      "solid_boxes": [
+        {
+          "id": "outpost:communications-mast",
+          "min": [
+            313.0,
+            58.0,
+            39.0
+          ],
+          "max": [
+            327.0,
+            120.0,
+            53.0
+          ]
+        },
+        {
+          "id": "outpost:dish-west base",
+          "min": [
+            271.435,
+            58.0,
+            39.435
+          ],
+          "max": [
+            284.565,
+            67.0,
+            52.565
+          ]
+        },
+        {
+          "id": "outpost:dish-east base",
+          "min": [
+            343.2,
+            58.0,
+            13.2
+          ],
+          "max": [
+            358.8,
+            67.0,
+            28.8
+          ]
+        },
+        {
+          "id": "outpost:radome-north",
+          "min": [
+            289.5,
+            58.0,
+            12.5
+          ],
+          "max": [
+            306.5,
+            75.0,
+            29.5
+          ]
+        },
+        {
+          "id": "outpost:radome-south",
+          "min": [
+            340.8,
+            58.0,
+            58.8
+          ],
+          "max": [
+            361.2,
+            76.0,
+            79.2
+          ]
+        },
+        {
+          "id": "outpost:operations-west",
+          "min": [
+            284.0,
+            58.0,
+            57.0
+          ],
+          "max": [
+            284.38,
+            66.0,
+            71.0
+          ]
+        },
+        {
+          "id": "outpost:operations-east",
+          "min": [
+            303.62,
+            58.0,
+            57.0
+          ],
+          "max": [
+            304.0,
+            66.0,
+            71.0
+          ]
+        },
+        {
+          "id": "outpost:operations-north",
+          "min": [
+            284.0,
+            58.0,
+            57.0
+          ],
+          "max": [
+            304.0,
+            66.0,
+            57.379999999999995
+          ]
+        },
+        {
+          "id": "outpost:operations-south-west",
+          "min": [
+            284.0,
+            58.0,
+            70.62
+          ],
+          "max": [
+            292.5,
+            66.0,
+            71.0
+          ]
+        },
+        {
+          "id": "outpost:operations-south-east",
+          "min": [
+            295.5,
+            58.0,
+            70.62
+          ],
+          "max": [
+            304.0,
+            66.0,
+            71.0
+          ]
+        },
+        {
+          "id": "outpost:operations-lintel",
+          "min": [
+            292.5,
+            61.0,
+            70.62
+          ],
+          "max": [
+            295.5,
+            66.0,
+            71.0
+          ]
+        },
+        {
+          "id": "outpost:operations-jamb-west",
+          "min": [
+            292.5,
+            58.0,
+            70.7
+          ],
+          "max": [
+            292.79999999999995,
+            61.0,
+            71.3
+          ]
+        },
+        {
+          "id": "outpost:operations-jamb-east",
+          "min": [
+            295.20000000000005,
+            58.0,
+            70.7
+          ],
+          "max": [
+            295.5,
+            61.0,
+            71.3
+          ]
+        },
+        {
+          "id": "outpost:operations-roof",
+          "min": [
+            284.0,
+            65.6,
+            57.0
+          ],
+          "max": [
+            304.0,
+            66.0,
+            71.0
+          ]
+        },
+        {
+          "id": "outpost:console-desk",
+          "min": [
+            291.3,
+            58.0,
+            60.35
+          ],
+          "max": [
+            296.7,
+            59.7,
+            61.85
+          ]
+        },
+        {
+          "id": "outpost:equipment-rack--7.3",
+          "min": [
+            285.8,
+            58.0,
+            58.550000000000004
+          ],
+          "max": [
+            287.59999999999997,
+            60.7,
+            59.85
+          ]
+        },
+        {
+          "id": "outpost:equipment-rack-7.3",
+          "min": [
+            300.40000000000003,
+            58.0,
+            58.550000000000004
+          ],
+          "max": [
+            302.2,
+            60.7,
+            59.85
+          ]
+        },
+        {
+          "id": "outpost:service-east",
+          "min": [
+            357.0,
+            58.0,
+            39.0
+          ],
+          "max": [
+            369.0,
+            70.0,
+            51.0
+          ]
+        },
+        {
+          "id": "outpost:service-module-0",
+          "min": [
+            319.0,
+            58.0,
+            22.5
+          ],
+          "max": [
+            327.0,
+            63.0,
+            29.5
+          ]
+        },
+        {
+          "id": "outpost:service-module-1",
+          "min": [
+            330.0,
+            58.0,
+            22.5
+          ],
+          "max": [
+            338.0,
+            63.0,
+            29.5
+          ]
+        },
+        {
+          "id": "outpost:service-module-2",
+          "min": [
+            329.0,
+            58.0,
+            66.5
+          ],
+          "max": [
+            337.0,
+            63.0,
+            73.5
+          ]
+        },
+        {
+          "id": "outpost:district-sign",
+          "min": [
+            334.5,
+            58.25,
+            84.75
+          ],
+          "max": [
+            359.5,
+            61.75,
+            85.25
+          ]
+        }
+      ],
+      "support_surfaces": [
+        {
+          "id": "outpost:plateau",
+          "polygon": [
+            [
+              379.19163409438966,
+              50.0
+            ],
+            [
+              381.7492419347785,
+              58.514104199157146
+            ],
+            [
+              381.03500148354226,
+              62.59773149092457
+            ],
+            [
+              379.67266156242977,
+              65.61855150291954
+            ],
+            [
+              379.7138129811923,
+              68.5285314444432
+            ],
+            [
+              379.30010118534335,
+              71.03260979086602
+            ],
+            [
+              378.1277633525924,
+              73.03831634746953
+            ],
+            [
+              378.03849366748466,
+              75.3147658224957
+            ],
+            [
+              375.7582675104747,
+              76.47535138798723
+            ],
+            [
+              376.5920862573003,
+              79.02009076235758
+            ],
+            [
+              376.0353986202004,
+              80.84748377192284
+            ],
+            [
+              375.3453245155374,
+              82.56036857604752
+            ],
+            [
+              372.84886548328643,
+              83.11431138481073
+            ],
+            [
+              374.619411079832,
+              86.35841802338464
+            ],
+            [
+              371.8664668879266,
+              86.61419465719865
+            ],
+            [
+              371.8477631042101,
+              88.77066420610154
+            ],
+            [
+              369.0427710204593,
+              88.82552705786364
+            ],
+            [
+              368.5391304378219,
+              90.68211219407127
+            ],
+            [
+              366.4757798300741,
+              91.26183928516427
+            ],
+            [
+              364.305907776994,
+              91.71462965746207
+            ],
+            [
+              362.1056707359226,
+              92.1158188329598
+            ],
+            [
+              359.15382820533574,
+              91.71099744219333
+            ],
+            [
+              357.44787241673714,
+              92.63385347604682
+            ],
+            [
+              357.24984033273296,
+              95.52668955958615
+            ],
+            [
+              355.0163627172807,
+              96.21929204878478
+            ],
+            [
+              351.8229780248019,
+              95.72647836343249
+            ],
+            [
+              350.03576699714756,
+              97.49592171667565
+            ],
+            [
+              347.24440458962243,
+              98.14202004449209
+            ],
+            [
+              344.0354146019505,
+              98.54786562306265
+            ],
+            [
+              340.18614863807016,
+              98.33623732169764
+            ],
+            [
+              335.6906457592861,
+              97.64443136971514
+            ],
+            [
+              330.14088995768566,
+              96.09496164452219
+            ],
+            [
+              320.0000000235387,
+              97.19276845121112
+            ],
+            [
+              309.92320260553623,
+              95.8036317656123
+            ],
+            [
+              304.3860817789598,
+              97.41144924863454
+            ],
+            [
+              300.6171020382319,
+              96.4128335058094
+            ],
+            [
+              296.8428624194162,
+              96.7738802136463
+            ],
+            [
+              293.5014243136735,
+              96.82410869524162
+            ],
+            [
+              290.7775180055971,
+              96.20986430294711
+            ],
+            [
+              287.26739559252616,
+              97.03352169148432
+            ],
+            [
+              284.624027589598,
+              96.69395315405563
+            ],
+            [
+              283.84745624424954,
+              94.1855756066445
+            ],
+            [
+              282.342651256897,
+              92.87233920109944
+            ],
+            [
+              280.41092477246457,
+              92.1746708111034
+            ],
+            [
+              278.78852878478403,
+              91.22140379678106
+            ],
+            [
+              275.63221416488017,
+              91.77288871157364
+            ],
+            [
+              274.9874496692863,
+              89.96276392460727
+            ],
+            [
+              272.81910058089176,
+              89.54373772814304
+            ],
+            [
+              271.2700169517463,
+              88.57790324653419
+            ],
+            [
+              268.8458597107479,
+              88.25198768788074
+            ],
+            [
+              268.25172461805664,
+              86.53075950021659
+            ],
+            [
+              266.2331971354765,
+              85.79086364501453
+            ],
+            [
+              267.0127497612887,
+              83.20102120989677
+            ],
+            [
+              266.65856938990567,
+              81.38145193368136
+            ],
+            [
+              265.43898673473666,
+              80.03583471739847
+            ],
+            [
+              265.4497731571428,
+              77.97303719974983
+            ],
+            [
+              262.8192600737334,
+              77.15077511848128
+            ],
+            [
+              262.0322551730263,
+              75.28390715927802
+            ],
+            [
+              262.9883953175588,
+              72.59593881470717
+            ],
+            [
+              259.223786114948,
+              71.55615868538268
+            ],
+            [
+              260.0695071914646,
+              68.59576478282621
+            ],
+            [
+              258.60779132628915,
+              66.06862083812328
+            ],
+            [
+              258.00916191438665,
+              62.79501784415481
+            ],
+            [
+              259.32424234087335,
+              58.36609012331292
+            ],
+            [
+              259.3495762567311,
+              50.000000028341475
+            ],
+            [
+              260.5964479323404,
+              41.809324029624264
+            ],
+            [
+              260.1438254971525,
+              37.64558046805121
+            ],
+            [
+              262.5032946937482,
+              34.95097705446951
+            ],
+            [
+              261.7596479107917,
+              31.928667068032997
+            ],
+            [
+              261.5948166400917,
+              29.284800416553985
+            ],
+            [
+              262.4710933812729,
+              27.199034104119573
+            ],
+            [
+              260.6006289453545,
+              24.091657566669426
+            ],
+            [
+              262.9462386735701,
+              22.909517340368904
+            ],
+            [
+              262.5646990164183,
+              20.547513658910997
+            ],
+            [
+              264.03700001067955,
+              19.19237167028285
+            ],
+            [
+              263.85775316965555,
+              16.97079174284609
+            ],
+            [
+              265.78417245795464,
+              16.029170564120022
+            ],
+            [
+              267.93078701319394,
+              15.33916835617471
+            ],
+            [
+              270.02807886435204,
+              14.723225667011768
+            ],
+            [
+              271.195626916927,
+              13.505118691620538
+            ],
+            [
+              270.8154598788249,
+              11.062239070736403
+            ],
+            [
+              271.77760065367204,
+              9.583349706116927
+            ],
+            [
+              273.49216678942435,
+              8.709703280885485
+            ],
+            [
+              274.5029255957228,
+              7.1638703618232
+            ],
+            [
+              276.18553705139044,
+              6.174977109846587
+            ],
+            [
+              279.0339182950227,
+              6.358389267792468
+            ],
+            [
+              280.4545394761706,
+              4.978073230611699
+            ],
+            [
+              284.11531714728227,
+              6.141803519509949
+            ],
+            [
+              286.6072020861511,
+              5.923706537784902
+            ],
+            [
+              288.9206790224664,
+              5.342083411497079
+            ],
+            [
+              290.8615363029251,
+              3.9229948470469864
+            ],
+            [
+              294.2540217761467,
+              4.505762985551868
+            ],
+            [
+              296.998541863548,
+              3.5405684804641524
+            ],
+            [
+              299.9962777661018,
+              2.1005872615302934
+            ],
+            [
+              304.3640355418862,
+              2.521607653845521
+            ],
+            [
+              309.4140918179079,
+              1.8822279245663438
+            ],
+            [
+              319.99999995347287,
+              0.674740860932836
+            ],
+            [
+              330.42279299555577,
+              2.623660707922049
+            ],
+            [
+              336.1069664978563,
+              1.091416398381888
+            ],
+            [
+              339.3572787372233,
+              3.648512367531737
+            ],
+            [
+              342.7642959204728,
+              4.019599925642176
+            ],
+            [
+              345.5890146967183,
+              4.7831242046135
+            ],
+            [
+              348.82367794470844,
+              4.4207693654516405
+            ],
+            [
+              351.64372982649695,
+              4.531083605000639
+            ],
+            [
+              354.31818703595144,
+              4.70225385754631
+            ],
+            [
+              357.4039036178342,
+              4.285014563419921
+            ],
+            [
+              359.3380272047489,
+              5.214233021835845
+            ],
+            [
+              361.55706533165505,
+              5.728808006633024
+            ],
+            [
+              363.0557045872154,
+              6.933918343365669
+            ],
+            [
+              364.25556995259376,
+              8.332764105762173
+            ],
+            [
+              365.4836023944597,
+              9.619029546738517
+            ],
+            [
+              367.05382794706486,
+              10.562764712994756
+            ],
+            [
+              368.37220519760007,
+              11.705337551899916
+            ],
+            [
+              369.3847115416682,
+              13.071153826851791
+            ],
+            [
+              371.1026615972322,
+              13.924999879689885
+            ],
+            [
+              371.7240152171838,
+              15.568955616061515
+            ],
+            [
+              372.9811525519948,
+              16.80279950971211
+            ],
+            [
+              374.4680274538123,
+              17.955756605808368
+            ],
+            [
+              375.31635820191013,
+              19.548347937688114
+            ],
+            [
+              377.47521835954484,
+              20.52704426203846
+            ],
+            [
+              379.62332048963174,
+              21.68942954360917
+            ],
+            [
+              378.8969662617972,
+              24.310792469651567
+            ],
+            [
+              379.63839298941355,
+              26.362961777652128
+            ],
+            [
+              379.1311621599627,
+              29.027309644822214
+            ],
+            [
+              379.07198808562094,
+              31.67061967597117
+            ],
+            [
+              377.65811895381694,
+              34.90872910873081
+            ],
+            [
+              380.19804747358233,
+              37.57501728652195
+            ],
+            [
+              380.37226430933055,
+              41.67575612326357
+            ]
+          ],
+          "plane": [
+            0,
+            0,
+            57.88
+          ]
+        },
+        {
+          "id": "outpost:terrace",
+          "polygon": [
+            [
+              375.0,
+              78.0
+            ],
+            [
+              374.88022805923333,
+              79.82736669108073
+            ],
+            [
+              374.522961568047,
+              81.62346663143529
+            ],
+            [
+              373.934313455158,
+              83.35756805311127
+            ],
+            [
+              373.12435565298216,
+              85.0
+            ],
+            [
+              372.1069467640773,
+              86.5226600061221
+            ],
+            [
+              370.8994949366117,
+              87.89949493661166
+            ],
+            [
+              369.52266000612207,
+              89.10694676407729
+            ],
+            [
+              368.0,
+              90.12435565298213
+            ],
+            [
+              366.35756805311127,
+              90.93431345515802
+            ],
+            [
+              364.6234666314353,
+              91.52296156804695
+            ],
+            [
+              362.8273666910807,
+              91.88022805923335
+            ],
+            [
+              361.0,
+              92.0
+            ],
+            [
+              279.0,
+              92.0
+            ],
+            [
+              277.1726333089193,
+              91.88022805923335
+            ],
+            [
+              275.3765333685647,
+              91.52296156804695
+            ],
+            [
+              273.64243194688873,
+              90.93431345515802
+            ],
+            [
+              272.0,
+              90.12435565298215
+            ],
+            [
+              270.47733999387793,
+              89.10694676407729
+            ],
+            [
+              269.10050506338837,
+              87.89949493661166
+            ],
+            [
+              267.8930532359227,
+              86.5226600061221
+            ],
+            [
+              266.87564434701784,
+              85.0
+            ],
+            [
+              266.065686544842,
+              83.35756805311127
+            ],
+            [
+              265.477038431953,
+              81.62346663143529
+            ],
+            [
+              265.11977194076667,
+              79.82736669108073
+            ],
+            [
+              265.0,
+              78.0
+            ],
+            [
+              265.0,
+              22.0
+            ],
+            [
+              265.11977194076667,
+              20.17263330891928
+            ],
+            [
+              265.477038431953,
+              18.376533368564708
+            ],
+            [
+              266.065686544842,
+              16.642431946888742
+            ],
+            [
+              266.87564434701784,
+              15.0
+            ],
+            [
+              267.8930532359227,
+              13.477339993877912
+            ],
+            [
+              269.1005050633883,
+              12.10050506338834
+            ],
+            [
+              270.4773399938779,
+              10.893053235922707
+            ],
+            [
+              272.0,
+              9.875644347017861
+            ],
+            [
+              273.64243194688873,
+              9.06568654484198
+            ],
+            [
+              275.3765333685647,
+              8.477038431953048
+            ],
+            [
+              277.1726333089193,
+              8.119771940766654
+            ],
+            [
+              279.0,
+              8.0
+            ],
+            [
+              361.0,
+              8.0
+            ],
+            [
+              362.8273666910807,
+              8.119771940766654
+            ],
+            [
+              364.6234666314353,
+              8.47703843195304
+            ],
+            [
+              366.35756805311127,
+              9.065686544841988
+            ],
+            [
+              368.0,
+              9.875644347017861
+            ],
+            [
+              369.52266000612207,
+              10.893053235922707
+            ],
+            [
+              370.89949493661163,
+              12.100505063388333
+            ],
+            [
+              372.1069467640773,
+              13.477339993877905
+            ],
+            [
+              373.12435565298216,
+              14.999999999999993
+            ],
+            [
+              373.934313455158,
+              16.64243194688875
+            ],
+            [
+              374.522961568047,
+              18.37653336856471
+            ],
+            [
+              374.88022805923333,
+              20.172633308919277
+            ],
+            [
+              375.0,
+              21.999999999999996
+            ]
+          ],
+          "plane": [
+            0,
+            0,
+            57.97
+          ]
+        },
+        {
+          "id": "outpost:route-01",
+          "polygon": [
+            [
+              124.6194278287001,
+              44.985495444028814
+            ],
+            [
+              125.3805721712999,
+              35.014504555971186
+            ],
+            [
+              256.3805721712999,
+              45.014504555971186
+            ],
+            [
+              255.61942782870008,
+              54.985495444028814
+            ]
+          ],
+          "plane": [
+            0.07589363304559411,
+            0.005793407102717108,
+            38.28155958519205
+          ]
+        },
+        {
+          "id": "outpost:route-02",
+          "polygon": [
+            [
+              251.8397485283108,
+              52.77350098112615
+            ],
+            [
+              260.1602514716892,
+              47.22649901887385
+            ],
+            [
+              272.1602514716892,
+              65.22649901887385
+            ],
+            [
+              263.8397485283108,
+              70.77350098112615
+            ]
+          ],
+          "plane": [
+            0.0,
+            0.0,
+            58.006
+          ]
+        },
+        {
+          "id": "outpost:route-03",
+          "polygon": [
+            [
+              267.48005305310426,
+              69.93123151704134
+            ],
+            [
+              268.51994694689574,
+              66.06876848295866
+            ],
+            [
+              294.51994694689574,
+              73.06876848295866
+            ],
+            [
+              293.48005305310426,
+              76.93123151704134
+            ]
+          ],
+          "plane": [
+            0.0,
+            0.0,
+            58.006
+          ]
+        },
+        {
+          "id": "outpost:route-05",
+          "polygon": [
+            [
+              265.79548060173266,
+              72.48777163218708
+            ],
+            [
+              270.20451939826734,
+              63.512228367812924
+            ],
+            [
+              327.20451939826734,
+              91.51222836781292
+            ],
+            [
+              322.79548060173266,
+              100.48777163218708
+            ]
+          ],
+          "plane": [
+            0.0,
+            0.0,
+            58.006
+          ]
+        }
+      ]
+    }
   },
   "stations": [
     {

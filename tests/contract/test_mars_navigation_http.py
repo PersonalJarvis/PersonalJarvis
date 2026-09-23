@@ -275,7 +275,9 @@ async def test_canonical_two_agent_handoff_waits_for_safe_departure(world):
             now[0] += 1000
             await service.advance()
             occupancy = (await service.snapshot()).occupancies
-            assert len({row.resource_id for row in occupancy}) == len(occupancy)
+            assert len({row.resource_id for row in occupancy}) == len(occupancy), [
+                (row.resource_id, row.owner, row.position) for row in occupancy
+            ]
 
     async with world.client() as client:
         first = (await post(client)).json()["command_id"]

@@ -25,6 +25,15 @@ class OrdinaryNavigationAuthority:
     async def __call__(self, agent_id: str, _destination: str, mode: TravelMode) -> bool:
         if mode is not TravelMode.PEDESTRIAN:
             return False
+        return await self._active(agent_id)
+
+    async def rover(self, agent_id: str, _destination: str, mode: TravelMode) -> bool:
+        """Only the seat-bearing rover action boundary uses this capability."""
+        if mode is not TravelMode.ROVER:
+            return False
+        return await self._active(agent_id)
+
+    async def _active(self, agent_id: str) -> bool:
         agent = await self.runtime.roster.get(agent_id)
         return (
             agent is not None

@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useT } from "@/i18n";
 import { MarsApiError } from "./api";
-import { cancelMove, clearMoveAttempt, latestNavigationRecords, readMoveAttempt, saveMoveAttempt, submitMove, type MoveAttempt } from "./navigationApi";
+import { cancelMove, clearMoveAttempt, currentRoverRide, latestNavigationRecords, readMoveAttempt, saveMoveAttempt, submitMove, type MoveAttempt } from "./navigationApi";
+import { MarsRoverPanel } from "./MarsRoverPanel";
 import { NAVIGATION_KEY, useMarsNavigation } from "./useMarsNavigation";
 
 export const VISIT_DESTINATIONS = ["communications-console", "outpost-bridge-staging", "outpost-approach"] as const;
 
 /** Moving and stopping here changes physical location, never the agent's real task. */
-export function MarsNavigationPanel({ agentId }: { agentId: string }) {
+export function MarsNavigationPanel({ agentId, active = false }: { agentId: string; active?: boolean }) {
   const t = useT();
   const query = useMarsNavigation();
   const client = useQueryClient();
@@ -16,6 +17,7 @@ export function MarsNavigationPanel({ agentId }: { agentId: string }) {
   const [destination, setDestination] = useState(pending.current?.station_id ?? "communications-console");
   const [busy, setBusy] = useState(false), [failed, setFailed] = useState(false);
   const record = latestNavigationRecords(query.data).find((row) => row.agent_id === agentId);
+  const riding = !!currentRoverRide(query.data, agentId);
   const inMotion = record && !["arrived", "unreachable", "canceled"].includes(record.state);
   useEffect(() => {
     const attempt = pending.current;
@@ -25,7 +27,7 @@ export function MarsNavigationPanel({ agentId }: { agentId: string }) {
     }
   }, [query.data, query.isError, busy]);
   const move = async (target = destination) => {
-    if (busy || !agentId) return;
+    if (busy || !agentId || riding) return;
     const attempt = pending.current ?? { request_id: crypto.randomUUID(), agent_id: agentId, station_id: target };
     pending.current = attempt; saveMoveAttempt(attempt); setBusy(true); setFailed(false);
     try {
@@ -47,7 +49,7 @@ export function MarsNavigationPanel({ agentId }: { agentId: string }) {
     catch { setFailed(true); }
     finally { setBusy(false); }
   };
-  return <section className="grid gap-2 border-t border-border pt-3" aria-label={t("society.mars.visits")} data-mars-ui>
+  return <><section className="grid gap-2 border-t border-border pt-3" aria-label={t("society.mars.visits")} data-mars-ui>
     <h3 className="text-sm font-semibold">{t("society.mars.visits")}</h3>
     <p className="text-xs text-muted-foreground">{t("society.mars.visit_scope")}</p>
     {pending.current && <p className="text-xs text-muted-foreground">{t("society.mars.pending_visit")}: {pending.current.agent_id} · {t(`society.mars.destination_${pending.current.station_id}`)}</p>}
@@ -58,13 +60,14 @@ export function MarsNavigationPanel({ agentId }: { agentId: string }) {
     </label>
     {destination === "outpost-approach" && <p className="text-xs text-muted-foreground">{t("society.mars.approach_hint")}</p>}
     <div className="flex flex-wrap gap-2 text-sm">
-      <button type="button" disabled={busy || !agentId || (!pending.current && !!inMotion)} onClick={() => void move()} className="rounded border border-border px-2 py-1 disabled:opacity-50">{t(pending.current ? "society.mars.retry_visit" : "society.mars.start_visit")}</button>
-      {inMotion && <button type="button" disabled={busy} onClick={() => void stop()} className="rounded border border-border px-2 py-1 disabled:opacity-50">{t("society.mars.stop_visit")}</button>}
-      {record?.presence === "placed" && !inMotion && record.station_id !== "outpost-bridge-staging" && <button type="button" disabled={busy || !!pending.current} onClick={() => void move("outpost-bridge-staging")} className="rounded border border-border px-2 py-1 disabled:opacity-50">{t("society.mars.park_by_bridge")}</button>}
+      <button type="button" disabled={busy || riding || !agentId || (!pending.current && !!inMotion)} onClick={() => void move()} className="rounded border border-border px-2 py-1 disabled:opacity-50">{t(pending.current ? "society.mars.retry_visit" : "society.mars.start_visit")}</button>
+      {inMotion && !riding && <button type="button" disabled={busy} onClick={() => void stop()} className="rounded border border-border px-2 py-1 disabled:opacity-50">{t("society.mars.stop_visit")}</button>}
+      {record?.presence === "placed" && !inMotion && !riding && record.station_id !== "outpost-bridge-staging" && <button type="button" disabled={busy || !!pending.current} onClick={() => void move("outpost-bridge-staging")} className="rounded border border-border px-2 py-1 disabled:opacity-50">{t("society.mars.park_by_bridge")}</button>}
     </div>
     {record && <p role="status" className="text-sm">{t(`society.mars.move_state_${record.state}`)}{record.presence === "spawn_queue" ? ` · ${t("society.mars.waiting_entry")}` : ""}</p>}
     {record?.state === "canceled" && record.presence === "placed" && <p className="text-xs text-muted-foreground">{t("society.mars.stopped_in_place")}</p>}
     {query.isError && <p role="status" className="text-sm">{t("society.mars.positions_offline")}</p>}
     {failed && <p role="alert" className="text-sm">{t(pending.current ? "society.mars.visit_uncertain" : "society.mars.request_failed")}</p>}
-  </section>;
+  </section><MarsRoverPanel agentId={agentId} active={active} snapshot={query.data}
+    online={query.isSuccess && query.isFetchedAfterMount && !query.isError && query.fetchStatus !== "paused"} /></>;
 }

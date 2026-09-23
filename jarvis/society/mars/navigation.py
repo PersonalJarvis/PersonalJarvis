@@ -10,7 +10,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from .models import StationError
-from .navigation_models import NavigationOccupancy, NavigationRecord, TravelMode
+from .navigation_models import (
+    NavigationOccupancy,
+    NavigationRecord,
+    RoverRideRecord,
+    TravelMode,
+    VehicleRecord,
+)
 
 
 @dataclass(frozen=True)
@@ -35,6 +41,9 @@ class NavigationGraph:
         if data["world_id"] != "mars:ordinary":
             raise ValueError("unsupported navigation world")
         nav = data["navigation"]
+        self.definition = data
+        self.migrations = nav.get("graph_migrations", [])
+        signature_nav = {k: v for k, v in nav.items() if k != "graph_migrations"}
         self.version = nav["version"]
         self.layout_version = data["layout_version"]
         if type(self.version) is not int or self.version < 1:
@@ -43,7 +52,9 @@ class NavigationGraph:
             raise ValueError("invalid layout version")
         self.signature = hashlib.sha256(
             json.dumps(
-                [nav, data["stations"], data["spawn"]], sort_keys=True, separators=(",", ":")
+                [signature_nav, data["stations"], data["spawn"]],
+                sort_keys=True,
+                separators=(",", ":"),
             ).encode()
         ).hexdigest()
         self.nodes = {
@@ -53,6 +64,9 @@ class NavigationGraph:
             raise ValueError("invalid bounded navigation nodes")
         if any(len(p) != 3 or not all(math.isfinite(v) for v in p) for p in self.nodes.values()):
             raise ValueError("invalid navigation position")
+        self.resource_aliases = {
+            "node:" + row["id"]: tuple(row.get("resource_ids", ())) for row in nav["nodes"]
+        }
         self.edges: dict[str, RouteEdge] = {}
         self.adjacent: dict[str, list[tuple[str, RouteEdge]]] = {key: [] for key in self.nodes}
         if len(nav["edges"]) > 2048:
@@ -68,6 +82,7 @@ class NavigationGraph:
             if edge.id in self.edges:
                 raise ValueError("duplicate route identity")
             self.edges[edge.id] = edge
+            self.resource_aliases["edge:" + edge.id] = tuple(row.get("resource_ids", ()))
             self.adjacent[start].append((end, edge))
             self.adjacent[end].append((start, edge))
         # Visit-only destinations share physical slots with task stations, but
@@ -84,6 +99,43 @@ class NavigationGraph:
             )
         ):
             raise ValueError("invalid physical station slot")
+        self.docks = {row["id"]: row for row in nav.get("rover_docks", [])}
+        self.rovers = {row["id"]: row for row in nav.get("rovers", [])}
+        self.geometry = None
+        if self.rovers:
+            from .mobility_geometry import MobilityGeometry
+
+            self.geometry = MobilityGeometry(data)
+            if len(self.rovers) > 16 or not 2 <= len(self.docks) <= 32:
+                raise ValueError("invalid bounded rover catalogue")
+            for dock in self.docks.values():
+                node = dock["node_id"]
+                if node not in self.nodes:
+                    raise ValueError("unknown rover dock node")
+                for station in [dock["boarding_station_id"], *dock["exit_station_ids"]]:
+                    if station not in self.stations:
+                        raise ValueError("unknown rover pedestrian dock station")
+                    point = self.nodes[self.stations[station]]
+                    if not 0.5 <= math.dist(point, self.nodes[node]) <= 4.0:
+                        raise ValueError("invalid rover transfer clearance")
+                    if not self.geometry.capsule_clear(point):
+                        raise ValueError("unsafe rover pedestrian dock station")
+                self.stations["rover-dock:" + dock["id"]] = node
+            for rover in self.rovers.values():
+                if (
+                    rover["home_dock_id"] not in self.docks
+                    or rover["seat_capacity"] != 1
+                    or rover["width_m"] != 3.4
+                    or rover["length_m"] != 4.8
+                    or rover["height_m"] != 2.6
+                    or rover["speed_m_s"] != 4
+                ):
+                    raise ValueError("unsupported rover envelope")
+            for dock in self.docks.values():
+                if not self.geometry.vehicle_clear(
+                    self.nodes[dock["node_id"]], self.dock_yaw(dock["id"])
+                ):
+                    raise ValueError("unsafe rover dock")
         spawn = data["spawn"]["position"]
         self.spawn_node = min(self.nodes, key=lambda key: (math.dist(spawn, self.nodes[key]), key))
 
@@ -131,16 +183,37 @@ class NavigationGraph:
             a + (b - a) * fraction for a, b in zip(self.nodes[start], self.nodes[end], strict=True)
         )  # type: ignore[return-value]
 
-    def occupancies(self, records: list[NavigationRecord]) -> tuple[NavigationOccupancy, ...]:
+    def resources(self, resource_id: str) -> tuple[str, ...]:
+        return (resource_id, *self.resource_aliases.get(resource_id, ()))
+
+    def dock_yaw(self, dock_id: str) -> float:
+        dock = self.docks[dock_id]
+        if "yaw" in dock:
+            return float(dock["yaw"])
+        node = dock["node_id"]
+        for destination, edge in self.adjacent[node]:
+            if self.supports(edge, TravelMode.ROVER):
+                start, end = self.nodes[node], self.nodes[destination]
+                return math.atan2(end[0] - start[0], end[2] - start[2])
+        raise ValueError("rover dock has no compatible road")
+
+    def occupancies(
+        self,
+        records: list[NavigationRecord],
+        vehicles: list[VehicleRecord] = (),
+        rides: list[RoverRideRecord] = (),
+    ) -> tuple[NavigationOccupancy, ...]:
         """Derive bodies from each actor's latest receipt, even terminal receipts.
 
         An edge chosen while queueing with zero progress is not occupied yet.
         Bodies at endpoints occupy nodes and any station sharing that anchor.
         Graph changes do not silently erase old physical resource identities.
         """
+        attached = {ride.agent_id for ride in rides if ride.attached}
         latest = {record.agent_id: record for record in records}
+        bodies = [record for agent_id, record in latest.items() if agent_id not in attached]
         occupied = []
-        for record in latest.values():
+        for record in [*bodies, *vehicles]:
             if record.presence == "spawn_queue":
                 continue
             if record.edge_id is not None and 0 < record.edge_progress < 1:
@@ -153,11 +226,15 @@ class NavigationGraph:
                     for station, anchor in self.stations.items()
                     if anchor == node
                 )
+            resources = list(
+                dict.fromkeys(item for resource in resources for item in self.resources(resource))
+            )
             occupied.extend(
                 NavigationOccupancy(
                     resource_id=resource,
                     command_id=record.command_id,
-                    agent_id=record.agent_id,
+                    agent_id=record.agent_id if isinstance(record, NavigationRecord) else None,
+                    actor=record.actor,
                     position=record.position,
                     graph_signature=record.graph_signature,
                 )

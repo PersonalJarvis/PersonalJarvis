@@ -12,7 +12,7 @@ import { WORLD, WORLD_BOUNDS } from "./world";
 import { MarsBackgroundControl } from "./MarsBackgroundControl";
 import { readViewPreferences, saveViewPreferences, VIEWPOINTS, type CameraPose, type Viewpoint } from "./viewPreferences";
 import { fetchMarsRoster, WORLD_ID } from "./api";
-import { latestNavigationRecords } from "./navigationApi";
+import { agentFollowRecords, pedestrianNavigationRecords } from "./navigationApi";
 import { MarsNavigationContext, useMarsNavigation } from "./useMarsNavigation";
 import { useEventStore } from "@/store/events";
 import { useCompanionPresentation } from "../companion/useCompanionPresentation";
@@ -56,7 +56,8 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
   const navigation = useMarsNavigation(awake);
   const roster = useQuery({ queryKey: ["mars", WORLD_ID, "roster"], queryFn: ({ signal }) => fetchMarsRoster(signal), enabled: awake, retry: false, staleTime: 5000,
     refetchOnMount: "always", refetchOnWindowFocus: false, refetchInterval: awake && mode === "follow" ? () => 2500 + Math.random() * 500 : false });
-  const navigationRecords = useMemo(() => latestNavigationRecords(navigation.data), [navigation.data]);
+  const navigationRecords = useMemo(() => pedestrianNavigationRecords(navigation.data), [navigation.data]);
+  const followRecords = useMemo(() => agentFollowRecords(navigation.data), [navigation.data]);
   const agentNames = useMemo(() => new Map((roster.data ?? []).map((row) => [row.agent_id, row.name])), [roster.data]);
   const { generation } = useWebglSurface(hostRef);
   const webgl = useWebglSupported();
@@ -71,10 +72,10 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
   const followOffline = navigation.isError || roster.isError || navigation.fetchStatus === "paused" || roster.fetchStatus === "paused";
   const followAvailable = navigationFresh && rosterFresh && !followOffline;
   const follow = useAgentFollowTarget(mode === "follow" ? followAgentId : null, {
-    records: navigationRecords, names: agentNames, navigationFresh, rosterFresh,
+    records: followRecords, names: agentNames, navigationFresh, rosterFresh,
     offline: followOffline,
   });
-  const followCandidates = useMemo(() => navigationRecords.filter((row) => row.presence === "placed" && agentNames.has(row.agent_id)), [navigationRecords, agentNames]);
+  const followCandidates = useMemo(() => followRecords.filter((row) => row.presence === "placed" && agentNames.has(row.agent_id)), [followRecords, agentNames]);
   const [selected, setSelected] = useState<string | null>(null);
   const [reset, setReset] = useState(0);
   const [gigiVisible, setGigiVisible] = useState(() => readCompanionVisible(WORLD.world_id));
@@ -148,6 +149,7 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
             <Suspense fallback={<div className="mars-render-fallback" role="status">{t("society.mars.loading")}</div>}>
               <Canvas shadows="percentage" camera={{ position: INITIAL_CAMERA, fov: CAMERA_FOV, near: 0.12, far: 20000 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false }} frameloop={!awake ? "never" : reduced ? "demand" : "always"} onPointerMissed={() => { setSelected(null); onSelectAgent?.(null); }}>
                 <MarsScene hostRef={hostRef} mode={mode} neutral={neutral} shadows={shadows} viewpoint={viewpoint} initialPose={pose} onSavePose={setPose} awake={awake && !stationPanel} selected={selected} onSelect={select} onOrbit={orbit} onOpenStation={onOpenStation} reset={reset} navigationRecords={navigationRecords} agentNames={agentNames} navigationStale={navigation.isError} onSelectAgent={onSelectAgent}
+                  vehicles={navigation.data?.vehicles ?? []} rides={navigation.data?.rides ?? []}
                   followTarget={follow.target} followAgentId={followAgentId} followAvailable={followAvailable} onFollowAgent={startFollow} onStopFollow={orbit}
                   gigiVisible={gigiVisible} gigiFocus={gigiFocus} onGigiFocusApplied={acknowledgeGigiFocus} gigiRecall={gigiRecall} reducedMotion={reduced} gigiPresentation={gigiPresentation} onOpenAssistant={openAssistant} onFocusGigi={focusGigi} />
               </Canvas>

@@ -55,7 +55,8 @@ authority and the kill switch. Routes, snapshots and actor counts are bounded.
 The process advances movement independently of renderer frames and draft-task
 inspection; clients display confirmed positions, with only short interpolation
 on the same graph segment. Spawn queues are not rendered as physical actors.
-The public API supports pedestrian visits; rover control remains separate work.
+The visit API remains pedestrian-only. Rover journeys have a separate explicit
+reservation and boarding contract, described below.
 
 The renderer currently uses named location markers while final worker art is
 pending. An optional Gigi companion uses the existing assistant's presentation
@@ -72,6 +73,42 @@ Dragging the view, choosing another camera mode, focusing Gigi or pressing
 Escape in the focused viewport relinquishes follow. Browser fullscreen exit
 also stops focused follow while preserving the map and unrelated forms.
 Follow identity and camera preferences are local to the client and world.
+
+## Route-driven rover development slice
+
+The communications panel exposes one rover for real active roster agents. Reserve
+its seat, wait for the agent to reach the boarding anchor, explicitly board, and
+choose Operations approach or South overlook. The two stops share the existing
+Outpost road. Stop retains the vehicle and passenger in place; Exit succeeds only
+at a stopped dock with a free, supported exit. If the primary exit is occupied,
+the server checks the alternative. An interrupted response retains the exact
+request identity for an explicit retry, including after the original agent is
+archived. New actions still require current authority.
+
+This is a functional transport slice with location labels. Final authored rover
+geometry, animations and player boarding remain unfinished. The local walk
+controller is not a server-owned passenger. Camera selection does not release a
+seat, and an attached agent has no second pedestrian body at its earlier location.
+Agent work continues through the existing scheduler independently of travel.
+
+Seats, bodies, ride receipts and pedestrian/vehicle conflict resources use one
+transaction in `navigation.db`. The existing process owner advances journeys with
+zero clients. Process downtime preserves exact placement; ten-minute wall-clock
+deadlines continue to expire. Expiry cancels an unboarded reservation or stops a
+boarded journey without dropping its passenger. A new travel action starts a fresh
+bounded journey. Revoked authority stops motion; it does not silently erase a body.
+
+Packaged support and wall geometry is projected from the authored Outpost contract
+with `python scripts/art/project_mars_collision.py --check`. Graph subdivisions
+retain the existing rendered roads. A stored placement migrates only when its
+source graph and unchanged geometry can be proved. An unmapped physical body
+stops further motion and admission until a valid migration is available; changed
+edge identifiers cannot make the old obstacle disappear.
+
+The dynamic `mars` CLI group exposes `reserve-mars-rover`, `board-mars-rover`,
+`travel-mars-rover`, `cancel-mars-rover` and `exit-mars-rover`. Use the named agent
+and ride identifiers and preserve `request_id` when retrying an uncertain action.
+These controls never dispatch a model task or allow animation to grant a seat.
 
 ## Window ownership
 

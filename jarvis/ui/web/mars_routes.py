@@ -27,6 +27,10 @@ from jarvis.society.mars.navigation_models import (
     NavigationRecord,
     NavigationSnapshot,
     PedestrianMoveCommand,
+    RoverActionCommand,
+    RoverReserveCommand,
+    RoverRideRecord,
+    RoverTravelCommand,
 )
 
 log = logging.getLogger(__name__)
@@ -53,6 +57,8 @@ class _PrivateStationRoute(APIRoute):
                 return await handler(request)
             except RequestValidationError as exc:
                 reason = "invalid_station_request"
+                if "/rides" in self.path:
+                    reason = "invalid_rover_request"
                 if "/moves" in self.path or "/navigation/" in self.path:
                     reason = "invalid_navigation_request"
                     if any(
@@ -134,10 +140,12 @@ async def _initialize_mars_station(state: Any) -> Any:
                 operation_timeout_s=20.0,
             )
             await service.start()
+            navigation_authority = OrdinaryNavigationAuthority(runtime)
             navigation = MarsNavigationService(
                 MarsNavigationStore(runtime.store.path.parent / "mars" / "navigation.db"),
                 load_definition(),
-                authorize=OrdinaryNavigationAuthority(runtime),
+                authorize=navigation_authority,
+                authorize_rover=navigation_authority.rover,
             )
             await navigation.start()
             if getattr(state, "mars_station_stopping", False):
@@ -372,5 +380,72 @@ async def cancel_mars_move(
     """Stop only the named visit in place; ordinary tasks remain unchanged."""
     try:
         return await (await ensure_mars_navigation(request.app.state)).cancel(agent_id, command_id)
+    except StationError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/agents/{agent_id}/rides", response_model=RoverRideRecord)
+async def reserve_mars_rover(
+    agent_id: Identity, body: RoverReserveCommand, request: Request
+) -> RoverRideRecord:
+    """Reserve one rover seat and approach it through real agent navigation."""
+    try:
+        return await (await ensure_mars_navigation(request.app.state)).reserve_ride(agent_id, body)
+    except StationError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/agents/{agent_id}/rides/{ride_id}/board", response_model=RoverRideRecord)
+async def board_mars_rover(
+    agent_id: Identity, ride_id: Identity, body: RoverActionCommand, request: Request
+) -> RoverRideRecord:
+    """Board only after the server confirms arrival at the reserved rover."""
+    try:
+        return await (await ensure_mars_navigation(request.app.state)).board_ride(
+            agent_id, ride_id, body
+        )
+    except StationError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/agents/{agent_id}/rides/{ride_id}/travel", response_model=RoverRideRecord)
+async def travel_mars_rover(
+    agent_id: Identity, ride_id: Identity, body: RoverTravelCommand, request: Request
+) -> RoverRideRecord:
+    """Travel to a named supported dock with the existing reserved rider."""
+    try:
+        return await (await ensure_mars_navigation(request.app.state)).travel_ride(
+            agent_id, ride_id, body
+        )
+    except StationError as exc:
+        raise _error(exc) from exc
+
+
+@router.post(
+    "/agents/{agent_id}/rides/{ride_id}/cancel",
+    response_model=RoverRideRecord,
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def cancel_mars_rover(
+    agent_id: Identity, ride_id: Identity, body: RoverActionCommand, request: Request
+) -> RoverRideRecord:
+    """Stop the named ride in place while retaining any attached rider safely."""
+    try:
+        return await (await ensure_mars_navigation(request.app.state)).cancel_ride(
+            agent_id, ride_id, body
+        )
+    except StationError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/agents/{agent_id}/rides/{ride_id}/exit", response_model=RoverRideRecord)
+async def exit_mars_rover(
+    agent_id: Identity, ride_id: Identity, body: RoverActionCommand, request: Request
+) -> RoverRideRecord:
+    """Exit only onto a supported, unoccupied dock anchor confirmed by the server."""
+    try:
+        return await (await ensure_mars_navigation(request.app.state)).exit_ride(
+            agent_id, ride_id, body
+        )
     except StationError as exc:
         raise _error(exc) from exc

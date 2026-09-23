@@ -11,7 +11,8 @@ import { bindPlayerInput, NO_INPUT } from "./input";
 import { avoidCameraCollision, frameInspectionBounds, MAX_POLAR, MIN_POLAR } from "./camera";
 import { VIEW_DIRECTIONS, type CameraPose, type Viewpoint, type CameraMode } from "./viewPreferences";
 import { MarsAgents } from "./MarsAgents";
-import type { NavigationRecord } from "./navigationApi";
+import { MarsRovers } from "./MarsRovers";
+import type { NavigationRecord, RoverRideRecord, VehicleRecord } from "./navigationApi";
 import type { AgentFollowTarget } from "./useAgentFollowTarget";
 import { createAgentFollowPose } from "./agentFollowCamera";
 import { GigiCompanion } from "../companion/GigiCompanion";
@@ -39,6 +40,8 @@ export interface MarsSceneProps {
   onOpenStation?: () => void;
   reset: number;
   navigationRecords: NavigationRecord[];
+  vehicles: VehicleRecord[];
+  rides: RoverRideRecord[];
   agentNames: ReadonlyMap<string, string>;
   navigationStale: boolean;
   onSelectAgent?: (id: string | null) => void;
@@ -145,7 +148,7 @@ function ColonyBlockout({ onSelect, outpostReady, labels }: { onSelect: (id: str
   );
 }
 
-export function MarsScene({ hostRef, mode, neutral, shadows, viewpoint, initialPose, onSavePose, awake, selected, onSelect, onOrbit, onOpenStation, reset, navigationRecords, agentNames, navigationStale, onSelectAgent, followTarget, followAgentId, followAvailable, onFollowAgent, onStopFollow, gigiVisible, gigiFocus, onGigiFocusApplied, gigiRecall, reducedMotion, gigiPresentation, onOpenAssistant, onFocusGigi }: MarsSceneProps) {
+export function MarsScene({ hostRef, mode, neutral, shadows, viewpoint, initialPose, onSavePose, awake, selected, onSelect, onOrbit, onOpenStation, reset, navigationRecords, vehicles, rides, agentNames, navigationStale, onSelectAgent, followTarget, followAgentId, followAvailable, onFollowAgent, onStopFollow, gigiVisible, gigiFocus, onGigiFocusApplied, gigiRecall, reducedMotion, gigiPresentation, onOpenAssistant, onFocusGigi }: MarsSceneProps) {
   const t = useT();
   const gigiPosition = useRef<Vec3 | null>(null);
   const [gigiPoseVersion, setGigiPoseVersion] = useState(0);
@@ -299,6 +302,8 @@ export function MarsScene({ hostRef, mode, neutral, shadows, viewpoint, initialP
       <ColonyBlockout onSelect={onSelect} outpostReady={outpostReady} labels={mode === "overview"} />
       <OutpostReference onSelect={onSelect} onReady={referenceReady} />
       <MarsAgents records={navigationRecords} names={agentNames} stale={navigationStale} awake={awake} onSelect={onSelectAgent}
+        followAgentId={followAgentId} followAvailable={followAvailable} onFollow={onFollowAgent} onStopFollow={onStopFollow} />
+      <MarsRovers vehicles={vehicles} rides={rides} names={agentNames} stale={navigationStale}
         followAgentId={followAgentId} followAvailable={followAvailable} onFollow={onFollowAgent} onStopFollow={onStopFollow} />
       <GigiCompanion player={player} colliders={BUILDING_COLLIDERS} getGround={surfaceHeight} awake={awake}
         reducedMotion={reducedMotion} visible={gigiVisible} presentation={gigiPresentation}
