@@ -94,10 +94,13 @@ def main() -> int:
                 binary = Path(scratch) / Path(name).name
                 binary.write_bytes(archive.read(name))
                 links = run(["otool", "-L", str(binary)], capture_output=True).stdout
+                print(links, flush=True)
                 for line in links.splitlines()[1:]:
                     dependency = line.strip().split(" ", 1)[0]
                     if not dependency.startswith(("/usr/lib/", "/System/Library/")):
-                        raise RuntimeError("Cryptography wheel links a non-system shared library")
+                        raise RuntimeError(
+                            f"Cryptography wheel links a non-system shared library: {dependency}"
+                        )
         (assets / "requirements-bundled.lock").write_text(
             add_wheel_hash(lock, built[0]), encoding="utf-8"
         )

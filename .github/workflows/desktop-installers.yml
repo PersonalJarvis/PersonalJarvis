@@ -201,6 +201,14 @@ jobs:
           chmod +x packaging/macos/build.sh
           ./packaging/macos/build.sh
 
+      - name: Preserve native wheel diagnostics on build failure
+        if: failure() && hashFiles('jarvis/assets/browser/wheels/*.whl') != ''
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: browser-wheel-diagnostic-macos-${{ matrix.arch }}
+          path: jarvis/assets/browser/wheels/*.whl
+          retention-days: 3
+
       - name: Verify the DMG browser provisioning and restart
         shell: bash
         run: |
