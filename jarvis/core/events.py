@@ -1558,7 +1558,7 @@ class BrainTTFT(Event):
 
 @dataclass(frozen=True, slots=True)
 class AudioOutFirst(Event):
-    """The WASAPI player sent the first sample to the output device.
+    """The native player or browser playback began audible output.
 
     Last stage event of a voice turn; marks TTFW = audio audible to the user.
     """

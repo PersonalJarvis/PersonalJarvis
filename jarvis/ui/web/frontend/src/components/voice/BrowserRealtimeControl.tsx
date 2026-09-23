@@ -23,6 +23,7 @@ import {
 import {
   clearVoiceOutputLevel,
   setBrowserVoiceOutputOwnership,
+  setBrowserPlaybackActive,
   setVoiceOutputLevel,
 } from "@/lib/voiceOutputLevel";
 
@@ -188,6 +189,9 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
           if (!isCurrent()) return;
           setError("");
           setVoice("speaking");
+        },
+        onPlaybackState: (active) => {
+          if (isCurrent()) setBrowserPlaybackActive(active);
         },
         onInputLevel: (value) => {
           if (!isCurrent()) return;

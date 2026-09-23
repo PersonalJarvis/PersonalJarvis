@@ -77,6 +77,11 @@ class LiveVoiceSession:
         self._thinking = False
         self._indicator_phase = "idle"
         self._indicator_trace_id = uuid4()
+        self._media_received = False
+        self._mic_feedback_owned = False
+        self._mic_feedback_warning = False
+        self._input_active = False
+        self._media_timeout: asyncio.TimerHandle | None = None
         self._active_model = ""
         self._archive_turn_id = str(uuid4())
         self._parent_owned = False
@@ -122,9 +127,11 @@ class LiveVoiceSession:
     @property
     def phase(self) -> str:
         """The surface indicator state: speaking, thinking or listening."""
-        if self._speaking or self.playback_active:
+        if self.playback_active or (self._speaking and not self._media_received):
             return "speaking"
-        if self._thinking:
+        if self._input_active:
+            return "listening"
+        if self._thinking or (self._media_received and self._speaking):
             return "thinking"
         return "listening"
 
@@ -136,6 +143,10 @@ class LiveVoiceSession:
         """
         if self._closing:
             return
+        if self._media_received and message.get("type") in {
+            "thinking", "speaking", "listening", "tts_start", "tts_end", "turn_complete",
+        }:
+            message = {"type": self.phase}
         await self._publish_phase()
         try:
             await self._send_json(message)
@@ -163,7 +174,7 @@ class LiveVoiceSession:
             )
 
     async def _note_thinking(self) -> None:
-        if self._thinking or self._speaking or self._closing:
+        if self._thinking or self._closing:
             return
         self._thinking = True
         await self._emit_indicator({"type": "thinking"})
@@ -183,7 +194,7 @@ class LiveVoiceSession:
             return
         ended_speech = self._speaking
         self._speaking = False
-        self._thinking = False
+        self._thinking = self._has_pending_work()
         if ended_speech:
             await self._emit_indicator({"type": "tts_end"})
         await self._emit_indicator({"type": "turn_complete"})
@@ -195,10 +206,112 @@ class LiveVoiceSession:
         # Playback is owned by the browser; it is not a model turn boundary.
         return None
 
+    def _has_pending_work(self) -> bool:
+        return bool(self._response_revisions) or any(not job.done() for job in self._jobs)
+
+    async def _playback_changed(self, active: bool) -> None:
+        first = active and not self.playback_active
+        ended = self.playback_active and not active
+        self.playback_active = active
+        self._speaking = active
+        if not active:
+            self._thinking = self._has_pending_work()
+        await self._emit_indicator({"type": self.phase})
+        if ended and self._media_received:
+            from jarvis.audio import level_tap
+
+            level_tap.reset_playing()
+        if first and self._bus is not None and not self._closing:
+            from jarvis.core.events import AudioOutFirst
+
+            # The native bar deliberately waits for audible output AFTER the
+            # SPEAKING state. RTP bypasses AudioPlayer, so media owns this edge.
+            await self._bus.publish(
+                AudioOutFirst(source_layer="live.media", trace_id=self._indicator_trace_id)
+            )
+
+    def _clear_media_levels(self) -> None:
+        if self._media_timeout is not None:
+            self._media_timeout.cancel()
+            self._media_timeout = None
+        if self._media_received:
+            from jarvis.audio import level_tap, mic_level
+
+            level_tap.reset_playing()
+            if self._mic_feedback_owned:
+                mic_level.publish(0.0, owner=self.session_id)
+                mic_level.release_external(self.session_id)
+                self._mic_feedback_owned = False
+        self._input_active = False
+        self.playback_active = False
+        self._speaking = False
+
+    def _expire_media_levels(self) -> None:
+        self._clear_media_levels()
+        if not self._closing and not self._recovering:
+            task = asyncio.create_task(
+                self._emit_indicator({"type": self.phase}), name="live-media-expired"
+            )
+            self._control_tasks.add(task)
+            task.add_done_callback(self._control_tasks.discard)
+
+    async def _receive_media_levels(self, message: dict) -> None:
+        from pydantic import ValidationError
+
+        from jarvis.audio import level_tap, mic_level
+        from jarvis.live.media import MediaLevels
+
+        if not self.is_active:
+            return
+        try:
+            levels = MediaLevels.model_validate(message)
+        except ValidationError:
+            log.debug("Ignoring invalid browser media measurements")
+            return
+        previous_phase = self.phase
+        previous_playback = self.playback_active
+        # A frontend rebuild can reach an already-running process whose eager
+        # audio module predates the lazily imported Live session. Optional
+        # meters must degrade instead of terminating a paid voice connection.
+        microphone_ready = all(
+            callable(getattr(mic_level, name, None))
+            for name in ("claim_external", "release_external", "publish")
+        )
+        if microphone_ready:
+            mic_level.claim_external(self.session_id)
+            self._mic_feedback_owned = True
+        elif not self._mic_feedback_warning:
+            self._mic_feedback_warning = True
+            log.warning("Browser microphone meter needs an app restart; voice remains connected")
+        self._media_received = True
+        self._input_active = levels.input_active
+        if levels.playback_active != previous_playback:
+            await self._playback_changed(levels.playback_active)
+        elif self.phase != previous_phase or self._indicator_phase != self.phase:
+            await self._emit_indicator({"type": self.phase})
+        if self._closing:
+            return
+        if levels.playback_active:
+            level_tap.publish(levels.output_level)
+            level_tap.note_playing(0.3)
+        elif previous_playback:
+            level_tap.reset_playing()
+        if microphone_ready:
+            mic_level.publish(levels.input_level, owner=self.session_id)
+        if self._media_timeout is not None:
+            self._media_timeout.cancel()
+        self._media_timeout = asyncio.get_running_loop().call_later(1.5, self._expire_media_levels)
+
     async def handle_control(self, message: dict) -> None:
         if self._closing:
             return
         kind = message.get("type")
+        if kind == "media_levels":
+            try:
+                await self._receive_media_levels(message)
+            except Exception:  # noqa: BLE001 — optional UI feedback must not end speech
+                log.warning("Browser media feedback failed; voice remains connected", exc_info=True)
+            return
         if kind == "reconnect_offer" and self._offer_future is not None:
             if message.get("request_id") == self._offer_request and not self._offer_future.done():
                 from jarvis.realtime.offer_broker import validate_webrtc_offer_sdp
@@ -206,12 +319,8 @@ class LiveVoiceSession:
                 self._offer_future.set_result(validate_webrtc_offer_sdp(message.get("sdp")))
             return
         if kind == "playback_state":
-            self.playback_active = bool(message.get("active", False))
-            # RTP playback is authoritative, including conversations with no
-            # delegation and therefore no Responses/audio sideband events.
-            self._speaking = self.playback_active
-            self._thinking = bool(self._response_revisions or self._jobs)
-            await self._emit_indicator({"type": self.phase})
+            if type(message.get("active")) is bool:
+                await self._playback_changed(message["active"])
             return
         if kind == "audio_start" and self._connection is None:
             await self._start(message)
@@ -582,11 +691,12 @@ class LiveVoiceSession:
             if rid in self._completed:
                 return
             self._completed.add(rid)
+            calls = self._responses.pop(rid, [])
+            revision = self._response_revisions.pop(rid, self._tools.revision)
             # A backend response completing is not a speech boundary. Its
             # tool calls still need running and RTP can still be playing.
             self._thinking = bool(
-                (kind == "response.completed" and self._responses.get(rid))
-                or any(other != rid for other in self._response_revisions)
+                (kind == "response.completed" and calls) or self._has_pending_work()
             )
             if self._thinking or self.playback_active:
                 self._speaking = self.playback_active
@@ -623,8 +733,6 @@ class LiveVoiceSession:
                     "usage": response.get("usage", {}),
                 }
             )
-            calls = self._responses.pop(rid, [])
-            revision = self._response_revisions.pop(rid, self._tools.revision)
             if calls and kind == "response.completed" and not self._closing:
                 task = asyncio.create_task(self._run_calls(calls, revision), name="live-tools")
                 self._jobs.add(task)
@@ -782,6 +890,7 @@ class LiveVoiceSession:
         if self._ended:
             return
         self._ended = True
+        self._clear_media_levels()
         from jarvis.live.runtime import unregister
 
         unregister(self.session_id)

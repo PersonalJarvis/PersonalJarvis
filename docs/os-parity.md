@@ -652,3 +652,27 @@ provider authorization may remain at the provider because revoking it could also
 invalidate a shared existing grant. Users can revoke it in the provider's app
 settings. The release audit separately requires a real safe action, disconnect,
 reconnect and persistence after restart.
+
+## Browser media presentation (T3)
+
+| Surface | Windows | macOS | Linux / headless |
+| --- | --- | --- | --- |
+| Browser microphone and audible-output meters | Shared Web Audio measurement | Same browser adapter | Same adapter; remote browser owns headless audio |
+| Native bar state and amplitude | Existing bus and level channels | Existing companion bridge | Existing overlay; no native window on headless hosts |
+| Unsupported media capability | Existing browser capability check | Same check | Same check |
+
+The `media_levels` control is a frozen, validated, transient snapshot: normalized
+input/output levels and input/playback activity. It carries no PCM or text and
+is never written to SQL, usage records, or the event journal. The existing
+`AudioOutFirst` event is emitted after the speaking state on an actual playback
+edge; generated text and backend completion do not prove audible playback.
+Microphone activity outranks background thinking; audible output takes priority.
+Close and a 1.5-second measurement expiry clear stale meters. Legacy clients
+retain the existing `playback_state` edge contract.
+
+`tests/contract/test_live_media_feedback.py` covers both Live session families,
+the real native bridge with a recording surface, invalid snapshots, cleanup,
+and Python/TypeScript field parity without opening a device. Browser tests
+cover level forwarding, word-gap hysteresis and stale thinking messages.
+Physical macOS/Linux device verification remains pending; portable contracts
+and headless tests must not be reported as physical-device acceptance.

@@ -2,6 +2,7 @@
 // JSON-only WSClient: this socket carries raw mono PCM16 in both directions.
 
 import { LevelMeter } from "./levelMeter";
+import { MediaActivity, type MediaLevels } from "./mediaLevels";
 import { requestConnect } from "./connectBudget";
 import { mintWsTicket } from "./ws";
 import pcmWorkletUrl from "./pcm-worklet.ts?worker&url";
@@ -19,6 +20,7 @@ export type RealtimeCallbacks = {
   onTranscript?: (text: string, isFinal: boolean, role: string) => void;
   onStatus?: (status: string, payload: RealtimeStatusPayload) => void;
   onAudio?: () => void;
+  onPlaybackState?: (active: boolean) => void;
   /** Normalized 0..1 microphone input level, ~30 Hz while capturing. */
   onInputLevel?: (level: number) => void;
   /**
@@ -404,8 +406,47 @@ export class RealtimeAudioClient {
 
   private remoteMeter: AudioWorkletNode | null = null;
   private remoteSource: MediaStreamAudioSourceNode | null = null;
-  private lastPlaybackActive = false;
-  private remoteSilenceFrames = 0;
+  private outputActivity = new MediaActivity(0.004, REMOTE_SILENCE_HANGOVER_FRAMES);
+  private inputActivity = new MediaActivity(0.008, 8);
+  private inputLevel = 0;
+  private outputLevel = 0;
+  private lastMediaSendAt = Number.NEGATIVE_INFINITY;
+
+  private sendMediaLevels(force = false): void {
+    if (!this.options.browserAudio || !this.ready || this.intentionalClose || this.ws?.readyState !== WebSocket.OPEN) return;
+    // Drop obsolete meter snapshots when the control transport stalls. The
+    // next audio-clock tick sends current measurements after it drains.
+    if (this.ws.bufferedAmount > 1024) return;
+    const now = performance.now();
+    if (!force && now - this.lastMediaSendAt < 100) return;
+    const snapshot: MediaLevels = {
+      type: "media_levels",
+      input_level: this.inputLevel,
+      output_level: this.outputLevel,
+      input_active: this.inputActivity.active,
+      playback_active: this.outputActivity.active,
+    };
+    this.ws.send(JSON.stringify(snapshot));
+    this.lastMediaSendAt = now;
+  }
+
+  private observeOutputLevel(rms: number): void {
+    this.outputLevel = this.outputMeter.push(rms);
+    this.cb.onOutputLevel?.(this.outputLevel);
+    const changed = this.outputActivity.update(rms);
+    if (changed) {
+      const active = this.outputActivity.active;
+      this.cb.onPlaybackState?.(active);
+      if (active) {
+        this.cb.onAudio?.();
+        this.cb.onStatus?.("speaking", {});
+      }
+      // Older Live servers still consume the edge. The level snapshot adds
+      // microphone/output meters; only the server resolves the quiet phase.
+      if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "playback_state", active }));
+    }
+    this.sendMediaLevels(changed);
+  }
 
   private observeRemoteAudio(stream: MediaStream): void {
     if (!this.ctx) return;
@@ -416,8 +457,8 @@ export class RealtimeAudioClient {
     this.remoteMeter?.disconnect();
     if (this.remoteMeter) this.remoteMeter.port.onmessage = null;
     this.remoteSource?.disconnect();
-    this.lastPlaybackActive = false;
-    this.remoteSilenceFrames = 0;
+    this.outputActivity.reset();
+    this.cb.onPlaybackState?.(false);
     const meter = new AudioWorkletNode(this.ctx, "pcm-level");
     this.remoteMeter = meter;
     this.remoteSource = this.ctx.createMediaStreamSource(stream);
@@ -427,26 +468,7 @@ export class RealtimeAudioClient {
       if (this.remoteMeter !== meter || this.intentionalClose) return;
       const rms = event.data?.rms;
       if (event.data?.type !== "level" || typeof rms !== "number" || !Number.isFinite(rms)) return;
-      this.cb.onOutputLevel?.(this.outputMeter.push(rms));
-      const active = rms > 0.004;
-      if (active) {
-        this.remoteSilenceFrames = 0;
-        if (!this.lastPlaybackActive) {
-          this.lastPlaybackActive = true;
-          this.cb.onAudio?.();
-          this.cb.onStatus?.("speaking", {});
-          if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "playback_state", active: true }));
-        }
-      } else if (this.lastPlaybackActive) {
-        // Word gaps are silence too: only report listening after the tail
-        // of the reply is really over, or the bar flickers mid-sentence.
-        this.remoteSilenceFrames += 1;
-        if (this.remoteSilenceFrames >= REMOTE_SILENCE_HANGOVER_FRAMES) {
-          this.lastPlaybackActive = false;
-          this.cb.onStatus?.("listening", {});
-          if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "playback_state", active: false }));
-        }
-      }
+      this.observeOutputLevel(rms);
     };
   }
 
@@ -517,7 +539,8 @@ export class RealtimeAudioClient {
         const data = event.data as { type?: string; rms?: number } | null;
         if (data && data.type === "level" && typeof data.rms === "number") {
           const live = performance.now() - this.lastPcmAt <= OUTPUT_TAP_TTL_MS;
-          this.cb.onOutputLevel?.(live ? this.outputMeter.push(data.rms) : null);
+          if (this.options.browserAudio) this.observeOutputLevel(live ? data.rms : 0);
+          else this.cb.onOutputLevel?.(live ? this.outputMeter.push(data.rms) : null);
         }
       };
       // Keep the capture worklet in the active audio graph without feeding the
@@ -577,7 +600,10 @@ export class RealtimeAudioClient {
           return;
         }
         if (data && data.type === "level" && typeof data.rms === "number") {
-          this.cb.onInputLevel?.(this.inputMeter.push(data.rms));
+          this.inputLevel = this.inputMeter.push(data.rms);
+          this.cb.onInputLevel?.(this.inputLevel);
+          const changed = this.inputActivity.update(data.rms);
+          this.sendMediaLevels(changed);
         }
       };
 
@@ -654,6 +680,9 @@ export class RealtimeAudioClient {
         } else if (type === "reconnecting") {
           this.reconnecting = true;
           this.ready = false;
+          this.outputActivity.reset();
+          this.inputActivity.reset();
+          this.cb.onPlaybackState?.(false);
           this.startupPreroll = [];
           this.startupPrerollBytes = 0;
           this.playbackNode?.port.postMessage({ type: "flush" });
@@ -676,12 +705,19 @@ export class RealtimeAudioClient {
           this.browserSpeech.cancel();
           this.playbackResampler?.reset();
           this.playbackNode?.port.postMessage({ type: "flush" });
+          if (this.options.browserAudio && !this.options.requiresWebRtcOffer) {
+            this.outputActivity.reset();
+            this.outputLevel = 0;
+            this.cb.onPlaybackState?.(false);
+            this.sendMediaLevels(true);
+          }
         } else if (type === "audio_ready") {
           this.setOutputRate(message.output_sample_rate);
           void this.finishAudioReady(message)
             .then(() => {
               this.ready = true;
               this.reconnecting = false;
+              this.sendMediaLevels(true);
               this.flushStartupPreroll();
               if (!settled) {
                 settled = true;
@@ -792,7 +828,7 @@ export class RealtimeAudioClient {
     if (converted.byteLength === 0) return;
     this.playbackNode?.port.postMessage({ type: "pcm", data: converted }, [converted]);
     this.lastPcmAt = performance.now();
-    this.cb.onAudio?.();
+    if (!this.options.browserAudio) this.cb.onAudio?.();
   }
 
   private handleBrowserSpeech(message: RealtimeStatusPayload): void {
@@ -844,8 +880,12 @@ export class RealtimeAudioClient {
     this.remoteMeter = null;
     this.remoteSource?.disconnect();
     this.remoteSource = null;
-    this.lastPlaybackActive = false;
-    this.remoteSilenceFrames = 0;
+    this.outputActivity.reset();
+    this.inputActivity.reset();
+    this.inputLevel = 0;
+    this.outputLevel = 0;
+    this.lastMediaSendAt = Number.NEGATIVE_INFINITY;
+    this.cb.onPlaybackState?.(false);
     const socket = this.ws;
     this.ws = null;
     this.ready = false;

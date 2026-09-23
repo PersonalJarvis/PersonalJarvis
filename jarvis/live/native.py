@@ -255,6 +255,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                 }
             )
         elif event.type == "tool_call":
+            await self._note_thinking()
             task = asyncio.create_task(self._call(event, self._tools.revision))
             self._jobs.add(task)
             task.add_done_callback(self._jobs.discard)
@@ -353,6 +354,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
         if self._ended:
             return
         self._ended = True
+        self._clear_media_levels()
         self._closing = True
         await self._publish_phase("idle")
         self._hangup_reason = reason

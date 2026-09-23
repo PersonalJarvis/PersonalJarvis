@@ -1643,7 +1643,14 @@ class OrbBusBridge:
         the same normalized value through it and retain the recency guard that
         suppresses simultaneous silent-mic updates.
         """
-        self._last_tts_level_t = time.monotonic()
+        from jarvis.audio import level_tap
+
+        # reset_playing publishes an explicit zero after clearing the audible
+        # window. Give the microphone back immediately on that edge; silence
+        # inside an ongoing utterance still retains the normal recency guard.
+        self._last_tts_level_t = (
+            time.monotonic() if level > 0.0 or level_tap.playback_active() else 0.0
+        )
         try:
             self._orb.set_level(level)
         except Exception:  # noqa: BLE001
