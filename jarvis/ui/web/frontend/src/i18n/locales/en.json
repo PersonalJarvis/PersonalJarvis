@@ -2938,9 +2938,9 @@
         "hint": "Interface and replies can differ. Both can be changed later in Settings."
       },
       "api-keys": {
-        "label": "Your key",
-        "title": "One key gets you started",
-        "hint": "Paste an API key from a provider you already use, or run fully local. Voice providers can be added later under API Keys."
+        "label": "Connections",
+        "title": "Set up live voice and agents",
+        "hint": "Choose your live voice provider, then connect an API key or subscription for background agents."
       },
       "permissions": {
         "label": "Permissions",
@@ -2992,6 +2992,17 @@
       "summary": "{0} · replies {1}"
     },
     "api_keys": {
+      "voice_label": "01 · Real-Time voice",
+      "voice_key_label": "Live API key",
+      "voice_key_hint": "One key for live conversation. OpenAI is recommended; Gemini Live works too.",
+      "agents_label": "02 · Sub-Agents",
+      "agents_title": "Connect agent access",
+      "agents_hint": "Use a separate API key or sign in with a supported subscription for background work and coding agents.",
+      "agents_ready": "Agent access connected",
+      "agents_missing": "Agent access still needs a key or subscription",
+      "agents_connect": "Connect agents",
+      "agents_hide": "Hide options",
+      "gap_agents": "Live voice is set up, but Sub-Agents still need an API key or subscription.",
       "providers_label": "Providers",
       "loading": "Loading providers…",
       "load_failed": "The provider list could not be loaded. You can add a key later under API Keys.",
@@ -3012,16 +3023,16 @@
       "local_missing_link": "Get Ollama",
       "security_note": "Keys are stored in your system keychain and only ever sent to the provider you chose — never into chat or voice.",
       "later": "Later — add a key in Settings",
-      "later_hint": "Chat and voice stay off until a key is saved.",
+      "later_hint": "Live voice needs a key; Sub-Agents need a separate key or subscription.",
       "summary_none": "No key yet",
       "summary_local": "Local · Ollama",
       "plan_label": "How do you want to start?",
-      "plan_custom_title": "Pick everything myself",
+      "plan_custom_title": "Advanced: configure providers myself or use a local model",
       "plan_custom_body": "The full provider list — choose each part on its own.",
       "plan_applying": "Setting everything up for {0}…",
-      "plan_applied": "{0} is set up: thinking, tool model, agents and voice all point at your key.",
+      "plan_applied": "{0} is set up for live voice. Connect Sub-Agents below.",
       "plan_partial": "Most of it is set; this did not apply: {0}. You can fix it later under API Keys.",
-      "plan_explainer": "Pick how {name} should run. Each option says how many keys it needs and which voice engine it uses — most people need exactly one key.",
+      "plan_explainer": "Real-Time is set automatically. Choose the provider for your live conversation.",
       "keys_one": "1 key",
       "keys_n": "{0} keys",
       "keys_several": "Several keys",
@@ -3030,7 +3041,7 @@
       "plan_keys_from": "Keys: {0}.",
       "mode_explainer": "Pipeline = listen, think, speak in three steps; works with any provider. Realtime = one live voice model that answers while you speak; only Google Gemini and OpenAI offer one — a Claude or OpenRouter key alone cannot run Realtime.",
       "plan_progress": "Keys for this plan · {0} of {1} saved",
-      "gap_none": "No API key saved — chat and voice stay off until you add one under API Keys.",
+      "gap_none": "No live API key saved — live voice stays off until you add one under API Keys.",
       "gap_plan_partial": "{0} is missing the {1} key — the parts that need it (live voice, for one) stay off until you add it under API Keys.",
       "gap_custom": "You picked providers yourself — voice in, voice out and the agents may still need their own keys. Check under API Keys."
     },
@@ -3102,6 +3113,10 @@
       "gap_skipped_wake_word": "Activation was skipped — use the Call shortcut, or set a wake word under Settings."
     },
     "plans": {
+      "openai_live_label": "OpenAI GPT-Live",
+      "openai_live_summary": "Live voice and thinking with one OpenAI API key.",
+      "gemini_live_label": "Gemini Live",
+      "gemini_live_summary": "Live voice with one Google Gemini API key.",
       "gemini_pipeline_label": "Pipeline with Gemini",
       "gemini_pipeline_summary": "One Google Gemini key runs everything: thinking, the tool model, the agents, voice in and voice out.",
       "gemini_realtime_label": "Realtime with Gemini",

@@ -2905,9 +2905,9 @@
         "hint": "Oberfläche und Antworten dürfen sich unterscheiden. Beides lässt sich später in den Einstellungen ändern."
       },
       "api-keys": {
-        "label": "Dein Schlüssel",
-        "title": "Ein Schlüssel genügt zum Start",
-        "hint": "Füge einen API-Schlüssel eines Anbieters ein, den du schon nutzt — oder arbeite komplett lokal. Sprachanbieter kannst du später unter API-Schlüssel ergänzen."
+        "label": "Verbindungen",
+        "title": "Live-Sprache und Agenten einrichten",
+        "hint": "Wähle den Anbieter für Live-Sprache und verbinde danach einen API-Key oder ein Abo für Hintergrund-Agenten."
       },
       "permissions": {
         "label": "Berechtigungen",
@@ -2959,6 +2959,17 @@
       "summary": "{0} · Antworten {1}"
     },
     "api_keys": {
+      "voice_label": "01 · Real-Time-Sprache",
+      "voice_key_label": "Live-API-Key",
+      "voice_key_hint": "Ein Key für Live-Gespräche. OpenAI ist empfohlen; Gemini Live funktioniert ebenfalls.",
+      "agents_label": "02 · Sub-Agents",
+      "agents_title": "Agenten-Zugang verbinden",
+      "agents_hint": "Nutze einen separaten API-Key oder melde dich mit einem unterstützten Abo für Hintergrundaufgaben und Coding-Agenten an.",
+      "agents_ready": "Agenten-Zugang verbunden",
+      "agents_missing": "Für Agenten fehlt noch ein API-Key oder Abo",
+      "agents_connect": "Agenten verbinden",
+      "agents_hide": "Optionen ausblenden",
+      "gap_agents": "Live-Sprache ist eingerichtet, aber Sub-Agents brauchen noch einen API-Key oder ein Abo.",
       "providers_label": "Anbieter",
       "loading": "Anbieter werden geladen…",
       "load_failed": "Die Anbieterliste konnte nicht geladen werden. Du kannst später unter API-Schlüssel einen Schlüssel hinzufügen.",
@@ -2979,16 +2990,16 @@
       "local_missing_link": "Ollama holen",
       "security_note": "Schlüssel liegen im Schlüsselbund deines Systems und gehen nur an den Anbieter, den du gewählt hast — nie in Chat oder Sprache.",
       "later": "Später — Schlüssel in den Einstellungen hinzufügen",
-      "later_hint": "Chat und Sprache bleiben aus, bis ein Schlüssel gespeichert ist.",
+      "later_hint": "Live-Sprache braucht einen Key; Sub-Agents brauchen einen separaten Key oder ein Abo.",
       "summary_none": "Noch kein Schlüssel",
       "summary_local": "Lokal · Ollama",
       "plan_label": "Wie willst du starten?",
-      "plan_custom_title": "Alles selbst auswählen",
+      "plan_custom_title": "Erweitert: Anbieter selbst wählen oder ein lokales Modell nutzen",
       "plan_custom_body": "Die komplette Provider-Liste — jeden Teil einzeln wählen.",
       "plan_applying": "Richte alles für {0} ein…",
-      "plan_applied": "{0} ist eingerichtet: Denken, Tool-Modell, Agenten und Stimme zeigen alle auf deinen Schlüssel.",
+      "plan_applied": "{0} ist für Live-Sprache eingerichtet. Verbinde unten die Sub-Agents.",
       "plan_partial": "Das meiste ist eingerichtet; das hier hat nicht geklappt: {0}. Du kannst es später unter API-Keys nachholen.",
-      "plan_explainer": "Wähle, wie {name} laufen soll. Jede Option sagt, wie viele Schlüssel sie braucht und welche Sprach-Engine sie nutzt — die meisten brauchen genau einen Schlüssel.",
+      "plan_explainer": "Real-Time wird automatisch eingerichtet. Wähle den Anbieter für deine Live-Gespräche.",
       "keys_one": "1 Schlüssel",
       "keys_n": "{0} Schlüssel",
       "keys_several": "Mehrere Schlüssel",
@@ -2997,7 +3008,7 @@
       "plan_keys_from": "Schlüssel: {0}.",
       "mode_explainer": "Pipeline = zuhören, denken, sprechen in drei Schritten; läuft mit jedem Anbieter. Realtime = ein Live-Sprachmodell, das antwortet, während du sprichst; das bieten nur Google Gemini und OpenAI — ein Claude- oder OpenRouter-Schlüssel allein kann kein Realtime.",
       "plan_progress": "Schlüssel für diesen Plan · {0} von {1} gespeichert",
-      "gap_none": "Kein API-Schlüssel gespeichert — Chat und Sprache bleiben aus, bis du unter API-Schlüssel einen einträgst.",
+      "gap_none": "Kein Live-API-Key gespeichert — Live-Sprache bleibt aus, bis du ihn unter API-Schlüssel hinzufügst.",
       "gap_plan_partial": "Bei {0} fehlt der Schlüssel für {1} — die Teile, die ihn brauchen (zum Beispiel die Live-Stimme), bleiben aus, bis du ihn unter API-Schlüssel einträgst.",
       "gap_custom": "Du hast die Anbieter selbst gewählt — Spracheingabe, Sprachausgabe und die Agenten brauchen eventuell eigene Schlüssel. Prüfe das unter API-Schlüssel."
     },
@@ -3069,6 +3080,10 @@
       "gap_skipped_wake_word": "Die Aktivierung wurde übersprungen — nutze das Anruf-Kürzel oder lege in den Einstellungen ein Aktivierungswort fest."
     },
     "plans": {
+      "openai_live_label": "OpenAI GPT-Live",
+      "openai_live_summary": "Live-Sprache und Denken mit einem OpenAI-API-Key.",
+      "gemini_live_label": "Gemini Live",
+      "gemini_live_summary": "Live-Sprache mit einem Google-Gemini-API-Key.",
       "gemini_pipeline_label": "Pipeline mit Gemini",
       "gemini_pipeline_summary": "Ein Google-Gemini-Schlüssel für alles: Denken, Tool-Modell, Agenten, Stimme rein und raus.",
       "gemini_realtime_label": "Realtime mit Gemini",
