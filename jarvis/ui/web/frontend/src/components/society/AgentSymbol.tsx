@@ -52,20 +52,6 @@ function SymbolBody({ shape, color }: { shape: SymbolShape; color: string }) {
   }
 }
 
-/** Decorations are local SVG paths, not remote media or progress indicators. */
-export function SymbolThinkingAccents({ color }: { color: string }) {
-  return <>
-    <g className="agent-symbol-orbit" fill="none" strokeWidth={2.2} strokeLinecap="round">
-      <path d="M4 10 C9 3 31 3 36 10" stroke="#8bd5ee" />
-      <path d="M36 10 C37 15 20 17 9 13" stroke="#edb973" />
-      <path d="M9 13 C1 11 2 8 6 7" stroke="#c294ed" />
-    </g>
-    <g className="agent-symbol-thoughts" fill={color}>
-      <circle cx={10} cy={22} r={3} /><circle cx={20} cy={22} r={4} /><circle cx={30} cy={22} r={3} />
-    </g>
-  </>;
-}
-
 /** Plain ink eyes share one resting gaze; only a working agent moves. */
 export function AgentSymbol({ shape, color, size, eyes = "lines", thinking = false }: { shape: SymbolShape; color: string; size: number; eyes?: "dots" | "lines"; thinking?: boolean }) {
   const eyeY = shape === "cloud" || shape === "triangle" ? 23 : shape === "drop" ? 25 : 17.2;
@@ -83,7 +69,6 @@ export function AgentSymbol({ shape, color, size, eyes = "lines", thinking = fal
           </g>
         </g>
       </g>
-      {thinking && <SymbolThinkingAccents color={color} />}
     </svg>
   );
 }
