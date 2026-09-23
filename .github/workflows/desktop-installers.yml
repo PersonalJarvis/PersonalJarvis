@@ -102,6 +102,20 @@ jobs:
         shell: pwsh
         run: pwsh packaging/windows/build.ps1
 
+      - name: Verify frozen browser provisioning and restart
+        run: python scripts/ci/check_frozen_browser.py --executable dist/Jarvis/PersonalJarvis.exe --output frozen-browser-proof
+
+      - name: Preserve frozen browser evidence
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: frozen-browser-windows-x64
+          path: |
+            frozen-browser-proof/report.json
+            frozen-browser-proof/*.jpg
+            frozen-browser-proof/*.log
+          if-no-files-found: warn
+
       # Signs the SETUP executable. Windows attaches Mark-of-the-Web to the
       # downloaded installer, so this signature is the one SmartScreen weighs;
       # files the installer then writes inherit no MOTW.
@@ -187,6 +201,27 @@ jobs:
           chmod +x packaging/macos/build.sh
           ./packaging/macos/build.sh
 
+      - name: Verify the DMG browser provisioning and restart
+        shell: bash
+        run: |
+          set -euo pipefail
+          mount_point="${RUNNER_TEMP}/jarvis-browser-dmg"
+          mkdir -p "$mount_point"
+          hdiutil attach "dist/installers/PersonalJarvis-macOS-${{ matrix.arch }}.dmg" -readonly -nobrowse -mountpoint "$mount_point"
+          trap 'hdiutil detach "$mount_point"' EXIT
+          python scripts/ci/check_frozen_browser.py --executable "$mount_point/Personal Jarvis.app/Contents/MacOS/PersonalJarvis" --output frozen-browser-proof
+
+      - name: Preserve frozen browser evidence
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: frozen-browser-macos-${{ matrix.arch }}
+          path: |
+            frozen-browser-proof/report.json
+            frozen-browser-proof/*.jpg
+            frozen-browser-proof/*.log
+          if-no-files-found: warn
+
       - name: Upload the DMG
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
@@ -230,6 +265,29 @@ jobs:
         run: |
           chmod +x packaging/linux/build.sh
           ./packaging/linux/build.sh
+
+      - name: Provision supported Linux browser system dependencies
+        run: |
+          python -m pip install playwright==1.62.0
+          python -m playwright install-deps chromium
+
+      - name: Verify the AppImage browser provisioning and restart
+        shell: bash
+        run: |
+          set -euo pipefail
+          dist/installers/PersonalJarvis-Linux-x86_64.AppImage --appimage-extract > /dev/null
+          python scripts/ci/check_frozen_browser.py --executable squashfs-root/AppRun --output frozen-browser-proof
+
+      - name: Preserve frozen browser evidence
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: frozen-browser-linux-x86_64
+          path: |
+            frozen-browser-proof/report.json
+            frozen-browser-proof/*.jpg
+            frozen-browser-proof/*.log
+          if-no-files-found: warn
 
       - name: Upload the AppImage
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
