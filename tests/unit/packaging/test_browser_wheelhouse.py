@@ -5,7 +5,20 @@ import hashlib
 import pytest
 
 from jarvis.society.browser import install
-from scripts.prepare_browser_wheelhouse import add_wheel_hash
+from scripts.prepare_browser_wheelhouse import add_wheel_hash, unbundled_libraries
+
+
+def test_macho_identity_is_not_an_external_library():
+    identity = "@rpath/cryptography.hazmat.bindings._rust.abi3.so"
+    links = (
+        "_rust.abi3.so:\n"
+        f"\t{identity} (compatibility version 0.0.0, current version 0.0.0)\n"
+        "\t/usr/lib/libiconv.2.dylib (compatibility version 7.0.0)\n"
+        "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n"
+    )
+    assert unbundled_libraries(links, f"_rust.abi3.so:\n{identity}\n") == []
+    links += "\t@rpath/libssl.3.dylib (compatibility version 3.0.0)\n"
+    assert unbundled_libraries(links, f"_rust.abi3.so:\n{identity}\n") == ["@rpath/libssl.3.dylib"]
 
 
 def test_built_wheel_adds_its_digest_without_changing_other_pins(tmp_path):
