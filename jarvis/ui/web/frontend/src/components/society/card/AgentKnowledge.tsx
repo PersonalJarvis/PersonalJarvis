@@ -4,6 +4,7 @@ import { FileText, RefreshCw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { MemoryMarkdown } from "../chat/MemoryDocument";
 
 export interface AgentKnowledge {
   files: { path: string; name: string; kind: "memory" | "skills"; updated_ms: number; size: number }[];
@@ -107,7 +108,7 @@ export function AgentMemoryFiles({ agentId, sample }: { agentId: string; sample:
       </nav>
       <section aria-label={current?.path} className="min-w-0 overflow-auto p-5">
         <div className="mb-4 border-b border-border pb-3"><p className="break-all font-mono text-xs">{current?.path}</p><p className="mt-1 text-xs text-muted-foreground">{t("society.profile_card.read_only")}</p></div>
-        {file.isLoading ? <p role="status" className="text-sm text-muted-foreground">{t("society.profile_card.loading")}</p> : file.isError ? <p role="alert" className="text-sm text-destructive">{t("society.profile_card.load_error")} <Button variant="ghost" size="sm" onClick={() => void file.refetch()}>{t("society.profile_card.retry")}</Button></p> : <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-6">{file.data?.content || t("society.profile_card.empty_file")}</pre>}
+        {file.isLoading ? <p role="status" className="text-sm text-muted-foreground">{t("society.profile_card.loading")}</p> : file.isError ? <p role="alert" className="text-sm text-destructive">{t("society.profile_card.load_error")} <Button variant="ghost" size="sm" onClick={() => void file.refetch()}>{t("society.profile_card.retry")}</Button></p> : <MemoryMarkdown text={file.data?.content || t("society.profile_card.empty_file")} />}
       </section>
     </div>}
   </div>;

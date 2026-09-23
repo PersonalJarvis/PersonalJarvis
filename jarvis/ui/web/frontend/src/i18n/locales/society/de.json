@@ -6,7 +6,7 @@
       "learned_hint": "Die KI prüft abgeschlossene Gespräche auf nützliche Erkenntnisse. Diese Regeln verbessern den nächsten Lauf; deine Anweisungen und Berechtigungen gelten weiterhin.",
       "no_instructions": "Noch keine Arbeitsregeln gelernt. Nützliche Fakten und Abläufe können bereits als Memory oder Skills gespeichert sein.",
       "review_reviewing": "Lernprüfung läuft",
-      "review_pending": "Lernprüfungen ausstehend — neuer Versuch nach dem nächsten abgeschlossenen Gespräch oder Neustart",
+      "review_pending": "Lernprüfungen ausstehend",
       "review_done": "Lernprüfung abgeschlossen",
       "review_waiting": "Wartet auf ein abgeschlossenes Gespräch zur Lernprüfung",
       "last_review": "Letzte Lernaktivität",
@@ -62,6 +62,11 @@
       "legacy": "Ältere Ausführung: Ergebnis vorhanden; Abschlussstatus wurde nicht aufgezeichnet."
     },
     "chat": {
+      "memory_updated": "Memory aktualisiert",
+      "memory_changes": "Änderungen",
+      "memory_current": "Aktuelle Datei",
+      "memory_raw": "Markdown-Quelltext",
+      "memory_change_legend": "Grün: ergänzt · Rot: entfernt. Hier siehst du die gespeicherte Änderung; die aktuelle Datei kann bereits neuer sein.",
       "activity_details": "Details",
       "activity_trace": "Aktivität · {count} Schritte",
       "routine_check": "Routine-Prüfung",

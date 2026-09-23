@@ -1,5 +1,6 @@
 import { PairConversationBoundary } from "@/components/agentchat/PairConversation";
 import { AgentMessageActivity, ChatActivity, RoutineActivity, routineTask } from "./ChatActivity";
+import { MemoryUpdateNotice } from "./MemoryUpdateNotice";
 import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentchat/useOutgoingMessages";
 /**
  * The model card's chat column, kept deliberately plain (maintainer,
@@ -687,6 +688,7 @@ function TimeStamp({ ms }: { ms: number }) {
  */
 function NoticeLine({ item }: { item: NoticeItem }) {
   const t = useT();
+  if (item.kind === "memory_updated") return <MemoryUpdateNotice item={item} />;
   if (item.kind === "native_goal_verdict") return <p className="py-1 text-xs text-muted-foreground">{t("slash.verifying")}</p>;
   const headline =
     item.kind === "society_result"

@@ -27,6 +27,13 @@ def identity(text: str) -> str:
     return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()[:16]
 
 
+def readable_document(text: str) -> str:
+    """The user-facing Markdown, without frontmatter and entry bookkeeping."""
+    text = re.sub(r"\A\ufeff?---\r?\n.*?\r?\n---(?:\r?\n|$)", "", text, flags=re.DOTALL)
+    text = re.sub(r"^<!-- memory-entry: [^\r\n]* -->\r?\n?", "", text, flags=re.MULTILINE)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
 def parse(body: str) -> list[Entry]:
     marks = list(_MARKER.finditer(body))
     if not marks:

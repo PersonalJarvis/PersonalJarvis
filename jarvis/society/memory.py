@@ -280,13 +280,14 @@ class SocietyMemory:
             existing = (
                 self._frontmatter(f"{agent.name} — memory", agent.agent_id, "agent", trace) + "\n"
             )
-        from .notebook import change, parse, render
+        from .notebook import change, parse, readable_document, render
 
         _, body = _parse(existing)
         prefix = existing[: len(existing) - len(body)] if body else existing
         try:
+            previous_entries = parse(body)
             entries = change(
-                parse(body),
+                previous_entries,
                 text,
                 operation=operation,
                 entry_id=entry_id,
@@ -296,6 +297,8 @@ class SocietyMemory:
             )
         except (ValueError, KeyError, TypeError) as exc:
             raise MemoryRefused(str(exc)) from exc
+        if entries == previous_entries:
+            return path.relative_to(vault).as_posix()
         after = prefix + "\n" + render(entries)
         atomic_write(path, after)
         rel = path.relative_to(vault).as_posix()
@@ -310,6 +313,9 @@ class SocietyMemory:
                 "before": _clip_diff_text(existing),
                 "after": _clip_diff_text(after),
                 "diff": build_memory_diff(existing, after),
+                "markdown_diff": build_memory_diff(
+                    readable_document(existing), readable_document(after)
+                ),
             },
         )
         return rel
@@ -629,6 +635,26 @@ class SocietyMemory:
             )
         except Exception:  # noqa: BLE001 — the memory is written; the board line is a courtesy
             log.warning("society memory: board digest not written (%s)", op, exc_info=True)
+        if op in {"remember", "note"} and (
+            payload.get("before") != payload.get("after") or payload.get("markdown_diff")
+        ):
+            # Background reviews do not emit chat tool calls. Persist their
+            # actual write receipt in the same agent's chat as well as the board.
+            # This is a written notice only, never a voice announcement.
+            try:
+                await self._runtime.post_chat_notice(
+                    agent,
+                    {
+                        "kind": "memory_updated",
+                        "agent_id": agent.agent_id,
+                        "agent_name": agent.name,
+                        "status": "done",
+                        "text": "Memory updated",
+                        **payload,
+                    },
+                )
+            except Exception:  # noqa: BLE001 — a notice failure must not undo a durable write
+                log.warning("society memory: chat receipt not delivered", exc_info=True)
         if self._on_activity is not None and by is None:
             try:
                 maybe = self._on_activity(agent.agent_id)

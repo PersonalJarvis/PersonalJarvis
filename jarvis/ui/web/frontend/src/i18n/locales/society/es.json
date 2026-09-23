@@ -6,7 +6,7 @@
       "learned_hint": "La IA revisa las conversaciones terminadas para extraer lecciones útiles. Estas reglas mejoran la siguiente ejecución; tus instrucciones y permisos siguen vigentes.",
       "no_instructions": "Aún no hay reglas aprendidas. Los datos y procedimientos útiles pueden estar guardados como memoria o habilidades.",
       "review_reviewing": "Revisión de aprendizaje en curso",
-      "review_pending": "Revisiones pendientes: se reintentan tras otra conversación terminada o al reiniciar",
+      "review_pending": "Revisiones de aprendizaje pendientes",
       "review_done": "Revisión de aprendizaje completada",
       "review_waiting": "Esperando una conversación terminada para revisar",
       "last_review": "Última actividad de aprendizaje",
@@ -62,6 +62,11 @@
       "legacy": "Ejecución anterior: resultado disponible; no se registró el estado final."
     },
     "chat": {
+      "memory_updated": "Memoria actualizada",
+      "memory_changes": "Cambios",
+      "memory_current": "Archivo actual",
+      "memory_raw": "Markdown original",
+      "memory_change_legend": "Verde: añadido · Rojo: eliminado. Se muestra el cambio guardado; el archivo actual puede tener cambios posteriores.",
       "activity_details": "Detalles",
       "activity_trace": "Actividad · {count} pasos",
       "routine_check": "Comprobación de rutina",

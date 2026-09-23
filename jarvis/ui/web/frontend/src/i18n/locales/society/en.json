@@ -6,7 +6,7 @@
       "learned_hint": "AI reviews completed conversations for useful lessons. These rules improve the next run while your instructions and permissions stay in force.",
       "no_instructions": "No working rules learned yet. Useful facts and procedures may already be saved as memory or skills.",
       "review_reviewing": "Learning review in progress",
-      "review_pending": "Reviews pending — retried after a new completed turn or restart",
+      "review_pending": "Learning reviews pending",
       "review_done": "Learning review completed",
       "review_waiting": "Waiting for a completed conversation to review",
       "last_review": "Last review activity",
@@ -62,6 +62,11 @@
       "legacy": "Older execution: result available; final status was not recorded."
     },
     "chat": {
+      "memory_updated": "Memory updated",
+      "memory_changes": "Changes",
+      "memory_current": "Current file",
+      "memory_raw": "Raw Markdown",
+      "memory_change_legend": "Green: added · Red: removed. This shows the saved change; the current file may have newer updates.",
       "activity_details": "Details",
       "activity_trace": "Activity · {count} steps",
       "routine_check": "Routine check",

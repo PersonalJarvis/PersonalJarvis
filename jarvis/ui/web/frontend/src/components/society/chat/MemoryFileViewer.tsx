@@ -1,168 +1,58 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Loader2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { FileText, X } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useT } from "@/i18n";
-import { cn } from "@/lib/utils";
-import { memoryDiff } from "@/components/agentchat/toolDiff";
+import { MemoryChanges, MemoryMarkdown } from "./MemoryDocument";
 
-interface MemoryFileResponse {
-  path: string;
-  agent_id: string;
-  content: string;
-  updated_ms: number;
-}
+interface MemoryFileResponse { path: string; content: string; updated_ms: number }
 
-async function fetchMemoryFile(path: string): Promise<MemoryFileResponse> {
-  const res = await fetch(`/api/society/memory/file?path=${encodeURIComponent(path)}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return (await res.json()) as MemoryFileResponse;
-}
-
-/**
- * The editor the Updating Memory row opens: the agent's memory file with
- * the change painted red/green, scrolled to the first changed line.
- *
- * `before`/`after` come from the tool result so the red/green matches the
- * chat row exactly; the fetched file proves the change landed on disk.
- */
-export function MemoryFileViewer({
-  path,
-  before,
-  after,
-  onClose,
-}: {
-  path: string;
-  before?: string;
-  after?: string;
-  onClose: () => void;
+/** Historical write receipts stay distinct from the current file on disk. */
+export function MemoryFileViewer({ path, before, after, patch, onClose }: {
+  path: string; before?: string; after?: string; patch?: string[]; onClose: () => void;
 }) {
   const t = useT();
   const [file, setFile] = useState<MemoryFileResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const firstChangeRef = useRef<HTMLDivElement | null>(null);
-  const closeRef = useRef<HTMLButtonElement | null>(null);
-
+  const [error, setError] = useState(false);
+  const opener = useRef(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  const hasChange = before !== undefined && after !== undefined;
   useEffect(() => {
-    let alive = true;
+    const abort = new AbortController();
     setFile(null);
-    setError(null);
-    closeRef.current?.focus();
-    void fetchMemoryFile(path)
-      .then((data) => {
-        if (alive) setFile(data);
-      })
-      .catch((err) => {
-        if (alive) setError(err instanceof Error ? err.message : String(err));
-      });
-    return () => {
-      alive = false;
-    };
+    setError(false);
+    void fetch(`/api/society/memory/file?path=${encodeURIComponent(path)}`, { signal: abort.signal })
+      .then(async response => { if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json() as Promise<MemoryFileResponse>; })
+      .then(data => { if (!abort.signal.aborted) setFile(data); })
+      .catch(() => { if (!abort.signal.aborted) setError(true); });
+    return () => abort.abort();
   }, [path]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const diff = useMemo(() => {
-    const b = before ?? "";
-    const a = after ?? file?.content ?? "";
-    if (!b && !a) return null;
-    return memoryDiff("society_wiki_note", { text: "" }, JSON.stringify({ path, before: b, after: a }));
-  }, [before, after, file?.content, path]);
-
-  useEffect(() => {
-    if (diff && firstChangeRef.current) {
-      firstChangeRef.current.scrollIntoView({ block: "center", behavior: "smooth" });
-    }
-  }, [diff, file]);
-
-  const name = path.split("/").at(-1) ?? path;
-
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${t("society.chat.memory_file_title")}: ${path}`}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <section
-        className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-popover text-foreground shadow-float"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-card px-4">
-          <FileText className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium">{name}</div>
-            <div className="truncate font-mono text-[11px] text-muted-foreground">{path}</div>
-          </div>
-          <button
-            ref={closeRef}
-            type="button"
-            onClick={onClose}
-            aria-label={t("society.world.drawer_close")}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <X className="h-4 w-4" aria-hidden />
-          </button>
+  return <Dialog.Root open onOpenChange={open => { if (!open) onClose(); }}>
+    <Dialog.Portal>
+      <Dialog.Overlay className="fixed inset-0 z-50 bg-scrim/60 backdrop-blur-sm" />
+      <Dialog.Content onCloseAutoFocus={event => { event.preventDefault(); opener.current?.focus(); }} className="fixed left-1/2 top-1/2 z-50 flex h-[min(82dvh,780px)] w-[min(800px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border bg-popover text-foreground shadow-float outline-none">
+        <header className="flex shrink-0 items-center gap-3 border-b border-border p-4">
+          <FileText size={18} aria-hidden className="shrink-0" />
+          <div className="min-w-0 flex-1"><Dialog.Title className="truncate text-sm font-semibold">{path.split("/").at(-1)}</Dialog.Title><Dialog.Description className="mt-1 truncate font-mono text-xs text-muted-foreground">{path}</Dialog.Description></div>
+          <Dialog.Close asChild><button type="button" aria-label={t("society.world.drawer_close")} className="rounded-md p-2 hover:bg-secondary focus-visible:ring-2 focus-visible:ring-ring"><X size={16} aria-hidden /></button></Dialog.Close>
         </header>
-
-        <div className="min-h-0 flex-1 overflow-auto p-4">
-          {error ? (
-            <p role="alert" className="text-sm text-destructive">
-              {t("society.chat.memory_file_failed")}: {error}
-            </p>
-          ) : !file && !diff ? (
-            <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-              {t("society.chat.memory_file_loading")}
-            </p>
-          ) : diff && diff.length > 0 ? (
-            <div aria-label={t("work_trace.diff")} className="font-mono text-xs leading-6">
-              {diff.map((f, i) => (
-                <div key={i} className="mb-2">
-                  <p className="mb-2 font-sans text-xs text-muted-foreground">{f.path || path}</p>
-                  {f.lines.map((line, n) => {
-                    const isFirstChange =
-                      (line.kind === "add" || line.kind === "del") &&
-                      !diff
-                        .slice(0, i)
-                        .some((prev) => prev.lines.some((l) => l.kind === "add" || l.kind === "del")) &&
-                      f.lines.slice(0, n).every((l) => l.kind !== "add" && l.kind !== "del");
-                    return (
-                      <div
-                        key={n}
-                        ref={isFirstChange ? firstChangeRef : undefined}
-                        className={cn(
-                          "whitespace-pre-wrap rounded-sm px-2 py-0.5 [overflow-wrap:anywhere]",
-                          line.kind === "add" && "diff-line-add",
-                          line.kind === "del" && "diff-line-del",
-                          line.kind === "ctx" && "text-muted-foreground",
-                        )}
-                      >
-                        {line.kind === "add" ? "+ " : line.kind === "del" ? "− " : "  "}
-                        {line.text}
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-              {file ? (
-                <p className="mt-4 font-sans text-[11px] text-muted-foreground">
-                  {t("society.chat.memory_file_on_disk")}
-                </p>
-              ) : null}
-            </div>
-          ) : file ? (
-            <pre className="whitespace-pre-wrap font-mono text-xs leading-6 text-foreground [overflow-wrap:anywhere]">
-              {file.content}
-            </pre>
-          ) : null}
-        </div>
-      </section>
-    </div>
-  );
+        <Tabs defaultValue={hasChange ? "changes" : "file"} className="flex min-h-0 flex-1 flex-col">
+          <TabsList className="mx-4 mt-3 w-fit shrink-0">
+            {hasChange && <TabsTrigger value="changes">{t("society.chat.memory_changes")}</TabsTrigger>}
+            <TabsTrigger value="file">{t("society.chat.memory_current")}</TabsTrigger>
+            <TabsTrigger value="raw">{t("society.chat.memory_raw")}</TabsTrigger>
+          </TabsList>
+          {hasChange && <TabsContent value="changes" className="min-h-0 flex-1 overflow-auto p-4">
+            <p className="mb-4 text-xs text-muted-foreground">{t("society.chat.memory_change_legend")}</p>
+            <MemoryChanges before={before!} after={after!} patch={patch} />
+          </TabsContent>}
+          <TabsContent value="file" className="min-h-0 flex-1 overflow-auto p-5">
+            {error ? <p role="alert" className="text-sm text-destructive">{t("society.chat.memory_file_failed")}</p> : file ? <MemoryMarkdown text={file.content} /> : <p role="status" className="text-sm text-muted-foreground">{t("society.chat.memory_file_loading")}</p>}
+          </TabsContent>
+          <TabsContent value="raw" className="min-h-0 flex-1 overflow-auto p-5">
+            {error ? <p role="alert" className="text-sm text-destructive">{t("society.chat.memory_file_failed")}</p> : file ? <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-6">{file.content}</pre> : <p role="status" className="text-sm text-muted-foreground">{t("society.chat.memory_file_loading")}</p>}
+          </TabsContent>
+        </Tabs>
+      </Dialog.Content>
+    </Dialog.Portal>
+  </Dialog.Root>;
 }

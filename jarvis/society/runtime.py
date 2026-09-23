@@ -464,9 +464,14 @@ class SocietyRuntime:
             for e in events
             if e.get("kind") == "tool_call"
         }
-        if names and names <= {"society_propose_change", "society_wiki_note"}:
-            # These turns already record their requested change (or a pending
-            # proposal). Reviewing them again wastes a model call and can
+        from .memory_intent import has_write_receipt
+
+        if (
+            names and names <= {"society_propose_change", "society_wiki_note"}
+            and has_write_receipt(events)
+        ):
+            # These turns already have a successful durable-write receipt.
+            # Reviewing them again wastes a model call and can
             # duplicate a standing instruction as a conflicting memory.
             return
         if self.conversations.queue_review(
@@ -478,15 +483,9 @@ class SocietyRuntime:
             self.background(self.recover_reviews())
 
     async def recover_reviews(self) -> None:
-        from .review import review_turn
+        from .review_queue import drain_reviews
 
-        async with self._review_lock:
-            for pending in self.conversations.pending_reviews():
-                try:
-                    if await review_turn(self, pending):
-                        self.conversations.finish_review(pending["session"], pending["turn_id"])
-                except Exception:
-                    log.exception("society review remains pending for %s", pending["turn_id"])
+        await drain_reviews(self)
 
     def background(self, coro: Any) -> asyncio.Task[Any]:
         """Run a coroutine as a tracked task (cancelled on close, AP-30: its

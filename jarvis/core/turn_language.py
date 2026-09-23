@@ -72,13 +72,15 @@ _TOKEN_RE = re.compile(r"\b[\w']+\b", re.UNICODE)
 _LANGUAGE_REQUEST_RE = re.compile(
     r"(?:jarvis[\s,]+)?"
     r"(?:(?:please|bitte|por favor)[\s,]+)?"  # i18n-allow
+    r"(?:(?:always|from now on|immer|ab jetzt|siempre|a partir de ahora)\s+)?"  # i18n-allow
     r"(?:(?:can|could|would) you\s+|(?:kannst|könntest) du\s+|puedes\s+)?"  # i18n-allow
     r"(?:(?:please|bitte|por favor)\s+)?"  # i18n-allow
-    r"(?:(?:speak|reply|respond|answer|continue|switch)(?:\s+to me)?\s+"
-    r"|(?:sprich|spreche|antworte|antworten|rede|wechsel|wechsle)\s+"  # i18n-allow
+    r"(?:(?:speak|reply|respond|answer|write|continue|switch)(?:\s+to me)?\s+"
+    r"|(?:sprich|spreche|antworte|antworten|schreib|schreibe|rede|wechsel|wechsle)\s+"  # i18n-allow
     r"|(?:sollst|du sollst)\s+"  # i18n-allow
-    r"|(?:habla|háblame|responde|contesta|cambia)\s+)?"
+    r"|(?:habla|háblame|responde|contesta|escribe|cambia)\s+)?"
     r"(?:(?:please|bitte|por favor)\s+)?"  # i18n-allow
+    r"(?:(?:always|from now on|immer|ab jetzt|siempre|a partir de ahora)\s+)?"  # i18n-allow
     r"(?:(?:in|auf|en|to|zu|a)\s+)?"  # i18n-allow
     r"(?P<language>deutsch|german|alemán|aleman|english|englisch|inglés|ingles"  # i18n-allow
     r"|español|espanol|spanish|spanisch)"  # i18n-allow

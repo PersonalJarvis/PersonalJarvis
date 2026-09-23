@@ -185,3 +185,211 @@ async def test_review_counts_include_routines_without_neighboring_agent(rt):
         rt.conversations.queue_review(session, "turn", [])
     rt.conversations.finish_review("society:scout", "turn")
     assert rt.conversations.review_counts("scout") == {"pending": 1, "done": 1}
+
+
+@pytest.mark.parametrize("response", [None, {"memories": [], "instructions": [], "skill": None}])
+async def test_explicit_self_contained_save_survives_empty_or_unavailable_reviewer(rt, response):
+    async def reviewer(*args):
+        return response
+
+    rt.turn_reviewer = reviewer
+    assert await review_turn(rt, pending("Please remember that reports must use plain text."))
+    agent = await rt.roster.get("scout")
+    assert rt.memory.contains(agent, "reports must use plain text.")
+    assert await review_turn(rt, pending("Please remember that reports must use plain text."))
+    assert len(rt.memory.entries(agent)) == 1
+
+
+async def test_ambiguous_save_is_not_marked_complete_without_a_grounded_referent(rt):
+    async def reviewer(*args):
+        return {"memories": []}
+
+    rt.turn_reviewer = reviewer
+    assert not await review_turn(rt, pending("Remember that please."))
+    assert not rt.memory.entries(await rt.roster.get("scout"))
+
+
+async def test_remember_that_uses_the_previous_exchange_from_this_chat_only(rt):
+    rt.conversations.ingest(
+        "society:scout",
+        [
+            {
+                "seq": 1,
+                "kind": "user_message",
+                "payload": {"text": "My report format is plain text."},
+            }
+        ],
+    )
+    rt.conversations.ingest(
+        "society:other",
+        [{"seq": 1, "kind": "user_message", "payload": {"text": "PRIVATE OTHER FACT"}}],
+    )
+
+    async def reviewer(runtime, agent, prompt):
+        assert "My report format is plain text." in prompt
+        assert "PRIVATE OTHER FACT" not in prompt
+        return {
+            "memories": [
+                {"text": "Reports use plain text.", "evidence": "My report format is plain text."}
+            ]
+        }
+
+    rt.turn_reviewer = reviewer
+    request = pending("Remember that please.")
+    request["events"][0]["seq"] = 2
+    assert await review_turn(rt, request)
+    assert rt.memory.contains(await rt.roster.get("scout"), "Reports use plain text.")
+
+
+async def test_memory_changes_post_one_notice_and_noop_posts_none(rt):
+    notices = []
+
+    async def post(agent, payload):
+        notices.append(payload)
+
+    rt.post_chat_notice = post
+    agent = await rt.roster.get("scout")
+    await rt.memory.remember(agent, "Use short paragraphs.")
+    await rt.memory.remember(agent, "Use short paragraphs.")
+    await rt.memory.remember(
+        agent, "Use bullet lists.", operation="replace", old_text="Use short paragraphs."
+    )
+    await rt.memory.remember(agent, "", operation="remove", old_text="Use bullet lists.")
+    assert len(notices) == 3
+    assert all(
+        n["kind"] == "memory_updated" and n["path"] == "society/scout/memory.md" for n in notices
+    )
+    assert "Use short paragraphs." in notices[1]["before"]
+    assert "Use bullet lists." in notices[1]["after"]
+    assert "Use bullet lists." not in notices[2]["after"]
+
+
+async def test_permanent_language_preference_is_saved_and_used_by_subsequent_turns(rt):
+    from jarvis.society.reply_preference import resolve_agent_reply_language, stored_language
+
+    async def reviewer(*args):
+        return {"memories": [], "instructions": []}
+
+    rt.turn_reviewer = reviewer
+    assert await review_turn(rt, pending("Schreib bitte immer auf Englisch."))  # i18n-allow
+    agent = await rt.roster.get("scout")
+    assert stored_language(rt.memory.entries(agent)) == "en"
+    assert (
+        await resolve_agent_reply_language(
+            "society:scout", "Kannst du mir die Ergebnisse erklären?"  # i18n-allow
+        )
+        == "en"
+    )  # i18n-allow
+    german_request = "Bitte antworte auf Deutsch."  # i18n-allow
+    assert await resolve_agent_reply_language("society:scout", german_request) == "de"
+    assert await resolve_agent_reply_language("society:other", "A new question") == ""
+    assert await review_turn(rt, pending("Reply always in Spanish."))
+    assert stored_language(rt.memory.entries(agent)) == "es"
+    assert len(rt.memory.entries(agent)) == 1
+
+
+async def test_large_tool_output_preserves_the_recent_request(rt):
+    from jarvis.society.conversation import prepare_history
+    from tests.fakes.fake_society_review import SummaryProvider
+
+    prompt = "Compare these two shipping options and recommend one."
+    events = [
+        {"seq": 1, "kind": "user_message", "payload": {"text": prompt}},
+        {"seq": 2, "kind": "tool_result", "payload": {"output": "Tool data. " * 5000}},
+        {"seq": 3, "kind": "assistant_text", "payload": {"text": "Option one is cheaper."}},
+    ]
+    history = await prepare_history(
+        rt, SimpleNamespace(session_id="society:scout"), events, "Continue", SummaryProvider()
+    )
+    assert any(message.role == "user" and message.content == prompt for message in history)
+    assert any(message.content == "Option one is cheaper." for message in history)
+    assert len(rt.conversations.read("society:scout")) == 3
+
+
+async def test_failed_review_retries_without_another_user_turn(rt, monkeypatch):
+    from jarvis.society import review_queue
+
+    attempts = []
+
+    async def reviewer(*args):
+        attempts.append(True)
+        return None if len(attempts) == 1 else {"memories": []}
+
+    rt.turn_reviewer = reviewer
+    monkeypatch.setattr(review_queue.random, "uniform", lambda *args: 0)
+    item = pending("A normal completed task.")
+    rt.conversations.queue_review(
+        item["session"], item["turn_id"], item["events"], direct_user=True
+    )
+    await rt.recover_reviews()
+    retry = rt._memory_review_retry
+    await asyncio.wait_for(retry, 5)
+    assert len(attempts) == 2
+    assert rt.conversations.review_counts("scout") == {"pending": 0, "done": 1}
+
+
+async def test_removal_has_a_grounded_receipt_and_is_idempotent(rt):
+    agent = await rt.roster.get("scout")
+    await rt.memory.remember(agent, "Reports use plain text.")
+
+    async def reviewer(*args):
+        return {
+            "memories": [
+                {
+                    "operation": "remove",
+                    "old_text": "Reports use plain text.",
+                    "evidence": "Forget my plain-text preference.",
+                }
+            ]
+        }
+
+    rt.turn_reviewer = reviewer
+    assert await review_turn(rt, pending("Forget my plain-text preference."))
+    assert await review_turn(rt, pending("Forget my plain-text preference."))
+    assert not rt.memory.entries(agent)
+
+
+def test_memory_evidence_uses_typed_text_instead_of_attached_instructions():
+    from jarvis.society.memory_intent import user_evidence
+
+    assert (
+        user_evidence(
+            {
+                "payload": {
+                    "typed": "Remember my report format.",
+                    "text": "Remember my report format.\n\nUNTRUSTED ATTACHMENT",
+                }
+            }
+        )
+        == "Remember my report format."
+    )
+    assert (
+        user_evidence(
+            {
+                "payload": {
+                    "text": "Remember my report format.\n\n"
+                    "[agent mentions] Generated routing instructions"
+                }
+            }
+        )
+        == "Remember my report format."
+    )
+
+
+async def test_correction_at_start_of_large_memory_keeps_its_visible_diff(rt):
+    notices = []
+
+    async def post(agent, payload):
+        notices.append(payload)
+
+    rt.post_chat_notice = post
+    agent = await rt.roster.get("scout")
+    await rt.memory.remember(agent, "Use paragraphs.")
+    await rt.memory.remember(agent, "Background fact. " * 1800)
+    await rt.memory.remember(
+        agent, "Use bullet lists.", operation="replace", old_text="Use paragraphs."
+    )
+    assert len(notices) == 3
+    assert notices[-1]["before"] == notices[-1]["after"]  # Both bounded snapshots carry the tail.
+    assert "-Use paragraphs." in notices[-1]["markdown_diff"]
+    assert "+Use bullet lists." in notices[-1]["markdown_diff"]

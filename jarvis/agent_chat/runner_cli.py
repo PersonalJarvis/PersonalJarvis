@@ -2549,6 +2549,12 @@ async def run_cli_turn(
     t0 = time.perf_counter()
     session = handle.session
     resume = session.vendor_session
+    if session.surface == "society":
+        from jarvis.society.reply_preference import resolve_agent_reply_language
+
+        handle.output_language = await resolve_agent_reply_language(
+            session.session_id, user_text, getattr(handle, "output_language", "")
+        )
     if getattr(handle, "output_language", "") and not user_text.startswith("/goal"):
         user_text += "\nRespond in this language: " + handle.output_language
     ident: jarvis_harness.Identity | None = None

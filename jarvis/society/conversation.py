@@ -127,6 +127,20 @@ class ConversationArchive:
             ).fetchone()
         return (int(row[0]), str(row[1])) if row else (0, "")
 
+    def recent_dialogue(
+        self, session: str, *, before_seq: int, limit: int = 8
+    ) -> list[dict[str, Any]]:
+        """Bounded conversational context for resolving an explicit 'remember that'."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT seq,kind,text FROM messages WHERE session=? AND seq<? "
+                "AND kind IN ('user_message','assistant_text') ORDER BY seq DESC LIMIT ?",
+                (session, before_seq, max(1, min(limit, 20))),
+            ).fetchall()
+        return [
+            {"seq": row["seq"], "kind": row["kind"], "text": row["text"]} for row in reversed(rows)
+        ]
+
     def save_checkpoint(self, session: str, through_seq: int, summary: str) -> None:
         if not summary.strip():
             raise ValueError("An empty summary cannot replace conversation context")
@@ -207,12 +221,25 @@ async def prepare_history(
         tail: list[dict[str, Any]] = []
         tail_size = 0
         for event in reversed(remaining):
-            cost = len(event_text(event)) + 32
+            # The API history renderer does not replay raw tool results.
+            # Charging their full size here displaced the latest user request
+            # even when the actual conversational tail easily fit the budget.
+            cost = 0 if event.get("kind") == "tool_result" else len(event_text(event)) + 32
             if tail_size + cost > budget // 2:
                 break
             tail.append(event)
             tail_size += cost
         prefix = remaining[: len(remaining) - len(tail)]
+        latest_user = next(
+            (event for event in reversed(remaining) if event.get("kind") == "user_message"), None
+        )
+        retained_request = (
+            latest_user
+            if latest_user is not None
+            and latest_user in prefix
+            and len(event_text(latest_user)) + tail_size <= budget // 2
+            else None
+        )
         if len(summary) > budget // 3:
             prefix.insert(
                 0, {"seq": through, "kind": "assistant_text", "payload": {"text": summary}}
@@ -265,6 +292,10 @@ async def prepare_history(
                 through = boundary
                 archive.save_checkpoint(sid, through, summary)
         remaining = [e for e in events if int(e.get("seq") or 0) > through]
+        if retained_request is not None and int(retained_request.get("seq") or 0) <= through:
+            # Keep the last human request verbatim even if its unusually long
+            # answer had to be summarized. The original ordering stays on disk.
+            remaining.insert(0, retained_request)
     history = brain_history_from_events(remaining, max_messages=None)
     if summary:
         recalled = archive.search(sid, query, limit=4)
