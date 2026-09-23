@@ -2025,6 +2025,9 @@ class OrbOverlay:
         if "pytest" in sys.modules and not os.environ.get("JARVIS_GUI_TESTS"):
             self._started.set()
             return
+        from jarvis.ui.tk_runtime import prepare_tk_runtime
+
+        prepare_tk_runtime()
         # DPI awareness MUST be set before Win32 GetWindowRect calls, else
         # taskbar coords come back DPI-virtualised and the mascot ends up
         # misplaced on 125%/150% scaled displays.
