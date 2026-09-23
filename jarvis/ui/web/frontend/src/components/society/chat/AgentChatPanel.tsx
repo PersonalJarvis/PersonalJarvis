@@ -226,7 +226,7 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col bg-[hsl(var(--society-chat-ground))]"
+      className="flex h-full min-h-0 flex-col bg-background"
       data-testid="society-chat"
       data-session-id={sessionId ?? ""}
       data-session-ready={sessionReady ? "true" : "false"}
@@ -364,7 +364,7 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[hsl(var(--society-chat-ground))]" data-testid="society-chat" data-mode="chat">
+    <div className="flex h-full min-h-0 flex-col bg-background" data-testid="society-chat" data-mode="chat">
       {header}
       <Transcript key={`${activeSessionId ?? ""}:${view.boundaryId}`} items={view.items} agent={agent} roster={roster} onDecide={decide} />
       {lastError ? (
