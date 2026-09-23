@@ -23,19 +23,29 @@ export function SwarmPreparation({ team, awake, onChanged }: {
   const inFlight = useRef(false);
   const mutation = useRef<AbortController | null>(null);
   const retryKey = useRef({ signature: "", key: "" });
+  const answerSource = useRef("");
   const teamId = team.id;
   const generation = team.storage_generation ?? "";
+  const acceptView = useCallback((next: PreparationView) => {
+    const source = JSON.stringify([next.team.id, next.team.storage_generation ?? "", next.revision]);
+    if (answerSource.current !== source) {
+      answerSource.current = source;
+      setAnswers(next.answers);
+    }
+    // Hydrate in the same commit: a later effect could erase a user's first click.
+    setView(next);
+  }, []);
   const load = useCallback(async (signal: AbortSignal) => {
     const serial = ++requests.current;
     try {
       const next = await readPreparation(teamId, signal);
-      if (!signal.aborted && serial === requests.current) { readFailures.current = 0; setView(next); setError(""); }
+      if (!signal.aborted && serial === requests.current) { readFailures.current = 0; acceptView(next); setError(""); }
     } catch (failure) {
       if (!signal.aborted && serial === requests.current) { readFailures.current += 1; setError(String(failure)); }
     } finally {
       if (!signal.aborted && serial === requests.current) setReadCompleted(value => value + 1);
     }
-  }, [teamId]);
+  }, [teamId, acceptView]);
   useEffect(() => {
     if (!awake) return;
     const abort = new AbortController();
@@ -50,7 +60,6 @@ export function SwarmPreparation({ team, awake, onChanged }: {
     return () => { cancel(); abort.abort(); };
   }, [load, awake, busy, view, readCompleted]);
   useEffect(() => () => mutation.current?.abort(), []);
-  useEffect(() => { if (view) setAnswers(view.answers); }, [view?.revision]);
   const keyFor = (signature: string) => {
     if (retryKey.current.signature !== signature) retryKey.current = { signature, key: crypto.randomUUID() };
     return retryKey.current.key;
@@ -66,7 +75,7 @@ export function SwarmPreparation({ team, awake, onChanged }: {
         : kind === "answers" ? await answerPreparation(view!, answers, key, abort.signal)
           : await launchPreparation(view!, key, abort.signal);
       if (!abort.signal.aborted) {
-        ++requests.current; setView(next); setEditing(false);
+        ++requests.current; acceptView(next); setEditing(false);
         retryKey.current = { signature: "", key: "" };
         onChanged(next.team);
       }

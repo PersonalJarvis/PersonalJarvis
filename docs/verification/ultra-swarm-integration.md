@@ -11,13 +11,14 @@ qualification report, not a declaration that every acceptance criterion passes.
 | Check | Result | Boundary |
 | --- | --- | --- |
 | Integrated Python selection, Windows Python 3.11, four test processes | 2,063 passed; 5 skipped | Swarm unit/integration/contracts, real PostgreSQL/Redis/S3 services, Society, agent chat, lifecycle, packaging and four mandatory guards; no live provider calls |
-| Complete frontend Vitest suite | 4,425 passed; no failures | Exact merged frontend source including settings navigation, in an independent dependency directory |
+| Complete frontend Vitest suite before the intake follow-up | 4,425 passed locally; CI later exposed one race | Exact merged frontend source including settings navigation, in an independent dependency directory |
 | Production frontend build | Passed | Generated distribution rebuilt from the merged source |
 | Isolated startup budget | Passed | Window 1.837 s; interactive 18.469 s; voice usable 19.111 s, against existing 8/20/20 s budgets |
 | Learning receipts and shutdown | 49 passed; 1 skipped | Receipt writers drain before storage closes; unfinished reviews persist; reopening does not duplicate subscriptions |
 | Snapshot and native cleanup fixes | 85 passed; 1 skipped | Includes actual PostgreSQL backup validation; overlaps the integrated selection |
 | Full typed-record parity and related API/storage contracts | 140 passed | All 12 typed browser records, inherited fields, nullable values, SQL/DTO/API roundtrips and exact counters above 2^63; overlaps earlier checks |
 | Native descendant observation under four-way launch pressure | 100 completed | Four exited Windows process records briefly remained observable; all returned exit code 1, with the longest observed wait 15 ms |
+| Intake follow-up | 70 Swarm UI tests passed; production build passed | The new committed-frame regression fails before the fix; a complete CI rerun remains pending |
 
 The process assertion now verifies process identity and waits for a bounded exit
 receipt. A live descendant still fails the assertion, and a reused PID is never
@@ -33,10 +34,21 @@ normally. These warnings are not reported as silent clean-runtime evidence.
 ## Runtime and remaining qualification
 
 The [native campaign on `2cdb52dee`](https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/35832789369)
-has passed actual Linux AppImage and Intel macOS DMG installation, bundled Wasm,
-team/lead persistence through same-artifact replacement, and workspace cleanup.
-Windows and ARM macOS results remain pending. These runs use disposable profiles
+has passed actual Linux AppImage and both ARM64/Intel macOS DMG installation,
+bundled Wasm, team/lead persistence through same-artifact replacement, and
+workspace cleanup. The Windows verification did not finish after more than
+30 minutes and the remaining run was stopped for diagnosis; Windows is not
+qualified by this campaign. These runs use disposable profiles
 and make zero provider requests; they do not include the later settings UI merge.
+
+The full CI frontend run found one intake race, with 4,424 other tests passing:
+questions could render before saved answers were restored, allowing the delayed
+effect to overwrite an immediate selection. A React Profiler regression reproduces
+the inconsistent commit. The component now accepts the view and its answers in
+one update, while a refresh of the same revision preserves local edits. The new
+regression fails on the previous implementation and passes with the fix; all 70
+related Swarm UI tests and the production build pass. The earlier complete local
+suite is not relabeled as a post-fix full-suite result.
 
 The existing public source-installer smoke test separately rejected release
 `v2.2.1` because its Rekor inclusion proof exceeded the wrapper's one-day freshness

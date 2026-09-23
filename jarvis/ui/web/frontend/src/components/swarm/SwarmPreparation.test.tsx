@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { Profiler } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SwarmPreparation } from "./SwarmPreparation";
 import { preparationFixture } from "./testFixtures";
@@ -7,6 +8,31 @@ vi.mock("@/i18n", () => ({ useUiLanguage: () => "en" }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("clarification and approved-plan launch", () => {
+  it("never commits new questions before their saved answers are available", async () => {
+    const view = { ...preparationFixture(), answers: { deliverable: "Readable report" } };
+    const committedAnswers: string[] = [];
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify(view)));
+    render(<Profiler id="preparation" onRender={() => {
+      const answer = screen.queryByLabelText("Which deliverable should be saved?") as HTMLTextAreaElement | null;
+      if (answer) committedAnswers.push(answer.value);
+    }}><SwarmPreparation team={view.team} awake onChanged={() => {}} /></Profiler>);
+    await screen.findByLabelText("Which deliverable should be saved?");
+    expect(committedAnswers.length).toBeGreaterThan(0);
+    expect(committedAnswers.every(answer => answer === "Readable report")).toBe(true);
+  });
+
+  it("preserves edited answers on a refresh of the same saved revision", async () => {
+    const view = { ...preparationFixture(), answers: { deliverable: "Readable report" } };
+    let gets = 0;
+    vi.stubGlobal("fetch", async () => { gets += 1; return new Response(JSON.stringify(view)); });
+    render(<SwarmPreparation team={view.team} awake onChanged={() => {}} />);
+    await screen.findByLabelText("Which deliverable should be saved?");
+    fireEvent.click(screen.getByRole("button", { name: "JSON file" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(gets).toBe(2));
+    expect((screen.getByLabelText("Which deliverable should be saved?") as HTMLTextAreaElement).value).toBe("JSON file");
+  });
+
   it("retries a transient busy-draft read failure without relaunching inference", async () => {
     vi.useFakeTimers();
     let gets = 0;
