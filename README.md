@@ -27,13 +27,14 @@ the conversation and inspect what happens. You can type instead of speaking.
 | **Ultra Agent Swarm** | Temporary teams for a shared goal: clarify, review a plan, then coordinate parallel work. [Development preview](#ultra-agent-swarm). |
 
 <p align="center">
-  <a href="assets/demo/readme-2026-09/jarvis-orchestrator.mp4">
-    <img src="assets/demo/readme-2026-09/jarvis-orchestrator.gif" alt="Jarvis interface recreation: a spoken request becomes a transcript, followed by a reply, with voice controls below" width="1000" />
+  <a href="assets/demo/readme-2026-09/jarvis-orchestrator-v2.mp4">
+    <img src="assets/demo/readme-2026-09/jarvis-orchestrator-v2.gif" alt="Jarvis interface recreation: a spoken request becomes a transcript, followed by a reply, with voice controls below" width="1000" />
   </a>
 </p>
 
-These short loops are **Remotion recreations of the app's UI**, with illustrative
-conversations and tasks. Click a loop for its video, or open the
+These nine-second loops are **Remotion recreations of the app's UI**, with illustrative
+conversations and tasks. Each shows the relevant section with global navigation
+closed. Click a loop for the sharper 60 fps video, or open the
 [still previews and reproducible source](scripts/readme-video/README.md).
 They explain the interface; they are not live recordings or speed benchmarks.
 
@@ -64,8 +65,8 @@ model or supported agent account for the work, and keep the conversations in
 one workspace.
 
 <p align="center">
-  <a href="assets/demo/readme-2026-09/jarvis-agents.mp4">
-    <img src="assets/demo/readme-2026-09/jarvis-agents.gif" alt="Agents workspace recreation: select an agent, write a brief, then edit a routine's instructions and schedule" width="1000" />
+  <a href="assets/demo/readme-2026-09/jarvis-agents-v2.mp4">
+    <img src="assets/demo/readme-2026-09/jarvis-agents-v2.gif" alt="Agents workspace recreation: select an agent, write a brief, then edit a routine's instructions and schedule" width="1000" />
   </a>
 </p>
 
@@ -91,8 +92,8 @@ Its run history and storage are separate from persistent Jarvis Agents.
 > implementation and uses an illustrative team.
 
 <p align="center">
-  <a href="assets/demo/readme-2026-09/ultra-swarm.mp4">
-    <img src="assets/demo/readme-2026-09/ultra-swarm.gif" alt="Ultra Agent Swarm preview: enter a goal, clarify it, review a plan, and inspect parallel task assignments" width="1000" />
+  <a href="assets/demo/readme-2026-09/ultra-swarm-v2.mp4">
+    <img src="assets/demo/readme-2026-09/ultra-swarm-v2.gif" alt="Ultra Agent Swarm preview: enter a goal, clarify it, review a plan, and inspect parallel task assignments" width="1000" />
   </a>
 </p>
 

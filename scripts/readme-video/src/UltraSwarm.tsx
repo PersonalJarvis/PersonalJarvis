@@ -1,6 +1,6 @@
 import React from "react";
-import { Easing, interpolate, useCurrentFrame } from "remotion";
-import { AppShell } from "./shared";
+import { Easing, interpolate } from "remotion";
+import { AppShell, useDemoFrame } from "./shared";
 
 /**
  * Source-faithful, deterministic presentation of an illustrative session.
@@ -119,19 +119,22 @@ const SOURCE_CSS = `
 .swarm-pagination { display:flex; gap:10px; align-items:center; justify-content:flex-end; margin-top:12px; }
 `;
 
-const tween = (frame: number, from: number, to: number, a = 0, b = 1) =>
+const glide = (frame: number, from: number, to: number, a = 0, b = 1) =>
   interpolate(frame, [from, to], [a, b], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
-    easing: Easing.bezier(0.22, 1, 0.36, 1),
+    easing: Easing.bezier(0.65, 0, 0.35, 1),
   });
+
+const press = (frame: number, at: number) =>
+  `scale(${1 - glide(frame, at, at + 4, 0, 0.015) + glide(frame, at + 4, at + 9, 0, 0.015)})`;
 
 const State: React.FC<{ value: string }> = ({ value }) => (
   <span className="swarm-state" data-state={value}>{value[0].toUpperCase() + value.slice(1)}</span>
 );
 
 const GoalForm: React.FC<{ frame: number }> = ({ frame }) => {
-  const text = GOAL.slice(0, Math.floor(tween(frame, 12, 54, 0, GOAL.length)));
+  const text = GOAL.slice(0, Math.floor(interpolate(frame, [8, 49], [0, GOAL.length], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })));
   return <form className="swarm-create" aria-label="New team">
     <div className="swarm-row"><h2>New team</h2></div>
     <label>What should this team accomplish?<textarea name="goal" rows={6} value={text} readOnly placeholder="Describe the result you want. Jarvis will work out the steps." /></label>
@@ -139,7 +142,7 @@ const GoalForm: React.FC<{ frame: number }> = ({ frame }) => {
     <p className="swarm-muted">Jarvis asks a few focused questions and prepares a plan. You review it before the team starts working.</p>
     <details><summary>Options · budget and access</summary></details>
     <p className="swarm-muted">The swarm stops at its limits. Adjust them under Options.</p>
-    <button className="swarm-primary" type="button" style={{ transform: `scale(${tween(frame, 72, 78, 1, 0.985) + tween(frame, 78, 84, 0, 0.015)})` }}>Clarify the goal</button>
+    <button className="swarm-primary" type="button" style={{ transform: press(frame, 72) }}>Clarify the goal</button>
   </form>;
 };
 
@@ -157,10 +160,10 @@ const Preparation: React.FC<{ frame: number; plan: boolean }> = ({ frame, plan }
       <div className="swarm-question">
         <label htmlFor="demo-swarm-answer">What kind of knowledge should the system organize?</label>
         <p className="swarm-muted">This helps make the comparison specific to your use case.</p>
-        <textarea id="demo-swarm-answer" rows={2} readOnly value={answer.slice(0, Math.floor(tween(frame, 102, 137, 0, answer.length)))} />
+        <textarea id="demo-swarm-answer" rows={2} readOnly value={answer.slice(0, Math.floor(interpolate(frame, [98, 128], [0, answer.length], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })))} />
         <button type="button">Let Jarvis propose this</button>
       </div>
-      <div className="swarm-actions"><button className="swarm-primary" type="button">Create plan</button></div>
+      <div className="swarm-actions"><button className="swarm-primary" type="button" style={{ transform: press(frame, 143) }}>Create plan</button></div>
     </form> : <div className="swarm-plan-review">
       <h3>Review the plan</h3><p>Research three local approaches, then compare their trade-offs.</p>
       <h3>What should this team accomplish?</h3><p className="swarm-plan-text">{GOAL}</p>
@@ -170,7 +173,7 @@ const Preparation: React.FC<{ frame: number; plan: boolean }> = ({ frame, plan }
       <h3>First work steps</h3><ol>{TASKS.map(task => <li key={task.id}><strong>{task.title}</strong><p>{task.description}</p><p className="swarm-muted">{task.acceptance}</p></li>)}</ol>
       <details><summary>Options · budget and access</summary></details>
       <p className="swarm-muted">Starting approves this saved plan and its limits. No execution agents have started yet.</p>
-      <div className="swarm-actions"><button>Change answers</button><button className="swarm-primary">Approve plan and start swarm</button></div>
+      <div className="swarm-actions"><button>Change answers</button><button className="swarm-primary" style={{ transform: press(frame, 271) }}>Approve plan and start swarm</button></div>
     </div>}
   </section>;
 };
@@ -216,21 +219,18 @@ const Inspector: React.FC<{ selected: boolean }> = ({ selected }) => <section cl
   </div>
 </section>;
 
-/** 450 frames, 30 fps, 1600 × 900. Intended for a silent README loop. */
-export const UltraSwarm: React.FC = () => {
-  const frame = useCurrentFrame();
-  const phase = frame < 90 ? "goal" : frame < 165 ? "clarify" : frame < 300 ? "plan" : "team";
-  const start = phase === "goal" ? 0 : phase === "clarify" ? 90 : phase === "plan" ? 165 : 300;
-  const scroll = phase === "plan"
-    ? tween(frame, 204, 220, 0, 420) + tween(frame, 246, 260, 0, 300)
-    : phase === "team"
-      ? tween(frame, 300, 314, 0, 360) + tween(frame, 385, 399, 0, 480)
-      : 0;
-  const titles = { goal: "Start with your goal.", clarify: "Clarify what matters.", plan: "Review the plan. Approve the work.", team: "One lead. A coordinated team." };
+type Phase = "goal" | "clarify" | "plan" | "team";
 
-  return <AppShell active="swarm" title={titles[phase]} subtitle="Ultra Agent Swarm">
-    <style>{SOURCE_CSS}</style>
-    <div className="swarm-root">
+// Render both sides of each cut while their opacities cross. The source UI
+// never briefly disappears or resets its scroll position in front of the viewer.
+const Scene: React.FC<{ frame: number; phase: Phase }> = ({ frame, phase }) => {
+  const scroll = phase === "plan"
+    ? glide(frame, 193, 208, 0, 340) + glide(frame, 234, 249, 0, 300)
+    : phase === "team"
+      ? glide(frame, 291, 306, 0, 290) + glide(frame, 372, 387, 0, 440)
+      : 0;
+
+  return <div className="swarm-root">
       <div style={{ transform: `translateY(${-scroll}px)`, position: "relative" }}>
         <header className="swarm-row"><div><h1>Ultra Agent Swarm</h1><p className="swarm-muted">Give Jarvis a goal. It plans the work and builds the team.</p></div><button className="swarm-primary">New team</button></header>
         <div className="swarm-layout">
@@ -239,7 +239,7 @@ export const UltraSwarm: React.FC = () => {
             <div className="swarm-team-list">{phase !== "goal" && <button className="swarm-team" aria-current="true"><strong>Local knowledge base</strong><State value={phase === "team" ? "running" : "created"} /></button>}</div>
             <div className="swarm-pagination"><button disabled>Previous</button><button disabled>Next</button></div>
           </aside>
-          <div style={{ minWidth: 0, opacity: tween(frame, start, start + 8, 0.65, 1), transform: `translateY(${tween(frame, start, start + 12, 12, 0)}px)` }}>
+          <div style={{ minWidth: 0 }}>
             {phase === "goal" ? <GoalForm frame={frame} /> : <main className="swarm-main">
               <section className="swarm-panel">
                 <div className="swarm-row"><h2>{phase === "team" ? "Local knowledge base" : "Your goal"}</h2>{phase === "team" && <span className="swarm-muted">Live</span>}</div>
@@ -258,6 +258,36 @@ export const UltraSwarm: React.FC = () => {
           </div>
         </div>
       </div>
+    </div>;
+};
+
+const PHASES: { phase: Phase; start: number; next: number }[] = [
+  { phase: "goal", start: 0, next: 84 },
+  { phase: "clarify", start: 84, next: 155 },
+  { phase: "plan", start: 155, next: 286 },
+  { phase: "team", start: 286, next: 437 },
+];
+
+/** 540 frames, 60 fps, 1920 × 1044: nine seconds, silent, section-only. */
+export const UltraSwarm: React.FC = () => {
+  const frame = useDemoFrame();
+  const loop = glide(frame, 437, 449);
+
+  return <AppShell active="swarm">
+    <style>{SOURCE_CSS}</style>
+    {/* A uniform source-canvas scale keeps the actual app controls readable.
+        The 28px native caption is supplied by AppShell, outside this canvas. */}
+    <div style={{ position: "absolute", left: 0, top: 0, width: 1440, height: 762, transform: "scale(1.3333333333)", transformOrigin: "top left", overflow: "hidden" }}>
+      {PHASES.map(({ phase, start, next }, index) => {
+        if (frame < start || frame >= next + 12) return null;
+        const enter = index === 0 ? 1 : glide(frame, start, start + 12);
+        // Keep the lower layer opaque until the incoming layer covers it;
+        // fading both would darken every midpoint of the dissolve.
+        return <div key={phase} style={{ position: "absolute", inset: 0, opacity: enter }}>
+          <Scene frame={frame} phase={phase} />
+        </div>;
+      })}
+      {frame >= 437 && <div style={{ position: "absolute", inset: 0, opacity: loop }}><Scene frame={0} phase="goal" /></div>}
     </div>
   </AppShell>;
 };

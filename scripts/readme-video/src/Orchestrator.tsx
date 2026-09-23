@@ -1,8 +1,8 @@
 import React from "react";
-import { AbsoluteFill, Easing, interpolate, useCurrentFrame } from "remotion";
+import { AbsoluteFill, Easing, interpolate } from "remotion";
 import { PhoneOff, Sparkles } from "lucide-react";
 import { GigiMark } from "@app/components/GigiMark";
-import { AppShell } from "./shared";
+import { AppShell, useDemoFrame } from "./shared";
 
 /**
  * Deterministic presentation of the shipped voice UI, with illustrative text.
@@ -130,31 +130,30 @@ const Transcript: React.FC<{ who: string; text: string; live?: boolean; user?: b
 );
 
 export const Orchestrator: React.FC = () => {
-  const frame = useCurrentFrame();
-  const enterConversation = progress(frame, 72, 84);
-  const phase: Phase = frame < 72 ? "idle" : frame < 166 ? "listening" : frame < 204 ? "thinking" : frame < 315 ? "speaking" : "listening";
-  const userText = wordReveal("Jarvis, help me plan this project.", frame, 87, 10);
-  const assistantText = wordReveal("Let’s define the goal and choose the right agent.", frame, 212, 9);
-  const zoom = 1 + 0.12 * progress(frame, 87, 99) - 0.12 * progress(frame, 356, 368);
-  const title = frame < 72 ? "Your voice orchestrator." : frame < 204 ? "Start with a conversation." : frame < 356 ? "Make the next step clear." : "Your agents. Your tools. One Jarvis.";
+  const frame = useDemoFrame();
+  const reset = progress(frame, 418, 449);
+  const enterConversation = progress(frame, 32, 58) * (1 - reset);
+  const phase: Phase = frame < 32 || frame >= 437 ? "idle" : frame < 128 ? "listening" : frame < 158 ? "thinking" : frame < 286 ? "speaking" : "listening";
+  const userText = wordReveal("Jarvis, help me plan this project.", frame, 64, 8);
+  const assistantText = wordReveal("Let’s define the goal and choose the right agent.", frame, 166, 8);
 
   return (
     <AbsoluteFill style={{ background: "#0A0A0A", fontFamily: "Inter, sans-serif", color: UI.primary }}>
-      <AppShell active="chat" title={title} subtitle="Jarvis brings the conversation, agents and tools together.">
-        <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }}>
-          <div style={{ position: "absolute", inset: 0, transform: `scale(${zoom})`, transformOrigin: "50% 88%" }}>
+      <AppShell active="chat" voiceState={phase === "idle" ? "Ready" : phase}>
+        <div style={{ position: "relative", width: "75%", height: "75%", transform: "scale(1.3333333333)", transformOrigin: "0 0", overflow: "hidden" }}>
+          <div style={{ position: "absolute", inset: 0 }}>
             <div style={{ position: "absolute", width: 760, left: "50%", top: interpolate(enterConversation, [0, 1], [218, 24]), transform: "translateX(-50%)", padding: "0 24px", boxSizing: "border-box" }}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", opacity: 1 - 0.3 * enterConversation, transform: `scale(${1 - 0.12 * enterConversation})` }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 24, fontWeight: 600, color: "#FFFFFF" }}><GigiMark size={36} /><span>Good morning</span></div>
                 {enterConversation < 1 && <p style={{ margin: "8px 0 0", maxWidth: 448, fontSize: 16, color: UI.muted, opacity: 1 - enterConversation }}>Say your wake word or tap the bar — the conversation shows up here.</p>}
               </div>
-              {userText && <div style={{ marginTop: 32, display: "flex", flexDirection: "column", gap: 20 }}>
-                <Transcript who="You" text={userText} user live={frame < 166} />
-                {assistantText && <Transcript who="Jarvis" text={assistantText} live={frame < 315} />}
+              {userText && <div style={{ marginTop: 32, display: "flex", flexDirection: "column", gap: 20, opacity: 1 - reset }}>
+                <Transcript who="You" text={userText} user live={frame < 128} />
+                {assistantText && <Transcript who="Jarvis" text={assistantText} live={frame < 286} />}
               </div>}
             </div>
             <div style={{ position: "absolute", width: 760, left: "50%", top: `calc(${enterConversation * 100}% + ${342 * (1 - enterConversation) - 144 * enterConversation}px)`, transform: "translateX(-50%)", padding: "0 24px", boxSizing: "border-box" }}>
-              <VoiceCard frame={frame} phase={phase} />
+              <VoiceCard frame={frame * (1 - reset)} phase={phase} />
             </div>
           </div>
         </div>

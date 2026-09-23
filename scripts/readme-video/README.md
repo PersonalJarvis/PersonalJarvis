@@ -1,6 +1,6 @@
 # README interface films
 
-Three 15-second, silent Remotion compositions explain the desktop workspace.
+Three nine-second, silent Remotion compositions explain the desktop workspace.
 They are deterministic UI recreations with sample data, not screen recordings,
 measured response times, or proof of successful agent executions.
 This public documentation generator uses synthetic data only; private captures
@@ -8,12 +8,14 @@ and internal marketing projects are not inputs.
 
 | Composition | Interface sources | Still |
 |---|---|---|
-| JarvisOrchestrator | `components/home/VoiceStage.tsx`, `JarvisBar.tsx`, `Greeting.tsx`, `StageWaveform.tsx` | [Voice preview](../../assets/demo/readme-2026-09/jarvis-orchestrator.png) |
-| JarvisAgents | `components/society/card/AgentCardOverlay.tsx`, `AgentRoutineDetail.tsx`, `roster/RosterRail.tsx`, `chat/AgentChatPanel.tsx` | [Agents preview](../../assets/demo/readme-2026-09/jarvis-agents.png) |
-| UltraSwarm | `views/swarm/UltraSwarmView.tsx`, `components/swarm/`, `i18n/locales/swarm/en.json` | [Swarm preview](../../assets/demo/readme-2026-09/ultra-swarm.png) |
+| JarvisOrchestrator | `components/home/VoiceStage.tsx`, `JarvisBar.tsx`, `Greeting.tsx`, `StageWaveform.tsx` | [Voice preview](../../assets/demo/readme-2026-09/jarvis-orchestrator-v2.png) |
+| JarvisAgents | `components/society/card/AgentCardOverlay.tsx`, `AgentRoutineDetail.tsx`, `roster/RosterRail.tsx`, `chat/AgentChatPanel.tsx` | [Agents preview](../../assets/demo/readme-2026-09/jarvis-agents-v2.png) |
+| UltraSwarm | `views/swarm/UltraSwarmView.tsx`, `components/swarm/`, `i18n/locales/swarm/en.json` | [Swarm preview](../../assets/demo/readme-2026-09/ultra-swarm-v2.png) |
 
 Paths in the middle column are relative to `jarvis/ui/web/frontend/src`.
-The shell follows `components/layout/Sidebar.tsx` and `TopBar.tsx`.
+Each composition fills the frame with its section, with global navigation closed.
+The narrow native caption follows the app; the Agents roster and Options pane
+remain part of the section. No marketing border or extra title strip is added.
 GigiMark, Badge, Button, and Switch are imported from the application.
 Generated CSS uses the application's Tailwind configuration, theme tokens,
 and bundled fonts. Network-dependent views have pure visual adapters here;
@@ -41,8 +43,11 @@ npm run preview
 npm run render
 ```
 
-`preview` renders frames 0, 90, 180, 270, 360, and 449 for every composition.
-`render` also writes 3840 x 2160 H.264 masters into `out/`. Remotion manages
+`settings.json` owns the frame rate, dimensions, duration, and selected frames.
+`preview` renders eight representative frames, including both loop endpoints.
+`render` writes 3840 x 2088, 60 fps H.264 masters into `out/`. The aspect ratio
+matches the section reference. Frames are captured losslessly as PNG before
+video encoding, preserving small text and thin UI lines. Remotion manages
 its own headless renderer; no browser extension or desktop control is required.
 Fonts and product UI assets resolve locally.
 
@@ -52,7 +57,10 @@ To render one composition:
 npm run render -- --id=JarvisAgents
 ```
 
-The README exports are 1000-pixel GIFs, 1600 x 900 MP4s, and still previews.
+The README exports are 1600-pixel GIFs at 25 fps with a full 256-color palette,
+1920 x 1044 MP4s at 60 fps, and still previews. GIF frames use an exact 40 ms
+cadence instead of uneven frame delays. All three clips last nine seconds and
+return to their initial view at the loop boundary.
 With FFmpeg installed, export them from the masters:
 
 ```bash

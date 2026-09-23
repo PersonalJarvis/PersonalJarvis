@@ -1,5 +1,5 @@
 import React from "react";
-import { Easing, interpolate, useCurrentFrame } from "remotion";
+import { Easing, interpolate } from "remotion";
 import {
   ArrowLeft, ChevronDown, Clock, Maximize2, Mic, MoreHorizontal,
   MousePointer2, Plus, Search, Send,
@@ -7,7 +7,8 @@ import {
 import { Badge } from "@app/components/ui/badge";
 import { Button } from "@app/components/ui/button";
 import { Switch } from "@app/components/ui/switch";
-import { AppShell } from "./shared";
+import { GigiMark } from "@app/components/GigiMark";
+import { AppShell, useDemoFrame } from "./shared";
 
 /**
  * Deterministic visual adapter for the actual Agents workspace, not a second UI.
@@ -28,6 +29,10 @@ const EASE = Easing.bezier(0.16, 1, 0.3, 1);
 const move = (frame: number, start: number, end: number, from: number, to: number) =>
   interpolate(frame, [start, end], [from, to], {
     extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: EASE,
+  });
+const glide = (frame: number, start: number, end: number) =>
+  interpolate(frame, [start, end], [0, 1], {
+    extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.inOut(Easing.cubic),
   });
 const typed = (text: string, frame: number, start: number, duration: number) =>
   text.slice(0, Math.floor(interpolate(frame, [start, start + duration], [0, text.length], {
@@ -59,7 +64,7 @@ const Roster: React.FC<{ selected: string }> = ({ selected }) => (
     <div className="mt-2 min-h-0 flex-1">
       <div className="flex justify-center px-2 pb-2">
         <button className="flex flex-col items-center gap-1.5 rounded-xl bg-secondary/50 px-5 py-3 text-center">
-          <Face agent={AGENTS[0]} size={56} />
+          <GigiMark size={56} />
           <span className="flex items-center justify-center gap-1.5"><span className="text-sm font-medium text-foreground">Jarvis</span><Badge variant="secondary" className="px-1.5 py-0 text-xs">Lead</Badge></span>
         </button>
       </div>
@@ -78,22 +83,40 @@ const Roster: React.FC<{ selected: string }> = ({ selected }) => (
 );
 
 const BRIEF = "Plan the next release. Ask before changing any files.";
+const UserMessage: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({ children, style }) =>
+  <div className="flex min-w-0 max-w-[min(85%,42rem)] flex-col items-end gap-1 self-end" style={style}>
+    <div className="min-w-0 rounded-2xl rounded-br-md bg-secondary px-4 py-2.5 text-sm leading-relaxed text-foreground">{children}</div>
+  </div>;
+/** WorkTrace.tsx conversation answer shape; illustrative planning prose only. */
+const PlanMessage: React.FC<{ children: React.ReactNode }> = ({ children }) =>
+  <div className="w-full max-w-xl self-start rounded-2xl rounded-bl-md bg-secondary px-4 py-2.5 text-sm leading-relaxed text-foreground">{children}</div>;
+
 const Chat: React.FC<{ frame: number; agent: DemoAgent }> = ({ frame, agent }) => {
-  const draft = typed(BRIEF, frame, 70, 54);
-  const submitted = frame >= 138;
+  const draft = typed(BRIEF, frame, 52, 46);
+  const submitted = frame >= 112;
   return <section className="flex h-full min-h-0 flex-col bg-background">
-    {submitted ? <div className="min-h-0 flex-1 overflow-hidden px-6 py-5">
-      <div className="mx-auto flex w-full min-w-0 flex-col gap-3">
+    <div className="min-h-0 flex-1 overflow-hidden px-6 py-5">
+      <div className="mx-auto flex w-full min-w-0 flex-col gap-3" style={{ transform: `translateY(${-move(frame, 112, 134, 0, 34)}px)` }}>
         <p className="my-4 text-center text-[11px] text-muted-foreground">Today 09:00</p>
-        <div className="flex min-w-0 max-w-[min(85%,42rem)] flex-col items-end gap-1 self-end" style={{ opacity: move(frame, 138, 145, 0, 1), transform: `translateY(${move(frame, 138, 150, 12, 0)}px)` }}>
-          <div className="min-w-0 rounded-2xl rounded-br-md bg-secondary px-4 py-2.5 text-sm leading-relaxed text-foreground">{BRIEF}</div>
-        </div>
+        <UserMessage>Help me organise the next release.</UserMessage>
+        <PlanMessage>
+          <p className="mb-2">We can plan it in four steps:</p>
+          <ol className="list-decimal space-y-1 pl-5">
+            <li>Define the outcome and what stays out of scope.</li>
+            <li>Split the work into small, reviewable tasks.</li>
+            <li>Decide who should review each result.</li>
+            <li>Confirm the plan before execution.</li>
+          </ol>
+        </PlanMessage>
+        <UserMessage>Use Atlas for planning and Nova for writing. Ask before making changes.</UserMessage>
+        <PlanMessage>
+          <p className="mb-2">A useful brief includes the goal, constraints and review step.</p>
+          <p>For recurring work, an agent&apos;s routine has its own instruction and schedule. You can review and edit both from this workspace.</p>
+        </PlanMessage>
+        <p className="my-4 text-center text-[11px] text-muted-foreground">Today 09:02</p>
+        {submitted && <UserMessage style={{ opacity: move(frame, 112, 120, 0, 1), transform: `translateY(${move(frame, 112, 130, 16, 0)}px)` }}>{BRIEF}</UserMessage>}
       </div>
-    </div> : <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-      <Face agent={agent} size={56} />
-      <p className="text-sm font-medium text-foreground">Talk to {agent.name}</p>
-      <p className="max-w-[32ch] text-xs text-muted-foreground">Type, speak, or tag an agent, plugin or tool with @ — e.g. @gmail.</p>
-    </div>}
+    </div>
     <div className="shrink-0 px-6 pb-4 pt-2">
       <div className="relative mx-auto flex w-full min-w-0 items-end gap-1 rounded-[24px] border border-border bg-secondary px-2 py-1.5">
         <button className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground"><Plus className="h-4 w-4" /></button>
@@ -116,13 +139,13 @@ const SelectField: React.FC<{ value: string }> = ({ value }) => <button classNam
 </button>;
 
 const RoutineDetail: React.FC<{ frame: number }> = ({ frame }) => {
-  const editing = frame >= 285 && frame < 410;
-  const changing = frame >= 230 && frame < 285;
-  const instruction = changing ? typed(INSTRUCTION, frame, 230, 40) : INSTRUCTION;
+  const editing = frame >= 272 && frame < 375;
+  const changing = frame >= 198 && frame < 254;
+  const instruction = changing ? typed(INSTRUCTION, frame, 198, 40) : INSTRUCTION;
   // A translated scroll interior is frame-deterministic even when the renderer
   // seeks directly to a frame before browser layout effects have settled.
   // The original detail's order, dimensions and viewport clipping stay intact.
-  const scroll = move(frame, 285, 299, 0, 330) - move(frame, 410, 428, 0, 210);
+  const scroll = 255 * glide(frame, 262, 292) - 255 * glide(frame, 365, 393);
   return <section className="min-h-0 flex-1 overflow-hidden text-foreground" style={{ flexBasis: 0 }}>
     <div className="space-y-4 pb-4" style={{ transform: `translateY(${-scroll}px)` }}>
     <button className="flex items-center gap-1 text-[12px] text-muted-foreground"><ArrowLeft size={14} />Routines</button>
@@ -143,9 +166,9 @@ const RoutineDetail: React.FC<{ frame: number }> = ({ frame }) => {
         <button className="flex w-full items-start gap-2 rounded text-left text-[12px]"><Clock size={14} className="mt-0.5 shrink-0" /><span>Every day at 09:00 (UTC)</span></button>
         <button className="flex items-center gap-1 text-[12px] text-muted-foreground"><Plus size={14} />Add another schedule</button>
       </div>
-      {editing && <div className="space-y-2 rounded-lg border border-border p-3" style={{ opacity: move(frame, 285, 292, 0, 1) }}>
+      {editing && <div className="space-y-2 rounded-lg border border-border p-3" style={{ opacity: move(frame, 272, 284, 0, 1) * (1 - move(frame, 365, 375, 0, 1)) }}>
         <SelectField value="Calendar schedule" />
-        <label className="block text-[11px] text-muted-foreground">Time<input className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-[12px] text-foreground" readOnly value={frame < 320 ? "09:00" : "10:00"} /></label>
+        <label className="block text-[11px] text-muted-foreground">Time<input className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-[12px] text-foreground" readOnly value={frame < 305 ? "09:00" : "10:00"} /></label>
         <label className="block text-[11px] text-muted-foreground">Timezone<input className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-[12px] text-foreground" readOnly value="UTC" /></label>
         <button className={routineButton}>Save</button>{" "}<button className={routineButton}>Cancel</button>
       </div>}
@@ -155,12 +178,14 @@ const RoutineDetail: React.FC<{ frame: number }> = ({ frame }) => {
   </section>;
 };
 
-const Options: React.FC<{ frame: number; name: string }> = ({ frame, name }) => <aside className="flex h-full min-h-0 flex-col border-l border-border bg-sidebar">
+const Options: React.FC<{ frame: number; name: string }> = ({ frame, name }) => {
+  const detail = glide(frame, 156, 172) * (1 - glide(frame, 391, 407));
+  return <aside className="flex h-full min-h-0 flex-col border-l border-border bg-sidebar">
   <header className="flex shrink-0 items-center justify-between gap-2 px-3 pb-1 pt-3">
     <h2 className="font-display text-sm font-semibold tracking-tight text-foreground">Options</h2><button className="rounded-md p-1 text-muted-foreground"><MoreHorizontal className="h-4 w-4" /></button>
   </header>
-  <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-3 pb-3 pt-2">
-    {frame < 210 ? <>
+  <div className="relative min-h-0 flex-1 overflow-hidden">
+    <div className="absolute inset-0 flex min-h-0 flex-col gap-3 px-3 pb-3 pt-2" style={{ opacity: 1 - detail }}>
       <div className="shrink-0">
         <div className="mb-1 flex items-center justify-between gap-1 text-[10px] text-muted-foreground"><span>{name} · Connecting</span><button className="rounded px-2 py-1 text-xs"><Maximize2 size={14} /></button></div>
         <div className="relative flex aspect-[16/10] items-center justify-center overflow-hidden rounded-lg bg-muted p-3 text-center text-xs text-muted-foreground">Connecting</div>
@@ -172,30 +197,39 @@ const Options: React.FC<{ frame: number; name: string }> = ({ frame, name }) => 
           <Clock size={16} className="mt-0.5 shrink-0 text-success" /><span className="min-w-0 flex-1"><span className="block text-[13px] font-medium text-foreground">Project review</span><span className="block text-[11px] leading-snug text-muted-foreground">Every day at 09:00 (UTC)</span></span>
         </button>
       </section>
-    </> : <RoutineDetail frame={frame} />}
+    </div>
+    <div className="absolute inset-0 flex min-h-0 flex-col px-3 pb-3 pt-2" style={{ opacity: detail, transform: `translateX(${12 * (1 - detail)}px)` }}>
+      <RoutineDetail frame={frame} />
+    </div>
   </div>
 </aside>;
+};
 
-export const Agents: React.FC = () => {
-  const frame = useCurrentFrame();
-  const agent = frame < 42 ? AGENTS[2] : AGENTS[1];
-  const focus = move(frame, 192, 204, 0, 1) - move(frame, 414, 432, 0, 1);
-  const scale = 1 + focus * 0.32;
-  const cursorVisible = (frame >= 18 && frame < 55) || (frame >= 179 && frame < 220);
-  const cursorX = frame < 55 ? move(frame, 18, 38, 25, 10) : move(frame, 179, 202, 65, 88);
-  const cursorY = frame < 55 ? move(frame, 18, 38, 62, 33) : move(frame, 179, 202, 78, 38);
-  const click = frame < 55 ? Math.abs(frame - 42) < 5 : Math.abs(frame - 210) < 5;
-  return <AppShell active="agents" title={frame < 150 ? "Your team. One workspace." : frame < 285 ? "Give every agent a routine." : "Set the schedule. Keep control."}
-    subtitle={frame < 150 ? "Jarvis Agents" : "Chats · instructions · schedules"}>
-    <div className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-card" data-readme-agents>
-      <style>{`[data-readme-agents] *, [data-readme-agents] *::before, [data-readme-agents] *::after { transition: none !important; animation: none !important; }`}</style>
-      <div className="relative grid h-full min-h-0 w-full flex-1 grid-cols-[minmax(240px,300px)_minmax(0,1fr)]" style={{ gridTemplateRows: "minmax(0, 1fr)", transform: `scale(${scale})`, transformOrigin: "100% 45%" }}>
+const Workspace: React.FC<{ frame: number }> = ({ frame }) => {
+  const agent = frame < 40 ? AGENTS[2] : AGENTS[1];
+  const focus = glide(frame, 148, 180) - glide(frame, 385, 420);
+  const scale = 1 + focus * 0.4;
+  const cursorVisible = (frame >= 8 && frame < 48) || (frame >= 130 && frame < 174);
+  const cursorX = frame < 48 ? move(frame, 8, 36, 20, 6) : move(frame, 130, 156, 84, 93);
+  const cursorY = frame < 48 ? move(frame, 8, 36, 39, 24) : move(frame, 130, 156, 96, 30.5);
+  const click = frame < 48 ? Math.abs(frame - 40) < 4 : Math.abs(frame - 158) < 4;
+  return <div className="relative grid h-full min-h-0 w-full" style={{ gridTemplateColumns: "12% minmax(0, 1fr)", gridTemplateRows: "minmax(0, 1fr)", transform: `scale(${scale})`, transformOrigin: "100% 0%" }}>
         <Roster selected={agent.name} />
-        <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(280px,320px)] overflow-hidden rounded-tl-[12px] border-l border-border bg-background" style={{ gridTemplateRows: "minmax(0, 1fr)" }}>
+        <div className="grid min-h-0 overflow-hidden rounded-tl-[12px] border-l border-border bg-background" style={{ gridTemplateColumns: "minmax(0, 1fr) 14.77%", gridTemplateRows: "minmax(0, 1fr)" }}>
           <Chat frame={frame} agent={agent} /><Options frame={frame} name={agent.name} />
         </div>
-        {cursorVisible && <MousePointer2 fill="hsl(var(--foreground))" stroke="hsl(var(--background))" strokeWidth={1.7} size={30} style={{ position: "absolute", left: `${cursorX}%`, top: `${cursorY}%`, transform: `scale(${click ? 0.8 : 1})`, filter: "drop-shadow(0 2px 3px rgba(0,0,0,.4))" }} />}
-      </div>
+        {cursorVisible && <MousePointer2 fill="hsl(var(--foreground))" stroke="hsl(var(--background))" strokeWidth={1.7} size={24} style={{ position: "absolute", left: `${cursorX}%`, top: `${cursorY}%`, transform: `scale(${click ? 0.8 : 1})`, filter: "drop-shadow(0 2px 3px rgba(0,0,0,.4))" }} />}
+      </div>;
+};
+
+export const Agents: React.FC = () => {
+  const frame = useDemoFrame();
+  const loop = glide(frame, 419, 446);
+  return <AppShell active="agents">
+    <div className="relative h-full min-h-0 flex-1 overflow-hidden bg-card" data-readme-agents>
+      <style>{`[data-readme-agents] *, [data-readme-agents] *::before, [data-readme-agents] *::after { transition: none !important; animation: none !important; }`}</style>
+      <div className="absolute inset-0"><Workspace frame={loop >= 1 ? 0 : frame} /></div>
+      {loop > 0 && loop < 1 && <div className="absolute inset-0" style={{ opacity: loop }}><Workspace frame={0} /></div>}
     </div>
   </AppShell>;
 };

@@ -1,0 +1,15 @@
+{
+  "width": 1920,
+  "height": 1044,
+  "fps": 60,
+  "durationInFrames": 540,
+  "masterScale": 2,
+  "gifWidth": 1600,
+  "gifFps": 25,
+  "stills": [0, 60, 150, 225, 325, 405, 490, 539],
+  "compositions": [
+    { "id": "JarvisOrchestrator", "file": "jarvis-orchestrator-v2", "poster": 325 },
+    { "id": "JarvisAgents", "file": "jarvis-agents-v2", "poster": 150 },
+    { "id": "UltraSwarm", "file": "ultra-swarm-v2", "poster": 405 }
+  ]
+}

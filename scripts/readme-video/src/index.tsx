@@ -4,10 +4,11 @@ import { Composition, registerRoot } from "remotion";
 import { Orchestrator } from "./Orchestrator";
 import { Agents } from "./Agents";
 import { UltraSwarm } from "./UltraSwarm";
+import settings from "../settings.json";
 
 const Root = () => <>
-  <Composition id="JarvisOrchestrator" component={Orchestrator} width={1600} height={900} fps={30} durationInFrames={450}/>
-  <Composition id="JarvisAgents" component={Agents} width={1600} height={900} fps={30} durationInFrames={450}/>
-  <Composition id="UltraSwarm" component={UltraSwarm} width={1600} height={900} fps={30} durationInFrames={450}/>
+  <Composition id="JarvisOrchestrator" component={Orchestrator} width={settings.width} height={settings.height} fps={settings.fps} durationInFrames={settings.durationInFrames}/>
+  <Composition id="JarvisAgents" component={Agents} width={settings.width} height={settings.height} fps={settings.fps} durationInFrames={settings.durationInFrames}/>
+  <Composition id="UltraSwarm" component={UltraSwarm} width={settings.width} height={settings.height} fps={settings.fps} durationInFrames={settings.durationInFrames}/>
 </>;
 registerRoot(Root);
