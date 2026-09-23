@@ -40,7 +40,7 @@ needed for their requests; running the app locally does not make every integrati
 offline. See [privacy and local data](docs/product/privacy-safety-and-support/privacy-and-local-data.md)
 and [how the system fits together](#how-it-works).
 
-[Website](https://personaljarvis.ai) · [Getting started](#quick-start) ·
+[Website](https://personaljarvis.ai) · [Getting started](#your-first-steps-in-the-desktop-app) ·
 [Documentation](#documentation) · [GitHub](https://github.com/PersonalJarvis/PersonalJarvis) ·
 [YouTube](https://www.youtube.com/@PersonalJarvis) ·
 [Discord](https://discord.gg/x7USduHxbc) · [X](https://x.com/Ruben_Luetke) ·
@@ -72,14 +72,54 @@ models do not require a cloud model account.
 
 [Full installation, platform requirements, and uninstall instructions](install/README.md).
 
-## Quick start
+## Jarvis: your voice orchestrator
+
+Start a **Voice Chat**, tap the voice bar, or use your configured wake phrase.
+Your speech and Jarvis's replies appear in the conversation. Start a normal
+**Chat** when you prefer a keyboard.
+
+Jarvis brings the workspace into reach: ask an agent to research a topic, work
+with a coding session, find something in memory, or use a connected tool.
+Available actions depend on your providers, installed tools, and permissions.
+Computer use needs a desktop and the required OS permissions.
+
+Choose your voice and model access in the app. The voice path can use realtime
+audio or a speech-recognition, model, and speech-output pipeline. Your selected
+provider determines the available capabilities; execution and approvals remain
+under Jarvis's control.
+
+<br />
+
+<p align="center">
+  <a href="assets/demo/readme-2026-09/jarvis-orchestrator-v4.mp4">
+    <img src="assets/demo/readme-2026-09/jarvis-orchestrator-v4.gif" alt="Illustrative desktop conversation: the app window and sidebar stay visible as Hey George activates listening, followed by a project-planning exchange" width="1000" />
+  </a>
+</p>
+
+<p align="center">
+  <sub>“Hey George” → listening → conversation. The desktop window and navigation stay in view.</sub>
+</p>
+
+The demos on this page are **Remotion recreations of the interface with
+illustrative conversations**, not live recordings or response-time benchmarks.
+The wake phrase and listening transition above are animated to explain the
+interaction. Click a GIF for its sharper 60 fps video, or use the
+[still previews and reproducible source](scripts/readme-video/README.md).
+
+[Voice conversations](docs/product/everyday-use/voice-conversations.md) ·
+[Wake phrase and audio](docs/product/personalize-and-connect/audio-and-wake-word.md) ·
+[Models and providers](docs/product/personalize-and-connect/providers-and-api-keys.md)
+
+<br />
+
+## Your first steps in the desktop app
 
 1. **Open Personal Jarvis.** The installer opens the desktop app for you. Later,
    find **Personal Jarvis** in Windows Search, macOS Spotlight, or the Linux
    application menu. You do not need to keep a terminal open.
 2. **Complete the in-app setup.** Choose your language, review device permissions,
    and choose a wake phrase or a keyboard shortcut. The assistant name follows
-   your chosen phrase: **Hey George** is the example below, not a required name.
+   your chosen phrase: **Hey George** is the example above, not a required name.
 3. **Connect model access.** Open **API Keys & Providers** to connect and test a
    supported provider, or configure a local model. Chat needs a ready model;
    voice additionally needs a working realtime connection or speech pipeline.
@@ -123,46 +163,6 @@ For a minimal server installation, use `pip install personal-jarvis` and
 See the [headless deployment guide](docs/headless-vps-deployment.md).
 
 </details>
-
-## Jarvis: your voice orchestrator
-
-Start a **Voice Chat**, tap the voice bar, or use your configured wake phrase.
-Your speech and Jarvis's replies appear in the conversation. Start a normal
-**Chat** when you prefer a keyboard.
-
-Jarvis brings the workspace into reach: ask an agent to research a topic, work
-with a coding session, find something in memory, or use a connected tool.
-Available actions depend on your providers, installed tools, and permissions.
-Computer use needs a desktop and the required OS permissions.
-
-Choose your voice and model access in the app. The voice path can use realtime
-audio or a speech-recognition, model, and speech-output pipeline. Your selected
-provider determines the available capabilities; execution and approvals remain
-under Jarvis's control.
-
-<br />
-
-<p align="center">
-  <a href="assets/demo/readme-2026-09/jarvis-orchestrator-v4.mp4">
-    <img src="assets/demo/readme-2026-09/jarvis-orchestrator-v4.gif" alt="Illustrative desktop conversation: the app window and sidebar stay visible as Hey George activates listening, followed by a project-planning exchange" width="1000" />
-  </a>
-</p>
-
-<p align="center">
-  <sub>“Hey George” → listening → conversation. The desktop window and navigation stay in view.</sub>
-</p>
-
-The demos on this page are **Remotion recreations of the interface with
-illustrative conversations**, not live recordings or response-time benchmarks.
-The wake phrase and listening transition above are animated to explain the
-interaction. Click a GIF for its sharper 60 fps video, or use the
-[still previews and reproducible source](scripts/readme-video/README.md).
-
-[Voice conversations](docs/product/everyday-use/voice-conversations.md) ·
-[Wake phrase and audio](docs/product/personalize-and-connect/audio-and-wake-word.md) ·
-[Models and providers](docs/product/personalize-and-connect/providers-and-api-keys.md)
-
-<br />
 
 ## Jarvis Agents
 
