@@ -78,6 +78,18 @@ class LiveTools:
         read = getattr(self.gateway, "voice_catalog", self.gateway.catalog)
         return read()
 
+    def accept_new_input(self) -> None:
+        """New requests get a fresh token; running work keeps its cancelled token."""
+        if self.cancel_token.is_cancelled():
+            self.cancel_token = CancelToken()
+        self.accepting = True
+
+    async def cancel_work(self) -> None:
+        self.cancel_token.cancel("user_cancelled")
+        self.accepting = False
+        self.revision += 1
+        await self._cancel_confirmations()
+
     def declarations(self) -> list[dict]:
         definitions = [
             function(
@@ -314,6 +326,9 @@ class LiveTools:
 
     async def close(self) -> None:
         self.accepting = False
+        await self._cancel_confirmations()
+
+    async def _cancel_confirmations(self) -> None:
         for trace, _, _, _ in self._pending.values():
             await self.gateway.cancel_pending(trace)
         self._pending.clear()

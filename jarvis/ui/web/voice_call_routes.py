@@ -63,10 +63,13 @@ async def voice_state() -> dict[str, Any]:
 
     sessions = active()
     if sessions:
+        phase = getattr(sessions[0], "phase", "listening")
+        if phase not in {"speaking", "thinking", "listening"}:
+            phase = "speaking" if sessions[0].playback_active else "listening"
         return {
             "available": True,
             "state": "active",
-            "voice_state": "speaking" if sessions[0].playback_active else "listening",
+            "voice_state": phase,
         }
     pipeline = _pipeline()
     if pipeline is None:
