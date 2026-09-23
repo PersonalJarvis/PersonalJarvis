@@ -492,5 +492,11 @@ docs/plans/mars-world/
 /docs/superpowers/
 /video/
 
+# Local validation scripts, runtime captures, and machine-specific telemetry.
+/scripts/_*.py
+/art/studies/*/evidence/
+/art/studies/agent-symbol-companions/mars-integration.patch
+/desktop-ttu-latest.json
+
 # Figure build: fetched CC0 sources and generated sheets (scripts/figures/README.md)
 scripts/figures/cache/
