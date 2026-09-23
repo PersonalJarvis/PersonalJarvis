@@ -398,6 +398,7 @@ async def _default_realtime_probe(spec: Any, cfg: Any, *, timeout_s: float) -> f
         profile = cfg.live
         config = profile.session_config(language="en", tools=[])
         config["instructions"] = "Connection validation only. Do not speak."
+
         async def continuous_probe() -> float:
             started = perf_counter()
             await connection_permit()
