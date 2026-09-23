@@ -18,6 +18,13 @@ const providersState = vi.hoisted(() => ({
       body: JSON.stringify({ provider }),
     });
   }),
+  switchSubagentProvider: vi.fn(async (provider: string) => {
+    await fetch("/api/jarvis-agent/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider, persist: true }),
+    });
+  }),
 }));
 vi.mock("@/hooks/useProviders", () => ({
   useProviders: () => ({
@@ -27,6 +34,7 @@ vi.mock("@/hooks/useProviders", () => ({
     refetch: providersState.refetch,
   }),
   switchBrainProvider: providersState.switchBrainProvider,
+  switchSubagentProvider: providersState.switchSubagentProvider,
 }));
 // The real form is exercised by its own tests; here it is a probe that
 // reports which slot it was mounted for and lets a test "save" a key.
@@ -82,6 +90,7 @@ afterEach(() => {
   providersState.error = null;
   providersState.refetch.mockClear();
   providersState.switchBrainProvider.mockClear();
+  providersState.switchSubagentProvider.mockClear();
   plansState.plans = [];
   plansState.selected = null;
   plansState.fail = true;
@@ -128,9 +137,12 @@ function stubFetch(probe: ProbeShape, agentReady = false) {
         return { ok: true, json: async () => probe } as Response;
       }
       if (url === "/api/jarvis-agent/status") {
-        return { ok: true, json: async () => ({ mapping: [{ is_active_brain: true, dedicated_key_set: agentReady }] }) } as Response;
+        return { ok: true, json: async () => ({ mapping: [
+          { jarvis: "gemini", label: "Google Gemini", billing: "api", secret_key: "agent_gemini_key", is_active_brain: true, dedicated_key_set: agentReady },
+          { jarvis: "openai", label: "OpenAI", billing: "api", secret_key: "agent_openai_key", is_active_brain: false, dedicated_key_set: false },
+        ] }) } as Response;
       }
-      if (url === "/api/brain/switch" || url === "/api/settings/voice-mode") {
+      if (url === "/api/brain/switch" || url === "/api/settings/voice-mode" || url === "/api/jarvis-agent/switch") {
         return { ok: true, json: async () => ({ ok: true }) } as Response;
       }
       throw new Error(`unexpected fetch: ${url}`);
@@ -307,7 +319,7 @@ it("with Ollama running but empty, explains the missing model and shows no activ
   expect(screen.queryByRole("button", { name: "onboarding.api_keys.local_use_button" })).toBeNull();
 });
 
-it("requires agent access in addition to the live key and exposes its connection options", async () => {
+it("shows Jarvis Agent API-key choices immediately and keeps subscription access available", async () => {
   plansState.fail = false;
   plansState.plans = [GEMINI_PLAN];
   providersState.providers = [
@@ -318,7 +330,14 @@ it("requires agent access in addition to the live key and exposes its connection
   await screen.findByTestId("onboarding-plan-gemini-live");
   await waitFor(() => expect(p.setGap).toHaveBeenLastCalledWith("onboarding.api_keys.gap_agents"));
   expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.click(screen.getByRole("button", { name: "onboarding.api_keys.agents_connect" }));
+  expect(screen.getByTestId("onboarding-agent-key-gemini")).toBeDefined();
+  expect(screen.getByTestId("onboarding-agent-key-openai")).toBeDefined();
+  expect(screen.getByTestId("form-agent_gemini_key")).toBeDefined();
+  fireEvent.click(screen.getByTestId("onboarding-agent-key-openai"));
+  expect(screen.getByTestId("form-agent_openai_key")).toBeDefined();
+  fireEvent.click(screen.getByTestId("form-agent_openai_key").querySelector("button")!);
+  await waitFor(() => expect(providersState.switchSubagentProvider).toHaveBeenCalledWith("openai"));
+  fireEvent.click(screen.getByRole("button", { name: "onboarding.api_keys.agents_subscription_title" }));
   expect(screen.getByTestId("agent-connection-options")).toBeDefined();
 
   cleanup();
