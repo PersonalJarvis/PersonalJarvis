@@ -774,6 +774,7 @@ def _owner_blocks_fallback(exc: BaseException) -> bool:
             "the routine owner is unavailable",
             "the routine owner is paused",
             "canonical chat service is unavailable",
+            "the routine chat failed",
         )
     )
 

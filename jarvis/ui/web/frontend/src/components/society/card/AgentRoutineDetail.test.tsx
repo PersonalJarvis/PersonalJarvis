@@ -5,20 +5,25 @@ import { AgentRoutineDetail, routineRuns } from "./AgentRoutineDetail";
 import type { LiveRoutine } from "../cardData";
 import type { TaskDetail, TaskStep } from "@/views/automations/automationsModel";
 import en from "@/i18n/locales/society/en.json";
+import { RoutineChatHost } from "../chat/RoutineChatHost";
+import { useRoutineNavigation } from "../chat/routineNavigation";
+
+// Transcript rendering is covered separately; this suite exercises lazy lifecycle.
+vi.mock("@/components/agentchat/AgentTimeline", () => ({ AgentTimeline: () => null }));
 
 vi.mock("@/i18n", () => ({
   useLocaleChunk: () => {},
   useT: () => (key: string) => key.split(".").reduce<unknown>((value, part) => (value as Record<string, unknown>)?.[part], en) ?? key,
 }));
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); useRoutineNavigation.getState().close(); vi.unstubAllGlobals(); });
 
-function setup(multiple = false) {
+function setup(multiple = false, steps: TaskStep[] = [], host = false) {
   const trigger = { type: "calendar", local_time: "08:00", timezone: "Europe/Berlin", weekdays: [0, 2] };
   const member: LiveRoutine = { id: "r1", title: "[agent:Mail] Inbox", prompt: "Read mail.", trigger, schedule: "", state: "scheduled", dueMs: null, lastRunMs: null };
   const members = multiple ? [member, { ...member, id: "r2" }] : [member];
   const tasks = new Map(members.map((m) => [m.id, {
-    ...m, trigger_type: "calendar", spec: { action: { kind: "agent", prompt: "Identity\nRoutine:\nRead mail." } }, steps: [],
+    ...m, trigger_type: "calendar", spec: { action: { kind: "agent", prompt: "Identity\nRoutine:\nRead mail." } }, steps,
   } as unknown as TaskDetail]));
   const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
@@ -29,6 +34,7 @@ function setup(multiple = false) {
   vi.stubGlobal("fetch", fetcher);
   const onClose = vi.fn();
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    {host && <RoutineChatHost agentId="mail" onOpen={() => {}}><p data-testid="main-agent-chat">Main conversation</p></RoutineChatHost>}
     <AgentRoutineDetail routine={{ ...member, members }} agentId="mail" onClose={onClose} />
   </QueryClientProvider>);
   return { fetcher, onClose };
@@ -44,6 +50,45 @@ test("loads the instruction and saves all timings under the original ids", async
   const writes = fetcher.mock.calls.filter(([url, init]) => url.includes("/routines/") && init?.method === "PATCH");
   expect(writes.map(([url]) => url)).toEqual(["/api/society/agents/mail/routines/r1", "/api/society/agents/mail/routines/r2"]);
   expect(JSON.parse(String(writes[0][1]?.body))).toMatchObject({ title: "Updated inbox", prompt: "Read mail.", schedule: { weekdays: [0, 2] } });
+});
+
+test("opens only the selected execution socket and releases it on return", async () => {
+  const sockets: { url: string; close: ReturnType<typeof vi.fn> }[] = [];
+  class Socket {
+    close = vi.fn();
+    constructor(public url: string) { sockets.push(this); }
+  }
+  vi.stubGlobal("WebSocket", Socket);
+  const sid = "society:mail:routine:r1:proof";
+  const events = [{ event: "run_started" }, { event: "routine_chat", session_id: sid }, { event: "run_completed" }];
+  const { fetcher } = setup(false, events.map((payload, seq) => ({ seq, kind: "log", timestamp_ns: (seq + 1) * 1e9, payload })), true);
+  await screen.findByText("Open latest chat");
+  expect(sockets).toHaveLength(0);
+  expect(fetcher.mock.calls.some(([url]) => url.includes("agent-chat"))).toBe(false);
+  fireEvent.click(screen.getByTestId("routine-run-r1:0"));
+  // Cold module transformation includes the real dialog and socket store.
+  await screen.findByTestId("routine-chat", {}, { timeout: 10000 });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByTestId("main-agent-chat")).toBeNull();
+  expect(screen.getByTestId("agent-routine-detail")).toBeTruthy();
+  expect(sockets).toHaveLength(1);
+  expect(decodeURIComponent(sockets[0].url)).toContain(sid);
+  fireEvent.click(screen.getByRole("button", { name: "Back to agent chat" }));
+  await screen.findByTestId("main-agent-chat");
+  expect(sockets[0].close).toHaveBeenCalledOnce();
+  expect(fetcher.mock.calls.some(([url]) => url.endsWith("/cancel"))).toBe(false);
+}, 15000);
+
+test("latest means the newest execution even when only an older run has a separate chat", async () => {
+  const events = [{ event: "run_started" }, { event: "routine_chat", session_id: "society:mail:routine:r1:older" }, { event: "run_completed" }, { event: "run_started" }, { event: "error" }];
+  const { fetcher } = setup(false, events.map((payload, seq) => ({ seq, kind: "log", timestamp_ns: (seq + 1) * 1e12, payload })));
+  await screen.findByText("Open latest chat");
+  expect(useRoutineNavigation.getState().target).toBeNull();
+  fireEvent.click(screen.getByText("Open latest chat"));
+  expect(useRoutineNavigation.getState().target).toMatchObject({ sessionId: "society:mail", timestamp: 4000000, legacy: { taskId: "r1", startedMs: 4000000, finishedMs: 5000000 } });
+  expect(fetcher.mock.calls.some(([url]) => url.includes("agent-chat"))).toBe(false);
+  fireEvent.click(screen.getByTestId("routine-run-r1:0"));
+  expect(useRoutineNavigation.getState().target?.sessionId).toBe("society:mail:routine:r1:older");
 });
 
 test("pauses every timing, tests once, and requires a delete confirmation", async () => {
