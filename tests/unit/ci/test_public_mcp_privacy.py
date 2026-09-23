@@ -35,6 +35,14 @@ def test_existing_catalog_manifests_are_public():
         assert gate.is_public_catalog_mcp(path.relative_to(ROOT).as_posix(), path.read_text()), path
 
 
+def test_shopify_public_endpoint_does_not_exempt_credentials():
+    path = "jarvis/marketplace/plugins/shopify/mcp.json"
+    safe = manifest({"type": "streamable-http", "url": "https://setup.shopify.com/mcp"}, "shopify")
+    assert gate.is_public_catalog_mcp(path, safe)
+    assert gate.forbidden_pushed_file(path, manifest({"type": "streamable-http", "url": "https://setup.shopify.com/mcp", "headers": {"Authorization": "private"}}, "shopify"), {"mcp.json"})
+    assert gate.forbidden_pushed_file(path, manifest({"type": "streamable-http", "url": "https://setup.shopify.com/mcp?token=private"}, "shopify"), {"mcp.json"})
+
+
 @pytest.mark.parametrize(
     "path",
     [
