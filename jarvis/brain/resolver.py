@@ -776,7 +776,9 @@ def _local_tail(
 # Test-Hooks
 # ----------------------------------------------------------------------
 
-def resolve_browser_brain(config: JarvisConfig, provider: str, model: str = "") -> Brain:
+def resolve_browser_brain(
+    config: JarvisConfig, provider: str, model: str = "", *, runner: str = ""
+) -> Brain:
     """Resolve an agent's existing access with a structured-output contract.
 
     CLI aliases are read from the chat catalog; capabilities are probed on the
@@ -787,7 +789,9 @@ def resolve_browser_brain(config: JarvisConfig, provider: str, model: str = "") 
     from jarvis.agent_chat.catalog import PROVIDER_ROWS
 
     registry = _get_registry()
-    name = provider
+    # A dual chat row may use a subscription CLI even when its historical id
+    # names an API provider. Preserve the actual chat transport's billing route.
+    name = runner if runner in registry.available() else provider
     row = next((r for r in PROVIDER_ROWS if r.id == provider), None)
     if name not in registry.available() and row and row.agent and row.agent in registry.available():
         name = row.agent

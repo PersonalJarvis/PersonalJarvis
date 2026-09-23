@@ -35,12 +35,13 @@ export function BrowserPointer({ pointer }: { pointer?: BrowserPointerState }) {
       {pointer.click_id > 0 && <span key={pointer.click_id} className="jarvis-browser-click"
         style={point(pointer.click_x, pointer.click_y)} data-testid="browser-click-mark" />}
       <span className="jarvis-browser-pointer" style={point(pointer.x, pointer.y)} data-testid="browser-agent-pointer">
-        <svg width="23" height="28" viewBox="0 0 23 28" fill="none">
-          <path d="M3 2.5C2.1 1.8 1.3 2.4 1.5 3.5L4.7 23.1C4.9 24.4 6.1 24.7 6.9 23.6L11.1 17.7L18.4 16.7C19.8 16.5 20.2 15.4 19.1 14.5L3 2.5Z"
-            fill="var(--browser-pointer-fill)" stroke="var(--browser-pointer-edge)" strokeWidth="1.6" strokeLinejoin="round" />
-          <path d="M5 6.5L8 17" stroke="white" strokeOpacity=".45" strokeWidth="1.2" strokeLinecap="round" />
+        <svg width="24" height="30" viewBox="0 0 24 30" fill="none">
+          <path d="M3 3L20 15L12 17L8 25L3 3Z"
+            fill="var(--browser-pointer-fill)" stroke="var(--browser-pointer-edge)" strokeWidth="2" strokeLinejoin="round" />
+          <path d="M12 17L17 25" stroke="var(--browser-pointer-edge)" strokeWidth="5" strokeLinecap="round" />
+          <path d="M12 17L17 25" stroke="var(--browser-pointer-fill)" strokeWidth="2.5" strokeLinecap="round" />
         </svg>
-        <span className="jarvis-browser-pointer-label">Jarvis</span>
+        <span className="jarvis-browser-pointer-label"><span className="jarvis-browser-pointer-dot" />Jarvis</span>
       </span>
     </>}
   </div>;

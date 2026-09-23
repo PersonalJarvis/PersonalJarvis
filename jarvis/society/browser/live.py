@@ -188,6 +188,17 @@ class LiveSession:
         while chunk := await self.proc.stderr.read(8192):
             self.stderr_tail = (self.stderr_tail + chunk.decode("utf-8", "replace"))[-4000:]
 
+    async def watch_exit(self) -> None:
+        """Reap descendants even if they keep the dead worker's pipes open.
+
+        asyncio Process.wait() also waits for pipe EOF, so it cannot be the
+        crash detector here. returncode is updated by the OS process watcher
+        independently of inherited pipe handles.
+        """
+        while self.proc.returncode is None:  # noqa: ASYNC110 — wait() depends on inherited pipe EOF
+            await asyncio.sleep(0.1)
+        self.tree.close()
+
     async def close(self) -> None:
         if not self.closed:
             try:
@@ -302,6 +313,7 @@ class LiveSessions:
             session.readers = [
                 asyncio.create_task(session.read()),
                 asyncio.create_task(session.drain_stderr()),
+                asyncio.create_task(session.watch_exit()),
             ]
             try:
                 result = await session.command(

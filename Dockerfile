@@ -21,14 +21,14 @@
 # --- Stage 1: build the React UI ---------------------------------------------
 # The frontend source lives in the repo; build it once here so the runtime image
 # carries a ready-to-serve dist/ and needs no Node.
-# Mirror the repo layout (frontend dir with a sibling dist/) so vite's
-# `--outDir ../dist` resolves to /web/dist, not a surprising /dist.
+# Mirror the package layout, including the shared marketplace catalog imported
+# by the frontend. Vite writes the bundle next to the frontend directory.
 FROM node:22-slim AS web
-WORKDIR /web/frontend
+WORKDIR /build/jarvis/ui/web/frontend
 COPY jarvis/ui/web/frontend/package.json jarvis/ui/web/frontend/package-lock.json ./
 RUN npm ci
 COPY jarvis/ui/web/frontend/ ./
-# vite build writes to ../dist relative to the frontend dir → /web/dist here.
+COPY jarvis/marketplace/seed_catalog.json /build/jarvis/marketplace/seed_catalog.json
 RUN npm run build
 
 # --- Stage 2: runtime --------------------------------------------------------
@@ -58,7 +58,7 @@ WORKDIR /app
 # into read-only site-packages.
 COPY pyproject.toml README.md LICENSE NOTICE ./
 COPY jarvis ./jarvis
-COPY --from=web /web/dist ./jarvis/ui/web/dist
+COPY --from=web /build/jarvis/ui/web/dist ./jarvis/ui/web/dist
 RUN python -m pip install --upgrade pip \
  && python -m pip install -e .
 

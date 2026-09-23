@@ -236,7 +236,14 @@ async def _scoped_tool_for_session(session_id: str, capability: str) -> Tool | N
     if capability == "core:browser":
         from .browser.tool import BrowserTool
 
-        tool = cast(Tool, BrowserTool(rt, agent_id, rt.browser, read_only=read_only))
+        pick = (
+            (session.provider, session.model)
+            if service is not None and getattr(session, "surface", "") == "jarvis"
+            else None
+        )
+        tool = cast(
+            Tool, BrowserTool(rt, agent_id, rt.browser, model_pick=pick, read_only=read_only)
+        )
     else:
         tool = cast(Tool, CodingSessionTool(rt, agent_id, session_id=session_id))
     picked = select_tools(
