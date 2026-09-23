@@ -146,8 +146,24 @@ def test_native_installation_proof_gates_artifact_upload(target):
         if step.get("with", {}).get("name", "").startswith("installer-")
     )
     assert smoke < installer_upload
+    assert steps[smoke]["timeout-minutes"] == 35
     assert not steps[smoke].get("continue-on-error", False)
     assert "if" not in steps[smoke]
+
+
+def test_windows_diagnostic_selection_cannot_skip_other_tagged_release_platforms():
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/desktop-installers.yml").read_text(encoding="utf-8")
+    )
+    inputs = workflow.get("on", workflow.get(True))["workflow_dispatch"]["inputs"]
+    assert inputs["windows_only"]["default"] is False
+    assert inputs["windows_only"]["type"] == "boolean"
+    assert "if" not in workflow["jobs"]["windows"]
+    for target in ("macos", "linux"):
+        assert workflow["jobs"][target]["if"] == (
+            "github.event_name != 'workflow_dispatch' || !inputs.windows_only"
+        )
+    assert set(workflow["jobs"]["release"]["needs"]) == {"windows", "macos", "linux"}
 
 
 @pytest.mark.parametrize(

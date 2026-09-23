@@ -39,6 +39,14 @@ class CompletedSmoke:
         return self.team
 
 
+class FailedReplacementSmoke(CompletedSmoke):
+    def install(self, installer, root, env):
+        executable = super().install(installer, root, env)
+        if self.installations == 2:
+            raise RuntimeError("Synthetic replacement failure")
+        return executable
+
+
 @contextmanager
 def mapped_extension(root: Path):
     """Keep a copied Python extension image mapped until explicitly released."""

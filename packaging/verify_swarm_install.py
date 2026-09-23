@@ -14,6 +14,7 @@ installation in that runner's account even with an explicit temporary target.
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import hashlib
 import json
 import os
@@ -486,7 +487,13 @@ def run(installer: Path, report: Path, *, live_provider: str = "", live_model: s
         "previous_public_release_upgrade": "not exercised",
         "cleanup": "not confirmed",
     }
-    report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+
+    def progress(phase: str, operation: str) -> None:
+        result["progress"] = {"phase": phase, "operation": operation}
+        report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        print(f"Native verification: {phase} / {operation}", file=sys.stderr, flush=True)
+
+    progress("setup", "validate_inputs")
     try:
         # Validate the explicit opt-in before any installer or application starts.
         # This environment is populated into a sanitized base only inside the
@@ -508,8 +515,10 @@ def run(installer: Path, report: Path, *, live_provider: str = "", live_model: s
             original = None
             goal = "Preserve this unstarted team across installer replacement."
             for index, phase in enumerate(("fresh_install", "same_artifact_replacement")):
+                progress(phase, "install")
                 executable = install(installer, root, env)
                 log_path = report.with_name(f"native-smoke-{index + 1}.log")
+                progress(phase, "start_application")
                 with running_app(
                     executable,
                     root,
@@ -517,9 +526,12 @@ def run(installer: Path, report: Path, *, live_provider: str = "", live_model: s
                     log_path,
                     live=bool(live_provider),
                 ) as child:
+                    progress(phase, "wait_ready")
                     wait_ready(api, child)
+                    progress(phase, "verify_capabilities")
                     verify_capabilities(api.request("/api/swarm/capabilities"))
                     if original is None:
+                        progress(phase, "create_team")
                         original = api.request(
                             "/api/swarm/teams",
                             {
@@ -533,6 +545,7 @@ def run(installer: Path, report: Path, *, live_provider: str = "", live_model: s
                             raise RuntimeError(
                                 "The installed API did not create a persistent team and lead"
                             )
+                    progress(phase, "verify_identity")
                     current = api.request(f"/api/swarm/teams/{original['id']}")
                     verify_identity(original, current)
                     teams = api.request("/api/swarm/teams")
@@ -545,15 +558,19 @@ def run(installer: Path, report: Path, *, live_provider: str = "", live_model: s
                             "Installer replacement duplicated or lost the isolated team"
                         )
                     if live_provider and index == 0:
+                        progress(phase, "live_task")
                         result["live_provider_verification"] = run_live_task(api, live_provider)
                     elif live_provider:
+                        progress(phase, "verify_live_artifact")
                         retained = verify_live_artifact(api, live_result["team_id"])
                         if any(retained[field] != live_result[field] for field in retained):
                             raise LiveVerificationError(
                                 "Installer replacement changed the accepted artifact"
                             )
                         live_result["same_artifact_replacement"] = "pass"
+                    progress(phase, "stop_application")
                 result[phase] = {"native_wasm": "pass", "persistent_team_and_lead": "pass"}
+            progress("cleanup", "remove_workspace")
     except BaseException as exc:
         result["status"] = "failed"
         result["failure_type"] = type(exc).__name__
@@ -566,7 +583,7 @@ def run(installer: Path, report: Path, *, live_provider: str = "", live_model: s
         report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
         raise
     result.update(status="pass", cleanup="pass")
-    report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    progress("complete", "verified")
     return result
 
 
@@ -613,4 +630,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # A stuck native API/pipe otherwise leaves no useful failure location in CI.
+    # Stack-only diagnostics contain no frame locals, provider bodies or keys.
+    faulthandler.dump_traceback_later(300, repeat=True)
+    try:
+        main()
+    finally:
+        faulthandler.cancel_dump_traceback_later()

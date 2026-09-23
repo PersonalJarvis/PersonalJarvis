@@ -31,6 +31,10 @@ on:
       - "v*.*.*"
   workflow_dispatch:
     inputs:
+      windows_only:
+        description: "Only build/verify Windows for manual diagnostics; releases always build all platforms"
+        type: boolean
+        default: false
       live_provider_verification:
         description: "Run bounded one-key Swarm arithmetic proof (requires SWARM_INSTALL_TEST_KEY)"
         type: boolean
@@ -142,6 +146,7 @@ jobs:
           echo "::notice::AZURE_* signing secrets are not configured - the installer is UNSIGNED."
 
       - name: Verify installed Swarm and native replacement
+        timeout-minutes: 35
         shell: pwsh
         env:
           SWARM_INSTALL_LIVE_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.live_provider_verification && 'true' || 'false' }}
@@ -169,6 +174,7 @@ jobs:
 
   # -------------------------------------------------------------------- macOS
   macos:
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_only
     name: macOS installer (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
@@ -219,6 +225,7 @@ jobs:
           ./packaging/macos/build.sh
 
       - name: Verify installed Swarm and native replacement
+        timeout-minutes: 35
         shell: bash
         env:
           SWARM_INSTALL_LIVE_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.live_provider_verification && 'true' || 'false' }}
@@ -246,6 +253,7 @@ jobs:
 
   # -------------------------------------------------------------------- Linux
   linux:
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_only
     name: Linux installer (x86_64)
     # 22.04, not latest: an AppImage inherits the glibc of the machine that
     # built it, so building on the OLDEST supported runner is what makes it run
@@ -281,6 +289,7 @@ jobs:
           ./packaging/linux/build.sh
 
       - name: Verify installed Swarm and native replacement
+        timeout-minutes: 35
         shell: bash
         env:
           SWARM_INSTALL_LIVE_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.live_provider_verification && 'true' || 'false' }}

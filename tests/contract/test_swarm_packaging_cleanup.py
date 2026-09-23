@@ -13,10 +13,33 @@ from pathlib import Path
 
 import pytest
 
-from tests.fakes.swarm_packaging_cleanup import CompletedSmoke, mapped_extension
+from tests.fakes.swarm_packaging_cleanup import (
+    CompletedSmoke,
+    FailedReplacementSmoke,
+    mapped_extension,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 NATIVE_SMOKE = runpy.run_path(str(ROOT / "packaging" / "verify_swarm_install.py"))
+
+
+def test_failed_replacement_records_its_phase_without_claiming_success(monkeypatch, tmp_path):
+    run = NATIVE_SMOKE["run"]
+    smoke = FailedReplacementSmoke()
+    installer = tmp_path / "installer.fixture"
+    installer.write_bytes(b"synthetic installer")
+    report = tmp_path / "report.json"
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    for name in ("install", "running_app", "wait_ready"):
+        monkeypatch.setitem(run.__globals__, name, getattr(smoke, name))
+    monkeypatch.setitem(run.__globals__, "SwarmApi", lambda _port, _key: smoke)
+    with pytest.raises(RuntimeError, match="replacement failure"):
+        run(installer, report)
+    saved = json.loads(report.read_text(encoding="utf-8"))
+    assert saved["status"] == "failed"
+    assert saved["progress"] == {"phase": "same_artifact_replacement", "operation": "install"}
+    assert saved["fresh_install"]["native_wasm"] == "pass"
+    assert "same_artifact_replacement" not in saved
 
 
 def test_cleanup_rejects_an_unowned_target(tmp_path):

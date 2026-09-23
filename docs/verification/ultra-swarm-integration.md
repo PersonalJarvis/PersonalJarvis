@@ -19,6 +19,7 @@ qualification report, not a declaration that every acceptance criterion passes.
 | Full typed-record parity and related API/storage contracts | 140 passed | All 12 typed browser records, inherited fields, nullable values, SQL/DTO/API roundtrips and exact counters above 2^63; overlaps earlier checks |
 | Native descendant observation under four-way launch pressure | 100 completed | Four exited Windows process records briefly remained observable; all returned exit code 1, with the longest observed wait 15 ms |
 | Intake follow-up | 70 Swarm UI tests passed; production build passed | The new committed-frame regression fails before the fix; a complete CI rerun remains pending |
+| Native diagnostic follow-up | 94 passed; 1 skipped | Persisted phase receipts, failure status, credential redaction, containment and a bounded verification-step timeout |
 
 The process assertion now verifies process identity and waits for a bounded exit
 receipt. A live descendant still fails the assertion, and a reused PID is never
@@ -40,6 +41,12 @@ workspace cleanup. The Windows verification did not finish after more than
 30 minutes and the remaining run was stopped for diagnosis; Windows is not
 qualified by this campaign. These runs use disposable profiles
 and make zero provider requests; they do not include the later settings UI merge.
+The canceled Windows job provided neither a completed report nor downloadable
+logs at inspection time, so its root cause remains unknown. The verifier now
+writes allowlisted phase receipts, emits stack-only diagnostic snapshots, and has
+a 35-minute CI step limit. A manual Windows-only option permits focused retries;
+tagged releases still require all platform jobs. This improves diagnosis and
+does not itself establish a Windows installation pass.
 
 The full CI frontend run found one intake race, with 4,424 other tests passing:
 questions could render before saved answers were restored, allowing the delayed
