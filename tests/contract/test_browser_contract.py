@@ -329,6 +329,65 @@ async def test_bare_cancel_does_not_mark_the_turn_stopped(tmp_path):
     assert ("test-bot", "trace-1") in live.stopped_turns
 
 
+@pytest.mark.parametrize(
+    "state,active_trace,chat_id,approve,running,stops",
+    [
+        ("pending", "turn", "root-chat", False, True, True),
+        ("pending", "turn", "society:test", False, True, True),
+        ("pending", "new-turn", "root-chat", False, True, False),
+        ("denied", "turn", "root-chat", False, True, False),
+        ("approved", "turn", "root-chat", False, True, False),
+        ("pending", "turn", "", False, True, False),
+        ("pending", "turn", "root-chat", True, True, False),
+        ("pending", "turn", "root-chat", False, False, False),
+    ],
+)
+async def test_browser_denial_stops_only_its_planner_before_releasing_reply(
+    monkeypatch, state, active_trace, chat_id, approve, running, stops
+):
+    import asyncio
+
+    from jarvis.ui.web import society_routes as routes
+
+    seen = []
+    lock = asyncio.Lock()
+    if running:
+        await lock.acquire()
+    session = SimpleNamespace(active_trace=active_trace, active_chat=chat_id, run_lock=lock)
+    item = SimpleNamespace(
+        agent_id="test",
+        trace_id="turn",
+        capability="core:browser",
+        state=state,
+        action={"resume_in_place": True},
+        to_dict=lambda: {},
+    )
+
+    async def get(_):
+        return item
+
+    async def resolve(*_args, **_kwargs):
+        seen.append("resolve")
+        return item
+
+    async def runtime(_):
+        return SimpleNamespace(
+            approvals=SimpleNamespace(get=get, resolve=resolve),
+            browser=SimpleNamespace(live=SimpleNamespace(sessions={"test": session})),
+        )
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                agent_chat=SimpleNamespace(signal_cancel=lambda sid: seen.append(sid)),
+            )
+        )
+    )
+    monkeypatch.setattr(routes, "_runtime", runtime)
+    await routes.resolve_approval("approval", routes.ResolveApprovalBody(approve=approve), request)
+    assert seen == ([chat_id, "resolve"] if stops else ["resolve"])
+
+
 async def test_jarvis_chat_uses_the_lead_browser_with_its_selected_model(tmp_path, monkeypatch):
     from jarvis.agent_chat.surface_kits import kit_for
     from jarvis.agent_chat.tool_catalog import build_catalog, resolve_choices

@@ -794,7 +794,8 @@ class AgentChatService:
         )
         return turn_id
 
-    async def cancel(self, session_id: str) -> bool:
+    def signal_cancel(self, session_id: str) -> bool:
+        """Stop planning synchronously before releasing an in-flight tool reply."""
         run = self._running.get(session_id)
         if run is None or run.task is None or run.task.done():
             return False
@@ -803,13 +804,21 @@ class AgentChatService:
             fut = self._approvals.get(aid)
             if fut is not None and not fut.done():
                 fut.set_result("cancel")
+        return True
+
+    async def cancel(self, session_id: str) -> bool:
+        run = self._running.get(session_id)
+        if not self.signal_cancel(session_id):
+            return False
+        assert run is not None and run.task is not None
         try:
             await asyncio.wait_for(asyncio.shield(run.task), timeout=15.0)
         except TimeoutError:
             run.task.cancel()
             await asyncio.gather(run.task, return_exceptions=True)
         except asyncio.CancelledError:
-            if asyncio.current_task().cancelling():
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
                 raise
         except Exception as exc:  # noqa: BLE001 — the task reported its own end already
             log.debug("agent chat cancel: task ended with %s", exc)
