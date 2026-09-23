@@ -92,9 +92,13 @@ macOS and Linux. It requires packaged collision/dock data and an explicit rover
 authorization callback; pedestrian authority alone grants no seat. Agent rides
 need no renderer, GPU, audio or native API. Portable contracts cover exclusive
 seats, safe exits, interrupted travel, graph migration and authenticated HTTP/CLI
-actions. The installed-wheel results above precede this rover increment and do
-not constitute its fresh-install acceptance. Final rover art, player control and
-native cross-platform presentation remain unverified.
+actions. A fresh Linux venv then installed the rover wheel from `ea3aab13a`:
+all 3,439 package members matched, dependency validation passed, and fourteen
+headless checks passed, including real-agent boarding, travel and safe exit.
+A separate runtime in that fresh environment completed a real communication
+draft with one Gemini key and retained its result after clean shutdown. No
+browser, display, graphics GPU or Blender was required. Final rover art, player
+control and native cross-platform presentation remain unverified.
 
 Physical pedestrian visits use the same bounded SQLite/asyncio graph controller
 on Windows, macOS and Linux, with no native graphics requirement. The existing

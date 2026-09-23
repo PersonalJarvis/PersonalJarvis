@@ -110,6 +110,12 @@ The dynamic `mars` CLI group exposes `reserve-mars-rover`, `board-mars-rover`,
 and ride identifiers and preserve `request_id` when retrying an uncertain action.
 These controls never dispatch a model task or allow animation to grant a seat.
 
+The `ea3aab13a` installed wheel passed fourteen headless checks in a fresh Linux
+venv, including actual rover boarding, route completion, safe exit and completed
+action replay. A separate one-key communication draft completed with durable
+references and clean shutdown. These operational checks do not establish visual
+quality, player boarding or a browser walkthrough of the rover controls.
+
 ## Window ownership
 
 Background mode is explicit, default-off and session-only. On supported Windows
