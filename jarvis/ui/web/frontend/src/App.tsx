@@ -17,6 +17,7 @@ import {
   SIDEBAR_WIDTH_STORAGE_KEY,
 } from "@/components/layout/Sidebar";
 import { PaneResizer } from "@/components/layout/PaneResizer";
+import { SETTINGS_HUB_IDS } from "@/components/layout/navGroups";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { TopBar } from "@/components/layout/TopBar";
 import { PermissionsAlertBanner } from "@/components/layout/PermissionsAlertBanner";
@@ -276,7 +277,16 @@ export default function App() {
   const activeSection = useEventStore((s) => s.activeSection);
   const agentsNavOpen = useSocietyShell((s) => s.navigationOpen);
   const toggleAgentsNav = useSocietyShell((s) => s.toggleNavigation);
-  const hideNavigation = activeSection === "agents" && !agentsNavOpen;
+  const settingsHubActive = SETTINGS_HUB_IDS.includes(activeSection);
+  const [settingsSidebarOpen, setSettingsSidebarOpen] = useState(false);
+  // Each visit to the Settings hub starts with its own navigation as the only
+  // left column. Switching tabs inside the hub preserves a deliberate reveal.
+  useEffect(() => {
+    if (!settingsHubActive) setSettingsSidebarOpen(false);
+  }, [settingsHubActive]);
+  const hideNavigation =
+    (activeSection === "agents" && !agentsNavOpen) ||
+    (settingsHubActive && !settingsSidebarOpen);
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
 
@@ -338,8 +348,8 @@ export default function App() {
       {!hideNavigation && <>
       <Sidebar
         width={sidebar.size}
-        collapsed={activeSection === "agents" ? false : navCollapsed}
-        onToggleCollapsed={activeSection === "agents" ? toggleAgentsNav : toggleNav}
+        collapsed={activeSection === "agents" || settingsHubActive ? false : navCollapsed}
+        onToggleCollapsed={activeSection === "agents" ? toggleAgentsNav : settingsHubActive ? () => setSettingsSidebarOpen(false) : toggleNav}
       />
 
       <PaneResizer
@@ -377,7 +387,10 @@ export default function App() {
             it is the same class of problem: an OS-level gate the user must be
             told about, since nothing else reports it. */}
         <InputIsolationBanner />
-        <TopBar />
+        <TopBar settingsNavigation={settingsHubActive ? {
+          open: settingsSidebarOpen,
+          onToggle: () => setSettingsSidebarOpen((open) => !open),
+        } : undefined} />
         <VoiceWarmingBanner />
         {/* The one-time "all lights green" note — the first time every
             section of the active voice mode answers. Never again after. */}

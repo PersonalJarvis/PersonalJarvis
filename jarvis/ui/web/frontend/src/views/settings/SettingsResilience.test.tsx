@@ -109,6 +109,38 @@ describe("SettingsGroupBoundary", () => {
 });
 
 describe("SettingsView against an empty backend", () => {
+  it("scrolls to a searched settings group after the view mounts", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+      text: async () => "{}",
+    }) as Response));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const scrollIntoView = vi.fn();
+    const previous = HTMLElement.prototype.scrollIntoView;
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    const handled = vi.fn();
+
+    try {
+      render(wrap(<SettingsView searchTarget="audio-devices" onSearchTargetHandled={handled} />));
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledOnce());
+      expect(handled).toHaveBeenCalledOnce();
+    } finally {
+      if (previous) {
+        Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+          configurable: true,
+          value: previous,
+        });
+      } else {
+        delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      }
+    }
+  });
+
   it("renders the whole page when every route answers {}", async () => {
     // The shape no group expects — the worst case of a version skew.
     vi.stubGlobal(

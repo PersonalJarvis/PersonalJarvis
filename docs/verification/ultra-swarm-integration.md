@@ -1,7 +1,9 @@
 # Ultra Agent Swarm integration evidence
 
-Date: 2026-09-23. Scope: the Swarm candidate integrated with private agent learning
-and automatic effort routing from main revision `888df0cab`. This is an interim
+Date: 2026-09-23. Scope: the Swarm candidate integrated with private agent learning,
+automatic effort routing and settings navigation from main revision `bf899713b`.
+The settings follow-up changes frontend sources only; backend evidence remains
+bound to production revision `2cdb52dee`. This is an interim
 qualification report, not a declaration that every acceptance criterion passes.
 
 ## Executed checks
@@ -9,7 +11,7 @@ qualification report, not a declaration that every acceptance criterion passes.
 | Check | Result | Boundary |
 | --- | --- | --- |
 | Integrated Python selection, Windows Python 3.11, four test processes | 2,063 passed; 5 skipped | Swarm unit/integration/contracts, real PostgreSQL/Redis/S3 services, Society, agent chat, lifecycle, packaging and four mandatory guards; no live provider calls |
-| Complete frontend Vitest suite | 4,414 passed; no failures | Exact merged frontend source in an independent dependency directory |
+| Complete frontend Vitest suite | 4,425 passed; no failures | Exact merged frontend source including settings navigation, in an independent dependency directory |
 | Production frontend build | Passed | Generated distribution rebuilt from the merged source |
 | Isolated startup budget | Passed | Window 1.837 s; interactive 18.469 s; voice usable 19.111 s, against existing 8/20/20 s budgets |
 | Learning receipts and shutdown | 49 passed; 1 skipped | Receipt writers drain before storage closes; unfinished reviews persist; reopening does not duplicate subscriptions |
@@ -29,6 +31,19 @@ and a Windows Proactor closed-pipe finalizer warning. The test process exited
 normally. These warnings are not reported as silent clean-runtime evidence.
 
 ## Runtime and remaining qualification
+
+The [native campaign on `2cdb52dee`](https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/35832789369)
+has passed actual Linux AppImage and Intel macOS DMG installation, bundled Wasm,
+team/lead persistence through same-artifact replacement, and workspace cleanup.
+Windows and ARM macOS results remain pending. These runs use disposable profiles
+and make zero provider requests; they do not include the later settings UI merge.
+
+The existing public source-installer smoke test separately rejected release
+`v2.2.1` because its Rekor inclusion proof exceeded the wrapper's one-day freshness
+bound. Both signature axes passed before that rejection. This existing public-
+release gate is not bypassed, and no release or re-signing is part of this change.
+The first portable-dependency matrix attempt ended with a `uv` process crash
+after resolution; the repeated matrix passed without changing dependency pins.
 
 The isolated preview returned HTTP 200 and shut down with process exit code 0.
 The browser extension timed out on network and DOM inspection, so this round does
