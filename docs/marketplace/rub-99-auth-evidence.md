@@ -28,6 +28,11 @@ is deployed: `/healthz` returned HTTP 200. The public Discord and Asana client
 IDs are bound server-side, while a real Discord `/start` still returned HTTP
 503 because the confidential publisher secret is not provisioned. No Discord login,
 installation or gateway operation is claimed.
+After explicit account-operator approval, the official Discord Bot settings
+saved Message Content Intent as enabled. A fresh load still showed the switch
+enabled. The app remains a public bot; the code-grant requirement setting was
+left unchanged. This is a gateway prerequisite, not evidence that a shared bot
+is running or that any user authorization succeeded.
 
 ## Continuation checkpoint (2026-09-23)
 
