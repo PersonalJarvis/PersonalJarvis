@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ExternalLink, KeyRound, Radio, Bot } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronDown, ExternalLink, Radio, Bot } from "lucide-react";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
-import { JarvisAgentSection } from "@/components/JarvisAgentSection";
 import { Button, FOCUS_RING } from "@/components/agentic/controls";
 import {
   switchBrainProvider,
@@ -22,6 +21,7 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { StepProps } from "../OnboardingFlow";
 import { ChoiceRow, StatusLine, StepFooter, StepSection } from "../primitives";
+import { AgentAccessList, type AgentAccessRow } from "../AgentAccessList";
 
 /** The "I'll pick everything myself" choice; mirrors the backend's custom id. */
 const CUSTOM_PLAN = "custom";
@@ -225,8 +225,7 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
   const [open, setOpen] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [localActive, setLocalActive] = useState(false);
-  const [agentsOpen, setAgentsOpen] = useState(false);
-  const [agentReady, setAgentReady] = useState(false);
+  const [agentRows, setAgentRows] = useState<AgentAccessRow[] | null>(null);
 
   // Starter plans: "one key and you are done". The recommended plan is
   // preselected; "custom" shows the whole catalog exactly as before.
@@ -272,36 +271,31 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
   const planComplete = plan ? planKeysComplete(plan, allStartable) : false;
   const planApplied = Boolean(plan && applied?.id === plan.id && applied.outcome.modeSet && applied.outcome.failed.length === 0);
 
+  const refreshAgentRows = useCallback(async () => {
+    try {
+      const response = await fetch("/api/jarvis-agent/status", { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const status = await response.json() as { mapping?: AgentAccessRow[] };
+      setAgentRows(Array.isArray(status.mapping) ? status.mapping : []);
+    } catch {
+      setAgentRows([]);
+    }
+  }, []);
+  const agentReady = Boolean(agentRows?.some((row) =>
+    row.is_active_brain && (row.dedicated_key_set || row.oauth_connected || row.keyless),
+  ));
+
   useEffect(() => {
-    let cancelled = false;
-    const refresh = async () => {
-      try {
-        const response = await fetch("/api/jarvis-agent/status", { cache: "no-store" });
-        if (!response.ok) return;
-        const status = await response.json() as { mapping?: {
-          is_active_brain?: boolean;
-          dedicated_key_set?: boolean;
-          oauth_connected?: boolean;
-          keyless?: boolean;
-        }[] };
-        if (!cancelled) setAgentReady(Boolean(status.mapping?.some((row) =>
-          row.is_active_brain && (row.dedicated_key_set || row.oauth_connected || row.keyless),
-        )));
-      } catch {
-        // Agent access remains visibly unconfigured while the status endpoint is unavailable.
-      }
-    };
-    void refresh();
-    const timer = agentsOpen ? window.setInterval(() => void refresh(), 3000) : null;
-    window.addEventListener("jarvis:agent-switched", refresh);
-    window.addEventListener("jarvis:secret-configured", refresh);
+    void refreshAgentRows();
+    const timer = window.setInterval(() => void refreshAgentRows(), 3000);
+    window.addEventListener("jarvis:agent-switched", refreshAgentRows);
+    window.addEventListener("jarvis:secret-configured", refreshAgentRows);
     return () => {
-      cancelled = true;
-      if (timer !== null) window.clearInterval(timer);
-      window.removeEventListener("jarvis:agent-switched", refresh);
-      window.removeEventListener("jarvis:secret-configured", refresh);
+      window.clearInterval(timer);
+      window.removeEventListener("jarvis:agent-switched", refreshAgentRows);
+      window.removeEventListener("jarvis:secret-configured", refreshAgentRows);
     };
-  }, [agentsOpen]);
+  }, [refreshAgentRows]);
 
   // Once the live key is saved, point voice and its thinking model at it. Agent
   // access remains a separate choice below. Runs
@@ -591,24 +585,18 @@ export function ApiKeysStep({ goNext, goBack, skip, setSummary, setGap }: StepPr
 
       {plan && (
         <StepSection label={t("onboarding.api_keys.agents_label")}>
-          <div className="rounded-xl border border-border bg-card p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="flex min-w-0 items-start gap-3">
-                <Bot className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-                <div>
-                  <p className="text-sm font-semibold text-foreground">{t("onboarding.api_keys.agents_title")}</p>
-                  <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{t("onboarding.api_keys.agents_hint")}</p>
-                  <p className="mt-2 text-xs text-muted-foreground" data-testid="onboarding-agent-status">
-                    {agentReady ? t("onboarding.api_keys.agents_ready") : t("onboarding.api_keys.agents_missing")}
-                  </p>
-                </div>
+          <div className="space-y-4">
+            <div className="flex items-start gap-3">
+              <Bot className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+              <div>
+                <p className="text-sm font-semibold text-foreground">{t("onboarding.api_keys.agents_title")}</p>
+                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{t("onboarding.api_keys.agents_hint")}</p>
+                <p className="mt-2 text-xs text-muted-foreground" data-testid="onboarding-agent-status">
+                  {agentReady ? t("onboarding.api_keys.agents_ready") : t("onboarding.api_keys.agents_missing")}
+                </p>
               </div>
-              <Button variant="quiet" onClick={() => setAgentsOpen((value) => !value)}>
-                <KeyRound className="mr-1.5 h-4 w-4" />
-                {t(agentsOpen ? "onboarding.api_keys.agents_hide" : "onboarding.api_keys.agents_connect")}
-              </Button>
             </div>
-            {agentsOpen && <div className="mt-5 border-t border-border pt-4" data-testid="onboarding-agent-options"><JarvisAgentSection hideHeader /></div>}
+            <AgentAccessList rows={agentRows} onChanged={refreshAgentRows} />
           </div>
         </StepSection>
       )}
