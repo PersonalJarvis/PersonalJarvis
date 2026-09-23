@@ -47,6 +47,18 @@ def run(argv: list[str], **kwargs) -> subprocess.CompletedProcess:
     )
 
 
+def unbundled_libraries(links: str, identities: str) -> list[str]:
+    # otool -L includes LC_ID_DYLIB (the module's own install name) as well
+    # as LC_LOAD_DYLIB entries. Only actual imported libraries need checking.
+    own_names = {line.strip() for line in identities.splitlines()[1:] if line.strip()}
+    dependencies = [line.strip().split(" ", 1)[0] for line in links.splitlines()[1:]]
+    return [
+        path
+        for path in dependencies
+        if path not in own_names and not path.startswith(("/usr/lib/", "/System/Library/"))
+    ]
+
+
 def main() -> int:
     if sys.platform != "darwin" or platform.machine().lower() not in {"x86_64", "amd64"}:
         print("Browser wheelhouse is only needed on Intel macOS")
@@ -94,13 +106,13 @@ def main() -> int:
                 binary = Path(scratch) / Path(name).name
                 binary.write_bytes(archive.read(name))
                 links = run(["otool", "-L", str(binary)], capture_output=True).stdout
+                identities = run(["otool", "-D", str(binary)], capture_output=True).stdout
                 print(links, flush=True)
-                for line in links.splitlines()[1:]:
-                    dependency = line.strip().split(" ", 1)[0]
-                    if not dependency.startswith(("/usr/lib/", "/System/Library/")):
-                        raise RuntimeError(
-                            f"Cryptography wheel links a non-system shared library: {dependency}"
-                        )
+                outside = unbundled_libraries(links, identities)
+                if outside:
+                    raise RuntimeError(
+                        f"Cryptography wheel links non-system shared libraries: {outside}"
+                    )
         (assets / "requirements-bundled.lock").write_text(
             add_wheel_hash(lock, built[0]), encoding="utf-8"
         )
