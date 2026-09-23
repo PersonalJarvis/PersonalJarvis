@@ -6,14 +6,18 @@ import re
 
 from jarvis.skills.authoring_request import is_skill_authoring_request
 
-_ROUTINE_NOUN = re.compile(r"\b(?:\w*routinen?|rutinas?)\b", re.IGNORECASE)  # i18n-allow: input vocabulary
+_ROUTINE_NOUN = re.compile(
+    r"\b(?:\w*routinen?|rutinas?)\b",  # i18n-allow: input vocabulary
+    re.IGNORECASE,
+)
 _CREATE_VERB = re.compile(
     r"\b(?:erstell\w*|anleg\w*|einricht\w*|creat\w*|set\s+up|"  # i18n-allow: input vocabulary
     r"program\w*|configur\w*)\b",
     re.IGNORECASE,
 )
 _HOW_TO = re.compile(
-    r"\b(?:wie\s+(?:kann|könnte|soll|würde|erstelle)|how\s+(?:do|can|to)|"  # i18n-allow: input vocabulary
+    r"\b(?:wie\s+(?:kann|könnte|soll|würde|erstelle)|"  # i18n-allow: input vocabulary
+    r"how\s+(?:do|can|to)|"
     r"cómo\s+(?:puedo|crear))\b",
     re.IGNORECASE,
 )
