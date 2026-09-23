@@ -451,7 +451,7 @@ def main() -> None:
             secret_key=f"publisher_{family}_oauth_client_secret",
             scopes=scopes,
             basic_auth=auth.client_auth_method == "client_secret_basic",
-            pkce=spec.id in {"asana", "figma"},
+            pkce=spec.id in {"asana", "figma", "hubspot"},
             resource=auth.resource,
             bot_permissions=68608 if spec.id == "discord" else None,
         )

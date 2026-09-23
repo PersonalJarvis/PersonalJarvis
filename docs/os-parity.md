@@ -2,6 +2,11 @@
 
 ## Publisher OAuth and capability state (RUB-99, T3, acceptance pending)
 
+Spotify and LinkedIn are retired from the default catalog as of 2026-09-23.
+HubSpot, Salesforce, Discord, Zoom, Asana and Figma remain active integration
+work. Existing non-placeholder local client overrides remain user-owned; the
+retirement does not imply an OS-specific provider qualification.
+
 Public PKCE, the confidential broker client, callback validation and the
 auth/capability split share portable Python and HTTP implementations on
 Windows, macOS and Linux. Availability is determined by publisher client/service

@@ -1,5 +1,16 @@
 # Plugin authentication and end-to-end audit
 
+## RUB-99 scope correction (2026-09-23)
+
+Only Spotify and LinkedIn are retired from the default built-in catalog. The
+other six disputed provider plugins — HubSpot, Salesforce, Discord, Zoom,
+Asana and Figma — remain in scope for browser authorization and real functional
+testing. The current catalog is **45 plugins / 1 full PASS / 44 BLOCKED**.
+Spotify's generic music-routing skill remains bundled so an existing YouTube
+Music connection can still receive generic music requests. The two retired
+plugin audit rows are archived; retirement is never an authentication PASS.
+Locally configured non-placeholder OAuth clients remain user-owned.
+
 ## RUB-99 continuation (2026-09-23)
 
 Microsoft is user-reported complete and excluded from further changes in this

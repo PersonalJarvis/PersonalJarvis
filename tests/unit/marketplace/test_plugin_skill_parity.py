@@ -59,10 +59,13 @@ def test_every_plugin_has_paired_skill():
 
 def test_paired_skill_plugin_ids_are_real_catalog_ids():
     catalog_ids = {p.id for p in load_catalog().plugins}
+    # Spotify's card is retired, but its generic music capture must remain so
+    # the execute-time music-service reroute can reach YouTube Music.
+    music_router_exception = {"spotify"} if "youtube_music" in catalog_ids else set()
     stray = [
         s.frontmatter.plugin_id
         for s in _paired_skills()
-        if s.frontmatter.plugin_id not in catalog_ids
+        if s.frontmatter.plugin_id not in catalog_ids | music_router_exception
     ]
     assert not stray, (
         f"paired skills pointing at non-existent catalog plugin ids: {stray}."

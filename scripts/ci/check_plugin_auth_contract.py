@@ -43,9 +43,9 @@ LEGACY_PLUGIN_IDS = frozenset(
     """
 github vercel supabase notion slack linear stripe cloudflare discord telegram
 asana google_drive gmail google_calendar todoist clickup dropbox canva airtable
-cal_com home_assistant spotify youtube_music higgsfield outlook onedrive teams
+cal_com home_assistant youtube_music higgsfield outlook onedrive teams
 sharepoint onenote microsoft_todo aws azure google_cloud gitlab agentmail x
-linkedin meta youtube_studio hubspot apollo salesforce granola zoom figma amd_gpu
+meta youtube_studio hubspot apollo salesforce granola zoom figma amd_gpu
 """.split()
 )
 E2E_STAGES = ("ui", "browser", "callback", "connected", "smoke", "reconnect", "restart")

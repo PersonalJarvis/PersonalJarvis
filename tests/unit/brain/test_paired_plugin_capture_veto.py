@@ -64,11 +64,12 @@ def test_reauth_flag_and_empty_access_count_as_disconnected() -> None:
 
 
 def test_unpaired_or_unknown_plugin_and_store_faults_never_veto() -> None:
-    store = _Store({}, raise_on="spotify")
+    store = _Store({}, raise_on="gmail")
     assert BrainManager._paired_plugin_disconnected(_skill(None), store=store) is False
     community = _skill("some-community-thing")
     assert BrainManager._paired_plugin_disconnected(community, store=store) is False
-    assert BrainManager._paired_plugin_disconnected(_skill("spotify"), store=store) is False
+    assert BrainManager._paired_plugin_disconnected(_skill("gmail"), store=store) is False
+    assert BrainManager._paired_plugin_disconnected(_skill("spotify"), store=store) is True
 
 
 def test_production_path_remembers_the_answer_per_plugin(monkeypatch) -> None:
@@ -89,7 +90,7 @@ def test_production_path_remembers_the_answer_per_plugin(monkeypatch) -> None:
     assert BrainManager._paired_plugin_disconnected(_skill("youtube_music")) is True
     assert BrainManager._paired_plugin_disconnected(_skill("youtube_music")) is True
     assert BrainManager._paired_plugin_disconnected(_skill("spotify")) is True
-    assert loads == ["youtube_music", "spotify"]
+    assert loads == ["youtube_music"]
 
 
 # -- preferred music service (2026-08-18) ---------------------------------------

@@ -1,5 +1,24 @@
 # RUB-99 observed authentication evidence
 
+## Corrected active scope (2026-09-23)
+
+The user clarified that **only Spotify and LinkedIn** should leave the default
+built-in catalog. HubSpot, Salesforce, Discord, Zoom, Asana and Figma remain
+active RUB-99 work. The earlier seven-plugin retirement was reverted before
+this change; no provider was marked PASS by removing a card. Current inventory:
+45 built-ins / 1 full PASS / 44 BLOCKED. Historical observations for Spotify
+and LinkedIn are preserved in `retired_plugins` in the machine-readable audit.
+
+Spotify's existing generic music-routing skill remains available for YouTube
+Music. No new account consent, callback, resource read or reconnect was proved
+for the six retained providers by this scope correction.
+
+HubSpot's broker catalog now uses the provider's current
+`/oauth/2026-03/token` form endpoint for both code exchange and refresh, as
+recommended in its [v1 deprecation notice](https://developers.hubspot.com/changelog/v1-oauth-api-deprecation).
+The previous v1 endpoint is scheduled for retirement; this configuration fix
+does not prove a successful HubSpot login or resource call.
+
 ## Continuation checkpoint (2026-09-23)
 
 The user reports completing the Microsoft ecosystem independently. Preserve

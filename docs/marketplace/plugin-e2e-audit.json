@@ -6,13 +6,27 @@
     "date": "2026-09-23",
     "reference": "docs/marketplace/rub-99-auth-evidence.md#continuation-checkpoint-2026-09-23",
     "microsoft": "User-reported complete; excluded from this continuation. Historical agent evidence is retained without promoting any result.",
-    "remaining_providers": ["hubspot", "salesforce", "discord", "zoom", "asana", "figma", "linkedin", "spotify", "slack", "shopify"],
+    "remaining_providers": [
+      "hubspot",
+      "salesforce",
+      "discord",
+      "zoom",
+      "asana",
+      "figma",
+      "slack",
+      "shopify"
+    ],
     "blocker": "Chrome automation cannot bootstrap: browser-service module is missing and official diagnostics report missing Windows native-host registration. Reinstall the Browser/Chrome plugin through the application UI before real provider work can resume.",
     "browser_control_restored_later": true,
     "broker_hosted_later": "https://oauth.personaljarvis.ai",
-    "new_completed_provider_journeys": false
+    "new_completed_provider_journeys": false,
+    "retired_builtin_plugins": [
+      "linkedin",
+      "spotify"
+    ],
+    "hubspot_token_endpoint": "Migrated to the official 2026-03 form token endpoint; no new live authorization is claimed."
   },
-  "scope": "RUB-94 inventory with RUB-99 observed updates. One complete Windows GitLab journey; all other full-plugin results remain blocked. Regression tests do not count as provider evidence.",
+  "scope": "Current 45-plugin built-in catalog: one full Windows GitLab PASS and 44 incomplete full journeys. Spotify and LinkedIn are user-retired from the default catalog; their historical evidence remains archived. Regression tests do not count as provider evidence.",
   "plugins": [
     {
       "plugin_id": "github",
@@ -1065,57 +1079,6 @@
       }
     },
     {
-      "plugin_id": "spotify",
-      "result": "BLOCKED",
-      "config_fingerprint": "b0145e0b044993161c719284ea7b6a59e7a9a0adabeb393caef448880f24d8dd",
-      "initial_state": "connect_attempt",
-      "evidence": {
-        "ui": {
-          "status": "PASS",
-          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "browser": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "callback": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "connected": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "smoke": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "reconnect": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "restart": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        }
-      },
-      "blocker": {
-        "reason": "Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
-        "owner": "Project publisher and provider account operator",
-        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
-        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
-      },
-      "observed_on": "2026-09-19",
-      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
-    },
-    {
       "plugin_id": "youtube_music",
       "result": "BLOCKED",
       "config_fingerprint": "bf658a854fa6ac203ae7f1a3d729960d17acf2ffbd2042ee3d9946e135ca4266",
@@ -1820,57 +1783,6 @@
       }
     },
     {
-      "plugin_id": "linkedin",
-      "result": "BLOCKED",
-      "config_fingerprint": "682fa6c38f3db533a0bb89a8c384d0fc9c21886d7c63c1582923135fc299bb87",
-      "initial_state": "connect_attempt",
-      "evidence": {
-        "ui": {
-          "status": "PASS",
-          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
-          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
-        },
-        "browser": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "callback": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "connected": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "smoke": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "reconnect": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        },
-        "restart": {
-          "status": "BLOCKED",
-          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
-          "reference": "docs/marketplace/rub-99-auth-evidence.md"
-        }
-      },
-      "blocker": {
-        "reason": "Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
-        "owner": "Project publisher and provider account operator",
-        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
-        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
-      },
-      "observed_on": "2026-09-19",
-      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
-    },
-    {
       "plugin_id": "meta",
       "result": "BLOCKED",
       "config_fingerprint": "6e3ac480076fa13d6a0e90500308404b558a2cb0b8deb722a324eba0f8008048",
@@ -1971,7 +1883,7 @@
     {
       "plugin_id": "hubspot",
       "result": "BLOCKED",
-      "config_fingerprint": "c05922a0962a3b8c992719c554c2e4bd3d65adf467eade6eafe6ebe72277794a",
+      "config_fingerprint": "df583aa14afa5b2bdcac91702e922c740bfcbbfaa646523cc9064680f5f58ff3",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
@@ -2367,6 +2279,110 @@
         "next_action": "Register the official shared Shopify app (redirect http://127.0.0.1:3130/oauth/callback, read scopes for products, orders, customers and discounts), provision publisher_shopify_oauth_client_id/secret, then repeat the full clean browser journey with a real read-only action.",
         "evidence": "Connect on the Shopify card returned the generic failure dialog on 2026-09-21; live metadata shows setup.shopify.com serves OAuth discovery but no DCR registration endpoint."
       }
+    }
+  ],
+  "retired_plugins": [
+    {
+      "plugin_id": "spotify",
+      "result": "BLOCKED",
+      "config_fingerprint": "b0145e0b044993161c719284ea7b6a59e7a9a0adabeb393caef448880f24d8dd",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        }
+      },
+      "blocker": {
+        "reason": "Official Google and email login found no linked Spotify account for the test identity. Spotify requires Premium for Development Mode and limits users; no paid account or upgrade was purchased.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
+    },
+    {
+      "plugin_id": "linkedin",
+      "result": "BLOCKED",
+      "config_fingerprint": "682fa6c38f3db533a0bb89a8c384d0fc9c21886d7c63c1582923135fc299bb87",
+      "initial_state": "connect_attempt",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "Historical Connect-entry click observed in the 2026-09-12 real UI audit. The current provider-specific journey was not revalidated; later stages remain BLOCKED.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Current full-journey stage is not attested. Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+          "reference": "docs/marketplace/rub-99-auth-evidence.md"
+        }
+      },
+      "blocker": {
+        "reason": "Official developer login and account selection were reached, but app prerequisites/products and the publisher broker callback have not been provisioned or verified.",
+        "owner": "Project publisher and provider account operator",
+        "next_action": "Complete the documented provider or deployment prerequisites and repeat every unverified real UI stage; do not infer success from regression tests.",
+        "evidence": "Observed details and remaining execution limits are recorded in docs/marketplace/rub-99-auth-evidence.md"
+      },
+      "observed_on": "2026-09-19",
+      "platform_limitations": "Windows browser observations; Linux automated protocol contracts passed separately; native macOS browser/keychain verification remains unperformed."
     }
   ]
 }

@@ -310,7 +310,6 @@ async def test_slow_refresh_does_not_block_other_flows_or_resurrect_disconnect(b
         "slack",
         "zoom",
         "gitlab",
-        "spotify",
         "salesforce",
         "google_cloud",
     ],
@@ -332,7 +331,7 @@ def test_publisher_public_clients_never_resolve_confidential_secrets(monkeypatch
     assert not any(key.startswith("publisher_") and key.endswith("_secret") for key in reads)
 
 
-@pytest.mark.parametrize("plugin", ["hubspot", "asana", "figma", "linkedin", "discord"])
+@pytest.mark.parametrize("plugin", ["hubspot", "asana", "figma", "discord"])
 def test_confidential_family_uses_broker_and_preserves_legacy_refresh(monkeypatch, plugin):
     from jarvis.marketplace.auth.oauth_broker import OAuthBrokerHandler
     from jarvis.marketplace.connect_helpers import build_handler_from_catalog

@@ -387,6 +387,29 @@ def test_asana_is_pkce_loopback_with_resource_and_http_mcp() -> None:
     assert spec.mcp_server["url"] == "https://mcp.asana.com/v2/mcp"
 
 
+def test_hubspot_confidential_broker_uses_current_token_endpoint() -> None:
+    spec = _seed().by_id("hubspot")
+    assert spec is not None
+    assert spec.auth.client_kind == "broker"
+    assert spec.auth.token_url == "https://api.hubapi.com/oauth/2026-03/token"  # noqa: S105
+
+
+@pytest.mark.parametrize("plugin_id", ["spotify", "linkedin"])
+def test_retired_cards_are_not_in_fresh_catalog(plugin_id: str) -> None:
+    assert _seed().by_id(plugin_id) is None
+
+
+def test_retired_placeholder_override_is_removed_but_own_client_is_preserved() -> None:
+    seed = {"plugins": [{"id": "shopify"}]}
+    legacy = {"id": "linkedin", "auth": {"client_id": "REPLACE_WITH_JARVIS_LINKEDIN_CLIENT_ID"}}
+    retired = catalog_data._merge_with_seed({"plugins": [legacy]}, seed)
+    assert [plugin["id"] for plugin in retired["plugins"]] == ["shopify"]
+
+    own_client = {"id": "linkedin", "auth": {"client_id": "my-own-linkedin-client"}}
+    preserved = catalog_data._merge_with_seed({"plugins": [own_client]}, seed)
+    assert [plugin["id"] for plugin in preserved["plugins"]] == ["linkedin", "shopify"]
+
+
 def test_google_drive_uses_full_drive_scope_via_native_tool() -> None:
     # 2026-07-23: Drive moved off Google's hosted Drive MCP (a Workspace
     # Developer-Preview endpoint that 403s consumer @gmail.com accounts on every

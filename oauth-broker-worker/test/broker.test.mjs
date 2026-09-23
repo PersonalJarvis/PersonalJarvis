@@ -33,6 +33,8 @@ function setup() {
     BROKER_ENCRYPTION_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64"),
     PUBLISHER_ASANA_OAUTH_CLIENT_ID: "asana-test-client",
     PUBLISHER_ASANA_OAUTH_CLIENT_SECRET: "asana-test-secret",
+    PUBLISHER_HUBSPOT_OAUTH_CLIENT_ID: "hubspot-test-client",
+    PUBLISHER_HUBSPOT_OAUTH_CLIENT_SECRET: "hubspot-test-secret",
     PUBLISHER_SLACK_OAUTH_CLIENT_ID: "slack-test-client",
   };
   async function call(path, method = "POST", body) {
@@ -44,11 +46,11 @@ function setup() {
   return { call, db, env };
 }
 
-async function begin(call) {
+async function begin(call, provider = "asana") {
   const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
   const challenge = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
   const response = await call("/start", "POST", {
-    provider: "asana", challenge, loopback_uri: "http://127.0.0.1:43123/oauth/broker",
+    provider, challenge, loopback_uri: "http://127.0.0.1:43123/oauth/broker",
     client_state: b64url(crypto.getRandomValues(new Uint8Array(32))),
   });
   return { response, verifier, data: await response.json() };
@@ -175,6 +177,31 @@ test("Slack public PKCE uses user scopes and a nested user grant without a secre
     const handoff = new URL(callback.headers.get("Location")).searchParams.get("code");
     const grant = await call("/redeem", "POST", { flow_id: flow.flow_id, verifier, handoff_code: handoff });
     assert.equal((await grant.json()).access_token, "dummy-user-access");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("HubSpot uses the current form token endpoint with S256 provider PKCE", async () => {
+  const { call } = setup();
+  const originalFetch = globalThis.fetch;
+  let sent;
+  globalThis.fetch = async (url, options) => {
+    sent = { host: new URL(url).hostname, path: new URL(url).pathname, body: Object.fromEntries(options.body) };
+    return Response.json({ access_token: "dummy-hubspot-access", refresh_token: "dummy-hubspot-refresh", expires_in: 3600 });
+  };
+  try {
+    const started = await begin(call, "hubspot");
+    assert.equal(started.response.status, 200);
+    const auth = new URL(started.data.authorization_url);
+    assert.equal(auth.searchParams.get("code_challenge_method"), "S256");
+    assert.equal(auth.searchParams.get("code_challenge")?.length, 43);
+    const callback = await call(`/callback?state=${auth.searchParams.get("state")}&code=dummy-code`, "GET");
+    assert.equal(callback.status, 302);
+    assert.equal(sent.host, "api.hubapi.com");
+    assert.equal(sent.path, "/oauth/2026-03/token");
+    assert.equal(sent.body.client_secret, "hubspot-test-secret");
+    assert.equal(sent.body.code_verifier?.length, 43);
   } finally {
     globalThis.fetch = originalFetch;
   }

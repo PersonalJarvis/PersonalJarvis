@@ -6121,9 +6121,10 @@ class BrainManager:
         """True when catalog plugin ``plugin_id`` holds no usable credential.
 
         Only catalog plugins are judged — every one of them authenticates, so
-        "no token" really means "not connected". A community skill naming an
-        unknown ``plugin_id`` is left alone: nothing here may veto a skill on
-        a guess. Any store or catalog fault answers False for the same reason
+        "no token" really means "not connected". The retired Spotify card is
+        an explicit exception: its generic music skill remains for rematching
+        to YouTube Music, but is vetoed if no sibling wins. A community skill
+        naming an unknown ``plugin_id`` is left alone. Any store or catalog fault answers False
         (a fault must never decide a turn). ``store`` is injectable for tests
         (a fake with ``load``); the default is the real TokenStore.
 
@@ -6143,7 +6144,10 @@ class BrainManager:
             from jarvis.marketplace.catalog_data import load_catalog
 
             if load_catalog().by_id(plugin_id) is None:
-                return False
+                # Spotify's default card is retired, but its generic music
+                # skill remains so a connected YouTube Music sibling can win
+                # the rematch. With no sibling, suppress the orphaned skill.
+                return plugin_id == "spotify"
             if store is None:
                 from jarvis.marketplace.token_store import TokenStore
 

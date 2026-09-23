@@ -89,7 +89,7 @@ function provider(env, name) {
   const clientId = publicSlack ? env.PUBLISHER_SLACK_OAUTH_CLIENT_ID : env[`PUBLISHER_${family}_OAUTH_CLIENT_ID`];
   const secret = publicSlack ? null : env[`PUBLISHER_${family}_OAUTH_CLIENT_SECRET`];
   if (!clientId || (!publicSlack && !secret)) throw new BrokerError(503, "Publisher registration is unavailable");
-  return { spec, clientId, secret, pkce: name === "asana" || name === "figma" || publicSlack };
+  return { spec, clientId, secret, pkce: name === "asana" || name === "figma" || name === "hubspot" || publicSlack };
 }
 
 async function readBody(request) {

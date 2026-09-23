@@ -91,6 +91,12 @@ retains its issuing broker address even if current configuration changes.
 
 ## Provider choices
 
+Spotify and LinkedIn were removed from the default built-in catalog on
+2026-09-23. Their rows below remain as historical design evaluations. The
+other confidential-provider rows remain active, pending app credentials and
+full live browser qualification. The deployed Worker rejects a retired
+provider's `/start` request after the catalog update.
+
 | Provider family | Default architecture | Registration requirement |
 | --- | --- | --- |
 | Microsoft Graph and Azure | Public native PKCE, shared Microsoft client | Native `localhost` callback; tenant policy and publisher verification may limit consent |
