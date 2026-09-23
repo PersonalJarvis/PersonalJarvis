@@ -143,9 +143,11 @@ The same campaign exposed a missing Wasmtime shared library in the Linux bundle
 and a Windows cleanup failure after otherwise successful API/Wasm rounds. Both
 fixes are implemented. The follow-up campaign on `2cdb52dee` passed Linux and
 both Mac installation/replacement/Wasm/cleanup checks. Windows verification did
-not finish after more than 30 minutes and was stopped for diagnosis; its native
-acceptance remains open. Later settings/intake UI changes are not part of those
-installer artifacts. Historical successful rounds do not qualify a newer build.
+not finish after more than 30 minutes and was stopped for diagnosis. Its focused
+repeat on `9d37206fa` passed installation/replacement/Wasm/cleanup without provider
+calls. Later settings/intake UI changes are included in that Windows artifact,
+but not the earlier Mac/Linux artifacts. Historical successful rounds do not
+qualify a newer build, and live one-key native acceptance remains open.
 
 Public-release source updates and candidate update interruption/retry were also
 exercised through the normal updater, with configuration and ordinary memory

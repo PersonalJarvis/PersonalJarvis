@@ -18,8 +18,9 @@ qualification report, not a declaration that every acceptance criterion passes.
 | Snapshot and native cleanup fixes | 85 passed; 1 skipped | Includes actual PostgreSQL backup validation; overlaps the integrated selection |
 | Full typed-record parity and related API/storage contracts | 140 passed | All 12 typed browser records, inherited fields, nullable values, SQL/DTO/API roundtrips and exact counters above 2^63; overlaps earlier checks |
 | Native descendant observation under four-way launch pressure | 100 completed | Four exited Windows process records briefly remained observable; all returned exit code 1, with the longest observed wait 15 ms |
-| Intake follow-up | 70 Swarm UI tests passed; production build passed | The new committed-frame regression fails before the fix; a complete CI rerun remains pending |
+| Intake follow-up | 70 Swarm UI tests passed; full Linux frontend 4,427 passed; production builds passed | The new committed-frame regression fails before the fix; the complete Linux suite runs from exact revision `9d37206fa` in a clean Node 22 container |
 | Native diagnostic follow-up | 94 passed; 1 skipped | Persisted phase receipts, failure status, credential redaction, containment and a bounded verification-step timeout |
+| Further integration guards | 231 realtime tests and 7 WebGL guard tests passed | Removed a duplicate write to a read-only test property; the static guard now follows called relative lifecycle hooks and still rejects missing cleanup |
 
 The process assertion now verifies process identity and waits for a bounded exit
 receipt. A live descendant still fails the assertion, and a reused PID is never
@@ -38,15 +39,18 @@ The [native campaign on `2cdb52dee`](https://github.com/PersonalJarvis/PersonalJ
 has passed actual Linux AppImage and both ARM64/Intel macOS DMG installation,
 bundled Wasm, team/lead persistence through same-artifact replacement, and
 workspace cleanup. The Windows verification did not finish after more than
-30 minutes and the remaining run was stopped for diagnosis; Windows is not
-qualified by this campaign. These runs use disposable profiles
+30 minutes and the remaining run was stopped for diagnosis. These runs use disposable profiles
 and make zero provider requests; they do not include the later settings UI merge.
 The canceled Windows job provided neither a completed report nor downloadable
 logs at inspection time, so its root cause remains unknown. The verifier now
 writes allowlisted phase receipts, emits stack-only diagnostic snapshots, and has
 a 35-minute CI step limit. A manual Windows-only option permits focused retries;
 tagged releases still require all platform jobs. This improves diagnosis and
-does not itself establish a Windows installation pass.
+does not itself establish a Windows installation pass. The
+[Windows-only repeat on `9d37206fa`](https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/35838325214)
+then passed real installation, Wasm, retained team/lead identity, same-artifact
+replacement and full workspace cleanup, with zero provider requests. The first
+run's root cause remains unknown; its cancellation is not relabeled as success.
 
 The full CI frontend run found one intake race, with 4,424 other tests passing:
 questions could render before saved answers were restored, allowing the delayed
@@ -54,8 +58,9 @@ effect to overwrite an immediate selection. A React Profiler regression reproduc
 the inconsistent commit. The component now accepts the view and its answers in
 one update, while a refresh of the same revision preserves local edits. The new
 regression fails on the previous implementation and passes with the fix; all 70
-related Swarm UI tests and the production build pass. The earlier complete local
-suite is not relabeled as a post-fix full-suite result.
+related Swarm UI tests and the production build pass. A clean Linux Node 22
+container subsequently passed the complete 4,427-test frontend suite and build.
+The earlier complete local suite is not relabeled as that post-fix result.
 
 The existing public source-installer smoke test separately rejected release
 `v2.2.1` because its Rekor inclusion proof exceeded the wrapper's one-day freshness
