@@ -17,7 +17,7 @@ describe("symbol gaze and thinking", () => {
     expect(container.querySelector(".agent-symbol-orbit")).toBeNull();
   });
 
-  it("restores the dot interlude without a rainbow and stops when work ends", () => {
+  it("shows three working dots and removes them as soon as work ends", () => {
     const { container, rerender } = render(<AgentSymbol shape="cloud" color="#8b5cf6" size={48} thinking />);
     expect(container.querySelector("[data-thinking=true]")).not.toBeNull();
     expect(container.querySelector(".agent-symbol-orbit")).toBeNull();
