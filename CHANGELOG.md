@@ -11,6 +11,18 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [2.3.1] — 2026-09-23
+
+### Fixed
+
+- Restore the current ecosystem README, architecture illustration, demo media,
+  and their reproducible source files in the published source download.
+- Align the latest release tag and resumable source archive with the current
+  GitHub `main` checkout. The validation limitations recorded for 2.3.0 still
+  apply; this patch changes documentation and release metadata only.
+
+---
+
 ## [2.3.0] — 2026-09-23
 
 ### Added
