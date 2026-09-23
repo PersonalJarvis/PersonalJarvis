@@ -53,6 +53,11 @@ def active() -> tuple[Any, ...]:
     return tuple(_active.values())
 
 
+def owns_microphone(*, except_session_id: str | None = None) -> bool:
+    """A pending or active browser call must not be replaced by a wake start."""
+    return any(sid != except_session_id for sid in (*_opening, *_active))
+
+
 async def close_all(reason: str = "hotkey") -> None:
     await asyncio.gather(*(session.end(reason=reason) for session in active()))
 

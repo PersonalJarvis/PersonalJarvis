@@ -217,6 +217,13 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                 self._tools.user_text = event.text or ""
                 if event.is_final:
                     self._tools.revision += 1
+                    if self._bus is not None:
+                        from jarvis.core.events import BrainTurnStarted
+
+                        await self._bus.publish(BrainTurnStarted(
+                            source_layer="live.native", trace_id=self._indicator_trace_id,
+                            provider=self.active_provider, model=self._active_model,
+                        ))
                     if not self._closing and not self._recovering:
                         self._resume_needs_input = False
                         self._tools.accepting = True
@@ -255,6 +262,16 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                     "is_final": event.is_final,
                 }
             )
+            stamp = time.monotonic_ns() // 1_000_000
+            caption = self._transcript.feed(
+                session_id=self.session_id, trace_id=self._indicator_trace_id,
+                event_id=str(uuid4()), role=role, text=event.text or "",
+                start_ms=stamp, end_ms=stamp, snapshot=role == "user",
+            )
+            if self._bus is not None:
+                await self._bus.publish(caption)
+            if role == "user" and event.is_final:
+                self._transcript.finish("user")
         elif event.type == "tool_call":
             await self._note_thinking()
             task = asyncio.create_task(self._call(event, self._tools.revision))
@@ -265,6 +282,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             self._thinking = False
             await self._emit_indicator({"type": "tts_cancel"})
         elif event.type == "turn_complete":
+            self._transcript.finish("assistant")
             await self._note_turn_end()
         elif event.type == "usage":
             usage = event.usage or {}

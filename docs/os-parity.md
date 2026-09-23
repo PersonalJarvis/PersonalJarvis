@@ -715,3 +715,46 @@ wake/microphone acceptance or physical macOS/Linux acceptance.
 A fresh Linux wheel installation passed all eight startup handoff contracts and
 a one-key synthetic Live speech/tool proof (one tool receipt, spoken result, no
 session failure). This checks the installed package without native audio devices.
+
+
+## Continuous voice conversation history (T3)
+
+| Surface | Windows | macOS | Linux / headless |
+| --- | --- | --- | --- |
+| Speaker segments | Portable Live adapter projection | Same implementation | Same; no audio device required by projection |
+| Live conversation and trace | Shared React voice stage and existing theme tokens | Same browser surface | Same surface in a remote browser |
+| Persisted history | Existing session event JSON in SQLite | Same schema | Same schema |
+| Legacy Live conversations | Read-only projection of existing transcript fragments | Same projection | Same projection |
+
+`VoiceTranscriptUpdated` is a frozen, revisioned snapshot identified by session
+and segment. Python, recorded JSON, API serialization and the TypeScript field
+contract are exercised together by `test_live_conversation.py`. Independent
+speaker rows allow overlapping audio and repeated phrases without overwriting
+previous turns. Presentation grouping does not send model turn-control events.
+Gemini/local snapshots and final markers use the same projection; older voice
+adapters keep their existing final-transcript path.
+
+Responses delegation publishes its real model-start event and exposes only
+provider-supplied public reasoning summaries as `ReasoningSummaryUpdated`.
+Raw/private reasoning and encrypted reasoning payloads are never projected.
+The existing tool-execution events continue to supply tool progress/results.
+Models that emit no summary still show their observable model/tool steps.
+Configured reasoning backends request the provider's automatic summary format;
+the selected model and credential stay unchanged.
+
+The session recorder stores both event types in its existing event table. The
+conversation API reconstructs the latest snapshot of each segment, with traces
+attached to the corresponding answer interval. Pre-fix Live fragment history
+is read without changing the original database. Physical OS audio acceptance
+is separate from this portable presentation/storage contract.
+
+Browser-owned calls also hold the native activation gate. A competing wake or
+card start must not publish a replacement session and erase the active
+conversation. This ownership is released with the Live runtime lease.
+
+Validation includes a real GPT-Live browser session with synthetic speech and
+a read-only test tool: three user segments, four assistant segments and two
+stored trace intervals survived retrieval after restart. Both light and dark
+voice-stage rendering were inspected. The fresh Linux backend installation
+passed all seven conversation contracts; physical macOS/Linux audio behavior
+is not inferred from these checks.

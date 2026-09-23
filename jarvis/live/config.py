@@ -39,7 +39,7 @@ class LiveConfig(BaseModel):
             "parallel_tool_calls": False,
         }
         if self.reasoning_effort:
-            backend["reasoning"] = {"effort": self.reasoning_effort}
+            backend["reasoning"] = {"effort": self.reasoning_effort, "summary": "auto"}
         language_rule = (
             "Use the user's language and follow explicit language changes. "
             if language == "auto"

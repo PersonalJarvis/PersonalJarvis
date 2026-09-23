@@ -182,6 +182,9 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
       {
         onTranscript: (text, isFinal, role) => {
           if (!isCurrent()) return;
+          // Live adapters project all speaker snapshots onto the shared bus.
+          // Keeping a second local caption would overwrite the conversation.
+          if (browserAudio) return;
           if (role === "user") setTranscription(text, isFinal);
           if (role === "user" && isFinal) setVoice("thinking");
         },

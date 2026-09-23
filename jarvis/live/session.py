@@ -68,6 +68,9 @@ class LiveVoiceSession:
         self._tools: LiveTools | None = None
         self._resampler = StreamingPcm16Resampler(48000, 24000)
         self._captions = {"user": "", "assistant": ""}
+        from jarvis.live.transcript import LiveTranscript
+
+        self._transcript = LiveTranscript()
         self._last_role = ""
         self._last_end = {"user": -1, "assistant": -1}
         self._delegation_responses: dict[str, str] = {}
@@ -591,9 +594,14 @@ class LiveVoiceSession:
             )
             if not await asyncio.to_thread(self._ledger.append, fragment):
                 return
-            if fragment.start_ms - self._last_end[role] > 1500:
-                self._captions[role] = ""
-            self._captions[role] = (self._captions[role] + delta)[-32000:]
+            caption = self._transcript.feed(
+                session_id=self.session_id, trace_id=self._indicator_trace_id,
+                event_id=fragment.event_id, role=role, text=delta,
+                start_ms=fragment.start_ms, end_ms=fragment.end_ms,
+            )
+            self._captions[role] = caption.text
+            if self._bus is not None:
+                await self._bus.publish(caption)
             current = fragment.end_ms >= self._last_end[role]
             self._last_end[role] = max(self._last_end[role], fragment.end_ms)
             if role == "user" and current:
@@ -683,9 +691,40 @@ class LiveVoiceSession:
             self._response_revisions[self._response_id] = self._tools.revision
             self._delegation_responses[delegation] = self._response_id
             self._responses.setdefault(self._response_id, [])
+            if self._bus is not None:
+                from jarvis.core.events import BrainTurnStarted
+
+                await self._bus.publish(BrainTurnStarted(
+                    source_layer="live.delegation", trace_id=self._indicator_trace_id,
+                    provider=self.active_provider, model=self._tools.backend_model,
+                ))
             await self._note_thinking()
+        elif kind == "response.reasoning_summary_text.done":
+            if self._bus is not None and event.get("text"):
+                from jarvis.core.events import ReasoningSummaryUpdated
+                from jarvis.core.redact import safe_preview
+
+                await self._bus.publish(ReasoningSummaryUpdated(
+                    source_layer="live.delegation", trace_id=self._indicator_trace_id,
+                    response_id=str(event.get("item_id") or event.get("response_id") or delegation),
+                    text=safe_preview(event["text"], max_chars=4000), done=True,
+                ))
         elif kind == "response.output_item.done":
             item = event.get("item", {})
+            if item.get("type") == "reasoning":
+                summary = "\n\n".join(
+                    str(part.get("text", "")) for part in item.get("summary", [])
+                    if part.get("type") == "summary_text"
+                )
+                if summary and self._bus is not None:
+                    from jarvis.core.events import ReasoningSummaryUpdated
+                    from jarvis.core.redact import safe_preview
+
+                    await self._bus.publish(ReasoningSummaryUpdated(
+                        source_layer="live.delegation", trace_id=self._indicator_trace_id,
+                        response_id=str(item.get("id") or delegation),
+                        text=safe_preview(summary, max_chars=4000), done=True,
+                    ))
             if item.get("type") == "function_call":
                 rid = str(
                     event.get("response_id")

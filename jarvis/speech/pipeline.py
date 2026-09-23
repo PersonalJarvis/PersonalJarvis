@@ -4422,6 +4422,10 @@ class SpeechPipeline:
             return False
         if self._dictation_blocks_activation():
             return False
+        from jarvis.live.runtime import owns_microphone
+
+        if owns_microphone(except_session_id=getattr(self, "_current_voice_session_id", None)):
+            return False
         return self._capture_permission_allowed()
 
     @property
