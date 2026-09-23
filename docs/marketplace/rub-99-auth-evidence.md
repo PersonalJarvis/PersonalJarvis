@@ -81,8 +81,11 @@ the official Slack authorization endpoint, the exact project callback,
 console shows token rotation and the earlier loopback redirect. A new HTTPS
 redirect is entered but remains unsaved pending action-time permission. The
 existing Discord app is public and supports guild and user installation. Its
-HTTPS callback is likewise entered but unsaved. Neither console action proves
-consent, token exchange, resource access or shared-bot operation.
+HTTPS callback was saved with the earlier loopback redirect retained; a fresh
+load of the official OAuth2 settings showed both exact URIs. Its confidential
+client secret is no longer displayed in the console and must be rotated by the
+account operator before server-only broker provisioning. The redirect save
+does not prove consent, token exchange, resource access or shared-bot operation.
 
 Verification after adding Shopify and the Worker: six Worker protocol tests,
 121 focused Python auth/catalog/audit tests, 46 privacy-gate tests and 59
