@@ -1,14 +1,16 @@
 # Mars runtime reference
 
-Status: opt-in development reference, not the completed colony. The previous
-world remains available. Open **Agents > Map > Mars preview** to inspect the new
-foundation; the Agents workspace and communications-station controls remain separate
-from rendering. Characters, rover travel and remaining districts are unfinished.
+Status: development reference, not the completed colony. In the Dev instance,
+**Agents > Map** opens Mars directly and offers no previous-world selector,
+including when an older URL requests another world. The normal instance retains
+its existing opt-in selector. The Agents workspace and communications-station
+controls remain separate from rendering. Final character/rover art, player
+boarding and remaining districts are unfinished.
 The art study has no user visual approval and must not be rolled out by family.
 
-After selecting Mars, the communications-station button is also available in
-the Agents workspace without mounting the map. Returning to the previous world
-clears this station panel. Browser fullscreen exit preserves a focused Mars
+The communications-station button is available in the Dev Agents workspace
+without mounting the map or selecting a preview first. In the normal instance,
+it follows the selected world. Browser fullscreen exit preserves a focused Mars
 form or player view; use the Agents tab to leave that view explicitly.
 
 ## Boundaries

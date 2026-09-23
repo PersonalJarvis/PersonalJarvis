@@ -1,8 +1,12 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useSocietyShell } from "@/store/societyShell";
 import { setMapFullscreen } from "@/lib/mapFullscreen";
 import { SocietyView } from "./SocietyView";
+
+const app = vi.hoisted(() => ({ instance: { name: "default", isDev: false } }));
+vi.mock("@/hooks/useAppInstance", () => ({ useAppInstance: () => app.instance }));
+beforeEach(() => { app.instance = { name: "default", isDev: false }; });
 
 vi.mock("@/lib/mapFullscreen", () => ({ setMapFullscreen: vi.fn(async () => undefined) }));
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, useLocaleChunk: () => true }));
@@ -92,6 +96,15 @@ it("keeps Mars station controls reachable without mounting a renderer", async ()
   expect(screen.getByTestId("workspace")).toBeTruthy();
   fireEvent.click(screen.getByText("Close station"));
   expect(screen.queryByRole("complementary", { name: "Mars station" })).toBeNull();
+});
+
+it("exposes the Mars station in dev without an opt-in URL", async () => {
+  app.instance = { name: "dev", isDev: true };
+  window.history.replaceState(null, "", "?view=agents");
+  render(<SocietyView />);
+  fireEvent.click(screen.getByRole("button", { name: "society.mars.station_title" }));
+  expect(await screen.findByRole("complementary", { name: "Mars station" })).toBeTruthy();
+  expect(screen.queryByTestId("map")).toBeNull();
 });
 
 it("does not discard a Mars form when Escape belongs to its input", async () => {

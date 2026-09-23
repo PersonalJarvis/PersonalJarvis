@@ -16,6 +16,7 @@ import { useSocietyRoster } from "@/components/society/data";
 import { RosterRail } from "@/components/society/roster/RosterRail";
 import { useModelMenuData } from "@/components/society/chat/useModelMenuData";
 import { CanvasActivity } from "@/hooks/useCanvasAwake";
+import { useAppInstance } from "@/hooks/useAppInstance";
 
 const JarvisAgentsBoard = lazy(() =>
   import("@/views/JarvisAgentsView").then((m) => ({ default: m.JarvisAgentsView })),
@@ -32,7 +33,9 @@ export function SocietyView() {
   useLocaleChunk("society");
   const [mode, setMode] = useState<"agents" | "world">("agents");
   const [marsStationOpen, setMarsStationOpen] = useState(false);
-  const [marsSelected, setMarsSelected] = useState(() => new URLSearchParams(window.location.search).get("world") === "mars");
+  const instance = useAppInstance();
+  const [selectedMars, setMarsSelected] = useState(() => new URLSearchParams(window.location.search).get("world") === "mars");
+  const marsSelected = instance?.isDev || selectedMars;
   const onMarsSelectionChange = useCallback((selected: boolean) => {
     setMarsSelected(selected);
     if (!selected) setMarsStationOpen(false);
