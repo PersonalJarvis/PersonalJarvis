@@ -2280,6 +2280,11 @@
   "settings_hub": {
     "subtitle": "Everything about you, your keys and this app — in one place.",
     "search_placeholder": "Search settings...",
+    "back_to_app": "Back to app",
+    "search_results": "Settings options",
+    "search_pages": "Settings pages",
+    "no_results": "No settings found",
+    "clear_search": "Clear search",
     "group_general": "General",
     "group_system": "System",
     "group_activity": "Activity"
