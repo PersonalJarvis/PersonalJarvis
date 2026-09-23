@@ -298,9 +298,9 @@ jarvis/ui/web/dist._predockpolish/
 # work, with a restore script). Local safety nets, never committed.
 /cu-restore-points/
 
-# Scratch analysis + video render output (local-only working material). NOTE:
-# the video/ folder is a tracked Remotion source project, so only its rendered
-# output is ignored here — not the whole folder.
+# Scratch analysis + video render output (local-only working material).
+# Historical video sources are already tracked; the root rule below prevents
+# newly created private production files from entering future commits.
 .tmp_video_analysis/
 video/public/*
 # The tracked Voice composition depends on these reproducible source assets.
@@ -462,10 +462,35 @@ scripts/ci/privacy_gate/references/secret-allowlist.tsv
 # Temporary marketing-video workspace (Remotion project + rendered frames)
 .tmp-music-video/
 
+# Private Mars implementation inputs, runtime captures, and local test evidence.
+.tmp/rub69/
+docs/plans/mars-world/
+
 # Hypothesis's example database. Every file in it stamps the absolute path of
 # the machine that ran the tests into its header, so it is a personal-data leak
 # as much as it is a cache. Regenerated on demand; never committed.
 .hypothesis/
+
+# Local integration worktrees, test output, and release scratch stay on disk.
+/.tmp/
+/.rub14-worktree/
+/.pytest-tmp-rub14-*/
+/_tmp_agy_schema.py
+/run_in_executor
+/to_thread
+/wait
+/{cutoff_iso}
+/flow_labs
+/flow_landing
+/grok-light.svg
+/handshake.txt
+/svgl.json
+
+# Internal planning and video production are withheld by the distribution
+# denylist; keep newly created files out of ordinary commits as well.
+/docs/plans/
+/docs/superpowers/
+/video/
 
 # Figure build: fetched CC0 sources and generated sheets (scripts/figures/README.md)
 scripts/figures/cache/
