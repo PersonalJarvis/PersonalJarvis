@@ -173,6 +173,26 @@ class TestForbiddenFile:
         assert not gate.forbidden_file("main.py", FORBIDDEN_BASENAMES)
 
 
+class TestPublicCatalogMcp:
+    def test_shopify_catalog_manifest_is_credential_free(self):
+        path = "jarvis/marketplace/plugins/shopify/mcp.json"
+        manifest = (
+            '{"$schema":"https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",'
+            '"mcpServers":{"shopify":{"type":"streamable-http",'
+            '"url":"https://setup.shopify.com/mcp"}}}'
+        )
+        assert gate.is_public_catalog_mcp(path, manifest)
+
+    def test_shopify_manifest_with_query_is_rejected(self):
+        path = "jarvis/marketplace/plugins/shopify/mcp.json"
+        manifest = (
+            '{"$schema":"https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",'
+            '"mcpServers":{"shopify":{"type":"streamable-http",'
+            '"url":"https://setup.shopify.com/mcp?token=secret"}}}'
+        )
+        assert not gate.is_public_catalog_mcp(path, manifest)
+
+
 # --------------------------------------------------------------------------- #
 # scan_text_for_secrets
 # --------------------------------------------------------------------------- #

@@ -142,6 +142,14 @@ WITHHELD: Final[dict[str, str]] = {
         "review the red/green change; a remote client has no editor and "
         "recall already covers lookup"
     ),
+    "GET /api/society/agents/{agent_id}/knowledge": (
+        "lists an agent's private memory files for the owner; remote clients "
+        "do not receive the agent notebook browsing surface"
+    ),
+    "GET /api/society/agents/{agent_id}/knowledge/file": (
+        "reads a private agent memory file for the owner in the app; remote "
+        "clients do not receive raw notebook contents"
+    ),
     "PATCH /api/society/agents/{agent_id}/routines/{task_id}": (
         "editing a routine changes recurring spend; the owner does it on the "
         "routine card where the schedule is visible, not via a remote client"
