@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, KeyRound } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { Button, FOCUS_RING } from "@/components/agentic/controls";
 import { JarvisAgentSection } from "@/components/JarvisAgentSection";
@@ -31,7 +31,6 @@ export function AgentAccessList({
 }) {
   const t = useT();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [subscriptionsOpen, setSubscriptionsOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const keyRows = (rows ?? []).filter((row) =>
@@ -56,7 +55,11 @@ export function AgentAccessList({
   }
 
   return (
-    <div className="space-y-4" data-testid="onboarding-agent-access">
+    <div className="space-y-6" data-testid="onboarding-agent-access">
+      <div data-testid="onboarding-agent-subscriptions">
+        <JarvisAgentSection hideHeader subscriptionsOnly />
+      </div>
+      <div className="space-y-4 border-t border-border pt-5">
       <div>
         <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <KeyRound className="h-4 w-4 text-primary" />
@@ -115,21 +118,6 @@ export function AgentAccessList({
         </div>
       )}
       {error && <StatusLine tone="error">{error}</StatusLine>}
-      <div className="border-t border-border pt-3">
-        <button
-          type="button"
-          aria-expanded={subscriptionsOpen}
-          onClick={() => setSubscriptionsOpen((open) => !open)}
-          className={cn("flex w-full items-center justify-between gap-3 text-left text-sm text-muted-foreground hover:text-foreground", FOCUS_RING)}
-        >
-          {t("onboarding.api_keys.agents_subscription_title")}
-          <ChevronDown className={cn("h-4 w-4 transition-transform", subscriptionsOpen && "rotate-180")} />
-        </button>
-        {subscriptionsOpen && (
-          <div className="mt-4" data-testid="onboarding-agent-subscriptions">
-            <JarvisAgentSection hideHeader subscriptionsOnly />
-          </div>
-        )}
       </div>
     </div>
   );
