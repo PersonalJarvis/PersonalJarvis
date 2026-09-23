@@ -910,6 +910,7 @@ async def list_approvals(request: Request, agent_id: str | None = None) -> dict[
 async def resolve_approval(
     approval_id: str, body: ResolveApprovalBody, request: Request
 ) -> dict[str, Any]:
+    """Resolve an approval; denying a live browser action also stops its owning chat."""
     from jarvis.society.proposals import kind_of
 
     rt = await _runtime(request)
@@ -924,6 +925,29 @@ async def resolve_approval(
                 "detail": f"use POST /api/society/proposals/{approval_id}/resolve",
             },
         )
+    if (
+        current is not None
+        and not body.approve
+        and str(current.state) == "pending"
+        and current.capability == "core:browser"
+        and current.action.get("resume_in_place")
+    ):
+        # A denied browser action must not release the parent planner to try
+        # the same operation through a desktop or shell tool. Signal before
+        # resolving the approval, while the live ownership still identifies
+        # this exact turn. An old approval cannot stop a newer/unrelated chat.
+        live = getattr(getattr(rt, "browser", None), "live", None)
+        session = getattr(live, "sessions", {}).get(current.agent_id)
+        chat = getattr(request.app.state, "agent_chat", None)
+        if (
+            session is not None
+            and current.trace_id
+            and session.active_trace == current.trace_id
+            and session.active_chat
+            and session.run_lock.locked()
+            and chat is not None
+        ):
+            chat.signal_cancel(session.active_chat)
     try:
         item = await rt.approvals.resolve(approval_id, approve=body.approve, note=body.note)
     except KeyError as exc:
