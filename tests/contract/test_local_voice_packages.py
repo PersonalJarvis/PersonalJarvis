@@ -94,6 +94,17 @@ def test_native_catalog_does_not_claim_unverified_language_or_tools(capsys) -> N
     assert json.loads(capsys.readouterr().out)["runtime_qualified"] is False
 
 
+def test_voicechat_candidate_keeps_model_claims_separate_from_hardware_qualification() -> None:
+    models = {model.id: model for model in native_model_catalog()}
+    candidate = models["nemotron-voicechat-11b-q4"]
+    assert candidate.family == "nemotron-voicechat-gguf"
+    assert {"tool_calls", "tool_results", "full_duplex"} <= candidate.capabilities
+    assert candidate.languages == ("en",)
+    assert candidate.memory == ()
+    assert len(candidate.artifacts) == 4
+    assert candidate.download_bytes == 6520209856
+
+
 def test_local_import_is_reachable_through_the_command_line(tmp_path: Path, capsys) -> None:
     source = tmp_path / "source"
     source.mkdir()

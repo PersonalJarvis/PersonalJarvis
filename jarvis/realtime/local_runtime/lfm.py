@@ -14,26 +14,16 @@ import json
 import math
 import struct
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from jarvis.core.http_pool import HttpClientPool
 
+from .events import NativeAudioError as NativeAudioError
+from .events import NativeAudioEvent as NativeAudioEvent
+
 _MAX_EVENT_BYTES = 4 * 1024 * 1024
 _AUDIO_RATES = frozenset({16_000, 24_000, 44_100, 48_000})
-
-
-class NativeAudioError(RuntimeError):
-    """The native engine did not complete a verified protocol operation."""
-
-
-@dataclass(frozen=True, slots=True)
-class NativeAudioEvent:
-    kind: Literal["text", "audio", "done"]
-    text: str = ""
-    pcm: bytes = b""
-    sample_rate: int = 0
 
 
 def loopback_root(value: str) -> str:

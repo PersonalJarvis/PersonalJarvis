@@ -166,7 +166,7 @@ and prompt changes must not be described as having fine-tuned a model.
 | Wave | Acceptance | Current state |
 | --- | --- | --- |
 | 1: Diagnosis | Reproducible findings, local-surface map and upstream feasibility assessment; regression for Mac rejection. | Initial assessment and Mac fix complete. |
-| 2: Runtime contract | Typed model/adapter selection; invalid or incompatible custom weights rejected; CPU/Metal/CUDA contract tests; no boot-time heavy imports. | Manifest, eligibility, verified acquisition/import and inspection CLI implemented. Actual engine adapter and application wiring remain pending. |
+| 2: Runtime contract | Typed model/adapter selection; invalid or incompatible custom weights rejected; CPU/Metal/CUDA contract tests; no boot-time heavy imports. | Manifest, eligibility, verified acquisition/import, inspection CLI and resident process controller implemented. Application wiring and runtime distribution remain pending. |
 | 3: Inference integration | Real audio in/out, tool request/result, interrupt, cancellation and two-turn context through the selected native model or agreed package. | Windows CPU pipe-worker proof covers synthetic English audio, context and cancellation. Tool execution and application integration remain pending. |
 | 4: App workflow | Choose/download/use/customize without server setup; progress/cancel/retry; settings migration and rollback; light/dark browser verification and frontend build. | Pending. |
 | 5: Wake and qualification | Cold app launch, first utterance preserved, warm wake latency measured, long-session recovery, real NVIDIA and Apple Silicon, CPU/headless base install and existing provider regression checks. | Pending; no Apple Silicon execution environment has been established. |
@@ -276,3 +276,49 @@ is not enough to grant either capability. The remaining application work must
 connect a qualified tool protocol to ToolExecutor, preserve confirmations and
 receipts, then integrate model selection, runtime acquisition, wake residency
 and recovery. The main desktop still uses its existing voice provider.
+
+## Resident controller and tool-model investigation
+
+The application-owned `LocalVoiceRuntime` now verifies an actual speech response
+before reporting audio readiness, keeps one warm worker, and leases it to one
+conversation. Failed or cancelled model changes restore the previous selection
+using a fresh process. Crash recovery retains the application conversation owner
+but discards uncertain native context; it never replays audio or tool effects.
+The process controller bounds protocol messages, validates generation identities,
+uses an interprocess ownership lock and reaps stalled children. A downloaded
+model or loaded engine is still never labelled Jarvis-qualified.
+
+The live verifier now uses this controller, rather than talking directly to the
+worker. Its Windows CPU run passed synthetic audio input/output, two-turn context,
+cancellation, stale-context refusal, warm process reuse and shutdown. The path-free
+record is [the controller report](reports/local-native-controller-2026-09-23.json).
+The targeted package/runtime/hardware/installer suite passed **194 tests with two
+skips**. Ruff, focused mypy and the silent-exception gate passed. These checks
+do not qualify application startup, wake activation or a physical Mac.
+
+A second experimental package pins the community Q4 conversion of
+[NVIDIA NemotronLabs VoiceChat 11B](https://huggingface.co/nvidia/NVIDIA-NemotronLabs-VoiceChat-11B).
+The upstream model has a dedicated function channel and English speech. The
+official optimized deployment and the community GGUF runner are different runtime
+profiles; upstream capability claims do not certify the community transport.
+The [conversion](https://huggingface.co/hoidhxd/NVIDIA-NemotronLabs-VoiceChat-11B-GGUF/tree/89883a05a031557729771f94abb9998e4facdd45)
+contains four verified files totalling 6,520,209,856 bytes. No measured memory
+profile or default recommendation is assigned.
+
+A real Windows CUDA probe with
+[llama-voicechat.cpp](https://github.com/sansamour/llama-voicechat.cpp/tree/f45001fc3d8013c72beb6753d3eb0b976b6a9fff)
+loaded its speech and function heads and returned spoken English. It exposed a
+Windows long-path defect: the function-head sidecar exceeded the legacy path
+limit. Extended native paths restored its loading, now covered by a regression.
+The weather prompt produced a clarification instead of the required tool call;
+no real tool ran and the probe **failed tool qualification**. This one observation
+does not establish a model-wide accuracy rate. The current upstream CLI also
+accepts whole WAV turns and publishes audio at turn completion, so its underlying
+model's full-duplex claim is not a streaming microphone transport implementation.
+
+The clarified first milestone uses English and keeps a single native audio model
+with a simple application-owned lifecycle. German is not an initial acceptance
+criterion. Completing the request still requires the in-app workflow,
+ToolExecutor integration, wake residency, runtime distribution and real device
+qualification described above. No experimental candidate has been activated as
+the user's current voice provider.

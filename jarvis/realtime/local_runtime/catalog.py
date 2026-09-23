@@ -1,8 +1,8 @@
 """Pinned native model candidates; listing never downloads or loads weights.
 
-Catalog presence is not Jarvis runtime qualification or a recommendation. This
-initial candidate permits exercising the native-package path without inventing
-German support, structured tools, full duplex, or hardware measurements.
+Catalog presence is not Jarvis runtime qualification or a recommendation.
+Capabilities describe the upstream model; an adapter must independently prove
+them. Neither candidate has qualified German or complete Jarvis tool support.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from .models import HuggingFaceSource, LocalModelManifest, ModelArtifact
 
 
 def native_model_catalog() -> tuple[LocalModelManifest, ...]:
-    """Official LFM2.5 artifacts, checked against Hub metadata on 2026-09-23."""
+    """Pinned native candidates, checked against Hub metadata on 2026-09-23."""
     return (
         LocalModelManifest(
             id="lfm2.5-audio-1.5b-q4",
@@ -51,6 +51,51 @@ def native_model_catalog() -> tuple[LocalModelManifest, ...]:
                     path="vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf",
                     size_bytes=108986560,
                     sha256="423cfcb054f41b69a5706226c243abc96d2531c3aff1121f7a2ed17149b79c95",
+                ),
+            ),
+        ),
+        LocalModelManifest(
+            id="nemotron-voicechat-11b-q4",
+            label="Nemotron VoiceChat 11B Q4 (English; runtime qualification pending)",
+            family="nemotron-voicechat-gguf",
+            source=HuggingFaceSource(
+                repository="hoidhxd/NVIDIA-NemotronLabs-VoiceChat-11B-GGUF",
+                revision="89883a05a031557729771f94abb9998e4facdd45",
+            ),
+            license="OpenMDW-1.1 (upstream model)",
+            languages=("en",),
+            capabilities=frozenset(
+                {
+                    "audio_input",
+                    "audio_output",
+                    "streaming_output",
+                    "full_duplex",
+                    "tool_calls",
+                    "tool_results",
+                    "interruption",
+                    "conversation_context",
+                }
+            ),
+            artifacts=(
+                ModelArtifact(
+                    path="llamacpp/nemotron_voicechat_11b-stt-llm-Q4_0.gguf",
+                    size_bytes=5015077920,
+                    sha256="dc31d53bfe853b1ec106b9becf184d3bc55569473bd5aee68ef12f0ae9d86342",
+                ),
+                ModelArtifact(
+                    path="llamacpp/nemotron_voicechat_11b-stt-llm-Q4_0-function-head.gguf",
+                    size_bytes=330302208,
+                    sha256="7ecb89e4ef21975ad9c5f173abb2d3a224c0231e6fe937f099011a519251765e",
+                ),
+                ModelArtifact(
+                    path="llamacpp/mmproj-voicechat-perception-Q4_0.gguf",
+                    size_bytes=456089120,
+                    sha256="4b07cc374e7690cdca3d525eca36f74998943daf495a4fcdb07e774f469d7c2a",
+                ),
+                ModelArtifact(
+                    path="llamacpp/voicechat-tts-Q4_0.gguf",
+                    size_bytes=718740608,
+                    sha256="07420c7b0eccdf56334f4cfd5cd002a61a591b37ff25e2b6377b9f1e6b3396aa",
                 ),
             ),
         ),

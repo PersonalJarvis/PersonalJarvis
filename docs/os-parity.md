@@ -25,6 +25,8 @@ provides the execution evidence; this does not claim physical audio-device testi
 | CPU/CUDA/Metal eligibility and shared-memory accounting | CPU/CUDA contract fixtures | CPU/Metal contract fixtures | CPU/CUDA contract fixtures |
 | Verified acquisition/import and cancellation | Contract tests plus real four-file GGUF download | Portable implementation; device execution pending | Portable implementation; device execution pending |
 | Native synthetic audio/context/cancellation | Real x64 CPU pipe-worker probe | Not qualified | Upstream HTTP runner exercised in a container; pipe worker not qualified |
+| Resident controller, exclusive conversation and crash cleanup | Subprocess contracts and real CPU controller probe | Portable implementation; native execution pending | Portable implementation; native execution pending |
+| Nemotron community runtime | CUDA audio probe; tool qualification failed | Not qualified | Not qualified |
 | Jarvis tools and wake-ready application integration | Not qualified | Not qualified | Not qualified |
 
 The new `realtime/local_runtime` package does not load inference libraries or

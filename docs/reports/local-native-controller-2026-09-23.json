@@ -1,0 +1,84 @@
+{
+  "passed": true,
+  "transport": "stdio",
+  "controller": "LocalVoiceRuntime / NativeAudioProcess",
+  "model_fingerprint": "effaea9195c404cd5423ad663373aa9ede22c0939f4654feb1b41dfb4955ddd6",
+  "runner_sha256": "c119e99ffc273a04179372c79e031578d2beb370a863f9d8f94be029588e9f6d",
+  "os": "Windows",
+  "architecture": "",
+  "returncode": 0,
+  "results": [
+    {
+      "case": "load",
+      "elapsed_s": 4.438000000000102,
+      "tools": false,
+      "full_duplex": false
+    },
+    {
+      "case": "question",
+      "terminal": "done",
+      "text": "",
+      "pcm_bytes": 83520,
+      "sample_rate": 24000,
+      "first_audio_s": 1.4529999999995198,
+      "elapsed_s": 4.20299999999952,
+      "cancel_s": null
+    },
+    {
+      "case": "audio_answer",
+      "terminal": "done",
+      "text": "2 plus 3 equals 5.",
+      "pcm_bytes": 121920,
+      "sample_rate": 24000,
+      "first_audio_s": 2.3909999999996217,
+      "elapsed_s": 7.265999999999622,
+      "cancel_s": null
+    },
+    {
+      "case": "context_first",
+      "terminal": "done",
+      "text": "Violet is a beautiful color. Would you like to hear more about it?",
+      "pcm_bytes": 329280,
+      "sample_rate": 24000,
+      "first_audio_s": 2.061999999999898,
+      "elapsed_s": 14.686999999999898,
+      "cancel_s": null
+    },
+    {
+      "case": "context_second",
+      "terminal": "done",
+      "text": "I was talking about violet, the deep blue\u2011green hue that feels both calm and mysterious. It\u2019s often linked to creativity and the night sky. Would you like to hear more about its symbolism?",
+      "pcm_bytes": 759360,
+      "sample_rate": 24000,
+      "first_audio_s": 1.0940000000009604,
+      "elapsed_s": 26.90600000000086,
+      "cancel_s": null
+    },
+    {
+      "case": "interruption",
+      "terminal": "cancelled",
+      "text": "S",
+      "pcm_bytes": 0,
+      "sample_rate": 0,
+      "first_audio_s": null,
+      "elapsed_s": 1.375,
+      "cancel_s": 0.04700000000048021
+    },
+    {
+      "case": "stale_context",
+      "terminal": "error",
+      "code": "context_reset_required"
+    },
+    {
+      "case": "after_cancel",
+      "terminal": "done",
+      "text": "Hello! How can I help you today?",
+      "pcm_bytes": 144960,
+      "sample_rate": 24000,
+      "first_audio_s": 1.734999999998763,
+      "elapsed_s": 6.671999999998661,
+      "cancel_s": null
+    }
+  ],
+  "scope": "synthetic English audio, context, cancellation; no Jarvis tool execution"
+}

@@ -72,6 +72,7 @@ def _verify_artifact(root: Path, artifact: ModelArtifact) -> ArtifactCheck:
             return result("hash_mismatch")
         return result("verified")
     except FileNotFoundError:
+        # Missing weights are an expected pre-download state, reported in the result.
         return result("missing")
     except OSError:
         # The structured result is the failure report; native paths and raw
