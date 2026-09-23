@@ -319,7 +319,7 @@ it("with Ollama running but empty, explains the missing model and shows no activ
   expect(screen.queryByRole("button", { name: "onboarding.api_keys.local_use_button" })).toBeNull();
 });
 
-it("shows Jarvis Agent API-key choices immediately and keeps subscription access available", async () => {
+it("shows subscription and API-key choices together for Jarvis Agents", async () => {
   plansState.fail = false;
   plansState.plans = [GEMINI_PLAN];
   providersState.providers = [
@@ -330,6 +330,8 @@ it("shows Jarvis Agent API-key choices immediately and keeps subscription access
   await screen.findByTestId("onboarding-plan-gemini-live");
   await waitFor(() => expect(p.setGap).toHaveBeenLastCalledWith("onboarding.api_keys.gap_agents"));
   expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByTestId("onboarding-agent-subscriptions")).toBeDefined();
+  expect(screen.getByTestId("agent-connection-options")).toBeDefined();
   expect(screen.getByTestId("onboarding-agent-key-gemini")).toBeDefined();
   expect(screen.getByTestId("onboarding-agent-key-openai")).toBeDefined();
   expect(screen.getByTestId("form-agent_gemini_key")).toBeDefined();
@@ -337,8 +339,6 @@ it("shows Jarvis Agent API-key choices immediately and keeps subscription access
   expect(screen.getByTestId("form-agent_openai_key")).toBeDefined();
   fireEvent.click(screen.getByTestId("form-agent_openai_key").querySelector("button")!);
   await waitFor(() => expect(providersState.switchSubagentProvider).toHaveBeenCalledWith("openai"));
-  fireEvent.click(screen.getByRole("button", { name: "onboarding.api_keys.agents_subscription_title" }));
-  expect(screen.getByTestId("agent-connection-options")).toBeDefined();
 
   cleanup();
   stubFetch(null, true);
