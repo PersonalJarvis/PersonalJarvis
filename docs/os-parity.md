@@ -17,6 +17,23 @@ two capability skips) at `dc053c1d0`. The
 [native macOS job](https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/35435846490/job/105878237409)
 provides the execution evidence; this does not claim physical audio-device testing.
 
+## Native local-voice package foundation (T3, incomplete runtime migration)
+
+| Capability | Windows | macOS | Linux / headless |
+| --- | --- | --- | --- |
+| Data-only custom manifests and package checksums | Portable code; real filesystem tests | Same code; OS paths simulated | Same code; OS paths simulated |
+| CPU/CUDA/Metal eligibility and shared-memory accounting | CPU/CUDA contract fixtures | CPU/Metal contract fixtures | CPU/CUDA contract fixtures |
+| Verified acquisition/import and cancellation | Contract tests plus real four-file GGUF download | Portable implementation; device execution pending | Portable implementation; device execution pending |
+| Native audio, tools and wake-ready inference | Not qualified | Not qualified | Not qualified |
+
+The new `realtime/local_runtime` package does not load inference libraries or
+start a server when imported. It does not replace the active voice provider yet.
+Compatibility, verified weights and live inference readiness are separate facts;
+a successful download is never a successful voice call. The first catalog
+candidate declares English audio and has no qualified tool channel. No native
+voice recommendation or physical Mac/Linux result is implied by these tests.
+See `local-realtime-redesign.md` for the remaining migration and acceptance work.
+
 ## Prepaid search hop (2026-09-17, T2)
 
 `search_web` may use an optional Apifare HTTP hop

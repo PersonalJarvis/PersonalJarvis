@@ -165,7 +165,7 @@ and prompt changes must not be described as having fine-tuned a model.
 | Wave | Acceptance | Current state |
 | --- | --- | --- |
 | 1: Diagnosis | Reproducible findings, local-surface map and upstream feasibility assessment; regression for Mac rejection. | Initial assessment and Mac fix complete. |
-| 2: Runtime contract | Typed model/adapter selection; invalid or incompatible custom weights rejected; CPU/Metal/CUDA contract tests; no boot-time heavy imports. | Pending. |
+| 2: Runtime contract | Typed model/adapter selection; invalid or incompatible custom weights rejected; CPU/Metal/CUDA contract tests; no boot-time heavy imports. | Manifest, eligibility, verified acquisition/import and inspection CLI implemented. Actual engine adapter and application wiring remain pending. |
 | 3: Inference integration | Real audio in/out, tool request/result, interrupt, cancellation and two-turn context through the selected native model or agreed package. | Pending model/language/tool decision and real engine qualification. |
 | 4: App workflow | Choose/download/use/customize without server setup; progress/cancel/retry; settings migration and rollback; light/dark browser verification and frontend build. | Pending. |
 | 5: Wake and qualification | Cold app launch, first utterance preserved, warm wake latency measured, long-session recovery, real NVIDIA and Apple Silicon, CPU/headless base install and existing provider regression checks. | Pending; no Apple Silicon execution environment has been established. |
@@ -186,3 +186,52 @@ fix, that suite plus `tests/unit/realtime/local_server/test_engine.py` produced
 88 passed and one skipped. Ruff passed for the changed code and tests.
 This is simulated cross-platform regression evidence on a Windows host, not
 a real Apple Silicon voice test or qualification of the replacement runtime.
+
+## Native package foundation
+
+`jarvis/realtime/local_runtime/` now contains the replacement's data-only model
+contract, adapter/memory eligibility checks, and verified model acquisition.
+It accepts pinned Hugging Face artifacts and own local weights; neither source
+can provide a shell command or executable model code. The package fingerprint
+includes artifact hashes, language/capability claims and memory profiles.
+
+Acquisition uses a cross-process lock, separate content-addressed directories,
+temporary files, size/SHA-256 checks and atomic publication. Cancellation and
+failed model changes preserve previously verified versions. Retries reuse
+verified files, rather than redownloading the entire package. The returned
+weights still need real inference and tool qualification before activation.
+
+The first catalog entry is an **experimental candidate**, LFM2.5 Audio Q4, using
+four official GGUF files from the immutable Hub revision
+`7d525f883a077e20afb782f2ff618edcae0e39e4`. Its declared language is English; tool
+calling, full duplex and measured hardware memory profiles are deliberately
+absent. It cannot satisfy the default Jarvis voice requirements yet. The
+[upstream runner integration](https://github.com/ggml-org/llama.cpp/pull/18641)
+was still an unmerged draft when checked; the official model repository lists
+Mac/Linux/Android runners but no Windows runner. A packaged Windows engine
+must be built and verified before advertising Windows inference support.
+
+Developer inspection commands, run from the repository root:
+
+```text
+python -m jarvis.realtime.local_runtime catalog
+python -m jarvis.realtime.local_runtime schema
+python -m jarvis.realtime.local_runtime inspect lfm2.5-audio-1.5b-q4
+python -m jarvis.realtime.local_runtime acquire MODEL.json --store MODEL_STORE --source OWN_WEIGHTS
+```
+
+These commands are the implementation/verification surface for the new package
+layer, not the finished user workflow. In-app selection, download progress,
+runtime installation, wake activation and tools remain required work.
+
+A real acquisition of the catalog candidate completed on the Windows test host:
+all four GGUF files matched their published sizes and SHA-256 digests. The CLI
+reported `package_verified: true` and `runtime_qualified: false`. This proves
+the download/verification path, not inference, speech quality or tool accuracy.
+
+The combined new package/selection/acquisition contracts and existing hardware
+and installer regressions passed with 149 tests and two skips. The skips are
+the host's unavailable symlink-creation capability and an existing optional
+installer test. Ruff and focused mypy checks passed. No native audio test,
+frontend build, fresh-install qualification or physical Mac/Linux test was
+performed for this package-only stage.
