@@ -153,6 +153,12 @@ _TURN_OVERRIDE: ContextVar[TurnOverride | None] = ContextVar(
 )
 
 
+def _private_agent_turn() -> bool:
+    """Society turns own their context; Jarvis' ambient memory is not theirs."""
+    override = _TURN_OVERRIDE.get()
+    return override is not None and override.tool_context.get("tool_origin") == "society"
+
+
 class _SkillTurnState:
     """Task-local mutable state for one manager skill-routing turn."""
 
@@ -3736,7 +3742,7 @@ class BrainManager:
         """
         base = self._build_system_prompt()
         prompt = base
-        if self._wiki_injector is not None:
+        if self._wiki_injector is not None and not _private_agent_turn():
             try:
                 prompt = await self._wiki_injector.maybe_inject(
                     user_text=user_text, system_prompt=base
@@ -4157,6 +4163,13 @@ class BrainManager:
         5. CoreMemory        — legacy JSON facts (transitional, kept for back-compat)
         6. Base-Prompt       — voice rules
         """
+        if _private_agent_turn():
+            override = _TURN_OVERRIDE.get()
+            if override is None or not override.system_extra.strip():
+                raise RuntimeError("Private agent briefing unavailable; refusing shared context")
+            return "\n\n".join((
+                override.system_extra, _WRITTEN_CHAT_STYLE, self._reply_language_directive(),
+            ))
         parts: list[str] = []
 
         # Configurable assistant identity. Derived solely from the wake phrase
@@ -4575,7 +4588,7 @@ class BrainManager:
         message keeps the cached system prefix byte-stable across turns, which
         is what actually lets the Gemini/Anthropic prompt cache hit.
         """
-        if not self._cache_optimized():
+        if _private_agent_turn() or not self._cache_optimized():
             return ""
         from datetime import datetime
 
@@ -5632,6 +5645,8 @@ class BrainManager:
 
     def _consume_pending_skill_trigger(self, user_text: str) -> None:
         """Fold a noted trigger into this turn's skill match (AD-S4)."""
+        if _private_agent_turn():
+            return  # Preserve Jarvis' pending skill for its own next turn.
         pending = self._pending_forced_skill
         self._pending_forced_skill = None
         self._skill_turn_content = ""
@@ -5694,6 +5709,8 @@ class BrainManager:
         Never raises — routing must not break when the skill subsystem is
         absent (headless/mock boots).
         """
+        if _private_agent_turn():
+            return None  # Private skills are explicitly loaded through society_run_skill.
         self._skill_relevance = None
         self._skill_match_band = "none"
         self._skill_match_class = ""
@@ -9864,7 +9881,7 @@ class BrainManager:
             text=response_text,
         )
 
-        if self._curator is not None:
+        if self._curator is not None and not _private_agent_turn():
             try:
                 asyncio.create_task(
                     self._curator.process_turn(user_text, response_text),
@@ -11697,7 +11714,7 @@ class BrainManager:
         # _wiki_context_suffix is reset in the finally block at the end of
         # generate() to prevent stale context leaking into the next turn.
         try:
-            if self._wiki_injector is not None:
+            if self._wiki_injector is not None and not _private_agent_turn():
                 base_prompt = self._build_system_prompt()
                 injected_prompt = await self._wiki_injector.maybe_inject(
                     user_text=user_text,
@@ -12503,7 +12520,7 @@ class BrainManager:
         # Fire-and-forget: the curator extracts personal facts from the turn
         # and merges them into USER.md / people/*.md in a controlled manner.
         # Runs async, does not block the response.
-        if self._curator is not None:
+        if self._curator is not None and not _private_agent_turn():
             try:
                 asyncio.create_task(
                     self._curator.process_turn(user_text, response_text),

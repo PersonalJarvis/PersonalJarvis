@@ -231,6 +231,12 @@ def test_provider_health_reports_each_row_and_caches_the_sweep(tmp_path: Path, m
     """
     import jarvis.ui.web.agent_chat_routes as routes
 
+    monkeypatch.setattr("jarvis.agent_chat.service._claude_cli_installed", lambda: False)
+    monkeypatch.setattr(
+        routes,
+        "_cli_login_snapshot",
+        lambda runner: ("needs_setup", "not_configured", "No CLI login"),
+    )
     calls: list[str] = []
 
     async def _fake(cfg, provider_id, *, probe=True):
@@ -371,60 +377,67 @@ def test_agent_surface_cli_health_does_not_probe_the_api_key(tmp_path: Path, mon
     assert rows["openai"]["reason"] == "bad_key"
 
 
-def test_jarvis_surface_still_probes_the_claude_api_key(tmp_path: Path, monkeypatch):
-    """The front page has no CLI seats: Claude there is the Anthropic key."""
+@pytest.mark.parametrize("cli_installed", [False, True])
+def test_jarvis_health_probes_the_selected_claude_transport(
+    tmp_path: Path, monkeypatch, cli_installed
+):
+    """The selected transport determines whether API credentials or CLI login matter."""
     import jarvis.ui.web.agent_chat_routes as routes
 
     api_calls: list[str] = []
+    cli_calls: list[str] = []
 
     async def _fake_api(cfg, provider_id, *, probe=True):
         api_calls.append(provider_id)
         return SimpleNamespace(status="error", reason="bad_key", detail="401")
 
     monkeypatch.setattr("jarvis.ui.web.provider_routes.provider_health", _fake_api, raising=False)
-    monkeypatch.setattr(
-        routes,
-        "_cli_login_snapshot",
-        lambda runner: pytest.fail(f"CLI login checked on jarvis surface: {runner}"),
-    )
-    monkeypatch.setattr("jarvis.agent_chat.service._claude_cli_installed", lambda: True)
+
+    def cli_status(runner):
+        cli_calls.append(runner)
+        return "ok", "ok", "Subscription connected"
+
+    monkeypatch.setattr(routes, "_cli_login_snapshot", cli_status)
+    monkeypatch.setattr("jarvis.agent_chat.service._claude_cli_installed", lambda: cli_installed)
     monkeypatch.setattr(routes, "_health_cache", {})
 
     with TestClient(_app(tmp_path)) as client:
         body = client.get("/api/agent-chat/provider-health?surface=jarvis").json()
     rows = {r["provider"]: r for r in body["providers"]}
-    assert "claude-api" in api_calls
-    assert rows["claude-api"]["reason"] == "bad_key"
+    assert ("claude-api" in api_calls) is not cli_installed
+    assert ("claude-cli" in cli_calls) is cli_installed
+    assert rows["claude-api"]["reason"] == ("ok" if cli_installed else "bad_key")
+    assert "openai" in api_calls and rows["openai"]["reason"] == "bad_key"
 
 
-def test_the_jarvis_catalog_is_api_seats_only(tmp_path: Path):
-    """What the front page's composer is handed: endpoints behind a key.
+def test_jarvis_catalog_and_routes_agree_on_api_and_cli_seats(tmp_path: Path, monkeypatch):
+    """Catalog, runner selection and session mutations agree on supported seats."""
+    import jarvis.ui.web.agent_chat_routes as routes
 
-    No CLI row, and the dual Claude row resolved to the brain runner with a
-    live model list — whether or not Claude Code is on this machine, which is
-    exactly what the previous behaviour turned on.
-    """
+    monkeypatch.setattr("jarvis.agent_chat.service._claude_cli_installed", lambda: False)
+    monkeypatch.setattr(routes, "_cli_installed", lambda runner: False)
     with TestClient(_app(tmp_path)) as client:
         cat = client.get("/api/agent-chat/catalog?surface=jarvis").json()
         rows = {p["id"]: p for p in cat["providers"]}
-        assert not ({"openai-codex", "antigravity", "grok-build"} & set(rows))
+        assert {"openai-codex", "antigravity", "grok-build"} <= set(rows)
         assert {"claude-api", "openai", "gemini", "ollama"} <= set(rows)
-        assert all(p["runner"] == "brain" for p in rows.values()), rows
+        assert rows["openai"]["runner"] == rows["claude-api"]["runner"] == "brain"
+        assert rows["openai-codex"]["runner"] == "codex-cli"
+        assert rows["antigravity"]["runner"] == "agy-cli"
         assert rows["claude-api"]["models_source"] == "live"
-        # No row claims a CLI either way, so the picker greys nothing for a
-        # missing binary here.
-        assert all(p["cli_installed"] is None for p in rows.values())
+        assert rows["openai"]["cli_installed"] is None
+        assert rows["openai-codex"]["cli_installed"] is False
 
         # The IDE's chat is untouched: its CLI rows are still there.
         agent_catalog = client.get("/api/agent-chat/catalog?surface=agent").json()
         agent_rows = {p["id"]: p for p in agent_catalog["providers"]}
         assert {"openai-codex", "antigravity", "grok-build"} <= set(agent_rows)
 
-        # And a CLI seat cannot be talked onto the front page by hand.
-        refused = client.post(
+        cli = client.post(
             "/api/agent-chat/sessions", json={"provider": "openai-codex", "surface": "jarvis"}
         )
-        assert refused.status_code == 400, refused.text
+        assert cli.status_code == 201, cli.text
+        assert cli.json()["provider"] == "openai-codex"
         made = client.post(
             "/api/agent-chat/sessions", json={"provider": "openai", "surface": "jarvis"}
         )
@@ -433,7 +446,13 @@ def test_the_jarvis_catalog_is_api_seats_only(tmp_path: Path):
             f"/api/agent-chat/sessions/{made.json()['session_id']}",
             json={"provider": "antigravity"},
         )
-        assert moved.status_code == 400, moved.text
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["provider"] == "antigravity"
+        refused = client.patch(
+            f"/api/agent-chat/sessions/{made.json()['session_id']}",
+            json={"provider": "no-such-provider"},
+        )
+        assert refused.status_code == 400, refused.text
 
 
 def test_routes_catalog_sessions_and_websocket_snapshot(tmp_path: Path, scripted):

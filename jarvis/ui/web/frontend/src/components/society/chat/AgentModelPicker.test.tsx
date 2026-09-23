@@ -213,18 +213,18 @@ test("clicking a model persists immediately, preserves the account and updates t
   mount(); await open();
   fireEvent.click(screen.getByTitle("openai-small"));
   await waitFor(() => expect(screen.getByRole("button", { name: "Model" }).textContent).toContain("openai-small"));
-  expect(posts).toEqual([{ provider: "openai", model: "openai-small", effort: "low", account_id: "saved-seat" }]);
+  expect(posts).toEqual([{ provider: "openai", model: "openai-small", effort: "", account_id: "saved-seat" }]);
   expect(row.description).toBe("Keep my instructions");
   expect(saving.mock.calls.map((call) => call[0])).toEqual([true, false]);
   await open();
   expect(screen.getByTitle("openai-small").getAttribute("aria-checked")).toBe("true");
 });
 
-test("changing provider resets the subscription account and uses a supported effort", async () => {
+test("changing provider resets the subscription account and leaves effort automatic", async () => {
   mount(); await open();
   fireEvent.click(screen.getByTitle("gemini-small"));
   await waitFor(() => expect(posts).toHaveLength(1));
-  expect(posts[0]).toEqual({ provider: "gemini", model: "gemini-small", effort: "low", account_id: "" });
+  expect(posts[0]).toEqual({ provider: "gemini", model: "gemini-small", effort: "", account_id: "" });
 });
 
 test("a failed save keeps the current model and permits retry", async () => {
@@ -253,11 +253,11 @@ test("search filters by model and provider, and Escape closes without saving", a
   expect(posts).toEqual([]);
 });
 
-test("the effort submenu commits the model and chosen effort together", async () => {
+test("the model menu has no manual effort control", async () => {
   mount(); await open();
-  fireEvent.click(within(screen.getByRole("group", { name: "gemini · API key" })).getByRole("button", { name: "Thinking effort: Large" }));
-  fireEvent.click(within(screen.getByRole("menu", { name: "Thinking effort" })).getByRole("menuitemradio", { name: "Medium" }));
-  await waitFor(() => expect(posts[0]).toEqual({ provider: "gemini", model: "gemini-large", effort: "medium", account_id: "" }));
+  expect(screen.queryByRole("button", { name: /Thinking effort/ })).toBeNull();
+  fireEvent.click(screen.getByTitle("gemini-large"));
+  await waitFor(() => expect(posts[0]).toEqual({ provider: "gemini", model: "gemini-large", effort: "", account_id: "" }));
 });
 
 test("OpenCode models are offered without a duplicate app-managed login", async () => {
@@ -365,7 +365,7 @@ test("hidden OpenCode models remain selectable through search and a reopened men
   expect(screen.queryByTitle("opencode-large")).toBeNull();
   fireEvent.change(reopened, { target: { value: "opencode large" } });
   fireEvent.click(screen.getByTitle("opencode-large"));
-  await waitFor(() => expect(posts[0]).toEqual({ provider: "opencode", model: "opencode-large", effort: "high", account_id: "" }));
+  await waitFor(() => expect(posts[0]).toEqual({ provider: "opencode", model: "opencode-large", effort: "", account_id: "" }));
 });
 
 test.each([

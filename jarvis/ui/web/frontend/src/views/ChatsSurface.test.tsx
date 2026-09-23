@@ -38,7 +38,7 @@ describe("ChatsSurface (the front page)", () => {
     expect(screen.getByTestId("home-view").getAttribute("data-surface")).toBe("voice");
   });
 
-  it("switches to the chat stage from the sidebar switch and remembers it", () => {
+  it("switches to the chat stage from the sidebar switch and remembers it", async () => {
     render(
       <>
         <SurfaceSwitch />
@@ -48,17 +48,17 @@ describe("ChatsSurface (the front page)", () => {
 
     fireEvent.click(screen.getByTestId("home-surface-chat"));
 
-    expect(screen.getByTestId("chat")).toBeTruthy();
+    expect(await screen.findByTestId("chat")).toBeTruthy();
     expect(screen.queryByTestId("voice")).toBeNull();
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe("chat");
     expect(screen.getByTestId("home-surface-chat").getAttribute("aria-selected")).toBe("true");
   });
 
-  it("opens on the chat stage when that is the stored choice", () => {
+  it("opens on the chat stage when that is the stored choice", async () => {
     window.localStorage.setItem(STORAGE_KEY, "chat");
     useHomeStore.setState({ surface: readHomeSurface() });
     render(<ChatsSurface />);
-    expect(screen.getByTestId("chat")).toBeTruthy();
+    expect(await screen.findByTestId("chat")).toBeTruthy();
   });
 
   it("switches back to voice", () => {

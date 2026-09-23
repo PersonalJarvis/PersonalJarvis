@@ -51,15 +51,15 @@ _CEILING_TO_MODE: Final[dict[str, str]] = {
 
 
 def pair_for(cfg: Any, agent: AgentRecord) -> tuple[str, str, str]:
-    """``(provider, model, effort)`` the agent's chat runs on."""
+    """Return the agent's provider and model with automatic effort."""
     if agent.provider:
-        return agent.provider, agent.model, agent.effort
+        return agent.provider, agent.model, ""
     from jarvis.local_models.assistant_session import agents_tier
 
     tier = agents_tier(cfg)
     if not tier.ready:
         raise PermissionError(tier.reason or "no provider can run the agent chat")
-    return tier.provider, tier.model, agent.effort
+    return tier.provider, tier.model, ""
 
 
 def _workspace(cfg: Any, agent: AgentRecord) -> str:
@@ -78,11 +78,10 @@ def _workspace(cfg: Any, agent: AgentRecord) -> str:
 
 def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
     """The agent's canonical session, created or re-seated to the roster row."""
-    from jarvis.agent_chat.effort import default_effort
     from jarvis.agent_chat.permissions import ladder_key, normalize_permission
     from jarvis.agent_chat.service import resolve_runner
 
-    provider, model, effort = pair_for(cfg, agent)
+    provider, model, _ = pair_for(cfg, agent)
     session_id = agent.session_id
     existing = svc.store.get_session(session_id)
     if existing is None:
@@ -91,7 +90,7 @@ def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
         return svc.store.create_session(
             provider=provider,
             model=model,
-            effort=effort or default_effort(provider),
+            effort="",
             cwd=_workspace(cfg, agent),
             permission_mode=mode,
             title=agent.name,
@@ -105,8 +104,8 @@ def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
     updates: dict[str, str] = {}
     if getattr(existing, "account_id", "") != agent.account_id:
         updates["account_id"] = agent.account_id
-    if effort and existing.effort != effort:
-        updates["effort"] = effort
+    if existing.effort:
+        updates["effort"] = ""
     if updates:
         svc.store.update_session(session_id, **updates)
         existing = svc.store.get_session(session_id)
@@ -179,7 +178,13 @@ def make_deliver_hook(
             message_id=env.event_id,
             sender_id=env.from_agent,
             sender_name=sender,
-            sender_kind=("jarvis" if env.from_agent == LEAD_AGENT_ID else "user" if env.from_agent == "user" else "agent"),
+            sender_kind=(
+                "jarvis"
+                if env.from_agent == LEAD_AGENT_ID
+                else "user"
+                if env.from_agent == "user"
+                else "agent"
+            ),
             text=env.text,
             prompt=frame_incoming(env, sender),
             trace_id=env.trace_id,

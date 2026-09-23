@@ -679,6 +679,7 @@ class LocalPreviewTranscriber:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
+            # Synchronous callers have no event loop; use the existing loader thread.
             threading.Thread(
                 target=self._load_model, name="dictation-preview-load", daemon=True
             ).start()
@@ -737,6 +738,7 @@ class LocalPreviewTranscriber:
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
+                # Without an event loop, close the native resource synchronously.
                 close()
             else:
 

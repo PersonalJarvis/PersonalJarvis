@@ -127,7 +127,7 @@ describe("chat composer attachments", () => {
 
   it("takes a pasted image and shows what was read from it", async () => {
     composer();
-    const box = document.querySelector("textarea[data-jarvis-chat-input]") as HTMLTextAreaElement;
+    const box = document.querySelector('[role="textbox"][data-jarvis-chat-input]') as HTMLElement;
     const png = new File([new Uint8Array([1, 2, 3])], "image.png", { type: "image/png" });
 
     await act(async () => {
@@ -148,7 +148,7 @@ describe("chat composer attachments", () => {
 
   it("leaves a pasted TEXT alone so ordinary copy-paste keeps working", async () => {
     composer();
-    const box = document.querySelector("textarea[data-jarvis-chat-input]") as HTMLTextAreaElement;
+    const box = document.querySelector('[role="textbox"][data-jarvis-chat-input]') as HTMLElement;
 
     const event = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(event, "clipboardData", { value: transfer([]) });
@@ -181,7 +181,7 @@ describe("chat composer attachments", () => {
     const send = vi.fn(async () => {});
     seed({ send });
     composer();
-    const box = document.querySelector("textarea[data-jarvis-chat-input]") as HTMLTextAreaElement;
+    const box = document.querySelector('[role="textbox"][data-jarvis-chat-input]') as HTMLElement;
     const png = new File([new Uint8Array([1])], "image.png", { type: "image/png" });
 
     await act(async () => {
@@ -189,7 +189,8 @@ describe("chat composer attachments", () => {
     });
     await waitFor(() => expect(screen.getByTestId("chat-attachment-shot.png")).toBeDefined());
 
-    fireEvent.change(box, { target: { value: "what is wrong here" } });
+    box.textContent = "what is wrong here";
+    fireEvent.input(box);
     await act(async () => {
       fireEvent.click(screen.getByTestId("composer-send"));
     });
@@ -203,7 +204,7 @@ describe("chat composer attachments", () => {
     const send = vi.fn(async () => {});
     seed({ send });
     composer();
-    const box = document.querySelector("textarea[data-jarvis-chat-input]") as HTMLTextAreaElement;
+    const box = document.querySelector('[role="textbox"][data-jarvis-chat-input]') as HTMLElement;
     const png = new File([new Uint8Array([1])], "image.png", { type: "image/png" });
 
     await act(async () => {

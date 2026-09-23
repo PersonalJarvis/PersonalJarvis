@@ -472,7 +472,8 @@ async def run_brain_turn(
         kit_tools=kit_tools,
         system_extra=system_extra,
     )
-    _note_skill_trigger(brain, text)
+    if session.surface != "society":
+        _note_skill_trigger(brain, text)
 
     if bridge is not None:
         bridge.arm(

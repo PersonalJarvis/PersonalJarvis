@@ -327,6 +327,7 @@ class SocietyScheduler:
         try:
             await self._deliver(target, env)
         except DeliveryBusy:
+            # Keep the delivery pending so the existing recovery loop can retry it.
             return False
         except Exception as exc:  # noqa: BLE001 — persist the failure and report it
             await self._store.mark_delivery(env.event_id, "failed", str(exc))

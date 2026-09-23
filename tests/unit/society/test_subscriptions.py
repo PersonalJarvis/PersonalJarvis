@@ -119,7 +119,7 @@ class FakeService:
         return False
 
 
-async def test_ensure_session_follows_account_and_effort(tmp_path: Path):
+async def test_ensure_session_follows_account_and_uses_automatic_effort(tmp_path: Path):
     rt = SocietyRuntime(tmp_path, seed_starter_team=False)
     await rt.ensure_started()
     svc = FakeService(AgentChatStore(tmp_path / "chat.db"))
@@ -129,7 +129,7 @@ async def test_ensure_session_follows_account_and_effort(tmp_path: Path):
             name="Scout", provider="openai", model="gpt-5", account_id="", effort="high"
         )
         first = ensure_session(svc, cfg, scout)
-        assert first.account_id == "" and first.effort == "high"
+        assert first.account_id == "" and first.effort == ""
         moved = await rt.roster.update(
             "scout", {"provider": "claude-api", "model": "claude-opus-5", "account_id": "seat-2"}
         )
@@ -171,7 +171,13 @@ def test_providers_and_model_switch_over_rest(client, monkeypatch):
         assert by_id["openai-codex"]["platform"] == "codex"
         assert isinstance(by_id["openai-codex"]["accounts"], list)
 
-    c.post("/api/society/agents", json={"name": "Scout", "provider": "openai", "model": "gpt-5"})
+    created = c.post(
+        "/api/society/agents",
+        json={"name": "Scout", "provider": "openai", "model": "gpt-5", "effort": "high"},
+    )
+    assert created.json()["agent"]["effort"] == ""
+    patched = c.patch("/api/society/agents/scout", json={"effort": "low"})
+    assert patched.json()["agent"]["effort"] == ""
     res = c.post(
         "/api/society/agents/scout/model",
         json={"provider": "gemini", "model": "gemini-3-pro", "effort": "medium", "account_id": ""},
@@ -183,6 +189,7 @@ def test_providers_and_model_switch_over_rest(client, monkeypatch):
     assert body["reseated"] == "society:scout"
     session = svc.store.get_session("society:scout")
     assert session.provider == "gemini" and session.model == "gemini-3-pro"
+    assert session.effort == ""
     bad = c.post("/api/society/agents/scout/model", json={"provider": "no-such-provider"})
     assert bad.status_code == 422
     listed = c.get("/api/society/agents/scout").json()["agent"]

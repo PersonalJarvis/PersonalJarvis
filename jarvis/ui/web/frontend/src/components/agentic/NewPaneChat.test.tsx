@@ -9,7 +9,7 @@
  * choosable while nothing is running, because they go on the CLI's command
  * line when it starts.
  */
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { NewPaneChat } from "@/components/agentic/NewPaneChat";
@@ -110,11 +110,11 @@ describe("the Agentic IDE's new chat", () => {
 
   it("starts the pane on the picks when the first message is sent", async () => {
     const { onOpen } = draw();
-    fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "read the router and tell me what it does" },
-    });
+    const box = screen.getByRole("textbox");
+    box.textContent = "read the router and tell me what it does";
+    fireEvent.input(box);
     fireEvent.click(screen.getByTestId("composer-send"));
-    expect(onOpen).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onOpen).toHaveBeenCalledTimes(1));
     expect(onOpen.mock.calls[0][0]).toMatchObject({
       agent: "claude",
       effort: "high",

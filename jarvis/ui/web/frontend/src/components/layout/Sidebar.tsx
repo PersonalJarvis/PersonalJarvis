@@ -24,14 +24,14 @@ import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { clsx } from "clsx";
 import { cn } from "@/lib/utils";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import { RecentChats } from "@/components/home/RecentChats";
 import { useConversations } from "@/hooks/useConversations";
 import { useHomeStore } from "@/store/home";
 import { useAgentChatStore } from "@/store/agentChat";
 import { useIdeChatStore } from "@/store/ideChat";
-import { WorkspaceChats } from "@/components/agentic/WorkspaceChats";
+const WorkspaceChats = lazy(() => import("@/components/agentic/WorkspaceChats").then((module) => ({ default: module.WorkspaceChats })));
 import { useAppInstance } from "@/hooks/useAppInstance";
 import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
 import { GigiMark } from "@/components/GigiMark";
@@ -536,7 +536,7 @@ export function Sidebar({
           {moreOpen && <ul id="sidebar-more" className="space-y-1">{moreItems.map((item) => renderRow(item))}</ul>}
         </nav>
         {!railed && <section className="mt-4 px-2 pb-3" aria-label={t("sidebar.recent_chats")}>
-          {chatFace ? <WorkspaceChats /> : <RecentChats />}
+          {chatFace ? <Suspense fallback={<div aria-busy="true" />}><WorkspaceChats /></Suspense> : <RecentChats />}
         </section>}
       </div>
 

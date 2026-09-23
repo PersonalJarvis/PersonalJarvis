@@ -169,7 +169,7 @@ def _spawn(worker: Any, tmp_path: Path):  # noqa: ANN202
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("_name,worker_factory", _WORKERS, ids=lambda value: str(value))
+@pytest.mark.parametrize("_name,worker_factory", _WORKERS, ids=[name for name, _factory in _WORKERS])
 async def test_binding_closes_once_after_normal_completion(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -195,7 +195,7 @@ async def test_binding_closes_once_after_normal_completion(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("_name,worker_factory", _WORKERS, ids=lambda value: str(value))
+@pytest.mark.parametrize("_name,worker_factory", _WORKERS, ids=[name for name, _factory in _WORKERS])
 async def test_binding_closes_once_after_empty_early_return(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -215,7 +215,7 @@ async def test_binding_closes_once_after_empty_early_return(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("_name,worker_factory", _WORKERS, ids=lambda value: str(value))
+@pytest.mark.parametrize("_name,worker_factory", _WORKERS, ids=[name for name, _factory in _WORKERS])
 async def test_binding_closes_once_after_worker_exception(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -237,7 +237,7 @@ async def test_binding_closes_once_after_worker_exception(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("_name,worker_factory", _WORKERS, ids=lambda value: str(value))
+@pytest.mark.parametrize("_name,worker_factory", _WORKERS, ids=[name for name, _factory in _WORKERS])
 async def test_binding_closes_once_when_consumer_closes_generator(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -260,7 +260,7 @@ async def test_binding_closes_once_when_consumer_closes_generator(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("_name,worker_factory", _WORKERS, ids=lambda value: str(value))
+@pytest.mark.parametrize("_name,worker_factory", _WORKERS, ids=[name for name, _factory in _WORKERS])
 async def test_binding_closes_once_when_active_read_is_cancelled(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -45,6 +45,7 @@ def verify_google_token(token: str, audience: str, service_account: str) -> bool
         claims = verify_oauth2_token(token, _google_request, audience=audience)
         return claims.get("email") == service_account and claims.get("email_verified") is True
     except (ValueError, TypeError):
+        # Invalid identity claims fail authentication without logging credential material.
         return False
 
 
@@ -90,6 +91,7 @@ def verify_provider(
         else:
             return False
     except (ValueError, TypeError, AttributeError):
+        # Malformed signature input is rejected, never treated as authenticated.
         return False
     expected = hmac.new(key.encode("utf-8"), signed, hashlib.sha256).hexdigest()
     return any(

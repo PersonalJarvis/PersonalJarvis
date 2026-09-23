@@ -2,21 +2,20 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSP
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, ChevronRight, Loader2, RefreshCw, Search, Users } from "lucide-react";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
-import { effortLabel } from "@/components/agentchat/AgentComposer";
 import { useAgentChat } from "@/components/agentchat/AgentChatStoreContext";
 import { useT } from "@/i18n";
 import type { CuratedModel } from "@/lib/agentChatApi";
 import { cn } from "@/lib/utils";
-import { effortsFor, type BrainSeat } from "../create/brainPicker";
+import { type BrainSeat } from "../create/brainPicker";
 import { useUpdateAgentModel, type SocietyAgent } from "../data";
-import { collapsibleModels, matchesModel, modelEffort, modelGroupOrder, modelSeats, providerTitle, visibleModels } from "./modelChoices";
+import { collapsibleModels, matchesModel, modelGroupOrder, modelSeats, providerTitle, visibleModels } from "./modelChoices";
 
 import { useModelMenuData } from "./useModelMenuData";
 
-type Submenu = { provider: string; model?: CuratedModel; anchor: DOMRect };
+type Submenu = { provider: string; anchor: DOMRect };
 const menuRow = "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-popover-foreground hover:bg-secondary focus-visible:bg-secondary focus-visible:outline-none disabled:opacity-45";
 
-/** A searchable provider catalog, with account and effort submenus. */
+/** A searchable provider catalog with account selection. */
 export function AgentModelPicker({ agent, busy, onSavingChange }: {
   agent: SocietyAgent; busy: boolean; onSavingChange: (saving: boolean) => void;
 }) {
@@ -48,7 +47,6 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
   const defaultModelLabel = t("agent_chat.model_default");
   const seats = useMemo(() => modelSeats(options, providers ?? [], live, defaultModelLabel), [options, providers, live, defaultModelLabel]);
   const currentAccount = (seat: BrainSeat) => accounts[seat.provider.id] ?? (agent.provider === seat.provider.id ? agent.accountId ?? "" : "");
-  const preferredEffort = (seat: BrainSeat, model: CuratedModel) => modelEffort(seat, model.id, seat.provider.id === agent.provider ? agent.effort : seat.provider.default_effort);
   // useT returns a new function each render; memoize by its actual labels.
   const titleKey = JSON.stringify(seats.map((seat) => providerTitle(seat, t)));
   const groups = useMemo(() => {
@@ -135,11 +133,11 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
     return () => document.removeEventListener("pointerdown", outside);
   }, [open]);
 
-  async function save(seat: BrainSeat, model: CuratedModel, effort = preferredEffort(seat, model)) {
+  async function save(seat: BrainSeat, model: CuratedModel) {
     if (busy || inFlight.current) return;
     inFlight.current = true; setSaving(true); onSavingChange(true); setError(null);
     try {
-      await update(agent.agentId, { provider: seat.provider.id, model: model.id, effort, account_id: currentAccount(seat) });
+      await update(agent.agentId, { provider: seat.provider.id, model: model.id, effort: "", account_id: currentAccount(seat) });
       setOpen(false); setSubmenu(null); trigger.current?.focus();
     } catch (err) {
       setError(`${t("society.chat.model_save_failed")} (${err instanceof Error ? err.message : String(err)})`);
@@ -182,7 +180,6 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
       className="flex max-w-full items-center gap-1.5 rounded-full px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
       {agent.provider ? <ProviderLogo providerId={agent.provider} label={agent.providerLabel} size="sm" /> : null}
       <span className="truncate">{agent.model || agent.providerLabel || t("society.chat.model_default")}</span>
-      {agent.effort ? <span className="shrink-0 opacity-70">{effortLabel(agent.effort, t)}</span> : null}
       <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />
     </button>
     {host && (open || !loading) ? createPortal(<>
@@ -215,7 +212,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
                 <span className="truncate">{title}</span><span className="ml-auto">{models.length}</span>
               </button> : <span className="min-w-0 flex-1 truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground" title={title}>{title}</span>}
               {seat.accounts.length ? <button type="button" disabled={busy || saving} data-menu-choice
-                aria-label={`${t("society.chat.model_account")}: ${title}`} aria-haspopup="menu" aria-expanded={submenu?.provider === seat.provider.id && !submenu.model}
+                aria-label={`${t("society.chat.model_account")}: ${title}`} aria-haspopup="menu" aria-expanded={submenu?.provider === seat.provider.id}
                 onClick={(event) => setSubmenu({ provider: seat.provider.id, anchor: event.currentTarget.getBoundingClientRect() })}
                 className="flex max-w-[140px] items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
                 <Users className="h-3 w-3 shrink-0" aria-hidden /><span className="truncate">{seat.accounts.find((account) => account.id === currentAccount(seat))?.label ?? t("society.chat.model_active_account")}</span><ChevronDown className="h-2.5 w-2.5 shrink-0" aria-hidden />
@@ -223,24 +220,12 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
             </div>
             <div id={choicesId}>{shown.map((model) => {
               const selected = agent.provider === seat.provider.id && agent.model === model.id && (agent.accountId ?? "") === currentAccount(seat);
-              const effort = preferredEffort(seat, model);
               return <div key={model.id} className={cn("group flex items-center", selected && "bg-secondary/70")}>
                 <button type="button" role="menuitemradio" aria-checked={selected} disabled={busy || saving} data-menu-choice
-                  onKeyDown={(event) => {
-                    if (event.key === "ArrowRight" && effortsFor(seat, model.id).length) {
-                      event.preventDefault(); event.stopPropagation();
-                      setSubmenu({ provider: seat.provider.id, model, anchor: event.currentTarget.getBoundingClientRect() });
-                    }
-                  }}
                   onClick={() => void save(seat, model)} className={cn(menuRow, "min-w-0 flex-1")} title={model.id}>
-                  <span className="min-w-0 truncate">{model.label || model.id}<span className="ml-1 text-muted-foreground">{effort ? effortLabel(effort, t) : ""}</span></span>
+                  <span className="min-w-0 truncate">{model.label || model.id}</span>
                   {selected ? <Check className="ml-auto h-3.5 w-3.5 shrink-0" aria-hidden /> : null}
                 </button>
-                {effortsFor(seat, model.id).length ? <button type="button" disabled={busy || saving} aria-label={`${t("society.chat.effort")}: ${model.label}`} aria-haspopup="menu"
-                  onClick={(event) => setSubmenu({ provider: seat.provider.id, model, anchor: event.currentTarget.getBoundingClientRect() })}
-                  className="mr-1 rounded p-1.5 text-muted-foreground opacity-60 hover:bg-secondary hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-                  <ChevronRight className="h-3 w-3" aria-hidden />
-                </button> : null}
               </div>;
             })}</div>
             {foldable && !isRouter && (isExpanded || shown.length < models.length) ? <button type="button" data-menu-choice
@@ -259,14 +244,10 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
           </button>
         </div>
       </div>
-      {open && submenu && sideSeat ? <div ref={sidePanel} style={sideStyle} role="menu" aria-label={t(submenu.model ? "society.chat.effort" : "society.chat.model_account")}
+      {open && submenu && sideSeat ? <div ref={sidePanel} style={sideStyle} role="menu" aria-label={t("society.chat.model_account")}
         className="z-[81] overflow-y-auto rounded-md border border-border bg-popover py-1 shadow-float" onKeyDown={(event) => moveFocus(event, sidePanel.current)}>
-        <p className="px-3 py-2 text-[11px] font-semibold uppercase text-muted-foreground">{submenu.model ? t("society.chat.effort") : t("society.chat.model_account")}</p>
-        {submenu.model ? effortsFor(sideSeat, submenu.model.id).map((effort) => <button key={effort} type="button" role="menuitemradio" data-menu-choice
-          aria-checked={effort === preferredEffort(sideSeat, submenu.model!)} disabled={busy || saving}
-          onClick={() => void save(sideSeat, submenu.model!, effort)} className={menuRow}>
-          {effortLabel(effort, t)}{effort === preferredEffort(sideSeat, submenu.model!) ? <Check className="ml-auto h-3.5 w-3.5" aria-hidden /> : null}
-        </button>) : [{ id: "", label: t("society.chat.model_active_account") }, ...sideSeat.accounts].map((account) => <button key={account.id} type="button" role="menuitemradio" data-menu-choice
+        <p className="px-3 py-2 text-[11px] font-semibold uppercase text-muted-foreground">{t("society.chat.model_account")}</p>
+        {[{ id: "", label: t("society.chat.model_active_account") }, ...sideSeat.accounts].map((account) => <button key={account.id} type="button" role="menuitemradio" data-menu-choice
           aria-checked={account.id === currentAccount(sideSeat)} disabled={busy || saving}
           onClick={() => { setAccounts((previous) => ({ ...previous, [sideSeat.provider.id]: account.id })); setSubmenu(null); input.current?.focus(); }} className={menuRow}>
           <span className="truncate">{account.label}</span>{account.id === currentAccount(sideSeat) ? <Check className="ml-auto h-3.5 w-3.5" aria-hidden /> : null}

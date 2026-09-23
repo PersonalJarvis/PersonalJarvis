@@ -169,7 +169,9 @@ async def list_agents(request: Request, include_archived: bool = False) -> dict[
 @router.post("/agents")
 async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any]:
     rt = await _runtime(request)
-    fields = body.model_dump(exclude_none=True, exclude={"name", "title", "description", "tier"})
+    fields = body.model_dump(
+        exclude_none=True, exclude={"name", "title", "description", "tier", "effort"}
+    )
     derived_focus, derived_rules = rt.derive(body.title, body.description)
     if body.focus is None and derived_focus:
         fields["focus"] = derived_focus
@@ -208,7 +210,7 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
     agent = await rt.roster.resolve(agent_id)
     if agent is None:
         raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
-    fields = body.model_dump(exclude_none=True)
+    fields = body.model_dump(exclude_none=True, exclude={"effort"})
     if ("title" in fields or "description" in fields) and "focus" not in fields:
         # A prose edit must not wipe what the agent earned in its chat: the
         # derived focus is APPENDED to the existing order (existing first,
@@ -543,7 +545,7 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
     fields = {
         "provider": body.provider.strip().lower(),
         "model": body.model.strip(),
-        "effort": body.effort.strip(),
+        "effort": "",
         "account_id": body.account_id.strip(),
     }
     chat = rt._get_chat()

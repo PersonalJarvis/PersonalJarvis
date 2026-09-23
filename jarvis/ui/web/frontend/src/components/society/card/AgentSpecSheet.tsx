@@ -379,7 +379,6 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
                   <span className="font-medium">{t("society.card.default_brain")}</span>
                 )}
                 {agent.model ? <span className="ac-prose font-mono text-xs">{agent.model}</span> : null}
-                {agent.effort ? <span className="text-xs text-muted-foreground">{agent.effort}</span> : null}
               </div>
             )}
           </section>

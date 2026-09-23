@@ -334,7 +334,10 @@ describe("AutomationsView", () => {
         locale: string;
       };
       expect(body.inputs).toEqual({ city: "Hamburg" });
-      expect(body.schedule).toEqual({ kind: "daily", time: "07:30", weekday: 0 });
+      expect(body.schedule).toEqual({
+        kind: "daily", time: "07:30", weekday: 0,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
       expect(body.title).toBe("Morning briefing");
       expect(body.locale).toBe("en");
     });
