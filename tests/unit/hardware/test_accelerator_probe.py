@@ -186,7 +186,21 @@ def test_a_metal_budget_beats_the_ram_guess_on_a_mac(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(detection.sys, "platform", "darwin")
     monkeypatch.setattr(detection.platform, "machine", lambda: "arm64")
     monkeypatch.setattr(detection, "_detect_ram", lambda: (32768, 16384))
-    assert detection.usable_accelerator_gb() == (21.3, "ollama-runtime")
+    assert detection.usable_accelerator_gb() == (21.3, "apple-unified")
+
+
+def test_a_mac_with_an_ollama_budget_remains_eligible_for_local_voice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Starting Ollama must not turn supported Metal hardware into an unknown GPU."""
+    from jarvis.realtime.local_server import preflight
+
+    _no_nvidia(monkeypatch)
+    monkeypatch.setattr(detection, "_ollama_reported_gb", lambda: 21.3)
+    monkeypatch.setattr(detection.sys, "platform", "darwin")
+    monkeypatch.setattr(detection.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(detection, "_detect_ram", lambda: (32768, 16384))
+    assert preflight._usable_accelerator_gb() == (21.3, "apple-unified")
 
 
 def test_a_box_with_nothing_readable_says_so_and_does_not_guess(
