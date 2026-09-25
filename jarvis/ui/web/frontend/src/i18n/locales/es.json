@@ -5363,7 +5363,9 @@
       "delete_confirm": "¿Eliminar a {0}? El agente dejará de aparecer en el equipo activo.",
       "delete_error": "No se pudo eliminar al agente. Inténtalo de nuevo.",
       "cancel": "Cancelar",
-      "save": "Guardar"
+      "save": "Guardar",
+      "reorder": "Arrastra para reordenar",
+      "reorder_keys": "Alt + flecha arriba / abajo mueve el agente"
     },
     "tier": {
       "lead": "Líder",

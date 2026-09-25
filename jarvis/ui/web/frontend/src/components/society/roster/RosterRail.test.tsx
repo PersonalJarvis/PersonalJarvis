@@ -169,3 +169,71 @@ describe("RosterRail agent actions", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/society/agents/a", { method: "DELETE" }));
   });
 });
+
+describe("RosterRail reorder", () => {
+  const ORDER_KEY = "society.roster.order";
+  const renderRail = (agents: SocietyAgent[]) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(<QueryClientProvider client={client}>
+      <RosterRail {...baseProps} agents={agents} activeAgentId={null} />
+    </QueryClientProvider>);
+  };
+
+  const trio = () => [
+    agent({ agentId: "a", name: "A" }),
+    agent({ agentId: "b", name: "B" }),
+    agent({ agentId: "c", name: "C" }),
+  ];
+
+  const rowOrder = () =>
+    [...document.querySelectorAll("div[data-agent-id]")].map((el) =>
+      el.getAttribute("data-agent-id"),
+    );
+
+  const rowOf = (name: string): HTMLElement => {
+    const row = screen.getByText(name).closest("div[data-agent-id]");
+    if (!(row instanceof HTMLElement)) throw new Error(`no row for ${name}`);
+    return row;
+  };
+
+  const dragData = () => ({ setData: vi.fn(), getData: vi.fn().mockReturnValue(""), effectAllowed: "", dropEffect: "" });
+
+  it("files a dragged row before the drop target and persists the order", () => {
+    renderRail(trio());
+    expect(rowOrder()).toEqual(["a", "b", "c"]);
+    fireEvent.dragStart(rowOf("A"), { dataTransfer: dragData() });
+    fireEvent.dragOver(rowOf("C"), { dataTransfer: dragData() });
+    fireEvent.drop(rowOf("C"), { dataTransfer: dragData() });
+    expect(rowOrder()).toEqual(["b", "a", "c"]);
+    expect(JSON.parse(localStorage.getItem(ORDER_KEY) ?? "[]")).toEqual(["b", "a", "c"]);
+  });
+
+  it("restores the persisted order on mount", () => {
+    localStorage.setItem(ORDER_KEY, JSON.stringify(["c", "a", "b"]));
+    renderRail(trio());
+    expect(rowOrder()).toEqual(["c", "a", "b"]);
+  });
+
+  it("moves a row with Alt + Arrow keys", () => {
+    renderRail(trio());
+    fireEvent.keyDown(rowOf("A"), { key: "ArrowDown", altKey: true });
+    expect(rowOrder()).toEqual(["b", "a", "c"]);
+    expect(JSON.parse(localStorage.getItem(ORDER_KEY) ?? "[]")).toEqual(["b", "a", "c"]);
+    fireEvent.keyDown(rowOf("A"), { key: "ArrowUp", altKey: true });
+    expect(rowOrder()).toEqual(["a", "b", "c"]);
+  });
+
+  it("ignores plain arrow keys without Alt", () => {
+    renderRail(trio());
+    fireEvent.keyDown(rowOf("A"), { key: "ArrowDown" });
+    expect(rowOrder()).toEqual(["a", "b", "c"]);
+    expect(localStorage.getItem(ORDER_KEY)).toBeNull();
+  });
+
+  it("locks rows while searching so the excerpt cannot file the order", () => {
+    renderRail(trio());
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "a" } });
+    expect(rowOf("A").getAttribute("draggable")).toBe("false");
+    expect(localStorage.getItem(ORDER_KEY)).toBeNull();
+  });
+});

@@ -5363,7 +5363,9 @@
       "delete_confirm": "{0} löschen? Der Agent wird aus deinem aktiven Team entfernt.",
       "delete_error": "Der Agent konnte nicht gelöscht werden. Versuche es erneut.",
       "cancel": "Abbrechen",
-      "save": "Speichern"
+      "save": "Speichern",
+      "reorder": "Zum Umordnen ziehen",
+      "reorder_keys": "Alt + Pfeil hoch / runter verschiebt den Agenten"
     },
     "tier": {
       "lead": "Leitung",

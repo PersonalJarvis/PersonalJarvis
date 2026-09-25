@@ -5396,7 +5396,9 @@
       "delete_confirm": "Delete {0}? This removes the agent from your active team.",
       "delete_error": "Could not delete this agent. Try again.",
       "cancel": "Cancel",
-      "save": "Save"
+      "save": "Save",
+      "reorder": "Drag to reorder",
+      "reorder_keys": "Alt + Arrow Up / Down moves the agent"
     },
     "tier": {
       "lead": "Lead",
