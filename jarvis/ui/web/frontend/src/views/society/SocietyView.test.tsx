@@ -174,5 +174,3 @@ it("still leaves the ordinary map when browser fullscreen exits", async () => {
   fireEvent(document, new Event("fullscreenchange"));
   expect(screen.queryByTestId("map")).toBeNull();
 });
-
-

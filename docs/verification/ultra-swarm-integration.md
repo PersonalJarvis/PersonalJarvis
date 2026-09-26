@@ -3,7 +3,9 @@
 ## September 26 integration
 
 The candidate integrates main revision `57e472439`, including the current
-Society memory, browser, voice setup and ordinary-agent Mars runtime. Swarm
+Society memory, browser, voice setup and ordinary-agent Mars runtime. The later
+Linux bootstrap fix from `7fba5133a` is also integrated; its eight real Bash
+bootstrap tests passed in a minimal Linux Python container. Swarm
 execution and its goal/question/plan/launch flow remain separate from that world.
 This continuation is not final acceptance.
 
@@ -29,8 +31,9 @@ passed lint. These test selections overlap.
 
 Frontend integration retains rich-text input and collapsed tool details,
 current provider navigation, and themed selection controls. The rebuilt
-production bundle passed type checking and build. Complete Linux qualification
-and the final startup-budget measurement are still being collected.
+production bundle passed type checking and build. The 13 tests covering the final
+UI corrections passed in Linux. Complete Linux qualification and the final
+startup-budget measurement are still being collected.
 The first loaded startup sample passed window and interactive budgets but
 missed the 20-second voice budget by 185 ms; it is not counted as a pass.
 
@@ -39,6 +42,11 @@ module is missing. No new browser walkthrough or actual prompt-file selection
 is claimed, and no alternate browser mechanism bypasses the earlier denial.
 No model credential has been transferred to CI. Native one-key execution and
 the unrestricted ordinary-agent host-access interpretation remain open.
+
+The upstream installer CI now permits historical release age while still
+verifying signatures. A green historical-artifact job does not establish the
+default production wrapper's one-day freshness requirement. No production
+wrapper policy is relaxed by this integration.
 
 ## September 23 evidence
 
