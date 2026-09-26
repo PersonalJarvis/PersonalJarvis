@@ -341,4 +341,10 @@ describe("RosterRail press-drag", () => {
     expect(onOpen).toHaveBeenCalledWith("a");
     expect(localStorage.getItem(ORDER_KEY)).toBeNull();
   });
+
+  it("renders no grip handles; the whole row is the drag surface", () => {
+    const { container } = renderRail(trio());
+    expect(container.querySelector(".lucide-grip-vertical")).toBeNull();
+    expect(rowOf("A").className).toContain("cursor-grab");
+  });
 });

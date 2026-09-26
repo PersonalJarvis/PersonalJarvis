@@ -21,7 +21,7 @@
  * target row. HTML5 drag events and Alt + Arrow keys stay as fallbacks.
  */
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { Eye, GripVertical, Loader2, Plus, Search } from "lucide-react";
+import { Eye, Loader2, Plus, Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -552,9 +552,9 @@ export function RosterRail({
             const isDragging = dragId === agent.agentId;
             const isDropTarget = dropId === agent.agentId && dragId !== agent.agentId;
             return (
-            <li key={agent.agentId}>
+            <li key={agent.agentId} className="relative">
               {isDropTarget && !dropAfter ? (
-                <div aria-hidden className="mx-2 mb-0.5 h-0.5 rounded-full bg-sky-400" />
+                <div aria-hidden className="pointer-events-none absolute inset-x-2 top-0 z-10 h-0.5 -translate-y-1/2 rounded-full bg-sky-400" />
               ) : null}
               <div
                 data-agent-id={agent.agentId}
@@ -571,7 +571,7 @@ export function RosterRail({
                 title={reorderable ? `${t("society.roster.reorder")} · ${t("society.roster.reorder_keys")}` : undefined}
                 aria-keyshortcuts={reorderable ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
                 className={cn(
-                  "group flex w-full select-none items-center rounded-md px-2 text-left transition-colors hover:bg-secondary",
+                  "flex w-full select-none items-center rounded-md px-2 text-left transition-colors hover:bg-secondary",
                   reorderable ? "cursor-grab" : null,
                   isDragging ? "cursor-grabbing opacity-40" : null,
                   agent.agentId === activeAgentId && "bg-secondary",
@@ -579,12 +579,6 @@ export function RosterRail({
                   isDropTarget && "bg-secondary ring-1 ring-inset ring-border-strong",
                 )}
               >
-                <span
-                  aria-hidden
-                  className="-ml-1 shrink-0 cursor-grab text-muted-foreground opacity-40 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
-                >
-                  <GripVertical className="h-4 w-4" />
-                </span>
                 <button type="button" onClick={() => openProfile(agent.agentId)} aria-label={t("society.profile_card.open").replace("{0}", agent.name)} className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                   <AgentSwatch agent={agent} size={48} />
                 </button>
@@ -604,7 +598,7 @@ export function RosterRail({
                 </button>
               </div>
               {isDropTarget && dropAfter ? (
-                <div aria-hidden className="mx-2 mt-0.5 h-0.5 rounded-full bg-sky-400" />
+                <div aria-hidden className="pointer-events-none absolute inset-x-2 bottom-0 z-10 h-0.5 translate-y-1/2 rounded-full bg-sky-400" />
               ) : null}
             </li>
             );
