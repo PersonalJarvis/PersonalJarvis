@@ -1,6 +1,7 @@
 /** The model seat one routine runs on — pinned at creation, changeable here. */
 import { useT } from "@/i18n";
 import { useAgentChat } from "@/components/agentchat/AgentChatStoreContext";
+import { BrandedSelect } from "@/components/ui/select";
 import { effortsFor } from "../create/brainPicker";
 import { modelSeats, providerTitle } from "../chat/modelChoices";
 import { useModelMenuData } from "../chat/useModelMenuData";
@@ -62,32 +63,29 @@ export function RoutineSeatPicker({ seat, onChange, disabled }: {
       {!seat.provider ? (
         <p className="text-[12px] text-muted-foreground">{label("model_follows_agent")}</p>
       ) : null}
-      <label className={miniLabel}>
-        {label("provider")}
-        <select
+      <div className={miniLabel}>
+        <span>{label("provider")}</span>
+        <BrandedSelect
           className={field}
-          aria-label={label("provider")}
+          ariaLabel={label("provider")}
           disabled={disabled || loading}
           value={seat.provider}
-          onChange={(e) => {
-            const next = seats.find((s) => s.provider.id === e.target.value) ?? null;
+          onValueChange={(value) => {
+            const next = seats.find((s) => s.provider.id === value) ?? null;
             onChange({
-              provider: e.target.value,
+              provider: value,
               model: "",
               effort: next?.provider.default_effort ?? "",
               account_id: "",
             });
           }}
-        >
-          <option value="">{label("follow_agent")}</option>
-          {seats.map((s) => (
-            <option key={s.provider.id} value={s.provider.id}>
-              {`${providerTitle(s, t)} · ${kindSuffix(s.kind, t)}`}
-            </option>
-          ))}
-          {seat.provider && !active ? <option value={seat.provider}>{seat.provider}</option> : null}
-        </select>
-      </label>
+          options={[
+            { value: "", label: label("follow_agent") },
+            ...seats.map((s) => ({ value: s.provider.id, label: `${providerTitle(s, t)} · ${kindSuffix(s.kind, t)}` })),
+            ...(seat.provider && !active ? [{ value: seat.provider, label: seat.provider }] : []),
+          ]}
+        />
+      </div>
       {seat.provider ? (
         <label className={miniLabel}>
           {label("model_name")}
@@ -110,42 +108,30 @@ export function RoutineSeatPicker({ seat, onChange, disabled }: {
         </label>
       ) : null}
       {seat.provider && efforts.length > 0 ? (
-        <label className={miniLabel}>
-          {label("effort")}
-          <select
+        <div className={miniLabel}>
+          <span>{label("effort")}</span>
+          <BrandedSelect
             className={field}
-            aria-label={label("effort")}
+            ariaLabel={label("effort")}
             disabled={disabled}
             value={seat.effort}
-            onChange={(e) => onChange({ ...seat, effort: e.target.value })}
-          >
-            <option value="">{t("agent_chat.model_default")}</option>
-            {efforts.map((level) => (
-              <option key={level} value={level}>
-                {level}
-              </option>
-            ))}
-          </select>
-        </label>
+            onValueChange={(value) => onChange({ ...seat, effort: value })}
+            options={[{ value: "", label: t("agent_chat.model_default") }, ...efforts.map((level) => ({ value: level, label: level }))]}
+          />
+        </div>
       ) : null}
       {seat.provider && (active?.accounts.length ?? 0) > 0 ? (
-        <label className={miniLabel}>
-          {label("account")}
-          <select
+        <div className={miniLabel}>
+          <span>{label("account")}</span>
+          <BrandedSelect
             className={field}
-            aria-label={label("account")}
+            ariaLabel={label("account")}
             disabled={disabled}
             value={seat.account_id}
-            onChange={(e) => onChange({ ...seat, account_id: e.target.value })}
-          >
-            <option value="">{t("society.chat.model_active_account")}</option>
-            {(active?.accounts ?? []).map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.label}
-              </option>
-            ))}
-          </select>
-        </label>
+            onValueChange={(value) => onChange({ ...seat, account_id: value })}
+            options={[{ value: "", label: t("society.chat.model_active_account") }, ...(active?.accounts ?? []).map((a) => ({ value: a.id, label: a.label }))]}
+          />
+        </div>
       ) : null}
     </div>
   );

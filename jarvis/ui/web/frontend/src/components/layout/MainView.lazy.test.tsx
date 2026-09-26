@@ -94,6 +94,6 @@ describe("MainView lazy sections", () => {
     // right at the 5 s default on a loaded machine, which made the case fail for
     // being slow rather than for a missing export. What is under test is the
     // export, not the load time, so the budget is generous on purpose.
-    20_000,
+    60_000,
   );
 });
