@@ -138,19 +138,12 @@ def frame_incoming(env: SocietyEnvelope, sender_name: str) -> str:
 
 
 def frame_assignment(env: SocietyEnvelope) -> str:
-    """An ASSIGN as the receiving agent's chat turn — with the handoff ask."""
-    sender = env.from_agent if env.from_agent != "user" else "the user"
+    """Keep the original task as the turn text for the shared language resolver."""
     task = env.text or str(env.payload.get("task") or "")
-    lines = [f"[assignment from {sender}]", task.strip()]
+    lines = [task.strip()]
     refs = env.payload.get("refs")
     if isinstance(refs, list) and refs:
         lines.append("Refs: " + ", ".join(str(r) for r in refs))
-    lines.append(
-        "When you are done, end with a handoff: what is done, where the output is, "
-        "what evidence you used, what remains open, who should own the next step."
-    )
-    lines.append(f"Message id: {env.event_id}; sender id: {env.from_agent}")
-    lines.append(response_instruction(env))
     return "\n".join(lines)
 
 

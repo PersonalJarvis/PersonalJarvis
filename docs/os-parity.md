@@ -632,6 +632,25 @@ matrix, scheduler delivery, durable reply identity, terminal answers, semantic
 blockers and compatibility. Windows execution does not establish native macOS/Linux
 or a fresh single-key live-provider qualification; those require separate evidence.
 
+Society task outcomes distinguish a checked local file (`done` with a workspace
+file path in evidence), an agent response without independent completion proof
+(`reported`), and `partial` or `blocked` work that can be retried after the
+specific missing action. The agent's report is bound to its current assignment;
+reported file paths are resolved under that agent's workspace before they become
+clickable results. This is the same Python and React path on Windows, macOS, and
+Linux, with no native API or provider gate. The three German handoff scenarios
+are exercised by `tests/contract/test_society_communication.py` with a fake chat
+runner; live desktop and single-key provider qualification remain separate.
+The shared task router also accepts a provider-backed capability hint for any
+language or script. Its only output is an ordered subset of connected catalog
+IDs; Python still chooses the active owner and the scheduler enforces budget,
+concurrency and approval gates. The hint uses the configured capable Agents
+tier and a scoped provider instance, with a bounded fallback to lexical routing
+and a generalist or coordinator. No platform-specific import or native API is
+added. Unit tests use English, German, Spanish and Japanese task text and a
+fake provider on Windows; native macOS/Linux and fresh arbitrary-key runs are
+not established by those tests.
+
 The message tool, durable SQLite queue, task-local sender provenance, and chat
 receipts use the same Python/React implementation on Windows, macOS and Linux.
 There are no native imports, GPU requirements, or provider-name gates. The

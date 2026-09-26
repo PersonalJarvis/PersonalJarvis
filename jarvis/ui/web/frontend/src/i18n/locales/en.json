@@ -5264,6 +5264,8 @@
       "coding_use_folder": "Use folder",
       "coding_retry": "Could not load coding agents. Retry.",
       "result_done": "{0} is done",
+      "result_reported": "{0} reported back",
+      "result_partial": "{0} finished part of the work",
       "result_blocked": "{0} got stuck",
       "result_agent": "An agent",
       "delegate_line": "Hand this to the agent '{0}' (id {1}) with delegate-to-agent and report back here when it is done.",

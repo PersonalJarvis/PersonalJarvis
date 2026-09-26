@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -16,7 +17,8 @@ from jarvis.agent_chat.service import AgentChatService
 from jarvis.agent_chat.store import AgentChatStore
 from jarvis.plugins.tool.delegate_to_agent import DelegateToAgentTool
 from jarvis.plugins.tool.message_agent import LeadMessageAgentTool
-from jarvis.society.agent_tools import MessageAgentTool
+from jarvis.society.agent_tools import MessageAgentTool, ReportOutcomeTool
+from jarvis.society.capabilities import CapabilityKind, CapabilityRow
 from jarvis.society.chat_binding import frame_assignment, frame_incoming, make_deliver_hook
 from jarvis.society.communication import reply_policy
 from jarvis.society.delivery import IncomingMessage, incoming_context
@@ -288,9 +290,90 @@ async def test_assignment_reporting_preserves_result_and_releases_slot(
     results = [
         e for e in await rt.store.events_for_trace(request.trace_id) if e.msg_type is MsgType.RESULT
     ]
-    assert len(results) == 1 and results[0].payload["status"] == status
+    expected_status = "reported" if status == "done" else status
+    assert len(results) == 1 and results[0].payload["status"] == expected_status
     assert rt.scheduler.active_runs("scout") == 0
     assert len(chat.notices) == len(published) == expected
+
+
+async def test_three_plain_german_tasks_keep_honest_results(world):
+    rt, chat, _ = world
+    rt.catalog = lambda: [
+        CapabilityRow(
+            id="core:search-web",
+            kind=CapabilityKind.CORE,
+            tool_name="search-web",
+            label="Search the web",
+            one_liner="",
+            risk_tier="safe",
+            connected=True,
+            aliases=(),
+        )
+    ]
+    await rt.roster.update("scout", {"focus": ["core:search-web"]})
+
+    async def semantic_focus(_runtime, _task, _catalog):
+        return ["core:search-web"]
+
+    rt.quests._infer_focus = semantic_focus  # noqa: SLF001 - fake multilingual classifier
+
+    async def finish(quest, answer, report=None):
+        assert quest.agent_id == "scout" and quest.state.value == "running"
+        if report is not None:
+            token = incoming_context.set(chat.contexts[-1])
+            try:
+                result = await ReportOutcomeTool(rt, "scout").execute(report, ctx())
+                assert result.success, result.error
+            finally:
+                incoming_context.reset(token)
+        queue = chat.queues["society:scout"]
+        await queue.put({"kind": "assistant_text", "payload": {"text": answer}})
+        await queue.put({"kind": "turn_finished", "payload": {"status": "completed"}})
+        await asyncio.wait_for(asyncio.gather(*list(rt._watchers)), timeout=5)
+        fresh = await rt.quests.get(quest.quest_id)
+        assert fresh is not None
+        return fresh
+
+    ordinary_task = "Recherchiere die wichtigsten Neuigkeiten zur Batterie."  # i18n-allow
+    ordinary = await finish(
+        await rt.quests.create(ordinary_task),
+        "Ich habe drei Quellen zusammengefasst.",
+    )
+    assert ordinary.state.value == "done" and ordinary.result["status"] == "reported", (
+        ordinary.result
+    )
+    assert ordinary.result["evidence"] == []
+    assert ordinary.result["output"] == ["chat:society:scout"]
+
+    blocked = await finish(
+        await rt.quests.create("Recherchiere die Daten hinter meinem Login."),  # i18n-allow
+        "Für die private Seite brauche ich deine Anmeldung.",  # i18n-allow: agent response
+        {
+            "status": "blocked",
+            "summary": "Login required.",
+            "open": ["Sign in in the agent browser."],
+        },
+    )
+    assert blocked.state.value == "failed" and blocked.result["status"] == "blocked"
+    assert blocked.result["open"] == ["Sign in in the agent browser."]
+
+    workspace = Path(chat.store.get_session("society:scout").cwd)
+    artifact = workspace / "bericht.md"
+    artifact.write_text("# Verified report", encoding="utf-8")
+    file_task = "Recherchiere das Thema und schreibe einen Bericht als Datei."  # i18n-allow
+    produced = await finish(
+        await rt.quests.create(file_task),
+        "Der Bericht liegt als Datei bereit.",  # i18n-allow: agent response
+        {
+            "status": "done",
+            "summary": "Report created.",
+            "output": ["bericht.md"],
+            "evidence": ["I read the file after writing it."],
+        },
+    )
+    assert produced.state.value == "done" and produced.result["status"] == "done"
+    assert produced.result["output"] == ["chat:society:scout", str(artifact.resolve())]
+    assert produced.result["evidence"] == [str(artifact.resolve())]
 
 
 @pytest.mark.parametrize(
