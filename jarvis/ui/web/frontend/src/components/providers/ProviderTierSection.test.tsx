@@ -1166,6 +1166,7 @@ describe("managed local realtime model setup", () => {
     card.experimental = true;
     card.managed_server!.ready = true;
     renderCard(card);
+    expect(screen.getByText("Advanced server model and voice options").closest("details")?.hasAttribute("open")).toBe(false);
     fireEvent.click(await screen.findByRole("button", { name: "Apply, test & use local voice" }));
     await waitFor(() => expect(calls.some((url) => url.endsWith("/setup"))).toBe(true));
     if (success) {

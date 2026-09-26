@@ -1946,6 +1946,7 @@
     "managed_voice_unavailable": "not voice-tested yet",
     "managed_voice_install_required": "runtime install required",
     "managed_apply_test": "Apply, test & use local voice",
+    "managed_protocol_options": "Advanced server model and voice options",
     "managed_setup_testing": "Preparing the selected models and testing speech. This can take longer on the first start.",
     "managed_selected": "Selected for voice. These models start automatically with Jarvis.",
     "managed_not_selected": "This server is not selected for voice yet. Choose two models and apply them to use local voice.",

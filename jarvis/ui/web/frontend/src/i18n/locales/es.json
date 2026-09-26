@@ -1913,6 +1913,7 @@
     "managed_voice_unavailable": "aún sin prueba de voz",
     "managed_voice_install_required": "requiere instalar el runtime",
     "managed_apply_test": "Aplicar, probar y usar voz local",
+    "managed_protocol_options": "Opciones avanzadas de modelo y voz del servidor",
     "managed_setup_testing": "Preparando los modelos seleccionados y probando la voz. El primer inicio puede tardar más.",
     "managed_selected": "Seleccionado para voz. Estos modelos se inician automáticamente con Jarvis.",
     "managed_not_selected": "Este servidor aún no está seleccionado para voz. Elige dos modelos y aplícalos para usar voz local.",

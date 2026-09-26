@@ -1581,10 +1581,18 @@ export function ProviderCard({
               // probe so the card does not visibly flicker while saying
               // "one moment".
               descriptor.codex_status?.reason_code === "busy") && (
-              <RealtimeOptionsControl
-                providerId={descriptor.id}
-                healthActive={descriptor.active}
-              />
+              descriptor.managed_server ? (
+                <details className="text-xs text-muted-foreground">
+                  <summary className="cursor-pointer">
+                    {t("apikeys_view.managed_protocol_options")}
+                  </summary>
+                  <div className="pt-3">
+                    <RealtimeOptionsControl providerId={descriptor.id} healthActive={descriptor.active} />
+                  </div>
+                </details>
+              ) : (
+                <RealtimeOptionsControl providerId={descriptor.id} healthActive={descriptor.active} />
+              )
             )}
 
           {/* Footer: the live connectivity test, visually separated from the

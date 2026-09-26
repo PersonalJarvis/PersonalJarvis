@@ -1913,6 +1913,7 @@
     "managed_voice_unavailable": "noch nicht sprachgetestet",
     "managed_voice_install_required": "Laufzeit-Installation nötig",
     "managed_apply_test": "Anwenden, testen & lokal sprechen",
+    "managed_protocol_options": "Erweiterte Modell- und Stimmoptionen des Servers",
     "managed_setup_testing": "Die ausgewählten Modelle werden vorbereitet und die Sprachausgabe geprüft. Beim ersten Start kann das länger dauern.",
     "managed_selected": "Für Sprache ausgewählt. Diese Modelle starten automatisch mit Jarvis.",
     "managed_not_selected": "Dieser Server ist noch nicht für Sprache ausgewählt. Zwei Modelle auswählen und anwenden, um lokal zu sprechen.",
