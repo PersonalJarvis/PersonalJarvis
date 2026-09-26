@@ -72,13 +72,15 @@ class LinuxStage1BootstrapTests(unittest.TestCase):
                 encoding="utf-8",
             )
             apt.chmod(0o755)
+            # Hosted CI runners are non-root; their real sudo resets PATH and
+            # would run the real apt-get instead of the harmless test stub.
+            sudo = stubs / "sudo"
+            sudo.write_text('#!/bin/sh\n"$@"\n', encoding="utf-8")
+            sudo.chmod(0o755)
             if pretend_unprivileged:
                 user_id = stubs / "id"
                 user_id.write_text('#!/bin/sh\nprintf "1000\\n"\n', encoding="utf-8")
                 user_id.chmod(0o755)
-                sudo = stubs / "sudo"
-                sudo.write_text('#!/bin/sh\n"$@"\n', encoding="utf-8")
-                sudo.chmod(0o755)
 
             source = INSTALL_SH.read_text(encoding="utf-8")
             self.assertIn(STOP_BEFORE_CLONE, source)

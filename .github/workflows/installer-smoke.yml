@@ -428,6 +428,10 @@ jobs:
         env:
           JARVIS_INSTALL_TAG: ${{ steps.tag.outputs.tag }}
           JARVIS_INSTALL_DIR: /tmp/jarvis-smoke-install
+          # This job verifies the latest published release even weeks later.
+          # Its signature chain still runs; only the 24-hour recency policy is
+          # waived for this historical artifact in CI.
+          JARVIS_INSTALL_ALLOW_STALE: "1"
         run: |
           set -euo pipefail
           REL_BASE="https://github.com/${{ github.repository }}/releases/download/${JARVIS_INSTALL_TAG}"
