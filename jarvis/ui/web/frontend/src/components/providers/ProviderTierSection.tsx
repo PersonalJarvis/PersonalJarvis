@@ -827,6 +827,7 @@ export function ProviderCategory({
   intro,
   localMode = false,
   onDisableLocalMode,
+  wideGrid = false,
 }: {
   meta: CategoryMeta;
   tier: ProviderTier;
@@ -845,6 +846,7 @@ export function ProviderCategory({
   localMode?: boolean;
   /** Turns Local Mode back off from the notice above the list. */
   onDisableLocalMode?: () => void;
+  wideGrid?: boolean;
 }) {
   const t = useT();
   const allTierProviders = providers.filter(
@@ -904,6 +906,7 @@ export function ProviderCategory({
           onChanged={onChanged}
           onActivateOptimistic={onActivateOptimistic}
           health={health}
+          wideGrid={wideGrid}
         />
       )}
     </div>
@@ -919,6 +922,7 @@ export function TierSection({
   onChanged,
   onActivateOptimistic,
   health,
+  wideGrid = false,
 }: {
   providers: ProviderDescriptor[];
   onChanged: () => void;
@@ -926,6 +930,7 @@ export function TierSection({
   /** Tier health — handed only to the ACTIVE card, since section-health tests
    *  exactly the one provider powering this tier. */
   health?: SectionHealth;
+  wideGrid?: boolean;
 }) {
   const tierHasActive = providers.some((p) => p.active);
   // The provider this tier actually RUNS on leads the list. Somebody who just
@@ -962,10 +967,18 @@ export function TierSection({
   return (
     <ul
       data-testid="provider-list"
-      className="divide-y divide-border/70 overflow-hidden rounded-surface border border-border bg-card"
+      className={cn(
+        wideGrid
+          ? "grid items-start gap-3"
+          : "divide-y divide-border/70 overflow-hidden rounded-surface border border-border bg-card",
+      )}
+      style={wideGrid ? { gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 34rem), 1fr))" } : undefined}
     >
       {sorted.map((p) => (
-        <li key={p.id}>
+        <li
+          key={p.id}
+          className={wideGrid ? "min-w-0 overflow-hidden rounded-surface border border-border bg-card" : undefined}
+        >
           <ProviderCard
             descriptor={p}
             onChanged={onChanged}
