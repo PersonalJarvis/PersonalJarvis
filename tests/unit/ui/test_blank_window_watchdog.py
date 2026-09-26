@@ -95,6 +95,17 @@ def test_a_page_that_dies_later_gets_a_full_budget_again() -> None:
     assert p.decide(_obs(100.0 + GRACE + 1)).action is Action.RELOAD
 
 
+def test_a_healthy_page_is_not_reloaded_when_webview_stops_answering_probes() -> None:
+    """A busy WebView can miss several probes while the painted app stays live."""
+    p = _policy()
+    assert p.decide(_obs(0.0, page="up")).action is Action.WAIT
+    for t in (10.0, GRACE + 1, GRACE * 10):
+        assert p.decide(_obs(t, page="unknown")).action is Action.WAIT
+    assert p.decide(_obs(GRACE * 10 + 1, page="up")).action is Action.WAIT
+    assert p.decide(_obs(GRACE * 10 + 2, page="blank")).action is Action.WAIT
+    assert p.decide(_obs(GRACE * 11 + 3, page="blank")).action is Action.RELOAD
+
+
 # --- the recoverable freeze -------------------------------------------------
 
 
@@ -354,12 +365,16 @@ def _watchdog(window: _FakeWindow, **kw: Any) -> BlankWindowWatchdog:
     )
 
 
-def test_an_unanswerable_window_counts_as_blank() -> None:
-    """``evaluate_js`` raising and a view with no document look the same to a user."""
+def test_an_unanswerable_window_is_unknown() -> None:
+    """A timed-out probe cannot establish whether the painted page is blank."""
     window = _FakeWindow()
     window.raise_on_eval = True
     wd = _watchdog(window)
-    assert wd._page_state(window) == "blank"
+    assert wd._page_state(window) == "unknown"
+    # Before first paint a never-navigated view still receives recovery.
+    p = _policy()
+    p.decide(_obs(0.0, page="unknown"))
+    assert p.decide(_obs(GRACE + 1, page="unknown")).action is Action.RELOAD
 
 
 def test_the_watchdog_reloads_the_configured_url() -> None:

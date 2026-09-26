@@ -77,8 +77,9 @@ SILENT_PATIENCE_S = 45.0
 #: ``up``     — our document is loaded (``#root`` exists). From here the page's
 #:              own watchdog is in charge; this one only guards the frame.
 #: ``notice`` — the explanation page this watchdog wrote.
-#: ``blank``  — no document of ours: nothing ever arrived, or the view is empty.
-PageState = Literal["up", "notice", "blank"]
+#: ``blank``  — a responding view confirms that our document is absent.
+#: ``unknown`` — the view did not answer the probe; it may still be painting.
+PageState = Literal["up", "notice", "blank", "unknown"]
 
 #: One expression, because it runs in a document that may be barely alive.
 #: ``#root`` is in the static HTML, so its presence proves our page arrived —
@@ -164,6 +165,7 @@ class BlankWindowPolicy:
         self._blank_since: float | None = None
         self._explained: BlankReason | None = None
         self._was_healthy = True
+        self._seen_up = False
 
     def decide(self, obs: Observation) -> Verdict:
         if self._deadline is None:
@@ -178,6 +180,16 @@ class BlankWindowPolicy:
             self._blank_since = None
             self._explained = None
             self._was_healthy = obs.server_healthy
+            self._seen_up = True
+            return Verdict(Action.WAIT)
+
+        # evaluate_js can time out while WebView2 is busy even though the app
+        # remains painted and usable. Once this window has shown our page,
+        # silence from the probe is not evidence that it went blank. A confirmed
+        # blank response still takes the recovery path below. Before first
+        # paint, keep the original cold-boot recovery for a view that never
+        # navigated and therefore cannot answer at all.
+        if obs.page == "unknown" and self._seen_up and obs.backend_alive:
             return Verdict(Action.WAIT)
 
         if self._blank_since is None:
@@ -636,17 +648,11 @@ class BlankWindowWatchdog:
         return True
 
     def _page_state(self, window: Any) -> PageState:
-        """Ask the window what it is showing; an unanswerable window is blank.
-
-        Every way the question can fail — ``None`` from a view with no
-        document, an exception, or no answer at all within the deadline — means
-        the same thing to the person looking at the frame: there is nothing
-        there. Which is precisely the state this guard acts on.
-        """
+        """Ask the window what it is showing without guessing on a timeout."""
         answered, value = self._caller.call(lambda: window.evaluate_js(PAGE_STATE_JS))
-        if answered and value in ("up", "notice"):
+        if answered and value in ("up", "notice", "blank"):
             return value  # type: ignore[return-value]
-        return "blank"
+        return "unknown"
 
     @staticmethod
     def _safe(probe: Callable[[], Any], *, default: Any) -> Any:
