@@ -91,6 +91,8 @@ Name: "addtopath"; Description: "Add the ""jarvis"" command to PATH (lets you ru
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "check_installed_boot.ps1"; Flags: dontcopy
+Source: "write_update_result.ps1"; Flags: dontcopy
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#GuiExeName}"; WorkingDir: "{app}"
@@ -111,6 +113,95 @@ const
   JarvisHwndBroadcast = $FFFF;
   JarvisWmSettingChange = $001A;
   JarvisSmtoAbortIfHung = $0002;
+
+var
+  RollbackDir: string;
+  RollbackReady: Boolean;
+  InstallSucceeded: Boolean;
+  BootExitCode: Integer;
+  LaunchExitCode: Integer;
+
+function LaunchAfterSilentSetup: Boolean;
+begin
+  Result := WizardSilent and (Pos('/NOLAUNCH', Uppercase(GetCmdTail)) = 0);
+end;
+
+procedure WriteUpdateResult(const Ok, RolledBack: string);
+var
+  ResultCode: Integer;
+begin
+  ExtractTemporaryFile('write_update_result.ps1');
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
+    ExpandConstant('{tmp}\write_update_result.ps1') + '" -Ok ' + Ok +
+    ' -RolledBack ' + RolledBack, '', SW_HIDE, ewWaitUntilTerminated,
+    ResultCode) or (ResultCode <> 0) then
+    Log('Could not record native update result.');
+end;
+
+{ Keep an exact copy of the prior program directory until Setup finishes. The
+  user's settings and memory live elsewhere and are never copied or deleted. }
+procedure CopyProgramTree(const Source, Destination: string);
+var
+  Entry: TFindRec;
+  FromPath, ToPath: string;
+begin
+  if not CreateDir(Destination) and not DirExists(Destination) then
+    RaiseException('Could not create program backup: ' + Destination);
+  if FindFirst(AddBackslash(Source) + '*', Entry) then
+  begin
+    try
+      repeat
+        if (Entry.Name <> '.') and (Entry.Name <> '..') then
+        begin
+          FromPath := AddBackslash(Source) + Entry.Name;
+          ToPath := AddBackslash(Destination) + Entry.Name;
+          if (Entry.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
+            CopyProgramTree(FromPath, ToPath)
+          else if not CopyFile(FromPath, ToPath, False) then
+            RaiseException('Could not copy program file: ' + FromPath);
+        end;
+      until not FindNext(Entry);
+    finally
+      FindClose(Entry);
+    end;
+  end;
+end;
+
+procedure DeinitializeSetup;
+var
+  AppDir: string;
+begin
+  if not RollbackReady then
+    Exit;
+  if InstallSucceeded then
+  begin
+    DelTree(RollbackDir, True, True, True);
+    Exit;
+  end;
+  AppDir := ExpandConstant('{app}');
+  Log('Setup failed or was cancelled after replacement; restoring prior installation.');
+  if not DelTree(AppDir, True, True, True) then
+  begin
+    Log('Could not remove partial installation; backup retained at ' + RollbackDir);
+    MsgBox('The previous installation could not be restored automatically. Backup: ' + RollbackDir,
+      mbError, MB_OK);
+    Exit;
+  end;
+  try
+    CopyProgramTree(RollbackDir, AppDir);
+    DelTree(RollbackDir, True, True, True);
+    WriteUpdateResult('false', 'true');
+    if LaunchAfterSilentSetup then
+      if not Exec(AddBackslash(AppDir) + '{#GuiExeName}', '', AppDir,
+        SW_SHOWNORMAL, ewNoWait, LaunchExitCode) then
+        Log('The previous app was restored but could not be relaunched.');
+  except
+    Log('Rollback failed: ' + GetExceptionMessage + '. Backup retained at ' + RollbackDir);
+    MsgBox('The previous installation could not be restored automatically. Backup: ' + RollbackDir,
+      mbError, MB_OK);
+  end;
+end;
 
 function SendMessageTimeout(hWnd: Longint; Msg: Cardinal; wParam: Longint;
   lParam: string; fuFlags: Cardinal; uTimeout: Cardinal;
@@ -231,14 +322,45 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+  if CurStep = ssInstall then
+  begin
+    if FileExists(ExpandConstant('{app}\{#GuiExeName}')) then
+    begin
+      RollbackDir := ExpandConstant('{tmp}\jarvis-prior-install');
+      if DirExists(RollbackDir) then
+        if not DelTree(RollbackDir, True, True, True) then
+          RaiseException('Could not clear stale program backup: ' + RollbackDir);
+      CopyProgramTree(ExpandConstant('{app}'), RollbackDir);
+      RollbackReady := True;
+    end;
+  end;
   if CurStep = ssPostInstall then
   begin
+    #ifdef SimulateInstallFailure
+    RaiseException('Simulated failure after replacement for native upgrade smoke');
+    #endif
+    ExtractTemporaryFile('check_installed_boot.ps1');
+    if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
+      ExpandConstant('{tmp}\check_installed_boot.ps1') + '" -AppDir "' +
+      ExpandConstant('{app}') + '" -ExpectedVersion "{#AppVersion}"',
+      '', SW_HIDE, ewWaitUntilTerminated, BootExitCode) or (BootExitCode <> 0) then
+      RaiseException('Installed backend failed its first boot; restoring the previous version.');
     if WizardIsTaskSelected('addtopath') then
       AddDirToUserPath(ExpandConstant('{app}'))
     else
       { An upgrade where the user cleared the task must also take the entry
         back out, or the choice silently does nothing. }
       RemoveDirFromUserPath(ExpandConstant('{app}'));
+  end;
+  if CurStep = ssDone then
+  begin
+    InstallSucceeded := True;
+    WriteUpdateResult('true', 'false');
+    if LaunchAfterSilentSetup then
+      if not Exec(ExpandConstant('{app}\{#GuiExeName}'), '', ExpandConstant('{app}'),
+        SW_SHOWNORMAL, ewNoWait, LaunchExitCode) then
+        Log('The new app was installed but could not be relaunched.');
   end;
 end;
 

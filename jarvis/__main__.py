@@ -31,6 +31,13 @@ if len(sys.argv) == 3 and sys.argv[1] == "--audio-device-probe":
 
     raise SystemExit(_audio_device_probe_main(sys.argv[2]))
 
+if len(sys.argv) == 3 and sys.argv[1] == "--native-update-supervisor":
+    from pathlib import Path
+
+    from jarvis.core.installer_update import run_native_update_supervisor
+
+    raise SystemExit(0 if run_native_update_supervisor(Path(sys.argv[2])) else 1)
+
 # Windows Terminal defaults to cp1252 — which breaks Unicode (box-drawing,
 # emojis, ✓/✗). Force utf-8 before printing anything.
 if sys.platform == "win32":

@@ -83,6 +83,7 @@ function mockBackend(opts: {
 async function clickUpdate(): Promise<void> {
   const button = await screen.findByText("Update available");
   button.click();
+  (await screen.findByRole("button", { name: /install update/i })).click();
 }
 
 function fillWidth(): string | undefined {

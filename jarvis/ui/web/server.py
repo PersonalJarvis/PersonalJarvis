@@ -1004,7 +1004,11 @@ class WebServer:
         async def health() -> dict[str, Any]:
             # ``instance`` lets the frontend badge a dev window as such
             # (``jarvis.core.instance``): "default" or "dev".
-            return {"ok": True, "version": __version__, "instance": _instance_name()}
+            result = {"ok": True, "version": __version__, "instance": _instance_name()}
+            nonce = os.environ.get("JARVIS_UPDATE_HEALTH_NONCE")
+            if nonce:
+                result["update_nonce"] = nonce
+            return result
 
         @app.post("/api/ui/shell-painted", status_code=204, response_model=None)
         async def shell_painted() -> Response:

@@ -1,4 +1,4 @@
-# Publish Personal Jarvis to PyPI on every `v*` tag.
+# Build and publish Personal Jarvis to PyPI after native release gates pass.
 #
 # No API token and no repository secret is involved: PyPI's Trusted Publishing
 # mints a short-lived, single-use credential from this workflow's OIDC identity.
@@ -12,6 +12,7 @@
 #   Workflow       release.yml
 #   Environment    pypi
 #
+# A version tag calls desktop-installers.yml as a reusable qualification gate.
 # The build and the publish are two jobs on purpose. Only the tiny publish job
 # holds `id-token: write` and enters the `pypi` environment, so the OIDC token
 # is never reachable from the step that executes project code.
@@ -24,18 +25,28 @@ name: Release to PyPI
 on:
   push:
     tags:
-      - "v*"
-  # A published version can never be replaced, so a re-run is for the case where
-  # the upload itself failed (network, a mis-registered publisher) while the tag
-  # is already correct.
-  workflow_dispatch: {}
+      - "v*.*.*"
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  native:
+    name: Qualify signed native installers
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/desktop-installers.yml
+    secrets: inherit
+
   build:
     name: Build sdist + wheel
+    needs: native
     runs-on: ubuntu-latest
     steps:
       - name: Check out the tagged tree
@@ -46,8 +57,38 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Fix build timestamp to the tagged commit
+        shell: bash
+        run: |
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct HEAD)" >> "$GITHUB_ENV"
+          echo 'PYTHONHASHSEED=0' >> "$GITHUB_ENV"
+
       - name: Install build tooling
         run: python -m pip install --upgrade build twine
+
+      - name: Download qualified native release
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: qualified-release
+          path: qualified-release
+
+      - name: Verify native release signature and source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          qualification = json.loads(Path('qualified-release/release-qualification.json').read_text())
+          if qualification['tag'] != os.environ['GITHUB_REF_NAME'] or qualification['commit'] != os.environ['GITHUB_SHA']:
+              raise SystemExit('Qualified bundle does not belong to this tag and commit')
+          PY
+          base64 -d qualified-release/installers-SHA256SUMS.txt.cosign.sig > "${RUNNER_TEMP}/manifest.sig"
+          openssl pkeyutl -verify -rawin -pubin -inkey install/keys/offline-ceremony.pub -in qualified-release/installers-SHA256SUMS.txt -sigfile "${RUNNER_TEMP}/manifest.sig"
+          cd qualified-release
+          sha256sum -c installers-SHA256SUMS.txt
 
       # A tag that disagrees with the shipped version would publish something
       # nobody can trace back to a commit. Fail before the artifacts exist.
@@ -79,6 +120,31 @@ jobs:
       - name: Check the packaging metadata
         run: python -m twine check --strict dist/*
 
+      - name: Refuse a conflicting PyPI version on rerun
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import tomllib
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          version = tomllib.loads(Path('pyproject.toml').read_text())['project']['version']
+          request = urllib.request.Request(f'https://pypi.org/pypi/personal-jarvis/{version}/json', headers={'Accept': 'application/json'})
+          try:
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  published = json.load(response)
+          except urllib.error.HTTPError as exc:
+              if exc.code != 404:
+                  raise
+          else:
+              existing = {item['filename']: item['digests']['sha256'] for item in published['urls']}
+              built = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in Path('dist').iterdir() if path.is_file()}
+              if existing != built:
+                  raise SystemExit('PyPI already has this version with different or incomplete files')
+          PY
+
       - name: Upload the artifacts
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
@@ -104,3 +170,36 @@ jobs:
 
       - name: Publish
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          skip-existing: true
+
+  github-release:
+    name: Publish complete GitHub release
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download qualified release bundle
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: qualified-release
+          path: release-assets
+
+      - name: Publish from draft only after all gates pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft' > "${RUNNER_TEMP}/release-state" 2>/dev/null; then
+            if [ "$(cat "${RUNNER_TEMP}/release-state")" != true ]; then
+              echo '::error::Release already published; refusing to overwrite public assets.'
+              exit 1
+            fi
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "$GITHUB_REF_NAME" --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false
