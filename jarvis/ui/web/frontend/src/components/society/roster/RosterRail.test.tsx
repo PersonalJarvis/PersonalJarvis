@@ -1,9 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SocietyAgent } from "@/components/society/data";
 import { useRetireStore } from "@/components/society/world/retireStore";
+import { useEventStore } from "@/store/events";
 import { RosterRail } from "./RosterRail";
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
@@ -12,6 +13,7 @@ afterEach(() => {
   useRetireStore.getState().cutShort();
   cleanup();
   localStorage.clear();
+  useEventStore.setState({ assistantName: "Assistant" });
   vi.unstubAllGlobals();
 });
 
@@ -53,6 +55,25 @@ const baseProps = {
   onOpen: () => undefined,
   onCreate: () => undefined,
 };
+
+describe("RosterRail lead name", () => {
+  it("shows the configured name, updates it live, and finds it in search", () => {
+    useEventStore.setState({ assistantName: "Nova" });
+    const lead = agent({ agentId: "jarvis", name: "Jarvis", tier: "lead", title: "Lead" });
+    render(<RosterRail {...baseProps} agents={[lead]} activeAgentId={null} />);
+
+    expect(screen.getByText("Nova")).toBeTruthy();
+    expect(screen.queryByText("Jarvis")).toBeNull();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "nova" } });
+    expect(screen.getByText("Nova")).toBeTruthy();
+
+    act(() => useEventStore.setState({ assistantName: "Hanna" }));
+    expect(screen.queryByText("Nova")).toBeNull();
+    expect(screen.queryByTestId("society-lead-hero")).toBeNull();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "hanna" } });
+    expect(screen.getByText("Hanna")).toBeTruthy();
+  });
+});
 
 describe("RosterRail status", () => {
   it("shows a loading spinner while an agent is thinking", () => {

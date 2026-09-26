@@ -21,7 +21,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/i18n";
+import { NEUTRAL_ASSISTANT_NAME } from "@/lib/assistantNameCache";
 import { cn } from "@/lib/utils";
+import { useEventStore } from "@/store/events";
 
 import { AgentSwatch } from "../AgentSwatch";
 import type { AgentRunState, SocietyAgent } from "../data";
@@ -84,6 +86,8 @@ export function RosterRail({
   const profile = agents.find((agent) => agent.agentId === profileId);
   const menuAgent = agents.find((agent) => agent.agentId === menu?.agentId);
   const unread = useRosterUnread(agents, activeAgentId);
+  const assistantName = useEventStore((state) => state.assistantName);
+  const leadDisplayName = assistantName.trim() || NEUTRAL_ASSISTANT_NAME;
 
   const setHidden = useCallback((agentId: string, hidden: boolean) => {
     setHiddenIds((current) => {
@@ -105,7 +109,7 @@ export function RosterRail({
     const q = query.trim().toLowerCase();
     const filtered = agents.filter((a) =>
       (showHidden || !hiddenIds.includes(a.agentId)) &&
-      (!q || `${a.name} ${a.title}`.toLowerCase().includes(q)),
+      (!q || `${a.name} ${a.tier === "lead" ? leadDisplayName : ""} ${a.title}`.toLowerCase().includes(q)),
     );
     const masterVisible = lead ? filtered.some((a) => a.agentId === lead.agentId) : false;
     // Orchestrators, then specialists; stable within a tier. The lead lives
@@ -115,7 +119,7 @@ export function RosterRail({
       .filter((a) => a.agentId !== lead?.agentId)
       .sort((a, b) => rank[a.tier] - rank[b.tier]);
     return { leadVisible: masterVisible, rows: rest };
-  }, [agents, hiddenIds, lead, query, showHidden]);
+  }, [agents, hiddenIds, lead, leadDisplayName, query, showHidden]);
 
   const hiddenCount = agents.filter((agent) => hiddenIds.includes(agent.agentId)).length;
 
@@ -181,7 +185,7 @@ export function RosterRail({
                 lead.agentId === activeAgentId && "bg-secondary",
               )}
             >
-              <button type="button" onClick={() => setProfileId(lead.agentId)} aria-label={t("society.profile_card.open").replace("{0}", lead.name)} className="relative rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <button type="button" onClick={() => setProfileId(lead.agentId)} aria-label={t("society.profile_card.open").replace("{0}", leadDisplayName)} className="relative rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <AgentSwatch agent={lead} size={56} />
                 {lead.state === "working" ? (
                   <span
@@ -201,7 +205,7 @@ export function RosterRail({
                 ) : null}
               </button>
               <button type="button" onClick={() => onOpen(lead.agentId)} aria-current={lead.agentId === activeAgentId ? "true" : undefined} className="flex max-w-full items-center justify-center gap-1.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                <span className="truncate text-sm font-medium text-foreground">{lead.name}</span>
+                <span className="truncate text-sm font-medium text-foreground">{leadDisplayName}</span>
                 <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-xs">
                   {t("society.tier.lead")}
                 </Badge>
