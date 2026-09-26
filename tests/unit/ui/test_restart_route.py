@@ -51,7 +51,7 @@ def test_restart_schedules_when_window_present(caplog):
     assert r.status_code == 200
     assert r.json() == {"ok": True, "restarting": True}
     assert calls["n"] == 1
-    assert "Desktop restart accepted by settings route (force=False)" in caplog.text
+    assert "Desktop restart requested through settings route (force=False)" in caplog.text
 
 
 def test_restart_rejects_control_bearer_even_when_forced():

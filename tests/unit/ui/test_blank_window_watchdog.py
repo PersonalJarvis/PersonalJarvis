@@ -106,6 +106,19 @@ def test_a_healthy_page_is_not_reloaded_when_webview_stops_answering_probes() ->
     assert p.decide(_obs(GRACE * 11 + 3, page="blank")).action is Action.RELOAD
 
 
+def test_confirmed_late_blank_recovers_even_when_later_probes_time_out() -> None:
+    """A known empty view must not be stuck by subsequent probe timeouts."""
+    window = _FakeWindow()
+    wd = _watchdog(window, policy=_policy())
+    assert wd._policy.decide(_obs(0.0, page="up")).action is Action.WAIT
+    assert wd._policy.decide(_obs(10.0, page="blank")).action is Action.WAIT
+    verdict = wd._policy.decide(_obs(10.0 + GRACE + 1, page="unknown"))
+    assert verdict.action is Action.RELOAD
+    assert verdict.after_up is True
+    assert wd._apply(window, verdict)
+    assert window.loaded_urls == ["http://127.0.0.1:47821#jarvis-interface-recovery"]
+
+
 # --- the recoverable freeze -------------------------------------------------
 
 

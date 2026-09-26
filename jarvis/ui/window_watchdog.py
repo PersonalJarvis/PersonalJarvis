@@ -138,6 +138,7 @@ class Verdict:
 
     action: Action
     reason: BlankReason | None = None
+    after_up: bool = False
 
 
 class BlankWindowPolicy:
@@ -189,7 +190,12 @@ class BlankWindowPolicy:
         # blank response still takes the recovery path below. Before first
         # paint, keep the original cold-boot recovery for a view that never
         # navigated and therefore cannot answer at all.
-        if obs.page == "unknown" and self._seen_up and obs.backend_alive:
+        if (
+            obs.page == "unknown"
+            and self._seen_up
+            and self._blank_since is None
+            and obs.backend_alive
+        ):
             return Verdict(Action.WAIT)
 
         if self._blank_since is None:
@@ -238,7 +244,7 @@ class BlankWindowPolicy:
         if self._reloads_left > 0:
             self._reloads_left -= 1
             self._arm_after_reload(obs.now)
-            return Verdict(Action.RELOAD)
+            return Verdict(Action.RELOAD, after_up=self._seen_up)
 
         # Out of attempts. The window keeps its explanation and the button on
         # it; the watchdog keeps watching, so the next recovery still heals it.
@@ -615,7 +621,12 @@ class BlankWindowWatchdog:
         """
         detail = ""
         if verdict.action is Action.RELOAD:
-            answered, _ = self._action_caller.call(lambda: window.load_url(self._url))
+            target = (
+                f"{self._url}#jarvis-interface-recovery"
+                if verdict.after_up
+                else self._url
+            )
+            answered, _ = self._action_caller.call(lambda: window.load_url(target))
         elif verdict.action is Action.EXPLAIN and verdict.reason is not None:
             detail = self._safe(self._failure_detail, default="")
             html = render_notice(
