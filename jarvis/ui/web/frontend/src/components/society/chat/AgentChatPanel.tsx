@@ -64,6 +64,7 @@ import { fetchIdeAgents, type AgentStatus } from "@/lib/agenticIdeApi";
 import { CodingProjectChoice } from "./CodingProjectChoice";
 import { MentionPicker } from "./MentionPicker";
 import { AgentModelPicker } from "./AgentModelPicker";
+import { AgentQuestionCard } from "./AgentQuestionCard";
 import { mentionChoice, messageChoices } from "./mentionChoices";
 import { ChatCommandPanel, useChatCommands } from "@/components/agentchat/ChatCommands";
 import { useTranscriptView } from "./useTranscriptView";
@@ -687,6 +688,8 @@ export function Transcript({
               ) : item.type === "notice" ? (
                 item.kind === "proposal" ? (
                   <ProposalCard item={item} />
+                ) : item.kind === "agent_question" && sessionId ? (
+                  <AgentQuestionCard item={item} sessionId={sessionId} />
                 ) : (
                   <NoticeLine item={item} />
                 )
@@ -914,6 +917,7 @@ export function UserBubble({ item, agentId, sessionId }: { item: UserItem; agent
   const t = useT();
   const choices = messageChoices(item);
   const text = visibleUserText(item.text);
+  if (item.origin === "question") return null;
   if (item.origin === "control") return <div className="self-start px-1 py-2 text-xs text-muted-foreground">{t("slash.control_turn")}{item.attachments.map((file) => <span key={file.name} className="ml-2">{file.name}</span>)}</div>;
   const task = routineTask(item.text);
   if (task !== null && item.attachments.length === 0) return <RoutineActivity task={task} original={item.text}

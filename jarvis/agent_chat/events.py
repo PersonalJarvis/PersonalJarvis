@@ -32,6 +32,8 @@ Kinds (``payload`` keys in brackets):
 ``session_updated``    [title?, provider?, model?, effort?, cwd?, permission_mode?]
 ``error``              [turn_id?, message]
 ``notice``              [kind, ...]                      — a system line outside a turn
+                        agent_question carries choices, recommendation and deadline;
+                        question_resolved carries the chosen answer and source
 
 ``text_delta`` / ``reasoning_delta`` / ``reasoning_started`` / ``usage_delta``
 are the transient kinds: the finished block carries the whole text and the
