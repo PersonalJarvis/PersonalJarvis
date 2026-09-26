@@ -244,13 +244,14 @@ def _auth_standard_payload(spec: Any) -> dict[str, Any] | None:
     try:
         from jarvis.marketplace.publisher_clients import resolve_publisher_client
 
-        _, _, source = resolve_publisher_client(
+        _, secret, source = resolve_publisher_client(
             spec.id, auth.client_id, getattr(auth, "client_secret", None)
         )
     except Exception:  # noqa: BLE001 — status must never break listing
         source = "missing"
+        secret = None
     return {
-        "ready": source in ("publisher", "catalog", "own"),
+        "ready": source in ("publisher", "catalog", "own") and (spec.id != "figma" or bool(secret)),
         "source": source,
         "fallback": isinstance(getattr(spec, "fallback_auth", None), PatPasteAuth),
     }
@@ -390,13 +391,15 @@ async def list_plugins(response: Response) -> dict[str, Any]:
                 resolve_pkce_client,
             )
 
-            effective_client_id, _ = resolve_pkce_client(
+            effective_client_id, effective_client_secret = resolve_pkce_client(
                 spec.id, spec.auth.client_id, spec.auth.client_secret
             )
             # Configuration state is safe to expose; the client id and secret
             # themselves never leave the backend. The dialog uses this to stop
             # placeholder-only installs before they launch a doomed OAuth tab.
-            item["oauth_client_configured"] = not is_placeholder_client_id(effective_client_id)
+            item["oauth_client_configured"] = not is_placeholder_client_id(
+                effective_client_id
+            ) and (spec.id != "figma" or bool(effective_client_secret))
         # Browser-auth standard state: WHERE the client comes from, so the
         # dialog can tell "publisher-provided, one click" apart from
         # "expert override active" and "provisioning pending", plus whether
@@ -760,6 +763,16 @@ async def connect_start(
                     "via the dialog's token fallback."
                 )
             raise HTTPException(status_code=409, detail=detail)
+        if plugin_id == "figma" and not _pkce_client_secret:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Figma requires a publisher-provisioned confidential OAuth "
+                    "client before browser sign-in can start. The project must "
+                    "complete its server-side setup; normal users do not need "
+                    "to create an OAuth app."
+                ),
+            )
         handler = PkceLoopbackHandler(
             PkceLoopbackConfig(
                 plugin_id=plugin_id,
