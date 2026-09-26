@@ -140,6 +140,15 @@
         } catch (e) {
           /* storage blocked (private mode) — keep the neutral fallback */
         }
+        try {
+          if (sessionStorage.getItem("jarvis:interface-update") === "1") {
+            sessionStorage.removeItem("jarvis:interface-update");
+            var status = document.querySelector("#jarvis-boot-splash .sub");
+            if (status) status.textContent = "Updating interface…";
+          }
+        } catch (e) {
+          /* storage blocked — keep the startup label */
+        }
       })();
     </script>
     <script>

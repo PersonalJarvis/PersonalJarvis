@@ -28,6 +28,30 @@ function indexHtmlPath(): string {
 
 const HTML = readFileSync(indexHtmlPath(), "utf8");
 
+test("an interface reload identifies itself without claiming the assistant restarted", () => {
+  const script = (HTML.match(/<script>([\s\S]*?)<\/script>/g) ?? []).find((s) =>
+    s.includes('localStorage.getItem("jarvis.assistantName")'),
+  );
+  expect(script).toBeDefined();
+  document.body.innerHTML =
+    '<div id="jarvis-boot-splash"><div class="name"></div><div class="sub">Starting…</div></div>';
+  const session = new Map([["jarvis:interface-update", "1"]]);
+  const sessionStub = {
+    getItem: (key: string) => session.get(key) ?? null,
+    removeItem: (key: string) => void session.delete(key),
+  };
+  // eslint-disable-next-line no-new-func
+  new Function("localStorage", "sessionStorage", script!.slice(8, -9))(
+    { getItem: () => "Nova" },
+    sessionStub,
+  );
+  expect(document.querySelector("#jarvis-boot-splash .name")?.textContent).toBe("Nova");
+  expect(document.querySelector("#jarvis-boot-splash .sub")?.textContent).toBe(
+    "Updating interface…",
+  );
+  expect(session.size).toBe(0);
+});
+
 /** The one inline script that owns the reload guard. */
 function watchdogSource(): string {
   const scripts = HTML.match(/<script>([\s\S]*?)<\/script>/g) ?? [];
