@@ -20,9 +20,11 @@ sub-mission tasks may emit bursts (worker spawn + worker progress +
 critic verdict all at once). A window size of 200 covers a few seconds of
 backlog before the first drop.
 """
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -85,9 +87,7 @@ class ConnectionManager:
         and merge it after the replay, skipping anything the replay already
         covers so the client never sees a duplicate.
         """
-        queue: asyncio.Queue[EventEnvelope | dict[str, Any]] = asyncio.Queue(
-            maxsize=_QUEUE_MAXSIZE
-        )
+        queue: asyncio.Queue[EventEnvelope | dict[str, Any]] = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
         async with self._lock:
             self._clients[client_id] = queue
 
@@ -99,15 +99,9 @@ class ConnectionManager:
             if isinstance(item, EventEnvelope):
                 live_during_replay.append(item)
 
-        max_replayed_seq = (
-            replay[-1].seq
-            if replay and replay[-1].seq is not None
-            else last_seq
-        )
+        max_replayed_seq = replay[-1].seq if replay and replay[-1].seq is not None else last_seq
         merged = list(replay) + [
-            env
-            for env in live_during_replay
-            if env.seq is not None and env.seq > max_replayed_seq
+            env for env in live_during_replay if env.seq is not None and env.seq > max_replayed_seq
         ]
         for env in merged:
             self._enqueue(client_id, queue, env)
@@ -197,9 +191,7 @@ async def _drain_client_frames(ws: WebSocket) -> None:
             # ("WebSocket is not connected ...") instead of
             # WebSocketDisconnect. `continue` here would re-poll the dead
             # socket forever — treat it as terminal.
-            logger.debug(
-                "missions_ws: reader socket error (%s) — closing", exc
-            )
+            logger.debug("missions_ws: reader socket error (%s) — closing", exc)
             return
         except ValueError as exc:
             # Malformed JSON (json.JSONDecodeError is a ValueError) on an
@@ -210,9 +202,7 @@ async def _drain_client_frames(ws: WebSocket) -> None:
             )
             continue
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "missions_ws: reader unexpected error (%s) — closing", exc
-            )
+            logger.warning("missions_ws: reader unexpected error (%s) — closing", exc)
             return
         # Reserved for future control frames (pause/resume etc.).
         if isinstance(msg, dict) and msg.get("type") == "ping":
@@ -243,9 +233,7 @@ async def missions_ws(ws: WebSocket) -> None:
 
     # 1. Hello frame (5s timeout).
     try:
-        first = await asyncio.wait_for(
-            ws.receive_json(), timeout=_HELLO_TIMEOUT_S
-        )
+        first = await asyncio.wait_for(ws.receive_json(), timeout=_HELLO_TIMEOUT_S)
     except TimeoutError:
         await ws.close(code=4400, reason="hello timeout")
         return
@@ -279,10 +267,21 @@ async def missions_ws(ws: WebSocket) -> None:
         _drain_client_frames(ws), name=f"missions_ws-reader-{client_id[:8]}"
     )
 
-    # 3. Writer loop. Stop on WS disconnect.
+    # 3. Writer loop. Wake on either an event or an idle client disconnect.
     try:
         while True:
-            env = await queue.get()
+            get_task = asyncio.create_task(queue.get())
+            try:
+                done, _ = await asyncio.wait(
+                    {reader_task, get_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if reader_task in done:
+                    break
+                env = get_task.result()
+            finally:
+                get_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await get_task
             frame = env.model_dump(mode="json") if isinstance(env, EventEnvelope) else env
             try:
                 await ws.send_json(frame)
@@ -299,13 +298,16 @@ async def missions_ws(ws: WebSocket) -> None:
         reader_task.cancel()
         try:
             await reader_task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
-            pass
+        except asyncio.CancelledError:
+            # Expected when the writer exits before the client reader.
+            pass  # noqa: S110
+        except Exception:
+            logger.exception("missions_ws: reader failed for client=%s", client_id)
         await conn_mgr.disconnect(client_id)
         try:
             await ws.close()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("missions_ws: close failed for client=%s: %s", client_id, exc)
 
 
 __all__ = ["ConnectionManager", "router"]
