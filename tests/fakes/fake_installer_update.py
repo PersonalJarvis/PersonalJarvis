@@ -9,7 +9,7 @@ installing anything.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,6 +30,7 @@ class FakeAssetFetcher:
     """
 
     manifest: str = ""
+    signature: bytes = b""
     payload: bytes = b""
     fail_text: Exception | None = None
     fail_download: Exception | None = None
@@ -44,6 +45,15 @@ class FakeAssetFetcher:
         if len(self.manifest.encode("utf-8")) > max_bytes:
             raise AssertionError("the fake manifest exceeds the caller's cap")
         return self.manifest
+
+    async def get_bytes(self, url: str, *, max_bytes: int) -> bytes:
+        self.text_urls.append(url)
+        if self.fail_text is not None:
+            raise self.fail_text
+        body = self.signature if url.endswith(".cosign.sig") else self.manifest.encode("utf-8")
+        if len(body) > max_bytes:
+            raise AssertionError("the fake response exceeds the caller's cap")
+        return body
 
     async def download(
         self,
@@ -103,6 +113,8 @@ class FakeCommandRunner:
     spawn_error: OSError | None = None
     ran: list[list[str]] = field(default_factory=list)
     spawned: list[list[str]] = field(default_factory=list)
+    spawn_envs: list[dict[str, str]] = field(default_factory=list)
+    terminated: list[int] = field(default_factory=list)
 
     def run(self, command: Sequence[str], *, timeout_s: float) -> tuple[int, str, str]:
         recorded = list(command)
@@ -112,10 +124,19 @@ class FakeCommandRunner:
         result = self._result_for(recorded)
         return result.returncode, result.stdout, result.stderr
 
-    def spawn_detached(self, command: Sequence[str]) -> None:
+    def spawn_detached(
+        self, command: Sequence[str], *, env: Mapping[str, str] | None = None
+    ) -> int:
         if self.spawn_error is not None:
             raise self.spawn_error
         self.spawned.append(list(command))
+        self.spawn_envs.append(dict(env or {}))
+        return 10000 + len(self.spawned)
+
+    def terminate_group(self, pid: int) -> None:
+        if pid not in {10000 + index for index in range(1, len(self.spawned) + 1)}:
+            raise AssertionError("attempted to terminate an unowned process")
+        self.terminated.append(pid)
 
     def _result_for(self, command: Sequence[str]) -> RunResult:
         # Keyed by the sub-command ("attach", "detach") when there is one, else

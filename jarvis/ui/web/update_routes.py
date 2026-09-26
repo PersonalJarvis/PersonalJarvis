@@ -66,12 +66,13 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from jarvis.core.branding import (
     MANAGED_INSTALL_MARKER,
@@ -82,10 +83,12 @@ from jarvis.core.branding import (
 from jarvis.core.frozen import is_frozen
 from jarvis.core.installer_update import (
     CHECKSUMS_ASSET_NAME,
+    CHECKSUMS_SIGNATURE_ASSET_NAME,
     InstallerUpdateError,
     apply_installer,
     download_and_verify,
     installer_asset_name,
+    native_update_result_dir,
     select_asset,
 )
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
@@ -829,17 +832,25 @@ def _on_git_progress(line: str) -> None:
 
 def _frozen_asset_name() -> str | None:
     """The installer asset this machine installs, or ``None`` if there is none."""
+    # A .deb install must not be offered an AppImage replacement. Package
+    # manager upgrades need their own rollback transaction.
+    if sys.platform.startswith("linux") and not os.environ.get("APPIMAGE"):
+        return None
     return installer_asset_name(sys.platform, platform_module.machine())
 
 
 def _frozen_release_assets(
     release: dict[str, Any], asset_name: str
-) -> tuple[Any | None, Any | None]:
-    """``(installer asset, checksum manifest asset)`` from a release payload."""
+) -> tuple[Any | None, Any | None, Any | None]:
+    """Installer, checksum manifest and signature from one release payload."""
     assets = release.get("assets") or []
     if not isinstance(assets, list):
-        return None, None
-    return select_asset(assets, asset_name), select_asset(assets, CHECKSUMS_ASSET_NAME)
+        return None, None, None
+    return (
+        select_asset(assets, asset_name),
+        select_asset(assets, CHECKSUMS_ASSET_NAME),
+        select_asset(assets, CHECKSUMS_SIGNATURE_ASSET_NAME),
+    )
 
 
 async def _frozen_status(current: str) -> dict[str, object]:
@@ -862,10 +873,10 @@ async def _frozen_status(current: str) -> dict[str, object]:
         "notes": None,
         "published_at": None,
         "asset": None,
-        # Frozen installs have no staged git transaction and no relauncher
-        # verdict; the fields stay present so the UI reads one shape.
+        # Frozen installs have no staged git transaction. The sidecar's verdict
+        # lives in per-user data, which survives replacing the app bundle.
         "pending_update": None,
-        "last_result": None,
+        "last_result": _read_update_result(native_update_result_dir()),
     }
 
     asset_name = _frozen_asset_name()
@@ -887,19 +898,20 @@ async def _frozen_status(current: str) -> dict[str, object]:
         return result
 
     version = str(latest.get("version") or "")
-    asset, checksums = _frozen_release_assets(latest, asset_name)
+    asset, checksums, signature = _frozen_release_assets(latest, asset_name)
     result["latest"] = version or None
     result["published_at"] = latest.get("published_at")
     result["release_url"] = latest.get("release_url")
 
-    if asset is None or checksums is None:
+    if asset is None or checksums is None or signature is None:
         # A release without installers is a code-only release (or one whose
         # installer job failed). Report honestly instead of half-offering.
         log.info(
-            "[update] release %s carries no %s / %s — not offering a frozen update",
+            "[update] release %s lacks %s, %s, or %s — not offering a frozen update",
             version or "?",
             asset_name,
             CHECKSUMS_ASSET_NAME,
+            CHECKSUMS_SIGNATURE_ASSET_NAME,
         )
         return result
 
@@ -910,13 +922,43 @@ async def _frozen_status(current: str) -> dict[str, object]:
     return result
 
 
-async def _apply_frozen() -> dict[str, object]:
+def _quit_for_native_update(desktop: Any, receipt: Path) -> None:
+    """Flush app state after the HTTP response, then authorize the sidecar swap."""
+    watchdog = threading.Timer(30.0, os._exit, args=(1,))
+    watchdog.daemon = True
+    watchdog.start()
+    try:
+        desktop._user_requested_quit = True
+        result = desktop.shutdown(require_clean=True)
+        if result != 0 or getattr(desktop, "_shutdown_clean", False) is not True:
+            log.error("[update] native shutdown incomplete (%s); swap not authorized", result)
+            os._exit(1)
+        receipt.write_text("graceful shutdown complete\n", encoding="utf-8")
+    except Exception:
+        log.exception("[update] native shutdown failed; swap not authorized")
+        os._exit(1)
+    finally:
+        watchdog.cancel()
+    os._exit(0)
+
+
+async def _apply_frozen(request: Request, background_tasks: BackgroundTasks) -> dict[str, object]:
     """Download, verify and install the native installer for this machine.
 
     Fail-CLOSED at every step: an unresolvable release, a missing asset, a
     missing or mismatching SHA-256 all raise before anything is executed. The
     running app keeps working on the old version in every failure case.
     """
+    controller = getattr(request.app.state, "kontrollierer", None)
+    running_ids = getattr(controller, "running_mission_ids", None)
+    active_missions = list(running_ids()) if callable(running_ids) else []
+    if active_missions:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{len(active_missions)} mission(s) are running; finish them before updating"
+            ),
+        )
     _progress.begin(INSTALL_KIND_FROZEN)
     current = _running_version()
     asset_name = _frozen_asset_name()
@@ -952,7 +994,7 @@ async def _apply_frozen() -> dict[str, object]:
     if not _is_newer(release_version, current):
         raise HTTPException(status_code=409, detail="no newer published release exists")
 
-    asset, checksums = _frozen_release_assets(latest, asset_name)
+    asset, checksums, signature = _frozen_release_assets(latest, asset_name)
     if asset is None:
         raise HTTPException(
             status_code=502,
@@ -966,8 +1008,24 @@ async def _apply_frozen() -> dict[str, object]:
                 "install an installer that cannot be verified"
             ),
         )
+    if signature is None:
+        raise HTTPException(
+            status_code=502,
+            detail=f"release {release_tag} has no {CHECKSUMS_SIGNATURE_ASSET_NAME}",
+        )
 
     _progress.version = release_version
+
+    supervised = sys.platform == "darwin" or sys.platform.startswith("linux")
+    desktop = getattr(request.app.state, "desktop_app", None)
+    shutdown = getattr(desktop, "shutdown", None)
+    config = getattr(request.app.state, "config", None)
+    ui_config = getattr(config, "ui", None)
+    health_port = getattr(ui_config, "admin_api_port", None)
+    if supervised and (
+        not callable(shutdown) or not isinstance(health_port, int)
+    ):
+        raise HTTPException(status_code=503, detail="safe native update restart is unavailable")
 
     def on_bytes(written: int, total: int | None) -> None:
         """One download tick. Without a total there is no honest fraction."""
@@ -981,19 +1039,46 @@ async def _apply_frozen() -> dict[str, object]:
         )
 
     workdir = Path(tempfile.mkdtemp(prefix="jarvis-update-"))
+    shutdown_receipt = workdir / "shutdown.ok"
     try:
         _progress.enter(PHASE_DOWNLOADING, detail=asset.name)
         installer = await download_and_verify(
-            asset, checksums, dest_dir=workdir, on_progress=on_bytes
+            asset,
+            checksums,
+            signature,
+            release_tag=release_tag,
+            dest_dir=workdir,
+            on_progress=on_bytes,
         )
         # download_and_verify hashes the file after the last byte lands, so by
         # the time it returns the verify phase is already over — the window is
         # closed here rather than announced, to keep the bar truthful.
         _progress.advance(PHASE_VERIFYING, 1.0, detail=None)
+        active_missions = list(running_ids()) if callable(running_ids) else []
+        if active_missions:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{len(active_missions)} mission(s) started during download; "
+                    "finish them before updating"
+                ),
+            )
         _progress.enter(PHASE_INSTALLING)
         # hdiutil, a directory swap and a detached spawn all block; keep the
         # event loop (and therefore the UI this answer travels back over) free.
-        handover = await asyncio.to_thread(apply_installer, installer)
+        handover = await asyncio.to_thread(
+            apply_installer,
+            installer,
+            supervise=supervised,
+            expected_version=release_version if supervised else None,
+            previous_version=current if supervised else None,
+            health_port=health_port if supervised else None,
+            shutdown_receipt=shutdown_receipt if supervised else None,
+        )
+    except HTTPException as exc:
+        shutil.rmtree(workdir, ignore_errors=True)
+        _progress.fail(str(exc.detail))
+        raise
     except InstallerUpdateError as exc:
         shutil.rmtree(workdir, ignore_errors=True)
         _progress.fail(str(exc))
@@ -1007,13 +1092,15 @@ async def _apply_frozen() -> dict[str, object]:
             status_code=500, detail=f"the update could not be installed: {exc}"
         ) from exc
 
-    # The native installer restarts the app itself, so this run is complete.
+    # The signed payload was handed off; the sidecar still has to prove health.
     _progress.finish(version=release_version, restart_required=False)
+    if supervised:
+        background_tasks.add_task(_quit_for_native_update, desktop, shutdown_receipt)
 
     # The download is deliberately NOT deleted: on Windows the installer that
     # replaces this app is running from it right now. The OS reclaims the temp
     # directory; deleting it here would kill the update mid-flight.
-    log.info("[update] %s installed from %s (%s)", release_tag, asset.name, workdir)
+    log.info("[update] %s staged from %s (%s)", release_tag, asset.name, workdir)
 
     global _status_cache, _status_cache_until, _status_cache_root
     _status_cache, _status_cache_until, _status_cache_root = None, 0.0, None
@@ -1021,10 +1108,7 @@ async def _apply_frozen() -> dict[str, object]:
     return {
         "ok": True,
         "prepared": True,
-        # The handover restarts the app itself (Inno's /RESTARTAPPLICATIONS,
-        # `open` on macOS, re-exec on Linux), so no caller-driven restart is
-        # required. The field is honest about that; a caller that restarts
-        # anyway is harmless because the single-instance lock still holds.
+        # The Windows installer or POSIX supervisor owns the restart.
         "restart_required": False,
         "kind": INSTALL_KIND_FROZEN,
         "version": release_version,
@@ -1060,11 +1144,16 @@ async def update_status(force: bool = False) -> dict[str, object]:
         # is cached; the staged-transaction fields are cheap local file reads
         # and must always be live (an apply invalidates the cache, but a
         # relauncher result appears while the cache is warm). A frozen install
-        # has no such local state, so its cached answer is complete.
+        # also gets a native sidecar verdict after the network answer is cached.
         if _status_cache.get("managed") and _status_cache_root is not None:
             return {
                 **_status_cache,
                 **(await _pending_update_overlay(_status_cache_root)),
+            }
+        if _status_cache.get("kind") == INSTALL_KIND_FROZEN:
+            return {
+                **_status_cache,
+                "last_result": _read_update_result(native_update_result_dir()),
             }
         return _status_cache
 
@@ -1147,7 +1236,7 @@ async def update_progress() -> dict[str, object]:
 
 
 @router.post("/apply", openapi_extra={"x-jarvis-dangerous": True})
-async def update_apply() -> dict[str, object]:
+async def update_apply(request: Request, background_tasks: BackgroundTasks) -> dict[str, object]:
     """Prepare the latest version and report progress while doing it.
 
     Dispatches on the install kind: a FROZEN install downloads and hands over
@@ -1166,7 +1255,7 @@ async def update_apply() -> dict[str, object]:
     async with _apply_lock:
         try:
             if is_frozen():
-                return await _apply_frozen()
+                return await _apply_frozen(request, background_tasks)
             return await _apply_managed()
         except HTTPException as exc:
             _progress.fail(str(exc.detail))

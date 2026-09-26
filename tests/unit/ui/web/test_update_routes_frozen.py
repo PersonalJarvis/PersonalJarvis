@@ -14,6 +14,7 @@ pinned here:
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -21,14 +22,21 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import jarvis.ui.web.update_routes as u
-from jarvis.core.installer_update import CHECKSUMS_ASSET_NAME, InstallerUpdateError
+from jarvis.core.installer_update import (
+    CHECKSUMS_ASSET_NAME,
+    CHECKSUMS_SIGNATURE_ASSET_NAME,
+    InstallerUpdateError,
+    native_update_result_dir,
+)
 from jarvis.ui.web.update_routes import router as update_router
 
 SETUP_NAME = "PersonalJarvis-Setup-x64.exe"
 
 
 @pytest.fixture(autouse=True)
-def _reset_cache() -> None:
+def _reset_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "user-data"))
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "runtime-data"))
     u._status_cache = None
     u._status_cache_until = 0.0
     u._status_cache_root = None
@@ -57,6 +65,11 @@ def _release(
                 "browser_download_url": (f"https://example.invalid/{CHECKSUMS_ASSET_NAME}"),
                 "size": 90,
             },
+            {
+                "name": CHECKSUMS_SIGNATURE_ASSET_NAME,
+                "browser_download_url": f"https://example.invalid/{CHECKSUMS_SIGNATURE_ASSET_NAME}",
+                "size": 88,
+            },
         ]
     return {
         "version": version,
@@ -75,6 +88,7 @@ def _patch_frozen(
     asset_name: str | None = SETUP_NAME,
     running: str = "1.5.3",
 ) -> None:
+    monkeypatch.setattr(u, "sys", SimpleNamespace(platform="win32"))
     monkeypatch.setattr(u, "is_frozen", lambda: frozen)
     monkeypatch.setattr(u, "_running_version", lambda: running)
     monkeypatch.setattr(u, "installer_asset_name", lambda _p, _m: asset_name)
@@ -94,6 +108,43 @@ def _forbid_git(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError("a frozen install must never resolve a git checkout")
 
     monkeypatch.setattr(u, "_resolve_managed_repo", _explode)
+
+
+def test_deb_install_does_not_offer_an_appimage(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(u, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.delenv("APPIMAGE", raising=False)
+    assert u._frozen_asset_name() is None
+
+
+def test_frozen_status_exposes_persisted_rollback_even_when_offline(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_frozen(monkeypatch)
+    _patch_latest(monkeypatch, None)
+    root = native_update_result_dir()
+    root.mkdir(parents=True)
+    (root / ".jarvis-update-result.json").write_text(
+        '{"ok": false, "rolled_back": true, "completed_at": 123}\n', encoding="utf-8"
+    )
+    body = client.get("/api/update/status").json()
+    assert body["last_result"] == {"ok": False, "rolled_back": True, "completed_at": 123}
+    assert body["check_failed"] is True
+
+
+def test_frozen_cached_status_refreshes_late_supervisor_verdict(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_frozen(monkeypatch)
+    _patch_latest(monkeypatch, _release("1.6.0"))
+    assert client.get("/api/update/status").json()["last_result"] is None
+    root = native_update_result_dir()
+    root.mkdir(parents=True)
+    (root / ".jarvis-update-result.json").write_text(
+        '{"ok": false, "rolled_back": true, "completed_at": 124}\n', encoding="utf-8"
+    )
+    assert client.get("/api/update/status").json()["last_result"] == {
+        "ok": False, "rolled_back": True, "completed_at": 124,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -216,13 +267,24 @@ def _capture_install(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         path.write_bytes(b"verified installer")
         return path
 
-    async def _download(asset: Any, checksums: Any, *, dest_dir: Path) -> Path:
+    async def _download(
+        asset: Any,
+        checksums: Any,
+        signature: Any,
+        *,
+        release_tag: str,
+        dest_dir: Path,
+        on_progress: Any,
+    ) -> Path:
         seen["asset"] = asset
         seen["checksums"] = checksums
+        seen["signature"] = signature
+        seen["release_tag"] = release_tag
         return _write_verified(dest_dir, asset.name)
 
-    def _apply(installer: Path) -> str:
+    def _apply(installer: Path, **kwargs: Any) -> str:
         seen["installer"] = installer
+        seen["apply_options"] = kwargs
         return "the Windows installer is running"
 
     monkeypatch.setattr(u, "download_and_verify", _download)
@@ -250,7 +312,108 @@ def test_apply_downloads_verifies_and_hands_over(
     assert body["restart_required"] is False
     assert seen["asset"].name == SETUP_NAME
     assert seen["checksums"].name == CHECKSUMS_ASSET_NAME
+    assert seen["signature"].name == CHECKSUMS_SIGNATURE_ASSET_NAME
+    assert seen["release_tag"] == "v1.6.0"
     assert seen["installer"].name == SETUP_NAME
+
+
+def test_posix_apply_stages_supervisor_then_quits_after_response(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_frozen(monkeypatch)
+    monkeypatch.setattr(u, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(u, "_frozen_asset_name", lambda: SETUP_NAME)
+    _patch_latest(monkeypatch, _release("1.6.0"))
+    seen = _capture_install(monkeypatch)
+    quit_calls: list[str] = []
+    monkeypatch.setattr(
+        u, "_quit_for_native_update",
+        lambda _desktop, _receipt: quit_calls.append("quit"),
+    )
+    client.app.state.desktop_app = SimpleNamespace(
+        request_quit=lambda: quit_calls.append("quit"), shutdown=lambda **_kwargs: None
+    )
+    client.app.state.config = SimpleNamespace(ui=SimpleNamespace(admin_api_port=47821))
+
+    response = client.post("/api/update/apply")
+
+    assert response.status_code == 200
+    assert response.json()["restart_required"] is False
+    assert seen["installer"].name == SETUP_NAME
+    receipt = seen["apply_options"].pop("shutdown_receipt")
+    assert receipt.name == "shutdown.ok"
+    assert seen["apply_options"] == {
+        "supervise": True,
+        "expected_version": "1.6.0",
+        "previous_version": "1.5.3",
+        "health_port": 47821,
+    }
+    assert quit_calls == ["quit"]
+
+
+def test_frozen_apply_refuses_to_quit_active_missions(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_frozen(monkeypatch)
+    _patch_latest(monkeypatch, _release("1.6.0"))
+    client.app.state.kontrollierer = SimpleNamespace(running_mission_ids=lambda: ["mission-1"])
+    response = client.post("/api/update/apply")
+    assert response.status_code == 409
+    assert "mission" in response.json()["detail"]
+
+
+def test_native_shutdown_receipt_is_written_after_state_flush(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+    receipt = tmp_path / "shutdown.ok"
+
+    def exit_process(code: int) -> None:
+        events.append(f"exit:{code}")
+        raise SystemExit(code)
+
+    monkeypatch.setattr(u.os, "_exit", exit_process)
+    desktop = SimpleNamespace(
+        shutdown=lambda **_kwargs: events.append("shutdown") or 0,
+        _shutdown_clean=True,
+    )
+    with pytest.raises(SystemExit) as outcome:
+        u._quit_for_native_update(desktop, receipt)
+    assert outcome.value.code == 0
+    assert events == ["shutdown", "exit:0"]
+    assert receipt.is_file()
+
+
+def test_native_shutdown_failure_never_authorizes_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt = tmp_path / "shutdown.ok"
+
+    def exit_process(code: int) -> None:
+        raise SystemExit(code)
+
+    monkeypatch.setattr(u.os, "_exit", exit_process)
+    desktop = SimpleNamespace(shutdown=lambda **_kwargs: 1)
+    with pytest.raises(SystemExit) as outcome:
+        u._quit_for_native_update(desktop, receipt)
+    assert outcome.value.code == 1
+    assert not receipt.exists()
+
+
+def test_native_shutdown_zero_without_backend_cleanup_does_not_authorize_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt = tmp_path / "shutdown.ok"
+
+    def exit_process(code: int) -> None:
+        raise SystemExit(code)
+
+    monkeypatch.setattr(u.os, "_exit", exit_process)
+    desktop = SimpleNamespace(shutdown=lambda **_kwargs: 0, _shutdown_clean=False)
+    with pytest.raises(SystemExit) as outcome:
+        u._quit_for_native_update(desktop, receipt)
+    assert outcome.value.code == 1
+    assert not receipt.exists()
 
 
 def test_apply_refuses_when_nothing_newer_is_published(
@@ -279,7 +442,7 @@ def test_apply_refuses_without_a_checksum_manifest(
         ),
     )
 
-    def _never(installer: Path) -> str:
+    def _never(installer: Path, **kwargs: Any) -> str:
         raise AssertionError("nothing may be executed without a checksum manifest")
 
     monkeypatch.setattr(u, "apply_installer", _never)
@@ -287,6 +450,21 @@ def test_apply_refuses_without_a_checksum_manifest(
     response = client.post("/api/update/apply")
     assert response.status_code == 502
     assert CHECKSUMS_ASSET_NAME in response.json()["detail"]
+
+
+def test_frozen_release_without_signature_is_not_offered_or_applied(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_frozen(monkeypatch)
+    release = _release("1.6.0")
+    release["assets"] = [
+        asset for asset in release["assets"] if asset["name"] != CHECKSUMS_SIGNATURE_ASSET_NAME
+    ]
+    _patch_latest(monkeypatch, release)
+    assert client.get("/api/update/status").json()["update_available"] is False
+    response = client.post("/api/update/apply")
+    assert response.status_code == 502
+    assert CHECKSUMS_SIGNATURE_ASSET_NAME in response.json()["detail"]
 
 
 def test_apply_refuses_when_the_release_has_no_installer(
@@ -305,10 +483,18 @@ def test_apply_surfaces_a_verification_failure(
     _patch_frozen(monkeypatch)
     _patch_latest(monkeypatch, _release("1.6.0"))
 
-    async def _download(asset: Any, checksums: Any, *, dest_dir: Path) -> Path:
+    async def _download(
+        asset: Any,
+        checksums: Any,
+        signature: Any,
+        *,
+        release_tag: str,
+        dest_dir: Path,
+        on_progress: Any,
+    ) -> Path:
         raise InstallerUpdateError("PersonalJarvis-Setup-x64.exe failed its SHA-256 check")
 
-    def _never(installer: Path) -> str:
+    def _never(installer: Path, **kwargs: Any) -> str:
         raise AssertionError("a failed verification must never reach the handover")
 
     monkeypatch.setattr(u, "download_and_verify", _download)

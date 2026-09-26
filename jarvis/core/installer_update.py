@@ -3,7 +3,7 @@
 A frozen install (Windows ``Setup.exe``, macOS ``.dmg``, Linux ``.AppImage``)
 has no git checkout, so ``jarvis/ui/web/update_routes.py``'s managed path cannot
 update it. What it does have is a GitHub Release carrying exactly one installer
-asset per platform plus a ``installers-SHA256SUMS.txt`` manifest:
+asset per platform plus a signed ``installers-SHA256SUMS.txt`` manifest:
 
 * ``PersonalJarvis-Setup-x64.exe``          Windows 10/11 x64
 * ``PersonalJarvis-macOS-arm64.dmg``        Apple Silicon
@@ -11,13 +11,13 @@ asset per platform plus a ``installers-SHA256SUMS.txt`` manifest:
 * ``PersonalJarvis-Linux-x86_64.AppImage``  Linux x86_64
 
 This module resolves which of those belongs to the running machine, downloads
-it, proves it byte-for-byte against the checksum manifest of the SAME release,
-and then hands control to the platform's own upgrade mechanism.
+it, verifies the manifest's pinned Ed25519 signature and release tag, proves
+the payload hash, then hands control to the platform's upgrade mechanism.
 
 Two rules run through everything here:
 
-* **Fail closed.** A missing asset, a missing or unparsable checksum manifest, a
-  digest that does not match, an oversized body, an unexpected redirect target —
+* **Fail closed.** A missing asset, missing or invalid signature, a digest
+  mismatch, an oversized body, an unexpected redirect target —
   every one of them raises :class:`InstallerUpdateError` and installs nothing.
   Executing an unverified binary is the single worst thing an updater can do.
 * **Injectable edges.** Network and process spawning arrive as small protocols
@@ -32,15 +32,22 @@ build never flashes a console.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import hashlib
+import json
 import logging
 import os
 import platform as platform_module
+import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable, Iterable, Sequence
+import time
+import urllib.request
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -53,6 +60,7 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "CHECKSUMS_ASSET_NAME",
+    "CHECKSUMS_SIGNATURE_ASSET_NAME",
     "AssetFetcher",
     "CommandRunner",
     "DownloadProgress",
@@ -61,6 +69,7 @@ __all__ = [
     "SubprocessCommandRunner",
     "apply_installer",
     "download_and_verify",
+    "run_native_update_supervisor",
     "installer_asset_name",
     "parse_sha256sums",
     "select_asset",
@@ -70,6 +79,15 @@ __all__ = [
 # The checksum manifest published alongside the installers. Its lines are plain
 # ``sha256sum`` output, so `sha256sum -c` verifies the same file by hand.
 CHECKSUMS_ASSET_NAME = "installers-SHA256SUMS.txt"
+CHECKSUMS_SIGNATURE_ASSET_NAME = f"{CHECKSUMS_ASSET_NAME}.cosign.sig"
+_NATIVE_RESULT_NAME = ".jarvis-update-result.json"
+# Same Wave-2 trust root as install/keys/offline-ceremony.pub. Keep it inside the
+# frozen executable: a public key fetched from the release would trust itself.
+_RELEASE_PUBLIC_KEY_PEM = (
+    b"-----BEGIN PUBLIC KEY-----\n"
+    b"MCowBQYDK2VwAyEArlfig3ALFBrED+VrNZ8hlrVnRJxDnI8PCkxGB26N4U4=\n"
+    b"-----END PUBLIC KEY-----\n"
+)
 
 # A whole onedir bundle compresses to a few hundred MB. The cap exists to stop a
 # hostile or broken endpoint from filling the disk, not to be a tight budget.
@@ -260,6 +278,9 @@ class AssetFetcher(Protocol):
     async def get_text(self, url: str, *, max_bytes: int) -> str:
         """Fetch a small text body (the checksum manifest)."""
 
+    async def get_bytes(self, url: str, *, max_bytes: int) -> bytes:
+        """Fetch bounded bytes without changing signed content."""
+
     async def download(
         self,
         url: str,
@@ -285,6 +306,10 @@ class HttpxAssetFetcher:
     """
 
     async def get_text(self, url: str, *, max_bytes: int) -> str:
+        body = await self.get_bytes(url, max_bytes=max_bytes)
+        return body.decode("utf-8")
+
+    async def get_bytes(self, url: str, *, max_bytes: int) -> bytes:
         import httpx
 
         async with httpx.AsyncClient(
@@ -298,7 +323,7 @@ class HttpxAssetFetcher:
             raise InstallerUpdateError(
                 f"checksum manifest is larger than {max_bytes} bytes — refusing it"
             )
-        return body.decode("utf-8", errors="replace")
+        return body
 
     async def download(
         self,
@@ -341,11 +366,14 @@ class HttpxAssetFetcher:
 async def download_and_verify(
     asset: InstallerAsset,
     checksums: InstallerAsset,
+    signature: InstallerAsset,
     *,
+    release_tag: str,
     dest_dir: Path,
     fetcher: AssetFetcher | None = None,
     max_bytes: int = MAX_INSTALLER_BYTES,
     on_progress: DownloadProgress | None = None,
+    public_key_pem: bytes = _RELEASE_PUBLIC_KEY_PEM,
 ) -> Path:
     """Download ``asset`` and prove it against ``checksums``. Fail closed.
 
@@ -372,12 +400,27 @@ async def download_and_verify(
         )
 
     try:
-        manifest_text = await active.get_text(checksums.url, max_bytes=MAX_CHECKSUMS_BYTES)
+        manifest_bytes = await active.get_bytes(checksums.url, max_bytes=MAX_CHECKSUMS_BYTES)
     except InstallerUpdateError:
         raise
     except Exception as exc:  # noqa: BLE001 — every transport error is the same refusal
         raise InstallerUpdateError(f"could not download {CHECKSUMS_ASSET_NAME}: {exc}") from exc
+    try:
+        signature_bytes = await active.get_bytes(signature.url, max_bytes=1024)
+    except InstallerUpdateError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — no unsigned fallback
+        raise InstallerUpdateError(
+            f"could not download {CHECKSUMS_SIGNATURE_ASSET_NAME}: {exc}"
+        ) from exc
 
+    _verify_manifest_signature(manifest_bytes, signature_bytes, public_key_pem)
+    try:
+        manifest_text = manifest_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise InstallerUpdateError("signed checksum manifest is not UTF-8") from exc
+    if not manifest_text.startswith(f"# release: {release_tag}\n"):
+        raise InstallerUpdateError("signed checksum manifest belongs to a different release")
     digests = parse_sha256sums(manifest_text)
     expected = digests.get(asset.name)
     if not expected:
@@ -409,6 +452,26 @@ async def download_and_verify(
 
     log.info("[update] verified %s (%d bytes, sha256 %s)", asset.name, written, actual)
     return target
+
+
+def _verify_manifest_signature(
+    manifest: bytes, signature_text: bytes, public_key_pem: bytes
+) -> None:
+    """Verify the detached Wave-2 signature before accepting any digest."""
+    try:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        signature = base64.b64decode(signature_text.strip(), validate=True)
+        public_key = serialization.load_pem_public_key(public_key_pem)
+        if len(signature) != 64 or not isinstance(public_key, Ed25519PublicKey):
+            raise ValueError("signature or key has the wrong format")
+        public_key.verify(signature, manifest)
+    except (InvalidSignature, ValueError, binascii.Error) as exc:
+        raise InstallerUpdateError(
+            "installer checksum manifest failed Ed25519 signature verification"
+        ) from exc
 
 
 def _prepare_target(dest_dir: Path, name: str) -> Path:
@@ -449,12 +512,20 @@ class CommandRunner(Protocol):
     def run(self, command: Sequence[str], *, timeout_s: float) -> tuple[int, str, str]:
         """Run to completion; return ``(returncode, stdout, stderr)``."""
 
-    def spawn_detached(self, command: Sequence[str]) -> None:
-        """Start ``command`` and return immediately, outliving this process."""
+    def spawn_detached(
+        self, command: Sequence[str], *, env: Mapping[str, str] | None = None
+    ) -> int:
+        """Start in a private process group and return the leader PID."""
+
+    def terminate_group(self, pid: int) -> None:
+        """Stop and reap only the process group created by this runner."""
 
 
 class SubprocessCommandRunner:
     """Default :class:`CommandRunner`. Every spawn is console-free (AP-1)."""
+
+    def __init__(self) -> None:
+        self._children: dict[int, subprocess.Popen[bytes]] = {}
 
     def run(self, command: Sequence[str], *, timeout_s: float) -> tuple[int, str, str]:
         try:
@@ -474,7 +545,9 @@ class SubprocessCommandRunner:
             return -1, "", f"{command[0]} timed out after {timeout_s:.0f}s"
         return completed.returncode, completed.stdout or "", completed.stderr or ""
 
-    def spawn_detached(self, command: Sequence[str]) -> None:
+    def spawn_detached(
+        self, command: Sequence[str], *, env: Mapping[str, str] | None = None
+    ) -> int:
         kwargs: dict[str, Any] = {
             "stdin": subprocess.DEVNULL,
             "stdout": subprocess.DEVNULL,
@@ -488,7 +561,48 @@ class SubprocessCommandRunner:
         else:
             # Leave the process group so the handover survives this app exiting.
             kwargs["start_new_session"] = True
-        subprocess.Popen(list(command), **kwargs)  # noqa: S603 - fixed argv, no shell
+            child_env = os.environ.copy()
+            original_library_path = child_env.pop("LD_LIBRARY_PATH_ORIG", None)
+            if original_library_path is None:
+                child_env.pop("LD_LIBRARY_PATH", None)
+            else:
+                child_env["LD_LIBRARY_PATH"] = original_library_path
+            for transient in ("APPDIR", "APPIMAGE", "ARGV0", "OWD", "_MEIPASS2"):
+                child_env.pop(transient, None)
+            child_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+            if env:
+                child_env.update(env)
+            kwargs["env"] = child_env
+        proc = subprocess.Popen(list(command), **kwargs)  # noqa: S603 - fixed argv, no shell
+        self._children[proc.pid] = proc
+        return proc.pid
+
+    def terminate_group(self, pid: int) -> None:
+        proc = self._children.get(pid)
+        if proc is None:
+            raise InstallerUpdateError("refusing to stop an unowned update process")
+        if sys.platform == "win32":
+            raise InstallerUpdateError("native process-group rollback is unavailable on Windows")
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            # The owned group already exited; reap its handle and finish cleanup.
+            proc.wait(timeout=1)
+            self._children.pop(pid, None)
+            return
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            # The process ignored SIGTERM; escalate to the owned group below.
+            pass
+        if _posix_group_alive(pid):
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                # A child may have exited between the group probe and kill.
+                pass
+        proc.wait(timeout=5)
+        self._children.pop(pid, None)
 
 
 # --------------------------------------------------------------------------- #
@@ -502,6 +616,11 @@ def apply_installer(
     app_path: Path | None = None,
     appimage_path: Path | None = None,
     relaunch: bool = True,
+    supervise: bool = False,
+    expected_version: str | None = None,
+    previous_version: str | None = None,
+    health_port: int | None = None,
+    shutdown_receipt: Path | None = None,
 ) -> str:
     """Install the verified ``installer`` and hand control to the new version.
 
@@ -515,6 +634,25 @@ def apply_installer(
 
     if not installer.is_file():
         raise InstallerUpdateError(f"{installer} does not exist")
+
+    if supervise and active_platform in {"darwin", "linux"}:
+        if (
+            not expected_version or not previous_version or not health_port
+            or shutdown_receipt is None or not is_frozen()
+        ):
+            raise InstallerUpdateError(
+                "native update supervision requires a frozen app and health port"
+            )
+        if active_platform == "darwin":
+            target = app_path if app_path is not None else _running_macos_app()
+        else:
+            target = appimage_path if appimage_path is not None else _running_appimage()
+        if target is None:
+            raise InstallerUpdateError("could not locate the installed application to update")
+        return _start_native_supervisor(
+            installer, target, active_platform, expected_version, previous_version,
+            health_port, shutdown_receipt, active_runner
+        )
 
     if active_platform == "win32":
         return _handover_windows(installer, runner=active_runner)
@@ -533,6 +671,224 @@ def apply_installer(
             relaunch=relaunch,
         )
     raise InstallerUpdateError(f"no installer handover exists for platform {active_platform!r}")
+
+
+def _start_native_supervisor(
+    installer: Path,
+    target: Path,
+    platform_name: str,
+    expected_version: str,
+    previous_version: str,
+    health_port: int,
+    shutdown_receipt: Path,
+    runner: CommandRunner,
+) -> str:
+    """Start an old-version sidecar before the desktop process exits."""
+    if not target.exists() or not 1 <= health_port <= 65535:
+        raise InstallerUpdateError("installed app or health port is unavailable")
+    payload = {
+        "schema": 1,
+        "parent_pid": os.getpid(),
+        "platform": platform_name,
+        "installer": str(installer.resolve()),
+        "installer_sha256": _sha256_file(installer),
+        "target": str(target.resolve()),
+        "version": expected_version,
+        "previous_version": previous_version,
+        "health_port": health_port,
+        "shutdown_receipt": str(shutdown_receipt.resolve()),
+    }
+    if platform_name == "darwin":
+        try:
+            payload["executable_relative"] = str(
+                Path(sys.executable).resolve().relative_to(target.resolve())
+            )
+        except ValueError as exc:
+            raise InstallerUpdateError("the running executable is outside its app bundle") from exc
+    fd, raw_path = tempfile.mkstemp(prefix="jarvis-native-update-", suffix=".json")
+    payload_path = Path(raw_path)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+        helper = str(target) if platform_name == "linux" else sys.executable
+        runner.spawn_detached([helper, "--native-update-supervisor", str(payload_path)])
+    except OSError as exc:
+        payload_path.unlink(missing_ok=True)
+        raise InstallerUpdateError(f"could not start the update supervisor: {exc}") from exc
+    return "verified update staged; the app will restart under health supervision"
+
+
+def _health_has_version(port: int, version: str, nonce: str) -> bool:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=1.0) as response:
+            payload = json.load(response)
+        return (
+            isinstance(payload, dict)
+            and payload.get("ok") is True
+            and payload.get("version") == version
+            and payload.get("update_nonce") == nonce
+        )
+    except (OSError, ValueError, TypeError):
+        # Refused connection and partial bootstrap responses are expected until
+        # the full app binds and reports its version and launch nonce.
+        return False
+
+
+def write_native_update_result(*, ok: bool, rolled_back: bool) -> None:
+    """Persist only the update verdict outside the replaceable app bundle."""
+    directory = native_update_result_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    destination = directory / _NATIVE_RESULT_NAME
+    fd, temp_name = tempfile.mkstemp(prefix=".jarvis-update-result-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(
+                {"ok": ok, "rolled_back": rolled_back, "completed_at": int(time.time())},
+                handle,
+                sort_keys=True,
+            )
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, destination)
+    finally:
+        Path(temp_name).unlink(missing_ok=True)
+
+
+def native_update_result_dir() -> Path:
+    """Use the configured runtime data root, or the stable per-user default."""
+    from jarvis.core.paths import user_data_dir
+
+    configured = os.environ.get("JARVIS_DATA_DIR", "").strip()
+    return Path(configured).expanduser() if configured else user_data_dir()
+
+
+def run_native_update_supervisor(
+    manifest_path: Path,
+    *,
+    runner: CommandRunner | None = None,
+    alive: Callable[[int], bool] | None = None,
+    health: Callable[[int, str, str], bool] = _health_has_version,
+    sleep: Callable[[float], None] = time.sleep,
+    wait_seconds: float = 45.0,
+    health_seconds: float = 120.0,
+) -> bool:
+    """After old process exits, swap, verify the new app, or restore prior bytes."""
+    active_runner = SubprocessCommandRunner() if runner is None else runner
+    success = False
+    rolled_back = False
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if payload.get("schema") != 1 or payload.get("platform") not in {"darwin", "linux"}:
+            return False
+        parent_pid = int(payload["parent_pid"])
+        port = int(payload["health_port"])
+        version = str(payload["version"])
+        previous_version = str(payload["previous_version"])
+        installer = Path(payload["installer"])
+        target = Path(payload["target"])
+        receipt = Path(payload["shutdown_receipt"])
+        if not 1 <= port <= 65535 or not installer.is_file() or not target.exists():
+            return False
+        platform_name = payload["platform"]
+        if platform_name == "darwin":
+            relative = Path(str(payload["executable_relative"]))
+            if relative.is_absolute() or ".." in relative.parts:
+                raise InstallerUpdateError("invalid bundle executable path")
+            command = [str(target / relative)]
+        else:
+            command = [str(target)]
+        probe_alive = alive or _posix_pid_alive
+        deadline = time.monotonic() + wait_seconds
+        while probe_alive(parent_pid) and time.monotonic() < deadline:
+            sleep(0.2)
+        if probe_alive(parent_pid):
+            raise InstallerUpdateError("old application did not exit before update")
+        if not receipt.is_file():
+            active_runner.spawn_detached(command)
+            rolled_back = True
+            raise InstallerUpdateError(
+                "old app did not finish a graceful shutdown; update cancelled"
+            )
+        try:
+            if _sha256_file(installer) != payload["installer_sha256"]:
+                raise InstallerUpdateError("verified installer changed before application")
+            apply_installer(
+                installer,
+                platform_name=platform_name,
+                runner=active_runner,
+                app_path=target if platform_name == "darwin" else None,
+                appimage_path=target if platform_name == "linux" else None,
+                relaunch=False,
+            )
+        except InstallerUpdateError:
+            if target.exists():
+                active_runner.spawn_detached(command)
+                rolled_back = True
+            raise
+        previous = target.with_name(f".{target.name}.previous")
+        child_pid: int | None = None
+        nonce = secrets.token_hex(16)
+        try:
+            child_pid = active_runner.spawn_detached(
+                command, env={"JARVIS_UPDATE_HEALTH_NONCE": nonce}
+            )
+            deadline = time.monotonic() + health_seconds
+            while time.monotonic() < deadline:
+                if health(port, version, nonce):
+                    success = True
+                    return True
+                sleep(0.5)
+        except Exception as exc:  # noqa: BLE001 - any failed health probe must roll back
+            log.warning("[update] new version failed to become healthy: %s", exc)
+        if child_pid is not None:
+            active_runner.terminate_group(child_pid)
+        _restore_previous(target, previous)
+        previous_nonce = secrets.token_hex(16)
+        active_runner.spawn_detached(
+            command, env={"JARVIS_UPDATE_HEALTH_NONCE": previous_nonce}
+        )
+        deadline = time.monotonic() + health_seconds
+        while time.monotonic() < deadline:
+            if health(port, previous_version, previous_nonce):
+                rolled_back = True
+                break
+            sleep(0.5)
+        else:
+            raise InstallerUpdateError("previous version restored but did not become healthy")
+        raise InstallerUpdateError("new version did not become healthy; restored previous version")
+    except (OSError, ValueError, TypeError, KeyError, InstallerUpdateError) as exc:
+        log.error("[update] native supervisor failed: %s", exc)
+        return False
+    finally:
+        manifest_path.unlink(missing_ok=True)
+        try:
+            write_native_update_result(ok=success, rolled_back=rolled_back)
+        except OSError as exc:
+            log.error("[update] could not persist native update result: %s", exc)
+
+
+def _posix_pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        # An absent PID is the expected successful end of a shutdown wait.
+        return False
+    except PermissionError:
+        # A protected PID still exists; never mistake denied access for exit.
+        return True
+    return True
+
+
+def _posix_group_alive(group_id: int) -> bool:
+    try:
+        os.killpg(group_id, 0)
+    except ProcessLookupError:
+        # No remaining group members means rollback can safely restore files.
+        return False
+    return True
 
 
 def _handover_windows(installer: Path, *, runner: CommandRunner) -> str:
@@ -601,7 +957,7 @@ def _handover_macos(
                 )
             source = candidates[0]
 
-        _replace_directory(source, app_path)
+        previous = _replace_directory(source, app_path)
     finally:
         if attached:
             rc, _out, err = runner.run(
@@ -617,8 +973,9 @@ def _handover_macos(
         try:
             runner.spawn_detached(["open", "-n", str(app_path)])
         except OSError as exc:
+            _restore_previous(app_path, previous)
             raise InstallerUpdateError(
-                f"the update was installed but could not be relaunched: {exc}"
+                f"the updated app could not be relaunched; restored the previous version: {exc}"
             ) from exc
     log.info("[update] replaced %s from %s", app_path, dmg.name)
     return f"{app_path.name} was replaced and relaunched"
@@ -638,6 +995,7 @@ def _handover_linux(
         )
 
     staged = appimage_path.with_name(f".{appimage_path.name}.new")
+    previous = appimage_path.with_name(f".{appimage_path.name}.previous")
     try:
         # Same directory, so os.replace below is a real atomic rename rather
         # than a cross-device copy that can leave a half-written binary.
@@ -646,7 +1004,13 @@ def _handover_linux(
         # is the user's own file in their own directory. 0o755 is the mode the
         # AppImage project itself documents.
         os.chmod(staged, 0o755)  # noqa: S103
-        os.replace(staged, appimage_path)
+        previous.unlink(missing_ok=True)
+        os.replace(appimage_path, previous)
+        try:
+            os.replace(staged, appimage_path)
+        except OSError:
+            os.replace(previous, appimage_path)
+            raise
     except OSError as exc:
         try:
             staged.unlink(missing_ok=True)
@@ -658,14 +1022,16 @@ def _handover_linux(
         try:
             runner.spawn_detached([str(appimage_path)])
         except OSError as exc:
+            _restore_previous(appimage_path, previous)
             raise InstallerUpdateError(
-                f"the update was installed but could not be relaunched: {exc}"
+                "the updated AppImage could not be relaunched; "
+                f"restored the previous version: {exc}"
             ) from exc
     log.info("[update] replaced %s", appimage_path)
     return f"{appimage_path.name} was replaced and relaunched"
 
 
-def _replace_directory(source: Path, target: Path) -> None:
+def _replace_directory(source: Path, target: Path) -> Path:
     """Put ``source`` where ``target`` is, keeping a rollback until it succeeds.
 
     ``os.replace`` refuses a non-empty destination directory, so the swap is two
@@ -674,9 +1040,8 @@ def _replace_directory(source: Path, target: Path) -> None:
     straight back, so the app is never left missing.
     """
     staging = target.with_name(f".{target.name}.new")
-    previous = target.with_name(f".{target.name}.old")
+    previous = target.with_name(f".{target.name}.previous")
     shutil.rmtree(staging, ignore_errors=True)
-    shutil.rmtree(previous, ignore_errors=True)
 
     try:
         shutil.copytree(source, staging, symlinks=True)
@@ -687,21 +1052,43 @@ def _replace_directory(source: Path, target: Path) -> None:
     moved_aside = False
     try:
         if target.exists():
+            shutil.rmtree(previous, ignore_errors=True)
             os.replace(target, previous)
             moved_aside = True
         os.replace(staging, target)
     except OSError as exc:
         if moved_aside:
             try:
-                os.replace(previous, target)
-            except OSError as rollback_exc:
+                _restore_previous(target, previous)
+            except InstallerUpdateError as rollback_exc:
                 raise InstallerUpdateError(
                     f"{target.name} could not be restored after a failed update: {rollback_exc}"
                 ) from rollback_exc
         shutil.rmtree(staging, ignore_errors=True)
         raise InstallerUpdateError(f"could not replace {target.name}: {exc}") from exc
 
-    shutil.rmtree(previous, ignore_errors=True)
+    return previous
+
+
+def _restore_previous(target: Path, previous: Path) -> None:
+    """Restore executable bytes only; user data lives outside the install path."""
+    if not previous.exists():
+        raise InstallerUpdateError(f"the previous version is unavailable at {previous}")
+    failed = target.with_name(f".{target.name}.failed")
+    try:
+        if failed.is_dir():
+            shutil.rmtree(failed)
+        else:
+            failed.unlink(missing_ok=True)
+        if target.exists():
+            os.replace(target, failed)
+        os.replace(previous, target)
+    except OSError as exc:
+        raise InstallerUpdateError(f"could not restore the previous version: {exc}") from exc
+    if failed.is_dir():
+        shutil.rmtree(failed, ignore_errors=True)
+    else:
+        failed.unlink(missing_ok=True)
 
 
 def _running_macos_app() -> Path | None:
@@ -730,5 +1117,7 @@ def _running_appimage() -> Path | None:
 def supported_here() -> bool:
     """True when this process is frozen AND an installer exists for its platform."""
     if not is_frozen():
+        return False
+    if sys.platform.startswith("linux") and _running_appimage() is None:
         return False
     return installer_asset_name(sys.platform, platform_module.machine()) is not None

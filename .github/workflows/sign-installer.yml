@@ -1,7 +1,7 @@
 # Sigstore keyless signing + SLSA L3 provenance for the Personal Jarvis
 # quick-install one-liner.
 #
-# Trigger: a push of a tag matching v*.*.* (e.g. v0.2.0-supplychain-wave1).
+# Called by desktop-installers.yml after release credential preflight.
 #
 # What it does:
 #   1. Job `sign`:
@@ -20,7 +20,7 @@
 #         The key is scrubbed from the runner in an `if: always()` step.
 #      f. Uploads the signed artifact bundle (install/*, .sig, .pem,
 #         .bundle, .cosign.sig, checksums.txt) as a workflow artifact so the
-#         `release` job can attach it to the Release. Also exposes a
+#         final release job can attach it to the Release. Also exposes a
 #         base64-encoded sha256sum manifest as a job output for the
 #         `provenance` job to consume.
 #   2. Job `provenance` (Wave 3 — SLSA L3):
@@ -30,12 +30,8 @@
 #      ISOLATED job — its OIDC token is never exposed to user-controlled
 #      steps in the `sign` job — and produces a Sigstore-signed in-toto v1.0
 #      provenance file `personal-jarvis.intoto.jsonl`.
-#      With `upload-assets: true` it attaches the provenance file to the
-#      same GitHub Release as the signatures.
-#   3. Job `release`:
-#      Downloads the signed-bundle artifact from `sign` and attaches every
-#      file to the GitHub Release in a single softprops/action-gh-release
-#      step. (The SLSA generator attaches the provenance separately.)
+#      The provenance stays as a workflow artifact until the final job has
+#      validated every native installer and can publish a complete release.
 #
 # Pins:
 #   Every third-party action is pinned by 40-char commit SHA. NEVER use tags
@@ -47,9 +43,7 @@
 name: Sign installer (Sigstore keyless)
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  workflow_call:
 
 # Wave 1 (keyless) needs no secrets — it uses OIDC. Wave 2 (Ed25519) and
 # Wave 4 (ML-DSA-65) read their PRIVATE KEYS from the WAVE2_OFFLINE_KEY_B64
@@ -61,7 +55,7 @@ on:
 # permit it). actions=read is required by the SLSA generator so it can
 # read this workflow file's definition into the provenance subject.
 permissions:
-  contents: write    # to attach signatures + verifier scripts to the Release
+  contents: read
   id-token: write    # to mint the GitHub OIDC token Fulcio binds to
   actions: read      # required by slsa-github-generator (Wave 3)
 
@@ -800,7 +794,8 @@ jobs:
   # PERMISSIONS:
   #   The reusable workflow REQUIRES (per slsa-github-generator README):
   #     id-token: write   — to mint OIDC token for Sigstore Fulcio
-  #     contents: write   — to upload the provenance to the GitHub Release
+  #     contents: write   — statically required by the upstream upload-assets
+  #                         job, even though upload-assets is false here
   #     actions:  read    — to read this workflow's definition into the
   #                         provenance `invocation` subject
   # ----------------------------------------------------------------------
@@ -831,11 +826,9 @@ jobs:
     with:
       base64-subjects: ${{ needs.sign.outputs.hashes }}
       provenance-name: "personal-jarvis.intoto.jsonl"
-      # upload-assets: true attaches the provenance file (and its Sigstore
-      # signature) to the GitHub Release for the tag. The verifier (SA-3
-      # work item — cross-runner-hash + install-verify.sh axis-3) downloads
-      # it and runs `slsa-verifier verify-artifact …`.
-      upload-assets: true
+      # The final native release job downloads this workflow artifact and
+      # publishes it only after every required platform passes.
+      upload-assets: false
       # private-repository: true lets the SLSA generator run while the repo is
       # still PRIVATE. By default it HALTS on a private repo ("Repository is
       # private. The workflow has halted …") to avoid publishing the repo name
@@ -844,166 +837,3 @@ jobs:
       # was private. The name `PersonalJarvis/PersonalJarvis` is not secret and
       # the repo is destined to be public, so recording it in Rekor is accepted.
       private-repository: true
-
-  # ----------------------------------------------------------------------
-  # Job 3: release
-  #
-  # Downloads the signed bundle from `sign` and attaches every file to the
-  # GitHub Release. Gated on `sign` ONLY (not `provenance`): the signed
-  # installer assets are the load-bearing deliverable, and coupling their upload
-  # to the OPTIONAL SLSA provenance attestation once skipped the entire
-  # release-asset upload when provenance's aggregator failed — shipping releases
-  # with ZERO downloadable installer files, so the signed install one-liner
-  # (`curl …/releases/download/vX.Y.Z/install-verify.sh`) 404'd (v1.0.0 and the
-  # first v1.0.1 both landed 0 assets). Provenance still runs (`needs: sign`) and
-  # attaches its own `personal-jarvis.intoto.jsonl` (+ `.sig`) via
-  # `upload-assets: true`; a provenance failure no longer blocks installer
-  # delivery. Trade-off accepted: a release CAN now carry the signed installers
-  # without the SLSA attestation if provenance fails — the Sigstore + Ed25519 +
-  # ML-DSA signatures (the `sign` job) remain mandatory.
-  # ----------------------------------------------------------------------
-  release:
-    needs: [sign]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    env:
-      TAG: ${{ github.ref_name }}
-    steps:
-      - name: Download signed bundle
-        # pin: actions/download-artifact@v4.1.8 — pinned by commit SHA.
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
-        with:
-          name: signed-bundle
-          path: bundle
-
-      - name: List downloaded bundle (defensive)
-        run: |
-          set -euo pipefail
-          ls -la bundle/
-          ls -la bundle/out/ || true
-          ls -la bundle/install/keys/ || true
-
-      - name: Attach signed assets to the GitHub Release
-        # pin: softprops/action-gh-release@v3.0.2 — pinned by commit SHA.
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
-        with:
-          tag_name: ${{ env.TAG }}
-          name: ${{ env.TAG }}
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: |
-            bundle/out/install.sh
-            bundle/out/install.sh.sig
-            bundle/out/install.sh.pem
-            bundle/out/install.sh.bundle
-            bundle/out/install.sh.cosign.sig
-            bundle/out/install.ps1
-            bundle/out/install.ps1.sig
-            bundle/out/install.ps1.pem
-            bundle/out/install.ps1.bundle
-            bundle/out/install.ps1.cosign.sig
-            bundle/out/installer.py
-            bundle/out/installer.py.sig
-            bundle/out/installer.py.pem
-            bundle/out/installer.py.bundle
-            bundle/out/installer.py.cosign.sig
-            bundle/out/install-verify.sh
-            bundle/out/install-verify.sh.sig
-            bundle/out/install-verify.sh.pem
-            bundle/out/install-verify.sh.bundle
-            bundle/out/install-verify.sh.cosign.sig
-            bundle/out/install-verify.ps1
-            bundle/out/install-verify.ps1.sig
-            bundle/out/install-verify.ps1.pem
-            bundle/out/install-verify.ps1.bundle
-            bundle/out/install-verify.ps1.cosign.sig
-            bundle/out/checksums.txt
-            bundle/out/hashes-cross-runner-verified.json
-            bundle/out/layout-content-anchor.json
-            bundle/out/pq-mldsa65.pub.pem
-            bundle/out/install.sh.mldsa.sig
-            bundle/out/install.ps1.mldsa.sig
-            bundle/out/installer.py.mldsa.sig
-            bundle/out/install-verify.sh.mldsa.sig
-            bundle/out/install-verify.ps1.mldsa.sig
-            bundle/out/payload-commit.txt
-            bundle/out/payload-commit.txt.sig
-            bundle/out/payload-commit.txt.pem
-            bundle/out/payload-commit.txt.bundle
-            bundle/out/payload-commit.txt.cosign.sig
-            bundle/out/payload-commit.txt.mldsa.sig
-            bundle/out/requirements.txt
-            bundle/out/requirements.txt.sig
-            bundle/out/requirements.txt.pem
-            bundle/out/requirements.txt.bundle
-            bundle/out/requirements.txt.cosign.sig
-            bundle/out/requirements.txt.mldsa.sig
-            bundle/install/keys/offline-ceremony.pub
-          body: |
-            ## Supply-chain status
-
-            All install artifacts in this release are signed on **four
-            independent axes**:
-
-            1. **Wave 1 — Sigstore keyless (Fulcio + Rekor):** ephemeral
-               cert bound to this workflow's GitHub OIDC identity,
-               recorded in the public transparency log. Files:
-               `<artifact>.sig`, `<artifact>.pem`, `<artifact>.bundle`.
-            2. **Wave 2 — offline-ceremony Ed25519 key:** key-bound
-               signature using a private key generated in an offline
-               ceremony, public key checked into
-               `install/keys/offline-ceremony.pub`. Files:
-               `<artifact>.cosign.sig`.
-            3. **Wave 3 — SLSA L3 provenance:** in-toto v1.0 provenance
-               file `personal-jarvis.intoto.jsonl` produced by the
-               slsa-github-generator reusable workflow (pinned by 40-char
-               commit SHA, NOT by tag). Lists the five install/* artifacts
-               + their SHA-256s as subjects, signs with a Sigstore Fulcio
-               cert minted in an isolated job.
-            4. **Wave 4 — ML-DSA-65 post-quantum (NIST FIPS 204):**
-               key-bound signature using a CRYSTALS-Dilithium category-3
-               private key generated alongside Wave 2 (defense in depth
-               against Shor's algorithm + store-now-decrypt-later).
-               Public key checked into `install/keys/pq-mldsa65.pub.pem`
-               and inlined into the verifier scripts. Files:
-               `<artifact>.mldsa.sig` (~3309 bytes each).
-            5. **Wave 6 — PyPI transitive dependency hash pin + audit:**
-               `requirements.txt` is a `uv pip compile --universal
-               --generate-hashes` lockfile (one `--hash=sha256:` per
-               wheel/sdist, with per-OS markers). The
-               signing workflow runs `pip-audit -r requirements.txt
-               --strict` before any other step, so a CVE in any
-               transitive dep blocks the release. The lockfile is
-               signed under axes 1+2+4 alongside the installer scripts.
-               `installer.py` runs `pip install --require-hashes -r
-               requirements.txt` from the desktop branch. See
-               `docs/supply-chain/threat-model.md` §11.
-
-            The verifier (`install-verify.sh` / `install-verify.ps1`)
-            requires the Wave-1 and Wave-2 signatures to validate before
-            any payload is executed. Wave-3 provenance verification (via
-            `slsa-verifier`) is wired into the verifier by SA-3 in the
-            integration step of the Wave 3 plan. A release with only
-            Wave-1 signatures is treated as compromised.
-
-            - Signing workflow: `.github/workflows/sign-installer.yml@${{ env.TAG }}`
-            - OIDC issuer: `https://token.actions.githubusercontent.com`
-            - Verifier wrapper: `install-verify.sh` / `install-verify.ps1`
-            - Transparency log: https://search.sigstore.dev/?logIndex (search for `${{ github.repository }}`)
-            - SLSA provenance: `personal-jarvis.intoto.jsonl` (attached separately)
-
-            **Do not use `install.sh` directly.** Use the verifying wrapper:
-
-            ```bash
-            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ env.TAG }}/install-verify.sh | bash
-            ```
-
-            ```powershell
-            irm https://github.com/${{ github.repository }}/releases/download/${{ env.TAG }}/install-verify.ps1 | iex
-            ```
-
-            See `docs/supply-chain/threat-model.md` for the full security
-            model and `install/TRUST_ROOT.md` for trust-root rotation
-            instructions.

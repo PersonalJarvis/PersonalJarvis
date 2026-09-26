@@ -1,5 +1,19 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Signed native releases and update recovery (2026-09-26, T3; acceptance open)
+
+Native targets are Windows x64, macOS arm64/x64 and Linux x86_64 AppImage.
+They share the frozen-install capability probe and a version-bound Ed25519
+manifest contract. Unsupported architectures and Debian package installations
+must not receive an incompatible automatic installer. Manual managed/source
+installations retain their existing update transaction.
+
+The release workflow requires native installation, previous-version upgrade
+and rollback evidence for every supported target, plus Windows signing and
+macOS notarization. Local tests cannot establish those native properties.
+Missing signing accounts block publication. See [the release pipeline](release-pipeline.md)
+for public scripts, account requirements, cost constraints and open evidence.
+
 ## Window caption (2026-09-21, T2)
 
 The desktop window is frameless on Windows, macOS and Linux. The page draws
