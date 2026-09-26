@@ -483,6 +483,10 @@ def test_read_codex_models_uses_the_executing_cli_not_a_foreign_cache(monkeypatc
     assert [row["id"] for row in rows] == ["future-supported-model"]
     assert calls == [(["codex-test"], {"CODEX_HOME": str(home)})]
     assert runner_cli.read_codex_models() == rows
+    # Society discovery is scoped for exec isolation. The read-only app-server
+    # must still receive only flags that its own subcommand accepts.
+    with runner_cli.cli_catalog_scope(ignore_user_config=True):
+        assert runner_cli.read_codex_models() == rows
     assert len(calls) == 1
 
 
