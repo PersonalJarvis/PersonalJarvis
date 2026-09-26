@@ -456,6 +456,12 @@ class AgentChatService:
             ),
         )
 
+    async def bind_society_session(self, session_id: str) -> AgentChatSession:
+        """Recheck the roster before a Society command or turn uses a session."""
+        from jarvis.society.chat_binding import bind_society_session
+
+        return await bind_society_session(self, session_id)
+
     async def send(
         self,
         session_id: str,
@@ -487,6 +493,8 @@ class AgentChatService:
         session = self.store.get_session(session_id)
         if session is None:
             raise NoSuchSession(session_id)
+        if session.surface == "society":
+            session = await self.bind_society_session(session_id)
         selected_runner = None
         if session.surface == "jarvis":
             from jarvis.core.model_selection import worker_selection

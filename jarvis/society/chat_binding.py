@@ -32,6 +32,7 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "SURFACE",
+    "bind_society_session",
     "ensure_session",
     "frame_assignment",
     "frame_incoming",
@@ -80,7 +81,7 @@ def _workspace(cfg: Any, agent: AgentRecord) -> str:
 def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
     """The agent's canonical session, created or re-seated to the roster row."""
     from jarvis.agent_chat.effort import default_effort
-    from jarvis.agent_chat.permissions import ladder_key, normalize_permission
+    from jarvis.agent_chat.permissions import ladder_key, normalize_permission, stance_of
     from jarvis.agent_chat.service import resolve_runner
 
     provider, model, effort = pair_for(cfg, agent)
@@ -100,18 +101,62 @@ def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
             surface=SURFACE,
             account_id=agent.account_id,
         )
-    if existing.provider != provider or (model and existing.model != model):
-        svc.store.reseat_session(session_id, provider=provider, model=model or existing.model)
+    if getattr(svc, "is_running", lambda _sid: False)(session_id):
+        # An active CLI turn still owns its provider-specific vendor session.
+        # Re-seat only after it ends so that id cannot land on another provider.
+        return existing
+    if existing.provider != provider or existing.model != model:
+        svc.store.reseat_session(session_id, provider=provider, model=model)
         existing = svc.store.get_session(session_id)
+    ladder = ladder_key(SURFACE, resolve_runner(provider, surface=SURFACE))
+    mode = normalize_permission(ladder, _CEILING_TO_MODE[str(agent.permission_ceiling)])
+    override = svc.store.permission_override(session_id)
+    if not override and existing.permission_mode in ("plan", "read-only"):
+        # Older sessions recorded /plan in the control state before the
+        # separate override record existed. Preserve that explicit choice.
+        control_store = getattr(getattr(svc, "controls", None), "store", None)
+        if control_store is not None:
+            control = control_store.get(session_id)
+            if control.mode == "plan" and control.previous_permission:
+                override = existing.permission_mode
+                svc.store.set_permission_override(session_id, override)
+    if override:
+        chosen = normalize_permission(ladder, override)
+        # The roster is the ceiling; a narrower user choice survives rebinding.
+        if stance_of(chosen) < stance_of(mode):
+            mode = chosen
     updates: dict[str, str] = {}
     if getattr(existing, "account_id", "") != agent.account_id:
         updates["account_id"] = agent.account_id
     if effort and existing.effort != effort:
         updates["effort"] = effort
+    if existing.permission_mode != mode:
+        updates["permission_mode"] = mode
+    if existing.title != agent.name:
+        updates["title"] = agent.name
+    workspace = _workspace(cfg, agent)
+    if existing.cwd != workspace:
+        updates["cwd"] = workspace
     if updates:
         svc.store.update_session(session_id, **updates)
         existing = svc.store.get_session(session_id)
     return existing
+
+
+async def bind_society_session(svc: Any, session_id: str) -> Any:
+    """Apply the live roster ceiling before a Society session is used."""
+    from jarvis.agent_chat.service import SessionBusy
+
+    from .runtime import current_runtime
+
+    if svc.is_running(session_id):
+        raise SessionBusy(session_id)
+    runtime = current_runtime()
+    agent_id = session_id.removeprefix("society:")
+    agent = await runtime.roster.get(agent_id) if runtime is not None else None
+    if agent is None or agent.session_id != session_id:
+        raise PermissionError("Society agent is unavailable")
+    return ensure_session(svc, runtime.config(), agent)
 
 
 def frame_incoming(env: SocietyEnvelope, sender_name: str) -> str:

@@ -5646,6 +5646,7 @@
     "done": "Listo"
   },
   "work_trace": {
+    "tool_failed": "Falló una acción de herramienta",
     "integration_used": "Usó {service}",
     "activity_command": "Ejecutó comandos",
     "activity_edit": "Editó archivos",

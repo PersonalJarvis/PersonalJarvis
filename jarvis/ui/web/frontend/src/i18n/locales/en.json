@@ -5679,6 +5679,7 @@
     "done": "Done"
   },
   "work_trace": {
+    "tool_failed": "A tool action failed",
     "integration_used": "Used {service}",
     "activity_command": "Ran commands",
     "activity_edit": "Edited files",

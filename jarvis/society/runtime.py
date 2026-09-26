@@ -843,6 +843,9 @@ class SocietyRuntime:
         if reports:
             status = "blocked"
             error = summary = reports[-1].text
+        elif status == "done" and not final_text.strip():
+            status = "blocked"
+            error = summary = "Agent finished without a result report."
         try:
             await self.store.append_and_publish(
                 SocietyEnvelope(

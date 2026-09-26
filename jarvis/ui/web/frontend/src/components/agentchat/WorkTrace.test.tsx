@@ -179,6 +179,18 @@ describe("work trace", () => {
     expect(splitConversationTurn([tool("a"), reply("done", "Ready."), failed]).after).toEqual([failed]);
   });
 
+  it("keeps a failed tool and its outcome visible after a conversation completes", () => {
+    const failed = tool("err", { isError: true, output: "Upload failed" });
+    const { container } = render(<WorkTrace {...props} conversation blocks={[tool("a"), failed, reply("done", "I prepared a draft.")]} />);
+    expect(screen.getByText("Upload failed")).toBeTruthy();
+    expect(container.querySelector('[data-trace-tool="err"]')).toBeTruthy();
+    expect(screen.getByTestId("tool-failure-warning").textContent).toContain("A tool action failed");
+    expect(screen.getAllByRole("status").at(-1)?.textContent).toContain("Done");
+    const fold = screen.getByTestId("conversation-work-fold").querySelector("button")!;
+    fireEvent.click(fold);
+    expect(screen.getAllByText("Upload failed").length).toBeGreaterThan(0);
+  });
+
   it("treats a tool-only turn as work", () => {
     expect(splitConversationTurn([tool("a")])).toEqual({ work: [tool("a")], answer: [], after: [] });
   });

@@ -99,11 +99,13 @@ def test_plan_build_and_review_preserve_original_permissions_and_history() -> No
         await controls.turn_completed(sid, "1", "Investigate first", True, False)
         assert controls.state(sid).plan == "Actual work product"
         assert controls.state(sid).previous_permission == "ask"
+        assert svc.store.permission_override(sid) == "plan"
         result = await controls.execute(sid, request("message", "@Friend Hello", "r2"))
         assert result.status == "failed" and "Plan mode" in result.error
         await controls.execute(sid, request("build", rid="r3"))
         await svc.wait_turn(sid)
         assert svc.store.get_session(sid).permission_mode == "ask"
+        assert svc.store.permission_override(sid) == "ask"
         await controls.execute(sid, request("review", rid="r4"))
         await svc.wait_turn(sid)
         assert svc.sent[-1][1]["read_only"] is True
@@ -327,6 +329,11 @@ def test_message_uses_executor_exact_text_sender_and_idempotency(monkeypatch: An
         monkeypatch.setattr("jarvis.society.runtime.current_runtime", lambda: runtime)
         monkeypatch.setattr("jarvis.society.agent_tools.MessageAgentTool", MessageTool)
         svc = AgentChatService(AgentChatStore(), bus=lambda: bus)
+
+        async def isolated_session(sid: str):
+            return svc.store.get_session(sid)
+
+        monkeypatch.setattr(svc, "bind_society_session", isolated_session)
         sid = svc.store.create_session(
             provider="openai",
             model="",
