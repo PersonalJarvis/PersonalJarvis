@@ -1469,7 +1469,7 @@
       "auth": {
         "mode": "oauth_pkce_loopback",
         "authorization_url": "https://www.figma.com/oauth",
-        "token_url": "https://www.figma.com/api/oauth/token",
+        "token_url": "https://api.figma.com/v1/oauth/token",
         "client_id": "REPLACE_WITH_JARVIS_FIGMA_CLIENT_ID",
         "callback_port": 3127,
         "callback_path": "/oauth/callback",
@@ -1480,6 +1480,7 @@
           "file_comments:read"
         ],
         "scope_separator": "space",
+        "client_auth_method": "client_secret_basic",
         "refresh_supported": true
       },
       "fallback_auth": {
