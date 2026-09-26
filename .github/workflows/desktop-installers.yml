@@ -286,6 +286,12 @@ jobs:
           $signed = (Get-AuthenticodeSignature -LiteralPath $installer).Status -eq 'Valid'
           if ('${{ github.ref_type }}' -eq 'tag' -and -not $signed) { throw 'Windows Authenticode signature is not valid' }
           $args = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOLAUNCH', ('/DIR="' + $installDir + '"'))
+          $freshInstallDir = Join-Path $env:RUNNER_TEMP 'jarvis-clean-candidate-install'
+          $freshArgs = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOLAUNCH', ('/DIR="' + $freshInstallDir + '"'))
+          $freshProcess = Start-Process -FilePath $installer -ArgumentList $freshArgs -PassThru -Wait -WindowStyle Hidden
+          if ($freshProcess.ExitCode -ne 0) { throw "Fresh candidate installation failed: $($freshProcess.ExitCode)" }
+          $freshVersion = & (Join-Path $freshInstallDir 'jarvis.exe') --version
+          if ($LASTEXITCODE -ne 0 -or $freshVersion -notmatch [regex]::Escape($version)) { throw 'Fresh candidate installer has the wrong version' }
           if ($env:PREVIOUS_TAG) {
             $priorDir = Join-Path $env:RUNNER_TEMP 'prior-release'
             New-Item -ItemType Directory -Force -Path $priorDir | Out-Null
