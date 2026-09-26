@@ -131,6 +131,11 @@ def test_group_chat_persists_members_and_correlates_agent_replies(client):
         if group["group_id"] == group_id
     )
     assert (preview["last_from_agent"], preview["last_text"]) == ("scout", "Research ready.")
+    assert c.patch("/api/society/agents/planner", json={"state": "paused"}).status_code == 200
+    partial = c.post(f"/api/society/chat-groups/{group_id}/messages", json={"text": "Follow up?"})
+    assert partial.status_code == 200
+    assert partial.json()["recipients"] == ["scout"]
+    assert partial.json()["skipped"] == ["planner"]
     assert (
         c.patch(
             f"/api/society/chat-groups/{group_id}",

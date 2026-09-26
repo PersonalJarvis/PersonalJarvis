@@ -4,8 +4,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { SocietyAgent } from "../data";
 import { ChatGroupPanel } from "./ChatGroupPanel";
 
-const mocks = vi.hoisted(() => ({ send: vi.fn(async () => undefined) }));
-vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
+const mocks = vi.hoisted(() => ({ send: vi.fn(async () => ({ post_id: "next", recipients: ["scout", "writer"], skipped: [] as string[] })) }));
+vi.mock("@/i18n", () => ({ useT: () => (key: string) => key === "society.groups.skipped" ? "Unavailable: {0}" : key }));
 vi.mock("@/lib/societyChatGroups", () => ({
   useSocietyChatGroupMessages: () => ({
     data: [
@@ -37,4 +37,8 @@ it("shows named agent replies and sends to the whole group by default", async ()
   fireEvent.change(screen.getByRole("textbox", { name: "society.groups.placeholder" }), { target: { value: "Next step?" } });
   fireEvent.click(screen.getByRole("button", { name: "society.groups.send" }));
   await waitFor(() => expect(mocks.send).toHaveBeenCalledWith("team", "Next step?", undefined));
+  mocks.send.mockResolvedValueOnce({ post_id: "later", recipients: ["scout"], skipped: ["writer"] });
+  fireEvent.change(screen.getByRole("textbox", { name: "society.groups.placeholder" }), { target: { value: "Another update?" } });
+  fireEvent.click(screen.getByRole("button", { name: "society.groups.send" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("Unavailable: Writer");
 });

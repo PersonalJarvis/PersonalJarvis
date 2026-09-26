@@ -5179,7 +5179,7 @@
     "groups": {
       "create": "Nuevo chat grupal", "edit": "Editar chat grupal", "description": "Reúne agentes en un chat. Los mensajes van a todos salvo que elijas destinatarios.",
       "name": "Nombre del grupo", "members": "Miembros", "cancel": "Cancelar", "save": "Guardar grupo", "delete": "Desagrupar", "delete_confirm": "¿Desagrupar estos agentes? Se borrará el historial grupal; los chats individuales permanecerán.",
-      "send": "Enviar", "placeholder": "Mensaje al grupo", "empty": "Envía un mensaje para iniciar este chat grupal.", "recipients": "Destinatarios", "everyone": "Todos", "error": "No se pudo cargar el grupo."
+      "send": "Enviar", "placeholder": "Mensaje al grupo", "empty": "Envía un mensaje para iniciar este chat grupal.", "recipients": "Destinatarios", "everyone": "Todos", "error": "No se pudo cargar el grupo.", "skipped": "Los miembros no disponibles no recibieron este mensaje: {0}."
     },
     "chat": {
       "placeholder": "Mensaje a {0}",

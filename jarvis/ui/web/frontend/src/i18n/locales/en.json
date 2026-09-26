@@ -5212,7 +5212,7 @@
     "groups": {
       "create": "New group chat", "edit": "Edit group chat", "description": "Keep agents together in one chat. Messages go to all members unless you select recipients.",
       "name": "Group name", "members": "Members", "cancel": "Cancel", "save": "Save group", "delete": "Ungroup", "delete_confirm": "Ungroup these agents? The group chat history will be removed; individual agent chats remain.",
-      "send": "Send", "placeholder": "Message the group", "empty": "Send a message to start this group chat.", "recipients": "Recipients", "everyone": "Everyone", "error": "The group could not be loaded."
+      "send": "Send", "placeholder": "Message the group", "empty": "Send a message to start this group chat.", "recipients": "Recipients", "everyone": "Everyone", "error": "The group could not be loaded.", "skipped": "Unavailable members did not receive this message: {0}."
     },
     "chat": {
       "placeholder": "Message {0}",

@@ -67,5 +67,7 @@ export async function deleteSocietyChatGroup(groupId: string) {
 }
 
 export async function sendSocietyChatGroupMessage(groupId: string, text: string, recipients?: string[]) {
-  await json(`/api/society/chat-groups/${encodeURIComponent(groupId)}/messages`, body({ text, recipients }));
+  return json<{ post_id: string; recipients: string[]; skipped: string[] }>(
+    `/api/society/chat-groups/${encodeURIComponent(groupId)}/messages`, body({ text, recipients }),
+  );
 }

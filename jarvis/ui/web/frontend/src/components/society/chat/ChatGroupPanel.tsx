@@ -40,8 +40,12 @@ export function ChatGroupPanel({ group, groups, roster, onOpenAgent, onOpenGroup
     setBusy(true);
     setError("");
     try {
-      await sendSocietyChatGroupMessage(group.group_id, text, recipient ? [recipient] : undefined);
+      const delivery = await sendSocietyChatGroupMessage(group.group_id, text, recipient ? [recipient] : undefined);
       setDraft("");
+      if (delivery.skipped.length) {
+        const names = delivery.skipped.map((id) => roster.find((agent) => agent.agentId === id)?.name ?? id);
+        setError(t("society.groups.skipped").replace("{0}", names.join(", ")));
+      }
       await refetch();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
