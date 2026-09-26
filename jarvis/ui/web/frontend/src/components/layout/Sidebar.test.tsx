@@ -13,6 +13,18 @@ import { isSectionId, useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { useIdeChatStore } from "@/store/ideChat";
 
+test("IDE sidebar puts Projects first and returns to the normal chat navigation", () => {
+  act(() => useEventStore.setState({ activeSection: "agentic-ide" }));
+  renderSidebar();
+  expect(screen.getByTestId("ide-project-tree")).toBeDefined();
+  expect(screen.queryByTestId("sidebar-new-chat")).toBeNull();
+  expect(screen.queryByTestId("nav-row-agentic-ide")).toBeNull();
+  fireEvent.click(screen.getByTestId("ide-back-to-jarvis"));
+  expect(useEventStore.getState().activeSection).toBe("chats");
+  expect(screen.getByTestId("sidebar-new-chat")).toBeDefined();
+  cleanup();
+});
+
 // The sidebar header avatar must mirror the chosen on-screen display style:
 // the ghost mascot ONLY when the user explicitly picked "mascot"; the slim bar
 // for "jarvis_bar"/"none" and while the style is still loading (config null).

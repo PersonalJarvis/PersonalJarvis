@@ -6,6 +6,7 @@ a pane to the anchor's OWN column and leaves every other column at full height.
 These tests pin that arithmetic, because an off-by-one renders as a blank stripe
 in the grid, or squashes panes that should not have moved.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -29,9 +30,7 @@ def registry(fake_pty: FakePtyManager, monkeypatch: pytest.MonkeyPatch) -> Regis
 
 
 async def _open(registry: Registry, folder: Path, count: int = 2):
-    return await registry.start(
-        str(folder), [{"agent": "claude"} for _ in range(count)]
-    )
+    return await registry.start(str(folder), [{"agent": "claude"} for _ in range(count)])
 
 
 async def _open_in_a_row(registry: Registry, folder: Path, count: int):
@@ -69,24 +68,15 @@ async def _noop_exit(_code: int) -> None:
 
 
 # --------------------------------------------------------------- initial rows
-async def test_a_fresh_workspace_fills_columns_two_deep(
+async def test_a_fresh_workspace_uses_row_major_terminal_order(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """The wizard's panes stack two to a column before a new one is opened.
-
-    A row of columns shares the window's width between every pane, so six
-    terminals left each about 410 px on the maintainer's display — under the
-    width their agent needs, so each pane was clipped at its tile edge and the
-    six read as overlapping (2026-08-11). Two deep halves the columns and so
-    doubles each pane's width. The odd third pane opens a column of its own.
-    """
+    """Three sessions share one row in the project workspace grid."""
     await _open(registry, tmp_path, 3)
-    assert _layout(registry) == [("T1", 0, 0), ("T2", 0, 1), ("T3", 1, 0)]
+    assert _layout(registry) == [("T1", 0, 0), ("T2", 1, 0), ("T3", 2, 0)]
 
 
-async def test_a_single_terminal_still_opens_alone(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_a_single_terminal_still_opens_alone(registry: Registry, tmp_path: Path) -> None:
     """Nothing is stacked that has nothing to stack with."""
     await _open(registry, tmp_path, 1)
     assert _layout(registry) == [("T1", 0, 0)]
@@ -103,18 +93,14 @@ async def test_split_right_opens_a_column_next_to_the_anchor(
     assert _layout(registry) == [("T1", 0, 0), (term.name, 1, 0), ("T2", 2, 0)]
 
 
-async def test_split_right_inherits_the_anchor_agent(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_split_right_inherits_the_anchor_agent(registry: Registry, tmp_path: Path) -> None:
     """Splitting a Codex pane means "another Codex", not the default agent."""
     await registry.start(str(tmp_path), [{"agent": "codex", "name": "Cody"}])
     term = await registry.add_terminal(anchor="Cody", direction="right")
     assert term.agent == "codex"
 
 
-async def test_an_explicit_agent_wins_over_the_anchor(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_an_explicit_agent_wins_over_the_anchor(registry: Registry, tmp_path: Path) -> None:
     await _open(registry, tmp_path, 1)
     term = await registry.add_terminal(anchor="T1", direction="right", agent="codex")
     assert term.agent == "codex"
@@ -146,9 +132,7 @@ async def test_split_down_pushes_the_existing_stack_down(
 
 
 # --------------------------------------------------------------------- naming
-async def test_new_panes_take_the_next_free_call_sign(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_new_panes_take_the_next_free_call_sign(registry: Registry, tmp_path: Path) -> None:
     await _open(registry, tmp_path, 2)  # T1, T2
     term = await registry.add_terminal(direction="right")
     assert term.name == "T3"
@@ -163,9 +147,7 @@ async def test_a_taken_position_moves_to_the_next_free_number(
     assert term.name == "T2"
 
 
-async def test_an_explicit_custom_name_is_deduplicated(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_an_explicit_custom_name_is_deduplicated(registry: Registry, tmp_path: Path) -> None:
     """A name the user chose keeps the familiar numeric suffix."""
     await _open(registry, tmp_path, 1)
     await registry.add_terminal(name="Mika", direction="right")
@@ -302,9 +284,7 @@ async def test_a_batch_reports_unknown_names_but_closes_valid_ones(
     assert [term.name for term in registry.session.terminals] == ["T2"]
 
 
-async def test_a_closed_pane_refuses_further_prompts(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_a_closed_pane_refuses_further_prompts(registry: Registry, tmp_path: Path) -> None:
     await _open(registry, tmp_path, 2)
     await registry.attach("T1", 80, 24, _noop, _noop_exit)
     await registry.close_terminal("T1")
@@ -312,9 +292,7 @@ async def test_a_closed_pane_refuses_further_prompts(
         await registry.send_prompt("T1", "still there?")
 
 
-async def test_a_reopened_call_sign_is_a_fresh_pane(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_a_reopened_call_sign_is_a_fresh_pane(registry: Registry, tmp_path: Path) -> None:
     """Closing T1 and splitting again must not resurrect the old transcript."""
     await _open(registry, tmp_path, 1)
     await registry.attach("T1", 80, 24, _noop, _noop_exit)

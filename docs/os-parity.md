@@ -1,5 +1,22 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## iGentic project workspaces (T3)
+
+Project ownership, workspace snapshots, eight-session ordering and addressed
+task receipts use portable Python/SQLite and the same browser UI on all three
+OSes. Terminal capability is checked through `workspace.agents.pty_available`:
+Windows retains ConPTY, Linux and macOS retain the existing POSIX backend, and
+an unavailable backend is reported without importing a new native dependency.
+ChatGPT Live and native Gemini/local voice use the same supervisor tool and
+permission boundary. There is no OS-specific routing or credential path.
+
+`tests/contract/test_workspace_orchestration.py` covers explicit and ambient
+resolution, ambiguous references, background dispatch, immutable targets and
+durable retry behavior. Native macOS desktop/PTY acceptance and real-device
+audio are not established by the portable tests. See
+[workspace architecture](igentic-workspaces.md) for the product and execution
+contract.
+
 ## Window caption (2026-09-21, T2)
 
 The desktop window is frameless on Windows, macOS and Linux. The page draws

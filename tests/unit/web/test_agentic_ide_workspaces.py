@@ -98,7 +98,7 @@ async def test_the_bar_lists_every_open_workspace_with_the_front_one_marked(
     await _open(registry, tmp_path / "alpha")
     await _open(registry, tmp_path / "beta", panes=2)
 
-    listed = await routes.get_workspaces()
+    listed = routes.get_workspaces()
 
     assert [w.name for w in listed.workspaces] == ["alpha", "beta"]
     assert [w.active for w in listed.workspaces] == [False, True]
@@ -121,7 +121,7 @@ async def test_a_tab_counts_the_panes_that_are_really_running(
     assert session is not None
     await registry.attach(session.terminals[0].name, 80, 24, _noop, _noop_exit)
 
-    card = (await routes.get_workspaces()).workspaces[0]
+    card = (routes.get_workspaces()).workspaces[0]
 
     assert card.terminals == 2
     assert card.live_terminals == 1
@@ -152,7 +152,7 @@ async def test_switching_starts_and_stops_nothing(
 async def test_the_wizard_state_keeps_every_workspace_open(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
-    """"Add a workspace" clears the front WITHOUT closing what is open.
+    """ "Add a workspace" clears the front WITHOUT closing what is open.
 
     This is the state the UI is in while the folder wizard is showing. If it
     closed anything, pressing + and then changing your mind would cost you a
@@ -207,9 +207,7 @@ async def test_closing_one_workspace_stops_only_its_agents(
     assert result["state"]["active_id"] == first_id, "the survivor takes the front"
 
 
-async def test_closing_an_unknown_workspace_is_a_404(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_closing_an_unknown_workspace_is_a_404(registry: Registry, tmp_path: Path) -> None:
     from fastapi import HTTPException
 
     await _open(registry, tmp_path / "alpha")
@@ -230,9 +228,7 @@ async def test_the_plain_close_still_closes_the_front_one(
     assert result["closed"] is True
     remaining = [w["name"] for w in result["state"]["workspaces"]]
     assert remaining == ["alpha"]
-    assert second["session"]["id"] not in [
-        w["id"] for w in result["state"]["workspaces"]
-    ]
+    assert second["session"]["id"] not in [w["id"] for w in result["state"]["workspaces"]]
 
 
 # -------------------------------------------------------------------- state
@@ -243,7 +239,7 @@ async def test_state_carries_the_bar_and_the_front_workspace_together(
     await _open(registry, tmp_path / "alpha")
     beta = await _open(registry, tmp_path / "beta")
 
-    state = await routes.get_state()
+    state = routes.get_state()
 
     assert state["session"]["id"] == beta["session"]["id"]
     assert state["active_id"] == beta["session"]["id"]

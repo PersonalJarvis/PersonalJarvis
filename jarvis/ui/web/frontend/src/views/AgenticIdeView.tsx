@@ -1,1264 +1,288 @@
-/**
- * Agentic IDE — the "code with Jarvis" section.
- *
- * Two states in one view:
- *
- * * no workspace open → a five-step wizard: folder, how many terminals, an
- *   aggregate agent allocation, grid or chat view, then start,
- * * workspace open → the terminal grid (see AgenticGrid).
- *
- * The wizard order is deliberate and matches how the decision actually gets
- * made: you know the folder first, the number of panes second, then which agent
- * sits in which pane, and last how you want to read them. Every step is
- * reversible and nothing is started until the last one.
- *
- * i18n note: the section label and view header go through the locale files; the
- * panel copy inside is still English-only source awaiting its i18n keys.
- */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { FolderPlus, Loader2, Mic, Moon, MoreHorizontal, Plus, Sun, X, ZoomIn, ZoomOut } from "lucide-react";
+import { FolderPicker } from "@/components/agentic/FolderPicker";
+import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/components/agentic/VoiceBubble";
+import { WorkspaceTerminalGrid } from "@/components/agentic/WorkspaceTerminalGrid";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
-import { AgenticGrid, rememberViewMode } from "@/components/agentic/AgenticGrid";
+import { useIdeProjectsStore } from "@/store/ideProjects";
+import { openProject } from "@/lib/chatLibraryApi";
 import {
-  VoiceBubble,
-  storedVoiceBubbleOpen,
-  storeVoiceBubbleOpen,
-} from "@/components/agentic/VoiceBubble";
-import {
-  WorkspaceLauncher,
-  type PlannedTerminal,
-} from "@/components/agentic/WorkspaceLauncher";
-import { Button } from "@/components/agentic/controls";
-import {
-  type AgentAccount,
-  type AgentAccountsResponse,
-  fetchAgentAccounts,
-  groupFor,
-} from "@/lib/agentAccountsApi";
-import { openScratchProject } from "@/lib/chatLibraryApi";
-
-import { WorkspaceBar } from "@/components/agentic/WorkspaceBar";
-import {
-  isEmptyPayload,
-  type PaneDropPayload,
-} from "@/components/agentic/paneDrop";
-import {
-  activateWorkspace,
-  addTerminal,
-  attachToTerminal,
-  closeWorkspace,
-  endIdeSession,
-  fetchIdeAgents,
-  fetchIdeState,
-  fetchResumeOffer,
-  forgetResumeOffer,
-  renameWorkspace,
-  resumeWorkspace,
-  setFocusMode,
-  startIdeSession,
-  type AgentsResponse,
-  type IdeAccountState,
-  type IdeState,
-  type ResumeOffer,
-  type SessionState,
-  type WorkspaceCard,
+  activateWorkspace, addTerminal, closeTerminal, closeWorkspace, fetchIdeAgents, fetchIdeProjects, fetchIdeState, renameWorkspace,
+  restoreIdeWorkspace, startIdeSession,
+  type AgentStatus, type IdeProject, type IdeState, type TerminalState,
 } from "@/lib/agenticIdeApi";
 
-/**
- * Terminal plan for ``count`` panes, preserving whatever the user already chose
- * for the panes that still exist.
- *
- * A pure function called from the click handlers on purpose. The first version
- * of this was a `useEffect` that synchronised `planned` against `count` — and
- * one of its dependencies was `meta?.suggested_names ?? []`, a fresh array on
- * every render. Setting state from an effect whose dependency is recreated each
- * render is an infinite loop; it froze the tab and only showed up because a test
- * ran out of heap. Deriving on the event that actually changes the plan has no
- * such failure mode.
- */
-function buildPlan(
-  count: number,
-  previous: PlannedTerminal[],
-  agent: string,
-  names: string[],
-): PlannedTerminal[] {
-  return Array.from({ length: count }, (_, i) => {
-    const kept = previous[i];
-    if (kept) return kept;
-    return { agent, name: names[i] ?? `T${i + 1}` };
-  });
-}
+const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
+const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
 
-export interface AgenticIdeViewProps {
-  /**
-   * Is this view the section currently on screen?
-   *
-   * Unlike every other section, this one is HIDDEN rather than unmounted when
-   * the user goes elsewhere (see MainView) — its panes are live terminals, and
-   * tearing them down to rebuild them seconds later is what put an onboarding
-   * wizard in front of a running workspace. Being hidden with CSS means the
-   * view cannot measure whether anyone can see it, so the shell says so.
-   *
-   * Defaults to true: rendered on its own (tests, any future embedding), a view
-   * that is there IS on screen, which is how this behaved before it could hide.
-   */
-  onScreen?: boolean;
-}
+export interface AgenticIdeViewProps { onScreen?: boolean }
 
+/** Project and workspace navigation is shared with Sidebar; PTY tiles stay mounted by stable session ID. */
 export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
-  const pushToast = useEventStore((s) => s.pushToast);
-  const setActiveSection = useEventStore((s) => s.setActiveSection);
-
-  const [loading, setLoading] = useState(true);
-  const [meta, setMeta] = useState<AgentsResponse | null>(null);
-  const [session, setSession] = useState<SessionState | null>(null);
-  const [promptTarget, setPromptTarget] = useState("");
-  const [focusMode, setFocus] = useState(false);
+  const pushToast = useEventStore((state) => state.pushToast);
+  const action = useIdeProjectsStore((state) => state.action);
+  const publishProjects = useIdeProjectsStore((state) => state.publish);
+  const setWorkspace = useIdeChatStore((state) => state.setWorkspace);
+  const setWorkspaces = useIdeChatStore((state) => state.setWorkspaces);
+  const [state, setState] = useState<IdeState | null>(null);
+  const [projects, setProjects] = useState<IdeProject[]>([]);
+  const [agents, setAgents] = useState<AgentStatus[]>([]);
+  const [projectDialog, setProjectDialog] = useState(false);
+  const [projectPath, setProjectPath] = useState<string | null>(null);
+  const [projectName, setProjectName] = useState("");
+  const [workspaceProject, setWorkspaceProject] = useState<IdeProject | null>(null);
+  const [workspaceName, setWorkspaceName] = useState("");
+  const [workspaceAgents, setWorkspaceAgents] = useState<string[]>([]);
+  const [selected, setSelected] = useState("");
+  const [agentMenu, setAgentMenu] = useState(false);
+  const [workspaceMenu, setWorkspaceMenu] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
-  /*
-   * The floating voice bubble — held HERE, not in the grid, because the
-   * conversation belongs to the app: the grid is keyed by workspace, and a
-   * bubble mounted inside it would reset the orb mid-sentence on every tab
-   * switch (the same reason the old voice column lived outside the grid).
-   * The choice survives restarts so the bubble greets its user where they
-   * left it.
-   */
   const [voiceOpen, setVoiceOpen] = useState(storedVoiceBubbleOpen);
-  const toggleVoiceBubble = useCallback(() => {
-    setVoiceOpen((current) => {
-      storeVoiceBubbleOpen(!current);
-      return !current;
-    });
-  }, []);
-  const closeVoiceBubble = useCallback(() => {
-    storeVoiceBubbleOpen(false);
-    setVoiceOpen(false);
-  }, []);
-
-  // Every open workspace, for the bar above. The one on screen is `session`;
-  // these are the others, still running, one click away.
-  const [workspaces, setWorkspaces] = useState<WorkspaceCard[]>([]);
-  const [maxWorkspaces, setMaxWorkspaces] = useState<number | null>(6);
-  // Which subscription new terminals open on, per coding CLI. Carried on the
-  // workspace state rather than fetched separately, so the toolbar and the
-  // panes can never disagree about which plan the next one will spend.
-  const [ideAccounts, setIdeAccounts] = useState<IdeAccountState[]>([]);
-  /*
-   * The wizard is showing for an ADDITIONAL workspace.
-   *
-   * Kept as its own flag rather than inferred from `session === null`, because
-   * the two mean different things once several workspaces exist: no session can
-   * also be "everything was closed", and the bar has to know whether the +
-   * button is the selected tab. Pressing + clears the front on the BACKEND too
-   * (see `startAdding`), which is what stops the outgoing panes from being read
-   * as a close.
-   */
-  const [addingNew, setAddingNew] = useState(false);
-
-  const [folder, setFolder] = useState<string | null>(null);
-  const [count, setCount] = useState(2);
-  const [planned, setPlanned] = useState<PlannedTerminal[]>([]);
-  /*
-   * Grid or chat — held in the store, not here.
-   *
-   * Three copies of this answer used to exist (this view, the grid, the
-   * store), coupled only by a localStorage key each of them read once on
-   * mount. Flipping the switch in the workspace bar therefore moved the grid
-   * and nothing else: the sidebar went on showing the app's sections, because
-   * its copy of "which view" had been read minutes earlier and never heard
-   * about the change (maintainer, 2026-08-25 — the sessions did not come
-   * along when the view changed). One store, one answer, every reader on it.
-   */
-  const view = useIdeChatStore((s) => s.view);
-  const setView = useIdeChatStore((s) => s.setView);
-  const publishWorkspace = useIdeChatStore((s) => s.setWorkspace);
-  const paneRequest = useIdeChatStore((s) => s.paneRequest);
-  const terminalRequest = useIdeChatStore((s) => s.terminalRequest);
-  const workspaceRequest = useIdeChatStore((s) => s.workspaceRequest);
-  const sessionRequest = useIdeChatStore((s) => s.sessionRequest);
-  const newChatRequest = useIdeChatStore((s) => s.newChatRequest);
-  const addWorkspaceRequest = useIdeChatStore((s) => s.addWorkspaceRequest);
-  const publishWorkspaces = useIdeChatStore((s) => s.setWorkspaces);
-  const publishAgents = useIdeChatStore((s) => s.setAgents);
-  // The registered subscriptions per CLI. Only ever used to OFFER a choice, so
-  // a failed load costs the picker, never the wizard: with none loaded every
-  // pane simply opens on the active account, exactly as before.
-  const [accounts, setAccounts] = useState<AgentAccountsResponse | null>(null);
-  // The workspace that was open when the window last closed, if it can come
-  // back. Null both when there is nothing to offer and after the user has
-  // answered the offer either way.
-  const [offer, setOffer] = useState<ResumeOffer | null>(null);
-
-  /**
-   * Re-read the agent sweep alone, without disturbing the workspace state.
-   *
-   * The user just added, edited or removed a CLI of their own, and that is the
-   * ONE thing this read answers differently than a second ago. Going through
-   * `refresh()` would also re-read the session and the workspace list — several
-   * hundred milliseconds of work whose answer has not changed, and one of them
-   * closes the wizard when it finds a workspace open.
-   */
-  const reloadAgents = useCallback(
-    () =>
-      fetchIdeAgents().then(setMeta, () => {
-        /* Same bargain as the sweep in `refresh`: the entry is already stored
-           and registered, so a failed re-read costs an out-of-date list, not
-           the change itself. */
-      }),
-    [],
-  );
-
-  const refresh = useCallback(async () => {
-    /*
-     * Both reads start together, but the workspace is applied WITHOUT waiting
-     * for the agent sweep.
-     *
-     * `/agents` starts one subprocess per registered CLI — 1.1-1.4 s on a cold
-     * cache, and on Windows every one of those is an npm shim (see
-     * `_DETECTION_TTL_S` in jarvis/workspace/agents.py). Awaiting the two
-     * together meant a running workspace could not be drawn until a question
-     * about which CLIs are installed had been answered, which is a question the
-     * grid never asks. The wizard needs the answer; the grid does not, and the
-     * grid is what the user is coming back to.
-     */
-    const sweep = fetchIdeAgents().then(setMeta, () => {
-      // Swallowed on purpose, and it costs exactly what it did when this was
-      // one `Promise.all`: `meta` stays as it was, so the wizard opens without
-      // its install callouts and the agent step offers whatever it had before.
-      // A failed sweep must not take the workspace state down with it — that
-      // state is the half of this read that the user is here for.
-    });
-    try {
-      const state = await fetchIdeState();
-      setSession(state.session);
-      setWorkspaces(state.workspaces ?? []);
-      setMaxWorkspaces(
-        state.max_workspaces === undefined ? 6 : state.max_workspaces,
-      );
-      setIdeAccounts(state.accounts ?? []);
-      setFocus(Boolean(state.session?.focus_mode));
-      // The backend is the authority on whether a workspace is on screen. It
-      // says so by carrying one in `session`, so a fetch that finds one ends
-      // the "adding" state — otherwise a workspace opened in another tab (or
-      // by voice) would come up behind a wizard nobody asked for.
-      if (state.session !== null) setAddingNew(false);
-      // Only worth asking about when NOTHING is open. With a workspace around,
-      // its panes reconnect and continue by themselves — the offer is for the
-      // case where the workspaces themselves did not survive.
-      if ((state.workspaces ?? []).length === 0) {
-        try {
-          const previous = await fetchResumeOffer();
-          setOffer(previous.workspaces.length > 0 ? previous : null);
-        } catch {
-          /* no offer is a perfectly good answer — the wizard still works */
-        }
-      } else {
-        setOffer(null);
-      }
-    } catch {
-      /* backend still warming or headless — keep whatever we had */
-    } finally {
-      // What `loading` gates is the WIZARD (see the render below), and a wizard
-      // shown before the sweep lands is one whose agent step has nothing to
-      // offer — so the placeholder holds until it is in. A workspace that is
-      // already open never waits for this: the running branch is chosen before
-      // `loading` is read at all.
-      await sweep;
-      setLoading(false);
-    }
-  }, []);
-
-  /** Apply a state the backend just handed back, without a second round-trip. */
-  const applyState = useCallback((state: IdeState) => {
-    setSession(state.session);
-    setWorkspaces(state.workspaces ?? []);
-    setMaxWorkspaces(
-      state.max_workspaces === undefined ? 6 : state.max_workspaces,
-    );
-    setFocus(Boolean(state.session?.focus_mode));
-    // Absent on a backend that predates the switcher — keeping what we had
-    // beats blanking the toolbar over a field that simply was not sent.
-    if (state.accounts) setIdeAccounts(state.accounts);
-  }, []);
+  const [fontSize, setFontSize] = useState(() => Number(localStorage.getItem(FONT_KEY)) || 13);
+  const [appearance, setAppearance] = useState<"light" | "dark" | null>(() => {
+    const stored = localStorage.getItem(APPEARANCE_KEY);
+    return stored === "light" || stored === "dark" ? stored : null;
+  });
+  const handledAction = useRef(0);
+  const refreshEpoch = useRef(0);
+  const activationRunning = useRef(false);
+  const pendingActivation = useRef<string | null>(null);
+  const session = state?.session ?? null;
+  const activeProject = projects.find((project) => project.id === session?.project_id || project.workspaces.some((workspace) => workspace.id === session?.id));
+  const installed = agents.filter((agent) => agent.installed && agent.kind !== "shell" && agent.accepts_prompts !== false);
+  const dialogOpen = projectDialog || workspaceProject !== null || renameOpen;
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  // Loaded once, and deliberately NOT part of `refresh`: the wizard must open
-  // even when this fails. Without it every pane opens on the active account,
-  // which is exactly what happened before the switcher existed.
-  useEffect(() => {
-    fetchAgentAccounts()
-      .then(setAccounts)
-      .catch(() => setAccounts(null));
-  }, []);
-
-  /*
-   * A state the workspace's settings panel handed back.
-   *
-   * Same as `applyState`, plus a re-read of the subscription list: that panel
-   * can ADD an account, and the wizard's per-pane picker was loaded once on
-   * mount — without this the next workspace would be offered a list one account
-   * short until the app is reloaded.
-   */
-  const applyStateFromSettings = useCallback(
-    (state: IdeState) => {
-      applyState(state);
-      fetchAgentAccounts()
-        .then(setAccounts)
-        .catch(() => undefined);
-    },
-    [applyState],
-  );
-
-  /** The registered subscriptions of one CLI, for the wizard's per-pane picker. */
-  const accountsFor = useCallback(
-    // No id guard: the backend already answers only for the CLIs that HAVE
-    // switchable subscriptions, so a list here could only ever disagree with
-    // it — and it would disagree silently, by hiding a picker for a CLI whose
-    // seats the API just returned.
-    (platform: string): AgentAccount[] =>
-      groupFor(accounts, platform)?.accounts ?? [],
-    [accounts],
-  );
-
-  /*
-   * Panes can appear without this view asking for them.
-   *
-   * Saying "spawn five more Claude Code terminals" adds them in the backend; the
-   * grid below renders whatever the last fetch returned, so without this listener
-   * the panes exist, their agents are told to start — and the user sees nothing.
-   * The event carries the new call-signs, but they are deliberately ignored here:
-   * re-fetching keeps ONE source of truth for the layout instead of patching the
-   * session object from a payload that could be a step behind.
-   */
-  useEffect(() => {
-    const onChanged = () => void refresh();
-    window.addEventListener("jarvis:agentic-ide-changed", onChanged);
-    return () =>
-      window.removeEventListener("jarvis:agentic-ide-changed", onChanged);
-  }, [refresh]);
-
-  /*
-   * Being in this section IS the coding mode.
-   *
-   * Focus mode started as a switch you had to remember to flip, and the result
-   * was predictable: the workspace was open, agents were running, and Jarvis
-   * still answered as the general-purpose assistant because nobody had pressed
-   * the button. Standing in a room full of running coding agents and having to
-   * announce that you are now coding is not a mode, it is paperwork. So opening
-   * a workspace turns it on.
-   *
-   * The switch stays, and it stays honest: turning it OFF here is respected for
-   * as long as this workspace is open (`optedOutRef`), so "I want the normal
-   * assistant for a minute" works and does not get overridden a second later.
-   */
-  const optedOutRef = useRef(false);
-  /*
-   * Was the mode switched on BY this screen, or by the user?
-   *
-   * It decides what happens when the section is left. An auto-enabled mode is
-   * on loan — it belongs to this screen and goes back when you walk away. A
-   * mode the user switched on by hand is theirs, and stays on everywhere, which
-   * is how "ask Jarvis about my terminals from the kitchen" keeps working.
-   *
-   * Without this distinction the mode simply never turned off: this view
-   * switched it on, nothing switched it off, and because the view is sticky
-   * (see MainView) there was not even an unmount to hang the cleanup on. The
-   * result was an assistant permanently in coding mode on every screen, with
-   * only a small badge admitting it.
-   */
-  const autoEnabledRef = useRef(false);
-  const [modeIntroFor, setModeIntroFor] = useState<string | null>(null);
-
-  /*
-   * How wide the workspace will be — measured here, in the wizard, because
-   * the preview must promise the arrangement the grid will actually produce.
-   *
-   * Width is what stops panes becoming unreadably narrow, and it is the ONLY
-   * thing that wraps a workspace: which panes share a row is otherwise the
-   * user's own choice, made through the split buttons. A preview computing
-   * columns from the count alone drifts apart from the running grid. The
-   * wizard shell sits in the same slot the grid will occupy, so measuring it
-   * here answers the same question.
-   *
-   * The readout names the width condition rather than silently assuming it —
-   * see WorkspaceShape. Measuring makes the picture correct for the window it
-   * was shown in; saying so is what keeps it honest after a resize.
-   */
-  const shellRef = useRef<HTMLDivElement | null>(null);
-  const [shellWidth, setShellWidth] = useState(0);
-  useEffect(() => {
-    const node = shellRef.current;
-    if (!node || typeof ResizeObserver === "undefined") return;
-    setShellWidth(node.clientWidth);
-    const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? node.clientWidth;
-      // Same 16 px step the grid rounds to, so both sides flip at one width.
-      setShellWidth(Math.round(width / 16) * 16);
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-    // Both states decide WHICH element (if any) carries `shellRef`, so both have
-    // to re-run the measurement. `loading` is easy to forget and silent when it
-    // is: the first read finds no node, gives up, and the preview then promises
-    // an arrangement computed from a width of zero for the rest of the session.
-  }, [session, loading]);
-
-  useEffect(() => {
-    // Gated on the LOCAL flag, not `session.focus_mode`: `session` is only
-    // refetched by `refresh`, so after this effect's counterpart hands the mode
-    // back on leaving, the cached session still claims the mode is on and
-    // returning to the section would never switch it on again. The local flag
-    // is the one that tracks what actually happened — and it is trustworthy
-    // here because `session` is non-null only once a refresh has landed, and
-    // that same refresh sets the flag from the backend.
-    if (!onScreen || !session || focusMode || optedOutRef.current) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const on = await setFocusMode(true);
-        if (cancelled) return;
-        setFocus(on);
-        autoEnabledRef.current = on;
-        // First workspace on this machine: say once what just changed. A mode
-        // that switches silently is indistinguishable from a bug.
-        if (on && !hasSeenModeIntro()) setModeIntroFor(session.id);
-      } catch {
-        /* the workspace still works; the mode toggle stays available */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // `onScreen` belongs here: this view is sticky and stays mounted, so coming
-    // back to the section is a prop change, not a remount. Without it the mode
-    // would be given back on leaving and never picked up again on return.
-  }, [session, onScreen, focusMode]);
-
-  /*
-   * Leaving the section gives the mode back.
-   *
-   * The signal is `onScreen`, not an unmount — MainView keeps this view mounted
-   * on purpose so a dozen terminals survive a trip to Settings, which means
-   * there is no unmount to clean up on. Only an auto-enabled mode is returned;
-   * one the user switched on by hand is left alone.
-   *
-   * Failure is deliberately silent. This runs while the user is already looking
-   * at another section, and a toast about a mode belonging to the screen they
-   * just left would be noise pointing at nothing. The app-wide badge keeps
-   * telling the truth either way, because it re-reads the backend on every
-   * section change (useCodingMode, path 4).
-   */
-  useEffect(() => {
-    if (onScreen) return;
-    if (!autoEnabledRef.current) return;
-    autoEnabledRef.current = false;
-    void setFocusMode(false)
-      .then(() => setFocus(false))
-      .catch(() => {});
-  }, [onScreen]);
-
-  // Memoised so these arrays keep a stable identity across renders — see the
-  // note on buildPlan for what an unstable one costs.
-  const agents = useMemo(() => meta?.agents ?? [], [meta]);
-  const suggested = useMemo(() => meta?.suggested_names ?? [], [meta]);
-  const installed = useMemo(() => agents.filter((a) => a.installed), [agents]);
-  const defaultAgent = installed[0]?.name ?? "claude";
-  const maxTerminals = meta?.max_terminals ?? 12;
-
-  // What the grid's split menus offer — every entry the backend registered, so
-  // the coding CLIs and the plain terminal, and anything registered later
-  // without a change here. Uninstalled entries stay in the list but disabled,
-  // so their absence is visible rather than silently missing — and carry their
-  // install command, which is what lets the menu offer to fix it on the spot.
-  const splitChoices = useMemo(
-    () =>
-      agents.map((a) => ({
-        name: a.name,
-        displayName: a.display_name,
-        installed: a.installed,
-        kind: a.kind ?? "cli",
-        logoUrl: a.logo_url || undefined,
-        installCommand: a.install_command || undefined,
-        // Whether a chat can be STARTED here at all, and what it could run on.
-        // Both are the backend's answer (`jarvis/workspace/launch_picks.py`),
-        // carried through unchanged: the split menus ignore them, and the chat
-        // surface — which opens a conversation rather than just a pane — reads
-        // them to decide what to offer and what to pass back at spawn.
-        acceptsPrompts: a.accepts_prompts ?? true,
-        picks: {
-          models: a.models ?? [],
-          defaultModel: a.default_model ?? "",
-          effortLevels: a.effort_levels ?? [],
-          defaultEffort: a.default_effort ?? "",
-          permissionModes: a.permission_modes ?? [],
-          defaultPermissionMode: a.default_permission_mode ?? "",
-        },
-        // For a plain terminal the useful second line is WHICH shell opens; a
-        // CLI's name already says what it is, so it gets no line of its own.
-        description:
-          a.kind === "shell" && a.version
-            ? `${a.version} — no agent, just a prompt`
-            : (a.description ?? ""),
-      })),
-    [agents],
-  );
-
-  const chooseCount = (n: number) => {
-    const next = Math.max(1, Math.min(maxTerminals, Math.trunc(n)));
-    setCount(next);
-    setPlanned((prev) => buildPlan(next, prev, "", suggested));
-  };
-
-  const replayRecent = (recent: {
-    path: string;
-    terminals: number;
-    agents: Record<string, number>;
-  }) => {
-    const total = Math.max(1, Math.min(recent.terminals, maxTerminals));
-    setCount(total);
-    // Only agents this machine can actually open.
-    //
-    // A remembered folder outlives the entry it was worked in: a CLI the user
-    // added themselves and later deleted, one renamed between releases, one
-    // uninstalled since. The backend refuses the WHOLE open when any requested
-    // agent is unknown or missing ("Unknown agent(s): …"), so a single dead id
-    // in this list made the folder unopenable from here — with an error naming
-    // an agent the user no longer has and no way to get past it. Dropping the
-    // dead ids and topping the plan back up keeps the folder openable; the
-    // panes are staged, so what came back is visible before anything runs.
-    const usable = new Set(
-      agents.filter((a) => a.installed).map((a) => a.name),
-    );
-    const entries = Object.entries(recent.agents ?? {}).filter(
-      ([agent, n]) => n > 0 && usable.has(agent),
-    );
-    if (entries.length === 0) {
-      setPlanned(buildPlan(total, [], defaultAgent, suggested));
-      return;
-    }
-    // Expand the remembered split back into one pane per terminal, grouped the
-    // way it was, then re-apply the call-sign pool in grid order.
-    const expanded: string[] = [];
-    for (const [agent, n] of entries) {
-      for (let i = 0; i < n && expanded.length < total; i += 1)
-        expanded.push(agent);
-    }
-    while (expanded.length < total) expanded.push(defaultAgent);
-    setPlanned(
-      expanded.map((agent, index) => ({
-        agent,
-        name: suggested[index] ?? `T${index + 1}`,
-      })),
-    );
-  };
-
-  /*
-   * The plan is built when the count changes rather than held in sync with it.
-   *
-   * It is also built once the agent sweep lands so the staged launcher already
-   * has useful defaults when the user reaches Agents. Guarding on length keeps
-   * backward navigation from overwriting choices already made.
-   */
-  useEffect(() => {
-    // Not before the sweep lands. `suggested` is empty until it does, so an
-    // earlier run would fill the plan with T1/T2 placeholders — and the guard
-    // below, which exists to protect choices the user has made, would then
-    // faithfully protect those placeholders from the real call-signs.
-    if (!meta) return;
-    setPlanned((previous) =>
-      previous.length === count
-        ? previous
-        : buildPlan(count, previous, "", suggested),
-    );
-  }, [meta, count, suggested]);
-
-  const start = async () => {
-    if (!folder) return;
-    setBusy(true);
-    // Recorded BEFORE the grid can mount: a grid coming up in a fresh window
-    // reads the stored preference, so the wizard's answer has to be on disk by
-    // then. `setView` writes it too; this is the belt for the braces.
-    rememberViewMode(view);
-    try {
-      // The open answers with the whole state — the new workspace AND the bar.
-      // Re-fetching instead would be a race that can blank what was just opened.
-      const next = await startIdeSession(folder, planned);
-      applyState(next);
-      setAddingNew(false);
-      // The launcher is reusable — someone who opens a third workspace should
-      // not land on the leftovers of the second one's plan.
-      setFolder(null);
-      const names = next.session?.terminals.map((x) => x.name).join(", ") ?? "";
-      pushToast("success", `Workspace open — ${names}`);
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const close = async () => {
-    setBusy(true);
-    try {
-      await endIdeSession();
-      setFocus(false);
-      // Closing on purpose withdraws the offer, so the wizard comes back clean
-      // rather than immediately proposing the workspace just shut down.
-      setOffer(null);
-      // Whatever is still open takes the front; only a full refresh knows what
-      // that is, so the view asks rather than guessing it is now empty.
-      await refresh();
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /*
-   * ------------------------------------------------------------ workspace bar
-   *
-   * All three actions share one rule, and it is the whole reason they are
-   * awaited rather than fired off: **the backend has to know the front workspace
-   * changed BEFORE the outgoing panes come down.**
-   *
-   * A pane that disappears releases its viewer, and the backend decides what
-   * that means from which workspace the pane belongs to. Ordering the state
-   * change after the round-trip keeps that decision correct; doing it the other
-   * way round would tear down panes while their workspace was still the front
-   * one, which is the difference between "switched tab" and "closed".
-   */
-  const switchTo = async (id: string) => {
-    if (busy || (id === session?.id && !addingNew)) return;
-    setBusy(true);
-    try {
-      applyState(await activateWorkspace(id));
-      setAddingNew(false);
-      setOffer(null);
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-      // The tab may have been closed elsewhere — re-read rather than leave a
-      // bar showing a workspace that is not there.
-      void refresh();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /*
-   * "Jump to a pane in another workspace", from the header bell.
-   *
-   * The grid cannot do this half itself: it is keyed by workspace, so switching
-   * tab REPLACES it — a maximize applied before the switch would land on the
-   * grid that is about to be thrown away, and one applied after it has no
-   * component left to call. So the wish is parked here, survives the swap, and
-   * is handed to the grid that comes up as `jumpTo`.
-   *
-   * The nonce is what lets the same pane be jumped to twice in a row: an effect
-   * cannot re-fire on a value that has not changed.
-   */
-  const [jumpTo, setJumpTo] = useState<{ pane: string; nonce: number } | null>(null);
-  const jumpToPane = useCallback(
-    async (workspaceId: string, pane: string) => {
-      if (workspaceId !== session?.id) await switchTo(workspaceId);
-      setJumpTo({ pane, nonce: Date.now() });
-    },
-    [session?.id, switchTo],
-  );
-
-  /*
-   * Tell the rest of the app WHICH workspace is open.
-   *
-   * Nothing published this, so the store's `workspace` stayed null forever and
-   * every reader that gates on it — the sidebar's chat face above all — was
-   * unreachable code. The folder travels with it because that is the one thing
-   * the IDE knows and a chat list does not: which project a session is
-   * touching.
-   */
-  useEffect(() => {
-    if (!onScreen) return;
-    publishWorkspace(
-      session
-        ? { id: session.id, name: session.project.name, path: session.folder }
-        : null,
-    );
-  }, [onScreen, publishWorkspace, session]);
-
-  /*
-   * Leaving the section hands the navigation back.
-   *
-   * Without this the sidebar keeps the workspace's chats while the user is
-   * reading Costs, because "is a workspace open" stayed true after this view
-   * went off screen.
-   */
-  useEffect(() => {
-    if (onScreen) return;
-    publishWorkspace(null);
-  }, [onScreen, publishWorkspace]);
-
-  /*
-   * A session list asked for one pane.
-   *
-   * The list is in the app sidebar, outside this view and outside the grid, so
-   * the ask arrives through the store and is performed here — by the same jump
-   * the notification bell and the voice bubble use, which already knows how to
-   * switch workspace first.
-   */
-  const lastPaneRequest = useRef(0);
-  useEffect(() => {
-    if (!paneRequest || paneRequest.nonce === lastPaneRequest.current) return;
-    lastPaneRequest.current = paneRequest.nonce;
-    void jumpToPane(paneRequest.workspaceId, paneRequest.pane);
-  }, [jumpToPane, paneRequest]);
-
-  /*
-   * The sidebar's session list draws every open workspace as a band — the
-   * same list the workspace bar draws, with the folder and which tab is at
-   * the front — and offers a new terminal under each, from the CLIs the
-   * grid's own split menus offer. Both are published from here because this
-   * view is the one place that holds them.
-   */
-  useEffect(() => {
-    publishWorkspaces(
-      onScreen
-        ? workspaces.map((w) => ({
-            id: w.id,
-            name: w.name,
-            folder: w.folder,
-            active: session ? w.id === session.id : w.active,
-          }))
-        : [],
-    );
-  }, [onScreen, publishWorkspaces, workspaces, session]);
-  useEffect(() => {
-    publishAgents(splitChoices);
-  }, [publishAgents, splitChoices]);
-
-  /*
-   * The sidebar asked for a new terminal in one workspace, or for one
-   * workspace's tab. Switching first when the ask names another tab, the
-   * way a pane request does; the grid then sees the new pane arrive and, in
-   * chat view, puts it on the stage.
-   */
-  const lastTerminalRequest = useRef(0);
-  useEffect(() => {
-    if (!terminalRequest || terminalRequest.nonce === lastTerminalRequest.current) return;
-    lastTerminalRequest.current = terminalRequest.nonce;
-    const { workspaceId, agent } = terminalRequest;
-    void (async () => {
-      try {
-        if (workspaceId !== session?.id) await switchTo(workspaceId);
-        setSession(await addTerminal({ agent }));
-      } catch (error) {
-        pushToast("error", error instanceof Error ? error.message : String(error));
-      }
-    })();
-    // `session` and `switchTo` are read at the moment of the ask, on purpose.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [terminalRequest]);
-  /*
-   * A new chat asked for in another workspace: bring that tab to the front and
-   * let its own grid open the draft. The grid is where the stage lives, so the
-   * request is answered there — this only makes sure the right one sees it.
-   */
-  const lastNewChatSwitch = useRef(0);
-  useEffect(() => {
-    if (!newChatRequest || newChatRequest.nonce === lastNewChatSwitch.current) return;
-    lastNewChatSwitch.current = newChatRequest.nonce;
-    if (newChatRequest.workspaceId !== session?.id) void switchTo(newChatRequest.workspaceId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [newChatRequest]);
-  const lastWorkspaceRequest = useRef(0);
-  useEffect(() => {
-    if (!workspaceRequest || workspaceRequest.nonce === lastWorkspaceRequest.current) return;
-    lastWorkspaceRequest.current = workspaceRequest.nonce;
-    if (workspaceRequest.workspaceId !== session?.id) void switchTo(workspaceRequest.workspaceId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceRequest]);
-  // A workspace with no project folder, asked for from the sidebar's last row.
-  const lastSessionRequest = useRef(0);
-  useEffect(() => {
-    if (!sessionRequest || sessionRequest.nonce === lastSessionRequest.current) return;
-    lastSessionRequest.current = sessionRequest.nonce;
-    void startSession();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionRequest]);
-  /*
-   * "Open one more workspace", asked for from the sidebar.
-   *
-   * The same act as the workspace bar's "+", performed by the same function,
-   * because it must be the same thing: chat mode hides the bar behind its own
-   * navigation, and a second, thinner "new workspace" reachable only from the
-   * sidebar would be one more flow to keep in step with this one. The launcher
-   * that comes up carries the folder picker, the pane count and the agents.
-   */
-  const lastAddWorkspaceRequest = useRef(0);
-  useEffect(() => {
-    if (!addWorkspaceRequest || addWorkspaceRequest.nonce === lastAddWorkspaceRequest.current)
-      return;
-    lastAddWorkspaceRequest.current = addWorkspaceRequest.nonce;
-    void startAdding();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [addWorkspaceRequest]);
-
-  /*
-   * A file dropped on a workspace TAB.
-   *
-   * It goes to that workspace's first pane, and the pane types the reference
-   * rather than swallowing it: a tab is a coarse target — it names a project,
-   * not an agent — so the honest reading is "put this in front of the agents
-   * over there", and the user finishes the thought when they switch to it.
-   * That is why this does not analyse or compose: the prompt bar is where a
-   * dropped file becomes part of an instruction, and this is not that.
-   *
-   * Dropping on the tab you are already on is the same gesture, so it is not
-   * special-cased away; switching to the target afterwards is what makes the
-   * result visible rather than something the user has to go looking for.
-   */
-  const dropOnWorkspace = async (id: string, payload: PaneDropPayload) => {
-    if (isEmptyPayload(payload)) return;
-    const label = workspaces.find((w) => w.id === id)?.name ?? "that workspace";
-    try {
-      // Switch FIRST, and not as a courtesy: a workspace card carries no pane
-      // names, so activating it is how the target pane becomes knowable at all.
-      // It also puts the user in front of the result instead of leaving the
-      // file somewhere they would have to go and find.
-      let active = session;
-      if (id !== session?.id || addingNew) {
-        const state = await activateWorkspace(id);
-        applyState(state);
-        setAddingNew(false);
-        setOffer(null);
-        active = state.session;
-      }
-      const pane = active?.terminals[0]?.name;
-      if (!pane) {
-        pushToast("warning", `${label} has no agent running to give the file to.`);
+    if (!dialogOpen) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = document.querySelector<HTMLElement>("[data-ide-dialog]");
+    if (!dialog) return;
+    const focusable = () => [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')];
+    (focusable()[0] ?? dialog).focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setProjectDialog(false); setWorkspaceProject(null); setRenameOpen(false);
         return;
       }
-      const result = await attachToTerminal(pane, payload);
-      pushToast("success", `${result.files.join(", ")} → ${pane} in ${label}.`);
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    }
-  };
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (items.length === 0) { event.preventDefault(); dialog.focus(); return; }
+      const first = items[0], last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => { document.removeEventListener("keydown", onKeyDown, true); previous?.focus(); };
+  }, [dialogOpen, projectDialog, workspaceProject, renameOpen]);
 
-  /**
-   * Open a workspace without asking which folder.
-   *
-   * A question, a quick script, "what is in this file" are all worth asking
-   * without first naming a repository to ask them in. The agent still runs
-   * somewhere — a coding CLI is a process with a working directory and there is
-   * no such thing as nowhere — so it runs in the home folder, which exists on
-   * every account on every OS. The backend owns that choice (it is the same
-   * folder the chat library calls a session), so nothing here has to guess a
-   * path or spell one out per platform.
-   */
-  const startSession = async () => {
-    if (busy) return;
+  const refresh = useCallback(async (allowDuringActivation = false) => {
+    if (activationRunning.current && !allowDuringActivation) return;
+    const epoch = ++refreshEpoch.current;
+    let [nextState, listing] = await Promise.all([fetchIdeState(), fetchIdeProjects()]);
+    // A workspace switch can fall between the two reads. Never publish a tree
+    // whose active row disagrees with the grid it is paired with.
+    if (nextState.active_id !== listing.active_workspace_id) {
+      [nextState, listing] = await Promise.all([fetchIdeState(), fetchIdeProjects()]);
+    }
+    if (epoch !== refreshEpoch.current || pendingActivation.current || (activationRunning.current && !allowDuringActivation) || nextState.active_id !== listing.active_workspace_id) return;
+    setState(nextState);
+    setProjects(listing.projects);
+    publishProjects(listing.projects, listing.active_workspace_id);
+  }, [publishProjects]);
+
+  useEffect(() => {
+    void refresh().catch((error) => pushToast("error", (error as Error).message));
+    void fetchIdeAgents(true).then((response) => setAgents(response.agents)).catch((error) => pushToast("error", (error as Error).message));
+  }, [refresh, pushToast]);
+
+  useEffect(() => {
+    if (!onScreen) return;
+    void refresh().catch((error) => console.warn("Agentic IDE state refresh failed:", error));
+    const timer = window.setInterval(() => {
+      void refresh().catch((error) => console.warn("Agentic IDE state refresh failed:", error));
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [onScreen, refresh]);
+
+  useEffect(() => {
+    setWorkspace(session ? { id: session.id, name: session.name ?? session.project.name, path: session.folder } : null);
+    setWorkspaces((state?.workspaces ?? []).map((workspace) => ({ id: workspace.id, name: workspace.name, folder: workspace.folder, active: workspace.active })));
+    if (session && !session.terminals.some((terminal) => terminal.name === selected)) setSelected(session.terminals[0]?.name ?? "");
+  }, [session, state?.workspaces, selected, setWorkspace, setWorkspaces]);
+
+  const run = useCallback(async (work: () => Promise<void>) => {
+    ++refreshEpoch.current; // invalidate reads started before this mutation
+    setBusy(true);
+    try { await work(); await refresh(); }
+    catch (error) { pushToast("error", (error as Error).message); }
+    finally { setBusy(false); }
+  }, [pushToast, refresh]);
+
+  const activateFromTree = useCallback(async (workspaceId: string) => {
+    pendingActivation.current = workspaceId;
+    if (activationRunning.current) return;
+    activationRunning.current = true;
+    ++refreshEpoch.current;
     setBusy(true);
     try {
-      const home = await openScratchProject();
-      const next = await startIdeSession(home.path, [{ agent: defaultAgent }]);
-      applyState(next);
-      setAddingNew(false);
-      setFolder(null);
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const startAdding = async () => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      applyState(await activateWorkspace(null));
-      setAddingNew(true);
-      // A fresh plan, not the previous workspace's.
-      setFolder(null);
-      setOffer(null);
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const closeOne = async (id: string) => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const next = await closeWorkspace(id);
-      applyState(next);
-      if (next.session === null && (next.workspaces ?? []).length === 0) {
-        // Nothing left — the wizard is the screen again, and the offer for the
-        // workspace just shut down has been withdrawn with it.
-        setAddingNew(false);
-        setOffer(null);
+      while (pendingActivation.current) {
+        const targetId = pendingActivation.current;
+        pendingActivation.current = null;
+        const target = useIdeProjectsStore.getState().projects.flatMap((project) => project.workspaces).find((workspace) => workspace.id === targetId);
+        try {
+          const next = target?.status === "closed" ? await restoreIdeWorkspace(targetId) : await activateWorkspace(targetId);
+          // A newer click is waiting: finish the switch in order, but never
+          // paint the superseded workspace or publish it as current context.
+          if (pendingActivation.current) continue;
+          setState(next);
+          await refresh(true);
+        } catch (error) {
+          pushToast("error", (error as Error).message);
+        }
       }
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-      void refresh();
     } finally {
+      activationRunning.current = false;
       setBusy(false);
     }
-  };
+  }, [pushToast, refresh]);
 
-  const renameOne = async (id: string, name: string) => {
-    if (busy) return false;
-    setBusy(true);
-    try {
-      applyState(await renameWorkspace(id, name));
-      return true;
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-      return false;
-    } finally {
-      setBusy(false);
+  useEffect(() => {
+    if (!action || handledAction.current === action.nonce) return;
+    handledAction.current = action.nonce;
+    if (action.kind === "connect-project") { setProjectDialog(true); return; }
+    if (action.kind === "new-workspace") {
+      const project = projects.find((entry) => entry.id === action.projectId);
+      if (project) { setWorkspaceProject(project); setWorkspaceName(""); setWorkspaceAgents([installed[0]?.name ?? ""]); }
+      return;
     }
-  };
+    void activateFromTree(action.workspaceId);
+  }, [action, activateFromTree, installed, projects]);
 
-  const resumeAll = async () => {
-    setBusy(true);
-    try {
-      const result = await resumeWorkspace();
-      applyState(result.state);
-      setAddingNew(false);
-      setOffer(null);
-      // Report what actually came back, not what was hoped for. A pane that
-      // reopened empty looks exactly like one that continued until it is asked
-      // a follow-up question, so the counts have to be said out loud — and so
-      // does any workspace that could not come back at all.
-      const spaces = result.workspace_count;
-      const panes = result.terminal_count;
-      const head =
-        `Resumed ${spaces} workspace${spaces === 1 ? "" : "s"}` +
-        ` · ${panes} terminal${panes === 1 ? "" : "s"}`;
-      const conversations =
-        result.started_fresh === 0
-          ? "every conversation continued"
-          : `${result.resumable_count} continued, ${result.started_fresh} started fresh`;
-      pushToast("success", `${head} — ${conversations}.`);
-      for (const missing of result.skipped) {
-        pushToast("warning", `${missing.folder}: ${missing.detail}`);
-      }
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
+  const connect = () => void run(async () => {
+    if (!projectPath) throw new Error("Choose a folder for this project.");
+    const project = await openProject(projectPath, projectName.trim() || undefined);
+    setProjectDialog(false); setProjectPath(null); setProjectName("");
+    const listing = await fetchIdeProjects();
+    setProjects(listing.projects);
+    publishProjects(listing.projects, listing.active_workspace_id);
+    const found = listing.projects.find((entry) => entry.id === project.id);
+    if (found) { setWorkspaceProject(found); setWorkspaceAgents([installed[0]?.name ?? ""]); }
+  });
 
-  const dismissOffer = async () => {
-    // Cleared on screen first: the user said no, and that should not wait for a
-    // round-trip. A failed delete only means the offer returns next visit.
-    setOffer(null);
-    try {
-      await forgetResumeOffer();
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    }
-  };
+  const createWorkspace = () => void run(async () => {
+    if (!workspaceProject || workspaceAgents.length === 0 || workspaceAgents.some((agent) => !agent)) throw new Error("Choose an installed coding agent for every session.");
+    const next = await startIdeSession(workspaceProject.path, workspaceAgents.map((agent) => ({ agent })), {
+      projectId: workspaceProject.id, name: workspaceName.trim() || undefined,
+    });
+    setState(next);
+    setWorkspaceProject(null);
+  });
 
-  const toggleFocus = async (enabled: boolean) => {
-    // Remember a deliberate opt-out, or the auto-enable effect above would turn
-    // the mode straight back on and the switch would look broken.
-    optedOutRef.current = !enabled;
-    // Touching the switch takes ownership of the mode either way: switching it
-    // on by hand means "keep it on when I leave", switching it off means there
-    // is nothing left for the leave-handler to undo.
-    autoEnabledRef.current = false;
-    try {
-      setFocus(await setFocusMode(enabled));
-    } catch (e) {
-      pushToast("error", (e as Error).message);
-    }
-  };
+  const addAgent = (agentName?: string) => void run(async () => {
+    if (!session) return;
+    if (session.terminals.length >= 8) throw new Error("This workspace already has eight sessions.");
+    const next = await addTerminal({ workspace_id: session.id, agent: agentName ?? installed[0]?.name, direction: "down" });
+    setState((current) => current ? { ...current, session: next } : current);
+  });
 
-  /*
-   * The workspace bar sits above BOTH states, always in the same place.
-   *
-   * It is the one part of this view that is not about the workspace you are in
-   * — it is about which one you are in — so it stays put whether the grid or
-   * the wizard is below it. A bar that moved (or vanished while adding one)
-   * would leave the user without a way back to the workspaces still running.
-   *
-   * With a workspace open it is handed to the grid rather than rendered here,
-   * so the tabs and that workspace's controls share ONE row (see the grid's
-   * `workspaceBar` prop). Same bar, same place on screen — one line instead of
-   * two, which in a view full of terminals is a pane's worth of output.
-   *
-   * Pane actions return the updated session, while the compact workspace cards
-   * remain the snapshot from the last full-state request. Replace the active
-   * card's count from that live session so closing or adding a terminal updates
-   * the badge immediately instead of leaving the original spawn count behind.
-   */
-  const barWorkspaces = workspaces.map((workspace) =>
-    session && workspace.id === session.id
-      ? { ...workspace, terminals: session.terminals.length }
-      : workspace,
-  );
-  const renderBar = (embedded: boolean) => (
-    <WorkspaceBar
-      embedded={embedded}
-      workspaces={barWorkspaces}
-      activeId={session?.id ?? null}
-      addingNew={addingNew}
-      maxWorkspaces={maxWorkspaces}
-      onSelect={(id) => void switchTo(id)}
-      onAdd={() => void startAdding()}
-      onRename={renameOne}
-      onClose={(id) => void closeOne(id)}
-      onDropFiles={(id, payload) => void dropOnWorkspace(id, payload)}
-      busy={busy}
-    />
-  );
+  const closeAgent = (terminal: TerminalState) => void run(async () => {
+    if (!session || !window.confirm(`Close ${terminal.name}? Its coding agent will stop.`)) return;
+    await closeTerminal(terminal.name, session.id);
+  });
 
-  // ------------------------------------------------------------ running mode
-  if (session && !addingNew) {
-    return (
-      <div className="flex h-full flex-col">
-        <div className="min-h-0 min-w-0 flex-1">
-          {/*
-            Keyed by workspace, so switching tabs REPLACES the grid instead of
-            re-using it. That is deliberate: each pane's terminal is wired to
-            one call-sign for its whole life, and re-using the component across
-            workspaces would leave xterm instances pointed at the panes of the
-            workspace that just left.
-          */}
-          <AgenticGrid
-            key={session.id}
-            session={session}
-            workspaceBar={renderBar(true)}
-            onJumpToWorkspace={(id, pane) => void jumpToPane(id, pane)}
-            jumpTo={jumpTo}
-            focusMode={focusMode}
-            onToggleFocus={(v) => void toggleFocus(v)}
-            onClose={() => void close()}
-            busy={busy}
-            maxTerminals={maxTerminals}
-            agents={splitChoices}
-            /* An install started from a split menu changes the one thing this
-               list answers, and the sweep behind it is cached — so the re-read
-               is explicit rather than waited for. */
-            onAgentsChanged={() => void reloadAgents()}
-            onSessionChanged={setSession}
-            accounts={ideAccounts}
-            onStateChanged={applyStateFromSettings}
-            onScreen={onScreen}
-            onPromptTargetChange={setPromptTarget}
-            voiceOpen={voiceOpen}
-            onToggleVoice={toggleVoiceBubble}
-          />
+  const saveFont = (size: number) => { const next = Math.max(9, Math.min(22, size)); setFontSize(next); localStorage.setItem(FONT_KEY, String(next)); };
+  const saveAppearance = (next: "light" | "dark" | null) => { setAppearance(next); if (next) localStorage.setItem(APPEARANCE_KEY, next); else localStorage.removeItem(APPEARANCE_KEY); };
+  const closeVoice = () => { setVoiceOpen(false); storeVoiceBubbleOpen(false); };
+  const jumpToPane = (workspaceId: string, pane: string) => void run(async () => {
+    if (workspaceId !== session?.id) setState(await activateWorkspace(workspaceId));
+    setSelected(pane);
+  });
+  const saveWorkspaceName = () => void run(async () => {
+    if (!session || !renameValue.trim()) return;
+    setState(await renameWorkspace(session.id, renameValue.trim()));
+    setRenameOpen(false);
+  });
+  const stopWorkspace = () => void run(async () => {
+    if (!session || !window.confirm(`Close ${session.name ?? session.project.name}? Its coding agents will stop.`)) return;
+    setState(await closeWorkspace(session.id));
+    setWorkspaceMenu(false);
+  });
+
+  if (state === null) return <div data-testid="agentic-ide-loading" className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading projects…</div>;
+
+  return <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="igentic-ide">
+    <header className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border/70 px-4">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <span className="truncate">{activeProject?.name ?? "Projects"}</span>
+          {session && <><span className="text-muted-foreground">/</span><span className="truncate text-muted-foreground">{session.name ?? session.project.name}</span></>}
         </div>
-        {/*
-          The floating voice bubble: talk to the assistant while the agents
-          work. A fixed overlay rather than a column, so the terminals keep
-          the whole width in every view mode; OUTSIDE the per-workspace grid
-          on purpose — the conversation belongs to the app, not to a
-          workspace, so switching tabs must not reset the orb mid-sentence.
-        */}
-        <VoiceBubble
-          open={voiceOpen}
-          onClose={closeVoiceBubble}
-          onScreen={onScreen}
-          // The same jump the bell's list performs, from the bubble's update
-          // card: switch workspace if the pane lives in another one, then bring
-          // that pane into view.
-          onJumpToPane={(id, pane) => void jumpToPane(id, pane)}
-          promptTarget={
-            session.terminals.some(
-              (terminal) =>
-                terminal.name === promptTarget && terminal.accepts_prompts !== false,
-            )
-              ? promptTarget
-              : session.terminals.find(
-                  (terminal) => terminal.accepts_prompts !== false,
-                )?.name ?? ""
-          }
-        />
-        {modeIntroFor === session.id && (
-          <CodingModeIntro
-            terminals={session.terminals.map((x) => x.name)}
-            project={session.project.name}
-            onDismiss={() => {
-              rememberModeIntro();
-              setModeIntroFor(null);
-            }}
-          />
-        )}
+        {session && <div className="truncate text-[11px] text-muted-foreground" title={session.folder}>{session.folder}</div>}
       </div>
-    );
-  }
-
-  /*
-   * ------------------------------------------------------------- still asking
-   *
-   * Before the first read lands, this view does not know whether a workspace is
-   * open — and "I do not know yet" must not be drawn as "there is none".
-   *
-   * It used to fall straight through to the wizard and merely add a line of
-   * "Checking this machine…" to it, which put the four-step ONBOARDING flow
-   * ("Which folder should the agents work in?") in front of a user whose eleven
-   * agents were running the whole time (maintainer report 2026-07-29). Being
-   * asked to start over is a far worse answer than being told to wait a moment,
-   * and the two states are indistinguishable to whoever is reading the screen.
-   *
-   * `loading` is a first-read flag: it is set once, cleared in `refresh`, and
-   * never raised again — so this never covers a workspace that is already up,
-   * and later refreshes redraw in place.
-   */
-  if (loading) {
-    return (
-      <div
-        className="flex h-full w-full items-center justify-center"
-        data-testid="agentic-ide-loading"
-        aria-busy="true"
-      >
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Checking this machine…
+      {session && <>
+        <span className="hidden text-xs tabular-nums text-muted-foreground sm:inline">{session.terminals.length} / 8 agents</span>
+        <div className="relative"><button type="button" aria-label="Add coding agent" title="Add coding agent" aria-expanded={agentMenu} disabled={busy || session.terminals.length >= 8 || installed.length === 0} onClick={() => setAgentMenu((value) => !value)} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"><Plus className="h-4 w-4" /></button>
+          {agentMenu && <div className="absolute right-0 top-full z-30 mt-1 min-w-40 rounded-lg border border-border bg-popover p-1 shadow-lg">{installed.map((agent) => <button key={agent.name} type="button" onClick={() => { setAgentMenu(false); addAgent(agent.name); }} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-accent">{agent.display_name}</button>)}</div>}
         </div>
-      </div>
-    );
-  }
-
-  // ---------------------------------------------------------------- launcher
-  return (
-    <div className="flex h-full min-h-0 flex-col" ref={shellRef}>
-      {renderBar(false)}
-      <div className="min-h-0 flex-1">
-        <WorkspaceLauncher
-          addingNew={addingNew}
-          busy={busy}
-          folder={folder}
-          onSelectFolder={setFolder}
-          onSelectRecent={replayRecent}
-          count={count}
-          maxTerminals={maxTerminals}
-          suggestedNames={suggested}
-          workspaceWidthPx={shellWidth}
-          onCount={chooseCount}
-          planned={planned}
-          onPlanned={setPlanned}
-          agents={agents}
-          accountsFor={accountsFor}
-          onAgentsChanged={() => void reloadAgents()}
-          /* Before the sweep lands `meta` is null, and this screen is not
-             reached in that state at all (see the `loading` branch above). The
-             optimistic default is still the right one: a machine is assumed
-             capable until it has said otherwise, never accused on no evidence. */
-          terminalAvailable={meta ? meta.terminal_available : true}
-          nothingInstalled={Boolean(meta) && installed.length === 0}
-          onOpenClis={() => setActiveSection("clis")}
-          offer={offer}
-          onResume={() => void resumeAll()}
-          onDismissOffer={() => void dismissOffer()}
-          view={view}
-          onView={setView}
-          onStart={() => void start()}
-        />
-      </div>
-    </div>
-  );
-}
-
-/*
- * One-time explanation of what entering a workspace changes.
- *
- * Shown once per machine, not once per session: after the first time the user
- * knows, and a modal that reappears every time is the thing people learn to
- * dismiss without reading. Stored in localStorage rather than in config —
- * "has this person seen a UI hint" is a property of this browser profile, not
- * something worth a round-trip and a config write.
- */
-const MODE_INTRO_KEY = "jarvis.agenticIde.codingModeIntroSeen";
-
-function hasSeenModeIntro(): boolean {
-  try {
-    return window.localStorage.getItem(MODE_INTRO_KEY) === "1";
-  } catch {
-    // Private mode / storage disabled: showing the hint again is a far smaller
-    // problem than crashing the view.
-    return false;
-  }
-}
-
-function rememberModeIntro(): void {
-  try {
-    window.localStorage.setItem(MODE_INTRO_KEY, "1");
-  } catch {
-    /* nothing to do — the hint will simply appear again */
-  }
-}
-
-/**
- * What just changed, once, in four sentences.
- *
- * It used to be four bullets with bolded lead-ins — "**Talk to the agents by
- * name.**", "**Jarvis writes the prompt.**" — each followed by a sentence
- * explaining the lead-in. That is feature-list prose: it advertises a thing the
- * reader has already chosen and opened, and the bolding makes the eye skip
- * precisely the half that carries the information. The same four facts as four
- * plain sentences take a third of the room and are actually read.
- *
- * It stays a dialog rather than becoming a toast because it appears exactly once
- * per machine and describes a mode change the user did not ask for — which is
- * the one thing on this screen worth interrupting for.
- */
-function CodingModeIntro({
-  terminals,
-  project,
-  onDismiss,
-}: {
-  terminals: string[];
-  project: string;
-  onDismiss: () => void;
-}) {
-  const first = terminals[0] ?? "T1";
-  const second = terminals[1] ?? terminals[0] ?? "T2";
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-6 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-lg bg-popover shadow-float p-5">
-        <h3 className="font-display text-base font-semibold">
-          Coding mode is on
-        </h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          While this workspace is open, Jarvis works inside {project}.
-        </p>
-
-        <ul className="mt-4 space-y-2 text-sm leading-relaxed text-foreground/90">
-          <li>
-            Talk to the agents by name — “tell {first} to look at the wake word
-            code” goes straight into that terminal.
-          </li>
-          <li>
-            What you say is turned into a proper instruction, with the relevant
-            files of this repository attached as{" "}
-            <code className="font-mono text-xs">@</code> references.
-          </li>
-          <li>
-            “What is {second} up to?” is answered from what that terminal
-            actually printed.
-          </li>
-          <li>
-            Nothing is started in the background: work you give a terminal stays
-            with that terminal. Turn the mode off any time from the toolbar.
-          </li>
-        </ul>
-
-        <div className="mt-5 flex justify-end">
-          <Button variant="primary" onClick={onDismiss}>
-            Got it
-          </Button>
+        <div className="mx-1 h-4 w-px bg-border" />
+        <button type="button" aria-label="Decrease terminal text size" onClick={() => saveFont(fontSize - 1)} className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"><ZoomOut className="h-4 w-4" /></button>
+        <span className="w-5 text-center text-xs tabular-nums text-muted-foreground">{fontSize}</span>
+        <button type="button" aria-label="Increase terminal text size" onClick={() => saveFont(fontSize + 1)} className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"><ZoomIn className="h-4 w-4" /></button>
+        <button type="button" aria-label="Toggle terminal appearance" title="Toggle terminal light and dark appearance" onClick={() => saveAppearance((appearance ?? "dark") === "dark" ? "light" : "dark")} className="ml-1 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground">{appearance === "light" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}</button>
+        <div className="relative"><button type="button" aria-label="Workspace actions" aria-expanded={workspaceMenu} onClick={() => setWorkspaceMenu((value) => !value)} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><MoreHorizontal className="h-4 w-4" /></button>
+          {workspaceMenu && <div className="absolute right-0 top-full z-30 mt-1 min-w-40 rounded-lg border border-border bg-popover p-1 shadow-lg">
+            <button type="button" onClick={() => { setWorkspaceMenu(false); setRenameValue(session.name ?? session.project.name); setRenameOpen(true); }} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-accent">Rename workspace</button>
+            <button type="button" onClick={stopWorkspace} className="block w-full rounded px-2 py-1.5 text-left text-xs text-destructive hover:bg-accent">Close workspace</button>
+          </div>}
         </div>
-      </div>
-    </div>
-  );
+      </>}
+      <button type="button" aria-label="Jarvis Live" title="Jarvis Live" onClick={() => { const next = !voiceOpen; setVoiceOpen(next); storeVoiceBubbleOpen(next); }} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Mic className="h-4 w-4" /></button>
+    </header>
+
+    <main className="min-h-0 flex-1">
+      {session ? <WorkspaceTerminalGrid key={session.id} session={session} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
+        onAdd={() => setAgentMenu(true)} onClose={closeAgent} onSelect={setSelected} selected={selected} fontSize={fontSize} appearance={appearance} />
+      : <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+        <FolderPlus className="h-8 w-8 text-muted-foreground/70" />
+        <h1 className="text-lg font-medium">{projects.some((project) => !project.scratch && !project.archived) ? "Choose a workspace" : "Connect a project"}</h1>
+        <p className="max-w-md text-sm text-muted-foreground">{projects.some((project) => !project.scratch && !project.archived) ? "Select a workspace from Projects, or create one with + beside its project." : "Connect a folder to bring its coding agents and Jarvis into one workspace."}</p>
+        <button type="button" onClick={() => setProjectDialog(true)} className="mt-2 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent">Connect folder</button>
+      </div>}
+    </main>
+
+    <VoiceBubble open={voiceOpen} onClose={closeVoice} onScreen={onScreen} onJumpToPane={jumpToPane} promptTarget={selected} />
+
+    {projectDialog && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setProjectDialog(false); }}>
+      <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="Connect project" className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border px-5 py-3"><h2 className="text-sm font-semibold">Connect project folder</h2><button type="button" aria-label="Close" onClick={() => setProjectDialog(false)}><X className="h-4 w-4" /></button></div>
+        <div className="min-h-0 flex-1 overflow-auto px-5 py-3"><FolderPicker selected={projectPath} onSelect={setProjectPath} /></div>
+        <div className="border-t border-border px-5 py-3"><label className="block text-xs text-muted-foreground">Project name (optional)<input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder={projectPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? "Project name"} className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" /></label>
+          <div className="mt-3 flex justify-end gap-2"><button type="button" onClick={() => setProjectDialog(false)} className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent">Cancel</button><button type="button" disabled={busy || !projectPath} onClick={connect} className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50">Connect project</button></div>
+        </div>
+      </section>
+    </div>}
+
+    {workspaceProject && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setWorkspaceProject(null); }}>
+      <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="New workspace" className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-2xl">
+        <div className="mb-4 flex items-center justify-between"><h2 className="text-base font-semibold">New workspace</h2><button type="button" aria-label="Close" onClick={() => setWorkspaceProject(null)}><X className="h-4 w-4" /></button></div>
+        <p className="mb-4 truncate text-xs text-muted-foreground" title={workspaceProject.path}>{workspaceProject.name} · {workspaceProject.path}</p>
+        <label className="block text-xs text-muted-foreground">Name (optional)<input value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} placeholder="Workspace" className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" /></label>
+        <label className="mt-3 block text-xs text-muted-foreground">Sessions<select value={workspaceAgents.length} onChange={(event) => setWorkspaceAgents((old) => Array.from({ length: Number(event.target.value) }, (_, index) => old[index] ?? installed[0]?.name ?? ""))} className="mt-1 w-full rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground">{[1, 2, 3, 4, 5, 6, 7, 8].map((count) => <option value={count} key={count}>{count}</option>)}</select></label>
+        <div className="mt-3 max-h-48 space-y-2 overflow-auto">{workspaceAgents.map((agent, index) => <label key={index} className="flex items-center gap-3 text-xs text-muted-foreground"><span className="w-16 shrink-0">Agent {index + 1}</span><select value={agent} onChange={(event) => setWorkspaceAgents((old) => old.map((value, at) => at === index ? event.target.value : value))} className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground">{installed.map((choice) => <option value={choice.name} key={choice.name}>{choice.display_name}</option>)}</select></label>)}</div>
+        {installed.length === 0 && <p className="mt-3 text-xs text-destructive">Install a coding agent from CLIs before creating a workspace.</p>}
+        <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setWorkspaceProject(null)} className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent">Cancel</button><button type="button" disabled={busy || installed.length === 0} onClick={createWorkspace} className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50">Create workspace</button></div>
+      </section>
+    </div>}
+    {renameOpen && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setRenameOpen(false); }}>
+      <form data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="Rename workspace" onSubmit={(event) => { event.preventDefault(); saveWorkspaceName(); }} className="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-2xl">
+        <h2 className="mb-4 text-sm font-semibold">Rename workspace</h2>
+        <label className="block text-xs text-muted-foreground">Workspace name<input autoFocus value={renameValue} onChange={(event) => setRenameValue(event.target.value)} className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" /></label>
+        <div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setRenameOpen(false)} className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent">Cancel</button><button type="submit" disabled={busy || !renameValue.trim()} className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50">Save</button></div>
+      </form>
+    </div>}
+  </div>;
 }
