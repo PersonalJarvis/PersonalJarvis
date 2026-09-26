@@ -20,7 +20,7 @@ TARGET_ASSETS = dict(zip(TARGETS, ASSETS[:4], strict=True))
 
 
 def _version_tuple(tag: str) -> tuple[int, int, int]:
-    match = re.fullmatch(r"v([0-9]+)\.([0-9]+)\.([0-9]+)(?:[-+][A-Za-z0-9.-]+)?", tag)
+    match = re.fullmatch(r"v([0-9]+)\.([0-9]+)\.([0-9]+)", tag)
     if match is None:
         raise ValueError(f"invalid release tag: {tag!r}")
     return tuple(int(part) for part in match.groups())

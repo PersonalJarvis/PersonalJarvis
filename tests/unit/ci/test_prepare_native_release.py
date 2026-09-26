@@ -43,6 +43,13 @@ def test_prepare_binds_tag_and_requires_every_native_target(tmp_path):
     assert set(qualification["targets"]) == set(TARGETS)
 
 
+@pytest.mark.parametrize("tag", ["v1.2.3-rc1", "v1.2.3+build", "1.2.3", "v1.2"])
+def test_prepare_rejects_nonstable_release_tags(tmp_path, tag):
+    _stage(tmp_path)
+    with pytest.raises(ValueError, match="invalid release tag"):
+        prepare(tmp_path, tag, "a" * 40)
+
+
 def test_prepare_rejects_missing_asset_or_native_proof(tmp_path):
     _stage(tmp_path)
     (tmp_path / ASSETS[0]).unlink()

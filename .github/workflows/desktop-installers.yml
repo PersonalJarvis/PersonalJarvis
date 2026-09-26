@@ -663,7 +663,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git archive --format=tar.gz -o installers/personal-jarvis-src.tar.gz HEAD
+          git archive --format=tar.gz --prefix=personal-jarvis/ -o installers/personal-jarvis-src.tar.gz HEAD
+          tar -tzf installers/personal-jarvis-src.tar.gz > source-archive-files.txt
+          grep -Fxq 'personal-jarvis/pyproject.toml' source-archive-files.txt
           python scripts/ci/prepare_native_release.py installers --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA"
           cd installers
           sha256sum -c installers-SHA256SUMS.txt
