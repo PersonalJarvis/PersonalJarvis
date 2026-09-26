@@ -5176,6 +5176,11 @@
     "mode_pipeline": "Stimme rein und raus"
   },
   "society": {
+    "groups": {
+      "create": "Neuer Gruppenchat", "edit": "Gruppenchat bearbeiten", "description": "Agents in einem Chat bündeln. Nachrichten gehen an alle Mitglieder, sofern du keine Empfänger auswählst.",
+      "name": "Gruppenname", "members": "Mitglieder", "cancel": "Abbrechen", "save": "Gruppe speichern", "delete": "Gruppe auflösen", "delete_confirm": "Diese Gruppe auflösen? Der Gruppenverlauf wird gelöscht; die einzelnen Agent-Chats bleiben erhalten.",
+      "send": "Senden", "placeholder": "Nachricht an die Gruppe", "empty": "Schreib eine Nachricht, um diesen Gruppenchat zu starten.", "recipients": "Empfänger", "everyone": "Alle", "error": "Die Gruppe konnte nicht geladen werden."
+    },
     "chat": {
       "placeholder": "Nachricht an {0}",
       "more": "Mehr",

@@ -5,12 +5,15 @@ import { LAST_AGENT_STORAGE_KEY } from "./lastAgent";
 import { SocietyView } from "./SocietyView";
 
 const app = vi.hoisted(() => ({ instance: { name: "default", isDev: false } }));
+const groupsState = vi.hoisted(() => ({ groups: [] as Array<{ group_id: string; name: string; members: string[] }> }));
 vi.mock("@/hooks/useAppInstance", () => ({ useAppInstance: () => app.instance }));
-beforeEach(() => { app.instance = { name: "default", isDev: false }; });
+beforeEach(() => { app.instance = { name: "default", isDev: false }; groupsState.groups = []; });
 
 vi.mock("@/lib/mapFullscreen", () => ({ setMapFullscreen: vi.fn(async () => undefined) }));
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, useLocaleChunk: () => true }));
 vi.mock("@/components/society/chat/useModelMenuData", () => ({ useModelMenuData: () => undefined }));
+vi.mock("@/lib/societyChatGroups", () => ({ useSocietyChatGroups: () => ({ data: groupsState.groups }) }));
+vi.mock("@/components/society/chat/ChatGroupPanel", () => ({ ChatGroupPanel: ({ group, onOpenAgent }: any) => <div data-testid="group-workspace">{group.name}<button onClick={() => onOpenAgent("specialist")}>Open member</button></div> }));
 vi.mock("@/components/society/data", () => ({ useSocietyRoster: () => ({ data: { sample: false, agents: [
   { agentId: "lead", name: "Lead", tier: "lead", state: "idle" },
   { agentId: "specialist", name: "Specialist", tier: "specialist", state: "idle" },
@@ -19,11 +22,12 @@ vi.mock("@/views/JarvisAgentsView", () => ({ JarvisAgentsView: ({ onSelectAgent,
   <div data-testid="map"><button onClick={() => onSelectAgent("specialist")}>Map specialist</button><button onClick={onOpenAgents}>Map fallback</button><div data-mars-ui><input aria-label="Mars draft" /></div><div data-mars-mode="player"><button>Player viewport</button></div><div data-mars-mode="follow"><button>Follow viewport</button></div><button onClick={() => onMarsSelectionChange(false)}>Previous world</button><button onClick={() => onMarsSelectionChange(true)}>Mars world</button></div>
 ) }));
 vi.mock("@/components/society/mars/MarsStationPanel", () => ({ MarsStationPanel: ({ onClose }: any) => <aside aria-label="Mars station"><button onClick={onClose}>Close station</button></aside> }));
-vi.mock("@/components/society/card/AgentCardOverlay", () => ({ AgentCardOverlay: ({ agent, embedded, onSelectAgent, onCreate, railHeader }: any) => (
+vi.mock("@/components/society/card/AgentCardOverlay", () => ({ AgentCardOverlay: ({ agent, embedded, onSelectAgent, onSelectGroup, onCreate, railHeader }: any) => (
   <div data-testid="workspace" data-embedded={String(embedded)}>
     {railHeader}
     <span>{agent.name}</span><input aria-label="Draft" />
     <button onClick={() => onSelectAgent("specialist")}>Select specialist</button>
+    <button onClick={() => onSelectGroup?.("team")}>Open group</button>
     <button onClick={onCreate}>Create agent</button>
   </div>
 ) }));
@@ -41,6 +45,15 @@ it("defaults to the embedded Agents workspace even with a saved legacy ledger pr
   expect(screen.getByText("Lead")).toBeTruthy();
   expect(screen.queryByTestId("map")).toBeNull();
   localStorage.removeItem("jarvis.agents.mode.v2");
+});
+
+it("opens a group from the agent rail and returns to an individual member chat", () => {
+  groupsState.groups = [{ group_id: "team", name: "Launch team", members: ["specialist"] }];
+  render(<SocietyView />);
+  fireEvent.click(screen.getByText("Open group"));
+  expect(screen.getByTestId("group-workspace").textContent).toContain("Launch team");
+  fireEvent.click(screen.getByText("Open member"));
+  expect(screen.getByTestId("workspace").textContent).toContain("Specialist");
 });
 
 it("switches to Map and back without losing the selected agent or draft", async () => {

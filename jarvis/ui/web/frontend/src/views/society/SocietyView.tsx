@@ -13,6 +13,8 @@ import type { PlaceId } from "@/components/society/world/islandLayout";
 import { useSocietyRoster } from "@/components/society/data";
 import { RosterRail } from "@/components/society/roster/RosterRail";
 import { useModelMenuData } from "@/components/society/chat/useModelMenuData";
+import { ChatGroupPanel } from "@/components/society/chat/ChatGroupPanel";
+import { useSocietyChatGroups } from "@/lib/societyChatGroups";
 import { CanvasActivity } from "@/hooks/useCanvasAwake";
 import { forgetLastAgentId, rememberLastAgentId, storedLastAgentId } from "./lastAgent";
 
@@ -35,6 +37,10 @@ export function SocietyView() {
   const roster = useSocietyRoster();
   const agents = useMemo(() => roster.data?.agents ?? [], [roster.data]);
   const sample = roster.data?.sample ?? true;
+  const groupsQuery = useSocietyChatGroups(!sample);
+  const groups = useMemo(() => groupsQuery.data ?? [], [groupsQuery.data]);
+  const [openGroupId, setOpenGroupId] = useState<string | null>(null);
+  const openGroup = groups.find((group) => group.group_id === openGroupId) ?? null;
   const [openAgentId, setOpenAgentId] = useState<string | null>(storedLastAgentId);
   const [creating, setCreating] = useState(false);
   const [openPlace, setOpenPlace] = useState<BuildingPlace | null>(null);
@@ -45,9 +51,19 @@ export function SocietyView() {
   );
 
   const selectAgent = useCallback((agentId: string | null) => {
+    setOpenGroupId(null);
     setOpenAgentId(agentId);
     if (agentId) rememberLastAgentId(agentId);
   }, []);
+
+  const selectGroup = useCallback((groupId: string) => {
+    setOpenGroupId(groupId);
+    setOpenAgentId(null);
+  }, []);
+
+  useEffect(() => {
+    if (openGroupId && groupsQuery.data && !groups.some((group) => group.group_id === openGroupId)) setOpenGroupId(null);
+  }, [groups, groupsQuery.data, openGroupId]);
 
   useEffect(() => {
     if (openAgentId && agents.length > 0 && !agents.some((agent) => agent.agentId === openAgentId)) {
@@ -145,12 +161,17 @@ export function SocietyView() {
         </div>
         ) : null}
         <div className={mode === "agents" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
-        {openAgent ? (
+        {openGroup ? (
+          <ChatGroupPanel group={openGroup} groups={groups} roster={agents} onOpenAgent={selectAgent} onOpenGroup={selectGroup}
+            onCreateAgent={() => setCreating(true)} onDeleted={() => setOpenGroupId(null)} />
+        ) : openAgent ? (
           <AgentCardOverlay embedded agent={openAgent} roster={agents} rosterLoading={roster.isLoading}
+            groups={groups} onSelectGroup={selectGroup}
             sample={sample} onSelectAgent={selectAgent} onCreate={() => setCreating(true)}
             onClose={() => setOpenAgentId(null)} />
         ) : (
           <RosterRail agents={agents} loading={roster.isLoading} sample={sample}
+            groups={groups} onOpenGroup={selectGroup}
             activeAgentId={null} onOpen={selectAgent} onCreate={() => setCreating(true)} side="left"
             className="w-full border-0 jarvis-nav-surface" />
         )}

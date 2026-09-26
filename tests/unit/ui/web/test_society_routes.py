@@ -9,6 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from jarvis.society.events import MsgType
 from jarvis.society.runtime import SocietyRuntime
 from jarvis.ui.web.society_routes import router
 
@@ -66,6 +67,74 @@ def test_lead_is_seeded_and_listed(client):
     assert [a["agent_id"] for a in body["agents"]] == ["jarvis"]
     assert body["agents"][0]["tier"] == "lead"
     assert body["agents"][0]["run_state"] == "idle"
+
+
+def test_group_chat_persists_members_and_correlates_agent_replies(client):
+    c, _ = client
+    for name in ("Scout", "Planner", "Writer"):
+        assert c.post("/api/society/agents", json={"name": name}).status_code == 200
+    created = c.post(
+        "/api/society/chat-groups",
+        json={"name": "Launch team", "members": ["scout", "planner"]},
+    )
+    assert created.status_code == 200, created.text
+    group = created.json()["group"]
+    group_id = group["group_id"]
+    assert c.get("/api/society/chat-groups").json()["groups"] == [group]
+    assert (
+        c.post(
+            "/api/society/chat-groups", json={"name": "Second team", "members": ["scout", "writer"]}
+        ).status_code
+        == 200
+    )
+    assert (
+        c.post(
+            f"/api/society/chat-groups/{group_id}/messages",
+            json={"text": "What is ready?", "recipients": ["writer"]},
+        ).status_code
+        == 422
+    )
+    posted = c.post(
+        f"/api/society/chat-groups/{group_id}/messages", json={"text": "What is ready?"}
+    )
+    assert posted.status_code == 200, posted.text
+    assert posted.json()["recipients"] == ["scout", "planner"]
+
+    runtime: SocietyRuntime = c.app.state.society
+    assert c.portal is not None
+    posts = c.portal.call(runtime.store.chat_group_messages, group_id)
+    assert [(item["from_agent"], item["text"]) for item in posts] == [("user", "What is ready?")]
+    events = c.portal.call(runtime.store.events_since)
+    requests = [event for event in events if event.payload.get("group_id") == group_id]
+    assert {event.to_agent for event in requests} == {"scout", "planner"}
+    assert len({event.trace_id for event in requests}) == 1
+
+    async def reply():
+        return await runtime.say(
+            from_agent="scout",
+            to_agent="user",
+            text="Research ready.",
+            trace_id=requests[0].trace_id,
+            parent_event_id=requests[0].event_id,
+            msg_type=MsgType.ANSWER,
+        )
+
+    c.portal.call(reply)
+    messages = c.get(f"/api/society/chat-groups/{group_id}/messages").json()["messages"]
+    assert [(item["from_agent"], item["text"]) for item in messages] == [
+        ("user", "What is ready?"),
+        ("scout", "Research ready."),
+    ]
+    assert (
+        c.patch(
+            f"/api/society/chat-groups/{group_id}",
+            json={"name": "Delivery team", "members": ["scout", "writer"]},
+        ).status_code
+        == 200
+    )
+    assert c.delete(f"/api/society/chat-groups/{group_id}").status_code == 200
+    assert len(c.get("/api/society/chat-groups").json()["groups"]) == 1
+    assert c.get("/api/society/agents/scout").status_code == 200
 
 
 def test_create_derives_focus_and_rules(client):

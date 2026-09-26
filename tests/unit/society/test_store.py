@@ -72,6 +72,18 @@ async def test_payload_roundtrips_unicode(store: SocietyStore):
     assert back.event_id == env.event_id
 
 
+async def test_chat_group_survives_store_reopen_and_deletes_without_agents(store: SocietyStore):
+    group = await store.create_chat_group("team", "Research", ["scout", "writer"])
+    assert group["members"] == ["scout", "writer"]
+    await store.add_chat_group_post("post", "team", "group:one", "Status?")
+    await store.close()
+    await store.open()
+    assert (await store.list_chat_groups())[0]["last_text"] == "Status?"
+    assert (await store.chat_group_messages("team"))[0]["text"] == "Status?"
+    await store.delete_chat_group("team")
+    assert await store.list_chat_groups() == []
+
+
 async def test_cost_and_stats_are_derived(store: SocietyStore):
     await store.append_and_publish(_say("scout", "quill", "t", cost=0.25))
     await store.append_and_publish(
