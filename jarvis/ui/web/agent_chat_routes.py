@@ -697,6 +697,8 @@ async def patch_session(
     existing = svc.store.get_session(session_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="session not found")
+    if existing.surface == "society" and ":routine:" in session_id:
+        raise HTTPException(status_code=403, detail="Routine chat is owned by its schedule")
     if existing.surface == "society" and svc.is_running(session_id):
         raise HTTPException(status_code=409, detail="Agent chat is working")
     fields: dict[str, Any] = {}
@@ -809,6 +811,8 @@ async def post_message(session_id: str, body: MessageBody, request: Request) -> 
         raise HTTPException(status_code=404, detail="session not found") from exc
     except SessionBusy as exc:
         raise HTTPException(status_code=409, detail="a turn is already running") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:

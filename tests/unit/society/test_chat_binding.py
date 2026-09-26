@@ -30,7 +30,8 @@ class FakeService:
 
         await self._emit(session_id, make_event("notice", payload))
 
-    async def cancel(self, _session_id):
+    async def cancel(self, _session_id, *, expected_turn_id=None):
+        self.cancelled_turns.append(expected_turn_id)
         return False
 
     async def bind_society_session(self, session_id):
@@ -42,6 +43,7 @@ class FakeService:
         self.store = store
         self.sent: list[tuple[str, str]] = []
         self.busy: set[str] = set()
+        self.cancelled_turns: list[str | None] = []
 
     def is_running(self, session_id: str) -> bool:
         return session_id in self.busy
@@ -262,6 +264,49 @@ async def test_direct_send_rebinds_safe_agent_before_runner(tmp_path: Path):
         await svc.wait_turn(session.session_id)
         assert observed == ["plan"]
         assert store.get_session(session.session_id).permission_mode == "plan"
+    finally:
+        await svc.cancel_all()
+        await rt.close()
+
+
+async def test_routine_chat_rejects_direct_messages_and_inactive_owner(tmp_path: Path):
+    from jarvis.agent_chat.service import AgentChatService
+    from jarvis.ui.web.agent_chat_routes import router
+
+    store = AgentChatStore(tmp_path / "agent_chat.db")
+    svc = AgentChatService(store, assistant_name=lambda: "Test")
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        agent, _ = await rt.roster.create(name="Scout", provider="openai")
+        routine = store.create_session(
+            session_id=f"{agent.session_id}:routine:task-1:run-1",
+            surface="society",
+            provider="openai",
+            model="",
+            effort="low",
+            cwd=str(tmp_path),
+            permission_mode="bypass",
+        )
+        app = FastAPI()
+        app.include_router(router)
+        app.state.agent_chat = svc
+        with TestClient(app) as client:
+            response = client.post(
+                f"/api/agent-chat/sessions/{routine.session_id}/messages",
+                json={"text": "Do something unrelated"},
+            )
+        assert response.status_code == 403
+        assert store.list_events(routine.session_id) == []
+
+        await rt.roster.update(agent.agent_id, {"state": "paused"})
+        with pytest.raises(PermissionError, match="active scheduled run"):
+            await svc.send(
+                routine.session_id, "Scheduled task", direct_user=False, routine_run=True
+            )
     finally:
         await svc.cancel_all()
         await rt.close()
@@ -491,7 +536,9 @@ class FakeTurnService(FakeService):
         return q
 
     def unsubscribe(self, session_id: str, q) -> None:
-        self.queues.get(session_id, []).remove(q)
+        subscribers = self.queues.get(session_id, [])
+        if q in subscribers:
+            subscribers.remove(q)
 
     async def send(self, session_id: str, text: str, attachments=None, *, incoming=None) -> str:
         self.sent.append((session_id, text))
@@ -576,5 +623,88 @@ async def test_empty_successful_turn_does_not_claim_task_completion(tmp_path: Pa
         assert result.msg_type is MsgType.RESULT
         assert result.payload["status"] == "blocked"
         assert result.payload["open"] == ["Agent finished without a result report."]
+    finally:
+        await rt.close()
+
+
+async def test_lost_subscriber_recovers_the_durable_turn_result(tmp_path: Path, monkeypatch):
+    import asyncio
+
+    import jarvis.society.runtime as runtime_module
+    from jarvis.agent_chat.events import make_event
+
+    monkeypatch.setattr(runtime_module, "_WATCH_EVENT_POLL_SECONDS", 0.01)
+    svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Scout", provider="openai")
+        env = await rt.say(
+            from_agent="user", to_agent="scout", text="Find the answer", msg_type=MsgType.ASSIGN
+        )
+        # A full subscriber queue is detached by the service. The terminal
+        # event still lives in the chat store but never reaches this queue.
+        svc.queues["society:scout"].clear()
+        svc.store.append_event(
+            "society:scout",
+            make_event("assistant_text", {"turn_id": "turn-1", "text": "Found the answer."}),
+        )
+        svc.store.append_event(
+            "society:scout",
+            make_event("turn_finished", {"turn_id": "turn-1", "status": "done"}),
+        )
+        for _ in range(20):
+            thread = await rt.store.events_for_trace(env.trace_id)
+            if thread[-1].msg_type is MsgType.RESULT:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("watcher did not recover the durable terminal event")
+        assert thread[-1].payload["status"] == "done"
+        assert thread[-1].payload["done"] == "Found the answer."
+        assert rt.scheduler.running == {}
+    finally:
+        await rt.close()
+
+
+async def test_durable_read_failure_releases_the_agent_slot(tmp_path: Path, monkeypatch):
+    import asyncio
+
+    import jarvis.society.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "_WATCH_EVENT_POLL_SECONDS", 0.01)
+    svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Scout", provider="openai")
+        env = await rt.say(
+            from_agent="user", to_agent="scout", text="Find the answer", msg_type=MsgType.ASSIGN
+        )
+        svc.queues["society:scout"].clear()
+
+        def unreadable(_session_id, *, after_seq=0):
+            raise OSError("chat history unavailable")
+
+        monkeypatch.setattr(svc.store, "list_events", unreadable)
+        for _ in range(30):
+            thread = await rt.store.events_for_trace(env.trace_id)
+            if thread[-1].msg_type is MsgType.RESULT:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("watcher did not release the slot after durable read failure")
+        assert thread[-1].payload["status"] == "blocked"
+        assert thread[-1].payload["open"] == [
+            "Agent result could not be recovered from chat history."
+        ]
+        assert svc.cancelled_turns == ["turn-1"]
+        assert rt.scheduler.running == {}
     finally:
         await rt.close()

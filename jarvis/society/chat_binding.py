@@ -143,7 +143,7 @@ def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
     return existing
 
 
-async def bind_society_session(svc: Any, session_id: str) -> Any:
+async def bind_society_session(svc: Any, session_id: str, *, routine_run: bool = False) -> Any:
     """Apply the live roster ceiling before a Society session is used."""
     from jarvis.agent_chat.service import SessionBusy
 
@@ -152,9 +152,18 @@ async def bind_society_session(svc: Any, session_id: str) -> Any:
     if svc.is_running(session_id):
         raise SessionBusy(session_id)
     runtime = current_runtime()
-    agent_id = session_id.removeprefix("society:")
+    agent_id = session_id.removeprefix("society:").split(":routine:", 1)[0]
     agent = await runtime.roster.get(agent_id) if runtime is not None else None
-    if agent is None or agent.session_id != session_id:
+    session = svc.store.get_session(session_id)
+    if agent is None or session is None or session.surface != SURFACE:
+        raise PermissionError("Society agent is unavailable")
+    if session_id.startswith(f"{agent.session_id}:routine:"):
+        if not routine_run or str(agent.state) != "active" or await runtime.store.kill_switch():
+            raise PermissionError("Routine chat requires an active scheduled run")
+        # Each scheduled run has its own explicitly pinned seat and permission
+        # contract. The internal caller has revalidated its live owner.
+        return session
+    if agent.session_id != session_id:
         raise PermissionError("Society agent is unavailable")
     return ensure_session(svc, runtime.config(), agent)
 

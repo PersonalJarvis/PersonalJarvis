@@ -326,11 +326,14 @@ def test_message_uses_executor_exact_text_sender_and_idempotency(monkeypatch: An
             turn_completed=completed,
             browser=SimpleNamespace(live=SimpleNamespace(sessions={})),
         )
+        from jarvis.society import surface as society_surface
+
         monkeypatch.setattr("jarvis.society.runtime.current_runtime", lambda: runtime)
+        monkeypatch.setattr(society_surface, "current_runtime", lambda: runtime)
         monkeypatch.setattr("jarvis.society.agent_tools.MessageAgentTool", MessageTool)
         svc = AgentChatService(AgentChatStore(), bus=lambda: bus)
 
-        async def isolated_session(sid: str):
+        async def isolated_session(sid: str, **_kwargs):
             return svc.store.get_session(sid)
 
         monkeypatch.setattr(svc, "bind_society_session", isolated_session)

@@ -87,6 +87,7 @@ _LEAD_MESSAGE: dict[str, str] = {
 _LEAD_INCOMING_TYPES: Final[frozenset[MsgType]] = frozenset(
     {MsgType.SAY, MsgType.QUERY, MsgType.ANSWER, MsgType.PROPOSE}
 )
+_WATCH_EVENT_POLL_SECONDS: Final[float] = 2.0
 
 _current: SocietyRuntime | None = None
 
@@ -795,33 +796,78 @@ class SocietyRuntime:
         error = ""
         tool_steps: list[str] = []
         used_browser = False
+        last_seq = 0
+        read_failures = 0
         quest_trace = env.trace_id.startswith("quest:")
         try:
             while True:
-                event = await queue.get()
-                kind = event.get("kind")
-                payload = event.get("payload") or {}
-                if payload.get("turn_id") not in (None, turn_id):
-                    continue
-                if kind == "assistant_text":
-                    final_text = str(payload.get("text") or final_text)
-                    if quest_trace:
-                        await self.quests.note_progress(env.trace_id, "", live=final_text)
-                elif kind == "tool_call":
-                    name = str(payload.get("name") or payload.get("tool") or "tool")
-                    summary = str(payload.get("summary") or "")[:120]
-                    step = f"{name}: {summary}" if summary else name
-                    tool_steps.append(step)
-                    if quest_trace:
-                        await self.quests.note_progress(env.trace_id, step)
-                    if name == "society_browser":
-                        used_browser = True
-                elif kind == "error":
-                    status, error = "blocked", str(payload.get("message") or "error")
-                elif kind == "turn_finished":
-                    if payload.get("status") not in (None, "ok", "done", "completed"):
+                try:
+                    events = [
+                        await asyncio.wait_for(queue.get(), timeout=_WATCH_EVENT_POLL_SECONDS)
+                    ]
+                except TimeoutError:
+                    # The service drops a subscriber whose queue overflows. Its
+                    # events remain durable, so recover the missing terminal.
+                    try:
+                        events = await asyncio.to_thread(
+                            svc.store.list_events, session_id, after_seq=last_seq
+                        )
+                    except Exception:  # noqa: BLE001 - a broken chat store must release the slot
+                        read_failures += 1
+                        log.warning(
+                            "society: durable turn recovery failed for %s (%s/3)",
+                            run_id,
+                            read_failures,
+                            exc_info=True,
+                        )
+                        if read_failures < 3:
+                            continue
                         status = "blocked"
-                        error = str(payload.get("error") or payload.get("status") or "")
+                        error = "Agent result could not be recovered from chat history."
+                        try:
+                            await svc.cancel(session_id, expected_turn_id=turn_id)
+                        except Exception:  # noqa: BLE001 - still release the board slot
+                            log.warning(
+                                "society: turn %s could not be cancelled after recovery failure",
+                                run_id,
+                                exc_info=True,
+                            )
+                        break
+                    read_failures = 0
+                else:
+                    read_failures = 0
+                finished = False
+                for event in events:
+                    seq = int(event.get("seq") or 0)
+                    if seq and seq <= last_seq:
+                        continue
+                    last_seq = max(last_seq, seq)
+                    kind = event.get("kind")
+                    payload = event.get("payload") or {}
+                    if payload.get("turn_id") not in (None, turn_id):
+                        continue
+                    if kind == "assistant_text":
+                        final_text = str(payload.get("text") or final_text)
+                        if quest_trace:
+                            await self.quests.note_progress(env.trace_id, "", live=final_text)
+                    elif kind == "tool_call":
+                        name = str(payload.get("name") or payload.get("tool") or "tool")
+                        summary = str(payload.get("summary") or "")[:120]
+                        step = f"{name}: {summary}" if summary else name
+                        tool_steps.append(step)
+                        if quest_trace:
+                            await self.quests.note_progress(env.trace_id, step)
+                        if name == "society_browser":
+                            used_browser = True
+                    elif kind == "error":
+                        status, error = "blocked", str(payload.get("message") or "error")
+                    elif kind == "turn_finished":
+                        if payload.get("status") not in (None, "ok", "done", "completed"):
+                            status = "blocked"
+                            error = str(payload.get("error") or payload.get("status") or "")
+                        finished = True
+                        break
+                if finished:
                     break
         except asyncio.CancelledError:
             return

@@ -456,11 +456,13 @@ class AgentChatService:
             ),
         )
 
-    async def bind_society_session(self, session_id: str) -> AgentChatSession:
+    async def bind_society_session(
+        self, session_id: str, *, routine_run: bool = False
+    ) -> AgentChatSession:
         """Recheck the roster before a Society command or turn uses a session."""
         from jarvis.society.chat_binding import bind_society_session
 
-        return await bind_society_session(self, session_id)
+        return await bind_society_session(self, session_id, routine_run=routine_run)
 
     async def send(
         self,
@@ -477,6 +479,7 @@ class AgentChatService:
         output_language: str = "",
         native_goal: bool = False,
         display_text: str | None = None,
+        routine_run: bool = False,
     ) -> str:
         """Persist the person's message and start the turn. Returns turn_id.
 
@@ -494,7 +497,7 @@ class AgentChatService:
         if session is None:
             raise NoSuchSession(session_id)
         if session.surface == "society":
-            session = await self.bind_society_session(session_id)
+            session = await self.bind_society_session(session_id, routine_run=routine_run)
         selected_runner = None
         if session.surface == "jarvis":
             from jarvis.core.model_selection import worker_selection

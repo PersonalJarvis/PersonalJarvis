@@ -179,7 +179,9 @@ class CodingSupervision:
             )
         except BaseException:
             # A cancelled/crashed delivery remains inspectable and is never replayed.
-            await self._pause_notice(key, "Assignment delivery interrupted. Inspect before resuming.")
+            await self._pause_notice(
+                key, "Assignment delivery interrupted. Inspect before resuming."
+            )
             self._ensure_loop()
             raise
         row.update(
@@ -436,7 +438,14 @@ class CodingSupervision:
         if row["state"] != "running" or row["revision"] != revision:
             return
         incoming = IncomingMessage(**row["outbox"])
-        await service.send(row["session_id"], incoming.prompt, incoming=incoming, direct_user=False)
+        routine_session = row["session_id"].startswith(f"society:{row['agent_id']}:routine:")
+        await service.send(
+            row["session_id"],
+            incoming.prompt,
+            incoming=incoming,
+            direct_user=False,
+            routine_run=routine_session,
+        )
         row.update(outbox=None, turns=row["turns"] + 1)
         if row["revision"] == revision and row["state"] == "running":
             row["awaiting_action"] = True
