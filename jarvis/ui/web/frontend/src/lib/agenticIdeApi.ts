@@ -12,6 +12,7 @@ import type {
   CuratedModel,
   PermissionModeOption,
 } from "./agentChatApi";
+import type { ChatProject } from "./chatLibraryApi";
 
 export interface AgentStatus {
   name: string;
@@ -354,6 +355,8 @@ export interface ActivityResponse {
 
 export interface SessionState {
   id: string;
+  project_id?: string | null;
+  name?: string;
   folder: string;
   project: ProjectProfile;
   created_at: number;
@@ -376,6 +379,7 @@ export interface SessionState {
  */
 export interface WorkspaceCard {
   id: string;
+  project_id?: string | null;
   folder: string;
   /** Project name — what the tab is labelled with. */
   name: string;
@@ -387,6 +391,42 @@ export interface WorkspaceCard {
   created_at: number;
   last_active_at: number;
   active: boolean;
+}
+
+export interface ProjectWorkspace extends WorkspaceCard {
+  status: "open" | "closed";
+  restorable: boolean;
+}
+
+export interface IdeProject extends ChatProject {
+  workspaces: ProjectWorkspace[];
+}
+
+export interface IdeProjectsResponse {
+  projects: IdeProject[];
+  active_project_id: string | null;
+  active_workspace_id: string | null;
+  max_terminals: number;
+}
+
+export function fetchIdeProjects(): Promise<IdeProjectsResponse> {
+  return getJson<IdeProjectsResponse>("/api/agentic-ide/projects");
+}
+
+export async function restoreIdeWorkspace(id: string): Promise<IdeState> {
+  const res = await fetch(`/api/agentic-ide/workspaces/${encodeURIComponent(id)}/restore`, { method: "POST" });
+  if (!res.ok) throw new Error(await detail(res));
+  return ((await res.json()) as { state: IdeState }).state;
+}
+
+export async function reorderIdeTerminals(id: string, terminalIds: string[]): Promise<IdeState> {
+  const res = await fetch(`/api/agentic-ide/workspaces/${encodeURIComponent(id)}/terminal-order`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ terminal_ids: terminalIds }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  return ((await res.json()) as { state: IdeState }).state;
 }
 
 /**
@@ -586,8 +626,8 @@ export function fetchIdeState(): Promise<IdeState> {
   return getJson<IdeState>("/api/agentic-ide/state");
 }
 
-export function fetchIdeAgents(): Promise<AgentsResponse> {
-  return getJson<AgentsResponse>("/api/agentic-ide/agents");
+export function fetchIdeAgents(quick = false): Promise<AgentsResponse> {
+  return getJson<AgentsResponse>(`/api/agentic-ide/agents${quick ? "?quick=true" : ""}`);
 }
 
 /** One entry, probed just now — what an install dialog watches for. */
@@ -1164,11 +1204,12 @@ export async function resolveDroppedFolder(payload: {
 export async function startIdeSession(
   folder: string,
   terminals: TerminalPlan[],
+  options: { projectId?: string; name?: string } = {},
 ): Promise<IdeState> {
   const res = await fetch("/api/agentic-ide/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ folder, terminals }),
+    body: JSON.stringify({ folder, terminals, project_id: options.projectId, name: options.name }),
   });
   if (!res.ok) throw new Error(await detail(res));
   const body = (await res.json()) as { session: SessionState; state: IdeState };
@@ -1288,6 +1329,7 @@ export async function forgetResumeOffer(): Promise<void> {
  * inherits the anchor's. Returns the updated workspace.
  */
 export async function addTerminal(payload: {
+  workspace_id?: string;
   anchor?: string;
   direction?: "right" | "down";
   agent?: string;

@@ -35,11 +35,13 @@ class BrainSupervisorToolGateway:
         browser_tool: Callable[[str], Awaitable[Tool | None]] | None = None,
         session_tools: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any] | None]]
         | None = None,
+        workspace_tool: Tool | None = None,
     ) -> None:
         self._manager = manager
         self._session_tool = session_tool
         self._browser_tool = browser_tool
         self._session_tools = session_tools
+        self._workspace_tool = workspace_tool
         self._lock = threading.Lock()
         self._fingerprint: tuple[tuple[str, int], ...] = ()
         self._catalog_version = 0
@@ -111,6 +113,13 @@ class BrainSupervisorToolGateway:
         if context is not None and getattr(computer_use, "enabled", True):
             tools.update(context.tools or {})
         tools["screen_snapshot"] = LiveScreenTool()
+        if self._workspace_tool is not None:
+            # Live delegates coding to one addressed service. The old prompt
+            # tools silently choose an ambient pane and cannot safely coexist.
+            tools = {
+                name: tool for name, tool in tools.items() if not name.startswith("agentic-ide-")
+            }
+            tools[self._workspace_tool.name] = self._workspace_tool
         return tools
 
     def voice_catalog(self) -> tuple[SupervisorToolDescriptor, ...]:

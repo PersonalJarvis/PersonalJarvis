@@ -6,6 +6,7 @@ how many panes appear, which agent they run, and whether the caller is told the
 truth when the pane cap within a workspace cuts the request short. A batch that
 silently opened three of five would report success for work that did not happen.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,7 +24,9 @@ from tests.fakes.fake_pty_manager import FakePtyManager
 
 
 @pytest.fixture(autouse=True)
-def _isolated_recents(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+def _isolated_recents(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Keep the recents file out of the developer's real data directory.
 
     Opening a workspace records it as "most recently used", and that file lives
@@ -46,9 +49,7 @@ def registry(monkeypatch: pytest.MonkeyPatch) -> Registry:
 
 
 async def _open(registry: Registry, folder: Path, count: int, agent: str = "claude"):
-    return await registry.start(
-        str(folder), [{"agent": agent} for _ in range(count)]
-    )
+    return await registry.start(str(folder), [{"agent": agent} for _ in range(count)])
 
 
 def _names(registry: Registry) -> list[str]:
@@ -56,9 +57,7 @@ def _names(registry: Registry) -> list[str]:
     return [t.name for t in registry.session.terminals]
 
 
-async def test_a_batch_opens_every_requested_pane(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_a_batch_opens_every_requested_pane(registry: Registry, tmp_path: Path) -> None:
     await _open(registry, tmp_path, 2)
     created, capped = await registry.add_terminals(3)
     assert len(created) == 3
@@ -69,19 +68,14 @@ async def test_a_batch_opens_every_requested_pane(
     assert len(set(_names(registry))) == 5
 
 
-async def test_the_cap_truncates_and_says_so(
+async def test_the_cap_rejects_the_batch_without_creating_any_pane(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """Nine panes open, five requested: three appear and ``capped`` is True.
-
-    This is the maintainer's live case (nine panes on screen). Silent truncation
-    is the failure mode — the flag is what lets the spoken reply be honest.
-    """
+    """The eight-session workspace limit is checked before creating the batch."""
     await _open(registry, tmp_path, MAX_TERMINALS - 3)
-    created, capped = await registry.add_terminals(5)
-    assert len(created) == 3
-    assert capped is True
-    assert len(_names(registry)) == MAX_TERMINALS
+    with pytest.raises(SessionError, match="at most"):
+        await registry.add_terminals(5)
+    assert len(_names(registry)) == MAX_TERMINALS - 3
 
 
 async def test_a_full_workspace_refuses_instead_of_reporting_nothing(
@@ -89,14 +83,12 @@ async def test_a_full_workspace_refuses_instead_of_reporting_nothing(
 ) -> None:
     """With no room at all the caller gets an error it can read out loud."""
     await _open(registry, tmp_path, MAX_TERMINALS)
-    with pytest.raises(SessionError, match="maximum"):
+    with pytest.raises(SessionError, match="at most"):
         await registry.add_terminals(2)
 
 
-async def test_the_agent_is_inherited_unless_named(
-    registry: Registry, tmp_path: Path
-) -> None:
-    """"Two more" means two more OF THESE; naming an agent overrides that."""
+async def test_the_agent_is_inherited_unless_named(registry: Registry, tmp_path: Path) -> None:
+    """ "Two more" means two more OF THESE; naming an agent overrides that."""
     await _open(registry, tmp_path, 1, agent="codex")
     inherited, _ = await registry.add_terminals(2)
     assert [t.agent for t in inherited] == ["codex", "codex"]
