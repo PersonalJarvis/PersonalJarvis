@@ -794,7 +794,8 @@ jobs:
   # PERMISSIONS:
   #   The reusable workflow REQUIRES (per slsa-github-generator README):
   #     id-token: write   — to mint OIDC token for Sigstore Fulcio
-  #     contents: read    — provenance is kept as a workflow artifact
+  #     contents: write   — statically required by the upstream upload-assets
+  #                         job, even though upload-assets is false here
   #     actions:  read    — to read this workflow's definition into the
   #                         provenance `invocation` subject
   # ----------------------------------------------------------------------
@@ -802,7 +803,7 @@ jobs:
     needs: sign
     permissions:
       id-token: write
-      contents: read
+      contents: write
       actions: read
     # PIN POLICY EXCEPTION (documented in
     # docs/supply-chain/wave3-reproducibility-protocol.md §6):

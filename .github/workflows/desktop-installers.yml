@@ -153,7 +153,9 @@ jobs:
     needs: [credentials, ci-proof]
     if: github.ref_type == 'tag'
     permissions:
-      contents: read
+      # Required by the nested SLSA generator's statically declared upload job.
+      # upload-assets: false prevents any release write in this workflow.
+      contents: write
       id-token: write
       actions: read
     uses: ./.github/workflows/sign-installer.yml
