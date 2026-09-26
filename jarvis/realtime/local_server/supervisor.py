@@ -895,10 +895,10 @@ def _boot_status(*, booting: bool) -> dict[str, object]:
     )
     expected = boot_progress.expected_boot_s(stats)
     remaining: float | None = None
-    # Past twice the historical boot time the countdown would be a lie;
-    # showing only the stage is the honest degradation.
-    if expected is not None and elapsed <= 2.0 * expected:
-        remaining = max(5.0, expected - elapsed)
+    # Once the measured estimate is exceeded, show the loading stage rather
+    # than an endless five-second countdown that promises imminent readiness.
+    if expected is not None and elapsed < expected:
+        remaining = expected - elapsed
     payload.update(
         {
             "starting": True,
