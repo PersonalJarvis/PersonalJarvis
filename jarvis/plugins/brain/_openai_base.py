@@ -29,30 +29,34 @@ log = logging.getLogger(__name__)
 CLIENT_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=30.0)
 
 
-def _stream_options_supported() -> bool:
-    """One-shot detection: does the installed openai SDK know ``stream_options``?
+_STREAM_OPTIONS_WARNING_EMITTED = False
 
-    `stream_options` was introduced in openai>=1.30 (June 2024) — older
-    versions raise ``TypeError: got unexpected keyword argument`` directly
-    on the call. We check the signature once at module-load time and cache
-    the result. For future API changes, the re-try path in
-    ``run_openai_chat`` is the safety net.
+
+def _stream_options_supported(client: Any) -> bool:
+    """Read the concrete client's signature without importing the OpenAI SDK.
+
+    Older SDKs reject ``stream_options`` before sending a request. The caller
+    already holds a client, so its ``create`` signature is the relevant
+    capability probe. Opaque wrappers get the option and rely on the existing
+    TypeError retry if they reject it.
     """
+    global _STREAM_OPTIONS_WARNING_EMITTED
     try:
-        from openai.resources.chat.completions import AsyncCompletions
-
-        sig = inspect.signature(AsyncCompletions.create)
-        return "stream_options" in sig.parameters
-    except Exception:  # noqa: BLE001 — detection must never kill the import
-        return False
-
-
-_STREAM_OPTIONS_SUPPORTED = _stream_options_supported()
-if not _STREAM_OPTIONS_SUPPORTED:
-    log.warning(
-        "openai SDK does not know 'stream_options' — likely openai<1.30. "
-        "Provider runs without inline usage tracking. Recommendation: pip install -U openai."
+        create = client.chat.completions.create
+        parameters = inspect.signature(create).parameters
+    except (TypeError, ValueError):
+        return True
+    supported = "stream_options" in parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
     )
+    if not supported and not _STREAM_OPTIONS_WARNING_EMITTED:
+        _STREAM_OPTIONS_WARNING_EMITTED = True
+        log.warning(
+            "OpenAI-compatible client does not accept 'stream_options'. "
+            "Provider runs without inline usage tracking."
+        )
+    return supported
 
 
 def _tool_output_text(message: BrainMessage) -> str:
@@ -546,7 +550,7 @@ async def stream_complete(
     # the unconditional call would raise a TypeError and crash the plugin
     # chain with "AsyncCompletions.create() got an unexpected keyword argument"
     # — the user then hears the "unreachable" diagnostic instead of an answer.
-    if _STREAM_OPTIONS_SUPPORTED:
+    if _stream_options_supported(client):
         kwargs["stream_options"] = {"include_usage": True}
     # Sanitize tool names to the OpenAI/Anthropic rule and keep a reverse map so
     # the model's tool_call resolves back to the ORIGINAL tool name (e.g. the
