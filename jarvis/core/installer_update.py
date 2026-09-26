@@ -586,6 +586,7 @@ class SubprocessCommandRunner:
         try:
             os.killpg(pid, signal.SIGTERM)
         except ProcessLookupError:
+            # The owned group already exited; reap its handle and finish cleanup.
             proc.wait(timeout=1)
             self._children.pop(pid, None)
             return
@@ -873,8 +874,10 @@ def _posix_pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
+        # An absent PID is the expected successful end of a shutdown wait.
         return False
     except PermissionError:
+        # A protected PID still exists; never mistake denied access for exit.
         return True
     return True
 
@@ -883,6 +886,7 @@ def _posix_group_alive(group_id: int) -> bool:
     try:
         os.killpg(group_id, 0)
     except ProcessLookupError:
+        # No remaining group members means rollback can safely restore files.
         return False
     return True
 
