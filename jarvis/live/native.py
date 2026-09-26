@@ -60,7 +60,12 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                     "screen_snapshot, inspect the image, call the desktop primitives, and verify "
                     "the result with a new snapshot. Do not call a separate computer-use harness. "
                     "Request confirmation for pending approvals. Use confirm_action only after "
-                    "explicit approval. A started job is not complete. Never invent tool results."
+                    "explicit approval. A started job is not complete. Never invent tool results. "
+                    "Use workspace-orchestrate for coding tasks: inspect and resolve project, "
+                    "workspace and agent references, then send to the returned stable IDs. "
+                    "Explicit references override the visible workspace; ask on ambiguity. "
+                    "Do not switch the UI to address another workspace. Reuse request_id on "
+                    "retries and never replay uncertain delivery."
                 ),
                 history=tuple(
                     {"role": item["role"], "text": item["delta"]} for item in self._initial_seed

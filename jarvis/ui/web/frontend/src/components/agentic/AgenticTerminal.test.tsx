@@ -975,6 +975,16 @@ describe("pane header actions", () => {
     expect(onToggleMaximize).toHaveBeenCalledTimes(1);
   });
 
+  it("starts a pane move from its explicit handle while leaving the recap clickable", () => {
+    const onArrangeStart = vi.fn();
+    render(<AgenticTerminal name="Dana" displayName="Claude Code" recap="Fix login"
+      appearance="dark" fontSize={13} onArrangeStart={onArrangeStart} showArrangeHandle />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Move Dana" }), { button: 0, clientX: 20, clientY: 20 });
+    expect(onArrangeStart).toHaveBeenCalledTimes(1);
+    fireEvent.pointerDown(screen.getByTestId("pane-recap-Dana"), { button: 0, clientX: 30, clientY: 20 });
+    expect(onArrangeStart).toHaveBeenCalledTimes(1);
+  });
+
   it("explains the bar's gestures in its own card after a settled hover", () => {
     vi.useFakeTimers();
     render(

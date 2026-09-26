@@ -90,6 +90,7 @@ from jarvis.agentic_ide import (
     recap_engine,
     recents,
     resume_store,
+    workspace_catalog,
 )
 from jarvis.agentic_ide.activity import has_work_behind_it
 from jarvis.agentic_ide.agent_sessions import has_conversation
@@ -255,6 +256,10 @@ class TerminalRequest(BaseModel):
 
 class StartSessionRequest(BaseModel):
     folder: str = Field(description="Absolute path of the folder to work in.")
+    project_id: str | None = Field(
+        default=None, description="Owning project from the project library."
+    )
+    name: str | None = Field(default=None, max_length=120, description="Optional workspace name.")
     terminals: list[TerminalRequest] = Field(
         default_factory=list,
         description="One entry per terminal, in grid order.",
@@ -262,6 +267,7 @@ class StartSessionRequest(BaseModel):
 
 
 class AddTerminalRequest(BaseModel):
+    workspace_id: str | None = Field(default=None, description="Workspace to add the session to.")
     agent: str | None = Field(
         default=None,
         description="Coding agent to run; defaults to the anchor terminal's.",
@@ -326,6 +332,7 @@ class AddTerminalsRequest(BaseModel):
         description="Coding agent to run in all of them; defaults to the last pane's.",
     )
     account: str | None = Field(default=None, description=_ACCOUNT_FIELD_DESCRIPTION)
+    workspace_id: str | None = Field(default=None, description="Workspace to add the sessions to.")
 
 
 class MoveTerminalRequest(BaseModel):
@@ -505,6 +512,7 @@ class WorkspaceCard(BaseModel):
     """One open workspace, as the workspace bar shows it."""
 
     id: str
+    project_id: str = ""
     folder: str
     name: str
     branch: str | None = None
@@ -522,6 +530,12 @@ class WorkspacesResponse(BaseModel):
     workspaces: list[WorkspaceCard]
     active_id: str | None = None
     max_workspaces: int | None
+
+
+class TerminalOrderRequest(BaseModel):
+    terminal_ids: list[str] = Field(
+        description="Every terminal history_id exactly once, in row-major grid order.",
+    )
 
 
 class SpawnGroupRequest(BaseModel):
@@ -1377,7 +1391,7 @@ def get_state_brief() -> dict:
 
 
 @router.get("/agents", response_model=AgentsResponse, summary="Coding agents available")
-async def get_agents() -> AgentsResponse:
+async def get_agents(quick: bool = False) -> AgentsResponse:
     """What this machine can open in a terminal, and how to install it.
 
     Every registered entry (``jarvis.workspace.agents``): the coding-agent CLIs
@@ -1386,9 +1400,16 @@ async def get_agents() -> AgentsResponse:
     resolvable the way the PTY will resolve it — a GUI process starts with a
     minimal PATH, so "installed" and "launchable from here" are not the same
     question.
+
+    ``quick`` is the workspace launch picker: check executable resolution and
+    static capabilities without running CLI versions or live model catalogs.
+    The full catalog remains available to settings and model-selection views.
     """
     from jarvis.workspace import launch_picks
     from jarvis.workspace.agents import detect_agents, pty_available
+
+    if quick:
+        return await asyncio.to_thread(_quick_agent_catalog)
 
     infos = await detect_agents()
     # Asked once for the whole list rather than per entry: two of these lists
@@ -1413,6 +1434,35 @@ async def get_agents() -> AgentsResponse:
     ]
     return AgentsResponse(
         terminal_available=pty_available(),
+        max_terminals=MAX_TERMINALS,
+        suggested_names=default_names(MAX_TERMINALS),
+        agents=agents,
+    )
+
+
+def _quick_agent_catalog() -> AgentsResponse:
+    """Resolve launchable coding agents without executing any CLI probe."""
+    from jarvis.workspace import agents as workspace_agents
+    from jarvis.workspace import launch_picks
+
+    agents = [
+        AgentStatus(
+            name=spec.name,
+            display_name=spec.display_name,
+            installed=agent_argv(spec.name) is not None,
+            version=None,
+            install_command=workspace_agents.install_command(spec.name),
+            kind=spec.kind,
+            description=spec.description,
+            custom=spec.custom,
+            logo_url=spec.logo_url,
+            accepts_prompts=accepts_prompts(spec.name),
+            **launch_picks.offered(spec.name),
+        )
+        for spec in workspace_agents.coding_agents()
+    ]
+    return AgentsResponse(
+        terminal_available=workspace_agents.pty_available(),
         max_terminals=MAX_TERMINALS,
         suggested_names=default_names(MAX_TERMINALS),
         agents=agents,
@@ -1873,6 +1923,39 @@ def _unwrap_file_uri(value: str) -> str:
     return path
 
 
+@router.get("/projects", summary="Projects with open and saved coding workspaces")
+def get_project_workspaces() -> dict:
+    """Return the sidebar hierarchy without starting any coding session."""
+    return workspace_catalog.project_graph(get_registry())
+
+
+@router.put("/workspaces/{workspace_id}/terminal-order", summary="Reorder workspace terminals")
+async def reorder_workspace_terminals(
+    request: Request,
+    workspace_id: str,
+    req: TerminalOrderRequest,
+) -> dict:
+    registry = get_registry()
+    try:
+        session = await registry.reorder_terminals(workspace_id, req.terminal_ids)
+    except SessionError as exc:
+        status = 404 if registry.get(workspace_id) is None else 422
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    await _announce_workspace(request, session, "reordered")
+    return {"ok": True, "workspace": session.to_dict(), "state": registry.state()}
+
+
+@router.post("/workspaces/{workspace_id}/restore", summary="Reopen one saved workspace")
+async def restore_saved_workspace(request: Request, workspace_id: str) -> dict:
+    registry = get_registry()
+    try:
+        session = await registry.restore_workspace(workspace_id)
+    except SessionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await _announce_workspace(request, session, "restored")
+    return {"ok": True, "session": session.to_dict(), "state": registry.state()}
+
+
 @router.get(
     "/workspaces",
     response_model=WorkspacesResponse,
@@ -1957,7 +2040,12 @@ async def start_session(request: Request, req: StartSessionRequest) -> dict:
     history with folders the user never selected.
     """
     try:
-        session = await get_registry().start(req.folder, [t.model_dump() for t in req.terminals])
+        session = await get_registry().start(
+            req.folder,
+            [t.model_dump() for t in req.terminals],
+            project_id=req.project_id,
+            name=req.name,
+        )
     except SessionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -2488,6 +2576,7 @@ async def add_terminal(req: AddTerminalRequest) -> dict:
     """
     try:
         term = await get_registry().add_terminal(
+            workspace_id=req.workspace_id,
             agent=req.agent,
             name=req.name,
             anchor=req.anchor,
@@ -2507,17 +2596,21 @@ async def add_terminals(request: Request, req: AddTerminalsRequest) -> dict:
     """Open ``count`` more terminals in the running workspace.
 
     The batch behind a spoken "open five more Claude Code terminals", and the
-    same call the CLI makes. Placement, call-signs and the agent default are the
-    single-terminal endpoint's — this only repeats it and reports honestly when
-    the pane cap within that workspace cut the request short.
+    same call the CLI makes. Oversized requests are rejected before creating a
+    pane. A concurrent addition or unavailable agent can still stop a batch,
+    which the response reports as a partial result.
 
     ``capped`` is true when fewer panes were opened than asked for. A client MUST
     surface that: five requested with three opened is not a plain success.
     """
     registry = get_registry()
+    selected_id = req.workspace_id or registry.active_id
     try:
         created, capped = await registry.add_terminals(
-            req.count, agent=req.agent, account=req.account
+            req.count,
+            agent=req.agent,
+            account=req.account,
+            workspace_id=selected_id,
         )
     except SessionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -2525,7 +2618,7 @@ async def add_terminals(request: Request, req: AddTerminalsRequest) -> dict:
     # Tell every connected client, so a workspace view that is already open shows
     # the new panes instead of a stale grid. Best-effort: the panes exist whether
     # or not a bus is attached (it is not, in tests).
-    session = registry.session
+    session = registry.get(selected_id) if selected_id else None
     bus = getattr(request.app.state, "bus", None)
     if session is not None and bus is not None and created:
         try:

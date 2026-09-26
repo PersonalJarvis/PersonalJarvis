@@ -67,6 +67,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
@@ -80,7 +81,7 @@ from loguru import logger
 from jarvis.workspace import agents as workspace_agents
 from jarvis.workspace import launch_picks
 
-from . import layout_tree, opening, prompt_history, recap_engine, resume_store
+from . import layout_tree, library, opening, prompt_history, recap_engine, resume_store
 from .activity import NO_READING, Reading, has_work_behind_it, observed
 from .agent_sessions import (
     ResumeHandle,
@@ -216,19 +217,8 @@ def _unavailable(agent: str) -> str:
     return f"{pretty} cannot open: this machine has no shell Jarvis can start."
 
 
-# How many panes one workspace may hold.
-#
-# Raised from 12 on maintainer directive (2026-07-26): "you can open as many as
-# you want". 12 was a product opinion dressed up as a limit, and it was wrong —
-# how many agents are useful is the user's call, not this module's.
-#
-# A number remains, and it is deliberately far above any real use: this is a
-# RUNAWAY GUARD, not a product ceiling. Every pane is a real coding-agent
-# process with its own memory, CPU and API spend, so a mistyped "500" in the
-# count field must not take the machine down before anyone can click away.
-# Nobody reaches 100 deliberately; anyone who mistypes their way past it gets a
-# sentence instead of a frozen desktop.
-MAX_TERMINALS = 100
+# One workspace fits at most four columns and two rows of coding sessions.
+MAX_TERMINALS = 8
 # How deep a wizard-opened column is filled before the next one is started.
 #
 # The workspace is exactly one screenful, so its columns share the window's
@@ -1421,6 +1411,8 @@ class Session:
     profile: ProjectProfile
     terminals: list[Terminal]
     created_at: float
+    # Durable ownership in the project library, independent of the workspace ID.
+    project_id: str = ""
     # WHERE every pane sits and how much room it has — the split tree, the one
     # authority on workspace geometry (see ``layout_tree``). Every structural
     # change (split, close, move, refold, restore) rewrites it and then lets
@@ -1521,6 +1513,7 @@ class Session:
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
+            "project_id": self.project_id or library.project_id_for(self.folder),
             "folder": self.folder,
             "name": self.name,
             "project": self.profile.to_dict(),
@@ -1563,6 +1556,8 @@ class Session:
             )
         return {
             "folder": self.folder,
+            "id": self.id,
+            "project_id": self.project_id or library.project_id_for(self.folder),
             "name": self.name,
             "focus_mode": self.focus_mode,
             "terminals": terminals,
@@ -1578,6 +1573,7 @@ class Session:
         live = sum(1 for t in self.terminals if t.status == "live")
         return {
             "id": self.id,
+            "project_id": self.project_id or library.project_id_for(self.folder),
             "folder": self.folder,
             "name": self.name,
             "branch": self.profile.branch,
@@ -1974,7 +1970,14 @@ class Registry:
         return self._pty
 
     # -------------------------------------------------------------- session
-    async def start(self, folder: str, requested: list[dict[str, Any]]) -> Session:
+    async def start(
+        self,
+        folder: str,
+        requested: list[dict[str, Any]],
+        *,
+        project_id: str | None = None,
+        name: str | None = None,
+    ) -> Session:
         """Open ``folder`` as a NEW workspace with one terminal per request entry.
 
         ``requested`` entries look like ``{"agent": "claude", "name": "Mika"}``;
@@ -2007,6 +2010,13 @@ class Registry:
             except OSError as exc:
                 raise SessionError(f"Cannot open {root}: {exc}") from exc
 
+            if project_id:
+                project = await asyncio.to_thread(library.get_project, project_id)
+                if project is None and project_id != library.project_id_for(root):
+                    raise SessionError("That project does not exist.")
+                if project and library.project_id_for(root) != library.project_id_for(project.path):
+                    raise SessionError("The workspace folder must belong to its project.")
+
             unknown = {
                 str(r.get("agent")) for r in requested if not is_runnable(str(r.get("agent")))
             }
@@ -2033,21 +2043,19 @@ class Registry:
             for index, entry in enumerate(requested):
                 agent = str(entry.get("agent"))
                 wanted = str(entry.get("name") or "").strip() or pool[index]
-                name = _unique_name(wanted, used)
-                used.add(normalize(name))
+                terminal_name = _unique_name(wanted, used)
+                used.add(normalize(terminal_name))
                 requested_account = _requested_account(entry)
                 resolved_account = resolve_account(agent, requested_account)
                 terminals.append(
                     Terminal(
-                        key=normalize(name) or f"t{index}",
-                        name=name,
+                        key=normalize(terminal_name) or f"t{index}",
+                        name=terminal_name,
                         agent=agent,
                         display_name=agent_display(agent),
                         index=index,
-                        # Columns of WIZARD_COLUMN_HEIGHT, filled top to bottom
-                        # before the next one opens — the same arithmetic the
-                        # preview draws with (frontend `layout.ts`), so the
-                        # workspace that appears is the one that was shown.
+                        # Legacy hints are normalized into row-major order
+                        # when the workspace is opened below.
                         column=index // WIZARD_COLUMN_HEIGHT,
                         slot=index % WIZARD_COLUMN_HEIGHT,
                         account=resolved_account,
@@ -2067,7 +2075,13 @@ class Registry:
                     )
                 )
 
-            session = await self._open_locked(root, terminals)
+            session = await self._open_locked(
+                root,
+                terminals,
+                name=name,
+                project_id=project_id,
+                grid=True,
+            )
             logger.info(
                 "Agentic IDE session started: {} terminals in {}",
                 len(terminals),
@@ -2123,6 +2137,8 @@ class Registry:
         *,
         name: str | None = None,
         workspace_id: str | None = None,
+        project_id: str | None = None,
+        grid: bool = False,
     ) -> Session:
         """Turn a prepared list of panes into a NEW open workspace, at the front.
 
@@ -2150,6 +2166,7 @@ class Registry:
             profile=profile,
             terminals=terminals,
             created_at=time.time(),
+            project_id=project_id or library.project_id_for(root),
             # Both callers prepare panes with legacy (column, slot) positions
             # — the wizard's opening arithmetic, a snapshot's remembered grid
             # — and the columns-of-stacks shape those describe is exactly
@@ -2157,6 +2174,8 @@ class Registry:
             # replaces this afterwards (`_restore_one_locked`).
             layout=layout_tree.from_grid((t.key, t.column, t.slot) for t in terminals),
         )
+        if grid:
+            self._row_major_grid(session)
         self._sessions[session.id] = session
         self._focus_locked(session)
         # Start indexing the codebase NOW, in a background thread, so the
@@ -2312,8 +2331,89 @@ class Registry:
             )
         return wanted
 
+    async def restore_workspace(self, workspace_id: str) -> Session:
+        """Explicitly reopen one saved workspace, preserving every session ID."""
+        async with self._lock:
+            existing = self.get(workspace_id)
+            if existing is not None:
+                self._focus_locked(existing)
+                return existing
+            snapshot = await asyncio.to_thread(resume_store.load)
+            saved = (
+                next(
+                    (space for space in snapshot.workspaces if space.session_id == workspace_id),
+                    None,
+                )
+                if snapshot
+                else None
+            )
+            if saved is None:
+                raise SessionError("That saved workspace does not exist.")
+            session = await self._restore_one_locked(saved)
+            if session is None:
+                raise SessionError("That saved workspace could not be reopened.")
+            await self._persist()
+            return session
+
+    async def reorder_terminals(self, workspace_id: str, terminal_ids: list[str]) -> Session:
+        """Persist row-major order without restarting or renaming an agent."""
+        async with self._lock:
+            session = self.get(workspace_id)
+            if session is None:
+                raise SessionError("That workspace is not open.")
+            by_id = {term.history_id: term for term in session.terminals}
+            if len(terminal_ids) != len(by_id) or set(terminal_ids) != set(by_id):
+                raise SessionError(
+                    "Terminal order must contain every workspace terminal exactly once."
+                )
+            session.terminals = [by_id[identity] for identity in terminal_ids]
+            self._row_major_grid(session)
+            await self._persist()
+            return session
+
+    @staticmethod
+    def _row_major_grid(session: Session) -> None:
+        """Keep legacy geometry consistent with the persistent terminal order."""
+        # Rebuild the legacy split tree from the new order. Old geometry
+        # must never sort the terminals back into their previous positions.
+        columns = (
+            len(session.terminals)
+            if len(session.terminals) <= 4
+            else (len(session.terminals) + 1) // 2
+        )
+        rows = [
+            layout_tree.normalize(
+                layout_tree.Split(
+                    direction="row",
+                    children=[
+                        layout_tree.Leaf(term.key)
+                        for term in session.terminals[start : start + columns]
+                    ],
+                    weights=[1.0] * len(session.terminals[start : start + columns]),
+                )
+            )
+            for start in range(0, len(session.terminals), columns or 1)
+        ]
+        session.layout = (
+            layout_tree.normalize(
+                layout_tree.Split(
+                    direction="column",
+                    children=rows,
+                    weights=[1.0] * len(rows),
+                )
+            )
+            if rows
+            else None
+        )
+        Registry._renumber(session)
+
     async def _restore_one_locked(self, space: resume_store.SnapshotWorkspace) -> Session | None:
         """Reopen one remembered workspace. Caller holds the lock."""
+        if len(space.terminals) > MAX_TERMINALS:
+            raise SessionError(
+                f"This saved workspace has {len(space.terminals)} terminals; "
+                f"the workspace limit is {MAX_TERMINALS}. Its saved sessions were preserved."
+            )
         root = Path(space.folder).expanduser()  # noqa: ASYNC240
         try:
             if not await asyncio.to_thread(root.is_dir):
@@ -2386,6 +2486,7 @@ class Registry:
             terminals,
             name=space.name or None,
             workspace_id=space.session_id or None,
+            project_id=space.project_id or library.project_id_for(space.folder),
         )
         # Which record this came back from, so a second restore of the same file
         # recognises it rather than opening a duplicate.
@@ -2542,6 +2643,7 @@ class Registry:
                 resume_store.SnapshotWorkspace(
                     session_id=session.id,
                     folder=session.folder,
+                    project_id=session.project_id or library.project_id_for(session.folder),
                     name=session.name,
                     terminals=[t.to_snapshot() for t in session.terminals],
                     layout=layout_tree.to_dict(session.layout) if session.layout else None,
@@ -4084,6 +4186,7 @@ class Registry:
     async def add_terminal(
         self,
         *,
+        workspace_id: str | None = None,
         agent: str | None = None,
         name: str | None = None,
         anchor: str | None = None,
@@ -4127,8 +4230,9 @@ class Registry:
         pane somebody opened to try something else is the confusing kind of
         helpful.
         """
+        selected_id = workspace_id or self.active_id
         async with self._lock:
-            session = self.session
+            session = self.get(selected_id) if selected_id else None
             if session is None:
                 raise SessionError("No Agentic-IDE session is running.")
             if len(session.terminals) >= MAX_TERMINALS:
@@ -4258,14 +4362,19 @@ class Registry:
             return term
 
     async def add_terminals(
-        self, count: int, *, agent: str | None = None, account: str | None = None
+        self,
+        count: int,
+        *,
+        agent: str | None = None,
+        account: str | None = None,
+        workspace_id: str | None = None,
     ) -> tuple[list[Terminal], bool]:
-        """Open up to ``count`` more panes — the batch behind "open five more".
+        """Open a batch in one pinned workspace, rejecting oversized requests.
 
-        Returns the panes that were created and whether the pane cap
-        truncated the request, because those are two different answers the caller
-        has to speak out loud: five requested with three opened is a success the
-        user must hear ("room for three"), not a silent partial.
+        Returns the created panes and a flag for partial operational failure.
+        Capacity is checked before any pane is created. A concurrent addition
+        or a disappearing agent binary can still stop a batch partway through,
+        which the flag reports honestly.
 
         Deliberately a loop over ``add_terminal`` rather than a second placement
         implementation: the anchor, the call-sign pool, and the grid position are
@@ -4273,17 +4382,24 @@ class Registry:
         drift from what the split buttons do. No anchor is named, so without an
         explicit ``account`` every pane opens on the workspace's active one.
 
-        The cap is the expected stopping point, so hitting it is not an error.
-        A failure with NOTHING opened is — an unknown agent or a vanished binary
-        must not be reported as "nothing to do".
+        A failure before creating any pane is raised to the caller.
         """
-        if self.session is None:
+        selected = self.get(workspace_id)
+        if selected is None:
             raise SessionError("No Agentic-IDE session is running.")
         wanted = max(1, int(count))
+        if len(selected.terminals) + wanted > MAX_TERMINALS:
+            raise SessionError(f"A workspace can contain at most {MAX_TERMINALS} terminals.")
         created: list[Terminal] = []
         for _ in range(wanted):
             try:
-                created.append(await self.add_terminal(agent=agent, account=account))
+                created.append(
+                    await self.add_terminal(
+                        agent=agent,
+                        account=account,
+                        workspace_id=selected.id,
+                    )
+                )
             except SessionError as exc:
                 if not created:
                     raise
@@ -4338,6 +4454,14 @@ class Registry:
                 raise SessionError(f"No terminal called {target!r}. Running: {known}.")
             if anchor.key == moved.key:
                 return moved
+
+            if session.layout is None:
+                # Legacy/injected workspaces can still carry only grid hints.
+                # Build their tree before moving; moving None followed by
+                # renumbering would silently leave every pane in its old order.
+                session.layout = layout_tree.from_grid(
+                    (term.key, term.column, term.slot) for term in session.terminals
+                )
 
             # "swap" exchanges the two panes and keeps the tree's exact shape;
             # the four sides carve the TARGET's own rectangle — the same local
@@ -5426,20 +5550,23 @@ def coding_mode_event(session: Session | None, *, source_layer: str) -> Any:
 
 
 _REGISTRY: Registry | None = None
+_REGISTRY_LOCK = threading.Lock()
 
 
 def get_registry() -> Registry:
     """The process-wide Agentic-IDE registry (created on first use)."""
     global _REGISTRY
-    if _REGISTRY is None:
-        _REGISTRY = Registry()
-    return _REGISTRY
+    with _REGISTRY_LOCK:
+        if _REGISTRY is None:
+            _REGISTRY = Registry()
+        return _REGISTRY
 
 
 def reset_registry() -> None:
     """Drop the registry — tests only."""
     global _REGISTRY
-    _REGISTRY = None
+    with _REGISTRY_LOCK:
+        _REGISTRY = None
 
 
 __all__ = [

@@ -459,6 +459,12 @@ class Tool(Protocol):
         ...
 
 
+class WorkspaceOrchestrationGateway(Protocol):
+    """Resolve and address coding sessions without ambient terminal focus."""
+
+    async def run(self, args: dict[str, Any], *, trace_id: str = "") -> dict[str, Any]: ...
+
+
 @runtime_checkable
 class SupervisorToolGateway(Protocol):
     """Versioned catalog and sole safety-gated execution seam for owned tools."""

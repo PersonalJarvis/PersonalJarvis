@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 vi.mock("./OnboardingFlow", () => ({ OnboardingFlow: () => <div data-testid="flow" /> }));
@@ -30,6 +30,14 @@ function stub(state: object | "error") {
 it("shows the overlay when not completed", async () => {
   stub({ ...base, completed: false });
   render(<OnboardingGate />);
+  await waitFor(() => expect(screen.getByRole("dialog")).toBeDefined());
+});
+
+it("keeps a fresh install's IDE accessible without app-wide onboarding", async () => {
+  stub({ ...base, completed: false });
+  const { rerender } = render(<OnboardingGate activeSection="agentic-ide" />);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  rerender(<OnboardingGate activeSection="chats" />);
   await waitFor(() => expect(screen.getByRole("dialog")).toBeDefined());
 });
 
@@ -70,6 +78,6 @@ it("closes when the flow reports completion", async () => {
   stub({ ...base, completed: false });
   render(<OnboardingGate />);
   await screen.findByTestId("flow");
-  window.dispatchEvent(new CustomEvent("jarvis:onboarding-changed"));
+  act(() => window.dispatchEvent(new CustomEvent("jarvis:onboarding-changed")));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });

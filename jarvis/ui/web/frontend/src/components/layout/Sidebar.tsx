@@ -3,6 +3,7 @@ import {
   MessageSquare,
   Mic,
   ChevronDown,
+  ChevronLeft,
   MoreHorizontal,
   Store,
   UserCircle2,
@@ -28,8 +29,7 @@ import { RecentChats } from "@/components/home/RecentChats";
 import { useConversations } from "@/hooks/useConversations";
 import { useHomeStore } from "@/store/home";
 import { useAgentChatStore } from "@/store/agentChat";
-import { useIdeChatStore } from "@/store/ideChat";
-import { WorkspaceChats } from "@/components/agentic/WorkspaceChats";
+import { IdeProjectTree } from "@/components/agentic/IdeProjectTree";
 import { useAppInstance } from "@/hooks/useAppInstance";
 import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
 import { GigiMark } from "@/components/GigiMark";
@@ -199,7 +199,6 @@ export function Sidebar({
    * Only while the IDE is the section on screen: every other section gets the
    * plain navigation, with no workspace list bolted on top of it.
    */
-  const ideView = useIdeChatStore((s) => s.view);
   /*
    * Is there anything for this column to list?
    *
@@ -216,9 +215,7 @@ export function Sidebar({
    * workspace as its own band now, so it has something true to say for as
    * long as any of them is running.
    */
-  const ideWorkspaceOpen = useIdeChatStore((s) => s.workspaces.length > 0);
   const onIdeSection = IDE_SECTIONS.includes(active);
-  const chatFace = onIdeSection && ideWorkspaceOpen && ideView === "chat";
   const [moreOpen, setMoreOpen] = useState(false);
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [startingVoice, setStartingVoice] = useState(false);
@@ -465,7 +462,13 @@ export function Sidebar({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-jarvis">
-        <nav aria-label={t("sidebar.sections")} className="space-y-1 px-2 py-2">
+        {onIdeSection ? <nav aria-label="IDE navigation" className="px-2 pt-2">
+          <button type="button" data-testid="ide-back-to-jarvis" onClick={() => setActive("chats")}
+            className="flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <ChevronLeft aria-hidden className="h-3.5 w-3.5 shrink-0" />
+            {!railed && <span>Back to Jarvis</span>}
+          </button>
+        </nav> : <nav aria-label={t("sidebar.sections")} className="space-y-1 px-2 py-2">
           <ul className="space-y-1">
             <li><Dialog.Root open={newChatOpen} onOpenChange={(open) => { if (!startingVoiceRef.current) setNewChatOpen(open); }}>
               <Dialog.Trigger asChild><button type="button" data-testid="sidebar-new-chat"
@@ -503,10 +506,10 @@ export function Sidebar({
             {!railed && <span>{t(moreOpen ? "sidebar.show_less" : "sidebar.more")}</span>}
           </button>
           {moreOpen && <ul id="sidebar-more" className="space-y-1">{moreItems.map((item) => renderRow(item))}</ul>}
-        </nav>
-        {!railed && <section className="mt-4 px-2 pb-3" aria-label={t("sidebar.recent_chats")}>
-          {chatFace ? <WorkspaceChats /> : <RecentChats />}
-        </section>}
+        </nav>}
+        {!railed && (onIdeSection
+          ? <IdeProjectTree />
+          : <section className="mt-4 px-2 pb-3" aria-label={t("sidebar.recent_chats")}><RecentChats /></section>)}
       </div>
 
       {/* The footer is one button now, not a popup: it opens the Settings hub

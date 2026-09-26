@@ -34,14 +34,15 @@ import json
 import os
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from loguru import logger
 
 from .agent_sessions import ResumeHandle, has_conversation
+from .library import project_id_for
 
 # Saves arrive from more than one thread (see `save`), and the last one has to
 # be the one that lands rather than the one that happened to finish its rename
@@ -187,10 +188,12 @@ class SnapshotWorkspace:
     # file's, because the file holds workspaces that closed at different times
     # and the merge in `save` has to know which record is the newer one.
     saved_at: float = 0.0
+    project_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "session_id": self.session_id,
+            "project_id": self.project_id or project_id_for(self.folder),
             "folder": self.folder,
             "name": self.name,
             "saved_at": self.saved_at,
@@ -222,7 +225,9 @@ class SnapshotWorkspace:
             saved_at = 0.0
         raw_layout = data.get("layout")
         return SnapshotWorkspace(
-            session_id=str(data.get("session_id") or ""),
+            session_id=str(data.get("session_id") or "")
+            or "ide_" + uuid5(NAMESPACE_URL, folder_key(folder)).hex[:12],
+            project_id=str(data.get("project_id") or "") or project_id_for(folder),
             folder=folder,
             name=str(data.get("name") or "").strip(),
             terminals=terminals,
@@ -266,6 +271,33 @@ class Snapshot:
     # back in the arrangement it had, and the tab you were working in is not
     # necessarily the first one.
     active_session_id: str = ""
+
+    def __post_init__(self) -> None:
+        """Repair legacy ID collisions without reminting healthy workspace IDs.
+
+        Old/imported files can give two different folders the same session ID.
+        They must remain separate registry entries, and the repaired identity
+        must be deterministic so repeated reads and sidebar clicks agree.
+        Exact duplicate records for the same folder retain their ID and are
+        deduplicated by the registry's existing restore-set handling.
+        """
+        seen: dict[str, str] = {}
+        normalized: list[SnapshotWorkspace] = []
+        for workspace in self.workspaces:
+            folder = folder_key(workspace.folder)
+            identity = workspace.session_id
+            attempt = 0
+            while not identity or (identity in seen and seen[identity] != folder):
+                seed = f"{workspace.session_id}|{folder}|{attempt}"
+                identity = "ide_" + uuid5(NAMESPACE_URL, seed).hex[:12]
+                attempt += 1
+            seen[identity] = folder
+            normalized.append(
+                workspace
+                if identity == workspace.session_id
+                else replace(workspace, session_id=identity)
+            )
+        self.workspaces = normalized
 
     @property
     def terminal_count(self) -> int:
@@ -401,9 +433,9 @@ def save(snapshot: Snapshot) -> None:
         clear()
         return
     target = _store_path()
-    snapshot = _merged_with_stored(snapshot)
     tmp = target.with_name(f"{target.name}.tmp-{os.getpid()}-{uuid4().hex[:8]}")
     with _WRITE_LOCK:
+        snapshot = _merged_with_stored(snapshot)
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             tmp.write_text(json.dumps(snapshot.to_dict(), indent=2), encoding="utf-8")
@@ -424,7 +456,7 @@ MAX_REMEMBERED_WORKSPACES = 20
 
 
 def _merged_with_stored(snapshot: Snapshot) -> Snapshot:
-    """Fold the live workspaces into what is already remembered, keyed by folder.
+    """Merge by workspace identity so closed siblings in one project survive.
 
     **The failure this exists for.** A save used to replace the file outright, so
     the restore point only ever held what happened to be open at that moment.
@@ -433,22 +465,23 @@ def _merged_with_stored(snapshot: Snapshot) -> Snapshot:
     to notice until the offer came back holding one pane. Reported as "it only
     resumed one".
 
-    So a save UPDATES rather than replaces: a folder that is open now overwrites
-    its own record (the newest arrangement of that folder is the truth), and
-    every other remembered folder is left exactly as it was. Only the user
+    So a save UPDATES rather than replaces: a workspace that is open overwrites
+    its own record, and every other remembered workspace is left intact.
+    Several independent workspaces may deliberately share one folder. Only the user
     asking to start fresh throws any of it away.
 
     Ordered newest-first and trimmed, so the file cannot grow without limit and
     the offer leads with what was most recently worked in.
     """
     stamped = [w if w.saved_at else _restamp(w, snapshot.saved_at) for w in snapshot.workspaces]
-    live_folders = {folder_key(w.folder) for w in stamped}
+    live_keys = {(w.session_id, folder_key(w.folder)) for w in stamped}
     try:
         stored = load()
-    except Exception:  # noqa: BLE001 - a broken file must not block the write
+    except Exception as exc:  # noqa: BLE001 - a broken file must not block the write
+        logger.warning("Agentic IDE: previous workspace snapshot could not be merged: {}", exc)
         stored = None
     kept = (
-        [w for w in stored.workspaces if folder_key(w.folder) not in live_folders]
+        [w for w in stored.workspaces if (w.session_id, folder_key(w.folder)) not in live_keys]
         if stored is not None
         else []
     )
@@ -468,6 +501,7 @@ def _restamp(workspace: SnapshotWorkspace, when: float) -> SnapshotWorkspace:
     return SnapshotWorkspace(
         session_id=workspace.session_id,
         folder=workspace.folder,
+        project_id=workspace.project_id or project_id_for(workspace.folder),
         name=workspace.name,
         terminals=workspace.terminals,
         layout=workspace.layout,
@@ -589,6 +623,7 @@ def offer(snapshot: Snapshot | None, *, installed: set[str]) -> dict[str, Any]:
         workspaces.append(
             {
                 "session_id": space.session_id,
+                "project_id": space.project_id or project_id_for(space.folder),
                 "folder": space.folder,
                 "folder_name": Path(space.folder).name or space.folder,
                 # The label the user gave the tab, empty when never renamed. Kept

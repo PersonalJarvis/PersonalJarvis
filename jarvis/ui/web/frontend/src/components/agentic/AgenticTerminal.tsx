@@ -59,6 +59,7 @@ import "@xterm/xterm/css/xterm.css";
 import {
   BookOpenText,
   Check,
+  GripVertical,
   Loader2,
   Maximize2,
   MessageSquare,
@@ -503,6 +504,8 @@ interface AgenticTerminalProps {
    * in selection mode, has nowhere to be dropped).
    */
   onArrangeStart?: (event: React.PointerEvent) => void;
+  /** Show a dedicated grip when the surrounding layout uses insertion reorder. */
+  showArrangeHandle?: boolean;
   /** True while THIS pane is the one being carried — it is drawn as lifted. */
   arranging?: boolean;
   /**
@@ -561,6 +564,7 @@ export function AgenticTerminal({
   onOpenChat,
   restartToken = 0,
   onArrangeStart,
+  showArrangeHandle = false,
   arranging = false,
   layoutBusy = false,
 }: AgenticTerminalProps) {
@@ -2289,6 +2293,7 @@ export function AgenticTerminal({
         status={visibleStatus}
         statusDetail={statusDetail}
         onArrangeStart={onArrangeStart}
+        showArrangeHandle={showArrangeHandle}
         arranging={arranging}
         name={name}
         displayName={displayName}
@@ -2464,6 +2469,7 @@ function PaneHeader({
   status,
   statusDetail,
   onArrangeStart,
+  showArrangeHandle = false,
   arranging = false,
   onOpenConversation,
   onOpenChat,
@@ -2493,6 +2499,7 @@ function PaneHeader({
   statusDetail?: string;
   /** Press on the header picks the pane up; absent leaves it undraggable. */
   onArrangeStart?: (event: React.PointerEvent) => void;
+  showArrangeHandle?: boolean;
   arranging?: boolean;
   /** Opens the pane's recorded conversation — the mode-proof scroll history. */
   onOpenConversation?: () => void;
@@ -2618,7 +2625,7 @@ function PaneHeader({
   // a maximized pane cannot be dragged, so its sentence never claims it can.
   const tipText = [
     onArrangeStart
-      ? `Drag ${name} by this bar to move it — drop it on another terminal to swap, or near an edge to place it there.`
+      ? `Drag ${name} by this bar to move it.`
       : "",
     onToggleMaximize
       ? onArrangeStart
@@ -2748,6 +2755,21 @@ function PaneHeader({
         }}
       />
       <div className="flex min-w-0 flex-1 items-center gap-2">
+        {showArrangeHandle && onArrangeStart && (
+          <button type="button" aria-label={`Move ${name}`} title={`Move ${name}`}
+            data-ide-drag-handle="true"
+            data-testid={`pane-move-${name}`}
+            onPointerDown={(event) => {
+              hideTip();
+              event.stopPropagation();
+              onArrangeStart(event);
+            }}
+            onClick={(event) => event.stopPropagation()}
+            className="flex h-5 w-5 shrink-0 cursor-grab items-center justify-center rounded text-[color:var(--pane-ink-muted)] hover:bg-[color:var(--pane-chip)] hover:text-[color:var(--pane-ink)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--pane-accent)] active:cursor-grabbing"
+            style={{ touchAction: "none" }}>
+            <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        )}
         {draft !== null ? (
           /*
            * The call-sign, being typed.
