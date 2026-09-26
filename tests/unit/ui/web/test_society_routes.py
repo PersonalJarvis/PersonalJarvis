@@ -385,7 +385,7 @@ def test_memory_file_serves_society_page_and_refuses_escape(memory_client):
     runtime: SocietyRuntime = c.app.state.society
     scout = asyncio.run(runtime.roster.get("scout"))
     rel = asyncio.run(runtime.memory.remember(scout, "Loves maps.", root=vault))
-    assert rel == "society/scout/memory.md"
+    assert rel == "society/scout/MEMORY.md"
     got = c.get("/api/society/memory/file", params={"path": rel}).json()
     assert got["path"] == rel and got["agent_id"] == "scout"
     assert "Loves maps." in got["content"]

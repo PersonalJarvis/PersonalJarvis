@@ -97,6 +97,7 @@ def media_type(reference: str, hint: str = "") -> str | None:
             else normalized
         )
     except ValueError:
+        # A malformed URL has no identifiable media type; do not log private references.
         return None
     path = re.sub(r"/(download|raw|view)$", "", path)
     return MEDIA_TYPES.get(Path(path).suffix.lower())
@@ -429,6 +430,7 @@ def normalize_media_event(
         try:
             parsed = json.loads(value) if value.lstrip().startswith(("{", "[")) else None
         except ValueError:
+            # JSON-looking prose is ordinary text and still passes through normalization.
             parsed = None
         processed = normalizer.structured(parsed, scan_text=True) if parsed is not None else None
         rewritten = (

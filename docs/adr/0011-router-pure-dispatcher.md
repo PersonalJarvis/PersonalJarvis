@@ -4,14 +4,14 @@ slug: adr-0011-router-pure-dispatcher
 diataxis: adr
 status: active
 owner: maintainers
-last_reviewed: 2026-07-13
+last_reviewed: 2026-09-10
 phase: 5
 audience: developer
 ---
 
 # ADR-0011 — Main Jarvis is a Pure Dispatcher with EXACTLY four tools
 
-**Status:** Amended 2026-07-13
+**Status:** Amended 2026-09-10
 **Phase:** Persona refactor §3 — routing fix
 
 ## Context
@@ -1377,3 +1377,66 @@ Guards: `tests/contract/test_internal_messages.py`, the router membership test,
 `InternalMessageBubble` tests. Voice confirmation retries share one result;
 a real microphone response captured after playback is not discarded solely
 because its transcript resembles the confirmation question.
+
+## Amendment 2026-09-10 — Explicit Swarm owner commands
+
+### Context
+
+Ultra Agent Swarm adds independent, explicitly authorized teams. Voice/chat
+and the control CLI need the same creation, lifecycle and inspection behavior
+as the mounted Swarm REST surface. The earlier no-spawn restriction remains
+binding for mission workers and ordinary Society specialists; it must also
+cover the flat command names produced by the virtual loader.
+
+### Decision
+
+The existing `app-command` expansion exposes `swarm-create`, `swarm-list`,
+`swarm-show`, `swarm-control`, `swarm-world`, `swarm-records`, `swarm-preparation`,
+`swarm-clarify`, `swarm-plan` and `swarm-launch`. No tool is
+added to `ROUTER_TOOLS`. Each command targets one existing `/api/swarm` route.
+The generic mission shortcut stands down for an explicit Swarm command at the
+start of the utterance; ordinary task descriptions do not imply Swarm opt-in.
+Creation uses the shared `TeamCreate` schema, an explicit request key and exact
+decimal-string budgets. The owner creation command begins tool-free clarification
+while the team remains created. Answers produce a stored candidate; the owner
+reviews it before `swarm-launch` approves its exact revision, digest and storage
+generation. The initial goal is not plan approval. This intake amendment was
+requested on 2026-09-12 and implemented on 2026-09-19. Explicit legacy task-graph
+creation remains available through the lower-level CLI/API, but a preparation-
+required team cannot bypass review through ordinary start or resume.
+Creation, preparation inference and every lifecycle mutation retain REST danger
+metadata and execute through
+`ToolExecutor` confirmation; the CLI requires `--yes` and supports `--dry-run`.
+
+Starting or resuming a team authorizes its trusted scheduler within the saved
+team limits. It never gives the caller a controller credential or a recursive
+spawn tool. All Swarm owner commands have `worker_allowed=False`. Society
+capability selection also denies the reserved `swarm-` owner namespace,
+including expanded commands under an all-tools grant. A separately bound
+ordinary-agent request or assigned membership must use its own scoped bridge.
+
+### Consequences
+
+- Voice/chat, CLI and UI use the same authenticated endpoint and server readback.
+- Team creation takes only explicitly selected inputs; ordinary conversations,
+  personal notes and credentials are not automatically copied into a Swarm.
+- Read-only owner inspection is also excluded from worker grants, preventing
+  unrelated workers from using an owner endpoint to inspect another team.
+- The curated CLI accepts a bounded UTF-8 JSON specification file for creation;
+  credentials are never accepted as Swarm command arguments.
+
+### Alternatives considered
+
+- A second router spawn tool: rejected because the existing command expansion
+  already provides validation, confirmation and server-response readback.
+- Granting owner commands to a specialist: rejected because owner REST authority
+  exceeds an assigned member's task and team scope.
+
+### Regression guards
+
+`tests/unit/commands/test_swarm_commands.py` checks REST/schema/danger parity,
+exact counters, validated arguments and both worker and Society denial.
+`tests/unit/brain/test_swarm_command_routing.py` checks router expansion.
+`tests/unit/cli_ctl/test_commands_swarm.py` checks paths, bounded input, version
+propagation, confirmation and dry-run behavior. The generated command and CLI
+references stay covered by their existing drift checks.

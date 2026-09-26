@@ -88,6 +88,21 @@ function composer() {
   );
 }
 
+function composerInput() {
+  return screen.getByRole("textbox");
+}
+
+function typeText(input: HTMLElement, text: string) {
+  input.textContent = text;
+  const range = document.createRange();
+  range.selectNodeContents(input);
+  range.collapse(false);
+  const selection = document.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  fireEvent.input(input);
+}
+
 /** A DataTransfer stand-in: jsdom's own carries neither files nor types. */
 function transfer(files: File[]) {
   return {
@@ -127,7 +142,7 @@ describe("chat composer attachments", () => {
 
   it("takes a pasted image and shows what was read from it", async () => {
     composer();
-    const box = document.querySelector("textarea[data-jarvis-chat-input]") as HTMLTextAreaElement;
+    const box = composerInput();
     const png = new File([new Uint8Array([1, 2, 3])], "image.png", { type: "image/png" });
 
     await act(async () => {
@@ -146,18 +161,23 @@ describe("chat composer attachments", () => {
     expect((init.body as FormData).get("session_id")).toBe("s-1");
   });
 
-  it("leaves a pasted TEXT alone so ordinary copy-paste keeps working", async () => {
+  it("inserts pasted text as plain text without uploading an attachment", async () => {
     composer();
-    const box = document.querySelector("textarea[data-jarvis-chat-input]") as HTMLTextAreaElement;
+    const box = composerInput();
+    typeText(box, "Existing ");
 
     const event = new Event("paste", { bubbles: true, cancelable: true });
-    Object.defineProperty(event, "clipboardData", { value: transfer([]) });
+    Object.defineProperty(event, "clipboardData", {
+      value: { ...transfer([]), types: ["text/plain"], getData: () => "<b>plain text</b>" },
+    });
     await act(async () => {
       box.dispatchEvent(event);
     });
 
-    // Not claimed, not prevented: the browser inserts the text itself.
-    expect(event.defaultPrevented).toBe(false);
+    // The rich-text composer inserts text itself, without treating it as HTML.
+    expect(event.defaultPrevented).toBe(true);
+    expect(box.textContent).toBe("Existing <b>plain text</b>");
+    expect(box.querySelector("b")).toBeNull();
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/attachments"))).toBe(false);
   });
 
@@ -181,7 +201,7 @@ describe("chat composer attachments", () => {
     const send = vi.fn(async () => {});
     seed({ send });
     composer();
-    const box = document.querySelector("textarea[data-jarvis-chat-input]") as HTMLTextAreaElement;
+    const box = composerInput();
     const png = new File([new Uint8Array([1])], "image.png", { type: "image/png" });
 
     await act(async () => {
@@ -189,7 +209,7 @@ describe("chat composer attachments", () => {
     });
     await waitFor(() => expect(screen.getByTestId("chat-attachment-shot.png")).toBeDefined());
 
-    fireEvent.change(box, { target: { value: "what is wrong here" } });
+    typeText(box, "what is wrong here");
     await act(async () => {
       fireEvent.click(screen.getByTestId("composer-send"));
     });
@@ -203,7 +223,7 @@ describe("chat composer attachments", () => {
     const send = vi.fn(async () => {});
     seed({ send });
     composer();
-    const box = document.querySelector("textarea[data-jarvis-chat-input]") as HTMLTextAreaElement;
+    const box = composerInput();
     const png = new File([new Uint8Array([1])], "image.png", { type: "image/png" });
 
     await act(async () => {

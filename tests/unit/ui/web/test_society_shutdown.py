@@ -137,21 +137,25 @@ async def test_roster_poll_during_remaining_server_cleanup_cannot_restart(tmp_pa
     try:
         await asyncio.wait_for(cleanup_started.wait(), timeout=2)
         assert not stopping.done()
-        assert runtime.store._conn is None
+        assert runtime.store._conn is connection
         for _ in range(3):
             with pytest.raises(HTTPException) as error:
                 await list_agents(Request({"type": "http", "app": server.app}))
             assert error.value.status_code == 503
             assert await runtime.prepare_context() is False
-        assert runtime.store._conn is None
+        assert runtime.store._conn is connection
         assert runtime._delivery_task is None and delivery.done()
-        assert current_runtime() is None
-        with pytest.raises(ValueError, match="no active connection"):
-            await connection.execute("SELECT 1")
+        assert current_runtime() is runtime
+        # Admitted chat/Swarm/HTTP writers still own storage during their drain.
+        await connection.execute("SELECT 1")
     finally:
         release_cleanup.set()
         await asyncio.wait_for(stopping, timeout=2)
         await runtime.close()
+    assert runtime.store._conn is None
+    assert current_runtime() is None
+    with pytest.raises(ValueError, match="no active connection"):
+        await connection.execute("SELECT 1")
 
 
 @pytest.mark.parametrize("pause_at", ["first-await", "remaining-cleanup"])
@@ -278,6 +282,7 @@ async def test_cancel_initial_connect_releases_real_sqlite_worker(tmp_path, monk
 
 async def test_slow_startup_keeps_owner_until_it_can_release_store(tmp_path, monkeypatch):
     from jarvis.society import runtime as runtime_module
+    from jarvis.society import shutdown
 
     runtime = SocietyRuntime(tmp_path)
     seeded = asyncio.Event()
@@ -294,20 +299,21 @@ async def test_slow_startup_keeps_owner_until_it_can_release_store(tmp_path, mon
             cancelled.set()
             await release.wait()
 
-    monkeypatch.setattr(runtime_module, "_CLOSE_TASK_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(shutdown, "QUIESCE_TIMEOUT_S", 0.02)
     monkeypatch.setattr(runtime, "seed_lead", reluctant_seed)
     starting = asyncio.create_task(runtime.ensure_started())
     try:
         await asyncio.wait_for(seeded.wait(), timeout=2)
-        with pytest.raises(TimeoutError, match="society task shutdown incomplete"):
+        with pytest.raises(RuntimeError, match="Society startup did not stop"):
             await runtime.close()
         assert cancelled.is_set()
         assert runtime._starting_task is starting and not starting.done()
-        assert runtime.store._conn is None
+        assert runtime.store._conn is not None
         release.set()
         with pytest.raises(runtime_module.SocietyRuntimeClosed):
             await starting
         assert runtime._starting_task is None
+        await runtime.close()
         assert runtime.store._conn is None
         assert runtime._delivery_task is None
         assert current_runtime() is None

@@ -22,8 +22,10 @@ _TOOLS = _REPO / "scripts" / "figures" / "glb_tools.py"
 
 
 def _shipped() -> Path | None:
-    files = sorted(_FIGURES.glob("biped-*.glb")) if _FIGURES.exists() else []
-    return files[0] if files else None
+    # A one-file upload must contain its clips. Shared-clip catalog variants
+    # are not valid standalone imports merely because they sort first.
+    figure = _FIGURES / "biped-knight.glb"
+    return figure if figure.exists() else None
 
 
 def _tools():

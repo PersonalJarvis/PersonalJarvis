@@ -89,6 +89,7 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
         "society_conversation_recall",
         "society_routines",
         "society_invoke_routine",
+        "society_request_swarm",
         *FOLDER,
     }
     assert "RunCommand" not in own
@@ -101,6 +102,7 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
     assert filt is not None
     picked = list(filt(merged))
     own_names = {
+        "society_request_swarm",
         MESSAGE_TOOL_NAME,
         WIKI_NOTE_TOOL_NAME,
         SHELL_TOOL_NAME,

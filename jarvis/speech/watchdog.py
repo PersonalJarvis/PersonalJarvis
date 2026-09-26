@@ -17,6 +17,8 @@ import os
 import sys
 from pathlib import Path
 
+log = logging.getLogger("jarvis.watchdog")
+
 
 def _setup_logging(log_file: Path) -> None:
     """Logs go to both the file AND the console."""
@@ -31,7 +33,7 @@ def _setup_logging(log_file: Path) -> None:
     ch.setFormatter(logging.Formatter(fmt))
     root.addHandler(ch)
 
-    # File (append-Mode — mehrere Runs nacheinander ok)
+    # Append so consecutive runs share the diagnostic log.
     fh = logging.FileHandler(str(log_file), mode="a", encoding="utf-8")
     fh.setFormatter(logging.Formatter(fmt))
     root.addHandler(fh)
@@ -67,13 +69,21 @@ def _write_pid_file(path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(str(os.getpid()), encoding="utf-8")
     except OSError:
-        pass
+        log.warning(
+            "Could not persist watchdog ownership marker; duplicate-start protection is limited"
+        )
 
 
 def _read_pid_file(path: Path) -> int | None:
     try:
         return int(path.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
+    except (FileNotFoundError, ValueError):
+        # First boot has no marker; malformed stale contents do not identify a process.
+        return None
+    except OSError:
+        log.warning(
+            "Could not read watchdog ownership marker; duplicate-start protection is limited"
+        )
         return None
 
 
@@ -90,6 +100,7 @@ def _pid_is_live_watchdog(pid: int) -> bool:
     try:
         import psutil  # noqa: PLC0415 - optional at type-check time, required at runtime
     except ImportError:
+        # Without the optional process probe, assume alive to avoid a duplicate start.
         return True
     try:
         proc = psutil.Process(pid)
@@ -133,6 +144,7 @@ def _clear_pid_file(path: Path) -> None:
                 return
             path.unlink()
     except OSError:
+        # Teardown is best effort; later liveness checks reject a marker for a dead PID.
         pass
 
 
@@ -142,6 +154,7 @@ async def _main() -> None:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
             sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
         except (AttributeError, OSError):
+            # Embedded or custom output streams may not support encoding reconfiguration.
             pass
 
     project_root = Path(__file__).resolve().parents[2]
@@ -157,11 +170,10 @@ async def _main() -> None:
     pid_file = _pid_file(project_root)
     _write_pid_file(pid_file)
 
-    log = logging.getLogger("jarvis.watchdog")
     log.info("=" * 60)
-    log.info("WATCHDOG-START — Pipeline mit voller Diagnostik")
-    log.info("Log-Datei:   %s", log_file)
-    log.info("WAV-Debug:   %s", debug_dir)
+    log.info("WATCHDOG START — Pipeline with full diagnostics")
+    log.info("Log file:    %s", log_file)
+    log.info("Debug WAVs:  %s", debug_dir)
     log.info("=" * 60)
 
     from jarvis.brain.factory import build_default_brain
@@ -180,8 +192,8 @@ async def _main() -> None:
     bus = EventBus()
     supervisor = Supervisor(bus=bus)
 
-    # Orb-Overlay als UI-Feedback: erscheint bei LISTENING, versteckt bei IDLE.
-    # Start im Daemon-Thread (Tk-Mainloop) damit asyncio-Loop frei bleibt.
+    # The orb appears while LISTENING and hides while IDLE.
+    # Run Tk in a daemon thread so the asyncio loop remains available.
     try:
         from ui.orb.bus_bridge import OrbBusBridge
         from ui.orb.overlay import OrbOverlay
@@ -189,7 +201,7 @@ async def _main() -> None:
         orb.start_in_thread()
         bridge = OrbBusBridge(bus=bus, orb=orb)
         bridge.attach()
-        log.info("Orb-Overlay + Bus-Bridge aktiv.")
+        log.info("Orb overlay and bus bridge active.")
     except Exception as exc:  # noqa: BLE001
         log.warning("Orb overlay failed to start (%s) — running without UI.", exc)
 

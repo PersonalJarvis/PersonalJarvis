@@ -21,6 +21,7 @@ class GrokBrain:
     name: str = "grok"
     context_window: int = 1_000_000
     supports_tools: bool = True
+    scoped_execution_only: bool = True  # Never falls back to ambient agent/tool execution.
     # xAI's OpenAI-compatible chat API accepts ``image_url`` data URIs on
     # grok-4.x. A False here made Screen Context / Computer-Use skip a live
     # key and tell the user to "connect a vision-capable provider" even

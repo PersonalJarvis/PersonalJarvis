@@ -1,0 +1,130 @@
+{
+  "started_at": "2026-09-23T09:47:12.445524+00:00",
+  "qualification": "source-runtime calibration only",
+  "native_installation": "not-run",
+  "one_key_isolation": "not-qualified; existing configured preview",
+  "requested_provider": "grok",
+  "limits": {
+    "token_budget": "60000",
+    "runtime_seconds": 180,
+    "concurrency": 2,
+    "worker_limit": "2",
+    "max_attempts": 1,
+    "max_output_tokens": 1024,
+    "max_tool_calls": 6
+  },
+  "status": "pass",
+  "team_id": "e435b5ac40df415b9779840094e28b98",
+  "provider": "grok",
+  "tokens_used": "10636",
+  "tokens_reserved": "0",
+  "provider_requests": "not counted; nonzero usage verified",
+  "artifact_id": "5eca3d35cf1f49619061f3b396a24d64",
+  "sha256": "01e95cb6f009c9ead27419f3ee317754173a2c6a3f9b5984d807ae7b0d8d0a30",
+  "result": {
+    "count": 4,
+    "sum": 40,
+    "mean": 10
+  },
+  "worker_ids": [
+    "83d1b4fc0caa4e299f3a3f95e094f9f8",
+    "af6496a35d934d509f3deadc7ad36a86"
+  ],
+  "worker_count": 2,
+  "shared_input_artifact_id": "2b7303c52f844d2b944e92f4070160eb",
+  "shared_input_sha256": "833b011f6a66860c0825fbda85d0cff24a33cccca8a8e6bd3901cd536a7a164a",
+  "duration_seconds": 19.89,
+  "accounting": {
+    "state": "succeeded",
+    "tokens_used": "10636",
+    "tokens_reserved": "0",
+    "cost_microusd": "26591",
+    "cost_reserved_microusd": "0"
+  },
+  "provider_usage_receipts": [
+    {
+      "provider": "grok",
+      "model": "grok-4.3",
+      "phase": "work",
+      "usage_known": true,
+      "cost_known": true,
+      "usage": {
+        "input_tokens": 513,
+        "output_tokens": 13,
+        "cache_hit_tokens": 1600
+      }
+    },
+    {
+      "provider": "grok",
+      "model": "grok-4.3",
+      "phase": "work",
+      "usage_known": true,
+      "cost_known": true,
+      "usage": {
+        "input_tokens": 1459,
+        "output_tokens": 103,
+        "cache_hit_tokens": 192
+      }
+    },
+    {
+      "provider": "grok",
+      "model": "grok-4.3",
+      "phase": "work",
+      "usage_known": true,
+      "cost_known": true,
+      "usage": {
+        "input_tokens": 1144,
+        "output_tokens": 4,
+        "cache_hit_tokens": 192
+      }
+    },
+    {
+      "provider": "grok",
+      "model": "grok-4.3",
+      "phase": "work",
+      "usage_known": true,
+      "cost_known": true,
+      "usage": {
+        "input_tokens": 1115,
+        "output_tokens": 32,
+        "cache_hit_tokens": 192
+      }
+    },
+    {
+      "provider": "grok",
+      "model": "grok-4.3",
+      "phase": "work",
+      "usage_known": true,
+      "cost_known": true,
+      "usage": {
+        "input_tokens": 1068,
+        "output_tokens": 4,
+        "cache_hit_tokens": 192
+      }
+    },
+    {
+      "provider": "grok",
+      "model": "grok-4.3",
+      "phase": "work",
+      "usage_known": true,
+      "cost_known": true,
+      "usage": {
+        "input_tokens": 426,
+        "output_tokens": 11,
+        "cache_hit_tokens": 1152
+      }
+    },
+    {
+      "provider": "grok",
+      "model": "grok-4.3",
+      "phase": "work",
+      "usage_known": true,
+      "cost_known": true,
+      "usage": {
+        "input_tokens": 968,
+        "output_tokens": 64,
+        "cache_hit_tokens": 192
+      }
+    }
+  ]
+}

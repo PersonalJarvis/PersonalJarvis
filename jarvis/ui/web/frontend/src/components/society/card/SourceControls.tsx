@@ -18,6 +18,9 @@ function SourceInputs({ taskId, source }: { taskId: string; source: Source }) {
   const [notice, setNotice] = useState("");
   const [values, setValues] = useState<Record<string, unknown>>(() => Object.fromEntries(Object.entries(source.form_fields ?? {}).filter(([, field]) => field.kind === "boolean").map(([name]) => [name, false])));
   const [credentials, setCredentials] = useState<Record<string, string>>({});
+  // Custom comboboxes need the same required-value guard as a native select.
+  const missingChoice = Object.entries(source.form_fields ?? {}).some(([name, spec]) =>
+    spec.kind === "choice" && spec.required && (!String(values[name] ?? "") || !spec.choices.includes(String(values[name] ?? ""))));
   const listener = ["sse", "kafka", "rabbitmq", "mqtt", "redis", "file"].includes(source.kind);
   const info = useQuery({ queryKey: ["routine-source", taskId], enabled: open && listener, retry: false, refetchInterval: open && listener ? 5000 : false,
     queryFn: async () => { const r = await fetch(`/api/tasks/${taskId}/source-connection`); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); } });
@@ -47,11 +50,11 @@ function SourceInputs({ taskId, source }: { taskId: string; source: Source }) {
         {["kafka", "rabbitmq", "mqtt", "redis"].includes(source.kind) && <button type="button" disabled={busy || info.data?.install?.status === "running"} className={button} onClick={() => void send("source-connection/install", "POST")}>{label(info.data?.install?.status === "running" ? "installing" : "install_support")}</button>}
       </>}
     </> : null}
-    {open && !listener ? <form onSubmit={(event) => { event.preventDefault(); void send("invoke", "POST", { payload: values }); }} className="space-y-2">
+    {open && !listener ? <form onSubmit={(event) => { event.preventDefault(); if (busy || missingChoice) return; void send("invoke", "POST", { payload: values }); }} className="space-y-2">
       {Object.entries(source.form_fields ?? {}).map(([name, spec]) => <label className="block text-[11px]" key={name}>{spec.label}
-        {spec.kind === "choice" ? <BrandedSelect className={field} value={String(values[name] ?? "")} onValueChange={(value) => setValues((v) => ({ ...v, [name]: value }))} ariaLabel={spec.label} options={[{ value: "", label: "—" }, ...spec.choices.map((choice) => ({ value: choice, label: choice }))]} /> : <input className={field} type={spec.kind === "boolean" ? "checkbox" : spec.kind === "number" ? "number" : "text"} required={spec.required && spec.kind !== "boolean"} onChange={(e) => setValues((v) => ({ ...v, [name]: spec.kind === "boolean" ? e.target.checked : spec.kind === "number" ? (e.target.value === "" ? null : Number(e.target.value)) : e.target.value }))} />}
+        {spec.kind === "choice" ? <BrandedSelect className="w-full" ariaLabel={spec.label} value={String(values[name] ?? "")} onValueChange={(value) => setValues((v) => ({ ...v, [name]: value }))} options={[{ value: "", label: "—" }, ...spec.choices.map((choice) => ({ value: choice, label: choice }))]} /> : <input className={field} type={spec.kind === "boolean" ? "checkbox" : spec.kind === "number" ? "number" : "text"} required={spec.required && spec.kind !== "boolean"} onChange={(e) => setValues((v) => ({ ...v, [name]: spec.kind === "boolean" ? e.target.checked : spec.kind === "number" ? (e.target.value === "" ? null : Number(e.target.value)) : e.target.value }))} />}
       </label>)}
-      <button type="submit" className={button} disabled={busy}>{label("run")}</button>
+      <button type="submit" className={button} disabled={busy || missingChoice}>{label("run")}</button>
     </form> : null}
     {notice && <span role="status" className="block text-[11px]">{notice}</span>}
     {info.error && <span role="alert" className="block text-[11px] text-destructive">{label("connection_unavailable")}</span>}

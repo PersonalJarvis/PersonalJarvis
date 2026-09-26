@@ -12,7 +12,7 @@ has and the model cannot see.
 
 So the tool description carries the whole tree: one line per group, the
 command names, and for the commands a spoken request most often lands on, the
-argument shape in angle brackets. Roughly 1.6 k characters — the price of one
+argument shape in angle brackets. Kept below 3 k characters — the price of one
 tool schema, paid once per prompt build, against several `--help` rounds paid
 per turn.
 
@@ -24,6 +24,8 @@ and fails the moment a group or command name here disagrees with it.
 """
 
 from __future__ import annotations
+
+import re
 
 #: ``group -> (command, ...)``. A command may carry an argument hint after a
 #: space (``'create "<what it should do>" [--name --trigger --schedule]'``);
@@ -73,6 +75,31 @@ COMMAND_INDEX: dict[str, tuple[str, ...]] = {
         "cancel <id>",
         "rerun <id>",
         "kill <id>",
+    ),
+    "swarm": (
+        "prepare <spec-file> --yes",
+        "preparation <id>",
+        "clarify <id>",
+        "plan <id> <answers-file>",
+        "launch <id>",
+        "list",
+        "create <spec-file> --yes",
+        "show <id>",
+        "start <id> --yes",
+        "pause <id> --yes",
+        "resume <id> --yes",
+        "stop <id> --yes",
+        "cancel <id> --yes",
+        "archive <id> --yes",
+        "world <id>",
+        "records <id> <kind>",
+        "export <id> --output <file> --yes",
+        "restore <file> --request-key <key> --yes",
+        "storage <id>",
+        "restores",
+        "resume-restore <id> --yes",
+        "delete <id> --request-key <key> --yes",
+        "retention <id> --yes",
     ),
     "tasks": ("list", "get <id>", "create", "cancel <id>", "delete <id>"),
     "workflows": ("list", "show <id>", "create", "run <id>", "delete <id>", "run-history"),
@@ -191,12 +218,28 @@ def command_names(group: str) -> tuple[str, ...]:
 def render_command_index() -> str:
     """The tree as the tool description shows it — one line per group."""
     lines = [
-        "Command index (`jarvisctl <group> <command> [args]`; call the command "
-        "directly — do not spend rounds on --help):",
+        "Command index (`jarvisctl <group> <command> [args]`); "
+        "call directly — do not spend rounds on --help:",
     ]
     for group, commands in COMMAND_INDEX.items():
-        lines.append(f"  {group}: " + ", ".join(commands))
-    lines.append("  top-level: " + ", ".join(TOP_LEVEL_COMMANDS))
+        hints = list(commands)
+        if group == "local-models":
+            hints = [" ".join(command.split()[:2]) for command in commands]
+        elif group == "swarm":
+            guided = {"prepare", "preparation", "clarify", "plan", "launch"}
+            hints = [
+                command if command.split()[0] in guided else command.split()[0]
+                for command in commands
+            ]
+        # Optional flags live in the full reference; keep every command visible.
+        hints = [re.sub(r" \[[^]]*\]", "", command) for command in hints]
+        lines.append(f"{group}: " + ", ".join(hints))
+    lines.append("top-level: " + ", ".join(TOP_LEVEL_COMMANDS))
+    lines.append(
+        "Swarm mutations: --yes. Bindings: clarify/plan/launch "
+        "--expected-storage-generation --request-key; plan/launch --expected-revision; "
+        "launch --digest."
+    )
     return "\n".join(lines)
 
 

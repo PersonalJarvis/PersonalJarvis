@@ -6,6 +6,7 @@ the client from the active profile, run the safety gate (confirm / --yes /
 the result honoring the global ``--json`` flag. Curated command modules call
 ``invoke.run(...)`` instead of re-implementing this.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -14,7 +15,7 @@ from typing import Any
 import typer
 
 from jarvis.cli_ctl import render, safety
-from jarvis.cli_ctl.client import ApiError
+from jarvis.cli_ctl.client import ApiError, JarvisClient
 
 
 def run(
@@ -28,6 +29,7 @@ def run(
     dangerous: bool | None = None,
     before_request: Callable[[], None] | None = None,
     request_timeout_s: float | None = None,
+    operation: Callable[[JarvisClient], Any] | None = None,
 ) -> Any | None:
     """Resolve client, gate mutations, send the request, render the result.
 
@@ -36,6 +38,8 @@ def run(
     True). When None, the method+path heuristic in ``safety.is_dangerous``
     decides — which is what the generic dynamic ``api`` layer relies on.
     ``before_request`` runs only after confirmation and never during a dry run.
+    A trusted curated ``operation`` can perform a streamed transfer or a
+    multi-request action behind this same gate, error handling and renderer.
     """
     # Local import avoids a load-time cycle with __main__ (which imports the
     # command modules that import this helper).
@@ -59,12 +63,16 @@ def run(
         if before_request is not None:
             before_request()
         try:
-            out = client.request(
-                method,
-                path,
-                params=params,
-                json=body,
-                timeout_s=request_timeout_s,
+            out = (
+                operation(client)
+                if operation is not None
+                else client.request(
+                    method,
+                    path,
+                    params=params,
+                    json=body,
+                    timeout_s=request_timeout_s,
+                )
             )
         except ApiError as exc:
             if exc.status_code is None:

@@ -125,6 +125,7 @@ export const NAV_GROUPS: NavItem[][] = [
   // 1) Workspace — what the user builds with and reads back.
   [
     { id: "agents", labelKey: "nav.agents", icon: Users },
+    { id: "ultra-swarm", labelKey: "nav.ultra_swarm", icon: Workflow },
     // The compact catalog opens on Plugins; direct section navigation selects
     // its corresponding tab and keeps this shared row highlighted.
     {

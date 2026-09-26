@@ -71,6 +71,7 @@ describe("SilenceWindowGroup", () => {
     mockPut(2500);
     render(<SilenceWindowGroup />);
     const slider = (await screen.findByRole("slider")) as HTMLInputElement;
+    await waitFor(() => expect(slider.value).toBe("1500"));
     // drag (onChange) updates the label but does not PUT yet
     fireEvent.change(slider, { target: { value: "2500" } });
     expect(fetchMock).toHaveBeenCalledTimes(1); // only the GET so far
@@ -90,6 +91,7 @@ describe("SilenceWindowGroup", () => {
     mockPut(500);
     render(<SilenceWindowGroup />);
     const slider = (await screen.findByRole("slider")) as HTMLInputElement;
+    await waitFor(() => expect(slider.value).toBe("1500"));
     fireEvent.change(slider, { target: { value: "100" } });
     expect(slider.value).toBe("0"); // nearer to automatic
     fireEvent.change(slider, { target: { value: "400" } });
@@ -103,7 +105,8 @@ describe("SilenceWindowGroup", () => {
     mockGet(3000);
     mockPut(0);
     render(<SilenceWindowGroup />);
-    await screen.findByRole("slider");
+    const slider = (await screen.findByRole("slider")) as HTMLInputElement;
+    await waitFor(() => expect(slider.value).toBe("3000"));
     fireEvent.click(screen.getByRole("button", { name: /reset|zurück|restablecer/i })); // i18n-allow: multilingual button-name regex
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ ms: 0 });

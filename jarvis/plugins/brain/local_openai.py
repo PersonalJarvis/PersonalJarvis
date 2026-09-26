@@ -82,6 +82,7 @@ class LocalOpenAIBrain:
     # manager treats this as a budget hint, not a hard cap.
     context_window: int = 32_768
     supports_tools: bool = True
+    scoped_execution_only: bool = True  # Never falls back to ambient agent/tool execution.
     supports_vision: bool = False
 
     def __init__(self, model: str | None = None) -> None:

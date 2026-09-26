@@ -158,6 +158,7 @@ async def install_source_support(task_id: UUID, request: Request) -> dict[str, A
                 if current and current.trigger.type == "source":
                     scheduler.sources.start(current)
         except Exception as exc:
+            # The status endpoint exposes the error type without subprocess or provider bodies.
             request.app.state.source_install_status = {
                 "status": "error",
                 "detail": type(exc).__name__,

@@ -62,10 +62,12 @@ test("the pinned seat is shown and can follow the agent again", async () => {
   expect(fetcher.mock.calls.some(([url]) => String(url).includes("agent-chat"))).toBe(false);
   // Opening the picker loads the catalog; clearing the pin saves empty seat fields.
   fireEvent.click(screen.getByText("Change"));
-  const provider = (await screen.findByLabelText("Provider")) as HTMLSelectElement;
-  expect(provider.value).toBe("claude-api");
-  fireEvent.change(provider, { target: { value: "" } });
-  expect(provider.value).toBe("");
+  const provider = await screen.findByRole("combobox", { name: "Provider" });
+  expect(provider.textContent).toContain("claude-api");
+  await waitFor(() => expect(provider).toHaveProperty("disabled", false));
+  fireEvent.click(provider);
+  fireEvent.click(screen.getByRole("option", { name: "Follow agent" }));
+  expect(provider.textContent).toContain("Follow agent");
   expect(screen.getByText("Follow agent", { selector: "p" })).toBeTruthy();
   fireEvent.click(screen.getAllByText("Save")[0]);
   await waitFor(() =>

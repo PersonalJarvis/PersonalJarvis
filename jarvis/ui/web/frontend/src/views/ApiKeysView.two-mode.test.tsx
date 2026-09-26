@@ -19,6 +19,9 @@ function renderKeys(ui: ReactElement = <ApiKeysView />) {
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
+// Profile editing has its own QueryClient-backed component tests.
+vi.mock("@/components/providers/LiveProfile", () => ({ LiveProfile: () => null }));
+
 // Mock the data hooks so the view renders deterministically, without a
 // network round-trip.
 vi.mock("@/hooks/useProviders", () => ({

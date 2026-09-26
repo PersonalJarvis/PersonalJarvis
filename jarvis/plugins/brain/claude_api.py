@@ -22,6 +22,7 @@ class ClaudeAPIBrain:
     name: str = "claude-api"
     context_window: int = 200_000
     supports_tools: bool = True
+    scoped_execution_only: bool = True  # Never falls back to ambient agent/tool execution.
     supports_vision: bool = True
 
     def __init__(self, model: str | None = None) -> None:

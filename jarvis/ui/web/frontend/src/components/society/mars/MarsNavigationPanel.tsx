@@ -1,3 +1,4 @@
+import { BrandedSelect } from "@/components/ui/select";
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useT } from "@/i18n";
@@ -54,9 +55,7 @@ export function MarsNavigationPanel({ agentId, active = false }: { agentId: stri
     <p className="text-xs text-muted-foreground">{t("society.mars.visit_scope")}</p>
     {pending.current && <p className="text-xs text-muted-foreground">{t("society.mars.pending_visit")}: {pending.current.agent_id} · {t(`society.mars.destination_${pending.current.station_id}`)}</p>}
     <label className="grid gap-1 text-sm">{t("society.mars.destination")}
-      <select value={destination} disabled={busy || !!pending.current} onChange={(event) => setDestination(event.target.value)} className="rounded border border-border bg-background p-2">
-        {VISIT_DESTINATIONS.map((id) => <option key={id} value={id}>{t(`society.mars.destination_${id}`)}</option>)}
-      </select>
+      <BrandedSelect value={destination} disabled={busy || !!pending.current} onValueChange={(selected) => setDestination(selected)} className="rounded border border-border bg-background p-2" ariaLabel={t("society.mars.destination")} options={VISIT_DESTINATIONS.map(id => ({ value: id, label: t(`society.mars.destination_${id}`) }))} />
     </label>
     {destination === "outpost-approach" && <p className="text-xs text-muted-foreground">{t("society.mars.approach_hint")}</p>}
     <div className="flex flex-wrap gap-2 text-sm">

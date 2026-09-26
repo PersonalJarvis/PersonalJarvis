@@ -292,12 +292,46 @@ async def stream_complete(
         # Tool-call accumulator (Anthropic streams tool_use as separate blocks)
         current_tool: dict[str, Any] | None = None
         current_tool_json = ""
+        usage_totals: dict[str, int] = {}
+
+        def record_usage(usage: Any) -> dict[str, int]:
+            # Anthropic puts input/cache counts in message_start and normally
+            # sends only the final output count in message_delta. Missing fields
+            # must not turn already-observed counts into zero.
+            for key in (
+                "input_tokens",
+                "output_tokens",
+                "cache_read_input_tokens",
+                "cache_creation_input_tokens",
+            ):
+                value = getattr(usage, key, None)
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    usage_totals[key] = max(value, usage_totals.get(key, 0))
+            canonical: dict[str, int] = {}
+            if "input_tokens" in usage_totals:
+                # Cache writes are uncached input under the shared protocol;
+                # retain them here so every consumer counts the same exposure.
+                canonical["input_tokens"] = usage_totals["input_tokens"] + usage_totals.get(
+                    "cache_creation_input_tokens",
+                    0,
+                )
+            if "output_tokens" in usage_totals:
+                canonical["output_tokens"] = usage_totals["output_tokens"]
+            if "cache_read_input_tokens" in usage_totals:
+                canonical["cache_hit_tokens"] = usage_totals["cache_read_input_tokens"]
+            return canonical
 
         async for event in stream:
             etype = getattr(event, "type", None) or getattr(event, "event", None)
 
+            if etype == "message_start":
+                message = getattr(event, "message", None)
+                usage_d = record_usage(getattr(message, "usage", None))
+                if usage_d:
+                    yield BrainDelta(usage=usage_d)
+
             # Text delta
-            if etype == "content_block_delta":
+            elif etype == "content_block_delta":
                 delta = getattr(event, "delta", None)
                 if delta is None:
                     continue
@@ -338,17 +372,5 @@ async def stream_complete(
             elif etype == "message_delta":
                 delta = getattr(event, "delta", None)
                 finish = getattr(delta, "stop_reason", None) if delta else None
-                usage = getattr(event, "usage", None)
-                usage_d: dict[str, int] = {}
-                if usage is not None:
-                    usage_d = {
-                        "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
-                        "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
-                        # The protocol key is cache_hit_tokens (protocols.py) —
-                        # this plugin used to forward Anthropic's wire name
-                        # cache_read_input_tokens, which no consumer reads, so
-                        # cache hits were invisible in cost and telemetry and
-                        # cache regressions could not be measured.
-                        "cache_hit_tokens": int(getattr(usage, "cache_read_input_tokens", 0) or 0),
-                    }
+                usage_d = record_usage(getattr(event, "usage", None))
                 yield BrainDelta(finish_reason=finish, usage=usage_d or None)

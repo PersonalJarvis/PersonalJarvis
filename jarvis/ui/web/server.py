@@ -99,6 +99,8 @@ class WebServer:
     def __init__(self, cfg: JarvisConfig, bus: EventBus | None = None) -> None:
         self.cfg = cfg
         self._browser_prepare_task: asyncio.Task[None] | None = None
+        self._stopping = False
+        self._shutdown_complete = False
         self.bus = bus if bus is not None else get_default_bus()
         self._clients: dict[str, WebSocket] = {}
         self._client_send_locks: dict[str, asyncio.Lock] = {}
@@ -397,11 +399,12 @@ class WebServer:
         from .setup_routes import router as setup_router
         from .skills_routes import router as skills_router
         from .socials_routes import router as socials_router
-        from .society_routes import router as society_router
         from .society_browser_routes import router as society_browser_router
         from .society_figure_routes import router as society_figure_router
+        from .society_routes import router as society_router
         from .starter_plan_routes import router as starter_plan_router
         from .sub_agents_routes import router as sub_agents_router
+        from .swarm_routes import router as swarm_router
         from .tasks_routes import router as tasks_router
         from .telephony_routes import router as telephony_router
         from .tool_model_routes import router as tool_model_router
@@ -596,6 +599,9 @@ class WebServer:
 
         app.include_router(mars_router)
         app.include_router(society_browser_router)
+        app.state.swarm = None
+        app.state.swarm_factory = self._build_swarm_runtime
+        app.include_router(swarm_router)
         app.include_router(society_figure_router)
         app.include_router(drop_router)
         # Default: no recorder wired up — _init_session_stack() in start()
@@ -1013,6 +1019,7 @@ class WebServer:
             # over, so the live app must accept the same POST as an idempotent
             # no-op instead of returning FastAPI's 405 Method Not Allowed.
             from jarvis.society.browser.install import start_install
+
             browser_data = Path(getattr(self.cfg.memory, "data_dir", None) or "data")
             start_install(browser_data)
             return Response(status_code=204)
@@ -1204,9 +1211,7 @@ class WebServer:
             # Display brand follows the wake-word-derived assistant name.
             brand = agent_brand(cfg)
 
-            def _key_flags(
-                slot: tuple[str, str] | None, provider: str
-            ) -> tuple[bool, bool]:
+            def _key_flags(slot: tuple[str, str] | None, provider: str) -> tuple[bool, bool]:
                 """Whether a dedicated and/or a shared credential exists."""
                 try:
                     dedicated = bool(slot and get_secret(slot[0], env_fallback=slot[1]))
@@ -2503,6 +2508,12 @@ class WebServer:
         """
         import uvicorn
 
+        if self._stopping and not self._shutdown_complete:
+            raise RuntimeError("Server shutdown is incomplete; finish it before restarting.")
+        self._stopping = False
+        self._shutdown_complete = False
+        self.app.state.society_stopping = False
+
         # Boot profiling (opt-in via JARVIS_BOOT_PROFILE=1; zero behavior change
         # otherwise). Emits one machine-readable ``[BOOT_PROFILE] <phase>=<ms>``
         # line per phase to stdout so the boot-timing harness
@@ -2825,13 +2836,15 @@ class WebServer:
         # browser-only install has no desktop shell to warm the realtime
         # transport for it.
         self._schedule_realtime_transport_warm()
+
         # Defer provisioning until the boot chain returns control to the server.
         async def prepare_browser() -> None:
             from jarvis.society.browser import install
+
             data_dir = Path(getattr(self.cfg.memory, "data_dir", None) or "data")
             try:
                 install.start_install(data_dir)
-                while install.snapshot(data_dir)["running"]:
+                while install.snapshot(data_dir)["running"]:  # noqa: ASYNC110 - installer exposes only snapshots
                     await asyncio.sleep(1)
                 if install.is_installed(data_dir):
                     runtime = self._build_society_runtime()
@@ -2841,7 +2854,11 @@ class WebServer:
                         await runtime.browser.live.ensure(lead)
             except Exception:
                 logger.debug("Browser preparation deferred after failure", exc_info=True)
+
         self._browser_prepare_task = asyncio.create_task(prepare_browser(), name="browser-prepare")
+        self._swarm_recovery_task = asyncio.create_task(
+            self._recover_swarms_after_ready(), name="deferred-swarm-recovery"
+        )
         # Existing Mars work recovers with zero clients. The deferred helper
         # performs its existence probe and runtime composition after boot yields.
         from .mars_routes import schedule_mars_resume
@@ -2993,7 +3010,7 @@ class WebServer:
             recover_missions=_is_primary,
             tts_speak_fn=None,  # TTS wiring comes from DesktopApp once voice is live
             brain_caller=None,  # The decomposer runs in heuristic-only mode
-            # Welle-4 Y: pass the speech bus through for MissionAnnouncer, so
+            # Wave-4 Y: pass the speech bus through for MissionAnnouncer, so
             # mission-completion events land as AnnouncementRequested on the
             # global bus — pipeline._on_announcement subscribes there.
             speech_bus=self.bus,
@@ -3027,7 +3044,7 @@ class WebServer:
         self._missions_voice_listener = result["voice_listener"]
         self._missions_cleanup_task = result["cleanup_task"]
 
-        # Welle-4 wiring: the spawn_worker tool in the brain needs both the
+        # Wave-4 wiring: the spawn_worker tool in the brain needs both the
         # MissionManager AND the Kontrollierer. The brain is built in
         # DesktopApp._start_speech_and_orb via build_default_brain() — the
         # singleton setters make both available there (lazy resolve via
@@ -3076,7 +3093,7 @@ class WebServer:
         if ws_mgr is not None:
             result["manager"].bus.subscribe_all(ws_mgr.fanout)
 
-        # Welle-4 follow-up: bridge MissionBus -> SubAgentRegistry so the
+        # Wave-4 follow-up: bridge MissionBus -> SubAgentRegistry so the
         # Sub-Agents board lights up. The legacy publishers for
         # JarvisAgentTaskStarted/Completed were removed in the migration; without
         # this hook the dashboard stays empty even while missions are flowing.
@@ -3404,7 +3421,10 @@ class WebServer:
         from jarvis.harness.manager import HarnessManager
 
         def workflow_services():
-            return (getattr(self.app.state, "workflow_store", None), getattr(self.app.state, "workflow_runner", None))
+            return (
+                getattr(self.app.state, "workflow_store", None),
+                getattr(self.app.state, "workflow_runner", None),
+            )
 
         runner = TaskRunner(
             store=store,
@@ -3417,7 +3437,9 @@ class WebServer:
             owned_action_guard=self._guard_society_routine_action,
             workflow_services=workflow_services,
         )
-        scheduler = TaskScheduler(store=store, bus=self.bus, runner=runner, workflow_services=workflow_services)
+        scheduler = TaskScheduler(
+            store=store, bus=self.bus, runner=runner, workflow_services=workflow_services
+        )
         scheduler.bind_bus()
         await scheduler.hydrate()
 
@@ -3599,7 +3621,7 @@ class WebServer:
         self.app.state.channel_chat_bridge = bridge
 
         if "telegram" in manager.started():
-            logger.info("Friends-Stack live: Telegram-Channel aktiv")
+            logger.info("Friends-Stack live: Telegram channel active")
         else:
             errs = manager.start_errors().get("telegram")
             if errs:
@@ -3672,6 +3694,32 @@ class WebServer:
             await runtime.ensure_started()
         return await run_owned_routine(runtime, task_id, tags, prompt, cancel)
 
+    def _build_swarm_runtime(self) -> Any:
+        from jarvis.swarm.runtime import build_service
+
+        service = getattr(self.app.state, "swarm", None)
+        if service is None:
+            if getattr(self, "_stopping", False):
+                raise RuntimeError("Swarm cannot start while the server is shutting down.")
+            service = build_service(self.cfg, control_bus=self.bus)
+            from jarvis.society.swarm_port import SocietySwarmProfiles
+
+            service.profiles = SocietySwarmProfiles(self._build_society_runtime)
+            self.app.state.swarm = service
+        return service
+
+    async def _recover_swarms_after_ready(self) -> None:
+        from jarvis.swarm.runtime import prepare_install, recovery_needed
+
+        await asyncio.sleep(0)
+        try:
+            if not await asyncio.to_thread(recovery_needed, self.cfg):
+                return
+            await asyncio.to_thread(prepare_install, self.cfg)
+            await self._build_swarm_runtime().start()
+        except Exception as exc:  # noqa: BLE001 - in-app recovery remains available
+            logger.opt(exception=exc).error("Swarm recovery needs attention in Ultra Agent Swarm")
+
     def _build_society_runtime(self) -> Any:
         """Build the agent-society runtime on first use (see society_routes).
 
@@ -3688,6 +3736,8 @@ class WebServer:
 
         if getattr(state, "society", None) is not None:
             return state.society
+        if getattr(self, "_stopping", False):
+            raise RuntimeError("Society cannot start while the server is shutting down.")
 
         def _manager() -> Any | None:
             return getattr(state, "mission_manager", None)
@@ -3739,9 +3789,12 @@ class WebServer:
             event_publish=self.bus.publish,
             app_bus=self.bus,
             task_services=lambda: (
-                getattr(state, "task_store", None), getattr(state, "task_scheduler", None)
+                getattr(state, "task_store", None),
+                getattr(state, "task_scheduler", None),
             ),
+            swarm_requests=self._build_swarm_runtime,
         )
+
         def browser_brain(agent: Any) -> Any:
             from jarvis.agent_chat.browser_model import browser_model_for_agent
 
@@ -3771,6 +3824,9 @@ class WebServer:
         return AgentChatService(store, assistant_name=_name, bus=lambda: self.bus)
 
     async def stop(self) -> None:
+        if getattr(self, "_shutdown_complete", False):
+            return
+        self._stopping = True
         # Fence lazy creation even when no Society owner exists yet. The shared
         # brain factory and HTTP surface can still be called while shutdown awaits.
         self.app.state.society_stopping = True
@@ -3786,20 +3842,28 @@ class WebServer:
             # Keep only the type: cleanup failures can contain private payloads.
             mars_shutdown_failure = type(exc).__name__
             logger.warning("Mars station cleanup incomplete ({})", mars_shutdown_failure)
+        society_shutdown_failure: str | None = None
+        society = getattr(self.app.state, "society", None)
+        if society is not None:
+            try:
+                await society.quiesce()
+            except Exception as exc:  # noqa: BLE001 -- preserve storage and drain independent owners
+                society_shutdown_failure = type(exc).__name__
+                logger.warning(
+                    "Society admission cleanup incomplete ({})", society_shutdown_failure
+                )
         if self._browser_prepare_task is not None:
             self._browser_prepare_task.cancel()
             await asyncio.gather(self._browser_prepare_task, return_exceptions=True)
             self._browser_prepare_task = None
-        society = getattr(self.app.state, "society", None)
-        society_shutdown_failure: str | None = None
-        if society is not None:
-            try:
-                # The runtime owns delivery tasks, subscriptions and SQLite as
-                # well as the browser. Leaving its store open prevents exit.
-                await asyncio.wait_for(society.close(), timeout=5.0)
-            except Exception as exc:  # noqa: BLE001 -- finish independent cleanup below
-                society_shutdown_failure = type(exc).__name__
-                logger.warning("Society runtime cleanup incomplete ({})", society_shutdown_failure)
+        swarm_recovery = getattr(self, "_swarm_recovery_task", None)
+        if swarm_recovery is not None:
+            swarm_recovery.cancel()
+            await asyncio.gather(swarm_recovery, return_exceptions=True)
+        swarm = getattr(self.app.state, "swarm", None)
+        if swarm is not None:
+            await swarm.stop()
+            self.app.state.swarm = None
         self._mic_level_sessions.clear()
         self._stop_mic_level_bridge()
 
@@ -4097,6 +4161,19 @@ class WebServer:
         self._server = None
         self._serve_task = None
 
+        # Swarm collectors, mission/chat completion and HTTP handlers can all
+        # write Society state. Drain those owners before closing its subscriptions
+        # and SQLite connection; closing only the browser leaks a worker thread.
+        society = getattr(self.app.state, "society", None)
+        if society is not None:
+            try:
+                await asyncio.wait_for(society.close(), timeout=5.0)
+            except Exception as exc:  # noqa: BLE001 - other shared owners still need cleanup
+                society_shutdown_failure = type(exc).__name__
+                logger.warning("Society runtime cleanup incomplete ({})", society_shutdown_failure)
+            else:
+                self.app.state.society = None
+
         # Browser/desktop realtime owners must release their ephemeral threads
         # before their shared process is reaped. Keep this unconditional: a
         # failed startup can complete the Codex handshake before uvicorn marks
@@ -4107,6 +4184,12 @@ class WebServer:
             await close_shared_codex_app_servers()
         except Exception as exc:  # noqa: BLE001 - shutdown continues best-effort
             logger.opt(exception=exc).warning("Codex subscription app-server cleanup failed")
+            return
+        self._shutdown_complete = (
+            getattr(self.app.state, "society", None) is None
+            and mars_shutdown_failure is None
+            and society_shutdown_failure is None
+        )
 
         if mars_shutdown_failure is not None:
             # Report incomplete Mars cleanup only after unrelated browser, chat,

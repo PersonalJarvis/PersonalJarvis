@@ -27,6 +27,7 @@ every other string in this module is English.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
@@ -36,6 +37,29 @@ from typing import Any
 REPLY_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es")
 
 VOICE_MODES: tuple[str, ...] = ("pipeline", "realtime")
+
+# i18n-allow: multilingual speech-input vocabulary for explicit owner commands.
+_SWARM_OWNER_REQUEST = re.compile(
+    r"^\s*(?:(?:please|can you|could you|bitte|kannst du|por favor|puedes)\s+)?"
+    r"(?:create|start|pause|resume|stop|cancel|archive|show|list|inspect|open|"
+    r"erstelle|starte|pausiere|stoppe|beende|archiviere|zeige|zeig|öffne|"  # i18n-allow: speech input
+    r"crea|inicia|pausa|reanuda|detén|cancela|archiva|muestra|abre)\s+"
+    r"(?:(?:a|an|the|my|this|that|our|einen|ein|den|die|das|meinen|meine|diesen|diese|"  # i18n-allow: speech input
+    r"un|una|el|la|mi|mis|este|esta|ultra|agent)\s+){0,6}"
+    r"(?:swarms?(?:\s+teams?)?|(?:agenten)?schwarm|enjambres?)"
+    r"(?=$|[.!?,:;]|\s+(?:to|for|with|about|named|called|status|tasks|teams?|"
+    r"zu|für|mit|um|namens|para|con|llamado|de)\b)",  # i18n-allow: speech input
+    re.IGNORECASE,
+)
+
+
+def is_swarm_owner_request(text: str) -> bool:
+    """Keep explicit Swarm commands out of the generic mission spawn shortcut.
+
+    This only defers routing to the command tools and their confirmation gate;
+    it never creates a team or infers opt-in from an ordinary task description.
+    """
+    return _SWARM_OWNER_REQUEST.search(text[:20000]) is not None
 
 
 @dataclass(frozen=True)
@@ -183,10 +207,159 @@ def _society_profile_properties() -> dict[str, Any]:
     }
 
 
+def _swarm_commands() -> tuple[AppCommand, ...]:
+    """Owner-only commands over the Swarm REST surface; no worker authority."""
+    from jarvis.core.protocols import PreparationAnswers, PreparationBegin, PreparationLaunch
+    from jarvis.core.swarm_types import TeamCreate
+
+    team_id = _str_param(
+        "Team id returned by swarm-list or swarm-create.", min_length=32, max_length=32
+    )
+    page = {
+        "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+        "offset": {"type": "integer", "minimum": 0, "maximum": 10000000, "default": 0},
+    }
+    def preparation_command(command_id: str, path: str, model: Any, description: str) -> AppCommand:
+        schema = model.model_json_schema()
+        schema["properties"] = {"team_id": team_id, **schema["properties"]}
+        schema["required"] = ["team_id", *schema.get("required", [])]
+        return AppCommand(id=command_id, title=description, description=description,
+            method="POST", path=path, ui_section="ultra-swarm", params=schema,
+            path_params=("team_id",), dangerous=True, worker_allowed=False)
+    return (
+        AppCommand(
+            id="swarm-list", title="List independent Swarm teams",
+            description="List the user's explicitly created Swarm teams and their saved status.",
+            method="GET", path="/api/swarm/teams", ui_section="ultra-swarm",
+            params={"type": "object", "properties": page}, worker_allowed=False,
+            voice_aliases={
+                "en": ("show my swarm teams",),
+                "de": ("zeige meine Swarm Teams",),  # i18n-allow: input vocabulary
+                "es": ("muestra mis equipos Swarm",),  # i18n-allow: input vocabulary
+            },
+        ),
+        AppCommand(
+            id="swarm-create", title="Create an explicitly requested Swarm team",
+            description=(
+                "Create a separate team only when the user explicitly asks for a Swarm. "
+                "Supply only their selected goal, acceptance criteria and authorized inputs; "
+                "never copy conversation history, personal notes or credentials. Reuse the "
+                "same request_key when retrying the same creation. Budgets use exact decimal "
+                "strings. This begins clarification only. Ask the returned questions, submit "
+                "the user's answers with swarm-plan, and show the saved plan before requesting "
+                "explicit approval for swarm-launch. Never infer plan approval from the "
+                "initial goal."
+            ),
+            method="POST", path="/api/swarm/preparations", ui_section="ultra-swarm",
+            params=TeamCreate.model_json_schema(), dangerous=True, worker_allowed=False,
+            voice_aliases={
+                "en": ("create a swarm to research this topic",),
+                "de": ("erstelle einen Swarm für diese Recherche",),  # i18n-allow
+                "es": ("crea un Swarm para esta investigación",),  # i18n-allow
+            },
+        ),
+        AppCommand(id="swarm-preparation", title="Read the selected Swarm's preparation",
+            description=("Read saved questions, answers and the exact plan revision/digest; "
+                         "this never runs work."),
+            method="GET", path="/api/swarm/teams/{team_id}/preparation", ui_section="ultra-swarm",
+            params={"type": "object", "properties": {"team_id": team_id}, "required": ["team_id"]},
+            path_params=("team_id",), worker_allowed=False),
+        preparation_command("swarm-clarify", "/api/swarm/teams/{team_id}/preparation",
+            PreparationBegin,
+            "Begin or retry goal clarification for an unlaunched team when the owner requests it."),
+        preparation_command("swarm-plan", "/api/swarm/teams/{team_id}/preparation/answers",
+            PreparationAnswers,
+            "Submit only the user's actual answers or their explicit delegation; generate a saved "
+            "plan for review without launching workers."),
+        preparation_command("swarm-launch", "/api/swarm/teams/{team_id}/launch", PreparationLaunch,
+            "Launch only after the owner has reviewed and explicitly approved this saved plan "
+            "revision. Send its exact digest, revision and storage generation; never invent "
+            "approval or replacement tasks."),
+        AppCommand(
+            id="swarm-show", title="Inspect one Swarm team",
+            description="Read one selected team's actual saved state, limits and accounting.",
+            method="GET", path="/api/swarm/teams/{team_id}", ui_section="ultra-swarm",
+            params={"type": "object", "properties": {"team_id": team_id}, "required": ["team_id"]},
+            path_params=("team_id",), worker_allowed=False,
+            voice_aliases={
+                "en": ("show this swarm's status",),
+                "de": ("zeige den Status dieses Swarms",),  # i18n-allow: input vocabulary
+                "es": ("muestra el estado de este Swarm",),  # i18n-allow: input vocabulary
+            },
+        ),
+        AppCommand(
+            id="swarm-control", title="Control a selected Swarm team",
+            description=(
+                "Start, pause, resume, stop, cancel or archive the selected team as explicitly "
+                "requested. Use its actual team_id, latest version and storage_generation "
+                "from the selected snapshot. An empty generation identifies legacy storage. "
+                "Starting or resuming "
+                "authorizes the trusted scheduler to run within the team's saved limits. "
+                "A preparation requires explicit plan approval through swarm-launch; start cannot "
+                "bypass that review. Report the server's resulting state; never create another "
+                "team as a retry."
+            ),
+            method="POST", path="/api/swarm/teams/{team_id}/{action}", ui_section="ultra-swarm",
+            params={"type": "object", "properties": {
+                "team_id": team_id,
+                "action": _str_param("Requested lifecycle action.", enum=[
+                    "start", "pause", "resume", "stop", "cancel", "archive",
+                ]),
+                "expected_version": {"type": "integer", "minimum": 1},
+                "expected_storage_generation": _str_param(
+                    "Snapshot storage_generation; empty string is valid for legacy storage.",
+                    max_length=64,
+                ),
+            }, "required": ["team_id", "action"]},
+            path_params=("team_id", "action"), dangerous=True, worker_allowed=False,
+            voice_aliases={
+                "en": ("pause this swarm",),
+                "de": ("pausiere diesen Swarm",),  # i18n-allow: input vocabulary
+                "es": ("pausa este Swarm",),  # i18n-allow: input vocabulary
+            },
+        ),
+        AppCommand(
+            id="swarm-world", title="Inspect a Swarm's live work projection",
+            description="Read a bounded team-local snapshot of workers, groups, work and activity.",
+            method="GET", path="/api/swarm/teams/{team_id}/world", ui_section="ultra-swarm",
+            params={"type": "object", "properties": {
+                "team_id": team_id,
+                "group": _str_param("Optional group id within this team.", max_length=100),
+            }, "required": ["team_id"]},
+            path_params=("team_id",), worker_allowed=False,
+            voice_aliases={
+                "en": ("what are this swarm's workers doing",),
+                "de": ("was machen die Worker dieses Swarms",),  # i18n-allow: input vocabulary
+                "es": ("qué hacen los agentes de este Swarm",),  # i18n-allow: input vocabulary
+            },
+        ),
+        AppCommand(
+            id="swarm-records", title="Inspect selected Swarm records",
+            description="Read a bounded page of evidence or work records from one selected team.",
+            method="GET", path="/api/swarm/teams/{team_id}/{kind}", ui_section="ultra-swarm",
+            params={"type": "object", "properties": {
+                "team_id": team_id,
+                "kind": _str_param("Record collection.", enum=[
+                    "tasks", "agents", "messages", "events", "artifacts", "reputation",
+                    "publications", "decisions", "checkpoints",
+                ]),
+                **page,
+            }, "required": ["team_id", "kind"]},
+            path_params=("team_id", "kind"), worker_allowed=False,
+            voice_aliases={
+                "en": ("show this swarm's evidence",),
+                "de": ("zeige die Belege dieses Swarms",),  # i18n-allow: input vocabulary
+                "es": ("muestra la evidencia de este Swarm",),  # i18n-allow: input vocabulary
+            },
+        ),
+    )
+
+
 def _build_registry() -> tuple[AppCommand, ...]:
     """Assemble the curated v1 command set (high-value commands first —
     the long tail stays reachable through the dynamic CLI ``api`` layer)."""
     return (
+        *_swarm_commands(),
         AppCommand(
             id="society-create-agent",
             title="Create a persistent team agent",

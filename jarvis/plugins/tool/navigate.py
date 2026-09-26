@@ -25,6 +25,7 @@ KNOWN: frozenset[str] = frozenset(
     {
         "chats",
         "agents",
+        "ultra-swarm",
         "skills",
         "plugins",
         "docs",
@@ -74,6 +75,8 @@ KNOWN: frozenset[str] = frozenset(
 # Natural-language aliases (DE + EN) → canonical id. The router usually passes an
 # id from the schema enum; this is the safety net for spoken labels/synonyms.
 _ALIASES: dict[str, str] = {
+    "swarm": "ultra-swarm",
+    "ultra agent swarm": "ultra-swarm",
     # Agentic IDE — the spoken forms people reach for. "agentic" is a mouthful
     # in every supported language, so the plain-words variants matter more here
     # than for sections whose label is already a common noun.

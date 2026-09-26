@@ -804,6 +804,7 @@ class GeminiBrain:
     name: str = "gemini"
     context_window: int = 1_048_576
     supports_tools: bool = True
+    scoped_execution_only: bool = True  # Never falls back to ambient agent/tool execution.
     supports_vision: bool = True
     #: Credential/endpoint identity used for ``resolve_provider_endpoint`` and
     #: for the pinned-route decision. Split from ``name`` so a sibling class can
@@ -977,7 +978,7 @@ class GeminiBrain:
             log.warning(
                 "Gemini cache create failed, falling back to direct for the next %.0fs: %s",
                 _CACHE_CREATE_RETRY_AFTER_S,
-                exc,
+                type(exc).__name__,
             )
             return None
 
@@ -1304,7 +1305,7 @@ class GeminiBrain:
                     log.warning(
                         "Gemini stale context-cache (BUG-019) — invalidating "
                         "and retrying once without cache: %s",
-                        exc,
+                        type(exc).__name__,
                     )
                     self.invalidate_cache()
                     config_dict.pop("cached_content", None)
@@ -1333,7 +1334,7 @@ class GeminiBrain:
                     log.info(
                         "Gemini model %s rejected thinking_config — retrying once without it: %s",
                         self._model,
-                        exc,
+                        type(exc).__name__,
                     )
                     rejected_budget = getattr(
                         config_dict.get("thinking_config"),

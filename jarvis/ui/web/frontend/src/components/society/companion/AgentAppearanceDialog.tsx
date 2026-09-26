@@ -1,3 +1,4 @@
+import { BrandedSelect } from "@/components/ui/select";
 import { useRef, useState, Suspense, lazy } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useQueryClient } from "@tanstack/react-query";
@@ -30,15 +31,13 @@ function CharacterEditor({ value, onChange, disabled, lead }: { value: FigureRec
   const slots = value.model ? [] : slotsWithParts(value.archetype, style, base?.family ?? null, base?.fitSize ?? null);
   return <fieldset disabled={disabled} className="grid gap-4 p-4" data-testid="character-editor">
     <div className="h-60"><Suspense fallback={null}><AgentFigureViewer recipe={value} quiet /></Suspense></div>
-    <label className="grid grid-cols-[6rem_1fr] items-center gap-3 text-sm">{t("society.create.style")}<select aria-label={t("society.create.style")} className={selectClass} value={style} onChange={e => {
-      const first = basesForStyle(e.target.value)[0]; if (first) selectBase(first.base, e.target.value);
-    }}>{availableStyles.map(s => <option key={s} value={s}>{t(`society.style.${s}`)}</option>)}{value.model && <option value={style}>{t("society.style.custom")}</option>}</select></label>
-    {!value.model && <label className="grid grid-cols-[6rem_1fr] items-center gap-3 text-sm">{t("society.create.base")}<select aria-label={t("society.create.base")} className={selectClass} value={value.base} onChange={e => selectBase(e.target.value, style)}>
-      {basesForStyle(style).map(b => <option key={b.id} value={b.base}>{b.label}</option>)}
-    </select></label>}
-    {slots.map(slot => <label key={slot} className="grid grid-cols-[6rem_1fr] items-center gap-3 text-sm">{t(`society.slot.${slot}`)}<select className={selectClass} value={value.parts[slot] ?? ""} onChange={e => {
-      const parts = { ...value.parts }; if (e.target.value) parts[slot] = e.target.value; else delete parts[slot]; onChange({ ...value, parts });
-    }}><option value="">{t("society.create.none")}</option>{partsForSlot(slot, value.archetype, style, base?.family ?? null, base?.fitSize ?? null).map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</select></label>)}
+    <label className="grid grid-cols-[6rem_1fr] items-center gap-3 text-sm">{t("society.create.style")}<BrandedSelect ariaLabel={t("society.create.style")} className={selectClass} value={style} onValueChange={selected => {
+      const first = basesForStyle(selected)[0]; if (first) selectBase(first.base, selected);
+    }} disabled={disabled} options={[...availableStyles.map(s => ({ value: s, label: t(`society.style.${s}`) })), ...(value.model ? [{ value: style, label: t("society.style.custom") }] : [])]} /></label>
+    {!value.model && <label className="grid grid-cols-[6rem_1fr] items-center gap-3 text-sm">{t("society.create.base")}<BrandedSelect ariaLabel={t("society.create.base")} className={selectClass} value={value.base} onValueChange={selected => selectBase(selected, style)} disabled={disabled} options={basesForStyle(style).map(b => ({ value: b.base, label: b.label }))} /></label>}
+    {slots.map(slot => <label key={slot} className="grid grid-cols-[6rem_1fr] items-center gap-3 text-sm">{t(`society.slot.${slot}`)}<BrandedSelect className={selectClass} value={value.parts[slot] ?? ""} onValueChange={selected => {
+      const parts = { ...value.parts }; if (selected) parts[slot] = selected; else delete parts[slot]; onChange({ ...value, parts });
+    }} ariaLabel={t(`society.slot.${slot}`)} disabled={disabled} options={[{ value: "", label: t("society.create.none") }, ...partsForSlot(slot, value.archetype, style, base?.family ?? null, base?.fitSize ?? null).map(p => ({ value: p.id, label: p.label }))]} /></label>)}
     <div className="grid grid-cols-2 gap-3">{EDITABLE_CELLS.map(cell => <label key={cell} className="flex items-center justify-between gap-2 text-sm">{t(`society.cell.${cell}`)}<input type="color" value={colors[cell]} onChange={e => onChange({ ...value, palette: { ...value.palette, [cell]: e.target.value } })} className="h-8 w-10 rounded border border-border bg-background" /></label>)}</div>
     <label className="text-sm">{t("society.create.height")} <span className="float-right">{(value.heightM ?? base?.heightM ?? 1.75).toFixed(2)} m</span>
       <input className="mt-2 w-full" type="range" min={0.6} max={2.4} step={0.05} value={value.heightM ?? base?.heightM ?? 1.75} onChange={e => onChange({ ...value, heightM: Number(e.target.value) })} />

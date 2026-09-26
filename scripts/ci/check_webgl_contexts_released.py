@@ -75,6 +75,33 @@ def _is_test(path: Path) -> bool:
     return path.name.endswith(_TEST_SUFFIXES) or "__tests__" in path.parts
 
 
+def _delegates_release(path: Path, text: str, base: Path) -> bool:
+    """Recognize a called local lifecycle hook with its own release mechanism.
+
+    Team-scoped hooks must not change the ordinary island's global fallback.
+    Follow one relative named import, require its call and exported definition,
+    and inspect the hook itself. An unused import or empty wrapper is no proof.
+    """
+    imports = re.findall(r"import\s*\{([^}]+)\}\s*from\s*['\"](\.[^'\"]+)['\"]", text)
+    for names, module in imports:
+        for binding in names.split(","):
+            match = re.fullmatch(r"\s*(use[A-Z]\w*)(?:\s+as\s+(\w+))?\s*", binding)
+            if not match or not re.search(rf"\b{match[2] or match[1]}\s*\(", text):
+                continue
+            for suffix in (".ts", ".tsx"):
+                target = (path.parent / (module + suffix)).resolve()
+                if not target.is_relative_to(base.resolve()) or not target.is_file():
+                    continue
+                try:
+                    hook = target.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue  # Unreadable release evidence cannot qualify its caller.
+                declaration = rf"\bexport\s+(?:function\s+{match[1]}\s*\(|const\s+{match[1]}\s*=)"
+                if re.search(declaration, hook) and any(token in hook for token in _RELEASES):
+                    return True
+    return False
+
+
 def offenders(root: Path | None = None) -> list[tuple[str, str]]:
     """Return (repo-relative path, what it mounts) for every unreleased scene."""
     base = root or _FRONTEND
@@ -90,6 +117,8 @@ def offenders(root: Path | None = None) -> list[tuple[str, str]]:
         if not mounted:
             continue
         if any(token in text for token in _RELEASES):
+            continue
+        if _delegates_release(path, text, base):
             continue
         found.append((_label(path), mounted))
     return found

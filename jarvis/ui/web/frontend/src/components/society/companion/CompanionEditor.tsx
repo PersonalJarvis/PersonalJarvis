@@ -1,3 +1,4 @@
+import { BrandedSelect } from "@/components/ui/select";
 import { useT } from "@/i18n";
 import { Switch } from "@/components/ui/switch";
 import { AgentSymbol } from "../AgentSymbol";
@@ -31,9 +32,7 @@ export function CompanionEditor({ value, onChange, disabled = false, lead = fals
       </div>
     </div>
     <label className="flex items-center justify-between gap-3 text-sm">{t("society.companion.eyes")}
-      <select aria-label={t("society.companion.eyes")} className="rounded-md border border-border bg-background p-2 text-foreground" value={value.eyes} onChange={e => update({ eyes: e.target.value as CompanionAppearance["eyes"] })}>
-        <option value="dots">{t("society.companion.dots")}</option><option value="lines">{t("society.companion.lines")}</option>
-      </select>
+      <BrandedSelect ariaLabel={t("society.companion.eyes")} className="rounded-md border border-border bg-background p-2 text-foreground" value={value.eyes} onValueChange={selected => update({ eyes: selected as CompanionAppearance["eyes"] })} disabled={disabled} options={[{ value: "dots", label: t("society.companion.dots") }, { value: "lines", label: t("society.companion.lines") }]} />
     </label>
     </>}
     <label className="flex items-center justify-between gap-3 text-sm">{t("society.companion.visible")}

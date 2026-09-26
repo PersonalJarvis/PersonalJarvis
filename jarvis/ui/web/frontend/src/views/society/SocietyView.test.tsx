@@ -4,9 +4,10 @@ import { setMapFullscreen } from "@/lib/mapFullscreen";
 import { LAST_AGENT_STORAGE_KEY } from "./lastAgent";
 import { SocietyView } from "./SocietyView";
 
-const app = vi.hoisted(() => ({ instance: { name: "default", isDev: false } }));
+const app = vi.hoisted(() => ({ instance: { name: "default", isDev: false }, desktop: false }));
+vi.mock("@/lib/nativeDrop", () => ({ inDesktopShell: () => app.desktop }));
 vi.mock("@/hooks/useAppInstance", () => ({ useAppInstance: () => app.instance }));
-beforeEach(() => { app.instance = { name: "default", isDev: false }; });
+beforeEach(() => { app.instance = { name: "default", isDev: false }; app.desktop = false; });
 
 vi.mock("@/lib/mapFullscreen", () => ({ setMapFullscreen: vi.fn(async () => undefined) }));
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, useLocaleChunk: () => true }));
@@ -108,6 +109,7 @@ it("navigates back through the window caption instead of a sections toggle", () 
 });
 
 it("requests fullscreen for Map and leaves it on Escape", async () => {
+  app.desktop = true;
   render(<SocietyView />);
   fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
   await screen.findByTestId("map");
@@ -172,5 +174,3 @@ it("still leaves the ordinary map when browser fullscreen exits", async () => {
   fireEvent(document, new Event("fullscreenchange"));
   expect(screen.queryByTestId("map")).toBeNull();
 });
-
-
