@@ -40,12 +40,12 @@ def decode(value: bytes | str) -> Any:
         raise ValueError("Source payload exceeds 32 KiB")
     try:
         text = value.decode("utf-8") if isinstance(value, bytes) else value
-    except UnicodeDecodeError:
+    except UnicodeDecodeError:  # Preserve non-UTF-8 payloads as base64 instead of dropping them.
         assert isinstance(value, bytes)
         return {"encoding": "base64", "value": base64.b64encode(value).decode("ascii")}
     try:
         return json.loads(text)
-    except ValueError:
+    except ValueError:  # Non-JSON payloads remain plain text.
         return text
 
 
@@ -410,7 +410,7 @@ async def listen_mqtt(
                 raise ConnectionError("MQTT disconnected")
             try:
                 message = await asyncio.wait_for(messages.get(), timeout=1)
-            except TimeoutError:
+            except TimeoutError:  # An empty MQTT poll keeps listening for the next message.
                 continue
             if message is None:
                 raise ConnectionError("MQTT disconnected")

@@ -227,7 +227,7 @@ def _is_macho_executable(path: Path) -> bool:
         mode = path.stat().st_mode
         with path.open("rb") as stream:
             magic = stream.read(4)
-    except OSError:
+    except OSError:  # An unreadable binary cannot pass the bundle probe.
         return False
     # Windows cannot represent POSIX execute bits. The only Windows caller is
     # the explicit cross-platform fixture seam; production validation runs on
@@ -260,6 +260,7 @@ def _codesign_issue(bundle: Path) -> str | None:
             creationflags=NO_WINDOW_CREATIONFLAGS,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
+        # The caller receives the verification failure as a diagnostic.
         return f"codesign verification did not run: {exc}"
     if result.returncode == 0:
         return None
@@ -284,7 +285,7 @@ def _bundle_cdhash(bundle: Path) -> str | None:
             check=False,
             creationflags=NO_WINDOW_CREATIONFLAGS,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired):  # A failed code-hash probe has no usable hash.
         return None
     # codesign prints the display block on stderr.
     match = re.search(r"^CDHash=([0-9a-f]+)", result.stderr or "", re.MULTILINE)
@@ -457,6 +458,7 @@ def _launchable_issue(candidate: Path) -> str | None:
         with info_path.open("rb") as stream:
             info = plistlib.load(stream)
     except (OSError, plistlib.InvalidFileException) as exc:
+        # The caller receives the plist failure text.
         return f"Info.plist is unreadable: {exc}"
     executable_name = info.get("CFBundleExecutable")
     if not isinstance(executable_name, str) or Path(executable_name).name != executable_name:
@@ -734,14 +736,14 @@ def _prefer_unversioned_runtime(dylib: Path, base_prefix: Path | None) -> Path:
         return dylib
     try:
         relative = dylib.relative_to(base_prefix)
-    except ValueError:
+    except ValueError:  # A library outside the base prefix keeps its original path.
         return dylib
     candidate = base_prefix.with_name(match.group("head") + (match.group("tail") or ""))
     sibling = candidate / relative
     try:
         if sibling.is_file():
             return sibling
-    except OSError:
+    except OSError:  # A missing sibling library keeps the original path.
         return dylib
     return dylib
 
@@ -950,6 +952,7 @@ def _runtime_identity_valid(
             and payload.get("machine") == platform.machine()
         )
     except (OSError, ValueError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
+        # Diagnostics record the unavailable identity before this probe fails.
         if diagnostics is not None:
             diagnostics.append(f"identity probe failed: {type(exc).__name__}: {exc}")
         return False
@@ -1003,6 +1006,7 @@ def _running_managed_bundle(
             diagnostics.extend(f"current process: {reason}" for reason in reasons)
         return None if reasons else current_bundle
     except (ImportError, OSError, TypeError, ValueError) as exc:
+        # Diagnostics record the failed process probe when requested.
         if diagnostics is not None:
             diagnostics.append(f"current process: probe failed: {type(exc).__name__}: {exc}")
         return None
@@ -1054,6 +1058,7 @@ def _bundle_version(bundle: Path) -> str | None:
         with (bundle / "Contents" / "Info.plist").open("rb") as stream:
             version = plistlib.load(stream).get("CFBundleShortVersionString")
     except (OSError, ValueError, plistlib.InvalidFileException):
+        # An unreadable plist has no usable version.
         return None
     return version if isinstance(version, str) else None
 

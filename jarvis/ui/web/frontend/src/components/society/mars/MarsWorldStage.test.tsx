@@ -40,7 +40,10 @@ function navigation(commands = [record]) {
     graph_signature: "a".repeat(64), seq: 1, commands, occupancies: [] });
 }
 function stage() { return document.querySelector("[data-mars-world]") as HTMLElement; }
-function start() { fireEvent.change(screen.getByRole("combobox", { name: "society.mars.follow_agent" }), { target: { value: "one" } }); }
+function start() {
+  fireEvent.click(screen.getByRole("combobox", { name: "society.mars.follow_agent" }));
+  fireEvent.click(screen.getByRole("option", { name: "Worker" }));
+}
 function saved() { return JSON.parse(localStorage.getItem(VIEW_KEY) ?? "null"); }
 beforeEach(() => {
   localStorage.clear();

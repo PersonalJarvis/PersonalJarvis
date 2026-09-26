@@ -142,5 +142,5 @@ class RoutineInvokeTool:
                 task_id, args.get("payload") or {}, str(uuid4()), mode="chat"
             )
             return ToolResult(status in {"queued", "duplicate", "filtered"}, {"status": status})
-        except ValueError as exc:
+        except ValueError as exc:  # Invalid input becomes an explicit failed tool result.
             return ToolResult(False, {}, str(exc))

@@ -179,7 +179,9 @@ class CodingSupervision:
             )
         except BaseException:
             # A cancelled/crashed delivery remains inspectable and is never replayed.
-            await self._pause_notice(key, "Assignment delivery interrupted. Inspect before resuming.")
+            await self._pause_notice(
+                key, "Assignment delivery interrupted. Inspect before resuming."
+            )
             self._ensure_loop()
             raise
         row.update(
@@ -353,7 +355,7 @@ class CodingSupervision:
         try:
             if budget is not None:
                 budget.assert_under_limit(row["trace_id"])
-        except Exception as exc:
+        except Exception as exc:  # The pause notice reports the budget failure to the agent.
             await self._pause_notice(key, f"Budget limit: {exc}")
             return
         if agent.daily_budget_usd > 0:

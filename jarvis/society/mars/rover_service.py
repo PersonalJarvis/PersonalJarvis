@@ -482,7 +482,7 @@ class RoverServiceMixin:
         async def check(ride):
             try:
                 await self._authorize(ride.agent_id, ride.vehicle_id, TravelMode.ROVER, rover=True)
-            except StationError as exc:
+            except StationError as exc:  # Return denied or unavailable for the rover receipt.
                 return ride.ride_id, "denied" if exc.status_code in {
                     401,
                     403,

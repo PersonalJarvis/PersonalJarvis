@@ -171,7 +171,7 @@ class MessageAgentTool:
         refs = args.get("refs")
         try:
             policy = select_reply_policy(args.get("reply_policy"), msg_type)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError) as exc:  # Invalid reply policy returns a policy failure.
             return _failure(FailureReason.BLOCKED_BY_POLICY, str(exc))
         reply_status = args.get("reply_status", "done")
         if reply_status not in ("done", "blocked"):
@@ -351,14 +351,14 @@ class WikiNoteTool:
             rel, _ = await rt.memory.note(
                 caller, title, text, origin=origin, trace=trace, root=self._vault_root
             )
-        except MemoryRefused as exc:
+        except MemoryRefused as exc:  # The caller receives the vault refusal as a policy failure.
             return _failure(FailureReason.BLOCKED_BY_POLICY, str(exc))
         try:
             from .memory import build_memory_diff as _build_diff
 
             vault = rt.memory.root(self._vault_root)
             after_page = (vault / rel).read_text(encoding="utf-8")
-        except OSError:
+        except OSError:  # If the saved page is unreadable, report the submitted text instead.
             after_page = text
         return ToolResult(
             success=True,
@@ -528,7 +528,7 @@ class ProposeChangeTool:
                 reason=str(args.get("reason") or ""),
                 session_id=self._session_id or caller.session_id,
             )
-        except ProposalRefused as exc:
+        except ProposalRefused as exc:  # Return the proposal's explicit refusal reason.
             return _failure(exc.reason, exc.detail)
         if apply_now:
             task_store, scheduler = rt.task_services()
@@ -637,7 +637,7 @@ class ShellTool:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "command is required")
         try:
             cwd = resolve_contained(self._workspace, args.get("cwd"))
-        except ContainmentError as exc:
+        except ContainmentError as exc:  # Return the workspace containment failure to the caller.
             return _failure(FailureReason.BLOCKED_BY_POLICY, str(exc))
         level = self._level(command)
         tier = "ask" if level == DESTRUCTIVE else "monitor"
@@ -664,7 +664,7 @@ class ShellTool:
         cwd.mkdir(parents=True, exist_ok=True)
         try:
             timeout = float(args.get("timeout_s") or DEFAULT_TIMEOUT_S)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # Invalid optional timeouts use the bounded default.
             timeout = DEFAULT_TIMEOUT_S
         result = await self._backend.run(command, cwd=cwd, timeout_s=timeout)
         body = {

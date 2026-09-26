@@ -3,6 +3,16 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { AgentBrowserPreview } from "./AgentBrowserPreview";
 import type { SocietyAgent } from "../data";
+vi.mock("@/i18n", () => ({
+  useLocaleChunk: () => true,
+  useT: () => (key: string) => ({
+    "society.browser_live.take_control": "Take control",
+    "society.browser_live.address": "Website address",
+    "society.browser_live.back": "Back",
+    "society.browser_live.screen": "Live browser of {0}",
+    "society.browser_live.live": "Live",
+  } as Record<string, string>)[key] ?? key,
+}));
 const { control, state } = vi.hoisted(() => ({
   control: vi.fn(),
   state: { connected: true, ready: true, fullWindow: false, manual: false, running: false,
