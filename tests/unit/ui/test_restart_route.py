@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from types import SimpleNamespace
 
@@ -36,19 +37,21 @@ def _manager_with_prompts(prompts):
     return SimpleNamespace(mission=mission)
 
 
-def test_restart_schedules_when_window_present():
+def test_restart_schedules_when_window_present(caplog):
     calls = {"n": 0}
 
     def request_restart():
         calls["n"] += 1
         return True
 
-    r = _client(SimpleNamespace(request_restart=request_restart)).post(
-        "/api/settings/restart-app"
-    )
+    with caplog.at_level(logging.INFO, logger="jarvis.ui.web.settings_routes"):
+        r = _client(SimpleNamespace(request_restart=request_restart)).post(
+            "/api/settings/restart-app"
+        )
     assert r.status_code == 200
     assert r.json() == {"ok": True, "restarting": True}
     assert calls["n"] == 1
+    assert "Desktop restart accepted by settings route (force=False)" in caplog.text
 
 
 def test_restart_rejects_control_bearer_even_when_forced():

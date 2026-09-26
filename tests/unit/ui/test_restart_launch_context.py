@@ -133,6 +133,8 @@ def test_invalid_helper_overrides_do_not_start_or_stop_any_process(args):
 
 
 def test_desktop_sends_context_to_detached_helper_without_running_it(monkeypatch):
+    from loguru import logger
+
     import jarvis
     from jarvis.ui import desktop_app
 
@@ -151,7 +153,14 @@ def test_desktop_sends_context_to_detached_helper_without_running_it(monkeypatch
 
     monkeypatch.setattr(desktop_app.threading, "Thread", DeferredThread)
     app = SimpleNamespace(_window=object())
-    assert desktop_app.DesktopApp._schedule_restart(app, drop_elevation=False)[0]
+    messages: list[str] = []
+    sink = logger.add(lambda message: messages.append(message.record["message"]), level="INFO")
+    try:
+        assert desktop_app.DesktopApp._schedule_restart(
+            app, drop_elevation=False, reason="desktop_request"
+        )[0]
+    finally:
+        logger.remove(sink)
     command, kwargs = spawned[0]
     root = str(Path(jarvis.__file__).resolve().parent.parent)
     assert command == [
@@ -167,3 +176,4 @@ def test_desktop_sends_context_to_detached_helper_without_running_it(monkeypatch
     ]
     assert kwargs == {"cwd": root, "env": {"JARVIS_INSTANCE": "dev"}}
     assert len(threads) == 1 and threads[0]["daemon"] is True
+    assert any("reason=desktop_request" in message for message in messages)

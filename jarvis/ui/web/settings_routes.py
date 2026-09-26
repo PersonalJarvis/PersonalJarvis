@@ -2484,6 +2484,7 @@ async def restart_app(request: Request, force: bool = False) -> dict[str, object
         raise HTTPException(
             status_code=503, detail="self-restart unavailable on this host"
         )
+    log.info("Desktop restart accepted by settings route (force=%s)", force)
     # Off the shared default pool — a restart must survive a pool exhausted by
     # hung threads (see ``_run_off_pool``). ``asyncio.to_thread`` would queue
     # behind the dead pool and hang the POST forever.

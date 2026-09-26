@@ -48,12 +48,16 @@ class _FakeApp:
         self._detached_windows: dict[str, Any] = {}
         self._auto_recovery_used = False
         self.restart_calls: list[bool] = []
+        self.restart_reasons: list[str] = []
         self.restart_result: tuple[bool, str] = (True, "restart scheduled")
         for key, value in overrides.items():
             setattr(self, key, value)
 
-    def _schedule_restart(self, *, drop_elevation: bool) -> tuple[bool, str]:
+    def _schedule_restart(
+        self, *, drop_elevation: bool, reason: str = "unspecified"
+    ) -> tuple[bool, str]:
         self.restart_calls.append(drop_elevation)
+        self.restart_reasons.append(reason)
         return self.restart_result
 
 
@@ -70,6 +74,7 @@ def test_unexpected_death_restarts_the_app() -> None:
     _note(app)
 
     assert app.restart_calls == [False]
+    assert app.restart_reasons == ["backend_recovery"]
     assert app._auto_recovery_used is True
 
 
