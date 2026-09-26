@@ -389,13 +389,14 @@ class _PrespawnProbe:
 
 
 @pytest.mark.asyncio
-async def test_prespawn_reaches_every_explicit_slot(monkeypatch) -> None:
-    """Unlike eager warming, the prestart is position-blind: a stone-cold
-    explicitly configured FALLBACK is what stranded the 2026-08-10 first call
-    when the primary was down. Providers without the capability are skipped
-    (AP-21), and one broken plugin never stops the others."""
+@pytest.mark.parametrize("eager_fallback", [False, True])
+async def test_prespawn_only_starts_primary_and_opted_in_fallback(
+    monkeypatch, eager_fallback
+) -> None:
+    """A process spawn can load a whole GPU stack even without awaiting readiness."""
     primary = _PrespawnProbe()
     fallback = _PrespawnProbe()
+    fallback.eager_warm_as_fallback = eager_fallback
     loaded = {"primary": primary, "plain": _NoWarmProbe(), "fallback": fallback}
 
     def _load(_group, pid, protocol=None):  # noqa: ANN001 - probe shape
@@ -413,7 +414,7 @@ async def test_prespawn_reaches_every_explicit_slot(monkeypatch) -> None:
     await factory.realtime_prespawn_transports(_cfg())
 
     assert primary.calls == 1
-    assert fallback.calls == 1
+    assert fallback.calls == int(eager_fallback)
 
 
 @pytest.mark.asyncio

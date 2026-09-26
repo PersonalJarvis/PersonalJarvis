@@ -5,6 +5,7 @@ import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { OpenRouterTtsControls } from "@/components/OpenRouterTtsVoicePicker";
 import { RealtimeOptionsControl } from "@/components/RealtimeOptionsControl";
+import { putVoiceMode } from "@/lib/voiceEngineMode";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useRowGestures } from "@/components/providers/rowGestures";
 import { Button } from "@/components/ui/button";
@@ -1580,10 +1581,18 @@ export function ProviderCard({
               // probe so the card does not visibly flicker while saying
               // "one moment".
               descriptor.codex_status?.reason_code === "busy") && (
-              <RealtimeOptionsControl
-                providerId={descriptor.id}
-                healthActive={descriptor.active}
-              />
+              descriptor.managed_server ? (
+                <details className="text-xs text-muted-foreground">
+                  <summary className="cursor-pointer">
+                    {t("apikeys_view.managed_protocol_options")}
+                  </summary>
+                  <div className="pt-3">
+                    <RealtimeOptionsControl providerId={descriptor.id} healthActive={descriptor.active} />
+                  </div>
+                </details>
+              ) : (
+                <RealtimeOptionsControl providerId={descriptor.id} healthActive={descriptor.active} />
+              )
             )}
 
           {/* Footer: the live connectivity test, visually separated from the
@@ -2215,21 +2224,28 @@ function ManagedServerPanel({
   useEffect(() => {
     if (running || !installed) return;
     let cancelled = false;
+    let timer: number | undefined;
     const read = async () => {
+      let delay = 20_000;
       try {
         const next = await managedServerStatus();
         if (!cancelled) setRuntime(next.runtime ?? null);
+        if (next.runtime?.boot?.starting || next.runtime?.ready === false || setupBusy || lifecycleBusy) {
+          delay = 1500;
+        }
       } catch {
         if (!cancelled) setRuntime(null);
+        delay = 5000;
+      } finally {
+        if (!cancelled) timer = window.setTimeout(read, delay + Math.random() * 500);
       }
     };
     void read();
-    const timer = window.setInterval(read, 20_000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
     };
-  }, [running, installed]);
+  }, [running, installed, setupBusy, lifecycleBusy]);
 
   if (!status) return null;
 
@@ -2351,7 +2367,7 @@ function ManagedServerPanel({
   ) => {
     if (!brainModel || !voiceModel) return;
     setError(null);
-    setSetupNote(null);
+    setSetupNote(t("apikeys_view.managed_setup_testing"));
     setSetupBusy(true);
     try {
       const choice = catalog?.brain.models.find((item) => item.id === brainModel);
@@ -2361,8 +2377,14 @@ function ManagedServerPanel({
         await downloadBrain(brainModel);
       }
       const result = await managedServerSetup(brainModel, voiceModel);
+      if (!descriptor.active) {
+        await switchRealtimeProvider(descriptor.id, descriptor.experimental === true);
+      }
+      await putVoiceMode("realtime");
+      window.dispatchEvent(new CustomEvent("jarvis:realtime-switched"));
       const latency = result.smoke.first_audio_ms;
       setSelectedBrain(brainModel);
+      setSelectedVoice(voiceModel);
       setSetupNote(
         latency === null
           ? t("apikeys_view.managed_setup_complete")
@@ -2374,6 +2396,7 @@ function ManagedServerPanel({
       await loadCatalog();
       onChanged();
     } catch (err) {
+      setSetupNote(null);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSetupBusy(false);
@@ -2560,6 +2583,9 @@ function ManagedServerPanel({
 
       {!running && catalog && (
         <div className="space-y-3" data-testid="managed-model-picker">
+          <p className="text-xs text-muted-foreground" role="status">
+            {t(descriptor.active ? "apikeys_view.managed_selected" : "apikeys_view.managed_not_selected")}
+          </p>
           <div className="grid gap-2 sm:grid-cols-3">
             <label className="space-y-1.5">
               <span className="flex items-center gap-1.5 text-xs font-medium">
