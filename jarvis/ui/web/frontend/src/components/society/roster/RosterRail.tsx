@@ -13,8 +13,14 @@
  * It sits on either edge. Beside the island it is the RIGHT rail with its own
  * fixed width; inside the agent card it is the LEFT eighth and takes its width
  * from the grid cell — same rows, same sizes, only the divider swaps sides.
+ *
+ * Reordering is press-and-drag: pressing the left mouse button anywhere on a
+ * row and moving it files the agent before or after the row under the
+ * pointer. A small movement threshold keeps plain clicks (open chat /
+ * profile) working; the drop position shows as a line above or below the
+ * target row. HTML5 drag events and Alt + Arrow keys stay as fallbacks.
  */
-import { lazy, Suspense, useCallback, useMemo, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Eye, GripVertical, Loader2, Plus, Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +36,8 @@ import { useRosterUnread } from "./useRosterUnread";
 
 const HIDDEN_AGENTS_KEY = "society.roster.hidden-agent-ids";
 const ORDER_KEY = "society.roster.order";
+/** How far the pointer must travel before a press becomes a drag. */
+const PRESS_DRAG_THRESHOLD_PX = 6;
 
 function readHiddenAgents(): string[] {
   try {
@@ -97,6 +105,7 @@ export function RosterRail({
   const [orderIds, setOrderIds] = useState(readRosterOrder);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropId, setDropId] = useState<string | null>(null);
+  const [dropAfter, setDropAfter] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
   const [menu, setMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
   const profile = agents.find((agent) => agent.agentId === profileId);
@@ -175,6 +184,39 @@ export function RosterRail({
     });
   }, [rows]);
 
+  /**
+   * File `fromId` directly before `toId`, or directly after it when `after`
+   * is set. Unlike the native-drop path this can also land behind the last
+   * row, which is what moving an agent down needs.
+   */
+  const moveToPosition = useCallback((fromId: string, toId: string, after: boolean) => {
+    if (fromId === toId) return;
+    setOrderIds((current) => {
+      const base = rows.map((a) => a.agentId);
+      const known = new Set(base);
+      for (const id of current) if (!known.has(id)) base.push(id);
+      const without = base.filter((id) => id !== fromId);
+      const at = without.indexOf(toId);
+      if (at === -1) {
+        const next = [...without, fromId];
+        try {
+          localStorage.setItem(ORDER_KEY, JSON.stringify(next));
+        } catch {
+          // Private mode: the order holds for this window.
+        }
+        return next;
+      }
+      const insert = after ? at + 1 : at;
+      const next = [...without.slice(0, insert), fromId, ...without.slice(insert)];
+      try {
+        localStorage.setItem(ORDER_KEY, JSON.stringify(next));
+      } catch {
+        // Private mode: the order holds for this window.
+      }
+      return next;
+    });
+  }, [rows]);
+
   /** Keyboard twin of the drag: Alt + Arrow Up / Down steps the row. */
   const moveStep = useCallback((agentId: string, delta: -1 | 1) => {
     setOrderIds((current) => {
@@ -203,7 +245,160 @@ export function RosterRail({
     }
   };
 
+  // --- Press-and-drag: the whole row is the handle. -----------------------
+  // Native HTML5 dragging starts only from non-interactive gaps, so a press
+  // on the agent's name or avatar never became a drag. These pointer
+  // listeners turn any left-button press on the row into a drag once the
+  // pointer travels past a small threshold, track the row under the pointer
+  // on the window (so fast moves stay tracked), and swallow the click that
+  // follows a completed drag so the chat does not open by accident.
+  const listRef = useRef<HTMLUListElement | null>(null);
+  const pendingRef = useRef<{ id: string; startX: number; startY: number; pointerId: number } | null>(null);
+  const pointerDragRef = useRef(false);
+  const suppressClickRef = useRef(false);
+  const dragIdRef = useRef<string | null>(null);
+  const dropIdRef = useRef<string | null>(null);
+  const dropAfterRef = useRef(false);
+  const reorderableRef = useRef(reorderable);
+  const moveToRef = useRef(moveToPosition);
+  dragIdRef.current = dragId;
+  dropIdRef.current = dropId;
+  dropAfterRef.current = dropAfter;
+  reorderableRef.current = reorderable;
+  moveToRef.current = moveToPosition;
+
+  useEffect(() => {
+    const rowElements = () => {
+      const list = listRef.current;
+      if (!list) return [] as HTMLElement[];
+      return [...list.querySelectorAll("[data-agent-id]")] as HTMLElement[];
+    };
+    const onMove = (event: PointerEvent) => {
+      if (!reorderableRef.current) return;
+      let sourceId = pointerDragRef.current ? dragIdRef.current : null;
+      if (!sourceId) {
+        const pending = pendingRef.current;
+        if (!pending) return;
+        if (event.pointerId !== pending.pointerId) return;
+        const moved = Math.max(Math.abs(event.clientX - pending.startX), Math.abs(event.clientY - pending.startY));
+        if (moved < PRESS_DRAG_THRESHOLD_PX) return;
+        pointerDragRef.current = true;
+        sourceId = pending.id;
+        setDragId(pending.id);
+        setDropId(null);
+        setDropAfter(false);
+      }
+      if (!sourceId) return;
+      {
+        const elements = rowElements();
+        const sourceEl = elements.find((el) => el.getAttribute("data-agent-id") === sourceId);
+        if (sourceEl) {
+          const rect = sourceEl.getBoundingClientRect();
+          if (rect.height > 0 && event.clientY >= rect.top && event.clientY <= rect.bottom) {
+            if (dropIdRef.current !== null) {
+              setDropId(null);
+              setDropAfter(false);
+            }
+            return;
+          }
+        }
+        let target: { id: string; after: boolean } | null = null;
+        for (const el of elements) {
+          const id = el.getAttribute("data-agent-id");
+          if (!id || id === sourceId) continue;
+          const rect = el.getBoundingClientRect();
+          if (rect.height === 0) continue;
+          if (event.clientY < rect.top + rect.height / 2) {
+            target = { id, after: false };
+            break;
+          }
+        }
+        if (!target) {
+          const others = elements.filter((el) => el.getAttribute("data-agent-id") !== sourceId);
+          const last = others[others.length - 1];
+          const lastId = last?.getAttribute("data-agent-id");
+          if (lastId) target = { id: lastId, after: true };
+        }
+        if (target) {
+          if (dropIdRef.current !== target.id || dropAfterRef.current !== target.after) {
+            setDropId(target.id);
+            setDropAfter(target.after);
+          }
+        } else if (dropIdRef.current !== null) {
+          setDropId(null);
+          setDropAfter(false);
+        }
+        if (event.cancelable) event.preventDefault();
+        return;
+      }
+    };
+    const finish = (commit: boolean) => {
+      if (pointerDragRef.current && dragIdRef.current) {
+        const from = dragIdRef.current;
+        const toId = dropIdRef.current;
+        const after = dropAfterRef.current;
+        pendingRef.current = null;
+        pointerDragRef.current = false;
+        setDragId(null);
+        setDropId(null);
+        setDropAfter(false);
+        if (commit && toId && toId !== from) moveToRef.current(from, toId, after);
+        suppressClickRef.current = true;
+        window.setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 0);
+      } else {
+        pendingRef.current = null;
+      }
+    };
+    const onUp = () => finish(true);
+    const onCancel = () => finish(false);
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") finish(false);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
+  const onRowPointerDown = (event: ReactPointerEvent, agentId: string) => {
+    if (!reorderable) return;
+    if (event.pointerType === "touch") return;
+    if (event.button !== undefined && event.button !== 0) return;
+    pendingRef.current = { id: agentId, startX: event.clientX, startY: event.clientY, pointerId: event.pointerId };
+  };
+
+  const onRowClickCapture = (event: MouseEvent) => {
+    if (suppressClickRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+
+  const openAgent = (agentId: string) => {
+    if (suppressClickRef.current) return;
+    onOpen(agentId);
+  };
+
+  const openProfile = (agentId: string) => {
+    if (suppressClickRef.current) return;
+    setProfileId(agentId);
+  };
+
   const onDragStart = (event: DragEvent, agentId: string) => {
+    // A press-drag already owns the gesture; never let the native backend
+    // start a second drag on top of it.
+    if (pointerDragRef.current) {
+      event.preventDefault();
+      return;
+    }
     setDragId(agentId);
     try {
       event.dataTransfer.effectAllowed = "move";
@@ -214,6 +409,7 @@ export function RosterRail({
   };
 
   const onDragOverRow = (event: DragEvent, agentId: string) => {
+    if (pointerDragRef.current) return;
     if (!dragId || dragId === agentId) return;
     event.preventDefault();
     try {
@@ -221,10 +417,14 @@ export function RosterRail({
     } catch {
       // Non-HTML backends ignore the hint; the drop still lands.
     }
-    if (dropId !== agentId) setDropId(agentId);
+    if (dropId !== agentId) {
+      setDropId(agentId);
+      setDropAfter(false);
+    }
   };
 
   const onDropRow = (event: DragEvent, agentId: string) => {
+    if (pointerDragRef.current) return;
     event.preventDefault();
     const from = dragId ?? (() => {
       try {
@@ -236,11 +436,14 @@ export function RosterRail({
     if (from && from !== agentId) moveBefore(from, agentId);
     setDragId(null);
     setDropId(null);
+    setDropAfter(false);
   };
 
   const endDrag = useCallback(() => {
+    if (pointerDragRef.current) return;
     setDragId(null);
     setDropId(null);
+    setDropAfter(false);
   }, []);
 
   const hiddenCount = agents.filter((agent) => hiddenIds.includes(agent.agentId)).length;
@@ -307,7 +510,7 @@ export function RosterRail({
                 lead.agentId === activeAgentId && "bg-secondary",
               )}
             >
-              <button type="button" onClick={() => setProfileId(lead.agentId)} aria-label={t("society.profile_card.open").replace("{0}", lead.name)} className="relative rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <button type="button" onClick={() => openProfile(lead.agentId)} aria-label={t("society.profile_card.open").replace("{0}", lead.name)} className="relative rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <AgentSwatch agent={lead} size={56} />
                 {lead.state === "working" ? (
                   <span
@@ -326,7 +529,7 @@ export function RosterRail({
                   />
                 ) : null}
               </button>
-              <button type="button" onClick={() => onOpen(lead.agentId)} aria-current={lead.agentId === activeAgentId ? "true" : undefined} className="flex max-w-full items-center justify-center gap-1.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <button type="button" onClick={() => openAgent(lead.agentId)} aria-current={lead.agentId === activeAgentId ? "true" : undefined} className="flex max-w-full items-center justify-center gap-1.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <span className="truncate text-sm font-medium text-foreground">{lead.name}</span>
                 <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-xs">
                   {t("society.tier.lead")}
@@ -338,15 +541,21 @@ export function RosterRail({
         {leadVisible ? (
           <div className="mx-3 mb-1 border-t border-border/60" aria-hidden />
         ) : null}
-        <ul className="flex flex-col gap-0.5 px-2 pb-3">
+        <ul ref={listRef} className="flex flex-col gap-0.5 px-2 pb-3">
           {loading && !leadVisible && rows.length === 0 ? (
             <li className="px-2 py-3 text-xs text-muted-foreground">{t("society.roster.loading")}</li>
           ) : null}
           {!loading && !leadVisible && rows.length === 0 ? (
             <li className="px-2 py-3 text-xs text-muted-foreground">{t("society.roster.empty")}</li>
           ) : null}
-          {rows.map((agent) => (
+          {rows.map((agent) => {
+            const isDragging = dragId === agent.agentId;
+            const isDropTarget = dropId === agent.agentId && dragId !== agent.agentId;
+            return (
             <li key={agent.agentId}>
+              {isDropTarget && !dropAfter ? (
+                <div aria-hidden className="mx-2 mb-0.5 h-0.5 rounded-full bg-sky-400" />
+              ) : null}
               <div
                 data-agent-id={agent.agentId}
                 draggable={reorderable}
@@ -355,28 +564,31 @@ export function RosterRail({
                 onDragLeave={() => setDropId((current) => (current === agent.agentId ? null : current))}
                 onDrop={(event) => onDropRow(event, agent.agentId)}
                 onDragEnd={endDrag}
+                onPointerDown={(event) => onRowPointerDown(event, agent.agentId)}
+                onClickCapture={onRowClickCapture}
                 onKeyDown={(event) => onRowKeyDown(event, agent.agentId)}
                 onContextMenu={(event) => openMenu(event, agent.agentId)}
                 title={reorderable ? `${t("society.roster.reorder")} · ${t("society.roster.reorder_keys")}` : undefined}
                 aria-keyshortcuts={reorderable ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
                 className={cn(
-                  "group flex w-full items-center rounded-md px-2 text-left transition-colors hover:bg-secondary",
+                  "group flex w-full select-none items-center rounded-md px-2 text-left transition-colors hover:bg-secondary",
+                  reorderable ? "cursor-grab" : null,
+                  isDragging ? "cursor-grabbing opacity-40" : null,
                   agent.agentId === activeAgentId && "bg-secondary",
                   hiddenIds.includes(agent.agentId) && "opacity-60",
-                  dragId === agent.agentId && "opacity-40",
-                  dropId === agent.agentId && "bg-secondary ring-1 ring-inset ring-border-strong",
+                  isDropTarget && "bg-secondary ring-1 ring-inset ring-border-strong",
                 )}
               >
                 <span
                   aria-hidden
-                  className="-ml-1 shrink-0 cursor-grab text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                  className="-ml-1 shrink-0 cursor-grab text-muted-foreground opacity-40 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
                 >
                   <GripVertical className="h-4 w-4" />
                 </span>
-                <button type="button" onClick={() => setProfileId(agent.agentId)} aria-label={t("society.profile_card.open").replace("{0}", agent.name)} className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <button type="button" onClick={() => openProfile(agent.agentId)} aria-label={t("society.profile_card.open").replace("{0}", agent.name)} className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                   <AgentSwatch agent={agent} size={48} />
                 </button>
-                <button type="button" onClick={() => onOpen(agent.agentId)} aria-current={agent.agentId === activeAgentId ? "true" : undefined} className="flex min-w-0 flex-1 select-none items-center gap-2.5 rounded-md py-2 pl-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <button type="button" onClick={() => openAgent(agent.agentId)} aria-current={agent.agentId === activeAgentId ? "true" : undefined} className="flex min-w-0 flex-1 select-none items-center gap-2.5 rounded-md py-2 pl-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
                     <span className="truncate text-sm font-medium text-foreground">{agent.name}</span>
@@ -391,8 +603,12 @@ export function RosterRail({
                 <RowStatus agent={agent} hasUnread={unread.has(agent.agentId)} />
                 </button>
               </div>
+              {isDropTarget && dropAfter ? (
+                <div aria-hidden className="mx-2 mt-0.5 h-0.5 rounded-full bg-sky-400" />
+              ) : null}
             </li>
-          ))}
+            );
+          })}
         </ul>
       </ScrollArea>
       {menu && menuAgent && <AgentRosterActions key={menu.agentId} agent={menuAgent} roster={agents} sample={sample}

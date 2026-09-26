@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -234,6 +234,111 @@ describe("RosterRail reorder", () => {
     renderRail(trio());
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "a" } });
     expect(rowOf("A").getAttribute("draggable")).toBe("false");
+    expect(localStorage.getItem(ORDER_KEY)).toBeNull();
+  });
+});
+
+describe("RosterRail press-drag", () => {
+  const ORDER_KEY = "society.roster.order";
+  const renderRail = (agents: SocietyAgent[], props: Partial<typeof baseProps> = {}) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(<QueryClientProvider client={client}>
+      <RosterRail {...baseProps} {...props} agents={agents} activeAgentId={null} />
+    </QueryClientProvider>);
+  };
+
+  const trio = () => [
+    agent({ agentId: "a", name: "A" }),
+    agent({ agentId: "b", name: "B" }),
+    agent({ agentId: "c", name: "C" }),
+  ];
+
+  const rowOrder = () =>
+    [...document.querySelectorAll("div[data-agent-id]")].map((el) =>
+      el.getAttribute("data-agent-id"),
+    );
+
+  const rowOf = (name: string): HTMLElement => {
+    const row = screen.getByText(name).closest("div[data-agent-id]");
+    if (!(row instanceof HTMLElement)) throw new Error(`no row for ${name}`);
+    return row;
+  };
+
+  /** Fake vertical layout so pointer heights resolve to real rows. */
+  const mockLayout = (tops: Record<string, number>, height = 48) => {
+    document.querySelectorAll("div[data-agent-id]").forEach((el) => {
+      const id = el.getAttribute("data-agent-id") ?? "";
+      const top = tops[id] ?? 0;
+      vi.spyOn(el, "getBoundingClientRect").mockReturnValue({
+        x: 0,
+        y: top,
+        top,
+        left: 0,
+        bottom: top + height,
+        right: 200,
+        width: 200,
+        height,
+        toJSON: () => ({}),
+      } as DOMRect);
+    });
+  };
+
+  /**
+   * jsdom has no PointerEvent constructor, so testing-library drops
+   * coordinates on pointer events. Dispatch real mouse events typed as
+   * pointer events instead — the rail reads button/clientX/clientY off
+   * them exactly like the browser does.
+   */
+  const pressRow = (el: Element, x: number, y: number) => {
+    act(() => {
+      el.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+    });
+  };
+  const movePointer = (x: number, y: number) => {
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+    });
+  };
+  const releasePointer = (x: number, y: number) => {
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+    });
+  };
+
+  it("starts from a press on the name itself and files the row at the drop point", () => {
+    const onOpen = vi.fn();
+    renderRail(trio(), { onOpen });
+    mockLayout({ a: 0, b: 48, c: 96 });
+    // Press on the inner name button, not the grip: this is the gesture that
+    // did nothing before press-drag existed.
+    pressRow(screen.getByText("A"), 10, 10);
+    movePointer(10, 80);
+    releasePointer(10, 80);
+    expect(rowOrder()).toEqual(["b", "a", "c"]);
+    expect(JSON.parse(localStorage.getItem(ORDER_KEY) ?? "[]")).toEqual(["b", "a", "c"]);
+    // The click that follows a drag must not open the chat.
+    fireEvent.click(screen.getByText("A"));
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("drops after the last row when released below the list", () => {
+    renderRail(trio());
+    mockLayout({ a: 0, b: 48, c: 96 });
+    pressRow(rowOf("B"), 10, 60);
+    movePointer(10, 220);
+    releasePointer(10, 220);
+    expect(rowOrder()).toEqual(["a", "c", "b"]);
+    expect(JSON.parse(localStorage.getItem(ORDER_KEY) ?? "[]")).toEqual(["a", "c", "b"]);
+  });
+
+  it("treats a tiny press as a click so the chat still opens", () => {
+    const onOpen = vi.fn();
+    renderRail(trio(), { onOpen });
+    mockLayout({ a: 0, b: 48, c: 96 });
+    pressRow(rowOf("A"), 10, 10);
+    releasePointer(11, 11);
+    fireEvent.click(screen.getByText("A"));
+    expect(onOpen).toHaveBeenCalledWith("a");
     expect(localStorage.getItem(ORDER_KEY)).toBeNull();
   });
 });
