@@ -86,6 +86,7 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
         SHELL_TOOL_NAME,
         MEMORY_RECALL_TOOL_NAME,
         PROPOSE_TOOL_NAME,
+        "society_ask_user",
         "society_conversation_recall",
         "society_routines",
         "society_invoke_routine",
@@ -106,6 +107,7 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
         SHELL_TOOL_NAME,
         MEMORY_RECALL_TOOL_NAME,
         PROPOSE_TOOL_NAME,
+        "society_ask_user",
         "society_conversation_recall",
         "society_routines",
         "society_invoke_routine",
@@ -116,6 +118,9 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
     assert "spawn-worker" not in picked and "cli_gh" not in picked
     assert "wiki-ingest" not in picked  # writes go through the namespaced note tool
     assert "wiki-recall" in picked
+    assert "society_ask_user" not in society_tools(
+        cfg, None, SimpleNamespace(session_id="society:mailbox:routine:r1:run1")
+    )
     assert own[WIKI_NOTE_TOOL_NAME].schema["properties"]["kind"]["enum"] == ["note", "memory"]
     assert "shared to propose" not in extra
     assert "task explicitly calls for the user's wiki" in extra

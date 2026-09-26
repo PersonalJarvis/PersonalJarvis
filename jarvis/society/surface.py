@@ -41,6 +41,7 @@ from .communication import COMMUNICATION_GUIDANCE
 from .conversation_tool import ConversationRecallTool, RoutineInvokeTool, RoutineListTool
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
+from .question_tool import AskUserTool
 from .roster import AgentRecord, canonical_session_id
 from .runtime import current_runtime
 
@@ -161,6 +162,10 @@ routine is active merely because you wrote its operating instructions or a memor
 - Approvals: actions above your permission ceiling queue for the user (chat card, Jarvis bar, \
 voice). A queued action is not refused — say what you are waiting for and continue with what \
 you can. Secrets are never typed into a chat; credentials come from the keyring.
+- Questions: use society_ask_user only for a material ambiguity that cannot be resolved \
+from the request, existing context, or a reasonable safe default. Supply distinct options \
+and recommend one. Stop the current turn after asking; a user answer or the recommended \
+choice after five minutes starts a continuation automatically. This is not tool approval.
 - Language: answer in the language of the message you received.
 - The island: you live in a small island village with your fellow agents. Places: your house \
 (rest), the market square (strolling), the Town Hall (rooms with the others), the Plugin Docks \
@@ -340,6 +345,10 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
             ),
         }
     )
+    if ":routine:" not in str(getattr(session, "session_id", "")):
+        tools[AskUserTool.name] = cast(
+            Tool, AskUserTool(rt, agent_id, str(getattr(session, "session_id", "")))
+        )
     if rt.browser.is_installed() or rt.browser.live.model_resolver is not None:
         from .browser.tool import BrowserTool
 
@@ -580,6 +589,11 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
 
     zone = client_timezone.get() or "unknown; ask before scheduling wall-clock work"
     context = f"\nClient timezone for this turn: {zone}."
+    if ":routine:" in str(getattr(session, "session_id", "")):
+        context += (
+            "\nThis is a background routine. Do not ask the user questions. Use available "
+            "context and reasonable safe defaults; report a genuine blocker in the result."
+        )
     return (
         build_briefing(agent, catalog, roster, browser=browser, learned=learned, memory=memory)
         + context

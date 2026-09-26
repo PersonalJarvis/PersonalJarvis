@@ -61,7 +61,7 @@ export type TurnBlock = TextBlock | ReasoningBlock | ToolBlock;
 export type TurnStatus = "running" | "done" | "cancelled" | "error";
 
 export interface UserItem {
-  origin?: "control";
+  origin?: "control" | "question";
   type: "user";
   id: string;
   /**
@@ -301,7 +301,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
           {
             type: "user",
             id: `u-${seq || ev.ts_ms}`,
-            ...(p.origin === "control" ? { origin: "control" as const } : {}),
+            ...(p.origin === "control" || p.origin === "question" ? { origin: p.origin } : {}),
             // `typed` is present only when the message carried files, and it
             // is the person's own sentence; `text` is the composed prompt.
             text: str(p.typed) || str(p.text),
@@ -639,6 +639,23 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
               resolved: str(p.status) || "applied",
               status: str(p.status),
               text: text ? `${card.text}\n${text}` : card.text,
+            }),
+          };
+        }
+      }
+      if (kind === "question_resolved") {
+        const questionId = str(p.question_id);
+        const index = base.items.findIndex(
+          (item) => item.type === "notice" && item.kind === "agent_question" && str(item.data.question_id) === questionId,
+        );
+        if (index >= 0) {
+          const card = base.items[index] as NoticeItem;
+          return {
+            ...base,
+            items: replaceAt(base.items, index, {
+              ...card,
+              resolved: str(p.source),
+              data: { ...card.data, source: p.source, answer: p.answer, selected_index: p.selected_index },
             }),
           };
         }

@@ -13,6 +13,7 @@ Prefix ``/api/agent-chat``:
     POST   /sessions/{id}/messages           {text, attachments} -> starts a turn
     POST   /sessions/{id}/cancel
     POST   /sessions/{id}/approvals/{aid}    {decision: allow | allow_always | deny}
+    POST   /sessions/{id}/questions/{qid}    {selected_index | custom_text}
     WS     /sessions/{id}/ws?after=<seq>     snapshot, then live events
     POST   /attachments                      drop/paste/pick files for the next message
     POST   /pick-folder                      the system folder dialog (desktop only)
@@ -163,6 +164,11 @@ class MessageBody(BaseModel):
 
 class ApprovalBody(BaseModel):
     decision: str
+
+
+class QuestionAnswerBody(BaseModel):
+    selected_index: int | None = Field(default=None, strict=True)
+    custom_text: str = Field(default="", max_length=2_000)
 
 
 class PickFolderBody(BaseModel):
@@ -842,6 +848,25 @@ async def resolve_approval(
     if not ok:
         raise HTTPException(status_code=404, detail="no such pending approval")
     return {"ok": True, "approval_id": approval_id, "decision": body.decision}
+
+
+@router.post("/sessions/{session_id}/questions/{question_id}")
+async def answer_agent_question(
+    session_id: str, question_id: str, body: QuestionAnswerBody, request: Request
+) -> dict[str, Any]:
+    svc = _service(request)
+    try:
+        result = await svc.questions.resolve(
+            session_id,
+            question_id,
+            selected_index=body.selected_index,
+            custom_text=body.custom_text,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="question is no longer pending")
+    return result
 
 
 # ------------------------------------------------------------------ attachments

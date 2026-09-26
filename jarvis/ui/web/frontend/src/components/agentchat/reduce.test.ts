@@ -17,6 +17,17 @@ function ev(kind: string, payload: Record<string, unknown>, persisted = true): A
 }
 
 describe("agent-chat reduce", () => {
+  it("patches an agent question with the chosen answer and hides its continuation input", () => {
+    const timeline = reduceEvents(EMPTY_TIMELINE, [
+      ev("notice", { kind: "agent_question", question_id: "q1", text: "Which format?", options: [], recommended_index: 0 }),
+      ev("notice", { kind: "question_resolved", question_id: "q1", source: "timeout", answer: "HTML", selected_index: 0 }),
+      ev("user_message", { text: "continue", origin: "question", question_id: "q1" }),
+    ]);
+    expect(timeline.items).toHaveLength(2);
+    expect(timeline.items[0]).toMatchObject({ type: "notice", resolved: "timeout", data: { answer: "HTML" } });
+    expect(timeline.items[1]).toMatchObject({ type: "user", origin: "question" });
+  });
+
   it("folds a full turn: user line, deltas into one text block, tool call + result, finish", () => {
     const tl = reduceEvents(EMPTY_TIMELINE, [
       ev("user_message", { text: "hi" }),

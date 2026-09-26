@@ -37,6 +37,7 @@ from jarvis.agent_chat.catalog import PROVIDER_ROWS, api_seat, offers, provider_
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import ladder_key, normalize_permission
+from jarvis.agent_chat.questions import AgentQuestions
 from jarvis.agent_chat.runner_api import TurnHandle, run_api_turn, supports_api_runner
 from jarvis.agent_chat.runner_brain import run_brain_turn
 from jarvis.agent_chat.runner_cli import run_cli_turn, supports_cli_runner
@@ -187,6 +188,7 @@ class AgentChatService:
         self._subscribers: dict[str, set[Subscriber]] = {}
         self._approvals: dict[str, asyncio.Future[str]] = {}
         self._approval_session: dict[str, str] = {}
+        self.questions = AgentQuestions(self)
         # "Always allow" on the Jarvis surface: the tools a person waved through
         # for the rest of the session, per session. Claude Code's "don't ask
         # again for this tool" rather than a mode flip — the unified ladder has
@@ -199,6 +201,7 @@ class AgentChatService:
         # person said everything twice. Bounded below in import_voice_turn.
         self._mirrored_voice_turns: set[str] = set()
         self._retire_cli_seats()
+        self.questions.start_recovery()
 
     def _retire_cli_seats(self) -> None:
         """Move chats off a CLI seat their surface no longer offers.
@@ -471,6 +474,8 @@ class AgentChatService:
         output_language: str = "",
         native_goal: bool = False,
         display_text: str | None = None,
+        question_owned: bool = False,
+        question_id: str = "",
     ) -> str:
         """Persist the person's message and start the turn. Returns turn_id.
 
@@ -593,7 +598,14 @@ class AgentChatService:
                         # storing only the sentence would lose the picture on the
                         # NEXT turn (runner_api.messages_from_events).
                         "text": prompt,
-                        **({"origin": "control"} if control_owned and not direct_user else {}),
+                        **(
+                            {"origin": "question"}
+                            if question_owned
+                            else {"origin": "control"}
+                            if control_owned and not direct_user
+                            else {}
+                        ),
+                        **({"question_id": question_id} if question_owned and question_id else {}),
                         **(
                             {"tool_choices": [row.model_dump(mode="json") for row in selected]}
                             if selected
@@ -917,6 +929,7 @@ class AgentChatService:
         return True
 
     async def cancel_all(self) -> None:
+        self.questions.close()
         if hasattr(self, "_controls"):
             await self._controls.close()
         for sid in list(self._running):

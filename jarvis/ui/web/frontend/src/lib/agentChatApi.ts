@@ -83,6 +83,18 @@ export interface AgentChatCatalog {
  */
 export type AgentChatSurface = "jarvis" | "agent" | "local-models" | "society";
 
+export async function answerAgentQuestion(
+  sessionId: string,
+  questionId: string,
+  answer: { selected_index?: number; custom_text?: string },
+): Promise<void> {
+  const response = await fetch(
+    `/api/agent-chat/sessions/${encodeURIComponent(sessionId)}/questions/${encodeURIComponent(questionId)}`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(answer) },
+  );
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+}
+
 export interface AgentChatSession {
   session_id: string;
   title: string;

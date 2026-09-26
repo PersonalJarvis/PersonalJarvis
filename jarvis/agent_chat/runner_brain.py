@@ -525,6 +525,10 @@ async def run_brain_turn(
 
     if status == "done" and handle.cancel.is_set():
         status = "cancelled"
+    if status == "cancelled" and session.surface == "society":
+        service = handle.control_service
+        if service is not None and service.questions.take_paused_turn(session.session_id, turn_id):
+            status = "done"
     if status == "done":
         answer = (reply or "").strip() or "".join(seen).strip()
         if answer:

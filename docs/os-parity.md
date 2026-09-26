@@ -1,5 +1,18 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Society agent questions (2026-09-26, T3)
+
+Interactive Society chats can post a question with two to four choices, a
+recommendation, and an optional custom answer. The answer or the recommended
+choice after five minutes starts a separate continuation turn, releasing the
+shared brain while waiting. Open questions and decisions live in the same
+SQLite event log as the chat and are recovered after an app restart. Routine
+sessions do not receive the question tool. This uses the same asyncio, SQLite,
+HTTP and WebSocket paths on Windows, macOS and Linux, with no native API or
+additional credential requirement. Contract tests cover timeout, direct answer,
+session isolation and restart recovery; native desktop interaction on macOS
+and Linux still needs live validation.
+
 ## Window caption (2026-09-21, T2)
 
 The desktop window is frameless on Windows, macOS and Linux. The page draws
