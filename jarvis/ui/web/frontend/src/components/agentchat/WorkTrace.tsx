@@ -102,12 +102,14 @@ function isPendingApproval(block: TurnBlock): block is ToolBlock {
   return block.kind === "tool" && Boolean(block.approval && block.approval.decision === null);
 }
 
+function needsAttention(block: TurnBlock): block is ToolBlock {
+  return block.kind === "tool" && (block.isError || isPendingApproval(block));
+}
+
 function hasFoldableWork(blocks: TurnBlock[]): boolean {
   return blocks.some((block) => {
-    // Only a pending approval keeps its row outside the fold — it asks the
-    // person to act. Failures and interruptions fold like any other work:
-    // the finished conversation shows the reply, the toggle reveals the rest.
-    if (isPendingApproval(block)) return false;
+    // Decisions and failed tools remain visible after a turn completes.
+    if (needsAttention(block)) return false;
     return block.kind !== "text" || Boolean(block.text.trim());
   });
 }
@@ -428,26 +430,25 @@ export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDeci
   const live = status === "running";
   const elapsed = useClock(startedMs, live);
   const split = useMemo(() => conversation && !live ? splitConversationTurn(blocks) : null, [blocks, conversation, live]);
-  // A finished conversation turn shows the reply and nothing else. All work
-  // — tools, thoughts, intermediate replies, failures, interruptions, and
-  // post-reply work — folds behind the "Thought for …" toggle. Pending
-  // approvals stay visible both ways: beside the toggle while it is closed
-  // (they need a tap) and inside the open chain.
+  // Completed failures and pending approvals stay visible beside the fold.
+  // Other work can collapse without hiding an action that needs attention.
   const fold = useMemo(() => {
     if (!split) return null;
     const workAll = [...split.work, ...split.after];
-    if (!hasFoldableWork(workAll.filter((block) => !isPendingApproval(block)))) return null;
+    if (!hasFoldableWork(workAll)) return null;
     return {
       answer: split.answer,
       workAll,
-      approvals: workAll.filter(isPendingApproval),
+      attention: workAll.filter(needsAttention),
     };
   }, [split]);
   const groups = useMemo(() => conversation ? groupConversationTrace(fold ? fold.workAll : blocks) : groupActivityTrace(blocks), [blocks, conversation, fold]);
   const restGroups = useMemo(() => fold ? groupConversationTrace(fold.answer) : null, [fold]);
   const pending = blocks.some(block => block.kind === "tool" && block.approval?.decision === null);
-  const outcome = pending ? "approval" : live ? "working" : status === "error" ? "failed" : status === "cancelled" ? "stopped" : "done";
-  const Icon = pending ? ShieldQuestion : live ? CircleDashed : status === "error" ? CircleAlert : Check;
+  const toolFailed = blocks.some(block => block.kind === "tool" && block.isError);
+  const failed = status === "error";
+  const outcome = pending ? "approval" : live ? "working" : failed ? "failed" : status === "cancelled" ? "stopped" : "done";
+  const Icon = pending ? ShieldQuestion : live ? CircleDashed : failed ? CircleAlert : Check;
   const groupProps = { live, status, onDecide, renderText, conversation };
   // A turn-level error next to a reply folds with the work — it stays one
   // tap away behind the toggle. With no reply the error IS the outcome, so
@@ -456,7 +457,7 @@ export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDeci
   const foldedError = fold && answered && error ? error : null;
   const visibleError = error && !foldedError ? error : null;
   return <div className={cn("min-w-0 space-y-0.5", conversation && "w-full max-w-xl self-start", className)} data-testid="work-trace" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
-    {fold ? <ConversationWorkFold durationMs={durationMs} attention={fold.approvals.map(block =>
+    {fold ? <ConversationWorkFold durationMs={durationMs} attention={fold.attention.map(block =>
       <div key={block.callId} className="w-full py-1 text-xs [&_button]:text-xs">
         <TraceTool block={block} status={status} onDecide={onDecide} />
       </div>)}>
@@ -465,7 +466,10 @@ export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDeci
     </ConversationWorkFold> : <TraceGroups groups={groups} {...groupProps} />}
     {restGroups ? <TraceGroups groups={restGroups} {...groupProps} /> : null}
     {visibleError ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{visibleError}</p> : null}
-    <div role="status" aria-live="polite" className={cn("flex flex-wrap items-center gap-2 text-xs text-muted-foreground", conversation ? "px-1 pb-2 pt-1" : "border-t border-border pt-3", status === "error" && "text-destructive")}>
+    {toolFailed && !live && !failed ? <p role="status" data-testid="tool-failure-warning" className="flex items-center gap-1.5 px-1 py-1 text-xs text-destructive">
+      <CircleAlert aria-hidden className="h-3.5 w-3.5" />{t("work_trace.tool_failed")}
+    </p> : null}
+    <div role="status" aria-live="polite" className={cn("flex flex-wrap items-center gap-2 text-xs text-muted-foreground", conversation ? "px-1 pb-2 pt-1" : "border-t border-border pt-3", failed && "text-destructive")}>
       <Icon aria-hidden className={cn("h-3.5 w-3.5", live && !pending && "motion-safe:animate-spin")} />
       <span>{outcome === "done" && completionLabel ? completionLabel : t(`work_trace.${outcome}`)}</span>
       {(live || durationMs !== null) ? <span aria-live="off" className="tabular-nums">{traceDuration(live ? elapsed : durationMs ?? 0)}</span> : null}

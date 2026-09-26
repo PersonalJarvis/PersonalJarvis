@@ -30,7 +30,7 @@ import { RoutineChatHost } from "./RoutineChatHost";
 import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 
-import { AgentChatStoreProvider, useAgentChat } from "@/components/agentchat/AgentChatStoreContext";
+import { AgentChatStoreProvider, useAgentChat, useAgentChatApi } from "@/components/agentchat/AgentChatStoreContext";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
 import { ScrollToEndButton } from "@/components/ui/scroll-to-end-button";
 import { useStickToBottom } from "@/hooks/useStickToBottom";
@@ -186,6 +186,7 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
   const activeSessionId = useAgentChat((s) => s.activeSessionId);
   const busy = useAgentChat((s) => s.busy);
   const lastError = useAgentChat((s) => s.lastError);
+  const socketState = useAgentChat((s) => s.socketState);
   const loadCatalog = useAgentChat((s) => s.loadCatalog);
   const loadSessions = useAgentChat((s) => s.loadSessions);
   const openSession = useAgentChat((s) => s.openSession);
@@ -263,6 +264,11 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
       data-session-ready={sessionReady ? "true" : "false"}
     >
       <Transcript key={`${sessionId ?? agent.agentId}:${view.boundaryId}`} items={view.items} agent={agent} roster={roster} onDecide={decide} />
+      {sessionReady && socketState !== "open" && socketState !== "idle" ? (
+        <p role="status" className="px-4 pb-1 text-xs text-muted-foreground">
+          {t(socketState === "closed" ? "society.chat.reconnecting" : "society.chat.connecting")}
+        </p>
+      ) : null}
       {lastError && sessionReady ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
           {lastError}
@@ -300,6 +306,7 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
   const activeSessionId = useAgentChat((s) => s.activeSessionId);
   const busy = useAgentChat((s) => s.busy);
   const lastError = useAgentChat((s) => s.lastError);
+  const socketState = useAgentChat((s) => s.socketState);
   const draft = useAgentChat((s) => s.draft);
   const loadCatalog = useAgentChat((s) => s.loadCatalog);
   const loadSessions = useAgentChat((s) => s.loadSessions);
@@ -398,6 +405,11 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
     <div className="flex h-full min-h-0 flex-col bg-background" data-testid="society-chat" data-mode="chat">
       {header}
       <Transcript key={`${activeSessionId ?? ""}:${view.boundaryId}`} items={view.items} agent={agent} roster={roster} onDecide={decide} />
+      {activeSessionId && socketState !== "open" && socketState !== "idle" ? (
+        <p role="status" className="px-4 pb-1 text-xs text-muted-foreground">
+          {t(socketState === "closed" ? "society.chat.reconnecting" : "society.chat.connecting")}
+        </p>
+      ) : null}
       {lastError ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
           {lastError}
@@ -993,12 +1005,13 @@ interface ComposerProps {
   provider: string;
   /** Which chat surface the attachments belong to (the front page by default). */
   surface?: AgentChatSurface;
-  onSend: (text: string, attachments?: ReturnType<typeof useChatAttachments>["attachments"]) => Promise<void>;
+  onSend: (text: string, attachments?: ReturnType<typeof useChatAttachments>["attachments"]) => Promise<void | "sent" | "failed" | "stale">;
   onCancel: () => Promise<void>;
 }
 
 export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onClear, onSend, onCancel }: ComposerProps) {
   const t = useT();
+  const chatStore = useAgentChatApi();
   const [modelSaving, setModelSaving] = useState(false);
   const [value, setValue] = useState("");
   const [plusOpen, setPlusOpen] = useState(false);
@@ -1011,6 +1024,8 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   const composerRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const attachments = useChatAttachments({ sessionId, cwd, provider, surface }, (message) => setProblem(message));
+  const attachmentsRef = useRef(attachments.attachments);
+  attachmentsRef.current = attachments.attachments;
   const commands = useChatCommands({ value, agentId: agent.agentId, onClear,
     attachments: attachments.attachments, attachmentsBusy: attachments.analyzing > 0, onAttachmentsSent: attachments.clear,
     setValue: (next) => { setValue(next); fieldRef.current?.setText(next); },
@@ -1093,12 +1108,14 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
 
   const submit = async () => {
     const draft = fieldRef.current?.getDraft();
-    const draftText = (draft?.text ?? value).trim();
+    const fullDraft = draft?.text ?? value;
+    const draftText = fullDraft.trim();
     const submittedFolder = codingFolder;
     const selected = selectedTools;
+    const sentAttachments = attachments.attachments;
     const text = draftText;
     if (await commands.execute(text)) return;
-    if (!text || (busy || live) && !commands.canSteer || modelSaving) return;
+    if ((!text && attachments.attachments.length === 0) || (busy || live) && !commands.canSteer || modelSaving || attachments.analyzing > 0) return;
     const chosenIds = new Set((draft?.choices ?? []).map((row) => row.id));
     const chosen = [...chosenIds].map((id) => catalog.find((item) => item.key === id));
     if (chosen.some((item) => !item || !item.connected)) {
@@ -1130,19 +1147,26 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     const codingHint = codingAssignmentHint(codingSelections, codingFolder);
     if (codingHint) lines.push(codingHint);
     const hint = lines.join("\n");
-    setValue("");
-    fieldRef.current?.clear();
-    setMention(null);
     setProblem(null);
     try {
-      await onSend(hint ? `${text}\n\n${hint}` : text, attachments.attachments);
-      setSelectedTools([]);
-      attachments.clear();
+      const result = await onSend(hint ? `${text}\n\n${hint}` : text, sentAttachments);
+      if (result === "stale" || sessionId && chatStore.getState().activeSessionId !== sessionId) return;
+      const sendError = chatStore.getState().lastError;
+      if (result === "failed" || result === undefined && sendError) throw new Error(sendError ?? t("common.error_generic"));
+      if ((fieldRef.current?.getDraft().text ?? value) === fullDraft) {
+        setValue("");
+        fieldRef.current?.clear();
+        setMention(null);
+        setSelectedTools([]);
+      }
+      if (attachmentsRef.current === sentAttachments) attachments.clear();
+      else sentAttachments.forEach((file) => attachments.remove(file.name));
     } catch (err) {
-      setValue(draftText);
-      fieldRef.current?.hydrate(draftText, draft?.choices ?? []);
-      setSelectedTools(selected);
-      setCodingFolder(submittedFolder);
+      // The input and files stay in place until the server accepts them.
+      if ((fieldRef.current?.getDraft().text ?? value) === fullDraft) {
+        setSelectedTools(selected);
+        setCodingFolder(submittedFolder);
+      }
       setProblem(err instanceof Error ? err.message : String(err));
     }
   };
@@ -1313,7 +1337,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           <button
             type="button"
             onClick={() => void submit()}
-            disabled={modelSaving || (!value.trim() && selectedTools.length === 0)}
+            disabled={modelSaving || attachments.analyzing > 0 || (!value.trim() && selectedTools.length === 0 && attachments.attachments.length === 0)}
             aria-label={t("society.chat.send")}
             data-testid="composer-send"
             className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-40"

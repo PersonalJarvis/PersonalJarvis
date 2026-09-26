@@ -5646,6 +5646,7 @@
     "done": "Fertig"
   },
   "work_trace": {
+    "tool_failed": "Eine Tool-Aktion ist fehlgeschlagen",
     "integration_used": "{service} verwendet",
     "activity_command": "Befehle ausgeführt",
     "activity_edit": "Dateien bearbeitet",

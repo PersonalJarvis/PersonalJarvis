@@ -82,6 +82,8 @@
       "legacy": "Older execution: result available; final status was not recorded."
     },
     "chat": {
+      "connecting": "Connecting to this chat…",
+      "reconnecting": "Reconnecting to this chat…",
       "memory_updated": "Memory updated",
       "memory_changes": "Changes",
       "memory_current": "Current file",

@@ -162,7 +162,7 @@ async def run_owned_routine(
     queue = service.subscribe(session.session_id)
     answer = ""
     try:
-        turn_id = await service.send(session.session_id, task, direct_user=False)
+        turn_id = await service.send(session.session_id, task, direct_user=False, routine_run=True)
         while True:
             if cancel_token is not None and cancel_token.is_cancelled():
                 raise asyncio.CancelledError

@@ -153,7 +153,7 @@ export interface AgentChatStore {
   openSession: (sessionId: string) => void;
   removeSession: (sessionId: string) => Promise<void>;
   /** Send the sentence, with whatever files the composer is holding for it. */
-  send: (text: string, attachments?: ChatAttachment[], toolChoices?: string[]) => Promise<void>;
+  send: (text: string, attachments?: ChatAttachment[], toolChoices?: string[]) => Promise<void | "sent" | "failed" | "stale">;
   cancel: () => Promise<void>;
   decide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
   /** Tests and the socket: fold one event into the active timeline. */
@@ -272,6 +272,8 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
   const DRAFT_KEY = draftKey(surface) + (draftNamespace ? `:${draftNamespace}` : "");
 
   let catalogRequest = 0;
+  const patchQueues = new Map<string, Promise<void>>();
+  const patchRevisions = new Map<string, number>();
   let socket: WebSocket | null = null;
   let socketSession: string | null = null;
   /** Cancels the reconnect waiting in the shared connect budget. */
@@ -569,14 +571,36 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
             body.permission_mode = draft.permissionMode;
           }
           if (patch.cwd !== undefined) body.cwd = draft.cwd;
+          const revision = (patchRevisions.get(sid) ?? 0) + 1;
+          patchRevisions.set(sid, revision);
+          const previous = patchQueues.get(sid) ?? Promise.resolve();
+          const pending = previous.then(() => patchAgentChatSession(sid, body));
+          patchQueues.set(sid, pending.then(() => undefined, () => undefined));
           try {
-            const session = await patchAgentChatSession(sid, body);
-            set((s) => ({
-              activeSession: s.activeSessionId === sid ? session : s.activeSession,
-              sessions: s.sessions.map((x) => (x.session_id === sid ? { ...x, ...session } : x)),
-            }));
+            const session = await pending;
+            let reconciledDraft: ComposerDraft | null = null;
+            set((s) => {
+              const latest = patchRevisions.get(sid) === revision;
+              const active = s.activeSessionId === sid && latest;
+              if (active) reconciledDraft = draftFromSession(session, s.draft);
+              return {
+                activeSession: active ? session : s.activeSession,
+                draft: reconciledDraft ?? s.draft,
+                sessions: latest
+                  ? s.sessions.map((x) => (x.session_id === sid ? { ...x, ...session } : x))
+                  : s.sessions,
+              };
+            });
+            if (reconciledDraft) writeDraft(DRAFT_KEY, reconciledDraft);
           } catch (err) {
-            set({ lastError: errorText(err) });
+            if (get().activeSessionId === sid && patchRevisions.get(sid) === revision) {
+              set({ lastError: errorText(err) });
+            }
+          } finally {
+            if (patchRevisions.get(sid) === revision) {
+              patchQueues.delete(sid);
+              patchRevisions.delete(sid);
+            }
           }
         }
       },
@@ -630,6 +654,8 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           set({ lastError: errorText(err) });
         }
         timelineCache.delete(sessionId);
+        patchQueues.delete(sessionId);
+        patchRevisions.delete(sessionId);
         if (get().activeSessionId === sessionId) get().newChat();
         set((s) => ({ sessions: s.sessions.filter((x) => x.session_id !== sessionId) }));
         void get().loadSessions();
@@ -639,7 +665,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
         const content = text.trim();
         // A message may be files alone — dropping a screenshot and pressing
         // Enter is a complete gesture — but never nothing at all.
-        if (!content && attachments.length === 0) return;
+        if (!content && attachments.length === 0) return "failed";
         const st = get();
         set({ busy: true, lastError: null });
         let sid = st.activeSessionId;
@@ -665,8 +691,10 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           }
           await sendAgentChatMessage(sid, content, attachments, toolChoices);
           if (get().activeSessionId === sid) void get().loadSessions();
+          return get().activeSessionId === sid ? "sent" : "stale";
         } catch (err) {
           if (get().activeSessionId === sid) set({ lastError: errorText(err) });
+          return get().activeSessionId === sid ? "failed" : "stale";
         } finally {
           // A switch away from this session already cleared `busy`; do not
           // unlock (or error) the chat that is on screen now.

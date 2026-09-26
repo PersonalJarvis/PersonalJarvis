@@ -82,6 +82,8 @@
       "legacy": "Ejecución anterior: resultado disponible; no se registró el estado final."
     },
     "chat": {
+      "connecting": "Conectando con este chat…",
+      "reconnecting": "Reconectando con este chat…",
       "memory_updated": "Memoria actualizada",
       "memory_changes": "Cambios",
       "memory_current": "Archivo actual",

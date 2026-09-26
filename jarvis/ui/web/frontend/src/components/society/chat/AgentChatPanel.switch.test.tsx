@@ -14,10 +14,16 @@ import {
 import { useAgentChatStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import type { AgentChatEvent, AgentChatSession } from "@/lib/agentChatApi";
+import type { ChatAttachment } from "@/lib/agentChatApi";
 import { useHomeStore } from "@/store/home";
 import { JarvisHistoryRail } from "./JarvisHistoryRail";
 import { useRoutineNavigation } from "./routineNavigation";
 import * as cardData from "../cardData";
+
+const attachmentState = vi.hoisted(() => ({
+  current: [] as ChatAttachment[],
+  clear: vi.fn(),
+}));
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, fill: (text: string) => text }));
 vi.mock("./AgentModelPicker", () => ({ AgentModelPicker: () => null }));
@@ -36,11 +42,11 @@ vi.mock("@/components/agentchat/useComposerDictation", () => ({
 vi.mock("@/components/agentchat/DictationStatus", () => ({ DictationStatus: () => null }));
 vi.mock("@/components/agentchat/useChatAttachments", () => ({
   useChatAttachments: () => ({
-    attachments: [],
+    attachments: attachmentState.current,
     analyzing: 0,
     dragging: false,
     dragHandlers: {},
-    clear() {},
+    clear: attachmentState.clear,
     remove() {},
     attachFiles() {},
   }),
@@ -109,6 +115,8 @@ const visual = agent({ agentId: "visual-qa", name: "Visual QA" });
 const gmail = agent({ agentId: "gmail-agent", name: "Gmail Agent" });
 
 beforeEach(() => {
+  attachmentState.current = [];
+  attachmentState.clear.mockClear();
   useRoutineNavigation.getState().close();
   seq = 0;
   useTranscriptViewStore.setState({ boundaries: {} });
@@ -307,4 +315,56 @@ it("shows stop while the send request is in flight, before the turn stream start
   render(<AgentChatPanel agent={gmail} roster={[gmail]} />);
   expect(screen.getByTestId("composer-stop")).toBeTruthy();
   expect(screen.queryByTestId("composer-send")).toBeNull();
+});
+
+const screenshot: ChatAttachment = {
+  name: "screen.png", reference: "screen.png", kind: "image", detail: "A screenshot",
+  described_by: "vision", note: "",
+};
+
+it("sends an attachment without requiring text", async () => {
+  attachmentState.current = [screenshot];
+  const store = useSocietyChatStore;
+  store.getState().openSession(gmail.chatSessionId!);
+  vi.mocked(fetch).mockImplementation(async (url) =>
+    String(url).endsWith("/messages")
+      ? new Response(JSON.stringify({ turn_id: "sent" }), { status: 200 })
+      : new Response(JSON.stringify({ providers: [], sessions: [], mapping: [], events: [] }), { status: 200 }),
+  );
+  render(<AgentChatPanel agent={gmail} roster={[gmail]} />);
+  const send = screen.getByTestId("composer-send") as HTMLButtonElement;
+  expect(send.disabled).toBe(false);
+  fireEvent.click(send);
+  await waitFor(() => expect(attachmentState.clear).toHaveBeenCalledTimes(1));
+  const request = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/messages"));
+  expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({ text: "", attachments: [screenshot] });
+});
+
+it("retains the exact draft and attachment when the message request fails", async () => {
+  attachmentState.current = [screenshot];
+  useSocietyChatStore.getState().openSession(gmail.chatSessionId!);
+  vi.mocked(fetch).mockImplementation(async (url) =>
+    String(url).endsWith("/messages")
+      ? new Response("failed", { status: 503 })
+      : new Response(JSON.stringify({ providers: [], sessions: [], mapping: [], events: [] }), { status: 200 }),
+  );
+  render(<AgentChatPanel agent={gmail} roster={[gmail]} />);
+  const field = screen.getByTestId("composer-chip-field");
+  field.textContent = "  Please inspect this  ";
+  fireEvent.input(field);
+  fireEvent.click(screen.getByTestId("composer-send"));
+  await waitFor(() => expect(useSocietyChatStore.getState().lastError).toBeTruthy());
+  await waitFor(() => expect(screen.getByTestId("composer-chip-field").textContent).toBe("  Please inspect this  "));
+  expect(attachmentState.clear).not.toHaveBeenCalled();
+  expect(screen.getByText("screen.png")).toBeTruthy();
+});
+
+it("shows connecting and reconnecting states for a specialist session", () => {
+  useSocietyChatStore.getState().openSession(gmail.chatSessionId!);
+  render(<AgentChatPanel agent={gmail} roster={[gmail]} />);
+  expect(screen.getByText("society.chat.connecting")).toBeTruthy();
+  act(() => useSocietyChatStore.setState({ socketState: "closed" }));
+  expect(screen.getByText("society.chat.reconnecting")).toBeTruthy();
+  act(() => useSocietyChatStore.setState({ socketState: "open" }));
+  expect(screen.queryByText("society.chat.reconnecting")).toBeNull();
 });

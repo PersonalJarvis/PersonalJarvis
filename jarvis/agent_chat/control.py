@@ -120,6 +120,16 @@ class ChatControls:
         )
         origin_token = _command_origin.set(request)
         try:
+            session = self.service.store.get_session(sid)
+            binder = getattr(self.service, "bind_society_session", None)
+            if (
+                request.command
+                not in {"stop", "status", "help", "clear", "history", "model", "routines", "find"}
+                and session is not None
+                and session.surface == "society"
+                and binder is not None
+            ):
+                await binder(sid)
             from jarvis.memory.wiki.secret_guard import contains_secret
 
             if contains_secret(request.arguments):
@@ -346,7 +356,19 @@ class ChatControls:
             session.surface, resolve_runner(session.provider, surface=session.surface)
         )
         permission = normalize_permission(ladder, permission)
+        if session.surface == "society" and self.service.is_running(sid):
+            raise ValueError("The agent chat is working; stop it before changing permissions")
         self.service.store.update_session(sid, permission_mode=permission)
+        if session.surface == "society":
+            self.service.store.set_permission_override(sid, permission)
+            binder = getattr(self.service, "bind_society_session", None)
+            bound = await binder(sid) if binder is not None else session
+            if permission not in ("plan", "read-only") and bound.permission_mode in (
+                "plan",
+                "read-only",
+            ):
+                raise ValueError("The agent's permission ceiling is read-only")
+            permission = bound.permission_mode
         state.mode = "plan" if permission in ("plan", "read-only") else "build"
         set_chat_read_only(sid, state.mode == "plan")
         await self.publish(state)
