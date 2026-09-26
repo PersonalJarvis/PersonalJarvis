@@ -251,8 +251,6 @@ jobs:
 
       - name: pytest (JUnit XML)
         shell: bash
-        env:
-          PYTHONHASHSEED: "0"
         run: |
           # Exit code deliberately non-blocking: the suite still carries the
           # pre-existing env/platform backlog (Windows-only tests on the Linux
@@ -267,9 +265,7 @@ jobs:
               --ignore=tests/unit/realtime/test_session_self_echo.py
             )
           fi
-          # Keep each file's stateful fixtures together while distributing the
-          # complete suite; serial execution exceeds the unchanged job timeout.
-          python -m pytest tests/ "${extra_pytest_args[@]}" -n 4 --dist loadfile -q -p no:cacheprovider \
+          python -m pytest tests/ "${extra_pytest_args[@]}" -q -p no:cacheprovider \
             -o faulthandler_timeout=300 \
             -m "not skip_ci and not slow and not openclaw_live and not voice_latency and not eval" \
             --continue-on-collection-errors \
@@ -795,9 +791,9 @@ jobs:
       - name: Blocking provider-neutral realtime contract
         run: >-
           python -m pytest
+          tests/contract/test_gpt_live.py
           tests/contract/test_realtime_provider_contract.py
           tests/contract/test_realtime_reliability_gate.py
-          tests/contract/test_agent_learning_loop.py
           -q -p no:cacheprovider
 
   realtime-slim:
@@ -832,9 +828,9 @@ jobs:
       - name: Blocking headless realtime degradation contract
         run: >-
           python -m pytest
+          tests/contract/test_gpt_live.py
           tests/contract/test_realtime_provider_contract.py
           tests/contract/test_realtime_reliability_gate.py
-          tests/contract/test_agent_learning_loop.py
           -q -p no:cacheprovider
 
   realtime-soak:

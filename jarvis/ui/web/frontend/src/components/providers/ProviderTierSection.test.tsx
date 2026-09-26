@@ -187,6 +187,21 @@ describe("ProviderCard — dictation polish activation", () => {
     cleanup();
   });
 
+  it("leaves continuous voice selection to its coherent profile form", async () => {
+    const calls = installFetchMock();
+    renderCard(dictationCard({
+      id: "continuous-test",
+      label: "Continuous voice",
+      tier: "realtime",
+      active: true,
+      configuration_surface: "live",
+    }));
+    fireEvent.click(screen.getByText("Continuous voice"));
+    await screen.findByRole("button", { name: "Test" });
+    expect(screen.queryByText("Realtime model")).toBeNull();
+    expect(calls.some(call => call.url.includes("/realtime/options"))).toBe(false);
+  });
+
   it("activates on a single click of the row; a double click switches once", async () => {
     const calls = installFetchMock();
 

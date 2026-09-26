@@ -1,0 +1,345 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
+import { Html, OrbitControls } from "@react-three/drei";
+import { Group, Mesh, Object3D, PerspectiveCamera, Vector3 } from "three";
+import { useT } from "@/i18n";
+import { roadOrientation } from "./roadGeometry";
+import { OutpostReference } from "./OutpostReference";
+import type { OrbitControls as OrbitControlsInstance } from "three-stdlib";
+import { advancePlayer, createPlayer } from "./controller";
+import { bindPlayerInput, NO_INPUT } from "./input";
+import { avoidCameraCollision, frameInspectionBounds, MAX_POLAR, MIN_POLAR } from "./camera";
+import { constrainOrbitPose, orbitLensIsClear } from "./orbitCamera";
+import { VIEW_DIRECTIONS, type CameraPose, type Viewpoint, type CameraMode } from "./viewPreferences";
+import { MarsAgents } from "./MarsAgents";
+import { MarsRovers } from "./MarsRovers";
+import type { NavigationRecord, RoverRideRecord, VehicleRecord } from "./navigationApi";
+import type { AgentFollowTarget } from "./useAgentFollowTarget";
+import { createAgentFollowPose } from "./agentFollowCamera";
+import { GigiCompanion } from "../companion/GigiCompanion";
+import type { AssistantPresentation } from "../companion/kinematics";
+import { usePendingCompanionFocus } from "../companion/usePendingCompanionFocus";
+import { OUTPOST_SHADOW, SHADOW_MAP_SIZE, SUN_POSITION, SUN_TARGET } from "./shadows";
+import {
+  BUILDING_COLLIDERS, createTerrainGeometry, outpostBounds, outpostCloseBounds, PLAYER_SPAWN,
+  ROADS, terrainHeight, surfaceHeight, WORLD, WORLD_BOUNDS, type Collider, type Road, type Vec3,
+} from "./world";
+
+export type { CameraMode } from "./viewPreferences";
+export interface MarsSceneProps {
+  hostRef: RefObject<HTMLDivElement>;
+  mode: CameraMode;
+  neutral: boolean;
+  shadows: boolean;
+  viewpoint: Viewpoint;
+  initialPose: CameraPose | null;
+  onSavePose: (pose: CameraPose) => void;
+  awake: boolean;
+  selected: string | null;
+  onSelect: (id: string) => void;
+  onOrbit: () => void;
+  onOpenStation?: () => void;
+  reset: number;
+  navigationRecords: NavigationRecord[];
+  vehicles: VehicleRecord[];
+  rides: RoverRideRecord[];
+  agentNames: ReadonlyMap<string, string>;
+  navigationStale: boolean;
+  onSelectAgent?: (id: string | null) => void;
+  followTarget: AgentFollowTarget | null;
+  followAgentId: string | null;
+  followAvailable: boolean;
+  onFollowAgent: (id: string) => void;
+  onStopFollow: () => void;
+  gigiVisible: boolean;
+  gigiFocus: number;
+  onGigiFocusApplied: (id: number) => void;
+  gigiRecall: number;
+  reducedMotion: boolean;
+  gigiPresentation: AssistantPresentation;
+  onOpenAssistant: () => void;
+  onFocusGigi: () => void;
+}
+
+function ColliderMesh({ collider, onClick }: { collider: Collider; onClick?: (event: ThreeEvent<MouseEvent>) => void }) {
+  const size = collider.max.map((v, index) => v - collider.min[index]) as Vec3;
+  const position = collider.min.map((v, index) => v + size[index] / 2) as Vec3;
+  return (
+    <mesh position={position} onClick={onClick} castShadow receiveShadow>
+      <boxGeometry args={size} />
+      <meshStandardMaterial color={collider.id.startsWith("operations") ? "#c1beb0" : "#b3a998"} roughness={0.95} />
+    </mesh>
+  );
+}
+
+function RoadMesh({ road }: { road: Road }) {
+  const midpoint = road.start.map((v, i) => (v + road.end[i]) / 2) as Vec3;
+  const delta = new Vector3(...road.end).sub(new Vector3(...road.start));
+  const length = delta.length();
+  const orientation = roadOrientation(road.start, road.end);
+  const bridge = road.kind === "bridge";
+  const supports = bridge ? [0.2, 0.5, 0.8] : [];
+  return (
+    <group>
+      <group position={midpoint} quaternion={orientation}>
+        <mesh position={[0, -0.27, 0]} receiveShadow castShadow={bridge}>
+          <boxGeometry args={[road.width, 0.7, length + 0.12]} />
+          <meshStandardMaterial color={bridge ? "#787975" : "#9e8c70"} roughness={0.92} />
+        </mesh>
+        {bridge && [-1, 1].map((side) => (
+          <mesh key={side} position={[side * (road.width / 2 - 0.12), 0.75, 0]} castShadow>
+            <boxGeometry args={[0.24, 1.35, length]} />
+            <meshStandardMaterial color="#666a65" roughness={0.85} />
+          </mesh>
+        ))}
+      </group>
+      {supports.map((t) => {
+        const x = road.start[0] + (road.end[0] - road.start[0]) * t;
+        const z = road.start[2] + (road.end[2] - road.start[2]) * t;
+        const deck = road.start[1] + (road.end[1] - road.start[1]) * t - 0.62;
+        const floor = terrainHeight(x, z);
+        if (deck <= floor) return null;
+        return (
+          <mesh key={t} position={[x, (deck + floor) / 2, z]} castShadow receiveShadow>
+            <boxGeometry args={[2.4, deck - floor, 2.4]} />
+            <meshStandardMaterial color="#77776e" roughness={1} />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+function Terrain() {
+  const geometry = useMemo(createTerrainGeometry, []);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  return <mesh geometry={geometry} receiveShadow><meshStandardMaterial vertexColors roughness={1} /></mesh>;
+}
+
+/** Static blockout is deliberately separate from input and per-frame simulation. */
+function ColonyBlockout({ onSelect, outpostReady, labels }: { onSelect: (id: string) => void; outpostReady: boolean; labels: boolean }) {
+  const t = useT();
+  return (
+    <group>
+      <Terrain />
+      {ROADS.filter((road) => !outpostReady || !["route-01", "route-02", "route-03", "route-04", "route-05"].includes(road.id)).map((road) => <RoadMesh key={road.id} road={road} />)}
+      {BUILDING_COLLIDERS.filter((collider) => !outpostReady || !collider.id.startsWith("outpost:")).map((collider) => (
+        <ColliderMesh key={collider.id} collider={collider} onClick={(event) => {
+          if (event.delta > 4) return;
+          event.stopPropagation(); onSelect(collider.id.startsWith("outpost:operations-") ? "operations" : collider.id.replace("outpost:", ""));
+        }} />
+      ))}
+      {/* Neutral massing markers reserve every district, including the northern skyline. */}
+      {WORLD.districts.filter((district) => !WORLD.buildings.some((building) => building.district_id === district.id)).map((district) => (
+        <mesh key={district.id} position={[district.center[0], district.center[1] + district.landmark_height / 2, district.center[2]]}>
+          <boxGeometry args={[district.size[0] * 0.28, district.landmark_height, district.size[1] * 0.28]} />
+          <meshStandardMaterial color="#ac9c83" roughness={1} wireframe />
+        </mesh>
+      ))}
+      {labels && WORLD.districts.map((district) => (
+        <Html key={district.id} center position={[district.center[0], district.center[1] + district.landmark_height + 10, district.center[2]]} zIndexRange={[12, 0]} style={{ pointerEvents: "none" }}>
+          <div className="mars-district-label"><strong>{district.name}</strong><span>{t(district.id === "communications-outpost" && outpostReady ? "society.mars.reference_pending" : "society.mars.district_blockout")}</span></div>
+        </Html>
+      ))}
+      {labels && <Html center position={[294, 61.8, 74]} zIndexRange={[12, 0]} style={{ pointerEvents: "none" }}>
+        <div className="mars-door-label">{t("society.mars.entrance")}</div>
+      </Html>}
+      {!outpostReady && <mesh position={[294, 58.6, 63]}><boxGeometry args={[2, 1.1, 0.8]} /><meshStandardMaterial color="#ceab56" roughness={0.7} /></mesh>}
+    </group>
+  );
+}
+
+export function MarsScene({ hostRef, mode, neutral, shadows, viewpoint, initialPose, onSavePose, awake, selected, onSelect, onOrbit, onOpenStation, reset, navigationRecords, vehicles, rides, agentNames, navigationStale, onSelectAgent, followTarget, followAgentId, followAvailable, onFollowAgent, onStopFollow, gigiVisible, gigiFocus, onGigiFocusApplied, gigiRecall, reducedMotion, gigiPresentation, onOpenAssistant, onFocusGigi }: MarsSceneProps) {
+  const t = useT();
+  const gigiPosition = useRef<Vec3 | null>(null);
+  const [gigiPoseVersion, setGigiPoseVersion] = useState(0);
+  const gigiPositionReady = useCallback(() => setGigiPoseVersion((value) => value + 1), []);
+  const sunTarget = useMemo(() => {
+    const target = new Object3D(); target.position.fromArray(SUN_TARGET); return target;
+  }, []);
+  const [outpostReady, setOutpostReady] = useState(false);
+  const referenceReady = useCallback((ready: boolean) => {
+    setOutpostReady(ready);
+    if (hostRef.current) hostRef.current.dataset.marsReference = ready ? "loaded-unapproved" : "unavailable";
+  }, [hostRef]);
+  const controls = useRef<OrbitControlsInstance>(null);
+  const figure = useRef<Group>(null);
+  const marker = useRef<Mesh>(null);
+  const player = useRef(createPlayer());
+  const input = useRef<ReturnType<typeof bindPlayerInput> | null>(null);
+  const frameCount = useRef(0), lastTelemetry = useRef(0);
+  const { camera, size, invalidate, gl } = useThree();
+  const followPose = useMemo(() => followTarget ? createAgentFollowPose(followTarget.position) : null, [followTarget]);
+  const orbitYaw = useRef(0.7);
+  const followHeight = useRef(2.15);
+  const restored = useRef(false);
+  const lastCameraPose = useRef<CameraPose | null>(null);
+  const rememberCamera = useCallback(() => {
+    const value = controls.current;
+    if (!value) return null;
+    const pose: CameraPose = { position: camera.position.toArray() as Vec3, target: value.target.toArray() as Vec3 };
+    lastCameraPose.current = pose;
+    return pose;
+  }, [camera]);
+  const constrainOrbit = useCallback(() => {
+    const value = controls.current;
+    if (!value) return null;
+    const wanted: CameraPose = { position: camera.position.toArray() as Vec3, target: value.target.toArray() as Vec3 };
+    const safe = constrainOrbitPose(lastCameraPose.current ?? wanted, wanted);
+    camera.position.fromArray(safe.position); value.target.fromArray(safe.target); camera.lookAt(value.target);
+    lastCameraPose.current = safe;
+    return safe;
+  }, [camera]);
+  const applyGigiFocus = useCallback((position: Vec3) => {
+    if (!controls.current || mode === "follow") return false;
+    const target: Vec3 = [position[0], position[1] + 0.2, position[2]];
+    const desired: Vec3 = [position[0] - 1.05, position[1] + 0.6, position[2] + 1.8];
+    camera.position.fromArray(avoidCameraCollision(target, desired));
+    controls.current.target.fromArray(target); controls.current.update();
+    rememberCamera(); onSavePose({ position: camera.position.toArray() as Vec3, target }); invalidate();
+    onGigiFocusApplied(gigiFocus);
+    return true;
+  }, [camera, invalidate, onSavePose, gigiFocus, onGigiFocusApplied, mode, rememberCamera]);
+  usePendingCompanionFocus(gigiFocus, gigiPosition, gigiPoseVersion, applyGigiFocus);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || mode !== "player" || !awake) { input.current?.clear(); return; }
+    const binding = bindPlayerInput(host, invalidate, () => { host.blur(); }, (dx, dy) => {
+      orbitYaw.current -= dx * 0.005;
+      followHeight.current = Math.max(0.5, Math.min(7, followHeight.current + dy * 0.025));
+    }, () => {
+      const [x, y, z] = player.current.position;
+      if (Math.hypot(x - 294, y - 58, z - 64) <= 4) onOpenStation?.();
+    });
+    input.current = binding;
+    return () => { binding.dispose(); input.current = null; };
+  }, [hostRef, mode, awake, invalidate, onOpenStation]);
+
+  useEffect(() => {
+    const value = controls.current;
+    if (!value || !(camera instanceof PerspectiveCamera)) return;
+    if (mode === "player") {
+      orbitYaw.current = Math.atan2(camera.position.x - value.target.x, camera.position.z - value.target.z);
+      invalidate(); return;
+    }
+    if (mode === "orbit" || mode === "follow") {
+      if (!restored.current && initialPose) {
+        const safe = orbitLensIsClear(initialPose.position) ? initialPose : frameInspectionBounds(outpostCloseBounds(), size.width / Math.max(1, size.height));
+        value.target.fromArray(safe.target);
+        camera.position.fromArray(safe.position);
+        value.update(); rememberCamera(); invalidate();
+      }
+      restored.current = true;
+      return;
+    }
+    restored.current = true;
+    const bounds = mode === "overview" ? WORLD_BOUNDS : viewpoint === "close_reference" ? outpostCloseBounds() : outpostBounds();
+    const frame = frameInspectionBounds(bounds, size.width / Math.max(1, size.height), WORLD.view.overview_padding,
+      mode === "outpost" ? VIEW_DIRECTIONS[viewpoint] : VIEW_DIRECTIONS.reference);
+    camera.position.fromArray(frame.position);
+    camera.far = Math.max(8000, frame.distance * 4);
+    camera.updateProjectionMatrix();
+    value.target.fromArray(frame.target);
+    value.update(); rememberCamera(); invalidate();
+  }, [camera, size.width, size.height, mode, reset, invalidate, viewpoint, initialPose, rememberCamera]);
+
+  useEffect(() => {
+    const value = controls.current;
+    if (mode !== "follow" || !awake || !value || !followPose) return;
+    value.target.fromArray(followPose.target); value.update();
+    camera.position.fromArray(followPose.position); camera.lookAt(...followPose.target);
+    rememberCamera(); onSavePose(followPose); invalidate();
+  }, [mode, awake, followPose, camera, invalidate, onSavePose, rememberCamera]);
+
+  useEffect(() => {
+    const value = controls.current;
+    const building = WORLD.buildings.find((item) => item.id === selected);
+    if (!value || !building) return;
+    const [x, y, z] = building.position, [w, h, d] = building.size;
+    // Aim outside the facade rather than putting the orbit pivot inside solid geometry.
+    value.target.set(x, y + Math.min(2.4, h / 2), z + d / 2 + 1.2);
+    camera.position.set(x + w * 0.6, y + h + 12, z + d + 24);
+    value.update(); rememberCamera(); invalidate();
+  }, [selected, camera, invalidate, rememberCamera]);
+
+  useFrame(({ clock }, delta) => {
+    const value = controls.current;
+    if (!value || !awake) return;
+    const command = mode === "player" ? input.current?.read() ?? NO_INPUT : NO_INPUT;
+    const steps = advancePlayer(player.current, command, orbitYaw.current, delta);
+    if (steps > 0) input.current?.consume();
+    if (figure.current) { figure.current.position.fromArray(player.current.position); figure.current.rotation.y = player.current.yaw; }
+    if (marker.current) marker.current.visible = mode !== "player";
+    if (mode === "player") {
+      const [x, y, z] = player.current.position;
+      const target: Vec3 = [x, y + 1.45, z];
+      const desired: Vec3 = [x + Math.sin(orbitYaw.current) * 6, y + 1.45 + followHeight.current, z + Math.cos(orbitYaw.current) * 6];
+      const position = avoidCameraCollision(target, desired);
+      camera.position.fromArray(position);
+      value.target.fromArray(target); camera.lookAt(...target);
+    } else if (mode === "follow" && followPose) {
+      // Controls update first. Reapply the collision-safe lens after their zoom
+      // limits, which must not push a short obstructed sightline through a wall.
+      camera.position.fromArray(followPose.position);
+      value.target.fromArray(followPose.target); camera.lookAt(...followPose.target);
+    } else if (mode === "orbit") {
+      constrainOrbit();
+    }
+    rememberCamera();
+    frameCount.current++;
+    if (clock.elapsedTime - lastTelemetry.current > 0.25) {
+      lastTelemetry.current = clock.elapsedTime;
+      const host = hostRef.current;
+      if (host) {
+        host.dataset.marsPlayer = player.current.position.map((v) => v.toFixed(3)).join(",");
+        host.dataset.marsGrounded = String(player.current.grounded);
+        host.dataset.marsFrames = String(frameCount.current);
+        host.dataset.marsDrawCalls = String(gl.info.render.calls);
+        host.dataset.marsTriangles = String(gl.info.render.triangles);
+        host.dataset.marsCamera = camera.position.toArray().map((v) => v.toFixed(2)).join(",");
+        host.dataset.marsTarget = value.target.toArray().map((v) => v.toFixed(2)).join(",");
+        host.dataset.gigiPosition = gigiPosition.current?.map((v) => v.toFixed(3)).join(",") ?? "pending";
+      }
+    }
+    // Reduced-motion scenes redraw only for deliberate input, gravity or camera interaction.
+    if (mode === "player" && (command.forward || command.right || command.jump || !player.current.grounded)) invalidate();
+  });
+
+  return (
+    <>
+      <color attach="background" args={[neutral ? "#d0d1cd" : "#b8a394"]} />
+      <hemisphereLight args={[neutral ? "#ffffff" : "#e4d6c0", "#584333", neutral ? 1.25 : 0.85]} />
+      <primitive object={sunTarget} />
+      <directionalLight target={sunTarget} position={SUN_POSITION} intensity={neutral ? 2 : 3.4} color={neutral ? "#ffffff" : "#ffdfb0"} castShadow={shadows}
+        shadow-mapSize={[SHADOW_MAP_SIZE, SHADOW_MAP_SIZE]} shadow-camera-left={OUTPOST_SHADOW.left} shadow-camera-right={OUTPOST_SHADOW.right}
+        shadow-camera-top={OUTPOST_SHADOW.top} shadow-camera-bottom={OUTPOST_SHADOW.bottom} shadow-camera-near={OUTPOST_SHADOW.near}
+        shadow-camera-far={OUTPOST_SHADOW.far} shadow-bias={OUTPOST_SHADOW.bias} shadow-normalBias={OUTPOST_SHADOW.normalBias} />
+      <ColonyBlockout onSelect={onSelect} outpostReady={outpostReady} labels={mode === "overview"} />
+      <OutpostReference onSelect={onSelect} onReady={referenceReady} />
+      <MarsAgents records={navigationRecords} names={agentNames} stale={navigationStale} awake={awake} onSelect={onSelectAgent}
+        followAgentId={followAgentId} followAvailable={followAvailable} onFollow={onFollowAgent} onStopFollow={onStopFollow} />
+      <MarsRovers vehicles={vehicles} rides={rides} names={agentNames} stale={navigationStale}
+        followAgentId={followAgentId} followAvailable={followAvailable} onFollow={onFollowAgent} onStopFollow={onStopFollow} />
+      <GigiCompanion player={player} colliders={BUILDING_COLLIDERS} getGround={surfaceHeight} awake={awake}
+        reducedMotion={reducedMotion} visible={gigiVisible} presentation={gigiPresentation}
+        recallSequence={gigiRecall} positionRef={gigiPosition} onPositionReady={gigiPositionReady}
+        onOpenAssistant={onOpenAssistant} onFocus={onFocusGigi}
+        markerLabel={t("society.mars.gigi_focus")} unavailableLabel={t("society.mars.gigi_unavailable")} />
+      <group ref={figure} position={PLAYER_SPAWN}>
+        <mesh position={[0, 0.9, 0]} castShadow><capsuleGeometry args={[0.32, 1.15, 5, 12]} /><meshStandardMaterial color="#f0c75c" roughness={0.8} /></mesh>
+        <mesh position={[0, 1.25, 0.31]}><boxGeometry args={[0.32, 0.15, 0.1]} /><meshStandardMaterial color="#393a38" /></mesh>
+        <mesh ref={marker} position={[0, 4, 0]}><coneGeometry args={[0.75, 2, 8]} /><meshBasicMaterial color="#f0c75c" /></mesh>
+      </group>
+      <OrbitControls
+        ref={controls} makeDefault enabled={mode !== "player" && awake} enableDamping={false}
+        minPolarAngle={MIN_POLAR} maxPolarAngle={MAX_POLAR} minDistance={WORLD.view.near_inspection_m}
+        maxDistance={6000} screenSpacePanning zoomToCursor zoomSpeed={0.65} panSpeed={0.8} rotateSpeed={0.65} onStart={onOrbit}
+        onEnd={() => {
+          const safe = constrainOrbit();
+          if (safe) onSavePose(safe);
+        }}
+      />
+    </>
+  );
+}

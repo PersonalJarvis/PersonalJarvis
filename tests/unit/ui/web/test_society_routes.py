@@ -53,7 +53,11 @@ def client(tmp_path: Path):
     app.state.society = None
     app.state.society_factory = lambda: runtime
     with TestClient(app) as c:
-        yield c, manager
+        try:
+            yield c, manager
+        finally:
+            assert c.portal is not None
+            c.portal.call(runtime.close)
 
 
 def test_lead_is_seeded_and_listed(client):
@@ -85,7 +89,7 @@ def test_create_derives_focus_and_rules(client):
     assert again["created"] is False
 
 
-def test_patch_rederives_focus_on_description_change(client):
+def test_patch_preserves_and_extends_focus_on_description_change(client):
     c, _ = client
     c.post("/api/society/agents", json={"name": "Scout", "description": "Research on the web."})
     first = c.get("/api/society/agents/scout").json()["agent"]
@@ -93,9 +97,23 @@ def test_patch_rederives_focus_on_description_change(client):
     patched = c.patch(
         "/api/society/agents/scout", json={"description": "Handle my mail inbox."}
     ).json()["agent"]
-    assert patched["focus"] == ["plugin:gmail"]
+    assert patched["focus"] == ["core:search-web", "plugin:gmail"]
     explicit = c.patch("/api/society/agents/scout", json={"focus": []}).json()["agent"]
     assert explicit["focus"] == []
+
+
+def test_rename_agent_keeps_chat_identity_and_rejects_duplicates(client):
+    c, _ = client
+    c.post("/api/society/agents", json={"name": "Scout"})
+    c.post("/api/society/agents", json={"name": "Planner"})
+    response = c.patch("/api/society/agents/scout", json={"name": "Research Scout"})
+    assert response.status_code == 200
+    agent = response.json()["agent"]
+    assert agent["agent_id"] == "scout"
+    assert agent["session_id"] == "society:scout"
+    assert agent["name"] == "Research Scout"
+    assert c.patch("/api/society/agents/scout", json={"name": "Planner"}).status_code == 409
+    assert c.patch("/api/society/agents/jarvis", json={"name": "Other Lead"}).status_code == 409
 
 
 def test_typed_errors(client):
@@ -179,7 +197,7 @@ def test_kill_switch_round_trip(client):
 def test_capabilities_catalog_hides_dispatch(client):
     c, _ = client
     ids = [r["id"] for r in c.get("/api/society/capabilities").json()["capabilities"]]
-    assert ids == ["plugin:gmail", "core:search-web"]
+    assert ids == ["plugin:gmail", "core:browser", "core:coding-session", "core:search-web"]
 
 
 def test_rooms_over_rest(client):
@@ -357,6 +375,26 @@ def test_memory_overview_recall_and_promotion_through_approvals(memory_client):
     # Direct promote/dismiss on unknown rows answer 404.
     assert c.post("/api/society/memory/999/promote").status_code == 404
     assert c.post("/api/society/memory/999/dismiss").status_code == 404
+
+
+def test_memory_file_serves_society_page_and_refuses_escape(memory_client):
+    c, vault = memory_client
+    c.post("/api/society/agents", json={"name": "Scout"})
+    import asyncio
+
+    runtime: SocietyRuntime = c.app.state.society
+    scout = asyncio.run(runtime.roster.get("scout"))
+    rel = asyncio.run(runtime.memory.remember(scout, "Loves maps.", root=vault))
+    assert rel == "society/scout/MEMORY.md"
+    got = c.get("/api/society/memory/file", params={"path": rel}).json()
+    assert got["path"] == rel and got["agent_id"] == "scout"
+    assert "Loves maps." in got["content"]
+    # Outside society/ is never served, even with traversal.
+    assert c.get("/api/society/memory/file", params={"path": "jarvis.toml"}).status_code == 404
+    traversal = c.get("/api/society/memory/file", params={"path": "society/../jarvis.toml"})
+    assert traversal.status_code == 404
+    missing = c.get("/api/society/memory/file", params={"path": "society/scout/missing.md"})
+    assert missing.status_code == 404
 
 
 def test_bind_agent_chat_creates_the_canonical_session(tmp_path: Path):

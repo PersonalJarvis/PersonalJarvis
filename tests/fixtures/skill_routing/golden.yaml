@@ -460,6 +460,27 @@ skills:
       - text: "was ist higgsfield eigentlich fuer ein dienst"
         reason: definitional question about the product, not a request to act
 
+  plugin-shopify:
+    positives:
+      - text: "zeig mir meine shopify bestellungen"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "show my shopify orders"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+      - text: "such in shopify nach dem produkt"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+    hard_negatives:
+      - text: "was ist shopify eigentlich fuer ein dienst"
+        reason: definitional question about the product, not a request to act
+
   plugin-cal_com:
     positives:
       - text: "wann ist mein naechster termin bei cal com"

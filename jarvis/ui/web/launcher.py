@@ -1765,6 +1765,9 @@ def _main(argv: list[str] | None = None) -> int:
 
     # From here on every desktop launch is written down — see the helper.
     if not args.headless:
+        from jarvis.ui.relauncher import remember_desktop_launch_args  # noqa: PLC0415
+
+        remember_desktop_launch_args(port=args.port, dev=args.dev, no_lock=args.no_lock)
         _install_boot_trace(_raw_argv)
 
     # Refuse a window we cannot build, BEFORE paying for the boot. Everything

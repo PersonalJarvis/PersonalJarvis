@@ -90,3 +90,28 @@ def test_two_agents_exchange_typed_messages_headless(tmp_path: Path) -> None:
         status = c.get("/api/society/status").json()
         assert status["agents"] == 3  # jarvis + scout + archivist
         assert status["kill_switch"] is False
+
+
+def test_roster_rename_and_archive_keep_identity_headless(tmp_path: Path) -> None:
+    runtime = SocietyRuntime(
+        tmp_path, seed_starter_team=False, mission_manager=lambda: FakeManager()
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.state.society_factory = lambda: runtime
+
+    with TestClient(app) as client:
+        created = client.post("/api/society/agents", json={"name": "Scout"}).json()["agent"]
+        renamed = client.patch(
+            f"/api/society/agents/{created['agent_id']}", json={"name": "Research Scout"}
+        ).json()["agent"]
+        assert renamed["agent_id"] == created["agent_id"]
+        assert renamed["session_id"] == created["session_id"]
+        assert renamed["name"] == "Research Scout"
+        assert client.delete(f"/api/society/agents/{created['agent_id']}").status_code == 200
+        visible = client.get("/api/society/agents").json()["agents"]
+        assert all(agent["agent_id"] != created["agent_id"] for agent in visible)
+        archived = client.get(
+            "/api/society/agents", params={"include_archived": "true"}
+        ).json()["agents"]
+        assert any(agent["agent_id"] == created["agent_id"] for agent in archived)

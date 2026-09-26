@@ -326,6 +326,8 @@ class SocietyScheduler:
                 for env in await self._store.pending_deliveries():
                     if not self._accepting:
                         break  # Preserve unattempted durable deliveries for the next startup.
+                    if await self._record_assignment_reply(env):
+                        continue
                     if env.to_agent in busy:
                         receive = getattr(self._deliver, "receive", None)
                         target = await self._resolve_target(env)
@@ -341,6 +343,23 @@ class SocietyScheduler:
                         continue
                     if not await self._on_deliver(env):
                         busy.add(env.to_agent)
+
+    async def _record_assignment_reply(self, env: SocietyEnvelope) -> bool:
+        """Assignment outcomes belong to the watcher, not a second chat turn."""
+        if env.msg_type is not MsgType.ANSWER or not env.parent_event_id:
+            return False
+        parent = await self._store.get_event(env.parent_event_id)
+        if (
+            parent is None
+            or parent.msg_type is not MsgType.ASSIGN
+            or "reply_policy" not in parent.payload
+            or parent.trace_id != env.trace_id
+            or parent.from_agent != env.to_agent
+            or parent.to_agent != env.from_agent
+        ):
+            return False
+        await self._store.mark_delivery(env.event_id, "delivered")
+        return True
 
     async def _on_deliver(self, env: SocietyEnvelope) -> bool:
         if await self._store.delivery_status(env.event_id) != "queued":

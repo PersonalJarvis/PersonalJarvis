@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppWindow, Download, PanelLeftClose, PanelLeftOpen, RotateCw } from "lucide-react";
+import { AppWindow, Download, RotateCw } from "lucide-react";
 
 import { useEventStore, type SectionId } from "@/store/events";
-import { NAV_FOOTER_ITEMS, NAV_GROUPS, resolveNavLabel } from "@/components/layout/navGroups";
 import {
   fetchUpdateProgress,
   useUpdate,
@@ -12,41 +11,29 @@ import { clsx } from "clsx";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
+import { SectionNavButtons } from "@/components/layout/SectionNavButtons";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
+import { useDesktopChrome, WindowControls } from "@/components/layout/WindowControls";
 import { hasEmbeddedDesktopBridge } from "@/components/voice/BrowserRealtimeControl";
 import { openExternalUrl } from "@/lib/openExternal";
 
 /**
- * Global top bar rendered above every view (see App.tsx). It carries the app-
- * chrome actions that must be reachable from *every* screen: a "Restart Jarvis"
- * button, and — only when a newer version is published — an "Update" button that
- * pulls the new code and restarts, so an end user never touches a terminal.
+ * The window's title strip, on every screen.
  *
- * Why a global bar and not the per-view ``ViewHeader``: a couple of views
- * (DocsView's 3-column layout, SubAgentsView's departure board) don't render a
- * ViewHeader at all, and ~13 views already fill the header's ``right`` slot with
- * their own actions. Putting the buttons in the shell, above MainView, is the
- * only placement that is on every screen and collides with nothing.
+ * It is one thin row at the top of the window: drag the empty part to move
+ * the window, and the right end holds the app buttons (theme, restart, and
+ * an update when one exists) immediately beside minimize, maximize and close.
+ * Sections do not grow a second bar for those buttons.
  *
- * The backend already ships the whole self-restart machinery: both buttons POST
- * to the existing ``/api/settings/restart-app`` endpoint, which spawns a
- * detached, cross-platform relauncher (see jarvis/ui/relauncher.py). On a
- * headless host that endpoint returns 503 and we recover with an honest toast.
+ * The backend already ships the self-restart machinery: restart and update
+ * POST to ``/api/settings/restart-app``, which spawns a detached relauncher
+ * (see jarvis/ui/relauncher.py). On a headless host that endpoint returns 503
+ * and we recover with an honest toast.
  *
- * A restart tears down the whole app mid-task, so both buttons honor the mission
- * guard (409 → arm a force override) rather than killing live missions silently.
- * We avoid a native ``window.confirm`` on purpose — it blocks the pywebview loop.
- *
- * **Two surfaces render the bar themselves.** The Agentic IDE is a wall of
- * terminal output with a single header row of its own, and a second full-width
- * bar above it holding two buttons cost that view ~40 px it had better uses
- * for. The mission deck has the same shape: its HUD is already a header, and
- * an empty chrome strip above it was a second, boring row. Both take
- * `TopBarActions` into their own row and this bar steps aside there — the
- * actions are still on that screen, which is the rule that matters; what
- * moved is the furniture around them. The agents section follows the same
- * rule with its own unified header (`SocietyView`). Every other view keeps
- * the bar.
+ * A restart tears down the whole app mid-task, so both buttons honor the
+ * mission guard (409 → arm a force override) rather than killing live missions
+ * silently. We avoid a native ``window.confirm`` on purpose — it blocks the
+ * pywebview loop.
  */
 const CONFIRM_TIMEOUT_MS = 4000;
 
@@ -68,7 +55,7 @@ const CONFIRM_TIMEOUT_MS = 4000;
  * change.)
  */
 const CHROME_BUTTON =
-  "inline-flex h-8 shrink-0 items-center gap-2 rounded-md px-3 text-base font-medium " +
+  "inline-flex h-8 shrink-0 items-center gap-2 rounded-md text-base font-medium " +
   "transition-[background-color,color,transform] duration-150 " +
   "motion-safe:active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 " +
   "focus-visible:ring-ring disabled:cursor-default disabled:opacity-70";
@@ -83,92 +70,57 @@ const CHROME_QUIET = "text-muted-foreground hover:bg-secondary hover:text-foregr
  */
 const CHROME_ARMED = "bg-warning text-background";
 
-const CODING_SECTIONS = new Set<SectionId>([
-  "agentic-ide",
-  "agentic-ide-classic",
-  "chat-workspace",
-]);
-
-/** The active section's own nav label — the bar's breadcrumb-style title. */
-function useViewTitle(activeSection: SectionId): string {
-  const t = useT();
-  const item = [...NAV_GROUPS.flat(), ...NAV_FOOTER_ITEMS].find((row) =>
-    row.matchIds ? row.matchIds.includes(activeSection) : row.id === activeSection,
-  );
-  return item ? resolveNavLabel(t, item) : "";
-}
-
-export function TopBar({ settingsNavigation }: {
+export function TopBar({ settingsNavigation, navToggle }: {
   settingsNavigation?: { open: boolean; onToggle: () => void };
+  /**
+   * The sidebar toggle the caption owns. State lives in the shell (App.tsx):
+   * the sidebar header no longer carries its own button — it moved here, next
+   * to back/forward, so the leading controls sit in the empty caption corner
+   * on every section.
+   */
+  navToggle?: { collapsed: boolean; onToggle: () => void };
 } = {}) {
-  const t = useT();
-  const activeSection = useEventStore((s) => s.activeSection);
-  const solo = useEventStore((s) => s.solo);
-  const detachedViews = useEventStore((s) => s.detachedViews);
-  const viewTitle = useViewTitle(activeSection);
-  // The coding workspace takes the actions into its own toolbar row, under
-  // every id that reaches it. The rule is "the section carries the actions
-  // itself" — a section that does not would lose Restart, which is the one
-  // control a frontend change is reached through. Once detached, that toolbar
-  // lives in the solo window and the main window only has a placeholder, so
-  // the main shell must provide the global bar again.
-  const codingDetached =
-    !solo && detachedViews.some((view) => CODING_SECTIONS.has(view));
-  if (CODING_SECTIONS.has(activeSection) && !codingDetached) {
-    return null;
-  }
-
+  const chrome = useDesktopChrome();
+  const controls = chrome.frameless ? chrome.controls : "none";
   /*
-   * The front page already has a header. A second empty strip above it was
-   * the boring row. Same rule as the IDE: this bar steps aside, the actions
-   * move into that header (`HomeView`). While chats is detached the main
-   * window is a placeholder and needs the bar back.
+   * The settings hub's own navigation toggle and the caption sidebar toggle
+   * are the same control: one panel button at the leading edge, not two
+   * adjacent ones doing the same job. It keeps its test id so the hub's
+   * contract ("the caption reopens the navigation") stays observable.
    */
-  const chatsDetached = !solo && detachedViews.includes("chats");
-  if (activeSection === "chats" && !chatsDetached) {
-    return null;
-  }
-
-  /*
-   * The agents section carries a single unified header of its own
-   * (`SocietyView`): the section toggle, the Map/Agents switch and these
-   * actions in one row. A global bar above it would be a second, boring row.
-   * Agents cannot detach, so no placeholder case applies here.
-   */
-  if (activeSection === "agents") {
-    return null;
-  }
+  const sidebarToggle = settingsNavigation
+    ? {
+        collapsed: !settingsNavigation.open,
+        onToggle: settingsNavigation.onToggle,
+        testId: "settings-sidebar-toggle",
+      }
+    : navToggle;
 
   return (
-    // 48 px on the page ground with a hairline beneath. Left: the view's
-    // name, and the coding-mode badge only while the mode is ON. Right: the
-    // app-chrome actions.
-    <div className="jarvis-shell-surface flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-      <div className="mr-auto flex min-w-0 items-center gap-3">
-        {settingsNavigation && (
-          <button
-            type="button"
-            data-testid="settings-sidebar-toggle"
-            onClick={settingsNavigation.onToggle}
-            aria-expanded={settingsNavigation.open}
-            aria-label={t(settingsNavigation.open ? "sidebar.collapse" : "sidebar.expand")}
-            title={t(settingsNavigation.open ? "sidebar.collapse" : "sidebar.expand")}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            {settingsNavigation.open ? <PanelLeftClose className="h-4 w-4" aria-hidden /> : <PanelLeftOpen className="h-4 w-4" aria-hidden />}
-          </button>
-        )}
-        {viewTitle && (
-          <span
-            data-testid="topbar-view-title"
-            className="truncate text-base font-medium text-foreground"
-          >
-            {viewTitle}
-          </span>
-        )}
+    // One title strip for the whole window. The empty middle is the drag
+    // handle (pywebview only starts a drag on this class, not on a child
+    // button — so the buttons sit beside it, never inside it).
+    <div
+      data-testid="window-caption"
+      className="fixed inset-x-0 top-0 z-[120] flex h-8 items-stretch bg-transparent"
+    >
+      {controls === "leading" && (
+        <WindowControls controls={controls} maximized={chrome.maximized} onCommand={chrome.command} />
+      )}
+      <SectionNavButtons sidebarToggle={sidebarToggle} />
+      <div
+        className="pywebview-drag-region min-w-0 flex-1"
+        onDoubleClick={() => {
+          if (chrome.frameless) chrome.command("maximize");
+        }}
+      />
+      <div className="flex shrink-0 items-center">
         <CodingModeBadge />
+        <TopBarActions />
+        {controls === "trailing" && (
+          <WindowControls controls={controls} maximized={chrome.maximized} onCommand={chrome.command} />
+        )}
       </div>
-      <TopBarActions />
     </div>
   );
 }
@@ -270,10 +222,10 @@ function DetachButton() {
       disabled={busy}
       title={t("topbar.detach_hint")}
       data-testid="detach-view-button"
-      className={clsx(CHROME_BUTTON, CHROME_QUIET)}
+      aria-label={t("topbar.detach")}
+      className={clsx(CHROME_BUTTON, "w-8 justify-center px-0", CHROME_QUIET)}
     >
       <AppWindow aria-hidden className="h-4 w-4" />
-      {t("topbar.detach")}
     </button>
   );
 }
@@ -371,14 +323,18 @@ function RestartButton() {
         ? t("topbar.restart_confirm")
         : t("topbar.restart");
 
+  const showLabel = confirming || forceArmed || restarting;
+
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={restarting}
       title={t("topbar.restart_hint")}
+      aria-label={label}
       className={clsx(
         CHROME_BUTTON,
+        showLabel ? "px-3" : "w-8 justify-center px-0",
         confirming || forceArmed ? CHROME_ARMED : CHROME_QUIET,
       )}
     >
@@ -386,7 +342,7 @@ function RestartButton() {
         aria-hidden
         className={cn("h-4 w-4", restarting && "animate-spin")}
       />
-      {label}
+      {showLabel ? label : null}
     </button>
   );
 }
@@ -666,7 +622,7 @@ function UpdateButton() {
         aria-valuenow={busy ? percent : undefined}
         className={clsx(
           CHROME_BUTTON,
-          "relative overflow-hidden",
+          "relative overflow-hidden px-3",
           // The one offer in the bar, so it is the one thing here with a fill
           // of its own: an object on the chrome, answering the pointer one
           // step up. It used to be accent-tinted TEXT on an accent-tinted

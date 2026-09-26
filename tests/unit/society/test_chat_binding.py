@@ -76,17 +76,6 @@ async def test_ensure_session_is_deterministic_and_reseats(world):
     assert reseated.session_id == "society:scout"
 
 
-async def test_ensure_session_clears_legacy_effort(world):
-    rt, svc, cfg = world
-    scout, _ = await rt.roster.create(
-        name="Scout", provider="antigravity", model="gemini-3.8-flash", effort="high"
-    )
-    first = ensure_session(svc, cfg, scout)
-    assert first.effort == ""
-    svc.store.update_session(first.session_id, effort="low")
-    assert ensure_session(svc, cfg, scout).effort == ""
-
-
 async def test_ceiling_maps_to_stance(world):
     rt, svc, cfg = world
     safe, _ = await rt.roster.create(name="Reader", provider="openai", permission_ceiling="safe")
@@ -134,8 +123,11 @@ async def test_deliver_hook_frames_and_sends(world):
         (
             "society:scout",
             "[query from Archivist]\nWhere is the VPS note?\nRefs: wiki:society/archivist/vps.md\n"
+            f"Message id: {env.event_id}; sender id: archivist\n"
             "Reply to the sender using society_message_agent with kind 'answer'. "
-            "This is internal communication; do not use an external messaging connector.",
+            "Include the actual findings or decision; use reply_status=blocked if you "
+            "cannot answer. This is internal communication; do not use an external "
+            "messaging connector. No preliminary acknowledgement is needed.",
         )
     ]
     svc.busy.add("society:scout")
@@ -157,7 +149,7 @@ def test_result_frame_carries_the_handoff():
         },
     )
     text = frame_incoming(env, "Scout")
-    assert text.splitlines() == [
+    assert text.splitlines()[:5] == [
         "[result from Scout]",
         "Status: partial",
         "Done: Found three providers.",

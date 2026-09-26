@@ -10,6 +10,7 @@ import type { TaskDetail, TaskStep } from "@/views/automations/automationsModel"
 import { TriggerBuilder } from "./TriggerBuilder";
 import { WebhookConnection } from "./WebhookConnection";
 import { SourceControls } from "./SourceControls";
+import { RoutineSeatPicker, type RoutineSeat } from "./RoutineSeatPicker";
 import { useRoutineNavigation } from "../chat/routineNavigation";
 
 const field = "w-full rounded-lg border border-border bg-background px-3 py-2 text-[12px] text-foreground";
@@ -80,12 +81,27 @@ export function AgentRoutineDetail({ agentId, routine, onClose }: {
   const marker = rawPrompt.indexOf("\nRoutine:\n");
   const saved = { title: displayRoutineTitle(first?.title ?? routine.title), prompt: marker >= 0 ? rawPrompt.slice(marker + 10) : routine.prompt ?? rawPrompt };
   const values = draft ?? saved;
+  const seatAction = (first?.spec?.action ?? {}) as { kind?: string; provider?: unknown; model?: unknown; effort?: unknown; account_id?: unknown };
+  const savedSeat: RoutineSeat = {
+    provider: String(seatAction.provider ?? ""),
+    model: String(seatAction.model ?? ""),
+    effort: String(seatAction.effort ?? ""),
+    account_id: String(seatAction.account_id ?? ""),
+  };
+  const [seatDraft, setSeatDraft] = useState<RoutineSeat | null>(null);
+  const [seatOpen, setSeatOpen] = useState(false);
+  const seat = seatDraft ?? savedSeat;
+  const seatDirty = seatDraft !== null && (
+    seatDraft.provider !== savedSeat.provider || seatDraft.model !== savedSeat.model ||
+    seatDraft.effort !== savedSeat.effort || seatDraft.account_id !== savedSeat.account_id
+  );
   const ready = details.every(Boolean);
   const running = details.some((detail) => detail?.state === "running");
   const active = details.some((detail) => detail && detail.state !== "paused" && !terminal.includes(detail.state));
   const editable = ready && !running && details.every((detail, index) => detail && (
     index > 0 && terminal.includes(detail.state) || recurring.includes(detail.trigger_type) && !terminal.includes(detail.state)
   ));
+  const seatEditable = ready && !running && seatAction.kind !== "workflow";
   const url = `/api/society/agents/${encodeURIComponent(agentId)}/routines`;
   const refresh = () => Promise.all([
     client.invalidateQueries({ queryKey: ["tasks"] }),
@@ -99,6 +115,7 @@ export function AgentRoutineDetail({ agentId, routine, onClose }: {
   };
   const update = (member: LiveRoutine, nextSchedule: unknown) => writeRoutine(`${url}/${encodeURIComponent(member.id)}`, {
     title: values.title.trim(), prompt: values.prompt.trim(), schedule: nextSchedule,
+    ...(seatDirty ? { provider: seat.provider, model: seat.model, effort: seat.effort, account_id: seat.account_id } : {}),
   });
   const valid = Boolean(values.title.trim() && values.prompt.trim());
   const runs = details.flatMap((detail) => detail ? routineRuns(detail.id, detail.steps) : []).sort((a, b) => b.timestamp - a.timestamp);
@@ -142,8 +159,29 @@ export function AgentRoutineDetail({ agentId, routine, onClose }: {
     <label className="block space-y-1 text-[11px] text-muted-foreground">{label("prompt")}<textarea className={field} aria-label={label("prompt")} maxLength={16000} rows={7} disabled={pending || !editable || Boolean(editing) || (first?.spec?.action as { kind?: string } | undefined)?.kind !== "agent"} value={values.prompt} onChange={(event) => setDraft({ ...values, prompt: event.target.value })} /></label>
     {draft && <div className="flex gap-2"><button className={button} disabled={pending || !valid || !editable || Boolean(editing)} onClick={() => void act(async () => {
       for (const [index, member] of members.entries()) if (!terminal.includes(details[index]!.state)) await update(member, details[index]?.trigger);
-      setDraft(null); setNotice(label("saved"));
+      setDraft(null); setSeatDraft(null); setSeatOpen(false); setNotice(label("saved"));
     })}>{label("save")}</button><button className={button} disabled={pending} onClick={() => setDraft(null)}>{label("cancel")}</button></div>}
+    {seatEditable && <div className="space-y-2 rounded-xl border border-border p-3">
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="text-[11px] text-muted-foreground">{label("model")}</h4>
+        <button
+          type="button"
+          className="text-[11px] text-muted-foreground underline disabled:opacity-50"
+          disabled={pending || !editable || Boolean(editing)}
+          onClick={() => setSeatOpen((open) => !open)}
+        >
+          {seatOpen ? label("cancel") : label("change")}
+        </button>
+      </div>
+      <p className="text-[12px]">
+        {!seat.provider ? label("follow_agent") : `${seat.provider}${seat.model ? ` · ${seat.model}` : ""}${seat.effort ? ` · ${seat.effort}` : ""}`}
+      </p>
+      {seatOpen && <RoutineSeatPicker seat={seat} disabled={pending || !editable || Boolean(editing)} onChange={setSeatDraft} />}
+    </div>}
+    {seatDirty && <div className="flex gap-2"><button className={button} disabled={pending || !valid || !editable || Boolean(editing) || Boolean(draft)} onClick={() => void act(async () => {
+      for (const [index, member] of members.entries()) if (!terminal.includes(details[index]!.state)) await update(member, details[index]?.trigger);
+      setSeatDraft(null); setSeatOpen(false); setNotice(label("saved"));
+    })}>{label("save")}</button><button className={button} disabled={pending} onClick={() => setSeatDraft(null)}>{label("cancel")}</button></div>}
     <div className="space-y-2">
       <h4 className="text-[11px] text-muted-foreground">{label("when")}</h4>
       <div className="space-y-2 rounded-xl border border-border p-3">

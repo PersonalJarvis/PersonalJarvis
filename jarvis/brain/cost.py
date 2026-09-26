@@ -111,6 +111,11 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "gemini-live-2.5-flash-native-audio": (0.50, 2.0),
     # ── OpenAI (Frontier: GPT-5.5 + 5.5-pro, released 2026-04-23) ──
     "gpt-5.5": (5.0, 30.0),
+    # OpenAI standard short-context rates, verified 2026-09-23:
+    # https://developers.openai.com/api/docs/pricing
+    "gpt-5.6-terra": (2.0, 12.0),
+    "gpt-5.6-sol": (4.0, 20.0),
+    "gpt-5.6-luna": (0.20, 1.20),
     # Not a vendor model: Codex's review pass, which runs on the session's own
     # model. Tracks gpt-5.6-sol, the default that pass runs on.
     "codex-auto-review": (2.0, 10.0),
@@ -139,6 +144,14 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     # (2026-08-25): $2 uncached in / $0.50 cached / $6 out.
     "grok-4.6": (2.0, 6.0),
     "grok-4.6-build": (2.0, 6.0),
+    # Grok 4.7, released 2026-09-21. Same list price as 4.6 below 200k
+    # prompt tokens ($2 in / $0.50 cached / $6 out). The long-context band
+    # is double; this row is the short-context rate, matching 4.6 above.
+    # ``-build`` is the suffix Grok Build transcripts used for 4.6.
+    "grok-4.7": (2.0, 6.0),
+    "grok-4.7-build": (2.0, 6.0),
+    # Grok Build only. Same model, twice the token rate (xAI, 2026-09-21).
+    "grok-4.7-build-fast": (4.0, 12.0),
     "grok-4.20": (2.0, 6.0),
     "grok-4-0709": (5.0, 15.0),
     "grok-4": (5.0, 15.0),

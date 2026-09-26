@@ -35,7 +35,7 @@ def worker_selection(config: Any) -> ModelSelection | None:
 
 
 @contextmanager
-def use_operation_model(selection: ModelSelection):
+def use_operation_model(selection: ModelSelection | None):
     token = operation_model.set(selection)
     try:
         yield

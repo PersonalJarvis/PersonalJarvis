@@ -93,6 +93,7 @@ export interface AgentChatSession {
   permission_mode: string;
   /** Absent on a backend older than the surface split; the store keeps such rows. */
   surface?: AgentChatSurface;
+  account_id?: string;
   vendor_session: string | null;
   created_ms: number;
   updated_ms: number;
@@ -188,8 +189,16 @@ async function json<T>(res: Response, what: string): Promise<T> {
 // caching completed requests: explicit refreshes must still reach the server.
 const catalogRequests = new Map<string, Promise<AgentChatCatalog>>();
 
-export function fetchAgentChatCatalog(surface?: AgentChatSurface): Promise<AgentChatCatalog> {
-  const query = surface ? `?surface=${encodeURIComponent(surface)}` : "";
+export function fetchAgentChatCatalog(
+  surface?: AgentChatSurface,
+  scope: { accountId?: string; sessionId?: string; cwd?: string } = {},
+): Promise<AgentChatCatalog> {
+  const params = new URLSearchParams();
+  if (surface) params.set("surface", surface);
+  if (scope.accountId) params.set("account_id", scope.accountId);
+  if (scope.sessionId) params.set("session_id", scope.sessionId);
+  if (scope.cwd) params.set("cwd", scope.cwd);
+  const query = params.size ? `?${params}` : "";
   const pending = catalogRequests.get(query);
   if (pending) return pending;
   const request = fetch(`/api/agent-chat/catalog${query}`)

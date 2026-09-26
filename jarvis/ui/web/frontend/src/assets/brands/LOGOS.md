@@ -127,6 +127,7 @@ still supply their own logo URL. No built-in depends on the Simple Icons CDN.
 
 | stripe | [Vendor original](https://images.stripeassets.com/fzn2n1nzq965/1hgcBNd12BfT9VLgbId7By/01d91920114b124fb4cf6d448f9f06eb/favicon.svg) | Vendor artwork; nominative identification only | 2026-09-10 |
 | cloudflare | [Vendor original](https://www.cloudflare.com/favicon.ico) | Vendor artwork; nominative identification only | 2026-09-10 |
+| shopify | [Original mark](https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/shopify.svg) | CC0-1.0; nominative use | 2026-09-21 |
 
 The `x` and `aws` marks use the monochrome [Simple Icons](https://github.com/simple-icons/simple-icons) variants (CC0-1.0) on white icon tiles. HubSpot uses its published orange. The X mark is the current X symbol, not the retired Twitter bird.
 

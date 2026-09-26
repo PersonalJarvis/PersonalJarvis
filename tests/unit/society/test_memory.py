@@ -35,7 +35,7 @@ async def test_pages_are_schema_valid_and_scoped(rt: SocietyRuntime, tmp_path: P
     vault = tmp_path / "vault"
     scout = await rt.roster.get("scout")
     rel = await rt.memory.remember(scout, "The user hosts on Hetzner.", root=vault)
-    assert rel == "society/scout/memory.md"
+    assert rel == "society/scout/MEMORY.md"
     text = (vault / rel).read_text(encoding="utf-8")
     assert text.startswith("---\ntype: society\n") and "author: agent:scout" in text
     note, row_id = await rt.memory.note(
@@ -172,7 +172,7 @@ async def test_secrets_never_enter_memory(rt: SocietyRuntime, tmp_path: Path):
         {"kind": "memory", "text": "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij0123"}, CTX
     )
     assert res.success is False and res.output["reason"] == "blocked_by_policy"
-    assert not (vault / "society" / "scout" / "memory.md").exists()
+    assert not (vault / "society" / "scout" / "MEMORY.md").exists()
 
 
 async def test_every_operation_is_a_memory_digest_on_the_board(rt: SocietyRuntime, tmp_path: Path):
@@ -228,3 +228,27 @@ async def test_overview_lists_shared_agents_and_queue(rt: SocietyRuntime, tmp_pa
     await rt.memory.promote(got["knowledge_id"], root=vault)
     view = await rt.memory.overview(root=vault)
     assert view["shared"][0]["title"] == "Maps"
+
+
+def test_build_memory_diff_paints_red_green():
+    from jarvis.society.memory import build_memory_diff
+
+    before = "line one\nline two\n"
+    after = "line one\nline TWO\nline three\n"
+    diff = build_memory_diff(before, after)
+    text = "\n".join(diff)
+    assert "-line two" in text and "+line TWO" in text and "+line three" in text
+
+
+async def test_remember_digest_carries_before_after_and_diff(rt: SocietyRuntime, tmp_path: Path):
+    vault = tmp_path / "vault"
+    scout = await rt.roster.get("scout")
+    await rt.memory.remember(scout, "First fact.", root=vault)
+    before = await rt.store.last_seq()
+    await rt.memory.remember(scout, "Second fact.", root=vault)
+    events = [e for e in await rt.store.events_since(before) if e.msg_type is MsgType.DIGEST]
+    assert len(events) == 1
+    payload = events[0].payload
+    assert payload["op"] == "remember" and payload["path"] == "society/scout/MEMORY.md"
+    assert "First fact." in payload["before"] and "Second fact." in payload["after"]
+    assert any(line.startswith("+") and "Second fact." in line for line in payload["diff"])

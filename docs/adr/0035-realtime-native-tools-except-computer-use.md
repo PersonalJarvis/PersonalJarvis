@@ -2,6 +2,11 @@
 
 **Status:** Accepted · **Date:** 2026-08-19 · **Phase:** Voice UX, realtime engine (every transport, every provider)
 
+**Continuous voice amendment (2026-09-19):** The new GPT-Live and native live
+orchestrators follow [ADR-0036](0036-continuous-voice-and-agent-selection.md).
+This decision remains the reference for the legacy realtime session during
+migration qualification.
+
 ## Context
 
 Maintainer mandate (2026-08-19): the realtime voice model must be allowed to

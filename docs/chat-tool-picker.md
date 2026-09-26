@@ -131,6 +131,7 @@ state or second tool-selection pipeline.
 | Spotify | `spotify` | `spotify` |
 | YouTube Music | `youtube_music` | `youtube_music` |
 | Higgsfield | `higgsfield` | `MCP/channel connector` |
+| Shopify | `shopify` | `MCP/channel connector` |
 
 ## Registered tool entry points
 

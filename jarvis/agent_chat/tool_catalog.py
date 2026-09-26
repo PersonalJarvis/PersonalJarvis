@@ -111,6 +111,25 @@ def build_catalog(
             servers.setdefault(server, []).append(name)
             category: Category = "mcp"
             group = server
+        elif name == "create_artifact":
+            # The explicit artifact pin for the Add menu: bilingual label so
+            # DE "Artefakt" and EN "Artifact" both find it via prefix and
+            # substring search, brand "artifact" for the shared Shapes mark.
+            label = "Artifact / Artefakt"
+            category = category_for(name)
+            group = "Artifact"
+            rows.append(
+                ToolChoice(
+                    id=f"tool:{name}",
+                    label=label,
+                    description=str(tool.description),
+                    category=category,
+                    group=group,
+                    brand="artifact",
+                    tool_names=(name,),
+                )
+            )
+            continue
         else:
             label = name
             category = category_for(name)

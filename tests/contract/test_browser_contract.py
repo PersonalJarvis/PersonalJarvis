@@ -1,13 +1,14 @@
 """Deterministic tests for browser contracts and policy boundaries."""
 
 from types import SimpleNamespace
-from pathlib import Path
+
 import pytest
+
 from jarvis.society.browser.bridge import brain_messages
 from jarvis.society.capabilities import (
+    build_catalog,
     capability_id_for_tool,
     tool_name_for_capability,
-    build_catalog,
 )
 from jarvis.ui.web.society_browser_routes import validate_control
 
@@ -26,6 +27,7 @@ def test_browser_capability_roundtrip():
 @pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
 def test_native_window_probe_degrades_without_native_dependencies(monkeypatch, platform):
     import importlib.util
+
     from jarvis.society.browser import native_window
 
     monkeypatch.setattr(native_window.sys, "platform", platform)
@@ -36,7 +38,9 @@ def test_native_window_probe_degrades_without_native_dependencies(monkeypatch, p
 def test_add_menu_names_the_browser_as_chrome():
     from jarvis.agent_chat.tool_catalog import build_catalog, keyword_rank
 
-    rows = build_catalog({"society_browser": SimpleNamespace(description="Browse websites", risk_tier="monitor")})
+    rows = build_catalog(
+        {"society_browser": SimpleNamespace(description="Browse websites", risk_tier="monitor")}
+    )
     row = next(row for row in rows if row.id == "tool:society_browser")
     assert row.label == "Chrome / Browser"
     assert keyword_rank("chrome", row) is not None
@@ -45,6 +49,7 @@ def test_add_menu_names_the_browser_as_chrome():
 
 async def test_cold_browser_start_emits_progress_until_subscription_ready():
     import asyncio
+
     from jarvis.ui.web.society_browser_routes import _subscribe_with_progress
 
     ready = asyncio.Event()
@@ -69,6 +74,7 @@ async def test_cold_browser_start_emits_progress_until_subscription_ready():
 
 async def test_starting_viewer_transport_failure_cancels_subscription():
     import asyncio
+
     from jarvis.ui.web.society_browser_routes import _subscribe_with_progress
 
     cancelled = asyncio.Event()
@@ -94,8 +100,8 @@ async def test_starting_viewer_transport_failure_cancels_subscription():
 
 
 async def test_stopped_browser_turn_cannot_retry_but_new_user_turn_can(tmp_path):
-    from jarvis.society.browser.live import LiveSessions
     from jarvis.society.browser.bridge import execute_live
+    from jarvis.society.browser.live import LiveSessions
 
     live = LiveSessions(tmp_path)
     live.stop_turn("agent", "denied-turn")
@@ -110,6 +116,7 @@ async def test_stopped_browser_turn_cannot_retry_but_new_user_turn_can(tmp_path)
 @pytest.mark.parametrize("chat_id", ["", "jarvis-root-test"])
 async def test_stop_button_also_stops_the_owning_chat(monkeypatch, chat_id):
     import asyncio
+
     from jarvis.ui.web import society_browser_routes as routes
 
     seen = []
@@ -117,9 +124,9 @@ async def test_stop_button_also_stops_the_owning_chat(monkeypatch, chat_id):
     await lock.acquire()
     session = SimpleNamespace(closed=False, run_lock=lock, active_chat=chat_id)
 
-    async def cancel_browser(value):
+    async def cancel_browser(value, *, end_turn=True):
         assert value is session
-        seen.append("browser")
+        seen.append(("browser", end_turn))
 
     async def cancel_chat(value):
         seen.append(value)
@@ -136,18 +143,256 @@ async def test_stop_button_also_stops_the_owning_chat(monkeypatch, chat_id):
         )
 
     request = SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(agent_chat=SimpleNamespace(cancel=cancel_chat)))
+        headers={"x-jarvis-stop-chat": "1"},
+        app=SimpleNamespace(state=SimpleNamespace(agent_chat=SimpleNamespace(cancel=cancel_chat))),
     )
     monkeypatch.setattr(routes, "_runtime", runtime)
     assert await routes.cancel_agent_browser("test", request) == {"cancelled": True}
-    assert seen == ["browser", chat_id or "society:test"]
+    assert seen == [("browser", True), chat_id or "society:test"]
+
+
+async def test_agent_cancel_releases_the_browser_without_stopping_the_chat(monkeypatch):
+    import asyncio
+
+    from jarvis.ui.web import society_browser_routes as routes
+
+    seen = []
+    lock = asyncio.Lock()
+    await lock.acquire()
+    session = SimpleNamespace(closed=False, run_lock=lock, active_chat="society:test-bot")
+
+    async def cancel_browser(value, *, end_turn=True):
+        seen.append(end_turn)
+
+    async def cancel_chat(value):
+        seen.append(value)
+
+    async def resolve(_):
+        return SimpleNamespace(agent_id="test-bot")
+
+    async def runtime(_):
+        return SimpleNamespace(
+            roster=SimpleNamespace(resolve=resolve),
+            browser=SimpleNamespace(
+                live=SimpleNamespace(sessions={"test-bot": session}, cancel=cancel_browser)
+            ),
+        )
+
+    request = SimpleNamespace(
+        headers={"origin": "http://127.0.0.1:47821"},
+        app=SimpleNamespace(state=SimpleNamespace(agent_chat=SimpleNamespace(cancel=cancel_chat))),
+    )
+    monkeypatch.setattr(routes, "_runtime", runtime)
+    assert await routes.cancel_agent_browser("test-bot", request) == {"cancelled": True}
+    assert seen == [False]
+
+
+async def test_desktop_fetch_stop_still_ends_the_chat(monkeypatch):
+    import asyncio
+
+    from jarvis.ui.web import society_browser_routes as routes
+
+    seen = []
+    lock = asyncio.Lock()
+    await lock.acquire()
+    session = SimpleNamespace(closed=False, run_lock=lock, active_chat="society:test-bot")
+
+    async def cancel_browser(value, *, end_turn=True):
+        seen.append(end_turn)
+
+    async def cancel_chat(value):
+        seen.append(value)
+
+    async def resolve(_):
+        return SimpleNamespace(agent_id="test-bot")
+
+    async def runtime(_):
+        return SimpleNamespace(
+            roster=SimpleNamespace(resolve=resolve),
+            browser=SimpleNamespace(
+                live=SimpleNamespace(sessions={"test-bot": session}, cancel=cancel_browser)
+            ),
+        )
+
+    request = SimpleNamespace(
+        headers={"origin": "http://127.0.0.1:47821", "sec-fetch-site": "same-origin"},
+        app=SimpleNamespace(state=SimpleNamespace(agent_chat=SimpleNamespace(cancel=cancel_chat))),
+    )
+    monkeypatch.setattr(routes, "_runtime", runtime)
+    assert await routes.cancel_agent_browser("test-bot", request) == {"cancelled": True}
+    assert seen == [True, "society:test-bot"]
+
+
+async def test_same_chat_replaces_an_abandoned_browser_run():
+    import asyncio
+
+    from jarvis.society.browser.live import claim_browser
+
+    lock = asyncio.Lock()
+    started = asyncio.Event()
+    released = asyncio.Event()
+
+    async def owner():
+        async with lock:
+            started.set()
+            await released.wait()
+
+    task = asyncio.create_task(owner())
+    await started.wait()
+
+    async def command(op, **_kwargs):
+        assert op == "cancel"
+        released.set()
+        return {}
+
+    session = SimpleNamespace(
+        control_owner=None,
+        run_lock=lock,
+        active_chat="society:test-bot",
+        attention={},
+        closed=False,
+        command=command,
+    )
+    await claim_browser(session, "society:test-bot")
+    assert not lock.locked()
+    await task
+
+
+async def test_another_chat_and_manual_control_stay_busy():
+    import asyncio
+
+    from jarvis.society.browser.live import claim_browser
+
+    lock = asyncio.Lock()
+    await lock.acquire()
+    session = SimpleNamespace(
+        control_owner=None,
+        run_lock=lock,
+        active_chat="society:other",
+        attention={},
+        closed=False,
+    )
+    with pytest.raises(RuntimeError, match="busy"):
+        await claim_browser(session, "society:test-bot")
+    session.control_owner = "viewer"
+    session.active_chat = ""
+    lock.release()
+    with pytest.raises(RuntimeError, match="busy"):
+        await claim_browser(session, "society:test-bot")
+
+
+async def test_pending_approval_is_not_replaced():
+    import asyncio
+
+    from jarvis.society.browser.live import claim_browser
+
+    lock = asyncio.Lock()
+    await lock.acquire()
+    called = []
+
+    async def command(op, **_kwargs):
+        called.append(op)
+        return {}
+
+    session = SimpleNamespace(
+        control_owner=None,
+        run_lock=lock,
+        active_chat="society:test-bot",
+        attention={"approval": {"id": "1"}},
+        closed=False,
+        command=command,
+    )
+    with pytest.raises(RuntimeError, match="paused"):
+        await claim_browser(session, "society:test-bot")
+    assert called == []
+    assert lock.locked()
+    lock.release()
+
+
+async def test_bare_cancel_does_not_mark_the_turn_stopped(tmp_path):
+    from jarvis.society.browser.live import LiveSessions
+
+    live = LiveSessions(tmp_path)
+    called = []
+
+    async def command(op, **_kwargs):
+        called.append(op)
+        return {}
+
+    session = SimpleNamespace(
+        agent_id="test-bot", active_trace="trace-1", closed=False, command=command
+    )
+    await live.cancel(session, end_turn=False)
+    assert called == ["cancel"]
+    assert ("test-bot", "trace-1") not in live.stopped_turns
+    await live.cancel(session, end_turn=True)
+    assert ("test-bot", "trace-1") in live.stopped_turns
+
+
+@pytest.mark.parametrize(
+    "state,active_trace,chat_id,approve,running,stops",
+    [
+        ("pending", "turn", "root-chat", False, True, True),
+        ("pending", "turn", "society:test", False, True, True),
+        ("pending", "new-turn", "root-chat", False, True, False),
+        ("denied", "turn", "root-chat", False, True, False),
+        ("approved", "turn", "root-chat", False, True, False),
+        ("pending", "turn", "", False, True, False),
+        ("pending", "turn", "root-chat", True, True, False),
+        ("pending", "turn", "root-chat", False, False, False),
+    ],
+)
+async def test_browser_denial_stops_only_its_planner_before_releasing_reply(
+    monkeypatch, state, active_trace, chat_id, approve, running, stops
+):
+    import asyncio
+
+    from jarvis.ui.web import society_routes as routes
+
+    seen = []
+    lock = asyncio.Lock()
+    if running:
+        await lock.acquire()
+    session = SimpleNamespace(active_trace=active_trace, active_chat=chat_id, run_lock=lock)
+    item = SimpleNamespace(
+        agent_id="test",
+        trace_id="turn",
+        capability="core:browser",
+        state=state,
+        action={"resume_in_place": True},
+        to_dict=lambda: {},
+    )
+
+    async def get(_):
+        return item
+
+    async def resolve(*_args, **_kwargs):
+        seen.append("resolve")
+        return item
+
+    async def runtime(_):
+        return SimpleNamespace(
+            approvals=SimpleNamespace(get=get, resolve=resolve),
+            browser=SimpleNamespace(live=SimpleNamespace(sessions={"test": session})),
+        )
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                agent_chat=SimpleNamespace(signal_cancel=lambda sid: seen.append(sid)),
+            )
+        )
+    )
+    monkeypatch.setattr(routes, "_runtime", runtime)
+    await routes.resolve_approval("approval", routes.ResolveApprovalBody(approve=approve), request)
+    assert seen == ([chat_id, "resolve"] if stops else ["resolve"])
 
 
 async def test_jarvis_chat_uses_the_lead_browser_with_its_selected_model(tmp_path, monkeypatch):
     from jarvis.agent_chat.surface_kits import kit_for
     from jarvis.agent_chat.tool_catalog import build_catalog, resolve_choices
-    from jarvis.society.runtime import SocietyRuntime
     from jarvis.core.protocols import ToolResult
+    from jarvis.society.runtime import SocietyRuntime
 
     runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
     await runtime.ensure_started()
@@ -182,8 +427,8 @@ async def test_jarvis_chat_uses_the_lead_browser_with_its_selected_model(tmp_pat
 
 
 async def test_upload_rejects_files_outside_the_agent_workspace(tmp_path, monkeypatch):
-    from jarvis.society.browser.live import LiveSessions
     from jarvis.society.browser.bridge import execute_live
+    from jarvis.society.browser.live import LiveSessions
 
     monkeypatch.setattr("jarvis.core.config.get_jarvis_agent_secret", lambda _: None)
     live = LiveSessions(tmp_path)
@@ -284,7 +529,9 @@ def test_managed_python_uses_windows_emulation_only_where_needed():
 @pytest.mark.parametrize("burst", [False, True])
 async def test_viewer_disconnect_cancels_pending_takeover(monkeypatch, burst):
     import asyncio
+
     from starlette.websockets import WebSocketDisconnect
+
     from jarvis.ui.web import society_browser_routes as routes
 
     started = asyncio.Event()
@@ -354,3 +601,127 @@ async def test_viewer_disconnect_cancels_pending_takeover(monkeypatch, burst):
     else:
         assert cancelled.is_set()
     assert released.is_set()
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "This model cannot see images. Pick a multimodal model.",
+        "This model does not support image input.",
+    ],
+)
+async def test_text_only_model_retries_with_dom_and_keeps_images_disabled(
+    tmp_path, monkeypatch, detail
+):
+    from jarvis.core.protocols import BrainDelta
+    from jarvis.society.browser.bridge import execute_live
+    from jarvis.society.runtime import SocietyRuntime
+
+    seen = []
+
+    class TextBrain:
+        supports_vision = True  # Adapter capability; the selected model is text-only.
+        context_window = 32768
+
+        async def complete(self, request):
+            seen.append(request)
+            if any(m.images for m in request.messages):
+                raise RuntimeError(detail)
+            yield BrainDelta(content='{"action": [{"done": {"success": true}}]}')
+
+    monkeypatch.setattr("jarvis.core.config.get_jarvis_agent_secret", lambda _: None)
+    rt = SocietyRuntime(tmp_path, seed_starter_team=False)
+    await rt.ensure_started()
+    rt.browser.live.model_resolver = lambda _: TextBrain()
+    rt.browser.live.executor = object()
+
+    async def run(agent, *, llm, **kwargs):
+        payload = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "DOM: [1] button Save"},
+                        {"type": "image_url", "image_url": {"url": "data:image/png;base64,YQ=="}},
+                    ],
+                }
+            ]
+        }
+        assert (await llm(payload))["ok"]
+        assert (await llm(payload))["ok"]
+        return {"ok": True, "artifacts": []}
+
+    rt.browser.live.run = run
+    try:
+        agent, _ = await rt.roster.create(name="Text model", provider="ollama")
+        result = await execute_live(
+            rt, agent, rt.browser, {"task": "Read"}, SimpleNamespace(trace_id="dom", config={})
+        )
+        assert result.success
+        assert len(seen) == 3
+        assert seen[0].messages[0].images
+        assert all(not m.images for req in seen[1:] for m in req.messages)
+        assert all("DOM: [1] button Save" in str(req.messages[0].content) for req in seen)
+    finally:
+        await rt.close()
+
+
+async def test_completed_chat_cancels_only_its_pending_browser(tmp_path, monkeypatch):
+    import asyncio
+
+    from jarvis.society.browser.tool import stop_chat_browser
+    from jarvis.society.runtime import SocietyRuntime
+
+    rt = SocietyRuntime(tmp_path, seed_starter_team=False)
+    await rt.ensure_started()
+    cancelled = []
+    own = SimpleNamespace(active_chat="ended", run_lock=asyncio.Lock())
+    other = SimpleNamespace(active_chat="other", run_lock=asyncio.Lock())
+    idle = SimpleNamespace(active_chat="ended", run_lock=asyncio.Lock())
+    await own.run_lock.acquire()
+    await other.run_lock.acquire()
+
+    async def cancel(session):
+        cancelled.append(session)
+        session.run_lock.release()
+
+    rt.browser.live.sessions = {"own": own, "other": other, "idle": idle}
+    monkeypatch.setattr(rt.browser.live, "cancel", cancel)
+    try:
+        await stop_chat_browser("ended")
+        assert cancelled == [own]
+        assert not own.run_lock.locked()
+        assert other.run_lock.locked()
+    finally:
+        rt.browser.live.sessions.clear()
+        other.run_lock.release()
+        await rt.close()
+
+
+async def test_chat_only_model_has_actionable_browser_failure_without_paid_fallback(
+    tmp_path, monkeypatch
+):
+    from jarvis.society.browser.bridge import execute_live
+    from jarvis.society.browser.live import LiveSessions
+
+    live = LiveSessions(tmp_path)
+    live.executor = object()
+    calls = []
+
+    def unavailable(caller):
+        calls.append(caller.provider)
+        raise KeyError("No inference implementation")
+
+    live.model_resolver = unavailable
+    monkeypatch.setattr("jarvis.core.config.get_jarvis_agent_secret", lambda _: None)
+    result = await execute_live(
+        SimpleNamespace(data_dir=tmp_path),
+        SimpleNamespace(agent_id="test", provider="chat-only"),
+        SimpleNamespace(live=live),
+        {"task": "Read"},
+        SimpleNamespace(trace_id="one", config={}),
+    )
+    assert not result.success
+    assert "Model menu" in result.error
+    assert calls == ["chat-only"]
+    assert live.sessions == {}

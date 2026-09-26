@@ -1,391 +1,357 @@
-"""Full Society ownership must end after writers drain, including its SQLite thread."""
+"""The server must release the real roster database before its event loop exits."""
 
 from __future__ import annotations
 
 import asyncio
-import json
+import os
+import subprocess
+import sys
 import threading
-from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
+from fastapi import HTTPException, Request
 
-from jarvis.core.bus import EventBus
-from jarvis.core.config import JarvisConfig
-from jarvis.society.runtime import SocietyRuntime, current_runtime
-from jarvis.ui.web.server import WebServer
-from tests.fakes.web_shutdown import (
-    DeliveryAfterChatDrain,
-    DrainingSocietyHttpServer,
-    GatedDelivery,
-    GatedMetadataWriter,
-    IdleChatRunner,
-    RecordingCodingGateway,
-    ResistantDelivery,
-    SocietyStoreDependent,
-)
+from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+from jarvis.society.runtime import SocietyRuntime, SocietyRuntimeClosed, current_runtime
+from jarvis.ui.web.society_routes import list_agents
+from tests.fakes.fake_society_shutdown import society_shutdown_server
 
 
-@pytest.mark.asyncio
-async def test_server_shutdown_drains_writers_then_closes_society_database(tmp_path):
-    cfg = JarvisConfig()
-    cfg.memory.data_dir = str(tmp_path)
-    server = WebServer(cfg, bus=EventBus())
-    society = SocietyRuntime(tmp_path, seed_starter_team=False)
-    server.app.state.society = society
-    await society.ensure_started()
-    connection = society.store.conn
-    # aiosqlite versions expose either a worker attribute or a Thread-like
-    # connection. Check the capability instead of an unpinned class identity.
-    worker = getattr(connection, "_thread", connection)
-    is_alive = getattr(worker, "is_alive", None)
-    assert callable(is_alive) and is_alive()
-    events: list[str] = []
-    server.app.state.swarm = SocietyStoreDependent(society.store, events, "swarm")
-    server.app.state.agent_chat = SocietyStoreDependent(society.store, events, "chat")
-    server._task_scheduler = SocietyStoreDependent(society.store, events, "tasks")
-    server._channel_chat_bridge = SocietyStoreDependent(society.store, events, "channels")
-    http = DrainingSocietyHttpServer(society.store, events, "http")
-    server._server = http
-    server._serve_task = asyncio.create_task(http.serve())
-    try:
-        await server.stop()
-        assert events == ["swarm", "chat", "tasks", "channels", "http"]
-        assert server.app.state.society is None
-        assert current_runtime() is None
-        assert society.store._conn is None
-        await asyncio.to_thread(worker.join, 1.0)
-        assert not is_alive()
-        assert worker not in threading.enumerate()
-    finally:
-        # A failing regression must not strand the exact non-daemon worker it
-        # is diagnosing and hang the test process itself.
-        await society.close()
+async def start_roster(tmp_path):
+    runtime = SocietyRuntime(tmp_path)
+    server, cleaned = society_shutdown_server(runtime)
+    response = await list_agents(Request({"type": "http", "app": server.app}))
+    assert response["agents"]
+    connection = runtime.store._conn
+    delivery = runtime._delivery_task
+    assert connection is not None and delivery is not None
+    assert current_runtime() is runtime
+    return runtime, server, cleaned, connection, delivery
 
 
-@pytest.mark.asyncio
-async def test_server_shutdown_closes_partially_started_society_and_can_repeat(tmp_path):
-    cfg = JarvisConfig()
-    cfg.memory.data_dir = str(tmp_path)
-    server = WebServer(cfg, bus=EventBus())
-    society = SocietyRuntime(tmp_path, seed_starter_team=False)
-    server.app.state.society = society
-    # Startup can stop after opening the store but before _started is set.
-    await society.store.open()
-    try:
-        await server.stop()
-        await server.stop()
-        assert society.store._conn is None
-        assert server.app.state.society is None
-    finally:
-        await society.close()
+async def test_server_stop_closes_real_roster_store_and_delivery(tmp_path, monkeypatch):
+    runtime, server, cleaned, connection, delivery = await start_roster(tmp_path)
+    original_close = runtime.browser.close
+    watcher_started = asyncio.Event()
 
+    async def check_close_order():
+        assert server.app.state.mars_station_stopping
+        assert runtime.store._conn is connection
+        cleaned.append("society-browser")
+        await original_close()
 
-@pytest.mark.asyncio
-async def test_shutdown_preserves_queued_delivery_without_starting_after_chat_drain(
-    tmp_path, monkeypatch
-):
-    from jarvis.agent_chat import service as service_module
-    from jarvis.agent_chat.service import AgentChatService
-    from jarvis.agent_chat.store import AgentChatStore
-    from jarvis.society.chat_binding import ensure_session, make_deliver_hook
-    from jarvis.society.store import SocietyStore
-
-    cfg = JarvisConfig()
-    cfg.memory.data_dir = str(tmp_path)
-    runner = IdleChatRunner()
-    monkeypatch.setattr(service_module, "run_brain_turn", runner)
-    service = AgentChatService(AgentChatStore(":memory:"))
-    server = WebServer(cfg, bus=EventBus())
-    society = SocietyRuntime(
-        tmp_path, deliver=make_deliver_hook(lambda: service, lambda: cfg), cfg=lambda: cfg
-    )
-    server.app.state.society = society
-    server.app.state.agent_chat = service
-    try:
-        await society.ensure_started()
-        agent, _ = await society.roster.create(name="Shutdown scout", provider="openai")
-        session = ensure_session(service, cfg, agent)
-        await service.send(
-            session.session_id, "Initial work", control_runner=runner, direct_user=False
-        )
-        await asyncio.wait_for(runner.started.wait(), timeout=2)
-        message = await society.say(from_agent="user", to_agent=agent.agent_id, text="Pending work")
-        assert await society.store.delivery_status(message.event_id) == "queued"
-        late = DeliveryAfterChatDrain(society, service, session.session_id, message.event_id)
-        server._task_scheduler = late
-        await server.stop()
-        assert late.observed == (False, "queued")
-        assert len(runner.starts) == 1 and not service.is_running(session.session_id)
-        persisted = SocietyStore(tmp_path / "society.db")
-        await persisted.open()
+    async def watch():
+        watcher_started.set()
         try:
-            assert await persisted.delivery_status(message.event_id) == "queued"
-            assert await persisted.get_meta("shutdown-writer") == "finished after chat drain"
+            await asyncio.Event().wait()
         finally:
-            await persisted.close()
-        # A completed close permits a real reopen; queued work is not lost.
-        runner.started.clear()
-        await society.ensure_started()
-        await asyncio.wait_for(runner.started.wait(), timeout=2)
-        assert len(runner.starts) == 2
-    finally:
-        await society.quiesce()
-        await service.cancel_all()
-        await society.close()
-        service.store.close()
+            cleaned.append("society-watcher")
 
-
-@pytest.mark.asyncio
-async def test_quiesce_joins_admitted_delivery_keeps_result_writers_and_defers_reviews(tmp_path):
-    from jarvis.society.events import MsgType, SocietyEnvelope
-
-    delivery = GatedDelivery()
-    society = SocietyRuntime(tmp_path, deliver=delivery)
-    await society.ensure_started()
-    # Isolate an admitted bus handler from the separately owned retry producer.
-    society._delivery_task.cancel()
-    await asyncio.gather(society._delivery_task, return_exceptions=True)
-    society._delivery_task = None
-    agent, _ = await society.roster.create(name="Quiesce scout", provider="openai")
-    publishing = asyncio.create_task(
-        society.say(from_agent="user", to_agent=agent.agent_id, text="Already admitted")
-    )
+    monkeypatch.setattr(runtime.browser, "close", check_close_order)
+    watcher = runtime.background(watch())
+    await watcher_started.wait()
     try:
-        await asyncio.wait_for(delivery.entered.wait(), timeout=2)
-        stopping = asyncio.create_task(society.quiesce())
-        await asyncio.sleep(0)
-        assert not stopping.done()
-        delivery.release.set()
-        first = await publishing
-        await stopping
-        assert delivery.completed == [first.event_id]
-        second = await society.say(from_agent="user", to_agent=agent.agent_id, text="Keep queued")
-        assert await society.store.delivery_status(second.event_id) == "queued"
-        society.scheduler.note_run_started("old-run", agent.agent_id)
-        await society.store.append_and_publish(
-            SocietyEnvelope(
-                msg_type=MsgType.RESULT,
-                from_agent=agent.agent_id,
-                trace_id="old-trace",
-                payload={
-                    "run_id": "old-run",
-                    "done": "Persisted result",
-                    "output": ["result"],
-                    "next_owner": agent.agent_id,
-                },
-            )
-        )
-        assert society.scheduler.running == {}
-        assert delivery.completed == [first.event_id]
-        with pytest.raises(RuntimeError, match="shutting down"):
-            await society.ensure_started()
-        assert not await society.prepare_context()
-        society.coding_supervision._ensure_loop()
-        assert society.coding_supervision.task is None
-        with pytest.raises(RuntimeError, match="shutting down"):
-            await society.coding_supervision.assign(agent.agent_id, agent.session_id, {})
-        await society.turn_completed(
-            SimpleNamespace(session_id=agent.session_id),
-            SimpleNamespace(
-                events_json=json.dumps(
-                    [
-                        {
-                            "seq": 1,
-                            "kind": "user_message",
-                            "payload": {"text": "Retain this preference"},
-                        },
-                        {"seq": 2, "kind": "assistant_text", "payload": {"text": "Understood"}},
-                        {"seq": 3, "kind": "turn_finished", "payload": {"status": "done"}},
-                    ]
-                ),
-                turn=SimpleNamespace(turn_id="old-turn", direct_user=True),
-            ),
-        )
-        pending = society.conversations.pending_reviews()
-        assert any(item["turn_id"] == "old-turn" for item in pending)
-        assert not society._producers
-        await society.quiesce()
-        assert await society.store.delivery_status(second.event_id) == "queued"
+        await asyncio.wait_for(server.stop(), timeout=3)
+        assert runtime.store._conn is None
+        with pytest.raises(ValueError, match="no active connection"):
+            await connection.execute("SELECT 1")
+        assert delivery.done()
+        assert watcher.done() and not runtime._watchers
+        assert cleaned.count("society-browser") == 1
+        assert cleaned.index("society-watcher") < cleaned.index("society-browser")
+        assert current_runtime() is None
+        assert not runtime._started
+        assert server.app.state.mars_station_stopping
+        assert {"chat", "pty", "mission-approvals"} <= set(cleaned)
     finally:
-        delivery.release.set()
-        await asyncio.gather(publishing, return_exceptions=True)
-        await society.close()
+        # The red test must not itself leak a non-daemon SQLite worker.
+        monkeypatch.setattr(runtime.browser, "close", original_close)
+        await runtime.close()
 
 
-@pytest.mark.asyncio
-async def test_final_close_releases_canceled_turn_slot_before_reopen(tmp_path):
-    from jarvis.society.events import MsgType, SocietyEnvelope
+@pytest.mark.parametrize("component", ["browser", "coding_supervision"])
+async def test_component_failure_still_closes_store_and_finishes_server(
+    tmp_path, monkeypatch, component
+):
+    runtime, server, cleaned, connection, delivery = await start_roster(tmp_path)
+    resource = getattr(runtime, component)
+    original_close = resource.close
 
-    society = SocietyRuntime(tmp_path)
-    await society.ensure_started()
-    agent, _ = await society.roster.create(name="Retained slot scout", provider="openai")
-    removed = []
-    service = SimpleNamespace(unsubscribe=lambda session, queue: removed.append(session))
-    queue = asyncio.Queue()
-    envelope = SocietyEnvelope(
-        msg_type=MsgType.ASSIGN,
-        from_agent="user",
-        to_agent=agent.agent_id,
-        trace_id="interrupted-run",
-        payload={"text": "Existing work"},
-    )
-    society.scheduler.note_run_started("old-run", agent.agent_id)
-    watcher = asyncio.create_task(
-        society._watch_turn(
-            service, agent.session_id, queue, "old-turn", "old-run", agent, envelope
-        )
-    )
-    society._watchers.add(watcher)
+    async def broken_close():
+        raise RuntimeError("PRIVATE-COMPONENT-PAYLOAD")
+
+    monkeypatch.setattr(resource, "close", broken_close)
     try:
-        await asyncio.sleep(0)
-        await society.quiesce()
-        assert not watcher.done() and society.scheduler.active_runs(agent.agent_id) == 1
-        await society.close()
-        assert watcher.done() and removed == [agent.session_id]
-        assert society.scheduler.active_runs(agent.agent_id) == 0
-        await society.ensure_started()
-        assert society.scheduler.active_runs(agent.agent_id) == 0
+        with pytest.raises(RuntimeError, match="society_runtime_shutdown_incomplete") as failure:
+            await asyncio.wait_for(server.stop(), timeout=3)
+        assert "PRIVATE-COMPONENT-PAYLOAD" not in str(failure.value)
+        assert runtime.store._conn is None
+        with pytest.raises(ValueError, match="no active connection"):
+            await connection.execute("SELECT 1")
+        assert delivery.done()
+        assert current_runtime() is None
+        assert {"chat", "pty", "mission-approvals"} <= set(cleaned)
     finally:
-        await society.close()
+        monkeypatch.setattr(resource, "close", original_close)
+        await runtime.close()
 
 
-@pytest.mark.asyncio
-async def test_quiesce_joins_previously_admitted_coding_assignment(tmp_path, monkeypatch):
-    service = SimpleNamespace(store=SimpleNamespace(get_session=lambda _: object()))
-    society = SocietyRuntime(tmp_path, chat_service=lambda: service)
-    await society.ensure_started()
-    write = GatedMetadataWriter(society.store.set_meta)
-    monkeypatch.setattr(society.store, "set_meta", write)
-    gateway = RecordingCodingGateway()
-    society._coding_sessions = gateway
-    assignment = asyncio.create_task(
-        society.coding_supervision.assign(
-            "scout",
-            "society:scout",
-            {
-                "workspace_id": "workspace",
-                "terminal_id": "pane:one",
-                "prompt": "Synthetic assignment",
-            },
-        )
-    )
-    try:
-        await asyncio.wait_for(write.entered.wait(), timeout=2)
-        stopping = asyncio.create_task(society.quiesce())
-        await asyncio.sleep(0)
-        assert not stopping.done()
-        write.release.set()
-        result = await assignment
-        await stopping
-        gateway.quiesced = True
-        assert result["supervision"]["state"] == "running"
-        assert gateway.sends_after_quiesce == [False]
-        assert society.coding_supervision.task is None
-        with pytest.raises(RuntimeError, match="shutting down"):
-            await society.coding_supervision.assign("scout", "society:scout", {})
-    finally:
-        write.release.set()
-        await asyncio.gather(assignment, return_exceptions=True)
-        await society.close()
+async def test_cancelled_browser_cleanup_still_releases_roster_store(tmp_path, monkeypatch):
+    runtime, _server, _cleaned, connection, delivery = await start_roster(tmp_path)
+    original_close = runtime.browser.close
+    closing = asyncio.Event()
 
-
-@pytest.mark.asyncio
-async def test_quiesce_cancels_direct_startup_then_closes_partial_store(tmp_path, monkeypatch):
-    society = SocietyRuntime(tmp_path)
-    entered = asyncio.Event()
-    original_open = society.store.open
-
-    async def delayed_open():
-        await original_open()
-        entered.set()
+    async def stalled_close():
+        closing.set()
         await asyncio.Event().wait()
 
-    monkeypatch.setattr(society.store, "open", delayed_open)
-    starting = asyncio.create_task(society.ensure_started())
+    monkeypatch.setattr(runtime.browser, "close", stalled_close)
+    task = asyncio.create_task(runtime.close())
     try:
-        await asyncio.wait_for(entered.wait(), timeout=2)
-        await society.quiesce()
-        assert starting.cancelled() and not society._start_tasks
-        await society.close()
-        assert society.store._conn is None
+        await asyncio.wait_for(closing.wait(), timeout=2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+        assert runtime.store._conn is None
+        with pytest.raises(ValueError, match="no active connection"):
+            await connection.execute("SELECT 1")
+        assert delivery.done()
+        assert current_runtime() is None
+    finally:
+        monkeypatch.setattr(runtime.browser, "close", original_close)
+        await runtime.close()
+
+
+async def test_roster_poll_during_remaining_server_cleanup_cannot_restart(tmp_path, monkeypatch):
+    runtime, server, _cleaned, connection, delivery = await start_roster(tmp_path)
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+
+    async def pending_cleanup():
+        cleanup_started.set()
+        await release_cleanup.wait()
+
+    monkeypatch.setattr(server, "_stop_marketplace_refresh_scheduler", pending_cleanup)
+    stopping = asyncio.create_task(server.stop())
+    try:
+        await asyncio.wait_for(cleanup_started.wait(), timeout=2)
+        assert not stopping.done()
+        assert runtime.store._conn is connection
+        for _ in range(3):
+            with pytest.raises(HTTPException) as error:
+                await list_agents(Request({"type": "http", "app": server.app}))
+            assert error.value.status_code == 503
+            assert await runtime.prepare_context() is False
+        assert runtime.store._conn is connection
+        assert runtime._delivery_task is None and delivery.done()
+        assert current_runtime() is runtime
+        # Admitted chat/Swarm/HTTP writers still own storage during their drain.
+        await connection.execute("SELECT 1")
+    finally:
+        release_cleanup.set()
+        await asyncio.wait_for(stopping, timeout=2)
+        await runtime.close()
+    assert runtime.store._conn is None
+    assert current_runtime() is None
+    with pytest.raises(ValueError, match="no active connection"):
+        await connection.execute("SELECT 1")
+
+
+@pytest.mark.parametrize("pause_at", ["first-await", "remaining-cleanup"])
+async def test_shutdown_fences_empty_owner_before_lazy_roster_factory(
+    tmp_path, monkeypatch, pause_at
+):
+    from jarvis.ui.web import mars_routes
+
+    server, _cleaned = society_shutdown_server(None)
+    paused = asyncio.Event()
+    release = asyncio.Event()
+    factory_calls = []
+
+    def factory():
+        factory_calls.append("constructed")
+        return SocietyRuntime(tmp_path)
+
+    async def pending_cleanup(*_args):
+        paused.set()
+        await release.wait()
+
+    server.app.state.society_factory = factory
+    if pause_at == "first-await":
+        monkeypatch.setattr(mars_routes, "stop_mars_station", pending_cleanup)
+    else:
+        monkeypatch.setattr(server, "_stop_marketplace_refresh_scheduler", pending_cleanup)
+    stopping = asyncio.create_task(server.stop())
+    try:
+        await asyncio.wait_for(paused.wait(), timeout=2)
+        assert server.app.state.society_stopping
+        with pytest.raises(HTTPException) as error:
+            await list_agents(Request({"type": "http", "app": server.app}))
+        assert error.value.status_code == 503
+        assert error.value.detail == "society runtime stopped"
+        assert factory_calls == []
+        assert server.app.state.society is None
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        release.set()
+        await asyncio.wait_for(stopping, timeout=2)
+        if server.app.state.society is not None:
+            await server.app.state.society.close()
+
+
+@pytest.mark.parametrize("existing_owner", [None, object()])
+def test_shared_brain_factory_rejects_shutdown_before_owner_lookup(existing_owner):
+    server, _cleaned = society_shutdown_server(existing_owner)
+    server.app.state.society_stopping = True
+    # The guard must run before consulting config or constructing collaborators.
+    with pytest.raises(SocietyRuntimeClosed, match="society runtime stopped"):
+        server._build_society_runtime()
+    assert server.app.state.society is existing_owner
+
+
+async def test_close_cancels_and_joins_initial_roster_request(tmp_path, monkeypatch):
+    runtime = SocietyRuntime(tmp_path)
+    server, _cleaned = society_shutdown_server(runtime)
+    seeded = asyncio.Event()
+    original_seed = runtime.seed_lead
+
+    async def pending_seed():
+        await original_seed()
+        seeded.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(runtime, "seed_lead", pending_seed)
+    starting = asyncio.create_task(list_agents(Request({"type": "http", "app": server.app})))
+    try:
+        await asyncio.wait_for(seeded.wait(), timeout=2)
+        connection = runtime.store._conn
+        assert connection is not None
+        await asyncio.wait_for(server.stop(), timeout=3)
+        assert starting.done() and starting.cancelled()
+        assert runtime._starting_task is None
+        assert runtime.store._conn is None
+        assert runtime._delivery_task is None
+        assert current_runtime() is None
+        with pytest.raises(ValueError, match="no active connection"):
+            await connection.execute("SELECT 1")
+        with pytest.raises(HTTPException) as error:
+            await list_agents(Request({"type": "http", "app": server.app}))
+        assert error.value.status_code == 503
     finally:
         starting.cancel()
         await asyncio.gather(starting, return_exceptions=True)
-        await society.close()
+        await runtime.close()
 
 
-@pytest.mark.asyncio
-async def test_failed_quiesce_keeps_storage_open_until_stalled_writer_finishes(
-    tmp_path, monkeypatch
-):
+async def test_cancel_initial_connect_releases_real_sqlite_worker(tmp_path, monkeypatch):
+    import sqlite3
+
+    runtime = SocietyRuntime(tmp_path)
+    server, _cleaned = society_shutdown_server(runtime)
+    original_connect = sqlite3.connect
+    connecting = asyncio.Event()
+    release_connect = threading.Event()
+    worker_threads = []
+    loop = asyncio.get_running_loop()
+
+    def slow_connect(*args, **kwargs):
+        worker_threads.append(threading.current_thread())
+        loop.call_soon_threadsafe(connecting.set)
+        assert release_connect.wait(timeout=5)
+        return original_connect(*args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", slow_connect)
+    starting = asyncio.create_task(runtime.ensure_started())
+    try:
+        await asyncio.wait_for(connecting.wait(), timeout=2)
+        assert runtime.store._conn is None
+        await asyncio.wait_for(server.stop(), timeout=3)
+        assert starting.done() and starting.cancelled()
+        release_connect.set()
+        for worker in worker_threads:
+            await asyncio.to_thread(worker.join, 2)
+            assert not worker.is_alive()
+        assert runtime.store._conn is None
+        assert current_runtime() is None
+    finally:
+        release_connect.set()
+        await asyncio.gather(starting, return_exceptions=True)
+        await runtime.close()
+
+
+async def test_slow_startup_keeps_owner_until_it_can_release_store(tmp_path, monkeypatch):
+    from jarvis.society import runtime as runtime_module
     from jarvis.society import shutdown
 
-    monkeypatch.setattr(shutdown, "QUIESCE_TIMEOUT_S", 0.03)
-    delivery = ResistantDelivery()
-    society = SocietyRuntime(tmp_path, deliver=delivery)
-    await society.ensure_started()
-    society._delivery_task.cancel()
-    await asyncio.gather(society._delivery_task, return_exceptions=True)
-    society._delivery_task = None
-    agent, _ = await society.roster.create(name="Stalled scout", provider="openai")
-    publishing = asyncio.create_task(
-        society.say(
-            from_agent="user",
-            to_agent=agent.agent_id,
-            text="Admitted before shutdown",
-        )
-    )
+    runtime = SocietyRuntime(tmp_path)
+    seeded = asyncio.Event()
+    cancelled = asyncio.Event()
+    release = asyncio.Event()
+    original_seed = runtime.seed_lead
+
+    async def reluctant_seed():
+        await original_seed()
+        seeded.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            await release.wait()
+
+    monkeypatch.setattr(shutdown, "QUIESCE_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(runtime, "seed_lead", reluctant_seed)
+    starting = asyncio.create_task(runtime.ensure_started())
     try:
-        await asyncio.wait_for(delivery.entered.wait(), timeout=2)
-        with pytest.raises(RuntimeError, match="storage must remain open"):
-            await society.quiesce()
-        assert society.store._conn is not None and not publishing.done()
-        await society.store.set_meta("retained-writer", "not closed prematurely")
-        delivery.release.set()
-        await publishing
-        await society.quiesce()
-        assert await society.store.get_meta("retained-writer") == "not closed prematurely"
-        await society.close()
-        assert society.store._conn is None
+        await asyncio.wait_for(seeded.wait(), timeout=2)
+        with pytest.raises(RuntimeError, match="Society startup did not stop"):
+            await runtime.close()
+        assert cancelled.is_set()
+        assert runtime._starting_task is starting and not starting.done()
+        assert runtime.store._conn is not None
+        release.set()
+        with pytest.raises(runtime_module.SocietyRuntimeClosed):
+            await starting
+        assert runtime._starting_task is None
+        await runtime.close()
+        assert runtime.store._conn is None
+        assert runtime._delivery_task is None
+        assert current_runtime() is None
     finally:
-        delivery.release.set()
-        await asyncio.gather(publishing, return_exceptions=True)
-        await society.close()
+        release.set()
+        await asyncio.gather(starting, return_exceptions=True)
+        await runtime.close()
 
 
-@pytest.mark.asyncio
-async def test_shutdown_fences_late_first_swarm_and_society_construction(tmp_path, monkeypatch):
-    from jarvis.swarm import runtime as swarm_runtime
+def test_roster_process_exits_after_real_server_stop(tmp_path):
+    script = """
+import asyncio
+import sys
+from pathlib import Path
+from fastapi import Request
+from jarvis.society.runtime import SocietyRuntime
+from jarvis.ui.web.society_routes import list_agents
+from tests.fakes.fake_society_shutdown import society_shutdown_server
 
-    cfg = JarvisConfig()
-    cfg.memory.data_dir = str(tmp_path)
-    server = WebServer(cfg, bus=EventBus())
-    constructions = []
-
-    def forbidden_construction(*args, **kwargs):
-        constructions.append(True)
-        raise AssertionError("Late shutdown request constructed a fresh Swarm")
-
-    monkeypatch.setattr(swarm_runtime, "build_service", forbidden_construction)
+async def main():
+    runtime = SocietyRuntime(Path(sys.argv[1]))
+    server, _ = society_shutdown_server(runtime)
+    await list_agents(Request({'type': 'http', 'app': server.app}))
     await server.stop()
-    assert server._shutdown_complete
-    with pytest.raises(RuntimeError, match="shutting down"):
-        server._build_swarm_runtime()
-    with pytest.raises(RuntimeError, match="shutting down"):
-        server._build_society_runtime()
-    assert constructions == []
-    assert server.app.state.swarm is None and server.app.state.society is None
+    print('SOCIETY_SERVER_STOP_RETURNED', flush=True)
 
-
-@pytest.mark.asyncio
-async def test_server_cannot_restart_while_previous_shutdown_is_incomplete(tmp_path):
-    cfg = JarvisConfig()
-    cfg.memory.data_dir = str(tmp_path)
-    server = WebServer(cfg, bus=EventBus())
-    server._stopping = True
-    try:
-        with pytest.raises(RuntimeError, match="shutdown is incomplete"):
-            await server.start(start_serving=False)
-        assert server._stopping and not server._shutdown_complete
-    finally:
-        await server.stop()
+asyncio.run(main())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        cwd=Path(__file__).resolve().parents[4],
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=15,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "SOCIETY_SERVER_STOP_RETURNED" in result.stdout

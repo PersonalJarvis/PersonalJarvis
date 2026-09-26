@@ -216,7 +216,7 @@ export function SettingsHubView() {
   // hub's own nav: a hard provider error on API Keys, a failing or
   // half-configured local setup on Local models. Badge only, never a toast.
   const apikeysHasError = useMemo(
-    () => Object.values(sectionHealth).some((h) => h?.status === "error"),
+    () => Object.entries(sectionHealth).some(([section, health]) => section !== "computer-use" && health?.status === "error"),
     [sectionHealth],
   );
   const localModelsHealth = sectionHealth.local_models;
@@ -285,7 +285,7 @@ export function SettingsHubView() {
     <div data-testid="settings-hub" className="flex h-full min-h-0 flex-col md:flex-row">
       <aside
         data-testid="settings-hub-sidebar"
-        className="flex max-h-72 w-full shrink-0 flex-col border-b border-border bg-sidebar md:max-h-none md:w-72 md:border-b-0 md:border-r"
+        className="jarvis-nav-surface flex max-h-72 w-full shrink-0 flex-col border-b border-border md:max-h-none md:w-72 md:border-b-0"
       >
         <div className="border-b border-border px-3 py-3">
           <button type="button" onClick={() => setActive("chats")}
@@ -375,7 +375,7 @@ export function SettingsHubView() {
           )}
         </nav>
       </aside>
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="jarvis-sheet flex min-h-0 min-w-0 flex-1 flex-col">
         <ViewHeader
           icon={<SettingsIcon className="h-4 w-4 text-foreground" />}
           title={t("nav.settings")}

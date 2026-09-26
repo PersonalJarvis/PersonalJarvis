@@ -245,6 +245,7 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
             ("openai/gpt-5.6-luna", "GPT-5.6 Luna"),
             ("google/gemini-3.5-flash", "Gemini 3.5 Flash"),
             ("google/gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
+            ("x-ai/grok-4.7", "Grok 4.7"),
             ("x-ai/grok-4.20", "Grok 4.20"),
             ("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"),
         ]
@@ -256,10 +257,13 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
     # (pinned by test_grok_has_authenticated_live_model_catalog): 4.6 was
     # inserted at the head without moving the default, which offered a model
     # as the pre-selected one that the client would not actually have used.
+    # Grok 4.7 (2026-09-21) is in the list, not at its head, for that reason.
     # The authenticated live catalog replaces this fallback entirely.
+    # Grok Build does not use this order: ``GROK_BUILD_MODELS`` leads with 4.7.
     "grok": _curated(
         [
             ("grok-4.3", "Grok 4.3"),
+            ("grok-4.7", "Grok 4.7"),
             ("grok-4.6", "Grok 4.6"),
             ("grok-4.5", "Grok 4.5"),
         ]
@@ -282,6 +286,20 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
         ]
     ),
 }
+
+
+#: Grok Build's picker. The subscription login has no /v1/models, so this
+#: list is what the create-agent dialog and the IDE pane offer. grok-4.7
+#: leads: it is the current default of the Grok Build CLI (xAI, 2026-09-21).
+#: The API fallback in ``CURATED_MODELS["grok"]`` must not copy this order —
+#: its head is the client default, ``grok-4.3``.
+GROK_BUILD_MODELS: tuple[tuple[str, str], ...] = (
+    ("grok-4.7", "Grok 4.7"),
+    ("grok-4.7-build-fast", "Grok 4.7 Fast"),
+    ("grok-4.6", "Grok 4.6"),
+    ("grok-4.5", "Grok 4.5"),
+    ("grok-4.3", "Grok 4.3"),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -766,20 +784,12 @@ def _build_provider_catalog() -> dict[str, CatalogSpec]:
         live=False,
     )
     # Grok Build — SuperGrok / X Premium+ CLI worker. No public /v1/models over
-    # the subscription login, so curated only. Grok 4.6 is the current Grok
-    # Build default (official docs, 2026-08).
+    # the subscription login, so curated only. grok-4.7 leads: it is the
+    # current Grok Build default (xAI, 2026-09-21).
     cat["grok-build"] = CatalogSpec(
         "brain",
         "model",
-        tuple(
-            _curated(
-                [
-                    ("grok-4.6", "Grok 4.6"),
-                    ("grok-4.3", "Grok 4.3"),
-                    ("grok-4.5", "Grok 4.5"),
-                ]
-            )
-        ),
+        tuple(_curated(list(GROK_BUILD_MODELS))),
         live=False,
     )
     # Claude CLI — the Anthropic-subscription writer (``claude -p``); no

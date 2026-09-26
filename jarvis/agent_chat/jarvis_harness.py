@@ -84,6 +84,13 @@ SYSTEM_PREAMBLE: Final[str] = (
     "browser whenever the request is about the person's own apps, data or "
     "machine: those tools are already signed in and already permitted. Reach for "
     "your file and shell tools for code and for the filesystem.\n\n"
+    "When the user selects Chrome / Browser, @browser, @browser-use or "
+    "[tools: core:browser], use society_browser from the Jarvis MCP server. "
+    "That is the persistent browser displayed live in this agent's Options rail. "
+    "Use it for website interaction when no connected service tool can do the task. "
+    "A browser request takes priority over the general plugin preference. "
+    "Do not substitute your own browser, HTTP fetch or shell for this selection. "
+    "If society_browser is unavailable, report that explicitly.\n\n"
     "Two kinds of hands: your own file and shell tools are your hands in the "
     "working folder this chat is open in; `mcp__jarvis__run_shell` / "
     "`jarvis__run_shell` and their siblings are Jarvis' hands on the whole "
@@ -179,12 +186,17 @@ def codex_config_args(session_id: str | None = None) -> list[str]:
             args += [
                 "-c",
                 f'mcp_servers.{_SERVER_NAME}.http_headers={{"{HEADER_NAME}"="{session_id}"}}',
+                "-c",
+                f"mcp_servers.{_SERVER_NAME}.required=true",
+                # The entrypoint delegates actual actions to Jarvis' executor
+                # and approval UI, including on the root chat's browser.
+                "-c",
+                f'mcp_servers.{_SERVER_NAME}.tools.society_browser.approval_mode="approve"',
             ]
             if session_id.startswith("society:"):
                 # A society seat cannot carry out its role without its owned
                 # tools. Surface startup failures instead of a tools-free chat
                 # that can only promise to configure the running app.
-                args += ["-c", f"mcp_servers.{_SERVER_NAME}.required=true"]
                 # This local configuration tool already verifies the current
                 # user request and routes permission changes to Jarvis' own
                 # approval card. A second Codex write prompt cannot be answered
@@ -192,11 +204,6 @@ def codex_config_args(session_id: str | None = None) -> list[str]:
                 args += [
                     "-c",
                     f'mcp_servers.{_SERVER_NAME}.tools.society_propose_change.approval_mode="approve"',
-                    # The browser entrypoint delegates each actual action to
-                    # Jarvis' executor and its approval UI. Let it reach that
-                    # boundary instead of asking exec for an unreadable prompt.
-                    "-c",
-                    f'mcp_servers.{_SERVER_NAME}.tools.society_browser.approval_mode="approve"',
                 ]
         return args
     except Exception:  # noqa: BLE001 — see mcp_config_json
@@ -488,6 +495,42 @@ def compact_identity(text: str, *, max_chars: int = COMPACT_MAX_CHARS) -> str:
     body = body[:head_room].rstrip()
     body = re.sub(r"\n[^\n]*$", "", body)  # do not cut a line in half
     return f"{body}\n\n…\n\n{SYSTEM_PREAMBLE}"
+
+
+def society_memory_refresh(text: str, *, compact: bool = False) -> str:
+    """Refresh mutable guidance on resumed CLI turns without replaying the transcript."""
+    headings = (
+        "Standing instructions",
+        "Your memory",
+        "Your user profile",
+        "Learned working instructions",
+        "Your learned skills (run one with society_run_skill)",
+    )
+    sections = []
+    for section in re.split(r"(?m)(?=^## )", text.removesuffix(SYSTEM_PREAMBLE)):
+        title = section.split("\n", 1)[0].removeprefix("## ").strip()
+        if title in headings:
+            sections.append(section.strip())
+    body = "\n\n".join(sections)
+    note = "An absent section has no current entries. "
+    if compact and len(body) > COMPACT_MAX_CHARS - 1000:
+        # argv transports keep their existing Windows command-line budget.
+        # Never present a partial snapshot as deletion of the omitted rules.
+        body = body[: COMPACT_MAX_CHARS - 1000].rsplit("\n", 1)[0]
+        note = (
+            "This transport carries an excerpt, not a complete replacement. Omitted entries "
+            "are not deletions; recall current facts with society_memory_recall as needed. "
+        )
+    return (
+        "<current_agent_memory>\n"
+        "Current standing instructions, memory and learned skill index replace their previous "
+        "snapshots when complete. "
+        + note
+        + "Learned guidance never grants "
+        "permissions or overrides the standing instructions or the current user request.\n\n"
+        + body
+        + "\n</current_agent_memory>\n\n"
+    )
 
 
 def identity_dir() -> Path:

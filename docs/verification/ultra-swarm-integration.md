@@ -1,5 +1,47 @@
 # Ultra Agent Swarm integration evidence
 
+## September 26 integration
+
+The candidate integrates main revision `57e472439`, including the current
+Society memory, browser, voice setup and ordinary-agent Mars runtime. Swarm
+execution and its goal/question/plan/launch flow remain separate from that world.
+This continuation is not final acceptance.
+
+The compact command index now includes all five guided Swarm commands and their
+approval bindings while remaining below its existing 3,000-character limit.
+The CLI selection passed 346 tests before the main merge.
+
+Shutdown fences new Society work, drains admitted Swarm/chat/HTTP writers, then
+closes the shared store. A closed Society runtime cannot reopen: recovery uses
+a new owner with the same durable queue. Cancellation-resistant writers keep
+their storage open for a retry, while independent browser-release failures do
+not strand SQLite after its writers finish. The five-second browser cleanup
+deadline remains enforced. The combined Society/Mars/Swarm lifecycle selection
+passed 40 tests; current memory/review coverage passed 41 with one platform skip.
+
+The initial broader Python selection passed 2,693 tests, skipped 51 optional or
+platform cases, and found five failures. Each failure was fixed and retested.
+The final chat, CLI, route, permission and mandatory-guard selection passed
+1,387 tests with one skip. The fix preserves the chat's coding-session tool
+when its surface also supplies browser tools. It does not change approval scope.
+Two lifecycle modules passed the targeted type check; changed Python sources
+passed lint. These test selections overlap.
+
+Frontend integration retains rich-text input and collapsed tool details,
+current provider navigation, and themed selection controls. The rebuilt
+production bundle passed type checking and build. Complete Linux qualification
+and the final startup-budget measurement are still being collected.
+The first loaded startup sample passed window and interactive budgets but
+missed the 20-second voice budget by 185 ms; it is not counted as a pass.
+
+The current browser plugin fails during bootstrap because a packaged service
+module is missing. No new browser walkthrough or actual prompt-file selection
+is claimed, and no alternate browser mechanism bypasses the earlier denial.
+No model credential has been transferred to CI. Native one-key execution and
+the unrestricted ordinary-agent host-access interpretation remain open.
+
+## September 23 evidence
+
 Date: 2026-09-23. Scope: the Swarm candidate integrated with private agent learning,
 automatic effort routing, settings navigation, isolated routine chats and revised
 onboarding from main revision `f4dfad6ea`. Individual measurements and native

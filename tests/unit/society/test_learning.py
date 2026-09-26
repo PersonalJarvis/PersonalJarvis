@@ -125,7 +125,7 @@ async def test_learned_skill_stays_a_private_draft(rt: SocietyRuntime, tmp_path:
         "learned_skill"
     )
     assert notices == [{"kind": "learned_skill", "slug": slug, "name": "Thumbnail style"}]
-    memory = tmp_path / "vault" / "society" / "tuber" / "memory.md"
+    memory = tmp_path / "vault" / "society" / "tuber" / "MEMORY.md"
     assert memory.is_file() and "thumbnail-style" in memory.read_text(encoding="utf-8")
     # The global user skills dir is untouched until promotion.
     from jarvis.skills.bootstrap import ensure_user_skills_dir

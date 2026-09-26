@@ -126,6 +126,10 @@ class FakeRealtimeToolBridge:
         self.transcripts: list[str] = []
         self.closed = False
 
+    @property
+    def has_pending_confirmation(self) -> bool:
+        return False
+
     def set_language(self, language: str) -> None:
         self.languages.append(language)
 

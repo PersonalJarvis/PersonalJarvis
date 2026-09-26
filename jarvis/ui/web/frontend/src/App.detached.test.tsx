@@ -28,6 +28,7 @@ vi.mock("@/lib/dictationTarget", () => ({
 vi.mock("@/components/layout/Sidebar", () => ({
   SIDEBAR_DEFAULT_WIDTH: 280,
   SIDEBAR_RAIL_WIDTH: 56,
+  SIDEBAR_RAIL_AT_WIDTH: 168,
   // App.tsx remembers the sidebar width under this key, so the mock has to
   // carry it too or the shell throws before it renders anything.
   SIDEBAR_WIDTH_STORAGE_KEY: "jarvis.sidebar.width.v3",
@@ -177,7 +178,7 @@ describe("App shell around detached coding views", () => {
     ).toBe(true);
   });
 
-  it("keeps a detached solo window chrome-free", () => {
+  it("keeps a detached solo window free of the app navigation", () => {
     useEventStore.setState({
       activeSection: "agentic-ide",
       solo: true,
@@ -187,7 +188,8 @@ describe("App shell around detached coding views", () => {
     render(<App />);
 
     expect(screen.queryByTestId("sidebar")).toBeNull();
-    expect(screen.queryByTestId("topbar")).toBeNull();
+    // The caption stays: it is that window's title bar.
+    expect(screen.getByTestId("topbar")).toBeTruthy();
     expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
     expect(
       screen.getByTestId("main-view").parentElement?.classList.contains("jarvis-section-stage"),

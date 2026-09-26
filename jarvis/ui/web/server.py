@@ -56,7 +56,7 @@ from .schema import (
     WSWelcome,
     event_to_ws_envelope,
 )
-from .spa_build import build_is_complete, holding_page_html
+from .spa_build import build_is_complete, holding_page_html, recover_conflicted_index
 from .surface_security import SurfaceSecurity, set_browser_login_required
 from .wallpapers import register_wallpaper_routes
 
@@ -399,12 +399,12 @@ class WebServer:
         from .setup_routes import router as setup_router
         from .skills_routes import router as skills_router
         from .socials_routes import router as socials_router
-        from .society_routes import router as society_router
         from .society_browser_routes import router as society_browser_router
-        from .swarm_routes import router as swarm_router
         from .society_figure_routes import router as society_figure_router
+        from .society_routes import router as society_router
         from .starter_plan_routes import router as starter_plan_router
         from .sub_agents_routes import router as sub_agents_router
+        from .swarm_routes import router as swarm_router
         from .tasks_routes import router as tasks_router
         from .telephony_routes import router as telephony_router
         from .tool_model_routes import router as tool_model_router
@@ -595,6 +595,9 @@ class WebServer:
 
         set_society_factory(self._build_society_runtime)
         app.include_router(society_router)
+        from .mars_routes import router as mars_router
+
+        app.include_router(mars_router)
         app.include_router(society_browser_router)
         app.state.swarm = None
         app.state.swarm_factory = self._build_swarm_runtime
@@ -1016,6 +1019,7 @@ class WebServer:
             # over, so the live app must accept the same POST as an idempotent
             # no-op instead of returning FastAPI's 405 Method Not Allowed.
             from jarvis.society.browser.install import start_install
+
             browser_data = Path(getattr(self.cfg.memory, "data_dir", None) or "data")
             start_install(browser_data)
             return Response(status_code=204)
@@ -1207,9 +1211,7 @@ class WebServer:
             # Display brand follows the wake-word-derived assistant name.
             brand = agent_brand(cfg)
 
-            def _key_flags(
-                slot: tuple[str, str] | None, provider: str
-            ) -> tuple[bool, bool]:
+            def _key_flags(slot: tuple[str, str] | None, provider: str) -> tuple[bool, bool]:
                 """Whether a dedicated and/or a shared credential exists."""
                 try:
                     dedicated = bool(slot and get_secret(slot[0], env_fallback=slot[1]))
@@ -2220,6 +2222,15 @@ class WebServer:
                     "Pragma": "no-cache",
                 },
             )
+        recovered = recover_conflicted_index(INDEX_FILE, DIST_DIR)
+        if recovered is not None:
+            return HTMLResponse(
+                content=recovered,
+                headers={
+                    "Cache-Control": "no-store, max-age=0",
+                    "Pragma": "no-cache",
+                },
+            )
         return self._spa_placeholder_response()
 
     @staticmethod
@@ -2501,6 +2512,7 @@ class WebServer:
             raise RuntimeError("Server shutdown is incomplete; finish it before restarting.")
         self._stopping = False
         self._shutdown_complete = False
+        self.app.state.society_stopping = False
 
         # Boot profiling (opt-in via JARVIS_BOOT_PROFILE=1; zero behavior change
         # otherwise). Emits one machine-readable ``[BOOT_PROFILE] <phase>=<ms>``
@@ -2824,13 +2836,15 @@ class WebServer:
         # browser-only install has no desktop shell to warm the realtime
         # transport for it.
         self._schedule_realtime_transport_warm()
+
         # Defer provisioning until the boot chain returns control to the server.
         async def prepare_browser() -> None:
             from jarvis.society.browser import install
+
             data_dir = Path(getattr(self.cfg.memory, "data_dir", None) or "data")
             try:
                 install.start_install(data_dir)
-                while install.snapshot(data_dir)["running"]:
+                while install.snapshot(data_dir)["running"]:  # noqa: ASYNC110 - installer exposes only snapshots
                     await asyncio.sleep(1)
                 if install.is_installed(data_dir):
                     runtime = self._build_society_runtime()
@@ -2840,10 +2854,17 @@ class WebServer:
                         await runtime.browser.live.ensure(lead)
             except Exception:
                 logger.debug("Browser preparation deferred after failure", exc_info=True)
+
         self._browser_prepare_task = asyncio.create_task(prepare_browser(), name="browser-prepare")
         self._swarm_recovery_task = asyncio.create_task(
             self._recover_swarms_after_ready(), name="deferred-swarm-recovery"
         )
+        # Existing Mars work recovers with zero clients. The deferred helper
+        # performs its existence probe and runtime composition after boot yields.
+        from .mars_routes import schedule_mars_resume
+
+        data_dir = Path(getattr(getattr(self.cfg, "memory", None), "data_dir", None) or "data")
+        schedule_mars_resume(self.app.state, data_dir)
 
     async def _init_screenshot_retention(self) -> None:
         """Auto-delete captured screenshot blobs older than the configured
@@ -3400,7 +3421,10 @@ class WebServer:
         from jarvis.harness.manager import HarnessManager
 
         def workflow_services():
-            return (getattr(self.app.state, "workflow_store", None), getattr(self.app.state, "workflow_runner", None))
+            return (
+                getattr(self.app.state, "workflow_store", None),
+                getattr(self.app.state, "workflow_runner", None),
+            )
 
         runner = TaskRunner(
             store=store,
@@ -3413,7 +3437,9 @@ class WebServer:
             owned_action_guard=self._guard_society_routine_action,
             workflow_services=workflow_services,
         )
-        scheduler = TaskScheduler(store=store, bus=self.bus, runner=runner, workflow_services=workflow_services)
+        scheduler = TaskScheduler(
+            store=store, bus=self.bus, runner=runner, workflow_services=workflow_services
+        )
         scheduler.bind_bus()
         await scheduler.hydrate()
 
@@ -3701,10 +3727,12 @@ class WebServer:
         follows the live mission manager, budget tracker, brain tool surface
         and skill registry — whichever of them exists at call time.
         """
-        from jarvis.society.runtime import SocietyRuntime
+        from jarvis.society.runtime import SocietyRuntime, SocietyRuntimeClosed
 
-        data_dir = Path(getattr(getattr(self.cfg, "memory", None), "data_dir", None) or "data")
         state = self.app.state
+        if getattr(state, "society_stopping", False):
+            raise SocietyRuntimeClosed("society runtime stopped")
+        data_dir = Path(getattr(getattr(self.cfg, "memory", None), "data_dir", None) or "data")
 
         if getattr(state, "society", None) is not None:
             return state.society
@@ -3761,18 +3789,16 @@ class WebServer:
             event_publish=self.bus.publish,
             app_bus=self.bus,
             task_services=lambda: (
-                getattr(state, "task_store", None), getattr(state, "task_scheduler", None)
+                getattr(state, "task_store", None),
+                getattr(state, "task_scheduler", None),
             ),
             swarm_requests=self._build_swarm_runtime,
         )
+
         def browser_brain(agent: Any) -> Any:
-            from jarvis.brain.resolver import resolve_browser_brain
-            provider = agent.provider
-            if not provider:
-                from jarvis.local_models.assistant_session import agents_tier
-                tier = agents_tier(self.cfg)
-                provider = tier.provider
-            return resolve_browser_brain(self.cfg, provider, agent.model)
+            from jarvis.agent_chat.browser_model import browser_model_for_agent
+
+            return browser_model_for_agent(self.cfg, agent)
 
         state.society.browser.live.model_resolver = browser_brain
         state.society.browser.live.executor = lambda: getattr(
@@ -3798,12 +3824,34 @@ class WebServer:
         return AgentChatService(store, assistant_name=_name, bus=lambda: self.bus)
 
     async def stop(self) -> None:
-        if self._shutdown_complete:
+        if getattr(self, "_shutdown_complete", False):
             return
         self._stopping = True
+        # Fence lazy creation even when no Society owner exists yet. The shared
+        # brain factory and HTTP surface can still be called while shutdown awaits.
+        self.app.state.society_stopping = True
+        from .mars_routes import stop_mars_station
+
+        # Fence station creation before any other shutdown await can interleave
+        # with a pending boot recovery or first HTTP request.
+        mars_shutdown_failure: str | None = None
+        try:
+            await stop_mars_station(self.app.state)
+        except Exception as exc:  # noqa: BLE001 -- independent resources must still shut down
+            # The helper retains its stop latch and pending owner references.
+            # Keep only the type: cleanup failures can contain private payloads.
+            mars_shutdown_failure = type(exc).__name__
+            logger.warning("Mars station cleanup incomplete ({})", mars_shutdown_failure)
+        society_shutdown_failure: str | None = None
         society = getattr(self.app.state, "society", None)
         if society is not None:
-            await society.quiesce()
+            try:
+                await society.quiesce()
+            except Exception as exc:  # noqa: BLE001 -- preserve storage and drain independent owners
+                society_shutdown_failure = type(exc).__name__
+                logger.warning(
+                    "Society admission cleanup incomplete ({})", society_shutdown_failure
+                )
         if self._browser_prepare_task is not None:
             self._browser_prepare_task.cancel()
             await asyncio.gather(self._browser_prepare_task, return_exceptions=True)
@@ -4119,9 +4167,10 @@ class WebServer:
         society = getattr(self.app.state, "society", None)
         if society is not None:
             try:
-                await society.close()
+                await asyncio.wait_for(society.close(), timeout=5.0)
             except Exception as exc:  # noqa: BLE001 - other shared owners still need cleanup
-                logger.opt(exception=exc).warning("Society runtime shutdown failed")
+                society_shutdown_failure = type(exc).__name__
+                logger.warning("Society runtime cleanup incomplete ({})", society_shutdown_failure)
             else:
                 self.app.state.society = None
 
@@ -4136,7 +4185,18 @@ class WebServer:
         except Exception as exc:  # noqa: BLE001 - shutdown continues best-effort
             logger.opt(exception=exc).warning("Codex subscription app-server cleanup failed")
             return
-        self._shutdown_complete = getattr(self.app.state, "society", None) is None
+        self._shutdown_complete = (
+            getattr(self.app.state, "society", None) is None
+            and mars_shutdown_failure is None
+            and society_shutdown_failure is None
+        )
+
+        if mars_shutdown_failure is not None:
+            # Report incomplete Mars cleanup only after unrelated browser, chat,
+            # plugin, watcher, terminal and server resources have been released.
+            raise RuntimeError(f"mars_station_shutdown_incomplete ({mars_shutdown_failure})")
+        if society_shutdown_failure is not None:
+            raise RuntimeError(f"society_runtime_shutdown_incomplete ({society_shutdown_failure})")
 
     @property
     def running(self) -> bool:

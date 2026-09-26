@@ -4,10 +4,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ConnectIconButton,
+  matchesNamePrefix,
   matchesQuery,
   matchesStatus,
   PatConnectDialog,
   PkceConnectDialog,
+  sortPluginsByName,
   type Plugin,
   PluginsView,
 } from "@/views/PluginsView";
@@ -1079,6 +1081,45 @@ describe("plugin search matches more than the display name", () => {
   it("ignores case and rejects a word that appears in no field", () => {
     expect(matchesQuery(plugin(), "INVOICES")).toBe(true);
     expect(matchesQuery(plugin(), "kubernetes")).toBe(false);
+  });
+});
+
+describe("plugin prefix search lists G-starting plugins A-Z", () => {
+  const make = (name: string, extra: Record<string, unknown> = {}): Plugin => ({
+    id: name.toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+    name,
+    description: "d",
+    category: "Developer",
+    logoSlug: "x",
+    authMode: "pat_paste",
+    authConfig: { mode: "pat_paste" },
+    status: "not_connected",
+    longevity: "permanent",
+    oauthClientConfigured: false,
+    fromMarketplace: false,
+    selfUploaded: false,
+    ...extra,
+  });
+
+  it("matches only names starting with the query, case-insensitive", () => {
+    const gmail = make("Gmail");
+    expect(matchesNamePrefix(gmail, "G")).toBe(true);
+    expect(matchesNamePrefix(gmail, "g")).toBe(true);
+    expect(matchesNamePrefix(gmail, "Gmail")).toBe(true);
+    expect(matchesNamePrefix(make("AgentMail"), "G")).toBe(false);
+    expect(matchesNamePrefix(make("Cal.com"), "g")).toBe(false);
+    expect(matchesNamePrefix(make("Outlook Mail & Calendar"), "g")).toBe(false);
+  });
+
+  it("orders AA before AZ and sorts case-insensitively", () => {
+    const names = ["AZ", "AA", "Gmail", "Google Drive", "Google Calendar"].map((n) => make(n));
+    const sorted = [...names].sort(sortPluginsByName).map((p) => p.name);
+    expect(sorted).toEqual(["AA", "AZ", "Gmail", "Google Calendar", "Google Drive"]);
+  });
+
+  it("matches the vendor family prefix, so 'google' still finds Gmail", () => {
+    const gmail = make("Gmail", { id: "gmail" });
+    expect(matchesNamePrefix(gmail, "google")).toBe(true);
   });
 });
 

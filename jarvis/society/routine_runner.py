@@ -7,7 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from .chat_binding import SURFACE, _workspace, pair_for
-from .routines import agent_id_from_tags
+from .routines import agent_id_from_tags, routine_seat
 
 
 async def guard_owned_routine(runtime: Any, tags: tuple[str, ...]) -> Any:
@@ -21,6 +21,98 @@ async def guard_owned_routine(runtime: Any, tags: tuple[str, ...]) -> Any:
     if agent is None or str(agent.state) != "active":
         raise RuntimeError("The routine owner is unavailable or paused")
     return agent
+
+
+def _billed_via_api(provider: str) -> bool:
+    """Whether ``provider`` answers through an API key on the society surface.
+
+    CLI seats (subscriptions) and keyless local providers never touch an API
+    key; ``brain``/``api`` runners do. Decided by asking the runner and the
+    row, never by matching a provider name (AP-21).
+    """
+    try:
+        from jarvis.agent_chat.catalog import provider_row
+        from jarvis.agent_chat.service import resolve_runner
+    except Exception:  # noqa: BLE001 — without the catalog every seat counts as billed
+        return True
+    row = provider_row(provider)
+    if row is not None and bool(getattr(row, "keyless", False)):
+        return False
+    return resolve_runner(provider, surface=SURFACE) in ("brain", "api", "unknown")
+
+
+def _subscription_seat(cfg: Any) -> tuple[str, str, str] | None:
+    """The Jarvis chat's current subscription seat, if it has one.
+
+    Mirrors what a typed turn on the front page resolves to
+    (``AgentChatService.send``): the global worker pick mapped through the
+    subscription aliases. ``None`` when the front page itself runs on an API
+    key or is unconfigured.
+    """
+    try:
+        from jarvis.core.model_selection import worker_selection
+        from jarvis.core.task_agent import subscription_seat
+    except Exception:  # noqa: BLE001 — no selection layer: no subscription seat
+        return None
+    try:
+        selection = worker_selection(cfg)
+    except Exception:  # noqa: BLE001 — unreadable config reads as no seat
+        return None
+    if selection is None or not selection.provider:
+        return None
+    mapped = subscription_seat(selection.provider)
+    if mapped is not None:
+        return mapped[0], selection.model or "", selection.reasoning_effort or ""
+    if not _billed_via_api(selection.provider):
+        return selection.provider, selection.model or "", selection.reasoning_effort or ""
+    return None
+
+
+async def _seat_for_run(runtime: Any, agent: Any, task_id: str) -> tuple[str, str, str, str]:
+    """The ``(provider, model, effort, account_id)`` this run answers on.
+
+    A pinned routine seat wins (the model the owner ran on when the routine
+    was created, or what the person later picked for it — an explicit choice,
+    billed as chosen). Unpinned legacy rows follow the owner's live seat, but
+    never slide silently onto an API-key chain: an owner without an explicit
+    provider takes the Jarvis chat's subscription seat, and when there is no
+    usable subscription seat the run fails honestly instead of billing a key.
+    """
+    cfg = runtime.config()
+    pinned = {"provider": "", "model": "", "effort": "", "account_id": ""}
+    try:
+        task_store, _ = runtime.task_services()
+        if task_store is not None:
+            spec = await task_store.get_spec(task_id)
+            if spec is not None:
+                pinned = routine_seat(spec)
+    except Exception:  # noqa: BLE001 — an unreadable spec falls back to the live seat
+        pinned = {"provider": "", "model": "", "effort": "", "account_id": ""}
+    if pinned["provider"]:
+        return pinned["provider"], pinned["model"], pinned["effort"], pinned["account_id"]
+    account_id = str(getattr(agent, "account_id", "") or "")
+    if getattr(agent, "provider", ""):
+        _provider, _model, _effort = pair_for(cfg, agent)
+        return _provider, _model, _effort, account_id
+    subscription = _subscription_seat(cfg)
+    if subscription is not None:
+        provider, model, effort = subscription
+        return provider, model, effort, account_id
+    try:
+        provider, model, effort = pair_for(cfg, agent)
+    except PermissionError as exc:
+        raise RuntimeError(
+            "The routine has no model seat: the owner names no provider and no "
+            f"subscription seat is available ({exc}). Pick a model for the agent "
+            "or for this routine."
+        ) from exc
+    if _billed_via_api(provider):
+        raise RuntimeError(
+            "The routine stays on its owner's model and was not rerouted: the owner "
+            "names no provider and the only fallback would bill an API key. Pick a "
+            "subscription model for the agent or for this routine."
+        )
+    return provider, model, effort, account_id
 
 
 async def run_owned_routine(
@@ -39,14 +131,14 @@ async def run_owned_routine(
     from jarvis.agent_chat.effort import default_effort
 
     cfg = runtime.config()
-    provider, model, effort = pair_for(cfg, agent)
+    provider, model, effort, account_id = await _seat_for_run(runtime, agent, task_id)
     session = service.store.create_session(
         session_id=f"{agent.session_id}:routine:{task_id}:{uuid4().hex}",
         surface=SURFACE,
         provider=provider,
         model=model,
         effort=effort or default_effort(provider),
-        account_id=agent.account_id,
+        account_id=account_id,
         cwd=_workspace(cfg, agent),
         permission_mode="bypass",
         title=f"{agent.name} · Routine {task_id}",

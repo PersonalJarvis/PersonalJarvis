@@ -4422,6 +4422,10 @@ class SpeechPipeline:
             return False
         if self._dictation_blocks_activation():
             return False
+        from jarvis.live.runtime import owns_microphone
+
+        if owns_microphone(except_session_id=getattr(self, "_current_voice_session_id", None)):
+            return False
         return self._capture_permission_allowed()
 
     @property
@@ -7635,10 +7639,7 @@ class SpeechPipeline:
             and realtime_browser_audio(getattr(self, "_config", None))
         )
         buffer = await self._claim_wake_capture_for_session()
-        if browser_media:
-            if buffer is not None:
-                await buffer.close()
-                await self._wake_capture_released.wait()
+        if browser_media and buffer is None:
             browser_buffer = _SessionInputBuffer()
             try:
                 yield browser_buffer
@@ -9121,6 +9122,8 @@ class SpeechPipeline:
             return await run_browser_call(
                 self._bus, self._hangup_event,
                 timeout_s=max(45.0, realtime_handshake_budget_s(self._config) + 5.0),
+                input_buffer=input_buffer,
+                session_id=self._current_voice_session_id or "",
             )
         allow_classic_fallback = True
         try:

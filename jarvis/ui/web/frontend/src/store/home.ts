@@ -31,6 +31,7 @@ interface HomeStore {
    * live line under the lane until the spoken line (SpeechSpoken) lands.
    */
   liveReply: string;
+  liveSessionId: string | null;
   ingest: (name: string, payload: unknown, tsMs: number) => void;
   /**
    * Replace the lane with a stored conversation (a reopened voice session);
@@ -90,8 +91,19 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
   },
   transcript: [],
   liveReply: "",
+  liveSessionId: null,
   ingest: (name, payload, tsMs) => {
+    if (name === "VoiceTranscriptUpdated") {
+      const sessionId = (payload as { session_id?: string } | null)?.session_id;
+      if (get().liveSessionId && sessionId !== get().liveSessionId) return;
+      // The continuous caption has a stable row of its own. Clear the legacy
+      // single-line preview so it cannot appear a second time at the bottom.
+      useEventStore.getState().setTranscription("", true);
+      set({ liveReply: "", liveSessionId: sessionId || null });
+    }
     if (name === "VoiceSessionEnded") {
+      const sessionId = (payload as { session_id?: string } | null)?.session_id;
+      if (sessionId && get().liveSessionId && sessionId !== get().liveSessionId) return;
       const reason = (payload as { hangup_reason?: string } | null)?.hangup_reason;
       // A provider handover continues the same call. A real hangup opens an
       // empty lane; the completed conversation remains in the history rail.
@@ -115,7 +127,7 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
     }
     if (name === "VoiceSessionStarted") {
       // A call already started elsewhere must not be ended on card re-entry.
-      set({ freshVoicePending: false });
+      set({ freshVoicePending: false, liveSessionId: (payload as { session_id?: string })?.session_id || null });
     }
     const before = get().transcript;
     const after = reduceTranscript(before, name, payload, tsMs);
@@ -125,5 +137,5 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
     }
   },
   seedTranscript: (lines) => set({ transcript: lines, liveReply: "", freshVoicePending: false }),
-  resetTranscript: () => set({ transcript: [], liveReply: "" }),
+  resetTranscript: () => set({ transcript: [], liveReply: "", liveSessionId: null }),
 }));

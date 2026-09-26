@@ -43,9 +43,9 @@ _UNSAFE_FALLBACK_DETAIL = (
     "duplicate actions."
 )
 _USAGE_FALLBACK_DISABLED_DETAIL = (
-    "Selected realtime access failed. Automatic usage-billed API fallback is "
-    "disabled for this provider; configure an explicit realtime fallback or "
-    "restore its subscription access."
+    "The selected voice connection could not start. Check its connection and "
+    "model settings. Automatic usage-billed API fallback is disabled; "
+    "Jarvis did not switch to another provider."
 )
 
 # BCP-47 from the canonical per-turn resolver (de/en/es).

@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, Final
 from uuid import uuid4
@@ -31,7 +32,9 @@ from .bridge import MissionBridge
 from .browser.session import BrowserJobs
 from .capabilities import CapabilityRow, build_catalog
 from .checkpoints import CheckpointEngine
+from .communication import reply_policy, should_report
 from .conversation import ConversationArchive
+from .delivery import IncomingMessage, incoming_context
 from .events import MsgType, QuestState, RoomState, SocietyEnvelope, Tier
 from .focus import derive_approval_rules, derive_focus
 from .learning import AgentSkills, LearningPass, TurnDigest, default_creator_factory
@@ -50,6 +53,11 @@ log = logging.getLogger(__name__)
 __all__ = ["SocietyRuntime", "current_runtime", "set_current_runtime"]
 
 _DB_NAME = "society.db"
+
+
+class SocietyRuntimeClosed(RuntimeError):
+    """This runtime owner has entered terminal shutdown."""
+
 
 #: What the person hears when a task Jarvis handed out comes back.
 _LEAD_DONE: dict[str, str] = {
@@ -173,12 +181,7 @@ class SocietyRuntime:
         #: The society's one memory service; every touch moves the figure to the Memory House.
         self.memory = SocietyMemory(self, on_activity=self.checkpoints.note_memory_activity)
         self.conversations = ConversationArchive(self._data_dir / "society-conversations.db")
-        self._review_locks: dict[str, asyncio.Lock] = {}
-        self._review_retries: dict[str, tuple[int, float]] = {}
-        self._learning_bus = app_bus
-        self._accept_learning_receipts = False
-        self._learning_receipts: set[asyncio.Task[Any]] = set()
-        self.lead_learning_context = ""
+        self._review_lock = asyncio.Lock()
         #: The Quest Board: the person's jobs, routed to one taker, read back off the board.
         self.quests = Quests(self)
         #: Speech on the board, projected onto the island: two agents talking
@@ -198,8 +201,9 @@ class SocietyRuntime:
         self._delivery_unsubscribe: Callable[[], None] | None = None
         self._lead_incoming_unsubscribe: Callable[[], None] | None = None
         self._started = False
+        self._closing = False
+        self._starting_task: asyncio.Task[Any] | None = None
         self._context_start_task: asyncio.Task[bool] | None = None
-        self._start_tasks: set[asyncio.Task[Any]] = set()
         self._quiesce_lock = asyncio.Lock()
         self._close_lock = asyncio.Lock()
         self._quiescing = False
@@ -213,7 +217,7 @@ class SocietyRuntime:
         Voice/chat may continue while storage is slow. One owned task does the
         work; close cancels and reaps it before dismantling runtime components.
         """
-        if self._quiescing and not self._closed:
+        if self._closing:
             return False
         if self._started:
             return True
@@ -224,8 +228,6 @@ class SocietyRuntime:
         try:
             return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_s)
         except TimeoutError:
-            # The optional context deadline leaves shielded startup running;
-            # _start_for_context owns and logs any eventual startup failure.
             return False
 
     async def _start_for_context(self) -> bool:
@@ -237,62 +239,55 @@ class SocietyRuntime:
         return True
 
     async def ensure_started(self) -> SocietyRuntime:
-        if self._quiescing and not self._closed:
-            raise RuntimeError("Society is shutting down; retry after restart.")
-        owner = asyncio.current_task()
-        assert owner is not None
-        self._start_tasks.add(owner)
-        try:
-            return await self._ensure_started()
-        finally:
-            self._start_tasks.discard(owner)
-
-    async def _ensure_started(self) -> SocietyRuntime:
+        self._require_open_owner()
         async with self._start_lock:
-            if self._quiescing and not self._closed:
-                raise RuntimeError("Society is shutting down; retry after restart.")
-            if self._closed:
-                self.conversations = ConversationArchive(
-                    self._data_dir / "society-conversations.db"
-                )
-                self.scheduler.resume_admission()
-                self.coding_supervision.resume_admission()
-                self._closed = self._quiescing = False
+            self._require_open_owner()
             if self._started:
                 return self
-            await self.store.open()
-            self.scheduler._budget = self._get_budget()  # noqa: SLF001 — the runtime owns its scheduler
-            self.scheduler.attach()
-            self._delivery_unsubscribe = self.store.bus.subscribe_all(self._delivery_failed)
-            self._lead_incoming_unsubscribe = self.store.bus.subscribe_all(self._on_lead_incoming)
-            bus = self._get_mission_bus()
-            if bus is not None:
-                self.bridge.attach(bus)
-            self.checkpoints.attach()
-            self.quests.attach()
-            self.world_feed.attach()
-            await self.seed_lead()
-            if self._seed_starter_team:
-                created = await seed_first_run(self.roster, self.store)
-                if created:
-                    log.info("society: starter team seeded: %s", ", ".join(created))
-            # Warm the roster snapshot so the lead card (lead_card.py) — a
-            # synchronous reader on the brain's prompt build — sees the team from
-            # the first turn, not from the first REST listing.
-            await self.roster.refresh()
-            self._started = True
-            if self._learning_bus is not None:
-                from jarvis.core.events import VoiceTurnCompleted
+            self._starting_task = asyncio.current_task()
+            try:
+                return await self._start_runtime()
+            finally:
+                # Final shutdown owns the store. A startup cancellation alone
+                # does not prove that its other admitted writers have stopped.
+                self._starting_task = None
 
-                self._learning_bus.subscribe(VoiceTurnCompleted, self._voice_learning)
-                self._accept_learning_receipts = True
-            self._delivery_task = asyncio.create_task(self._deliver_pending())
-            set_current_runtime(self)
-            await self.coding_supervision.start()
-            self.background(self.recover_reviews())
-            self.background(self.refresh_lead_learning())
-            log.info("society runtime started (%s)", self.store.path)
-            return self
+    def _require_open_owner(self) -> None:
+        if self._closing:
+            raise SocietyRuntimeClosed("society runtime stopped")
+
+    async def _start_runtime(self) -> SocietyRuntime:
+        await self.store.open()
+        self._require_open_owner()
+        self.scheduler._budget = self._get_budget()  # noqa: SLF001 — the runtime owns its scheduler
+        self.scheduler.attach()
+        self._delivery_unsubscribe = self.store.bus.subscribe_all(self._delivery_failed)
+        self._lead_incoming_unsubscribe = self.store.bus.subscribe_all(self._on_lead_incoming)
+        bus = self._get_mission_bus()
+        if bus is not None:
+            self.bridge.attach(bus)
+        self.checkpoints.attach()
+        self.quests.attach()
+        self.world_feed.attach()
+        await self.seed_lead()
+        self._require_open_owner()
+        if self._seed_starter_team:
+            created = await seed_first_run(self.roster, self.store)
+            if created:
+                log.info("society: starter team seeded: %s", ", ".join(created))
+        # Warm the roster snapshot so the lead card (lead_card.py) — a
+        # synchronous reader on the brain's prompt build — sees the team from
+        # the first turn, not from the first REST listing.
+        await self.roster.refresh()
+        self._require_open_owner()
+        self._started = True
+        self._delivery_task = asyncio.create_task(self._deliver_pending())
+        set_current_runtime(self)
+        await self.coding_supervision.start()
+        self._require_open_owner()
+        self.background(self.recover_reviews())
+        log.info("society runtime started (%s)", self.store.path)
+        return self
 
     async def _delivery_failed(self, env: SocietyEnvelope) -> None:
         """Project a terminal scheduler veto onto an already-visible chat receipt."""
@@ -325,13 +320,25 @@ class SocietyRuntime:
             if sender is None:
                 return
             requests = await self.store.events_for_trace(env.trace_id)
-            if not any(
-                request.from_agent == LEAD_AGENT_ID
-                and request.to_agent == env.from_agent
-                and request.msg_type in (MsgType.SAY, MsgType.QUERY, MsgType.ASSIGN)
-                and request.event_id == env.parent_event_id
-                for request in requests
-            ):
+            request = next(
+                (
+                    item
+                    for item in requests
+                    if item.from_agent == LEAD_AGENT_ID
+                    and item.to_agent == env.from_agent
+                    and item.msg_type
+                    in (MsgType.SAY, MsgType.QUERY, MsgType.PROPOSE, MsgType.ASSIGN)
+                    and item.event_id == env.parent_event_id
+                ),
+                None,
+            )
+            if request is None:
+                return
+            if request.msg_type is MsgType.ASSIGN and "reply_policy" in request.payload:
+                # The turn watcher owns this completion, including semantic blockers.
+                return
+            status = str(env.payload.get("reply_status") or "done")
+            if not should_report(request, status):
                 return
             await self.announce_lead_message(sender, env)
         except Exception:  # noqa: BLE001 - a silent message is a lost courtesy, not a lost result
@@ -431,15 +438,11 @@ class SocietyRuntime:
 
     async def _deliver_pending(self) -> None:
         """Recover committed messages and retry busy chats without opening sockets."""
-        next_review = asyncio.get_running_loop().time() + 30
         while True:
             try:
                 await self.scheduler.drain_deliveries()
             except Exception:  # noqa: BLE001 — one failed pass must not lose the queue
                 log.warning("society: delivery recovery failed", exc_info=True)
-            if asyncio.get_running_loop().time() >= next_review:
-                next_review = asyncio.get_running_loop().time() + 30
-                self.background(self.recover_reviews())
             await asyncio.sleep(1.0)
 
     @property
@@ -459,15 +462,16 @@ class SocietyRuntime:
         if self._closed:
             return
         self._quiescing = True
+        self._closing = True
         self.scheduler.stop_admission()
         self.coding_supervision.stop_admission()
         async with self._quiesce_lock:
-            starts = set(self._start_tasks)
+            starts = {self._starting_task} if self._starting_task is not None else set()
             if self._context_start_task is not None:
                 starts.add(self._context_start_task)
             await cancel_and_join(starts, "Society startup")
             self._context_start_task = None
-            await self.coding_supervision.close()
+            await self.coding_supervision.quiesce()
             if self._delivery_task is not None:
                 await cancel_and_join([self._delivery_task], "Society delivery recovery")
                 self._delivery_task = None
@@ -475,48 +479,44 @@ class SocietyRuntime:
             await self.scheduler.quiesce()
 
     async def close(self) -> None:
+        # Closing is terminal for this owner; recovery constructs a new runtime.
+        self._closing = True
         async with self._close_lock:
             if self._closed:
                 return
-            await self._close_owned()
+            await self.quiesce()
+            # A cancellation-resistant writer keeps its store alive for retry.
+            # Resource cleanup is safe only after all producers and writers end.
+            await cancel_and_join(self._watchers, "Society result writers")
+            self._watchers.clear()
 
-    async def _close_owned(self) -> None:
-        await self.quiesce()
-        # Voice owners finish during the server's drain. Keep their receipt path
-        # open until this final close, then stop admission before joining writers.
-        self._accept_learning_receipts = False
-        if self._learning_bus is not None:
-            from jarvis.core.events import VoiceTurnCompleted
+            def clear_runtime() -> None:
+                self._started = False
+                if current_runtime() is self:
+                    set_current_runtime(None)
 
-            self._learning_bus.unsubscribe(VoiceTurnCompleted, self._voice_learning)
-        if self._learning_receipts:
-            from .shutdown import QUIESCE_TIMEOUT_S
-
-            _, pending = await asyncio.wait(set(self._learning_receipts), timeout=QUIESCE_TIMEOUT_S)
-            if pending:
-                # These owners may be in filesystem threads: canceling the asyncio
-                # waiter would not prove its write stopped. Keep storage open.
-                raise RuntimeError("Society learning receipts did not drain; retry shutdown")
-        if self._delivery_unsubscribe is not None:
-            self._delivery_unsubscribe()
-            self._delivery_unsubscribe = None
-        if self._lead_incoming_unsubscribe is not None:
-            self._lead_incoming_unsubscribe()
-            self._lead_incoming_unsubscribe = None
-        await self.browser.close()
-        await cancel_and_join(self._watchers, "Society result writers")
-        self._watchers.clear()
-        self.conversations.close()
-        self.scheduler.detach()
-        self.bridge.detach()
-        self.checkpoints.detach()
-        self.quests.detach()
-        self.world_feed.detach()
-        await self.store.close()
-        self._started = False
-        self._closed = True
-        if current_runtime() is self:
-            set_current_runtime(None)
+            # Browser or supervisor release failures must not strand SQLite
+            # after its writers have already relinquished ownership.
+            async with AsyncExitStack() as cleanup:
+                cleanup.callback(clear_runtime)
+                cleanup.push_async_callback(self.store.close)
+                for release in (
+                    self.world_feed.detach,
+                    self.quests.detach,
+                    self.checkpoints.detach,
+                    self.bridge.detach,
+                    self.scheduler.detach,
+                    self.conversations.close,
+                ):
+                    cleanup.callback(release)
+                cleanup.push_async_callback(self.browser.close)
+                cleanup.push_async_callback(self.coding_supervision.close)
+                for attribute in ("_delivery_unsubscribe", "_lead_incoming_unsubscribe"):
+                    unsubscribe = getattr(self, attribute)
+                    if unsubscribe is not None:
+                        cleanup.callback(unsubscribe)
+                        setattr(self, attribute, None)
+            self._closed = True
 
     def skills_for(self, agent_id: str) -> AgentSkills:
         """The agent's private skill namespace (lazy registry)."""
@@ -529,131 +529,105 @@ class SocietyRuntime:
     async def turn_completed(self, session: Any, completion: Any) -> None:
         import json
 
-        from .experience import learning_events
-
-        events = learning_events(json.loads(completion.events_json))
+        events = json.loads(completion.events_json)
         self.conversations.ingest(session.session_id, events)
+        await self._complete_message_reply(session, completion, events)
         terminal = [e for e in events if e.get("kind") == "turn_finished"]
-        if not terminal:
+        if not terminal or terminal[-1].get("payload", {}).get("status") not in {
+            "done",
+            "ok",
+            "completed",
+        }:
             return
         names = {
             str(e.get("payload", {}).get("name") or "")
             for e in events
             if e.get("kind") == "tool_call"
         }
-        if names and names <= {"society_propose_change", "society_wiki_note"}:
-            # These turns already record their requested change (or a pending
-            # proposal). Reviewing them again wastes a model call and can
+        from .memory_intent import has_write_receipt
+
+        if (
+            names
+            and names <= {"society_propose_change", "society_wiki_note"}
+            and has_write_receipt(events)
+        ):
+            # These turns already have a successful durable-write receipt.
+            # Reviewing them again wastes a model call and can
             # duplicate a standing instruction as a conflicting memory.
             return
-        if (
-            self.conversations.queue_review(
-                session.session_id,
-                completion.turn.turn_id,
-                events,
-                direct_user=completion.turn.direct_user,
-                owner=LEAD_AGENT_ID if getattr(session, "surface", "") == "jarvis" else "",
-            )
-            and not self._quiescing
-        ):
+        queued = self.conversations.queue_review(
+            session.session_id,
+            completion.turn.turn_id,
+            events,
+            direct_user=completion.turn.direct_user,
+        )
+        if queued and not self._quiescing:
             self.background(self.recover_reviews())
+
+    async def _complete_message_reply(
+        self, session: Any, completion: Any, events: list[dict[str, Any]]
+    ) -> None:
+        """Return a requested answer even when the receiver only writes its final text."""
+        incoming = incoming_context.get()
+        if incoming is None or completion.turn.direct_user:
+            return
+        request = await self.store.get_event(incoming.message_id)
+        if (
+            request is None
+            or request.to_agent is None
+            or request.msg_type not in (MsgType.QUERY, MsgType.SAY, MsgType.PROPOSE)
+            or session.session_id != f"society:{request.to_agent}"
+            or reply_policy(request) == "none"
+            or await self.store.kill_switch()
+        ):
+            return
+        replies = await self.store.events_for_trace(request.trace_id)
+        if any(
+            item.msg_type is MsgType.ANSWER
+            and item.parent_event_id == request.event_id
+            and item.from_agent == request.to_agent
+            and item.to_agent == request.from_agent
+            for item in replies
+        ):
+            return
+        final = next(
+            (
+                str(item.get("payload", {}).get("text") or "").strip()
+                for item in reversed(events)
+                if item.get("kind") == "assistant_text"
+            ),
+            "",
+        )
+        terminal: dict[str, Any] = next(
+            (
+                item.get("payload", {})
+                for item in reversed(events)
+                if item.get("kind") == "turn_finished"
+            ),
+            {},
+        )
+        status = (
+            "done" if final and terminal.get("status") in ("done", "ok", "completed") else "blocked"
+        )
+        if not should_report(request, status):
+            return
+        await self.say(
+            from_agent=request.to_agent,
+            to_agent=request.from_agent,
+            text=final
+            or "The receiving turn ended without an answer; the request remains unresolved.",
+            trace_id=request.trace_id,
+            parent_event_id=request.event_id,
+            msg_type=MsgType.ANSWER,
+            payload={"reply_policy": "none", "reply_status": status},
+        )
 
     async def recover_reviews(self) -> None:
         if self._quiescing:
-            return  # Durable reviews wait for a completed restart, never new inference.
-        from .surface import agent_id_of
+            return  # Durable reviews resume with the next runtime owner.
+        from .review_queue import drain_reviews
 
-        owners = {
-            str(p.get("owner") or agent_id_of(p["session"]) or "")
-            for p in self.conversations.pending_reviews()
-        }
-        await asyncio.gather(*(self._review_agent(owner) for owner in owners if owner))
-
-    async def _review_agent(self, owner: str) -> None:
-        import random
-
-        from .experience import receipt_for
-        from .review import review_turn
-        from .surface import agent_id_of
-
-        async with self._review_locks.setdefault(owner, asyncio.Lock()):
-            for pending in self.conversations.pending_reviews():
-                if self._quiescing:
-                    return  # The durable review remains pending for a completed restart.
-                if (pending.get("owner") or agent_id_of(pending["session"])) != owner:
-                    continue
-                receipt = receipt_for(pending["session"], pending["turn_id"])
-                attempts, due = self._review_retries.get(receipt, (0, 0.0))
-                if asyncio.get_running_loop().time() < due:
-                    break  # Preserve correction order within this owner across retries.
-                finished = False
-                try:
-                    if await review_turn(self, pending):
-                        self.conversations.finish_review(pending["session"], pending["turn_id"])
-                        self._review_retries.pop(receipt, None)
-                        finished = True
-                except Exception:
-                    log.exception("society review remains pending for %s", pending["turn_id"])
-                if not finished:
-                    self._review_retries[receipt] = (
-                        attempts + 1,
-                        asyncio.get_running_loop().time()
-                        + min(1800, 30 * 2 ** min(attempts, 6)) * random.uniform(0.8, 1.2),  # noqa: S311 - retry jitter, not a secret
-                    )
-                    break  # Another owner's loop remains free to make progress.
-            if owner == LEAD_AGENT_ID:
-                await self.refresh_lead_learning()
-
-    def experience_for(self, agent_id: str) -> Any:
-        from .experience import ExperienceNotebook
-
-        return ExperienceNotebook(self._data_dir, agent_id)
-
-    async def learning_context(self, agent_id: str, *, query: str = "", receipt: str = "") -> str:
-        return str(
-            await asyncio.to_thread(self.experience_for(agent_id).context, query, receipt=receipt)
-        )
-
-    async def refresh_lead_learning(self) -> None:
-        try:
-            agent = await self.roster.get(LEAD_AGENT_ID)
-            memory = await asyncio.to_thread(self.memory.head, agent) if agent is not None else ""
-            self.lead_learning_context = memory + "\n" + await self.learning_context(LEAD_AGENT_ID)
-        except Exception:
-            log.warning("society: lead learning context unavailable", exc_info=True)
-
-    async def _voice_learning(self, event: Any) -> None:
-        # The publisher must never wait for disk or a reviewer model.
-        if not self._accept_learning_receipts:
-            return
-        task = asyncio.create_task(self._record_voice_learning(event))
-        self._learning_receipts.add(task)
-        task.add_done_callback(self._learning_receipts.discard)
-
-    async def _record_voice_learning(self, event: Any) -> None:
-        from .experience import learning_events, receipt_for
-
-        try:
-            session = "voice:" + event.session_id
-            receipt = receipt_for(session, event.turn_id)
-            events = [
-                {"kind": "user_message", "payload": {"text": event.user_text}},
-                {"kind": "assistant_text", "payload": {"text": event.jarvis_text}},
-                {"kind": "turn_finished", "payload": {"status": "completed"}},
-            ]
-            events = learning_events(events)
-            # VoiceTurnCompleted has tool names, not verified tool results.
-            # Consequently voice can teach user corrections, never invented tool success.
-            queued = self.conversations.queue_review(
-                session, event.turn_id, events, direct_user=True, owner=LEAD_AGENT_ID
-            )
-            await asyncio.to_thread(
-                self.experience_for(LEAD_AGENT_ID).complete, receipt, "completed"
-            )
-            if queued and not self._quiescing:
-                self.background(self.recover_reviews())
-        except Exception:
-            log.exception("society: voice learning receipt could not be recorded")
+        await drain_reviews(self)
 
     def background(self, coro: Any) -> asyncio.Task[Any]:
         """Run a coroutine as a tracked task (cancelled on close, AP-30: its
@@ -770,6 +744,8 @@ class SocietyRuntime:
         if not runner:
             runner = "chat" if self._get_chat() is not None else "mission"
         if runner == "mission":
+            if reply_policy(env) != "always":
+                raise RuntimeError("this reply policy requires an available agent chat service")
             return await self._dispatch_mission(target, env)
         return await self._dispatch_chat(target, env)
 
@@ -783,10 +759,23 @@ class SocietyRuntime:
         if svc.is_running(session.session_id):
             raise RuntimeError(f"target busy: {target.name} is running a turn")
         queue = svc.subscribe(session.session_id)
+        # Both API and CLI turns inherit the same trusted request provenance.
+        token = incoming_context.set(
+            IncomingMessage(
+                message_id=env.event_id,
+                sender_id=env.from_agent,
+                sender_name=env.from_agent,
+                sender_kind="jarvis" if env.from_agent == LEAD_AGENT_ID else "agent",
+                text=env.text,
+                prompt=frame_assignment(env),
+                trace_id=env.trace_id,
+            )
+        )
         try:
             turn_id = await svc.send(
                 session.session_id,
                 frame_assignment(env),
+                **({"read_only": True} if env.payload.get("read_only") is True else {}),
                 **(
                     {"direct_user": False}
                     if getattr(svc, "supports_turn_completion", False)
@@ -796,6 +785,8 @@ class SocietyRuntime:
         except Exception:
             svc.unsubscribe(session.session_id, queue)
             raise
+        finally:
+            incoming_context.reset(token)
         run_id = f"turn:{turn_id}"
         watcher = asyncio.create_task(
             self._watch_turn(svc, session.session_id, queue, turn_id, run_id, target, env)
@@ -856,6 +847,20 @@ class SocietyRuntime:
             finally:
                 self.scheduler.note_run_ended(run_id)
         summary = (final_text or error or "turn finished").strip()
+        # A successful model turn can still report an unfinished task. Use the
+        # correlated, typed report, never a keyword guess over the final prose.
+        reports = [
+            item
+            for item in await self.store.events_for_trace(env.trace_id)
+            if item.parent_event_id == env.event_id
+            and item.from_agent == target.agent_id
+            and item.to_agent == env.from_agent
+            and item.msg_type is MsgType.ANSWER
+            and item.payload.get("reply_status") == "blocked"
+        ]
+        if reports:
+            status = "blocked"
+            error = summary = reports[-1].text
         try:
             await self.store.append_and_publish(
                 SocietyEnvelope(
@@ -905,6 +910,8 @@ class SocietyRuntime:
         realtime session both read ``AnnouncementRequested``) and posted as a
         notice into the newest front-page chat. Neither leg may fail the run.
         """
+        if not should_report(env, status):
+            return
         lang = str(env.payload.get("lang") or "en").lower()
         line = (_LEAD_DONE if status == "done" else _LEAD_BLOCKED).get(
             lang, (_LEAD_DONE if status == "done" else _LEAD_BLOCKED)["en"]

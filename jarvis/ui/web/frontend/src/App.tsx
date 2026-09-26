@@ -13,6 +13,7 @@ import { useSectionUrlMemory } from "@/hooks/useSectionUrlMemory";
 import {
   Sidebar,
   SIDEBAR_DEFAULT_WIDTH,
+  SIDEBAR_RAIL_AT_WIDTH,
   SIDEBAR_RAIL_WIDTH,
   SIDEBAR_WIDTH_STORAGE_KEY,
 } from "@/components/layout/Sidebar";
@@ -289,6 +290,27 @@ export default function App() {
     (settingsHubActive && !settingsSidebarOpen);
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
+  /*
+   * The caption's leading navigation (sidebar toggle beside back/forward).
+   *
+   * The toggle moved here from the sidebar header, so the stranded handlers
+   * move with it: the agents section folds its own navigation, every other
+   * section folds the main column. The settings hub brings its own toggle
+   * (TopBar maps it onto the same button), so it needs nothing here. The
+   * collapsed flag mirrors the rail the sidebar itself reports — a dragged
+   * narrow column reads as collapsed even before the toggle was touched.
+   */
+  const navToggle = settingsHubActive
+    ? undefined
+    : activeSection === "agents"
+      ? {
+          collapsed: !agentsNavOpen || sidebar.size < SIDEBAR_RAIL_AT_WIDTH,
+          onToggle: toggleAgentsNav,
+        }
+      : {
+          collapsed: navCollapsed || sidebar.size < SIDEBAR_RAIL_AT_WIDTH,
+          onToggle: toggleNav,
+        };
 
   /*
    * The realtime broker must exist exactly ONCE across all windows: it
@@ -309,23 +331,30 @@ export default function App() {
 
   /*
    * A detached solo window is one section in its own desktop window: the
-   * section IS the window, so the app chrome around it — nav, top bar,
-   * onboarding, dock — has no job here and is omitted rather than hidden.
+   * section IS the window, so the app chrome around it — nav, onboarding,
+   * dock — has no job here and is omitted rather than hidden. The caption
+   * strip stays: it is the title bar of that window.
    * What stays is what any surface needs to function: toasts (many components
    * report through them) and the right-click edit menu (the desktop WebView
    * has no native context menu, so this is the only mouse-driven paste).
    */
   if (solo) {
     return (
-      <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
+      <div className="jarvis-nav-surface relative isolate flex h-screen w-screen overflow-hidden text-foreground">
         <DesktopWallpaper />
         {brokerMounted && <SubscriptionRealtimeTransportBroker />}
         <BrowserRealtimeControl controlOnly />
+        {/* The caption paints nothing: the window ground is the sidebar gray,
+            and the content panel below it rounds away from that gray. */}
+        <TopBar />
         {/* No z-index on the stage column — see the shell below. */}
         <main className="relative flex min-w-0 flex-1 flex-col">
+          <div className="h-8 shrink-0" />
+          <div className="jarvis-sheet flex min-h-0 min-w-0 flex-1 flex-col">
           <SectionStage visualization={visualizationActive}>
             <MainView />
           </SectionStage>
+          </div>
         </main>
         <ToastLayer />
         <CommandActivityLayer />
@@ -340,7 +369,7 @@ export default function App() {
   }
 
   return (
-    <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
+    <div className="jarvis-nav-surface relative isolate flex h-screen w-screen overflow-hidden text-foreground">
       {brokerMounted && <SubscriptionRealtimeTransportBroker />}
       <BrowserRealtimeControl controlOnly />
       <DesktopWallpaper />
@@ -349,10 +378,10 @@ export default function App() {
       <Sidebar
         width={sidebar.size}
         collapsed={activeSection === "agents" || settingsHubActive ? false : navCollapsed}
-        onToggleCollapsed={activeSection === "agents" ? toggleAgentsNav : settingsHubActive ? () => setSettingsSidebarOpen(false) : toggleNav}
       />
 
       <PaneResizer
+        showLine={false}
         orientation="vertical"
         onPointerDown={startSidebarResize}
         onDoubleClick={sidebar.reset}
@@ -379,6 +408,10 @@ export default function App() {
         components/layout/overlay-stacking.test.ts.
       */}
       <main className="relative flex min-w-0 flex-1 flex-col">
+        {/* Gray, like the sidebar. The content panel below rounds its
+            top-left corner so this gray shows in the curve. */}
+        <div className="h-8 shrink-0" data-testid="caption-rule" />
+        <div className={activeSection === "agents" || settingsHubActive ? "flex min-h-0 min-w-0 flex-1 flex-col" : "jarvis-sheet flex min-h-0 min-w-0 flex-1 flex-col"}>
         {/* App-wide macOS permission alert — topmost so a missing grant is
             impossible to miss on any view. No-op on other platforms. */}
         <PermissionsAlertBanner />
@@ -387,7 +420,7 @@ export default function App() {
             it is the same class of problem: an OS-level gate the user must be
             told about, since nothing else reports it. */}
         <InputIsolationBanner />
-        <TopBar settingsNavigation={settingsHubActive ? {
+        <TopBar navToggle={navToggle} settingsNavigation={settingsHubActive ? {
           open: settingsSidebarOpen,
           onToggle: () => setSettingsSidebarOpen((open) => !open),
         } : undefined} />
@@ -398,6 +431,7 @@ export default function App() {
         <SectionStage visualization={visualizationActive}>
           <MainView />
         </SectionStage>
+        </div>
       </main>
 
       <ToastLayer />

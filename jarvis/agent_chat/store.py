@@ -363,6 +363,22 @@ class AgentChatStore:
                 receipt.update(payload)
         return receipt
 
+    def turn_terminal(self, session_id: str, turn_id: str) -> dict[str, Any] | None:
+        """Read one durable terminal event for an exact owned turn without loading history."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT seq, ts_ms, kind, payload FROM agent_chat_events "
+                "WHERE session_id = ? AND kind = 'turn_finished' "
+                "AND json_extract(payload, '$.turn_id') = ? ORDER BY seq DESC LIMIT 1",
+                (session_id, turn_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "seq": int(row["seq"]), "ts_ms": int(row["ts_ms"]), "kind": row["kind"],
+            "payload": json.loads(row["payload"]),
+        }
+
     def list_events(self, session_id: str, *, after_seq: int = 0) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(

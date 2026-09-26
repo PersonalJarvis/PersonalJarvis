@@ -5,14 +5,16 @@ thin per-OS dispatch with a graceful no-op fallback when no display is present
 (headless VPS), mirroring jarvis/plugins/tool/app_resolver.py. Import-cleanliness
 (HN-7): only stdlib at module scope; no platform-only package imported here.
 """
+
 from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.platform import detect_platform
@@ -284,7 +286,7 @@ def _open_url_windows(url: str) -> bool:
         os.startfile(url)  # type: ignore[attr-defined]  # noqa: S606
         log.warning(
             "open_url: no browser exe found; handed off to ShellExecute "
-            "(cannot verify it opened) for %s", host
+            "(cannot verify it opened) for %s", host,
         )
         return True  # best-effort; ShellExecute may open nothing for a dead handler
     except OSError as exc:
@@ -422,9 +424,236 @@ def open_url(url: str) -> bool:
     return _open_url_linux(url)
 
 
+# A chat link must never launch a program. Media, documents and folders open
+# with the default app; these suffixes are programs, installers or scripts.
+_REFUSED_CHAT_SUFFIXES = frozenset(
+    {
+        ".exe",
+        ".bat",
+        ".cmd",
+        ".com",
+        ".scr",
+        ".pif",
+        ".ps1",
+        ".psc1",
+        ".psm1",
+        ".psd1",
+        ".vbs",
+        ".vbe",
+        ".js",
+        ".jse",
+        ".wsf",
+        ".wsh",
+        ".wsc",
+        ".msi",
+        ".msp",
+        ".mst",
+        ".dll",
+        ".cpl",
+        ".jar",
+        ".sh",
+        ".bash",
+        ".command",
+        ".zsh",
+        ".ksh",
+        ".dmg",
+        ".pkg",
+        ".deb",
+        ".rpm",
+        ".appimage",
+        ".lnk",
+        ".scf",
+        ".url",
+        ".hta",
+        ".reg",
+        ".inf",
+        ".app",
+        ".apk",
+        ".ipa",
+        ".py",
+        ".pyw",
+        ".rb",
+        ".pl",
+        ".php",
+    }
+)
+
+
+class ChatOpenRejected(ValueError):
+    """The chat link is not a file or folder this computer should open."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
+def _path_from_file_uri(value: str) -> str | None:
+    """``file:///C:/x`` / ``file:///home/x`` → a native path, else None.
+
+    A host other than empty or ``localhost`` is a network location and is
+    refused. ``file://C:/x`` (the drive letter parsed as the host) is repaired.
+    """
+    parsed = urlparse(value)
+    host = parsed.netloc
+    path = unquote(parsed.path or "")
+    if re.fullmatch(r"[A-Za-z]:", host):
+        path = host + path
+    elif host and host.lower() != "localhost":
+        return None
+    if re.match(r"^/[A-Za-z]:[\\/]", path):
+        path = path[1:]
+    return path or None
+
+
+def chat_link_path(raw: str) -> str | None:
+    """Absolute local path inside a chat link, or None when it is not one.
+
+    Accepts a Windows drive path, a POSIX absolute path, a ``~/`` path, and a
+    ``file:`` URI with no remote host. Relative paths, UNC shares and web URLs
+    are not local opens. Does not check that the path exists.
+    """
+    text = raw.strip()
+    if len(text) >= 2 and text[0] == "<" and text[-1] == ">":
+        text = text[1:-1].strip()
+    if not text or any(ch in text for ch in "\x00\r\n"):
+        return None
+    lowered = text.lower()
+    if lowered.startswith(("http://", "https://", "javascript:", "data:", "mailto:")):
+        return None
+    if lowered.startswith("file:"):
+        converted = _path_from_file_uri(text)
+        if not converted:
+            return None
+        text = converted
+    if text.startswith("\\\\") or text.startswith("//"):
+        return None
+    if text.startswith("~/") or text.startswith("~\\"):
+        return text
+    if re.match(r"^[A-Za-z]:[\\/]", text):
+        return text
+    if text.startswith("/") and text != "/api" and not text.startswith("/api/"):
+        return text
+    return None
+
+
+def _user_file_roots() -> list[Path]:
+    """Folders a bare filename from chat may be found in."""
+    home = Path.home()
+    roots: list[Path] = []
+    for name in ("Downloads", "Desktop", "Documents"):
+        folder = home / name
+        if folder.is_dir():
+            roots.append(folder)
+    return roots
+
+
+def _relative_file_name(raw: str) -> Path | None:
+    """``notes.md`` or ``shots/photo.png``, never a path that climbs upward."""
+    text = raw.strip()
+    if len(text) >= 2 and text[0] == "<" and text[-1] == ">":
+        text = text[1:-1].strip()
+    if not text or any(ch in text for ch in "\x00\r\n"):
+        return None
+    lowered = text.lower()
+    if lowered.startswith(("http://", "https://", "javascript:", "data:", "mailto:", "file:")):
+        return None
+    if text.startswith(("\\\\", "//", "~/")) or re.match(r"^[A-Za-z]:[\\/]", text):
+        return None
+    parts = [part for part in text.replace("\\", "/").split("/") if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        return None
+    suffix = Path(parts[-1]).suffix
+    if not re.fullmatch(r"\.[A-Za-z0-9]{1,12}", suffix):
+        return None
+    return Path(*parts)
+
+
+def _inside(root: Path, candidate: Path) -> bool:
+    try:
+        resolved_root = root.resolve()
+        resolved = candidate.resolve()
+    except OSError:
+        return False
+    return resolved == resolved_root or resolved_root in resolved.parents
+
+
+def _find_named_file(raw: str) -> Path | None:
+    """Newest file of this name under Downloads, Desktop or Documents."""
+    relative = _relative_file_name(raw)
+    if relative is None:
+        return None
+    names = [relative]
+    if len(relative.parts) > 1:
+        names.append(Path(relative.name))
+    found: list[Path] = []
+    for root in _user_file_roots():
+        for name in names:
+            candidate = root / name
+            if _inside(root, candidate) and candidate.is_file():
+                found.append(candidate)
+    if not found:
+        return None
+    found.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return found[0]
+
+
+def _refuse_program(target: Path) -> None:
+    suffix = target.suffix.lower()
+    if (target.is_file() and suffix in _REFUSED_CHAT_SUFFIXES) or (
+        target.is_dir() and suffix == ".app"
+    ):
+        raise ChatOpenRejected("refused-program")
+
+
+def _existing_absolute(native: str) -> Path | None:
+    """Resolve an absolute local path, or None when it is not on this computer."""
+    if native.startswith("~"):
+        native = str(Path(native).expanduser())
+    drive = re.match(r"^[A-Za-z]:[\\/]", native) is not None
+    if drive and os.name != "nt":
+        return None
+    path = Path(native)
+    if not path.is_absolute():
+        return None
+    try:
+        target = path.resolve()
+    except OSError:
+        return None
+    if target.exists() and (target.is_file() or target.is_dir()):
+        return target
+    return None
+
+
+def prepare_chat_open(raw: str) -> Path:
+    """Existing local file or folder a chat link may open.
+
+    A full path opens that exact file, whatever its type: video, picture,
+    markdown or anything else the system can open. A bare filename is looked
+    up in Downloads, Desktop and Documents. Programs and scripts are refused.
+
+    Raises :class:`ChatOpenRejected`. A Windows drive path is only accepted
+    on Windows, so resolving it cannot land inside another operating system's
+    working directory.
+    """
+    native = chat_link_path(raw)
+    target = _existing_absolute(native) if native is not None else None
+    if target is None:
+        named = Path(native).name if native else raw
+        target = _find_named_file(named)
+    if target is None:
+        if native is None and _relative_file_name(raw) is None:
+            raise ChatOpenRejected("not-a-local-path")
+        raise ChatOpenRejected("not-found")
+    _refuse_program(target)
+    return target
+
+
 __all__ = [
+    "ChatOpenRejected",
+    "chat_link_path",
     "open_file",
     "open_file_with",
     "open_url",
+    "prepare_chat_open",
     "reveal_in_folder",
 ]

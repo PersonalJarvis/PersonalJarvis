@@ -98,7 +98,7 @@ from jarvis.voice.action_phrases import (
 )
 from jarvis.voice.contextual_readback import render_readback
 
-from .action_honesty import replace_unbacked_action_claim
+from .action_honesty import has_unbacked_action_claim, replace_unbacked_action_claim
 from .assistant_name import (
     DEFAULT_ASSISTANT_NAME,
     resolve_assistant_name,
@@ -151,12 +151,6 @@ _TURN_OVERRIDE: ContextVar[TurnOverride | None] = ContextVar(
     "jarvis.brain.manager.turn_override",
     default=None,
 )
-
-
-def _private_agent_turn() -> bool:
-    """Society turns own their context; Jarvis' ambient memory is not theirs."""
-    override = _TURN_OVERRIDE.get()
-    return override is not None and override.tool_context.get("tool_origin") == "society"
 
 
 class _SkillTurnState:
@@ -1875,6 +1869,17 @@ def _evidence_unfulfilled_answer(*, lang: str, domain: str = "") -> str:
 # to a write ("not saved yet"), not a failed lookup. Static, no LLM (AP-11);
 # localized for every supported language, unknown code → default locale.
 _ACTION_UNFULFILLED_PHRASES: dict[str, dict[str, str]] = {
+    "society_propose_change": {
+        "de": (
+            "Die Routine wurde nicht erstellt. "  # i18n-allow: runtime output
+            "Der Speichervorgang wurde nicht ausgeführt."  # i18n-allow: runtime output
+        ),
+        "en": "The routine was not created. The save action did not run.",
+        "es": (
+            "La rutina no se creó. "  # i18n-allow: runtime output
+            "No se ejecutó la acción de guardarla."  # i18n-allow: runtime output
+        ),
+    },
     "contact-upsert": {
         "de": (
             "Ich hab den Kontakt noch nicht gespeichert — sag mir die Angaben "  # i18n-allow: German TTS
@@ -3221,6 +3226,11 @@ class BrainManager:
         self, name: str, fallback: str | None = None
     ) -> str | None:
         """Resolve an explicit Tool Model pin before a caller's model choice."""
+        from jarvis.core.model_selection import operation_model, worker_selection
+
+        selection = operation_model.get() or worker_selection(self._config)
+        if selection is not None and selection.provider == name:
+            return selection.model or fallback or get_tier_default_model("worker", name)
         cfg = self._provider_cfg(name)
         if cfg is None:
             return fallback or get_tier_default_model("router", name)
@@ -3234,6 +3244,11 @@ class BrainManager:
 
     def _tool_model_provider(self) -> str:
         """Return the canonical Tool Model provider or its legacy fallback."""
+        from jarvis.core.model_selection import operation_model, worker_selection
+
+        selection = operation_model.get() or worker_selection(self._config)
+        if selection is not None:
+            return selection.provider
         try:
             brain_cfg = self._config.brain
             canonical = getattr(brain_cfg, "tool_model", None)
@@ -3439,6 +3454,12 @@ class BrainManager:
         self, chain: list[tuple[str, str | None]]
     ) -> list[tuple[str, str | None]]:
         """Filter a delegated turn to tool-capable cross-family candidates."""
+        from jarvis.core.model_selection import operation_model, worker_selection
+
+        selection = operation_model.get() or worker_selection(self._config)
+        if selection is not None:
+            # A selected subscription must not silently turn into metered API usage.
+            return [(selection.provider, selection.model)]
         configured = self._tool_model_provider()
         candidates = list(chain)
         if configured and configured != "auto":
@@ -3742,7 +3763,7 @@ class BrainManager:
         """
         base = self._build_system_prompt()
         prompt = base
-        if self._wiki_injector is not None and not _private_agent_turn():
+        if self._wiki_injector is not None:
             try:
                 prompt = await self._wiki_injector.maybe_inject(
                     user_text=user_text, system_prompt=base
@@ -4163,13 +4184,23 @@ class BrainManager:
         5. CoreMemory        — legacy JSON facts (transitional, kept for back-compat)
         6. Base-Prompt       — voice rules
         """
-        if _private_agent_turn():
-            override = _TURN_OVERRIDE.get()
-            if override is None or not override.system_extra.strip():
-                raise RuntimeError("Private agent briefing unavailable; refusing shared context")
-            return "\n\n".join((
-                override.system_extra, _WRITTEN_CHAT_STYLE, self._reply_language_directive(),
-            ))
+        private = _TURN_OVERRIDE.get()
+        if private is not None and private.tool_context.get("tool_origin") == "society":
+            # An agent's own notebooks are its profile source. Do not append
+            # Jarvis' global USER.md, contacts, persona or ambient core memory.
+            parts = [
+                private.system_extra
+                or "Your private agent context is unavailable; do not invent it.",
+                _TOOL_ROUTING_RULES,
+                self._render_live_tool_block(),
+                getattr(self, "_evidence_directive", ""),
+                _WRITTEN_CHAT_STYLE,
+            ]
+            identity = getattr(self, "_active_turn_identity", None)
+            if identity:
+                parts.append(_provider_identity_directive(identity[0], identity[1], "this agent"))
+            parts.append(self._reply_language_directive())
+            return "\n\n".join(part for part in parts if part)
         parts: list[str] = []
 
         # Configurable assistant identity. Derived solely from the wake phrase
@@ -4588,7 +4619,7 @@ class BrainManager:
         message keeps the cached system prefix byte-stable across turns, which
         is what actually lets the Gemini/Anthropic prompt cache hit.
         """
-        if _private_agent_turn() or not self._cache_optimized():
+        if not self._cache_optimized():
             return ""
         from datetime import datetime
 
@@ -4610,6 +4641,9 @@ class BrainManager:
             f"[Current date and time: {_weekdays_en[_now.weekday()]}, "
             f"{_now.strftime('%Y-%m-%d %H:%M')}]"
         ]
+        private = _TURN_OVERRIDE.get()
+        if private is not None and private.tool_context.get("tool_origin") == "society":
+            return "\n\n".join(parts)
         if self._awareness_manager is not None:
             try:
                 snap = self._awareness_manager.state.snapshot_for_prompt(max_chars=4_000)
@@ -5645,8 +5679,6 @@ class BrainManager:
 
     def _consume_pending_skill_trigger(self, user_text: str) -> None:
         """Fold a noted trigger into this turn's skill match (AD-S4)."""
-        if _private_agent_turn():
-            return  # Preserve Jarvis' pending skill for its own next turn.
         pending = self._pending_forced_skill
         self._pending_forced_skill = None
         self._skill_turn_content = ""
@@ -5709,8 +5741,6 @@ class BrainManager:
         Never raises — routing must not break when the skill subsystem is
         absent (headless/mock boots).
         """
-        if _private_agent_turn():
-            return None  # Private skills are explicitly loaded through society_run_skill.
         self._skill_relevance = None
         self._skill_match_band = "none"
         self._skill_match_class = ""
@@ -9887,7 +9917,10 @@ class BrainManager:
             text=response_text,
         )
 
-        if self._curator is not None and not _private_agent_turn():
+        if self._curator is not None and not (
+            (profile_override := _TURN_OVERRIDE.get()) is not None
+            and profile_override.tool_context.get("tool_origin") == "society"
+        ):
             try:
                 asyncio.create_task(
                     self._curator.process_turn(user_text, response_text),
@@ -11576,6 +11609,27 @@ class BrainManager:
                     _local_mandate[0],
                 )
 
+        # A society model can describe a routine without ever calling its
+        # configuration tool. Make the write mandatory on explicit creation
+        # turns, including a short confirmation after the details were agreed.
+        # The live surface check keeps this guard out of other chat surfaces.
+        if not self._evidence_required_tool and "society_propose_change" in self._live_tool_names():
+            from jarvis.society.routine_intent import requests_routine_creation
+
+            if requests_routine_creation(user_text):
+                self._evidence_directive = (
+                    "MANDATORY THIS TURN: the user asked you to CREATE a routine. "
+                    "Read existing routines with society_routines, then call "
+                    "society_propose_change with kind=routine and mode=apply. "
+                    "Use the current request and agreed conversation details; "
+                    "do not invent missing requirements. Verify the saved routine. "
+                    "If a prerequisite prevents saving it, say that it was not created."
+                )
+                self._evidence_required_tool = "society_propose_change"
+                self._evidence_required_is_write = True
+                self._evidence_required_domain = "routine"
+                log.info("Society routine creation intent — mandating society_propose_change")
+
         # Phase 5 / ADR-0006: pre-call budget gate. Block rather than request
         # when cooldown is active or the task/daily budget is exhausted.
         trace_uuid = turn_trace_id
@@ -11720,7 +11774,10 @@ class BrainManager:
         # _wiki_context_suffix is reset in the finally block at the end of
         # generate() to prevent stale context leaking into the next turn.
         try:
-            if self._wiki_injector is not None and not _private_agent_turn():
+            if self._wiki_injector is not None and not (
+                turn_override is not None
+                and turn_override.tool_context.get("tool_origin") == "society"
+            ):
                 base_prompt = self._build_system_prompt()
                 injected_prompt = await self._wiki_injector.maybe_inject(
                     user_text=user_text,
@@ -12498,8 +12555,11 @@ class BrainManager:
                     self._evidence_required_is_write,
                 )
                 response_text = _replacement
+                if turn_override is not None:
+                    turn_override.receipt.mark_guard_failure("mandated_tool_unfulfilled")
 
         execution_evidence = set(_turn_executed)
+        full_action_fallback = not execution_evidence and has_unbacked_action_claim(response_text)
         honest_response = replace_unbacked_action_claim(
             response_text,
             executed_tools=execution_evidence,
@@ -12510,6 +12570,8 @@ class BrainManager:
                 "Blocked a model action promise with no execution evidence."
             )
             response_text = honest_response
+            if full_action_fallback and turn_override is not None:
+                turn_override.receipt.mark_guard_failure("unbacked_action_claim")
 
         # 4. History + Events
         if use_history:
@@ -12526,7 +12588,10 @@ class BrainManager:
         # Fire-and-forget: the curator extracts personal facts from the turn
         # and merges them into USER.md / people/*.md in a controlled manner.
         # Runs async, does not block the response.
-        if self._curator is not None and not _private_agent_turn():
+        if self._curator is not None and not (
+            (profile_override := _TURN_OVERRIDE.get()) is not None
+            and profile_override.tool_context.get("tool_origin") == "society"
+        ):
             try:
                 asyncio.create_task(
                     self._curator.process_turn(user_text, response_text),
@@ -13373,6 +13438,32 @@ class BrainManager:
         trace_id: UUID | None = None,
         prefer_api: bool = False,
     ) -> str:
+        """Keep the selected agent and billing account for the entire scheduled turn."""
+        from jarvis.core.model_selection import (
+            operation_model,
+            use_operation_model,
+            worker_selection,
+        )
+
+        selected = operation_model.get() or worker_selection(self._config)
+        with use_operation_model(selected):
+            return await self._run_task_with_selection(
+                prompt=prompt,
+                allowed_tools=allowed_tools,
+                model_tier=model_tier,
+                trace_id=trace_id,
+                prefer_api=prefer_api,
+            )
+
+    async def _run_task_with_selection(
+        self,
+        *,
+        prompt: str,
+        allowed_tools: tuple[str, ...] = (),
+        model_tier: str = "auto",
+        trace_id: UUID | None = None,
+        prefer_api: bool = False,
+    ) -> str:
         """Run one isolated agentic turn for a scheduled task.
 
         The turn sees ONLY the allowlisted tools and runs with an EMPTY
@@ -13383,9 +13474,10 @@ class BrainManager:
         actions still hit the approval gate (which, with no human present,
         means they block until the unattended-approval wave wires Option B).
 
-        Provider order (BUG-212): the Tool Model leads, then every other
-        credential-ready, tool-capable provider of a different family — see
-        :meth:`_task_provider_chain`. A credential / credit / rate-limit
+        An explicit agent selection stays fixed, including subscription tasks.
+        Until migration selects an agent, the legacy credential-ready provider
+        chain remains available — see :meth:`_task_provider_chain`.
+        A credential / credit / rate-limit
         error (401/402/403/429 — the same classes the chat path dead-lists
         or cools down) moves the SAME turn on to the next candidate; any
         other error propagates so the runner records it in ``last_error``.
@@ -13400,6 +13492,14 @@ class BrainManager:
         del prefer_api
         intent = "deep" if model_tier == "deep" else "fast"
         tools = self._select_task_tools(allowed_tools)
+        from jarvis.core.model_selection import operation_model, worker_selection
+        from jarvis.core.task_agent import run_selected, subscription_seat
+
+        selected = operation_model.get() or worker_selection(self._config)
+        if selected is not None and subscription_seat(selected.provider) is not None:
+            return await run_selected(
+                selection=selected, prompt=prompt, tool_names=tuple(tools), trace_id=trace_id
+            )
         # The per-turn context (date/time, awareness, wiki) rides on the user
         # message in cache-optimized mode; without it a scheduled turn did not
         # know what day it was (BUG-212 — the morning brief prompts say "the
@@ -13467,6 +13567,11 @@ class BrainManager:
         an unattended background turn. Capped so an unattended run cannot
         walk a long chain for minutes.
         """
+        from jarvis.core.model_selection import operation_model, worker_selection
+
+        selected = operation_model.get() or worker_selection(self._config)
+        if selected is not None:
+            return [(selected.provider, selected.model)]
         try:
             ready = self._hoist_tool_model(self._tool_model_base_chain())
         except Exception:  # noqa: BLE001 — a broken probe must not kill the task

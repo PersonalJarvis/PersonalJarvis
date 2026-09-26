@@ -56,13 +56,26 @@ def active() -> tuple[Any, ...]:
     return tuple(_active.values())
 
 
+def owns_microphone(*, except_session_id: str | None = None) -> bool:
+    """A pending or active browser call must not be replaced by a wake start."""
+    return any(sid != except_session_id for sid in (*_opening, *_active))
+
+
 async def close_all(reason: str = "hotkey") -> None:
     await asyncio.gather(*(session.end(reason=reason) for session in active()))
 
 
-async def run_browser_call(bus: Any, hangup: asyncio.Event, *, timeout_s: float = 45.0) -> str:
+async def run_browser_call(
+    bus: Any,
+    hangup: asyncio.Event,
+    *,
+    timeout_s: float = 45.0,
+    input_buffer: Any = None,
+    session_id: str = "",
+) -> str:
     """Wake hands media to the WebView; the desktop never feeds speaker echo back."""
     from jarvis.core.events import BrowserVoiceRequested
+    from jarvis.live import startup
 
     changed = asyncio.Event()
     watcher = (asyncio.get_running_loop(), changed)
@@ -78,9 +91,13 @@ async def run_browser_call(bus: Any, hangup: asyncio.Event, *, timeout_s: float 
             await asyncio.gather(*tasks, return_exceptions=True)
         changed.clear()
 
-    await bus.publish(BrowserVoiceRequested(action="start"))
-    # UI permission and device setup can take time. No background billed connection.
     try:
+        if hangup.is_set():
+            return "hotkey"
+        if input_buffer is not None and session_id:
+            startup.offer(session_id, input_buffer)
+        await bus.publish(BrowserVoiceRequested(action="start"))
+        # UI permission and device setup can take time. No idle billed connection.
         async with asyncio.timeout(timeout_s):
             while not active() and not hangup.is_set():
                 await wait_change()
@@ -90,8 +107,10 @@ async def run_browser_call(bus: Any, hangup: asyncio.Event, *, timeout_s: float 
         log.warning("Browser voice media did not attach before its startup deadline")
         return "error"
     finally:
+        startup.discard(session_id)
         _watchers.discard(watcher)
-        if hangup.is_set():
-            await bus.publish(BrowserVoiceRequested(action="stop"))
-            await close_all()
+        # Retract pending browser starts on timeout/cancellation too. Otherwise
+        # focusing a hidden window later starts a call whose owner already left.
+        await bus.publish(BrowserVoiceRequested(action="stop"))
+        await close_all()
     return "hotkey" if hangup.is_set() else "client_stop"

@@ -16,7 +16,6 @@ Single source of truth: the frontend receives these lists through
 
 from __future__ import annotations
 
-import re
 from typing import Final
 
 # The universal ordering — every provider ladder is a sub-sequence of this.
@@ -61,10 +60,11 @@ _LADDERS: Final[dict[str, tuple[tuple[str, ...], str]]] = {
     "antigravity": (("low", "medium", "high"), "medium"),
     # OpenRouter forwards reasoning.effort to whatever sits behind the slug.
     "openrouter": (("", "none", "low", "medium", "high", "xhigh"), ""),
-    # xAI reasoning_effort: grok-4.6 low..xhigh, grok-4.5 low..high; "" leaves
-    # a model that reasons on its own alone.
+    # xAI reasoning_effort: grok-4.7 and grok-4.6 take low..xhigh (their own
+    # default is high). grok-4.5 stops at high and treats xhigh as high.
+    # "" leaves the model's own default alone.
     "grok": (("", "low", "medium", "high", "xhigh"), ""),
-    "grok-build": (("", "low", "medium", "high"), ""),
+    "grok-build": (("", "low", "medium", "high", "xhigh"), ""),
     # No knob to offer: OpenCode's ``--variant`` names are the model's own
     # and differ per provider, Kimi sets effort in its config, GLM's endpoint
     # takes no effort flag and the DeepSeek harness has none — so the pick
@@ -135,30 +135,3 @@ def normalize_effort(provider: str, level: str | None) -> str:
     if lower:
         return lower[-1]
     return offered[0]
-
-
-def automatic_society_effort(prompt: str) -> str:
-    """Pick a CLI effort for a Society turn when the model requires one.
-
-    Keep the choice per turn, so a short follow-up does not inherit the cost
-    of an earlier complex assignment. Provider-native adaptive thinking remains
-    in charge when a runner can omit an effort setting.
-    """
-    task = prompt.partition("\n\n")[2] if prompt.startswith("Scheduled routine ") else prompt
-    task = task.strip()
-    words = task.split()
-    steps = sum(
-        line.lstrip().startswith(tuple(f"{n}." for n in range(1, 10))) for line in task.splitlines()
-    )
-    if len(words) > 110 or steps >= 3:
-        return "high"
-    complex_task = re.search(
-        r"\b(?:fix|debug|investigat\w*|analy[sz]\w*|review|implement\w*|"
-        r"refactor\w*|untersuch\w*|analysier\w*|"  # i18n-allow: spoken task verbs
-        r"prüf\w*|beheb\w*|reparier\w*)\b",  # i18n-allow: spoken task verbs
-        task,
-        re.IGNORECASE,
-    )
-    if len(words) <= 18 and steps == 0 and not complex_task:
-        return "low"
-    return "medium"

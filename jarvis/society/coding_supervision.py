@@ -138,6 +138,10 @@ class CodingSupervision:
             self.changed.set()  # Never wait on a model or file read inside EventBus.publish.
 
     async def close(self) -> None:
+        await self.quiesce()
+
+    async def quiesce(self) -> None:
+        """Fence assignments and join producers before shared storage closes."""
         self.stop_admission()
         if self.attached:
             self.bus.unsubscribe(AgenticIdePaneActivity, self._activity)

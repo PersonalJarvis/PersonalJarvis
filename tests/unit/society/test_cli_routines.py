@@ -244,6 +244,12 @@ def test_routine_approval_delegation_is_only_for_society(monkeypatch):
         jarvis_harness, "endpoint", lambda: "http://localhost:47821/api/control/mcp/"
     )
     for session_id in (None, "ordinary-chat"):
-        assert not any(
-            "approval_mode" in arg for arg in jarvis_harness.codex_config_args(session_id)
+        args = jarvis_harness.codex_config_args(session_id)
+        approvals = {arg for arg in args if "approval_mode" in arg}
+        # The browser delegates approval to Jarvis on every bound chat. Routine
+        # mutations remain Society-only, with no blanket approval override.
+        assert approvals == (
+            {'mcp_servers.jarvis.tools.society_browser.approval_mode="approve"'}
+            if session_id
+            else set()
         )

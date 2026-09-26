@@ -619,6 +619,7 @@
     "navigate": "Abriendo",
     "app": "Abriendo la app",
     "memory": "Recordando",
+    "memory_update": "Updating Memory",
     "profile": "Actualizando el perfil",
     "contact": "Buscando contacto",
     "call": "Llamando",
@@ -5347,7 +5348,23 @@
       "create": "Nuevo",
       "search": "Buscar agentes",
       "loading": "Cargando agentes…",
-      "empty": "Ningún agente coincide."
+      "empty": "Ningún agente coincide.",
+      "thinking": "Pensando…",
+      "unread": "Nuevos resultados — abre para leer",
+      "menu": "Acciones del agente",
+      "rename": "Cambiar nombre del agente",
+      "rename_hint": "Elige un nombre nuevo. El chat y los archivos seguirán vinculados.",
+      "name": "Nombre del agente",
+      "rename_error": "No se pudo cambiar el nombre. Compruébalo o elige otro.",
+      "hide": "Ocultar de la barra lateral",
+      "show": "Mostrar en la barra lateral",
+      "show_hidden": "Mostrar agentes ocultos ({0})",
+      "hide_hidden": "Ocultar agentes ocultos ({0})",
+      "delete": "Eliminar",
+      "delete_confirm": "¿Eliminar a {0}? El agente dejará de aparecer en el equipo activo.",
+      "delete_error": "No se pudo eliminar al agente. Inténtalo de nuevo.",
+      "cancel": "Cancelar",
+      "save": "Guardar"
     },
     "tier": {
       "lead": "Líder",
@@ -5637,6 +5654,7 @@
     "activity_read": "Leyó archivos",
     "activity_list": "Listó archivos",
     "activity_search": "Buscó archivos",
+    "activity_memory": "Updating Memory",
     "activity_tools": "Usó herramientas",
     "live_integration_used": "Usando {service}",
     "live_activity_command": "Ejecutando comandos",
@@ -5645,6 +5663,7 @@
     "live_activity_read": "Leyendo archivos",
     "live_activity_list": "Listando archivos",
     "live_activity_search": "Buscando archivos",
+    "live_activity_memory": "Updating Memory",
     "live_activity_tools": "Usando herramientas",
     "thought": "Razonamiento",
     "thinking_for": "Pensando durante {duration}",
@@ -5677,7 +5696,8 @@
     "done": "Listo",
     "command": "Ejecutar comando",
     "edit": "Editar archivo",
-    "write": "Escribir archivo"
+    "write": "Escribir archivo",
+    "memory": "Updating Memory"
   },
   "chat_media": {
     "unavailable": "No se puede cargar o reproducir este archivo. Puedes abrirlo directamente.",

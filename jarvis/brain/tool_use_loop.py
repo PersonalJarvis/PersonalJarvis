@@ -1595,7 +1595,10 @@ class ToolUseLoop:
                         "type": "tool_result",
                         "tool_use_id": call_id,
                         "content": _cap_tool_result_json(
-                            json.dumps(tool_result_payload, ensure_ascii=False, default=str)
+                            json.dumps(
+                                tool_result_payload, ensure_ascii=False,
+                                separators=(",", ":"), default=str,
+                            )
                         ),
                     }],
                     tool_call_id=call_id,

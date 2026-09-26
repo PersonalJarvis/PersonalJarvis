@@ -6,7 +6,13 @@ import { ApiKeysView } from "./ApiKeysView";
 
 vi.mock("@/hooks/useProviders", () => ({
   sectionHealthForSubject: () => undefined,
-  useProviders: () => ({ providers: [], loading: false, error: null, refetch: vi.fn(), setActiveOptimistic: vi.fn() }),
+  useProviders: () => ({ providers: [{
+    id: "openai-live", label: "GPT-Live", tier: "realtime", configuration_surface: "live",
+    active: true, configured: keyReady, auth_mode: "api_key", billing: "api",
+    secret_keys: ["OPENAI_API_KEY"], secrets_set: { OPENAI_API_KEY: keyReady },
+    dashboard_url: null, credential_help: "", login_cli: null, install_hint: null,
+    credential_path_hint: null, alt_credential: null,
+  }], loading: false, error: null, refetch: vi.fn(), setActiveOptimistic: vi.fn() }),
   useSectionHealth: () => ({ health: {} }),
 }));
 vi.mock("@/hooks/useVoiceMode", () => ({
@@ -46,13 +52,14 @@ describe("shared computer-control thinking model", () => {
   it("shows the shared model instead of a separate Computer-Use provider tab", async () => {
     await openLive();
     expect(screen.queryByRole("tab", { name: /tool model/i })).toBeNull();
-    expect(screen.getByText(/Computer control uses this same thinking model/)).toBeTruthy();
+    expect(screen.getByText(/handles computer control with the same key/)).toBeTruthy();
   });
 
   it("persists model changes through the live profile without switching the Brain provider", async () => {
     const model = await openLive();
-    fireEvent.change(model, { target: { value: "thinking-large" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save and use GPT-Live" }));
+    fireEvent.click(model);
+    fireEvent.click(await screen.findByRole("option", { name: /Large/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(calls.some((call) => call.url === "/api/live/profile"
       && call.method === "PUT" && (call.body as { backend_model: string }).backend_model === "thinking-large")).toBe(true));
     expect(calls.some((call) => call.url === "/api/brain/switch" || call.url === "/api/computer-use/switch")).toBe(false);
@@ -60,25 +67,25 @@ describe("shared computer-control thinking model", () => {
 
   it("offers the backend model catalogue on the shared model input", async () => {
     const model = await openLive();
-    expect(model.getAttribute("list")).toBe("live-thinking-models");
-    await waitFor(() => expect(Array.from(document.querySelectorAll("#live-thinking-models option"))
-      .map((option) => option.getAttribute("value"))).toEqual(["thinking-small", "thinking-large"]));
+    fireEvent.click(model);
+    expect(await screen.findByRole("option", { name: /Small/ })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /Large/ })).toBeTruthy();
   });
 
   it("requires the voice credential before saving a computer-control model", async () => {
     keyReady = false;
     await openLive();
-    expect(screen.getByRole("button", { name: "Save and use GPT-Live" })).toHaveProperty("disabled", true);
-    expect(screen.getByText(/Connect your OpenAI key below/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Saved & active" })).toHaveProperty("disabled", true);
+    expect(screen.getByText(/Connect your OpenAI key above/)).toBeTruthy();
   });
 
   it("saves voice and effort selected through the themed dropdowns", async () => {
     await openLive();
     fireEvent.click(screen.getByRole("combobox", { name: "Voice" }));
-    fireEvent.click(screen.getByRole("option", { name: "alloy" }));
+    fireEvent.click(screen.getByRole("option", { name: "Alloy" }));
     fireEvent.click(screen.getByRole("combobox", { name: "Reasoning effort" }));
-    fireEvent.click(screen.getByRole("option", { name: "high" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save and use GPT-Live" }));
+    fireEvent.click(screen.getByRole("option", { name: "High" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(calls.find((call) => call.method === "PUT")?.body)
       .toMatchObject({ voice: "alloy", reasoning_effort: "high" }));
   });

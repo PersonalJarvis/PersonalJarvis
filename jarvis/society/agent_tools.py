@@ -14,7 +14,7 @@ resolves, and the kill switch is off. The tool runs under
 namespace ``society/<agent_id>/`` in the Obsidian vault — never anywhere
 else, by construction (there is no path argument) — with provenance
 frontmatter, and records the page in the knowledge staging table as
-unreviewed. The agent's durable notes live in ``memory.md`` of the same
+unreviewed. The agent's durable notes live in ``MEMORY.md`` and ``USER.md`` of the same
 folder.
 """
 
@@ -27,6 +27,7 @@ from typing import Any, Final
 
 from jarvis.core.protocols import ToolResult
 
+from .communication import REPLY_POLICY_SCHEMA, reply_policy, select_reply_policy
 from .delivery import incoming_context
 from .events import MsgType
 from .failure_reasons import FailureReason, retry_action
@@ -83,7 +84,10 @@ class MessageAgentTool:
         "you need an answer, 'propose' to suggest a plan, 'answer' when replying to a "
         "query, else 'say'. The teammate reads it in their own chat and may reply "
         "later; this call returns at once. It never assigns work — ask Jarvis or an "
-        "orchestrator to assign."
+        "orchestrator to assign. Include the objective, relevant known context, scope "
+        "and expected evidence, not just a paraphrase. Select reply_policy from the "
+        "intent: none for information, on_error for blockers only, always for findings. "
+        "An answer ends the exchange; never send courtesy acknowledgements."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -92,7 +96,25 @@ class MessageAgentTool:
                 "type": "string",
                 "description": "The teammate's name or id, exactly as listed under Teammates.",
             },
-            "text": {"type": "string", "description": "Your message, in your own words."},
+            "text": {
+                "type": "string",
+                "description": (
+                    "Self-contained question or brief with known context and expected output."
+                ),
+            },
+            "reply_policy": REPLY_POLICY_SCHEMA,
+            "reply_status": {
+                "type": "string",
+                "enum": ["done", "blocked"],
+                "description": "For answers: done (default) or blocked with the concrete obstacle.",
+            },
+            "in_reply_to": {
+                "type": "string",
+                "description": (
+                    "Original message id for a delayed answer; "
+                    "otherwise inferred from the incoming turn."
+                ),
+            },
             "kind": {
                 "type": "string",
                 "enum": sorted(_KINDS),
@@ -130,7 +152,9 @@ class MessageAgentTool:
         ):
             return _failure(FailureReason.BLOCKED_BY_POLICY, "internal messaging is disabled")
         target_key = str(args.get("target", "")).strip()
-        text = str(args.get("text", "")).strip()[:_MAX_TEXT]
+        text = str(args.get("text", "")).strip()
+        if len(text) > _MAX_TEXT:
+            return _failure(FailureReason.BLOCKED_BY_POLICY, "message exceeds 8000 characters")
         if not target_key or not text:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "target and text are required")
         target = await rt.roster.resolve(target_key)
@@ -145,11 +169,56 @@ class MessageAgentTool:
         if msg_type is None:
             return _failure(FailureReason.BLOCKED_BY_POLICY, f"unknown kind {kind!r}")
         refs = args.get("refs")
-        payload: dict[str, Any] = {}
+        try:
+            policy = select_reply_policy(args.get("reply_policy"), msg_type)
+        except (TypeError, ValueError) as exc:
+            return _failure(FailureReason.BLOCKED_BY_POLICY, str(exc))
+        reply_status = args.get("reply_status", "done")
+        if reply_status not in ("done", "blocked"):
+            return _failure(FailureReason.BLOCKED_BY_POLICY, "reply_status must be done or blocked")
+        payload: dict[str, Any] = {"reply_policy": policy}
+        if msg_type is MsgType.ANSWER:
+            payload["reply_status"] = reply_status
         if isinstance(refs, list) and refs:
             payload["refs"] = [str(r) for r in refs][:20]
         incoming = incoming_context.get()
-        trace_id = incoming.trace_id if incoming is not None else None
+        parent_id = args.get("in_reply_to")
+        if parent_id is not None and (not isinstance(parent_id, str) or not parent_id.strip()):
+            return _failure(FailureReason.BLOCKED_BY_POLICY, "in_reply_to must be a message id")
+        if parent_id is None and incoming is not None:
+            parent_id = incoming.message_id
+        parent = await rt.store.get_event(parent_id) if parent_id else None
+        if args.get("in_reply_to") is not None and (
+            parent is None
+            or parent.to_agent != caller.agent_id
+            or parent.from_agent != target.agent_id
+        ):
+            return _failure(
+                FailureReason.BLOCKED_BY_POLICY,
+                "in_reply_to is not a request from this target to you",
+            )
+        if msg_type is MsgType.ANSWER:
+            if (
+                parent is None
+                or parent.to_agent != caller.agent_id
+                or parent.from_agent != target.agent_id
+            ):
+                return _failure(
+                    FailureReason.BLOCKED_BY_POLICY,
+                    "an answer needs the original request from this target",
+                )
+            if parent.msg_type in (MsgType.ANSWER, MsgType.RESULT):
+                return _failure(
+                    FailureReason.BLOCKED_BY_POLICY,
+                    "this exchange is already closed; do not acknowledge an answer",
+                )
+            if parent.msg_type is not MsgType.ASSIGN:
+                expected = reply_policy(parent)
+                if expected == "none" or (expected == "on_error" and reply_status == "done"):
+                    return _failure(
+                        FailureReason.BLOCKED_BY_POLICY, "no success reply was requested"
+                    )
+        trace_id = parent.trace_id if parent is not None else None
         env = await rt.say(
             from_agent=caller.agent_id,
             to_agent=target.agent_id,
@@ -157,7 +226,7 @@ class MessageAgentTool:
             trace_id=trace_id,
             msg_type=msg_type,
             payload=payload,
-            parent_event_id=incoming.message_id if incoming is not None else None,
+            parent_event_id=parent.event_id if parent is not None else None,
         )
         status = await rt.store.delivery_status(env.event_id)
         return ToolResult(
@@ -169,6 +238,9 @@ class MessageAgentTool:
                 "target": target.name,
                 **({"delivered_to": target.name} if status == "delivered" else {}),
                 "kind": kind,
+                "reply_policy": policy,
+                "in_reply_to": parent.event_id if parent is not None else None,
+                "receipt_scope": "delivery only; not task completion or an answer",
                 "seq": env.seq,
                 "trace_id": env.trace_id,
             },
@@ -190,14 +262,25 @@ class WikiNoteTool:
     risk_tier: str = "monitor"
     description: str = (
         "Write into YOUR personal memory folder (society/<you>/). kind 'memory' appends "
-        "a durable fact about your role or the user to your memory page; kind 'note' files a "
+        "a durable entry. Set target='user' for the person's profile and communication preferences "
+        "(USER.md), or target='memory' for project facts, experience and working methods "
+        "(MEMORY.md). Use replace to consolidate overlapping entries and remove only obsolete "
+        "facts with evidence. kind 'note' files a "
         "finding as a dated page (give it a title). These notes are for your own context. "
+        "If consolidation_recommended is true, merge related entries with replace while "
+        "preserving useful facts; large original entries remain retrievable on disk. "
         "Never put secrets in memory."
     )
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
             "text": {"type": "string", "description": "Markdown body."},
+            "target": {
+                "type": "string",
+                "enum": ["memory", "user"],
+                "description": "For kind memory: memory=experience and projects; "
+                "user=profile and preferences. Omit to infer the target for legacy callers.",
+            },
             "operation": {"type": "string", "enum": ["add", "replace", "remove"]},
             "entry_id": {"type": "string", "description": "Stable memory id from your briefing."},
             "old_text": {
@@ -244,9 +327,10 @@ class WikiNoteTool:
         title = str(args.get("title") or "")
         try:
             if kind == "memory":
-                rel = await rt.memory.remember(
+                receipt = await rt.memory.remember_receipt(
                     caller,
                     text,
+                    target=str(args["target"]) if args.get("target") is not None else None,
                     origin=origin,
                     trace=trace,
                     root=self._vault_root,
@@ -255,9 +339,7 @@ class WikiNoteTool:
                     old_text=str(args.get("old_text") or ""),
                     importance=int(args.get("importance", 8)),
                 )
-                return ToolResult(
-                    success=True, output={"path": rel, "kind": kind, "reviewed": False}
-                )
+                return ToolResult(success=True, output={**receipt, "reviewed": False})
             if kind == "shared":
                 return _failure(
                     FailureReason.BLOCKED_BY_POLICY,
@@ -271,7 +353,24 @@ class WikiNoteTool:
             )
         except MemoryRefused as exc:
             return _failure(FailureReason.BLOCKED_BY_POLICY, str(exc))
-        return ToolResult(success=True, output={"path": rel, "kind": "note", "reviewed": False})
+        try:
+            from .memory import build_memory_diff as _build_diff
+
+            vault = rt.memory.root(self._vault_root)
+            after_page = (vault / rel).read_text(encoding="utf-8")
+        except OSError:
+            after_page = text
+        return ToolResult(
+            success=True,
+            output={
+                "path": rel,
+                "kind": "note",
+                "reviewed": False,
+                "before": "",
+                "after": after_page[-20_000:],
+                "diff": _build_diff("", after_page),
+            },
+        )
 
 
 class MemoryRecallTool:

@@ -192,7 +192,7 @@ class PluginToolRegistry:
             if plugin is not None:
                 await self._connect_plugin(plugin)
             now_has_tools = any(t.name.startswith(f"{plugin_id}/") for t in self._tools.values())
-            changed = had_tools != now_has_tools
+            changed = had_tools or now_has_tools
         if changed:
             await self._publish_brain_tools_changed(plugin_id, connected=now_has_tools)
 

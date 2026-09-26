@@ -9,8 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from jarvis.agent_chat import permissions, runner_cli
-from jarvis.agent_chat.catalog import CODEX_FALLBACK_MODELS, provider_row
-from jarvis.agent_chat.effort import automatic_society_effort
+from jarvis.agent_chat.catalog import provider_row
 from jarvis.agent_chat.runner_cli import (
     _AgyState,
     agy_model_args,
@@ -23,45 +22,6 @@ from jarvis.agent_chat.runner_cli import (
 from jarvis.plugins.brain._anthropic_base import _is_reasoning_model, reasoning_kwargs
 
 # ------------------------------------------------------------ permissions
-
-
-def test_society_effort_follows_the_current_task():
-    assert automatic_society_effort("Hi") == "low"
-    assert (
-        automatic_society_effort("Summarize the changes and explain their impact for the team.")
-        == "low"
-    )
-    assert (
-        automatic_society_effort(
-            "Please review the implementation and identify the likely cause "
-            "before proposing a fix with tests."
-        )
-        == "medium"
-    )
-    assert (
-        automatic_society_effort(
-            "1. Inspect the logs\n2. Find the regression\n3. Fix and verify it"
-        )
-        == "high"
-    )
-    assert (
-        automatic_society_effort("Scheduled routine abc. Follow instructions.\n\nReply OK.")
-        == "low"
-    )
-
-
-def test_new_agy_gemini_base_keeps_required_effort_without_a_catalog():
-    stale = [{"id": "gemini-3.7-flash", "efforts": ["low", "medium", "high"]}]
-    assert agy_model_args("gemini-3.8-flash", "", stale) == [
-        "--model",
-        "gemini-3.8-flash",
-        "--effort",
-        "medium",
-    ]
-    assert agy_model_args(
-        "gemini-3.8-flash", "high", [{"id": "gemini-3.8-flash", "efforts": []}]
-    ) == ["--model", "gemini-3.8-flash", "--effort", "high"]
-    assert agy_model_args("gemini-3.8-flash-high", "", []) == ["--model", "gemini-3.8-flash-high"]
 
 
 async def test_agy_cold_chat_resolves_catalog_before_building_command(tmp_path, monkeypatch):
@@ -135,35 +95,6 @@ def test_agy_refreshes_a_cached_fallback_missing_the_scheduled_model(monkeypatch
     ]
     runner_cli.read_agy_models(required_model="current-model")
     assert len(calls) == 1
-
-
-@pytest.mark.parametrize("runner", ["agy-cli", "codex-cli", "grok-cli"])
-async def test_society_cli_effort_is_chosen_for_each_turn(tmp_path, monkeypatch, runner):
-    seen = []
-
-    def planner(**kwargs):
-        seen.append(kwargs["effort"])
-        raise runner_cli.CliUnavailable("stop before process launch")
-
-    monkeypatch.setitem(runner_cli._PLANNERS, runner, planner)
-    if runner == "agy-cli":
-        monkeypatch.setattr(runner_cli, "read_agy_models", lambda **kwargs: [])
-    handle = SimpleNamespace(
-        session=SimpleNamespace(
-            session_id="society:scout",
-            surface="society",
-            cwd=str(tmp_path),
-            provider="antigravity" if runner == "agy-cli" else "openai-codex",
-            model="",
-            effort="high",
-            permission_mode="plan",
-        )
-    )
-    await runner_cli._run_cli_once(handle, "Hi", runner, None)
-    await runner_cli._run_cli_once(
-        handle, "1. Inspect the logs\n2. Find the cause\n3. Fix and verify it", runner, None
-    )
-    assert seen == ["low", "high"]
 
 
 def test_every_runner_has_a_ladder_with_its_default_on_it():
@@ -408,7 +339,7 @@ def test_agy_model_catalog_folds_suffixed_ids():
     assert by_id["claude-sonnet-4-6"]["efforts"] == []
     assert by_id["gpt-oss-120b"]["efforts"] == ["medium"]
     # No list at all -> the fallback table.
-    assert agy_model_catalog(None)[0]["id"] == "gemini-3.8-flash"
+    assert agy_model_catalog(None)[0]["id"] == "gemini-3.7-flash"
 
 
 # ------------------------------------------------------------ agy translation
@@ -532,62 +463,81 @@ def test_translate_agy_line_reads_failure_from_result_status():
 # ------------------------------------------------------------ codex catalog
 
 
-def test_read_codex_models_reads_the_account_cache(monkeypatch, tmp_path: Path):
+def test_read_codex_models_uses_the_executing_cli_not_a_foreign_cache(monkeypatch, tmp_path: Path):
     home = tmp_path / "codex-home"
+    home.mkdir()
+    (home / "models_cache.json").write_text(
+        json.dumps({"client_version": "future", "models": [{"slug": "unavailable"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner_cli, "_account_env", lambda platform: {"CODEX_HOME": str(home)})
+    monkeypatch.setattr(runner_cli, "codex_argv_prefix", lambda: ["codex-test"])
+    calls = []
+
+    def discover(argv, env, cwd):
+        calls.append((argv, env))
+        return [{"id": "future-supported-model", "label": "Future", "efforts": ["high"]}]
+
+    monkeypatch.setattr(runner_cli, "discover_codex_models", discover)
+    rows = runner_cli.read_codex_models()
+    assert [row["id"] for row in rows] == ["future-supported-model"]
+    assert calls == [(["codex-test"], {"CODEX_HOME": str(home)})]
+    assert runner_cli.read_codex_models() == rows
+    assert len(calls) == 1
+
+
+def test_read_grok_models_reads_the_account_cache(monkeypatch, tmp_path: Path):
+    home = tmp_path / "grok-home"
     home.mkdir()
     (home / "models_cache.json").write_text(
         json.dumps(
             {
-                "models": [
-                    {
-                        "slug": "gpt-5.5",
-                        "display_name": "GPT-5.5",
-                        "visibility": "list",
-                        "priority": 3,
-                        "supported_reasoning_levels": [{"effort": "low"}, {"effort": "high"}],
+                "models": {
+                    "grok-4.7": {
+                        "info": {
+                            "id": "grok-4.7",
+                            "name": "Grok 4.7",
+                            "description": "SpaceXAI's latest frontier model",
+                            "hidden": False,
+                            "reasoning_efforts": [
+                                {"value": "xhigh"},
+                                {"value": "high"},
+                                {"value": "low"},
+                            ],
+                        }
                     },
-                    {
-                        "slug": "gpt-5.6-terra",
-                        "display_name": "GPT-5.6-Terra",
-                        "visibility": "list",
-                        "priority": 2,
-                        "supported_reasoning_levels": [{"effort": "medium"}, {"effort": "ultra"}],
-                        "upgrade": None,
+                    "grok-4.7-build-fast": {
+                        "info": {
+                            "id": "grok-4.7-build-fast",
+                            "name": "Grok 4.7 Fast",
+                            "description": "Fast variant. 2x the price.",
+                            "hidden": False,
+                            "reasoning_efforts": [{"value": "high"}],
+                        }
                     },
-                    {"slug": "codex-auto-review", "visibility": "hide", "priority": 1},
-                    {
-                        "slug": "gpt-5.4-mini",
-                        "display_name": "GPT-5.4-Mini",
-                        "visibility": "list",
-                        "priority": 9,
-                        "supported_reasoning_levels": [],
-                        "upgrade": {
-                            "model": "gpt-5.6-luna",
-                            "retirement_at": "2026-08-31T19:00:00Z",
-                        },
-                    },
-                ]
+                    "retired": {"info": {"id": "grok-old", "name": "Old", "hidden": True}},
+                }
             }
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(runner_cli, "_account_env", lambda platform: {"CODEX_HOME": str(home)})
-    rows = runner_cli.read_codex_models()
+    monkeypatch.setattr(runner_cli, "_account_env", lambda platform: {"GROK_HOME": str(home)})
+    rows = runner_cli.read_grok_models()
     assert rows is not None
-    assert [r["id"] for r in rows] == ["gpt-5.6-terra", "gpt-5.5", "gpt-5.4-mini"]
-    assert rows[0]["efforts"] == ["medium", "ultra"]
-    assert rows[2]["note"] == "retires 2026-08-31"
-    # No cache -> None, and the catalog's fallback carries the picker.
-    monkeypatch.setattr(runner_cli, "_account_env", lambda platform: {"CODEX_HOME": str(tmp_path)})
-    assert runner_cli.read_codex_models() is None
-    assert CODEX_FALLBACK_MODELS[0].id == "gpt-5.6-sol"
+    assert [row["id"] for row in rows] == ["grok-4.7", "grok-4.7-build-fast"]
+    assert rows[0]["label"] == "Grok 4.7"
+    assert rows[0]["efforts"] == ["", "low", "high", "xhigh"]
+    assert rows[0]["note"] == "SpaceXAI's latest frontier model"
+    assert rows[1]["note"] == "Fast variant. 2x the price."
+    monkeypatch.setattr(runner_cli, "_account_env", lambda platform: {"GROK_HOME": str(tmp_path)})
+    assert runner_cli.read_grok_models() is None
 
 
 def test_catalog_rows_carry_per_model_efforts_for_cli_runners():
     agy = provider_row("antigravity")
     assert agy is not None
     models = agy.to_dict()["curated_models"]
-    assert models[0]["id"] == "gemini-3.8-flash" and models[0]["efforts"] == [
+    assert models[0]["id"] == "gemini-3.7-flash" and models[0]["efforts"] == [
         "low",
         "medium",
         "high",

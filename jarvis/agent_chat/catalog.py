@@ -58,7 +58,7 @@ from dataclasses import dataclass, field
 from typing import Any, Final, Literal
 
 from jarvis.agent_chat.effort import default_effort, effort_levels
-from jarvis.brain.model_catalog import CURATED_MODELS
+from jarvis.brain.model_catalog import CURATED_MODELS, GROK_BUILD_MODELS
 
 Runner = Literal[
     "api",
@@ -271,8 +271,8 @@ PROVIDER_ROWS: Final[tuple[ProviderRow, ...]] = (
         family="xai",
         runner="grok-cli",
         models_source="curated",
-        curated_models=_curated("grok"),
-        default_model="",
+        curated_models=tuple(CuratedModel(mid, label) for mid, label in GROK_BUILD_MODELS),
+        default_model=GROK_BUILD_MODELS[0][0],
         agent="grok-build",
     ),
     ProviderRow(

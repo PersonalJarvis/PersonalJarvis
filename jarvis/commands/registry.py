@@ -366,9 +366,13 @@ def _build_registry() -> tuple[AppCommand, ...]:
             description=(
                 "Create an agent in the user's existing Agents team, only when requested. "
                 "This creates a roster profile and starts no work. Responsibilities derive "
-                "capabilities through the same service as the Agents UI. Read the returned "
-                "agent and created flag: an existing name is adopted, never duplicated. "
-                "Use society-switch-agent-model only if a specific provider is requested."
+                "capabilities through the same service as the Agents UI. When a team agent "
+                "creates a teammate, the new agent inherits that creator's model seat "
+                "(provider, model, effort, subscription account) and permission setup "
+                "(ceiling, grant mode, grants, denies) and cannot exceed them. Read the "
+                "returned agent and created flag: an existing name is adopted, never "
+                "duplicated. Use society-switch-agent-model only if a different provider "
+                "is requested."
             ),
             method="POST", path="/api/society/agents", ui_section="agents",
             params={"type": "object", "properties": {

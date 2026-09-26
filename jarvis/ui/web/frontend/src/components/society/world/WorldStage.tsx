@@ -18,7 +18,7 @@ import "@fontsource/pixelify-sans/500.css";
 import "@fontsource/pixelify-sans/600.css";
 import "./world.css";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { useReducedMotion } from "framer-motion";
 
@@ -65,8 +65,6 @@ import { SKY } from "./worldPalette";
 import { useWorldSettings } from "./worldSettings";
 
 export interface WorldStageProps {
-  /** App-chrome content for the HUD's top-right corner (the Map / Agents switch). */
-  topRight?: ReactNode;
   /** Where the fallback sends someone whose window cannot draw 3D. */
   onOpenAgents: () => void;
   /** A figure was clicked (or the selection cleared). The model card hooks in here. */
@@ -84,7 +82,7 @@ const CAMERA_START = cameraOffset();
 /** Zoom step the island snaps to when it shows a newborn leaving the foundry. */
 const SPAWN_ZOOM = 1;
 
-export function WorldStage({ topRight, onOpenAgents, onSelectAgent, onSelectPlace }: WorldStageProps) {
+export function WorldStage({ onOpenAgents, onSelectAgent, onSelectPlace }: WorldStageProps) {
   const t = useT();
   const ready = useLocaleChunk("society");
   const hostRef = useRef<HTMLDivElement>(null);
@@ -239,7 +237,6 @@ export function WorldStage({ topRight, onOpenAgents, onSelectAgent, onSelectPlac
           sample={sample}
           awake={awake}
           reducedMotion={reduced}
-          topRight={topRight}
           questsOnBoard={questsOnBoard}
           questsOpen={questOpen}
           onOpenQuests={() => {

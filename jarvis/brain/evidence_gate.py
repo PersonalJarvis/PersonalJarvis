@@ -296,8 +296,11 @@ def check_evidence_domain(
     if not t:
         return _PASS
     normalised = _normalize(t)
-    if "society_propose_change" in live_tool_names and _CONFIGURATION_REQUEST.search(t):
-        return _PASS
+    if "society_propose_change" in live_tool_names:
+        from jarvis.society.routine_intent import requests_routine_creation
+
+        if _CONFIGURATION_REQUEST.search(t) or requests_routine_creation(t):
+            return _PASS
     if _DEFINITION_RE.search(normalised) and not _OWNERSHIP_RE.search(normalised):
         return _PASS
     if not _LOOKUP_SHAPE_RE.search(normalised):

@@ -119,7 +119,8 @@ describe("SettingsHubView header and navigation", () => {
   it("separates the navigation from the content and returns to the app", async () => {
     render(<SettingsHubView />);
     await screen.findByTestId("TAB_SETTINGS");
-    expect(screen.getByTestId("settings-hub-sidebar").className).toContain("bg-sidebar");
+    expect(screen.getByTestId("settings-hub-sidebar").className).toContain("jarvis-nav-surface");
+    expect(screen.getByTestId("settings-hub-content").parentElement?.className).toContain("jarvis-sheet");
     fireEvent.click(screen.getByRole("button", { name: "settings_hub.back_to_app" }));
     expect(mockState.setActiveSection).toHaveBeenCalledWith("chats");
   });

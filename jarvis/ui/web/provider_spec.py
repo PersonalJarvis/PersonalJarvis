@@ -105,6 +105,8 @@ class ProviderSpec:
     # shows a clear badge and fallback note, while runtime selection remains
     # capability-driven. This is presentation only and never gates behavior.
     experimental: bool = False
+    # Settings presentation: continuous voice has one coherent profile form.
+    configuration_surface: Literal["provider", "live"] = "provider"
     # Withdrawn from the public catalog: ``/api/providers`` does not serve the
     # card, so the settings UI offers no way to select the provider. This is
     # presentation-gating only (AP-21): all runtime plumbing — config
@@ -901,6 +903,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         id="openai-live",
         label="OpenAI GPT-Live",
         tier="realtime",
+        configuration_surface="live",
         auth_mode="api_key",
         secret_keys=("openai_api_key",),
         dashboard_url="https://platform.openai.com/api-keys",

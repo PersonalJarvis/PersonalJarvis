@@ -1,14 +1,12 @@
-import { lazy, Suspense } from "react";
 import { useHomeStore } from "@/store/home";
 import { HomeHeader } from "@/components/home/HomeHeader";
 import { VoiceStage } from "@/components/home/VoiceStage";
-const ChatStage = lazy(() => import("@/components/home/ChatStage").then((module) => ({ default: module.ChatStage })));
+import { ChatStage } from "@/components/home/ChatStage";
 
 /**
  * The front page — the "chats" section.
  *
- * One header that carries the app chrome (the shell TopBar steps aside here,
- * same rule as the IDE), and under it one of two stages chosen by the
+ * One header for who is talking, and under it one of two stages chosen by the
  * `Voice | Chat` switch at the top of the sidebar (store/home.ts):
  *
  *   Voice — the Jarvis bar, centred, with the live transcript above it.
@@ -24,7 +22,7 @@ export function HomeView() {
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="home-view" data-surface={surface}>
       <HomeHeader />
-      {surface === "chat" ? <Suspense fallback={<div className="min-h-0 flex-1" aria-busy="true" />}><ChatStage /></Suspense> : <VoiceStage />}
+      {surface === "chat" ? <ChatStage /> : <VoiceStage />}
     </div>
   );
 }

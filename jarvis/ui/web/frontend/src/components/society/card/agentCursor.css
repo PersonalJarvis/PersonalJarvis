@@ -1,0 +1,80 @@
+.agent-cursor-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.agent-cursor,
+.agent-cursor-click {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.agent-cursor {
+  z-index: 2;
+  animation: agent-cursor-in 90ms ease-out;
+  will-change: transform;
+}
+
+.agent-cursor-click {
+  z-index: 1;
+}
+
+.agent-cursor-art {
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.4));
+}
+
+.agent-cursor-art[data-pressing="true"] {
+  animation: agent-cursor-press 110ms ease-out;
+}
+
+.agent-cursor-arrow {
+  display: block;
+  overflow: visible;
+}
+
+.agent-cursor-dot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: #0a0a0a;
+  box-shadow: 0 0 0 1.5px #ffffff;
+}
+
+.agent-cursor-ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border: 2px solid #0a0a0a;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px #ffffff;
+  animation: agent-cursor-ring 420ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes agent-cursor-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes agent-cursor-press {
+  0% { transform: scale(1); }
+  45% { transform: scale(0.9); }
+  100% { transform: scale(1); }
+}
+
+@keyframes agent-cursor-ring {
+  from { transform: scale(0.45); opacity: 0.95; }
+  to { transform: scale(1.85); opacity: 0; }
+}

@@ -50,6 +50,7 @@ _PLUGIN_PAIRED_SKILLS: tuple[str, ...] = (
     "plugin-spotify",
     "plugin-youtube_music",
     "plugin-higgsfield",
+    "plugin-shopify",
 )
 
 BUILTIN_SKILL_NAMES: tuple[str, ...] = (

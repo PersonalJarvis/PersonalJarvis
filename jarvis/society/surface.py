@@ -37,6 +37,7 @@ from .agent_tools import (
 )
 from .capabilities import CapabilityKind, CapabilityRow, capability_id_for_tool, select_tools
 from .coding_tool import CodingSessionTool
+from .communication import COMMUNICATION_GUIDANCE
 from .conversation_tool import ConversationRecallTool, RoutineInvokeTool, RoutineListTool
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
@@ -65,7 +66,10 @@ _OWN_PREFIX: Final[str] = "society_"
 #: the wiki only through its namespaced note tool and runs commands only
 #: through its own contained shell (never the free-cwd shell tools).
 _SOCIETY_DENIED: Final[frozenset[str]] = frozenset(
-    {"wiki-ingest", "run-shell", "run_shell", "RunCommand"}
+    {
+        "wiki-ingest", "run-shell", "run_shell", "RunCommand",
+        "remember", "update_profile", "profile-update", "update-profile",
+    }
 )
 
 _ECOSYSTEM_CARD: Final[str] = """\
@@ -85,8 +89,10 @@ natural conversation, not a mandatory handoff checklist; mention only relevant d
 outside paths are refused). Destructive commands ask the user first.
 - Learning: after a finished task you may gain a learned skill of your own (listed \
 above when present); run it with society_run_skill when a task matches.
-- Memory: keep your own durable facts and findings with society_wiki_note (kind memory or \
-note), and search only your own notes with society_memory_recall. Other agents' notes and \
+- Memory: maintain your own USER.md (user profile and preferences, kind memory, target user) \
+and MEMORY.md (project knowledge and experience, kind memory, target memory) with \
+society_wiki_note. Keep dated findings as kind note. Consolidate rather than duplicate entries. \
+Search only your own notes with society_memory_recall. Other agents' notes and \
 shared knowledge are not automatically available. Use separately granted wiki tools only \
 when the task explicitly calls for the user's wiki. Never edit the user's own pages.
 - Routines: recurring work runs from the Automations section as tasks tagged with your name; \
@@ -237,7 +243,14 @@ async def _scoped_tool_for_session(session_id: str, capability: str) -> Tool | N
     if capability == "core:browser":
         from .browser.tool import BrowserTool
 
-        tool = cast(Tool, BrowserTool(rt, agent_id, rt.browser, read_only=read_only))
+        pick = (
+            (session.provider, session.model)
+            if service is not None and getattr(session, "surface", "") == "jarvis"
+            else None
+        )
+        tool = cast(
+            Tool, BrowserTool(rt, agent_id, rt.browser, model_pick=pick, read_only=read_only)
+        )
     else:
         tool = cast(Tool, CodingSessionTool(rt, agent_id, session_id=session_id))
     picked = select_tools(
@@ -570,27 +583,7 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
     return (
         build_briefing(agent, catalog, roster, browser=browser, learned=learned, memory=memory)
         + context
-        + "\n"
-        + await private_learning_context(session, agent_id)
     )
-
-
-async def private_learning_context(session: Any, agent_id: str) -> str:
-    from jarvis.core.protocols import current_chat_turn
-
-    from .experience import receipt_for
-
-    runtime = current_runtime()
-    if runtime is None:
-        return ""
-    turn = current_chat_turn.get()
-    query = turn.user_text if turn is not None else ""
-    receipt = receipt_for(session.session_id, turn.turn_id) if turn is not None else ""
-    try:
-        return await runtime.learning_context(agent_id, query=query, receipt=receipt)
-    except Exception:
-        log.warning("society: private learning context unavailable for %s", agent_id, exc_info=True)
-        return ""
 
 
 # ------------------------------------------------------------------ briefing
@@ -689,6 +682,7 @@ def build_briefing(
             lines.append(line)
         parts.append("\n".join(lines))
     parts.append(_ECOSYSTEM_CARD)
+    parts.append(COMMUNICATION_GUIDANCE)
 
     mates = [a for a in roster if a.agent_id != agent.agent_id and str(a.state) == "active"]
     if mates:

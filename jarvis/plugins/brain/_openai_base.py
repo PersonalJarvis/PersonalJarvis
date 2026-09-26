@@ -55,6 +55,29 @@ if not _STREAM_OPTIONS_SUPPORTED:
     )
 
 
+def _tool_output_text(message: BrainMessage) -> str:
+    """Translate one internal result envelope without billing it as nested JSON.
+
+    The call ID already has its own wire field. Unwrap only the exact envelope
+    emitted by ToolUseLoop; preserve unfamiliar blocks and metadata in full.
+    Strings are opaque tool evidence, including whitespace and repetitions.
+    """
+    content = message.content
+    if isinstance(content, list) and len(content) == 1:
+        block = content[0]
+        if (
+            isinstance(block, dict)
+            and set(block) == {"type", "tool_use_id", "content"}
+            and block["type"] == "tool_result"
+            and message.tool_call_id
+            and block["tool_use_id"] == message.tool_call_id
+        ):
+            content = block["content"]
+    if isinstance(content, str):
+        return content
+    return json.dumps(content, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
 def _to_openai_messages(
     messages: tuple[BrainMessage, ...],
     system_extra: str | None,
@@ -89,11 +112,7 @@ def _to_openai_messages(
         if m.role == "tool":
             out.append({
                 "role": "tool",
-                "content": (
-                    m.content
-                    if isinstance(m.content, str)
-                    else json.dumps(m.content, default=str)
-                ),
+                "content": _tool_output_text(m),
                 "tool_call_id": m.tool_call_id or "",
             })
             continue
@@ -117,7 +136,9 @@ def _to_openai_messages(
                                 original_name,
                                 original_name,
                             ),
-                            "arguments": json.dumps(block.get("input", {}), ensure_ascii=False),
+                            "arguments": json.dumps(
+                                block.get("input", {}), ensure_ascii=False, separators=(",", ":")
+                            ),
                         },
                     })
                     if isinstance(block.get("extra_content"), dict):

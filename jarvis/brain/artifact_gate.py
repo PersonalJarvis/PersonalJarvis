@@ -1,19 +1,24 @@
 """Explicit-request gate for the ``create_artifact`` tool (ask-only, never ambient).
 
-Building an artifact — a page, a dashboard, a diagram the user looks at — is
-the one capability a user must be able to switch on with their own words. An
+Building an artifact — a page the user looks at and keeps — is the one
+capability a user must switch on with their own words, literally. An
 assistant that decides on its own when an answer "would be clearer as a page"
-produces a stream of artifacts nobody asked for, and every one of them costs a
-background mission on the strongest model, a file in the archive, and a jump
-of the UI to another section. So the tool is not merely *discouraged*
+produces a stream of artifacts nobody asked for, and every one of them costs
+a background mission on the strongest model, a file in the archive, and a
+jump of the UI to another section. So the tool is not merely *discouraged*
 ambiently — it is withheld from the model's tool set on every turn that did
 not ask for it (see ``BrainManager._hide_artifact_tool_without_request``),
 which also keeps its schema out of the request on the ~99% of turns that are
 about something else.
 
-Regex-only, provider-agnostic, no model in the detection path (AP-11): the gate
-runs on every single turn, so an LLM here would tax exactly the turns this
-module exists to keep cheap.
+The second explicit path is the composer Add menu: pinning the artifact
+capability there hands the tool to the turn through the override's extra
+hands (applied AFTER this gate), so no word is needed in that case. This
+module only judges the words.
+
+Regex-only, provider-agnostic, no model in the detection path (AP-11): the
+gate runs on every single turn, so an LLM here would tax exactly the turns
+this module exists to keep cheap.
 
 Three rules, in order:
 
@@ -23,14 +28,15 @@ Three rules, in order:
    would produce a brand-new page instead of showing the old ones.
 2. A **definition question** ("was ist ein Artefakt?") is answered with
    words. The word appearing in a question about the word is not a request.
-3. Otherwise: an explicit artifact VERB or NOUN on its own ("visualisier",
-   "Artefakt", "Dashboard"), or a build/show verb together with a visual NOUN
-   ("mach mir ein Diagramm", "show me that as a page"), is a request.
+3. Otherwise: only the artifact said BY NAME ("Artefakt", "Artifact",
+   "Artefacto") is a request. Visual verbs and page shapes on their own
+   ("visualisier", "Dashboard", "Diagramm", "mach mir eine Seite dazu")
+   are NOT requests — the user says the literal word or pins it via Add.
 
 A false negative is cheap and self-correcting — the user says "mach ein
 Artefakt draus" and gets it on the next turn. A false positive is the whole
-problem this module was written for, so every pattern here is deliberately
-narrow.
+problem this module was written for, so the pattern here is deliberately
+a single noun.
 
 Every literal below is input-matching vocabulary in the user's spoken languages
 (DE/EN/ES), which the language policy allows on the input surface.
@@ -50,13 +56,11 @@ _NAV_VERBS = (
     r"open|go\s+to|switch\s+to|navigate\s+to|show|"
     r"abre|ve\s+a|muestra(?:me)?"  # i18n-allow: input vocab
 )
-_NAV_ARTICLES = (
-    r"(?:mir\s+|me\s+)?(?:die|den|das|the|la|el|los|las)?"  # i18n-allow: input vocab
-)
+_NAV_ARTICLES = r"(?:mir\s+|me\s+)?(?:die|den|das|the|la|el|los|las)?"  # i18n-allow: input vocab
 _NAV_SECTION_NOUNS = (
     r"visualisierung(?:s\w*)?(?:en)?|"  # i18n-allow: input vocab
     r"visualiz(?:ation|aciones|aci[oó]n)s?|visualisations?|visuals|"
-    r"artefakte?|artifacts?|artefactos?"  # i18n-allow: input vocab
+    r"artefakt\w*|artifact\w*|artefact\w*|artefactos?"  # i18n-allow: input vocab
 )
 _NAV_SUFFIX = (
     r"(?:\s*[-–]?\s*"
@@ -83,71 +87,27 @@ _DEFINITION_RE = re.compile(
     re.IGNORECASE,
 )
 
-# --- 3a. Words strong enough on their own -------------------------------------
-# "visualisier mir das", "visualize this", "mach eine Mindmap draus", "ein
-# Artefakt bitte", "als Dashboard". Each of these names the ACT of building a
-# picture or the artifact itself; no second signal is needed. Stems are matched
-# so every inflection is covered ("visualisiere", "visualizing", "visualízalo").
+# --- 3. The artifact said by name — the only word that builds ---------------
+# "mach ein Artefakt draus", "build me an artifact", "hazme un artefacto".
+# Nothing else builds: "visualisier", "Dashboard", "Diagramm", "Seite",
+# "Bericht" are ordinary conversation until the user says the literal word
+# or pins the capability via the Add menu (which bypasses this gate through
+# the turn override's extra hands, applied after it).
 _EXPLICIT_RE = re.compile(
     r"\b(?:"
-    # One stem for all three languages and every inflection, accents included:
-    # visualisieren, visualize, visualising, visualízamelo.
-    r"visual[ií]\w*|"  # i18n-allow: input vocab
-    r"veranschaulich\w*|skizzier\w*|"  # i18n-allow: input vocab
-    r"schaubild|flussdiagramm|ablaufdiagramm|organigramm|"  # i18n-allow: input vocab
-    r"mindmap|mind\s+map|flowchart|flow\s+chart|org\s+chart|"
-    r"esquematiza\w*|diagrama\s+de\s+flujo|"  # i18n-allow: input vocab
-    # The artifact by name, and the page shapes that ARE artifacts.
-    r"artefakte?s?|artifacts?|artefactos?|"  # i18n-allow: input vocab
-    r"dashboards?|infografik\w*|infographics?|infograf[ií]as?|"  # i18n-allow: input vocab
-    r"landing\s*pages?|one-?pagers?"
-    r")\b",
-    re.IGNORECASE,
-)
-
-# --- 3b. Build/show verb + visual noun — a request only in combination -------
-# "diagramm" or "chart" alone is ordinary conversation ("der Chart ist rot").
-# Paired with a verb that PRODUCES or DISPLAYS something, it is a request.
-_VERB_RE = re.compile(
-    r"\b(?:"
-    r"mach|mache|erstell\w*|bau\w*|zeichne|zeichnen|mal|male|"  # i18n-allow: input vocab
-    r"stell\w*|gib\s+mir|zeig\w*|erkl[äa]r\w*|fass\w*|"  # i18n-allow: input vocab
-    r"make|create|build|draw|sketch|render|turn\s+(?:it|this|that)\s+into|"
-    r"give\s+me|show|explain|summari[sz]e|map\s+out|"
-    # "chart"/"graph"/"plot" are nouns as often as verbs, and _NOUN_RE already
-    # matches them. Without an object they would let ONE word play both halves
-    # of the combination and fire on "wie ist der bitcoin chart gerade".
-    r"(?:plot|chart|graph|map)\s+(?:it|this|that|these|those|the)|"
-    r"haz(?:me)?|crea|dibuja|muestra(?:me)?|resume"  # i18n-allow: input vocab
-    r")\b",
-    re.IGNORECASE,
-)
-
-_NOUN_RE = re.compile(
-    r"\b(?:"
-    r"diagramm\w*|grafik\w*|schaubild\w*|zeitstrahl|"  # i18n-allow: input vocab
-    r"bildlich|grafisch|visuell|anschaulich|als\s+bild|"  # i18n-allow: input vocab
-    r"diagram|chart|graphic|timeline|infographic|"
-    r"visually|graphically|as\s+(?:a\s+)?(?:picture|image|drawing)|"
-    r"diagrama|gr[áa]fic[oa]s?|l[íi]nea\s+de\s+tiempo|"  # i18n-allow: input vocab
-    r"visualmente|gr[áa]ficamente|"  # i18n-allow: input vocab
-    # Page shapes — a request only next to a build/show verb ("mach mir eine
-    # Seite dazu", "build me a report page"), never on their own: "die Seite
-    # war langsam" is conversation.
-    r"html(?:-?(?:seite|datei|page|file))?|webseite|websites?|web\s*pages?|"  # i18n-allow
-    r"p[áa]ginas?(?:\s+web)?|als\s+seite|as\s+a\s+page|"  # i18n-allow: input vocab
-    r"bericht(?:sseite)?|reports?|informes?|"  # i18n-allow: input vocab
-    r"übersicht(?:sseite)?|uebersicht|overview\s+page"  # i18n-allow: input vocab
+    r"artefakt\w*|artifact\w*|artefact\w*|artefactos?"  # i18n-allow: input vocab
     r")\b",
     re.IGNORECASE,
 )
 
 
 def wants_artifact(text: str) -> bool:
-    """True when the utterance explicitly asks for an artifact to be built.
+    """True when the utterance literally names an artifact to be built.
 
-    The single decision point for offering the ``create_artifact`` tool at
-    all. See the module docstring for the three rules and why each is narrow.
+    The single WORD decision point for offering the ``create_artifact`` tool
+    at all. See the module docstring for the three rules. The Add-menu pin
+    is the second path and bypasses this function through the turn
+    override's extra hands.
     """
     t = (text or "").strip()
     if not t:
@@ -156,9 +116,7 @@ def wants_artifact(text: str) -> bool:
         return False
     if _DEFINITION_RE.search(t):
         return False
-    if _EXPLICIT_RE.search(t):
-        return True
-    return bool(_VERB_RE.search(t) and _NOUN_RE.search(t))
+    return bool(_EXPLICIT_RE.search(t))
 
 
 __all__ = ["wants_artifact"]

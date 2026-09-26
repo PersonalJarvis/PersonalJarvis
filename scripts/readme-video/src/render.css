@@ -1,0 +1,6 @@
+/* The timeline owns motion. Production hover/transitions must not depend on wall time. */
+[data-demo-shell] *, [data-demo-shell] *::before, [data-demo-shell] *::after {
+  transition: none !important;
+  animation: none !important;
+  caret-color: transparent;
+}

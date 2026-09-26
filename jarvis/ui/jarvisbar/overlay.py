@@ -744,6 +744,9 @@ class JarvisBarOverlay:
     def start(self) -> None:
         import tkinter as tk
 
+        from jarvis.ui.tk_runtime import prepare_tk_runtime
+
+        prepare_tk_runtime()
         from PIL import ImageTk  # noqa: F401 — fail fast here if Pillow missing
 
         # DPI strategy (two steps, order matters — both no-ops off Windows):

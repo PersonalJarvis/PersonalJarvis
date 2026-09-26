@@ -19,4 +19,4 @@ Report success only after a successful tool response; an accepted request is not
 Do not retry a write after an uncertain network failure until its outcome has been checked.
 Never accept credentials in chat; direct the user to this plugin's connect dialog.
 
-Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration.  Permissions: offline_access, User.Read, Tasks.ReadWrite.
+Click Connect and sign in with your Microsoft account in the browser. The shared sign-in is already included, so you do not create an Azure app. A company directory may ask an administrator to approve Personal Jarvis once.  Permissions: offline_access, User.Read, Tasks.ReadWrite.

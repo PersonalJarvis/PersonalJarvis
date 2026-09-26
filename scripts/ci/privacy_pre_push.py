@@ -63,6 +63,7 @@ _PUBLIC_CATALOG_MCP_URLS = {
     "github": "https://api.githubcopilot.com/mcp/",
     "granola": "https://mcp.granola.ai/mcp",
     "salesforce": "https://api.salesforce.com/platform/mcp/v1/platform/sobject-all",
+    "shopify": "https://setup.shopify.com/mcp",
 }
 
 

@@ -21,7 +21,7 @@ class FakeAudioNode {
   connect = vi.fn(() => this);
   disconnect = vi.fn();
 
-  constructor() {
+  constructor(_context?: unknown, readonly name?: string) {
     FakeAudioNode.instances.push(this);
   }
 }
@@ -34,15 +34,21 @@ class FakeAudioContext {
   close = vi.fn(async () => undefined);
   createMediaStreamSource = vi.fn(() => new FakeAudioNode());
   createGain = vi.fn(() => Object.assign(new FakeAudioNode(), { gain: { value: 1 } }));
+  createMediaStreamDestination = vi.fn(() => Object.assign(new FakeAudioNode(), {
+    stream: { getAudioTracks: () => ["buffered-track"], getTracks: () => [] },
+  }));
 }
 
 class FakePeerConnection {
   static instances: FakePeerConnection[] = [];
+  static offerSdp = "offer-sdp";
   iceGatheringState: RTCIceGatheringState = "complete";
   localDescription: RTCSessionDescription | null = null;
   remoteDescriptions: RTCSessionDescriptionInit[] = [];
   addTransceiver = vi.fn();
-  createDataChannel = vi.fn();
+  addTrack = vi.fn();
+  channel = Object.assign(new EventTarget(), { close: vi.fn() });
+  createDataChannel = vi.fn(() => this.channel);
   close = vi.fn();
   addEventListener = vi.fn();
   removeEventListener = vi.fn();
@@ -52,12 +58,13 @@ class FakePeerConnection {
     FakePeerConnection.instances.push(this);
   }
 
-  createOffer = vi.fn(async () => ({ type: "offer" as const, sdp: "offer-sdp" }));
+  createOffer = vi.fn(async () => ({ type: "offer" as const, sdp: FakePeerConnection.offerSdp }));
   setLocalDescription = vi.fn(async (description: RTCSessionDescriptionInit) => {
     this.localDescription = description as RTCSessionDescription;
   });
   setRemoteDescription = vi.fn(async (description: RTCSessionDescriptionInit) => {
     this.remoteDescriptions.push(description);
+    this.channel.dispatchEvent(new MessageEvent("message", { data: '{"type":"session.started"}' }));
   });
 }
 
@@ -65,6 +72,7 @@ class FakeWebSocket {
   static OPEN = 1;
   static instances: FakeWebSocket[] = [];
   readyState = 0;
+  bufferedAmount = 0;
   binaryType = "";
   sent: unknown[] = [];
   onopen: (() => void) | null = null;
@@ -103,7 +111,7 @@ class FakeWebSocket {
 function installVoiceBrowserFakes() {
   const track = { stop: vi.fn() };
   vi.stubGlobal("navigator", {
-    mediaDevices: { getUserMedia: vi.fn(async () => ({ getTracks: () => [track] })) },
+    mediaDevices: { getUserMedia: vi.fn(async () => ({ getTracks: () => [track], getAudioTracks: () => [track] })) },
   });
   vi.stubGlobal("AudioContext", FakeAudioContext);
   vi.stubGlobal("AudioWorkletNode", FakeAudioNode);
@@ -113,6 +121,124 @@ function installVoiceBrowserFakes() {
 }
 
 describe("realtime audio client", () => {
+  it("uses buffered RTP and forwards input levels before the media handshake completes", async () => {
+    installVoiceBrowserFakes();
+    vi.stubGlobal("Audio", class { play = async () => undefined; pause = () => undefined; });
+    const client = new RealtimeAudioClient({}, { browserAudio: true, requiresWebRtcOffer: true });
+    const connecting = client.connect();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0];
+    const peer = FakePeerConnection.instances[0];
+    const gate = FakeAudioNode.instances.find(node => node.name === "pcm-startup")!;
+    const capture = FakeAudioNode.instances.find(node => node.name === "pcm-capture")!;
+    expect(peer.addTrack.mock.calls[0][0]).toBe("buffered-track");
+    expect(gate.port.postMessage).not.toHaveBeenCalled();
+    socket.open();
+    expect(JSON.parse(String(socket.sent[0])).capture_started_at_ms).toBeGreaterThan(0);
+    socket.receive({ type: "input_prefix", sample_rate: 48000, audio: "AQACAA==" });
+    expect(gate.port.postMessage.mock.calls[0][0].type).toBe("prefix");
+    let release!: () => void;
+    peer.setRemoteDescription = vi.fn(async () => { await new Promise<void>(resolve => { release = resolve; }); });
+    socket.receive({ type: "audio_ready", requires_webrtc_answer: true, webrtc_answer_sdp: "answer" });
+    capture.port.onmessage!({ data: { type: "level", rms: 0.2 } } as MessageEvent);
+    expect(socket.sent.map(v => JSON.parse(String(v))).at(-1)).toMatchObject({ type: "media_levels", input_active: true });
+    expect(gate.port.postMessage.mock.calls.some(([m]) => m.type === "start")).toBe(false);
+    peer.channel.dispatchEvent(new MessageEvent("message", { data: '{"type":"session.started"}' }));
+    release();
+    await connecting;
+    expect(gate.port.postMessage.mock.calls.filter(([m]) => m.type === "start")).toHaveLength(1);
+    socket.receive({ type: "reconnecting" });
+    expect(gate.port.postMessage).toHaveBeenLastCalledWith({ type: "suspend" });
+    socket.receive({ type: "audio_closed" });
+    await client.disconnect();
+  });
+
+  it("precedes browser PCM with native wake audio on the local/Gemini path", async () => {
+    installVoiceBrowserFakes();
+    const client = new RealtimeAudioClient({}, { browserAudio: true });
+    const connecting = client.connect();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    const capture = FakeAudioNode.instances.find(node => node.name === "pcm-capture")!;
+    capture.port.onmessage!({ data: new Int16Array([3, 4]).buffer } as MessageEvent);
+    socket.receive({ type: "input_prefix", sample_rate: 48000, audio: "AQACAA==" });
+    socket.receive({ type: "audio_ready", requires_webrtc_answer: false });
+    await connecting;
+    expect(socket.sent.filter(v => v instanceof ArrayBuffer).map(v => [...new Int16Array(v as ArrayBuffer)])).toEqual([[1, 2], [3, 4]]);
+    socket.receive({ type: "audio_closed" });
+    await client.disconnect();
+  });
+
+  it.each([true, false])("forwards measured microphone/output levels and releases them on close (WebRTC=%s)", async (webrtc) => {
+    installVoiceBrowserFakes();
+    vi.stubGlobal("Audio", class { play = async () => undefined; pause = () => undefined; });
+    const onPlaybackState = vi.fn();
+    const onStatus = vi.fn();
+    const onAudio = vi.fn();
+    const client = new RealtimeAudioClient({ onPlaybackState, onStatus, onAudio }, { browserAudio: true, requiresWebRtcOffer: webrtc });
+    const connecting = client.connect();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    socket.receive({ type: "audio_ready", requires_webrtc_answer: webrtc, ...(webrtc ? { webrtc_answer_sdp: "answer" } : {}) });
+    await connecting;
+    if (webrtc) {
+      FakePeerConnection.instances[0].ontrack?.({ streams: [{}] } as unknown as RTCTrackEvent);
+    } else {
+      socket.receiveBinary(new Int16Array(4800).buffer);
+      expect(onAudio).not.toHaveBeenCalled();
+    }
+    const capture = FakeAudioNode.instances.find(node => node.name === "pcm-capture")!;
+    const output = FakeAudioNode.instances.find(node => node.name === (webrtc ? "pcm-level" : "pcm-playback"))!;
+    const emit = (node: FakeAudioNode, rms: number) => node.port.onmessage?.({ data: { type: "level", rms } } as MessageEvent);
+    const frames = () => socket.sent.map(value => JSON.parse(String(value))).filter(value => value.type === "media_levels");
+    const tick = performance.now() + 100;
+    const clock = vi.spyOn(performance, "now").mockReturnValue(tick);
+    try {
+      emit(capture, 0.12);
+      expect(frames().at(-1)).toMatchObject({ input_active: true, playback_active: false });
+      expect(frames().at(-1).input_level).toBeGreaterThan(0);
+      emit(output, 0.1);
+      expect(onPlaybackState).toHaveBeenLastCalledWith(true);
+      expect(frames().at(-1).output_level).toBeGreaterThan(0);
+      expect(frames().at(-1).playback_active).toBe(true);
+      const count = frames().length;
+      for (let i = 0; i < 20; i++) emit(capture, 0.12);
+      expect(frames()).toHaveLength(count);
+      clock.mockReturnValue(tick + 101);
+      emit(capture, 0.12);
+      expect(frames()).toHaveLength(count + 1);
+      for (let i = 0; i < 20; i++) emit(output, 0);
+      expect(onPlaybackState).toHaveBeenLastCalledWith(true);
+      emit(output, 0);
+      expect(onPlaybackState).toHaveBeenLastCalledWith(false);
+      expect(frames().at(-1).playback_active).toBe(false);
+      // The backend decides whether silence means thinking or listening.
+      expect(onStatus.mock.calls.some(([status]) => status === "listening")).toBe(false);
+      const beforeStall = frames().length;
+      socket.bufferedAmount = 2048;
+      clock.mockReturnValue(tick + 201);
+      emit(output, 0.1);
+      expect(frames()).toHaveLength(beforeStall);
+      socket.bufferedAmount = 0;
+      clock.mockReturnValue(tick + 202);
+      emit(capture, 0.12);
+      expect(frames()).toHaveLength(beforeStall + 1);
+      expect(frames().at(-1).playback_active).toBe(true);
+      const staleMeter = output.port.onmessage!;
+      const closing = client.disconnect();
+      socket.receive({ type: "audio_closed" });
+      await closing;
+      const sent = socket.sent.length;
+      if (webrtc) staleMeter({ data: { type: "level", rms: 0.3 } } as MessageEvent);
+      expect(socket.sent).toHaveLength(sent);
+      expect(onPlaybackState).toHaveBeenLastCalledWith(false);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   beforeEach(() => {
     vi.stubGlobal("window", {
       location: { protocol: "https:", host: "app.example", hostname: "app.example" },
@@ -122,6 +248,7 @@ describe("realtime audio client", () => {
       clearTimeout: globalThis.clearTimeout,
     });
     FakePeerConnection.instances = [];
+    FakePeerConnection.offerSdp = "offer-sdp";
     FakeWebSocket.instances = [];
     FakeAudioNode.instances = [];
     wsFakes.mintWsTicket.mockClear();
@@ -238,6 +365,8 @@ describe("realtime audio client", () => {
 
   it("sends a WebRTC offer and applies the matching answer while PCM stays active", async () => {
     const { track } = installVoiceBrowserFakes();
+    const offerSdp = "v=0\r\no=- 123 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n";
+    FakePeerConnection.offerSdp = offerSdp;
     const client = new RealtimeAudioClient({}, { requiresWebRtcOffer: true });
     const connecting = client.connect();
 
@@ -248,7 +377,7 @@ describe("realtime audio client", () => {
     expect(start).toMatchObject({
       type: "audio_start",
       sample_rate: 48_000,
-      webrtc_offer_sdp: "offer-sdp",
+      webrtc_offer_sdp: offerSdp,
     });
     expect(FakePeerConnection.instances[0].addTransceiver).toHaveBeenCalledWith(
       "audio",

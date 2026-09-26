@@ -724,7 +724,8 @@ async def test_realtime_socket_drop_flushes_pending_turn_to_session_store(
                 if self._incoming:
                     return self._incoming.pop(0)
                 assert provider.session is not None
-                await asyncio.wait_for(provider.session.events_drained.wait(), timeout=1.0)
+                # This checks archive flush, not cold-start language-guard latency.
+                await asyncio.wait_for(provider.session.events_drained.wait(), timeout=5.0)
                 raise WebSocketDisconnect()
 
         ws = _DropAfterProviderEvents(

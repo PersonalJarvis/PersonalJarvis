@@ -108,6 +108,37 @@ def test_grok_defaults_are_universal_and_tool_capable() -> None:
     assert brain.supports_vision is True
 
 
+def test_grok_4_7_is_offered_and_leads_grok_build() -> None:
+    """Grok 4.7 is the Grok Build default; the API fallback still leads with 4.3."""
+    from jarvis.agent_chat.catalog import api_seat, provider_row
+    from jarvis.brain.cost import PRICING_USD_PER_MTOK
+    from jarvis.brain.model_catalog import CURATED_MODELS, GROK_BUILD_MODELS
+    from jarvis.missions.workers.grok_build_direct_worker import _DEFAULT_GROK_BUILD_MODEL
+    from jarvis.workspace import launch_picks
+
+    build_ids = [mid for mid, _label in GROK_BUILD_MODELS]
+    spec = catalog_spec("grok-build")
+    assert spec is not None
+    assert [model.id for model in spec.curated] == build_ids
+    assert spec.curated[0].id == "grok-4.7"
+    grok_ids = [model.id for model in CURATED_MODELS["grok"]]
+    assert grok_ids[0] == DEFAULT_MODEL == "grok-4.3"
+    assert "grok-4.7" in grok_ids
+    row = provider_row("grok-build")
+    assert row is not None
+    assert row.default_model == "grok-4.7"
+    assert [model.id for model in row.curated_models] == build_ids
+    assert api_seat("grok-build", "grok-4.7") == ("grok", "grok-4.7")
+    assert _DEFAULT_GROK_BUILD_MODEL == "grok-4.7"
+    offered = launch_picks.offered("grok-build")
+    assert offered["default_model"] == "grok-4.7"
+    assert offered["models"][0]["id"] == "grok-4.7"
+    assert "xhigh" in offered["effort_levels"]
+    assert PRICING_USD_PER_MTOK["grok-4.7"] == (2.0, 6.0)
+    assert PRICING_USD_PER_MTOK["grok-4.7-build-fast"] == (4.0, 12.0)
+    assert "x-ai/grok-4.7" in {model.id for model in CURATED_MODELS["openrouter"]}
+
+
 def test_grok_has_authenticated_live_model_catalog() -> None:
     spec = catalog_spec("grok")
     assert spec is not None and spec.tier == "brain" and spec.live is True

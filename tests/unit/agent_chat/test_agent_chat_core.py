@@ -526,7 +526,7 @@ def test_codex_reasoning_start_is_announced():
 
 
 def test_resolve_runner_per_surface(monkeypatch):
-    """Jarvis uses its brain for APIs and preserves supported subscription seats."""
+    """Jarvis runs API seats through its brain and preserves coding CLI seats."""
     from jarvis.agent_chat import service as svc_mod
 
     monkeypatch.setattr(svc_mod, "_claude_cli_installed", lambda: False)
@@ -542,47 +542,62 @@ def test_resolve_runner_per_surface(monkeypatch):
     monkeypatch.setattr(svc_mod, "_claude_cli_installed", lambda: True)
     assert svc_mod.resolve_runner("claude-api") == "claude-cli"
     assert svc_mod.resolve_runner("claude-api", surface="jarvis") == "claude-cli"
+    # API-only surfaces still resolve Claude to the brain with its CLI installed.
+    assert svc_mod.resolve_runner("claude-api", surface="local-models") == "brain"
+    assert svc_mod.resolve_runner("openai-codex", surface="local-models") == "unknown"
     assert svc_mod.resolve_runner("no-such-provider", surface="jarvis") == "unknown"
 
 
-def test_the_jarvis_surface_offers_supported_api_and_cli_seats():
-    """Every advertised seat has an API or CLI runner that can drive it."""
+def test_the_jarvis_surface_offers_api_and_cli_seats():
+    """Jarvis shares the IDE's provider seats; API-only surfaces remain filtered."""
     from jarvis.agent_chat.catalog import PROVIDER_ROWS, offers, rows_for
     from jarvis.agent_chat.runner_api import supports_api_runner
-    from jarvis.agent_chat.runner_cli import supports_cli_runner
 
-    jarvis_rows = rows_for("jarvis")
-    assert jarvis_rows and all(
-        supports_api_runner(row.id) or supports_cli_runner(row.runner) for row in jarvis_rows
-    )
+    jarvis_ids = [row.id for row in rows_for("jarvis")]
+    assert jarvis_ids == [row.id for row in rows_for("agent")]
     for cli_row in ("openai-codex", "antigravity", "grok-build"):
         assert offers("jarvis", cli_row)
         assert offers("agent", cli_row)
+        assert not offers("local-models", cli_row)
+    api_ids = [row.id for row in rows_for("local-models")]
+    assert api_ids and all(supports_api_runner(pid) for pid in api_ids)
     assert [row.id for row in rows_for("agent")] == [row.id for row in PROVIDER_ROWS]
 
 
-def test_supported_cli_seats_can_be_created_on_jarvis_but_unknown_seats_cannot(tmp_path):
+def test_cli_seat_creation_follows_the_surface_capability(tmp_path):
+    """CLI seats can be created on Jarvis and the IDE, but not API-only surfaces."""
     from jarvis.agent_chat.service import AgentChatService
     from jarvis.agent_chat.store import AgentChatStore
 
     svc = AgentChatService(AgentChatStore(":memory:"), default_cwd=lambda: str(tmp_path))
-    assert svc.create_session(provider="openai-codex", surface="jarvis").provider == "openai-codex"
-    with pytest.raises(ValueError):
-        svc.create_session(provider="no-such-provider", surface="jarvis")
-    assert svc.create_session(provider="openai-codex", surface="agent").provider == "openai-codex"
+    for surface in ("jarvis", "agent"):
+        session = svc.create_session(provider="openai-codex", surface=surface, cwd=str(tmp_path))
+        assert (session.provider, session.surface) == ("openai-codex", surface)
+    with pytest.raises(ValueError, match="not offered"):
+        svc.create_session(provider="openai-codex", surface="local-models")
 
 
-def test_existing_jarvis_cli_seats_keep_their_provider_and_model_on_startup(tmp_path):
-    """Startup must not replace a user's selected subscription or CLI model."""
+@pytest.mark.parametrize("cli_seats", [True, False])
+def test_cli_seat_retirement_follows_the_surface_capability(tmp_path, monkeypatch, cli_seats):
+    """Keep supported CLI seats; retain migration coverage for an API-only kit."""
+    from dataclasses import replace
+
+    from jarvis.agent_chat import surface_kits
     from jarvis.agent_chat.service import AgentChatService
     from jarvis.agent_chat.store import AgentChatStore
 
+    if not cli_seats:
+        monkeypatch.setitem(
+            surface_kits._KITS,
+            "jarvis",
+            replace(surface_kits.kit_for("jarvis"), cli_seats=False),
+        )
     store = AgentChatStore(":memory:")
-    # A CLI-specific model remains owned by the CLI seat.
+    # ``gpt-5.2`` is in Codex's own catalog and not in OpenAI's, so it goes.
     codex = store.create_session(
         provider="openai-codex", model="gpt-5.2", effort="high", cwd=".", surface="jarvis"
     )
-    # A model shared with the API must not cause an implicit provider switch.
+    # One the API does know rides along rather than resetting for nothing.
     shared = store.create_session(
         provider="openai-codex", model="gpt-5.5", effort="high", cwd=".", surface="jarvis"
     )
@@ -592,24 +607,28 @@ def test_existing_jarvis_cli_seats_keep_their_provider_and_model_on_startup(tmp_
     kept = store.create_session(
         provider="claude-api", model="claude-opus-5", effort="high", cwd=".", surface="agent"
     )
+    history = store.append_event(codex.session_id, make_event("user_message", {"text": "hi"}))
     before = store.get_session(codex.session_id).updated_ms
 
     AgentChatService(store, default_cwd=lambda: str(tmp_path))
 
     moved = store.get_session(codex.session_id)
-    assert (moved.provider, moved.model) == ("openai-codex", "gpt-5.2")
+    assert (moved.provider, moved.model) == (
+        ("openai-codex", "gpt-5.2") if cli_seats else ("openai", "")
+    )
     assert (
         store.get_session(shared.session_id).provider,
         store.get_session(shared.session_id).model,
     ) == (
-        "openai-codex",
+        "openai-codex" if cli_seats else "openai",
         "gpt-5.5",
     )
-    # Startup must not reshuffle the conversation list.
+    # The list order is by updated_ms; a migration must not reshuffle it.
     assert moved.updated_ms == before
-    # Claude retains its CLI-specific planning model.
+    assert store.list_events(codex.session_id) == [history]
+    # Only an API-only kit retires Claude's CLI-specific model id.
     assert store.get_session(claude.session_id).provider == "claude-api"
-    assert store.get_session(claude.session_id).model == "opusplan"
+    assert store.get_session(claude.session_id).model == ("opusplan" if cli_seats else "")
     # The IDE's chat is untouched.
     assert store.get_session(kept.session_id).provider == "claude-api"
     assert store.get_session(kept.session_id).model == "claude-opus-5"

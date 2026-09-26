@@ -13,8 +13,15 @@ export { describeTrigger } from "@/lib/triggerDescription";
  * every one of them returns an empty list when the backend is not there. The
  * card treats them as enrichment and never blocks on them.
  */
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+
+const routineListeners = new Set<(agentId: string) => void>();
+
+/** Tell an open routines card that a chat action changed its stored tasks. */
+export function notifyRoutineChanged(agentId: string): void {
+  for (const listener of routineListeners) listener(agentId);
+}
 
 /** One line of what the agent did or was told, from the society event log. */
 export interface AgentActivity {
@@ -52,6 +59,11 @@ export interface LiveRoutine {
   lastRunMs: number | null;
   prompt?: string;
   members?: LiveRoutine[];
+  /** Pinned model seat ("", all empty = the routine follows its owner). */
+  provider?: string;
+  model?: string;
+  effort?: string;
+  account_id?: string;
 }
 
 /** Per-agent browser status from `GET /api/society/agents/{id}/browser`. */
@@ -168,6 +180,16 @@ export function useAgentSkills(agentId: string | null) {
 
 /** The agent's scheduled tasks, as the Automations store actually holds them. */
 export function useAgentRoutines(agentId: string | null) {
+  const client = useQueryClient();
+  useEffect(() => {
+    const refresh = (changedAgentId: string) => {
+      if (changedAgentId !== agentId) return;
+      void client.invalidateQueries({ queryKey: ["society", "agent-routines", agentId] });
+      void client.invalidateQueries({ queryKey: ["tasks"] });
+    };
+    routineListeners.add(refresh);
+    return () => { routineListeners.delete(refresh); };
+  }, [agentId, client]);
   return useQuery({
     queryKey: ["society", "agent-routines", agentId],
     enabled: Boolean(agentId),
@@ -187,6 +209,10 @@ export function useAgentRoutines(agentId: string | null) {
           last_run_ns?: number;
           prompt?: string;
           tags?: string[];
+          provider?: string;
+          model?: string;
+          effort?: string;
+          account_id?: string;
         }[];
       };
       const raw = body?.routines ?? [];
@@ -199,6 +225,10 @@ export function useAgentRoutines(agentId: string | null) {
         dueMs: nsToMs(r.due_at_ns),
         lastRunMs: nsToMs(r.last_run_ns),
         prompt: r.prompt ?? "",
+        provider: String(r.provider ?? ""),
+        model: String(r.model ?? ""),
+        effort: String(r.effort ?? ""),
+        account_id: String(r.account_id ?? ""),
       }));
       const groups = new Map<string, LiveRoutine[]>();
       mapped.forEach((row, i) => {

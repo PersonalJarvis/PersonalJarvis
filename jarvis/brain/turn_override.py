@@ -20,11 +20,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from jarvis.core.protocols import ReasoningEffort, Tool
 
 from .loop_control import LoopControl
+
+GuardFailureReason = Literal["mandated_tool_unfulfilled", "unbacked_action_claim"]
 
 
 @dataclass(slots=True)
@@ -42,6 +44,15 @@ class TurnReceipt:
     tokens_out: int = 0
     cost_usd: float = 0.0
     finish_reason: str = ""
+    # Provider completion is separate from a later honesty guard rejecting
+    # its answer. Callers must not label a full fallback as completed work.
+    guard_failure: bool = False
+    failure_reason: GuardFailureReason | Literal[""] = ""
+
+    def mark_guard_failure(self, reason: GuardFailureReason) -> None:
+        if not self.guard_failure:
+            self.guard_failure = True
+            self.failure_reason = reason
 
     def record(
         self,
@@ -59,6 +70,8 @@ class TurnReceipt:
         self.tokens_out = int(tokens_out)
         self.cost_usd = float(cost_usd)
         self.finish_reason = finish_reason
+        self.guard_failure = False
+        self.failure_reason = ""
 
     def usage(self) -> dict[str, Any]:
         """The ``usage`` dict an agent-chat ``turn_finished`` event carries."""
@@ -127,4 +140,4 @@ class TurnOverride:
     receipt: TurnReceipt = field(default_factory=TurnReceipt)
 
 
-__all__ = ["TurnOverride", "TurnReceipt"]
+__all__ = ["GuardFailureReason", "TurnOverride", "TurnReceipt"]

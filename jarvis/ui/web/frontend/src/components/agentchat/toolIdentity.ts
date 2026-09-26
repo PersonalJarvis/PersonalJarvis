@@ -19,6 +19,7 @@ import {
   Plug,
   Presentation,
   Search,
+  Shapes,
   ShieldCheck,
   Sparkles,
   Terminal,
@@ -193,6 +194,7 @@ const CATEGORY_PALETTES: Record<ToolCategory, Palette> = {
 };
 
 const DETAIL_ICONS = [
+  [/\b(artifact|artefakt|artefact)\b/, Shapes],
   [/\b(wiki|recall|knowledge)\b/, BookOpen],
   [/\b(pdf|document|docs|word|read)\b/, FileText],
   [/\b(slides|presentation|powerpoint)\b/, Presentation],
@@ -213,7 +215,29 @@ const DETAIL_ICONS = [
   [/\b(navigate)\b/, Compass],
 ] as const;
 
+/** The Artifacts section mark — shared by the section and the Add-menu pin. */
+export const ARTIFACT_GLYPH = Shapes;
+const ARTIFACT_PALETTE: Palette = VIOLET;
+
+function isArtifactRow(row: ToolChoice): boolean {
+  const hay = `${row.id} ${row.brand} ${row.group} ${row.label}`.toLowerCase();
+  return (
+    row.id === "tool:create_artifact" ||
+    row.brand.toLowerCase() === "artifact" ||
+    /\bartefakt|\bartifact|\bartefact/.test(hay)
+  );
+}
+
 export function toolIdentity(row: ToolChoice) {
+  if (isArtifactRow(row)) {
+    return {
+      key: "artifact",
+      logo: undefined,
+      mark: "colour" as const,
+      palette: ARTIFACT_PALETTE,
+      Glyph: ARTIFACT_GLYPH,
+    };
+  }
   const cliName = [row.brand, row.label, row.id.replace(/^(cli:|tool:|plugin:)/, "")]
     .map((value) => cliVendor(value || ""))
     .find(Boolean);

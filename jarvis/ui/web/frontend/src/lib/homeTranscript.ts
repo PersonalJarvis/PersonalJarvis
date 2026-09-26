@@ -39,6 +39,7 @@ import {
   reduceThinkingSteps,
   type ThinkingStep,
 } from "@/lib/thinkingSteps";
+import { readVoiceTranscript } from "@/lib/liveTranscript";
 
 export type TranscriptWho = "user" | "assistant" | "steps";
 
@@ -59,6 +60,7 @@ export interface TranscriptTextLine extends TranscriptLineBase {
    * follows the tool call.
    */
   kind?: string;
+  revision?: number;
 }
 
 /** The reasoning steps of one turn — tools, workers, the brain call. */
@@ -386,6 +388,22 @@ export function reduceTranscript(
   lines = closeStaleTurn(lines, tsMs);
 
   switch (name) {
+    case "VoiceTranscriptUpdated": {
+      const snapshot = readVoiceTranscript(payload);
+      if (!snapshot || !snapshot.text.trim()) return lines;
+      const id = `live:${snapshot.session_id}:${snapshot.segment_id}`;
+      const index = lines.findIndex(line => line.id === id);
+      if (index >= 0) {
+        const previous = lines[index] as TranscriptTextLine;
+        if ((previous.revision ?? 0) >= snapshot.revision) return lines;
+        return replaceAt(lines, index, { ...previous, text: snapshot.text, revision: snapshot.revision });
+      }
+      // Captions are independent of model turns and can overlap a running
+      // tool. A new user segment must not mark background work as complete.
+      return cap([...lines, {
+        id, ts: tsMs, who: snapshot.role, text: snapshot.text, revision: snapshot.revision,
+      }]);
+    }
     case "TranscriptFinal": {
       const transcript = (p.transcript ?? {}) as Record<string, unknown>;
       const text = clean(transcript.text);
@@ -435,6 +453,12 @@ export function reduceTranscript(
       // assistant spoke: whatever the turn was doing, it is over.
       const next = str(p.new_state).toLowerCase();
       const previous = str(p.previous).toLowerCase();
+      const continuous = lines.some(line => line.who !== "steps" && line.revision !== undefined);
+      if (continuous && next === "listening" && previous === "speaking") {
+        // GPT-Live can listen while delegated work is still running. Only
+        // the model/tool completion events settle that work, not playback.
+        return lines;
+      }
       if (next === "idle" || (next === "listening" && previous === "speaking")) {
         return closeOpenTurn(lines, tsMs);
       }

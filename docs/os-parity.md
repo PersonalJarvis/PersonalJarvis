@@ -1,21 +1,19 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
-## Private agent learning (2026-09-19, T3)
+## Window caption (2026-09-21, T2)
 
-Jarvis chat/voice and Society agents share a provider-independent learning loop
-with private files and independent review queues. All OSes use the same portable
-implementation; the existing `filelock` backend selects the OS lock implementation.
-No GPU, audio device, native UI or extra API key is required. An unavailable review
-provider leaves a durable retry receipt while deterministic failure warnings remain
-available. See [the design and proof](agent-society/self-learning.md).
+The desktop window is frameless on Windows, macOS and Linux. The page draws
+one title strip: drag to move, and theme, restart, minimize, maximize and
+close at the end of that row. macOS puts the window buttons on the left;
+Windows and Linux put them on the right. A browser tab and a headless server
+draw no window buttons (`frameless: false`).
 
-Windows contracts and a Linux container contract run passed, including real Linux
-symlink isolation. A fresh temporary workspace with one Grok key demonstrated
-learning across a full runtime restart and isolation from another agent. Native
-macOS CI also passed the realtime and private-learning contracts (55 passed,
-two capability skips) at `dc053c1d0`. The
-[native macOS job](https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/35435846490/job/105878237409)
-provides the execution evidence; this does not claim physical audio-device testing.
+Windows adds edge resize and a maximized work-area inset in
+`jarvis/ui/window_frame.py`, so the missing native frame does not cover the
+taskbar. macOS keeps pywebview's resizable window mask. Linux stays
+undecorated: moving and the buttons work; dragging an edge to resize depends
+on the window manager and is not claimed as parity. Tests:
+`tests/unit/ui/test_window_command.py` and `tests/unit/ui/test_window_frame.py`.
 
 ## Prepaid search hop (2026-09-17, T2)
 
@@ -33,9 +31,11 @@ transports. Browser audio is selected by provider capability and owns echo
 cancellation on desktop and remote surfaces. OS-specific capture and actuation
 remain behind the existing screen/desktop adapters and ToolExecutor.
 
-Windows contract tests, an OpenAI API synthetic tool-and-audio test, and a Python
-3.11 Linux-container contract run passed. Native macOS audio, native Linux audio,
-fresh installations, long-call recovery and comparative latency remain unverified.
+Windows contract tests, OpenAI/Gemini synthetic tool-and-audio recovery probes,
+and a fresh Python 3.11 slim installation passed. The Linux installation boots
+without PortAudio and passes the 34 Live contract cases plus an isolated OpenAI
+one-key synthetic tool/reconnect probe. Native-device audio, fresh desktop
+installations, long-call recovery and comparative latency remain unverified.
 See [the continuous voice architecture](gpt-live.md).
 
 ## Full Chrome window preview (2026-09-12, T3; acceptance open)
@@ -69,6 +69,63 @@ Contract evidence: `tests/contract/test_service_connectors.py`; AMD absence is
 tested for all three platform values, and HTTP requests use fake transports.
 Real account consent and live AMD hardware remain separate acceptance steps.
 See [coverage and provider limits](marketplace/service-connector-coverage.md).
+
+## Mars world reference foundation (2026-09-19, in progress)
+
+The new Mars namespace uses a packaged metre/Y-up definition and the existing
+React/Three client on Windows, macOS and Linux. Rendering is optional and gated
+by the shared WebGL capability probe; Agents/status remains accessible without
+it. Authoring uses Blender only in development. No native graphics or authoring
+dependency enters the Python definition or station interfaces.
+
+The implementation is T3 and unfinished. Windows native close/reopen and
+clientless task progress are verified: 213 observations recorded an active
+real draft after main-window destruction, followed by completion and an
+authenticated reopen under the same backend. The default close policy remains
+Quit unless the user enables background mode for that session. This mode needs
+persistent WebView storage and verified native tray registration. The blank
+keeper has no application URL; browser-dependent voice is not kept alive.
+
+Native tray registration is currently proved on Windows only. Other desktop
+backends report background mode unavailable while ordinary windows and the
+headless server remain usable. Native macOS/Linux WebViews and integrated-GPU
+performance remain unverified. Tests with fakes do not establish those device results.
+
+A clean wheel from `9e155de95` was installed into a new isolated Linux venv in
+a container without a display, graphics GPU, browser or Blender. Its 3,436
+package members matched the wheel and `pip check` passed. Actual HTTP visits,
+occupancy, idempotency, status and clientless progress passed. A separate
+isolated runtime used one existing Gemini key for a real station draft with
+durable task/result references and no tool calls. The result remained after
+clean backend and container exit. Client readiness waited for a live active
+brain from `/api/providers`; early roster readiness alone does not prove it.
+These results cover headless operation and process shutdown. Native desktop
+parity, active-task cancellation in that installed-wheel run, and final visual
+acceptance remain separate checks.
+See [the Mars runtime](agent-society/mars-runtime.md) for current support boundaries.
+
+The route-driven rover increment uses the same SQLite/asyncio owner on Windows,
+macOS and Linux. It requires packaged collision/dock data and an explicit rover
+authorization callback; pedestrian authority alone grants no seat. Agent rides
+need no renderer, GPU, audio or native API. Portable contracts cover exclusive
+seats, safe exits, interrupted travel, graph migration and authenticated HTTP/CLI
+actions. A fresh Linux venv then installed the rover wheel from `ea3aab13a`:
+all 3,439 package members matched, dependency validation passed, and fourteen
+headless checks passed, including real-agent boarding, travel and safe exit.
+A separate runtime in that fresh environment completed a real communication
+draft with one Gemini key and retained its result after clean shutdown. No
+browser, display, graphics GPU or Blender was required. Final rover art, player
+control and native cross-platform presentation remain unverified.
+
+Physical pedestrian visits use the same bounded SQLite/asyncio graph controller
+on Windows, macOS and Linux, with no native graphics requirement. The existing
+world owner resumes either station or navigation journals after boot; no-client
+movement, process-abort recovery, authority checks and repeated-cancellation
+rollback are covered by portable contracts. The ordinary-world HTTP surface is
+pedestrian-only; rover control and per-Swarm adapters remain unfinished. These
+contracts do not establish live native macOS/Linux rendering or fresh-install
+acceptance. Gigi is a client presentation over the existing assistant, not a
+new provider, worker scheduler or audio process.
 
 **Managed agent browser, 2026-09-10:** The Browser-Use environment and browser
 are provisioned per host with one shared installer. The live viewport uses
@@ -462,7 +519,7 @@ implementations, not stubs.
 | Core (launcher, config, keyring, restart, autostart, tray, elevation, paths) | Clean; per-OS autostart (Registry / LaunchAgent / XDG `.desktop`), keyring falls back to a 0600 file on headless hosts |
 | Data / agents (wiki, contacts, telephony, sessions, missions, skills, self-mod, channels, MCP) | Clean; mission workers run on POSIX with a real process-group reaper |
 | Agent society hands (own shell, browser via browser-use, learned skills) | Shell: local subprocess in the agent's workspace on every OS (Git Bash/PowerShell/bash/sh pick as the chat's folder tools), no container by decision. Browser: browser-use lives in a managed venv under the data dir (its pins collide with the app's), installed on demand — `uv`/`venv`, a 3.11–3.13 interpreter preferred, Chromium downloaded once; headless runs need no display, so a headless Linux box runs agents' browsers; the headed login session needs a display (409 without one is the follow-up); attach mode needs a running Chrome with `--remote-debugging-port`. Learning is pure files + the brain, OS-neutral |
-| Agent society substrate (roster, typed board, scheduler, rooms, mission bridge, `/api/society`) | Clean; pure asyncio + SQLite (`data/society.db`, WAL) and FastAPI, no OS API, no GPU, no audio. Full REST parity from a headless `python:3.11-slim` (`tests/contract/test_society_substrate.py` seeds two agents and exchanges typed messages with fakes only); the dynamic `jarvis api society …` CLI layer covers every route. FTS5 over knowledge summaries is optional — a SQLite without it degrades to plain reads (same class as P-05). Per-agent screens (`agent_screen`) are M6 and keep their own per-OS probes |
+| Agent society substrate (roster, typed board, scheduler, rooms, mission bridge, `/api/society`) | Clean; pure asyncio + SQLite (`data/society.db`, WAL) and FastAPI, no OS API, no GPU, no audio. Full REST parity from a headless `python:3.11-slim` (`tests/contract/test_society_substrate.py` covers messages, rename with stable agent/chat IDs, and archive). The agent sidebar's hide choice is a browser-local display preference on every desktop OS; it does not change roster state. The dynamic `jarvis api society …` CLI layer covers every route. FTS5 over knowledge summaries is optional — a SQLite without it degrades to plain reads (same class as P-05). Per-agent screens (`agent_screen`) are M6 and keep their own per-OS probes |
 | Typed chat on the Jarvis surface (brain runner, folder tools, approval card, CLI seats as Jarvis) | Clean; pure asyncio + SQLite, no OS API. Every CLI spawn keeps `NO_WINDOW_CREATIONFLAGS` and UTF-8 stdio. The identity for a Claude Code seat travels as a FILE under the app data dir (`jarvis_harness.write_identity_file`, removed after the turn) because Windows caps a command line at 32 767 characters; Codex and agy take it on stdin (no limit), Grok Build a compact cut on argv (`COMPACT_MAX_CHARS`). The MCP session header and the approval bridge are transport-level and OS-neutral |
 
 ## Open parity gaps
@@ -607,6 +664,32 @@ install verification are not claimed. See [the inventory and design](chat-tool-p
 
 ## Internal agent messaging — RUB-14 (2026-09-07)
 
+### Contextual communication and reply expectations (2026-09-23)
+
+The lead, realtime directive and teammate briefings share the same guidance:
+compose an actionable objective with known context, scope and completion evidence.
+The existing envelope JSON carries optional `reply_policy` metadata
+(`none`, `on_error`, `always`). Questions require an answer; answers close the
+exchange. Delivery receipts remain separate from task outcomes. Legacy assignments
+keep completion reporting. No SQL status, REST field or frontend enum is added:
+SQLite and Pydantic preserve the payload and TypeScript exposes it as an opaque
+record; the UI continues to render message text and existing delivery states.
+
+Windows, macOS and Linux use identical pure Python, asyncio and SQLite paths,
+behind the existing runtime/chat-service capability boundary. No native, GPU or
+audio dependency is added. API and CLI seats receive the same guidance. The chat
+completion hook sends one correlated answer when a receiver only writes its final
+response. Explicit answers suppress that fallback. Task completion remains in the
+board even when notifications are suppressed. An explicit blocker is reflected in
+the assignment outcome, and the runtime alone forwards that outcome.
+
+The legacy mission runner retains its existing reporting for `always`; it refuses
+quiet policies when no agent chat service is available instead of promising silence
+it cannot enforce. `tests/contract/test_society_communication.py` covers the reporting
+matrix, scheduler delivery, durable reply identity, terminal answers, semantic
+blockers and compatibility. Windows execution does not establish native macOS/Linux
+or a fresh single-key live-provider qualification; those require separate evidence.
+
 The message tool, durable SQLite queue, task-local sender provenance, and chat
 receipts use the same Python/React implementation on Windows, macOS and Linux.
 There are no native imports, GPU requirements, or provider-name gates. The
@@ -710,3 +793,176 @@ provider authorization may remain at the provider because revoking it could also
 invalidate a shared existing grant. Users can revoke it in the provider's app
 settings. The release audit separately requires a real safe action, disconnect,
 reconnect and persistence after restart.
+
+## Routine model seat pinning (2026-09-20, T2)
+
+| Capability | Windows | macOS | Linux / headless |
+| --- | --- | --- | --- |
+| Routine runs on its pinned seat (or the owner's live seat) | Same portable resolution | Same portable resolution | Same portable resolution |
+| No silent reroute onto an API-key chain | Fails honestly with a readable error | Same | Same |
+| Per-routine seat picker in the routine editor | Same React component | Same | Same |
+
+One surface (society routine execution); the shared `AgentAction` contract gains
+four optional seat fields that default empty, so stored rows from before this
+change still validate and behave as before (follow the owner). Seat kinds are
+decided by asking the runner/catalog (AP-21), never by provider name; a vendor
+CLI that is not installed on the host fails the run honestly instead of billing
+a key. Portable contracts: `tests/unit/society/test_routines.py` (pin, inherit,
+update), `tests/unit/tasks/test_runner_agent_result.py` (no API fallback for
+society tags, generic fallback kept), `tests/unit/ui/web/test_routine_editor.py`.
+Physical macOS/Linux runs and a fresh-install end-to-end check remain open
+acceptance and must not be inferred from these tests.
+
+## Browser media presentation (T3)
+
+| Surface | Windows | macOS | Linux / headless |
+| --- | --- | --- | --- |
+| Browser microphone and audible-output meters | Shared Web Audio measurement | Same browser adapter | Same adapter; remote browser owns headless audio |
+| Native bar state and amplitude | Existing bus and level channels | Existing companion bridge | Existing overlay; no native window on headless hosts |
+| Unsupported media capability | Existing browser capability check | Same check | Same check |
+
+The `media_levels` control is a frozen, validated, transient snapshot: normalized
+input/output levels and input/playback activity. It carries no PCM or text and
+is never written to SQL, usage records, or the event journal. The existing
+`AudioOutFirst` event is emitted after the speaking state on an actual playback
+edge; generated text and backend completion do not prove audible playback.
+Microphone activity outranks background thinking; audible output takes priority.
+Close and a 1.5-second measurement expiry clear stale meters. Legacy clients
+retain the existing `playback_state` edge contract.
+
+`tests/contract/test_live_media_feedback.py` covers both Live session families,
+the real native bridge with a recording surface, invalid snapshots, cleanup,
+and Python/TypeScript field parity without opening a device. Browser tests
+cover level forwarding, word-gap hysteresis and stale thinking messages.
+Physical macOS/Linux device verification remains pending; portable contracts
+and headless tests must not be reported as physical-device acceptance.
+
+## Agent profile companions (T3)
+
+| Capability | Windows | macOS | Linux / headless |
+| --- | --- | --- | --- |
+| Companion settings in existing avatar JSON | Portable Pydantic + SQLite | Same implementation | Same; no GPU or credentials required |
+| Character and companion editor | Shared React UI | Same browser UI | Same browser UI |
+| In-map follower | Existing WebGL capability probe | Same capability probe | Available in a WebGL browser; headless API still works |
+| No WebGL / lost context | Profile stays SVG/PNG; existing context recovery | Same fallback | Same fallback |
+
+`avatar.companion` stores shape, colour, eye style and visibility independently
+of the preserved character recipe. Companions use a fixed 0.50 m size and 1 m
+following distance; earlier saved slider values normalize to these constants. No additional SQL
+column, provider setting, inference request or credential is required. Old avatars
+retain deterministic identity defaults. Per-agent settings survive reload and
+world changes; hidden followers still retain their profile identity.
+
+`tests/contract/test_agent_companion.py` exercises a fresh, credential-free,
+headless API/database through creation, edit, rejection and reopening. A shared
+JSON corpus is accepted/rejected by Python and TypeScript. Browser verification
+on Windows covers real creation, appearance editing and rendering; physical
+macOS/Linux verification is not inferred from this portable implementation.
+Follower tests cover route corners, following gaps, height changes, bounded
+history and background-tab catch-up. Existing WebGL lifecycle hooks own context
+release/recovery; each follower shares the map canvas and cached geometry.
+
+
+## Wake-to-browser startup audio (T3)
+
+| Capability | Windows | macOS | Linux / headless |
+| --- | --- | --- | --- |
+| Wake microphone handoff | Existing capture lease, kept until browser capture | Same portable lease | Same; no native lease in headless mode |
+| Retained first sentence | Web Audio worklet feeds the negotiated RTP track | Same browser capability probe | Same browser path, including remote clients |
+| Gemini/local input | Prefix precedes existing PCM stream | Same adapter | Same adapter |
+| Missing Web Audio capability | Existing explicit unsupported-browser result | Same result | Same result |
+
+The one-use `input_prefix` message carries bounded mono PCM16 and its sample
+rate. Python validates its typed envelope; TypeScript decodes and resamples it
+before browser input. The desktop cuts the prefix at `capture_started_at_ms`,
+a wall-clock estimate of browser capture start, to exclude overlapping audio.
+Capture clocks are not sample-synchronized: device/graph latency can affect
+this boundary and requires physical-device acceptance. The source is released
+on its owning event loop. Audio is memory-only; no SQL, transcript or journal
+field is added. Closing or cancelling clears the offered lease, and no prefix
+or captured audio is retained through reconnection.
+
+GPT-Live input stays on RTP. The startup worklet emits silence until
+`session.started`, then drains retained speech once. Only excess near-digital
+silence is skipped to catch up; quiet speech is preserved. The native meter
+continues receiving wake levels during connection and browser levels before
+the RTP handshake completes. No billed idle session or extra provider call is
+introduced.
+
+`test_live_startup_audio.py`, `test_live_media_feedback.py`, capture-first
+pipeline tests and the browser audio tests cover overlap trimming, once-only
+consumption, cross-thread release, cancellation, PCM ordering and RTP startup.
+Windows Chrome verification supplied a synthetic sentence entirely before
+readiness with an extra three-second handshake delay: its complete transcript
+arrived and assistant playback followed. This does not establish physical
+wake/microphone acceptance or physical macOS/Linux acceptance.
+
+A fresh Linux wheel installation passed all eight startup handoff contracts and
+a one-key synthetic Live speech/tool proof (one tool receipt, spoken result, no
+session failure). This checks the installed package without native audio devices.
+
+
+## Continuous voice conversation history (T3)
+
+| Surface | Windows | macOS | Linux / headless |
+| --- | --- | --- | --- |
+| Speaker segments | Portable Live adapter projection | Same implementation | Same; no audio device required by projection |
+| Live conversation and trace | Shared React voice stage and existing theme tokens | Same browser surface | Same surface in a remote browser |
+| Persisted history | Existing session event JSON in SQLite | Same schema | Same schema |
+| Legacy Live conversations | Read-only projection of existing transcript fragments | Same projection | Same projection |
+
+`VoiceTranscriptUpdated` is a frozen, revisioned snapshot identified by session
+and segment. Python, recorded JSON, API serialization and the TypeScript field
+contract are exercised together by `test_live_conversation.py`. Independent
+speaker rows allow overlapping audio and repeated phrases without overwriting
+previous turns. Presentation grouping does not send model turn-control events.
+Gemini/local snapshots and final markers use the same projection; older voice
+adapters keep their existing final-transcript path.
+
+Responses delegation publishes its real model-start event and exposes only
+provider-supplied public reasoning summaries as `ReasoningSummaryUpdated`.
+Raw/private reasoning and encrypted reasoning payloads are never projected.
+The existing tool-execution events continue to supply tool progress/results.
+Models that emit no summary still show their observable model/tool steps.
+Configured reasoning backends request the provider's automatic summary format;
+the selected model and credential stay unchanged.
+
+The session recorder stores both event types in its existing event table. The
+conversation API reconstructs the latest snapshot of each segment, with traces
+attached to the corresponding answer interval. Pre-fix Live fragment history
+is read without changing the original database. Physical OS audio acceptance
+is separate from this portable presentation/storage contract.
+
+Browser-owned calls also hold the native activation gate. A competing wake or
+card start must not publish a replacement session and erase the active
+conversation. This ownership is released with the Live runtime lease.
+
+Validation includes a real GPT-Live browser session with synthetic speech and
+a read-only test tool: three user segments, four assistant segments and two
+stored trace intervals survived retrieval after restart. Both light and dark
+voice-stage rendering were inspected. The fresh Linux backend installation
+passed all seven conversation contracts; physical macOS/Linux audio behavior
+is not inferred from these checks.
+
+
+## Startup audio catch-up (T2)
+
+The existing WebRTC input worklet now repays startup audio delay with bounded
+waveform-aligned overlap-add processing. It no longer depends on digitally
+silent microphone samples, which left the previous queue permanently behind
+in rooms with background noise. Quiet input is retained without an amplitude
+speech gate. After catch-up, microphone samples pass through unchanged.
+The native prefix shares the existing memory bound; reconnection clears both
+queued audio and a partly rendered overlap grain. Assistant playback is not
+processed by this input queue.
+
+This changes the shared Web Audio implementation on Windows, macOS and Linux;
+Gemini/local PCM adapters and headless boot are unchanged. No provider session,
+credential setting or always-on billed connection is added. Tests cover 16,
+24, 44.1 and 48 kHz, low amplitudes, waveform gain/pitch, noise/hum, prefix
+ordering and cancellation. An actual Chrome AudioWorklet comparison with the
+same two-second setup delay and background noise removed the old two-second
+steady input lag. Paired GPT-Live probes retained the same recognized words in
+German and English, including a quieter English sample. First response text
+arrived 0.4–1.4 seconds earlier in those three comparisons; these small
+synthetic comparisons are not a physical-device latency guarantee.
