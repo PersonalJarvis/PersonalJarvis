@@ -242,7 +242,9 @@ export function RosterRail({
               <span className="min-w-0 flex-1"><span className="flex items-center gap-1"><span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{group.name}</span>
                 {group.last_ms && <time className="shrink-0 text-[10px] text-muted-foreground" dateTime={new Date(group.last_ms).toISOString()}>{new Date(group.last_ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</time>}
                 </span>
-                <span className="block truncate text-xs text-muted-foreground">{group.last_text || `${t("society.groups.members")} · ${group.members.length}`}</span>
+                <span className="block truncate text-xs text-muted-foreground">{group.last_text
+                  ? `${group.last_from_agent && group.last_from_agent !== "user" ? `${agents.find((agent) => agent.agentId === group.last_from_agent)?.name ?? group.last_from_agent}: ` : ""}${group.last_text}`
+                  : `${t("society.groups.members")} · ${group.members.length}`}</span>
               </span>
             </button>
           </li>)}

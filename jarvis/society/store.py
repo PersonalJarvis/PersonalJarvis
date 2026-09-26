@@ -390,14 +390,11 @@ class SocietyStore:
             for row in rows
         ]
         for group in groups:
-            async with self.conn.execute(
-                "SELECT text, created_ms FROM society_chat_group_posts "
-                "WHERE group_id = ? ORDER BY created_ms DESC LIMIT 1",
-                (group["group_id"],),
-            ) as cur:
-                latest = await cur.fetchone()
-            group["last_text"] = latest[0] if latest else ""
-            group["last_ms"] = latest[1] if latest else None
+            messages = await self.chat_group_messages(group["group_id"])
+            latest = messages[-1] if messages else None
+            group["last_text"] = latest["text"] if latest else ""
+            group["last_ms"] = latest["ts_ms"] if latest else None
+            group["last_from_agent"] = latest["from_agent"] if latest else None
         return groups
 
     async def get_chat_group(self, group_id: str) -> dict[str, Any] | None:
@@ -416,14 +413,11 @@ class SocietyStore:
             "created_ms": row[3],
             "updated_ms": row[4],
         }
-        async with self.conn.execute(
-            "SELECT text, created_ms FROM society_chat_group_posts "
-            "WHERE group_id = ? ORDER BY created_ms DESC LIMIT 1",
-            (group_id,),
-        ) as cur:
-            latest = await cur.fetchone()
-        group["last_text"] = latest[0] if latest else ""
-        group["last_ms"] = latest[1] if latest else None
+        messages = await self.chat_group_messages(group_id)
+        latest = messages[-1] if messages else None
+        group["last_text"] = latest["text"] if latest else ""
+        group["last_ms"] = latest["ts_ms"] if latest else None
+        group["last_from_agent"] = latest["from_agent"] if latest else None
         return group
 
     async def create_chat_group(
@@ -494,7 +488,10 @@ class SocietyStore:
             }
             for event_id, sender, stamp, payload in replies
         )
-        return sorted(messages, key=lambda item: (item["ts_ms"], item["id"]))
+        return sorted(
+            messages,
+            key=lambda item: (item["ts_ms"], item["from_agent"] != "user", item["id"]),
+        )
 
     async def last_seq(self) -> int:
         cur = await self.conn.execute("SELECT COALESCE(MAX(seq), 0) FROM society_events")

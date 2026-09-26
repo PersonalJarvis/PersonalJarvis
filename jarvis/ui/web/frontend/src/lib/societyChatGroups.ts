@@ -8,6 +8,7 @@ export interface SocietyChatGroup {
   updated_ms: number;
   last_text: string;
   last_ms: number | null;
+  last_from_agent: string | null;
 }
 
 export interface SocietyChatGroupMessage {

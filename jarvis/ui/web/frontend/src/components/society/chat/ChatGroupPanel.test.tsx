@@ -28,7 +28,7 @@ it("shows named agent replies and sends to the whole group by default", async ()
   const scout = { agentId: "scout", name: "Scout", tier: "specialist" } as SocietyAgent;
   const writer = { agentId: "writer", name: "Writer", tier: "specialist" } as SocietyAgent;
   render(<QueryClientProvider client={client}><ChatGroupPanel
-    group={{ group_id: "team", name: "Launch team", members: ["scout", "writer"], created_ms: 1, updated_ms: 1, last_text: "", last_ms: null }}
+    group={{ group_id: "team", name: "Launch team", members: ["scout", "writer"], created_ms: 1, updated_ms: 1, last_text: "", last_ms: null, last_from_agent: null }}
     groups={[]} roster={[scout, writer]} onOpenAgent={() => undefined} onOpenGroup={() => undefined}
     onCreateAgent={() => undefined} onDeleted={() => undefined}
   /></QueryClientProvider>);

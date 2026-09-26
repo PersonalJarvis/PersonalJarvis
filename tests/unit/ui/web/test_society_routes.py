@@ -125,6 +125,12 @@ def test_group_chat_persists_members_and_correlates_agent_replies(client):
         ("user", "What is ready?"),
         ("scout", "Research ready."),
     ]
+    preview = next(
+        group
+        for group in c.get("/api/society/chat-groups").json()["groups"]
+        if group["group_id"] == group_id
+    )
+    assert (preview["last_from_agent"], preview["last_text"]) == ("scout", "Research ready.")
     assert (
         c.patch(
             f"/api/society/chat-groups/{group_id}",
