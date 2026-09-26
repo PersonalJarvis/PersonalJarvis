@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -127,6 +128,16 @@ class MessageBody(BaseModel):
     msg_type: str = "SAY"
     trace_id: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatGroupBody(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    members: list[str] = Field(min_length=2, max_length=50)
+
+
+class ChatGroupMessageBody(BaseModel):
+    text: str = Field(min_length=1, max_length=20_000)
+    recipients: list[str] | None = None
 
 
 class AssignBody(BaseModel):
@@ -296,6 +307,120 @@ async def archive_agent(agent_id: str, request: Request) -> dict[str, Any]:
     except RosterError as exc:
         raise _typed_error(exc) from exc
     return {"agent": archived.to_dict()}
+
+
+async def _valid_group_members(rt: SocietyRuntime, members: list[str]) -> list[str]:
+    if len(set(members)) != len(members):
+        raise HTTPException(422, "group members must be unique")
+    for member_id in members:
+        agent = await rt.roster.get(member_id)
+        if agent is None or agent.tier == "lead" or agent.state == "archived":
+            raise HTTPException(422, f"agent {member_id} is unavailable for a group")
+    return members
+
+
+@router.get("/chat-groups")
+async def list_chat_groups(request: Request) -> dict[str, Any]:
+    """List persistent Society group chats and their members."""
+    rt = await _runtime(request)
+    return {"groups": await rt.store.list_chat_groups()}
+
+
+@router.post("/chat-groups")
+async def create_chat_group(body: ChatGroupBody, request: Request) -> dict[str, Any]:
+    """Create one group chat from available Society agents."""
+    rt = await _runtime(request)
+    if not body.name.strip():
+        raise HTTPException(422, "group name is required")
+    members = await _valid_group_members(rt, body.members)
+    group = await rt.store.create_chat_group(uuid4().hex, body.name.strip(), members)
+    return {"group": group}
+
+
+@router.patch("/chat-groups/{group_id}")
+async def update_chat_group(group_id: str, body: ChatGroupBody, request: Request) -> dict[str, Any]:
+    """Rename a group chat and replace its member list."""
+    rt = await _runtime(request)
+    if not body.name.strip():
+        raise HTTPException(422, "group name is required")
+    if await rt.store.get_chat_group(group_id) is None:
+        raise HTTPException(404, "chat group not found")
+    members = await _valid_group_members(rt, body.members)
+    return {"group": await rt.store.update_chat_group(group_id, body.name.strip(), members)}
+
+
+@router.delete("/chat-groups/{group_id}", openapi_extra={"x-jarvis-dangerous": True})
+async def delete_chat_group(group_id: str, request: Request) -> dict[str, bool]:
+    """Ungroup agents and remove the group transcript."""
+    rt = await _runtime(request)
+    if await rt.store.get_chat_group(group_id) is None:
+        raise HTTPException(404, "chat group not found")
+    await rt.store.delete_chat_group(group_id)
+    return {"deleted": True}
+
+
+@router.get("/chat-groups/{group_id}/messages")
+async def chat_group_messages(group_id: str, request: Request) -> dict[str, Any]:
+    """Read user posts and correlated agent replies in a group chat."""
+    rt = await _runtime(request)
+    if await rt.store.get_chat_group(group_id) is None:
+        raise HTTPException(404, "chat group not found")
+    return {"messages": await rt.store.chat_group_messages(group_id)}
+
+
+@router.post("/chat-groups/{group_id}/messages", openapi_extra={"x-jarvis-dangerous": True})
+async def send_chat_group_message(
+    group_id: str, body: ChatGroupMessageBody, request: Request
+) -> dict[str, Any]:
+    """Ask all or selected group members and append one shared user post."""
+    rt = await _runtime(request)
+    group = await rt.store.get_chat_group(group_id)
+    if group is None:
+        raise HTTPException(404, "chat group not found")
+    members = group["members"]
+    recipients = body.recipients if body.recipients is not None else members
+    if not recipients or len(set(recipients)) != len(recipients) or set(recipients) - set(members):
+        raise HTTPException(422, "recipients must be distinct group members")
+    active = []
+    skipped = []
+    for member_id in recipients:
+        agent = await rt.roster.get(member_id)
+        if agent is None or agent.state != "active":
+            if body.recipients is not None:
+                raise HTTPException(409, f"agent {member_id} is not active")
+            skipped.append(member_id)
+            continue
+        active.append(agent)
+    if not active:
+        raise HTTPException(409, "no group members are active")
+    history = await rt.store.chat_group_messages(group_id, limit=8)
+    names = {agent.agent_id: agent.name for agent in active}
+    recent = "\n".join(
+        f"{names.get(item['from_agent'], item['from_agent'])}: {item['text'][:300]}"
+        for item in history[-8:]
+    )
+    trace_id = f"group:{uuid4().hex}"
+    post_id = uuid4().hex
+    await rt.store.add_chat_group_post(post_id, group_id, trace_id, body.text)
+    prompt = (
+        f"Group chat '{group['name']}'. Members: {', '.join(members)}.\n"
+        + (f"Recent group messages:\n{recent}\n" if recent else "")
+        + f"User: {body.text}\nReply to the group request."
+    )
+    for agent in active:
+        await rt.say(
+            from_agent="user",
+            to_agent=agent.agent_id,
+            text=prompt,
+            trace_id=trace_id,
+            msg_type=MsgType.QUERY,
+            payload={"group_id": group_id, "reply_policy": "always"},
+        )
+    return {
+        "post_id": post_id,
+        "recipients": [agent.agent_id for agent in active],
+        "skipped": skipped,
+    }
 
 
 @router.post("/agents/{agent_id}/message", openapi_extra={"x-jarvis-dangerous": True})
@@ -623,7 +748,7 @@ async def agent_knowledge(agent_id: str, request: Request) -> dict[str, Any]:
     last = await rt.store.get_meta(f"review:last:{agent.agent_id}", "")
     return {
         "files": files,
-        "learned_instructions": [e.text[len(PREFIX):] for e in rules(entries)],
+        "learned_instructions": [e.text[len(PREFIX) :] for e in rules(entries)],
         "reviews": rt.conversations.review_counts(agent.agent_id),
         "last_review": json.loads(last) if last else None,
     }

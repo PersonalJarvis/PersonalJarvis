@@ -15,18 +15,20 @@
  * from the grid cell — same rows, same sizes, only the divider swaps sides.
  */
 import { lazy, Suspense, useCallback, useMemo, useState, type MouseEvent, type ReactNode } from "react";
-import { Eye, Loader2, Plus, Search } from "lucide-react";
+import { Eye, Loader2, Plus, Search, UsersRound } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import type { SocietyChatGroup } from "@/lib/societyChatGroups";
 
 import { AgentSwatch } from "../AgentSwatch";
 import type { AgentRunState, SocietyAgent } from "../data";
 import { AgentRosterActions } from "./AgentRosterActions";
 import { useRosterUnread } from "./useRosterUnread";
+import { ChatGroupDialog } from "../chat/ChatGroupDialog";
 
 const HIDDEN_AGENTS_KEY = "society.roster.hidden-agent-ids";
 
@@ -50,6 +52,9 @@ const STATE_DOT: Record<AgentRunState, string> = {
 
 export interface RosterRailProps {
   agents: SocietyAgent[];
+  groups?: SocietyChatGroup[];
+  activeGroupId?: string | null;
+  onOpenGroup?: (groupId: string) => void;
   loading: boolean;
   /** True while rows come from the sample roster rather than society.db. */
   sample: boolean;
@@ -66,6 +71,9 @@ export interface RosterRailProps {
 
 export function RosterRail({
   agents,
+  groups = [],
+  activeGroupId = null,
+  onOpenGroup,
   loading,
   sample,
   activeAgentId,
@@ -77,6 +85,7 @@ export function RosterRail({
 }: RosterRailProps) {
   const t = useT();
   const [query, setQuery] = useState("");
+  const [creatingGroup, setCreatingGroup] = useState(false);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [hiddenIds, setHiddenIds] = useState(readHiddenAgents);
   const [showHidden, setShowHidden] = useState(false);
@@ -100,6 +109,8 @@ export function RosterRail({
   };
 
   const lead = useMemo(() => agents.find((a) => a.tier === "lead") ?? null, [agents]);
+  const groupedIds = useMemo(() => new Set(groups.flatMap((group) => group.members)), [groups]);
+  const visibleGroups = groups.filter((group) => `${group.name} ${group.members.map((id) => agents.find((agent) => agent.agentId === id)?.name ?? "").join(" ")}`.toLowerCase().includes(query.trim().toLowerCase()));
 
   const { leadVisible, rows } = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -112,10 +123,10 @@ export function RosterRail({
     // in its own centered hero above and never repeats in the list.
     const rank = { lead: 0, orchestrator: 1, specialist: 2 } as const;
     const rest = filtered
-      .filter((a) => a.agentId !== lead?.agentId)
+      .filter((a) => a.agentId !== lead?.agentId && !groupedIds.has(a.agentId))
       .sort((a, b) => rank[a.tier] - rank[b.tier]);
     return { leadVisible: masterVisible, rows: rest };
-  }, [agents, hiddenIds, lead, query, showHidden]);
+  }, [agents, groupedIds, hiddenIds, lead, query, showHidden]);
 
   const hiddenCount = agents.filter((agent) => hiddenIds.includes(agent.agentId)).length;
 
@@ -140,6 +151,10 @@ export function RosterRail({
             </Badge>
           ) : null}
         </div>
+        <div className="flex items-center gap-1">
+        {!sample && onOpenGroup && <Button size="sm" variant="secondary" className="h-8 px-2" onClick={() => setCreatingGroup(true)} data-testid="society-create-group-button" aria-label={t("society.groups.create")} title={t("society.groups.create")}>
+          <UsersRound className="h-4 w-4" aria-hidden />
+        </Button>}
         <Button
           size="sm"
           variant="secondary"
@@ -150,6 +165,7 @@ export function RosterRail({
           <Plus className="h-3.5 w-3.5" aria-hidden />
           {t("society.roster.create")}
         </Button>
+        </div>
       </div>
       <label className="relative mx-3 mt-3 block">
         <Search
@@ -212,11 +228,32 @@ export function RosterRail({
         {leadVisible ? (
           <div className="mx-3 mb-1 border-t border-border/60" aria-hidden />
         ) : null}
+        {visibleGroups.length > 0 && <ul className="flex flex-col gap-0.5 px-2 pb-2">
+          {visibleGroups.map((group) => <li key={group.group_id}>
+            <button type="button" onClick={() => onOpenGroup?.(group.group_id)} aria-current={activeGroupId === group.group_id ? "true" : undefined}
+              className={cn("flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", activeGroupId === group.group_id && "bg-secondary")}
+              data-testid={`society-group-${group.group_id}`}>
+              <span className="flex w-12 shrink-0 items-center justify-center">
+                {group.members.slice(0, 3).map((id, index) => {
+                  const member = agents.find((agent) => agent.agentId === id);
+                  return member ? <span key={id} className={cn("rounded-full ring-2 ring-sidebar", index > 0 && "-ml-3")}><AgentSwatch agent={member} size={26} /></span> : null;
+                })}
+              </span>
+              <span className="min-w-0 flex-1"><span className="flex items-center gap-1"><span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{group.name}</span>
+                {group.last_ms && <time className="shrink-0 text-[10px] text-muted-foreground" dateTime={new Date(group.last_ms).toISOString()}>{new Date(group.last_ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</time>}
+                </span>
+                <span className="block truncate text-xs text-muted-foreground">{group.last_text
+                  ? `${group.last_from_agent && group.last_from_agent !== "user" ? `${agents.find((agent) => agent.agentId === group.last_from_agent)?.name ?? group.last_from_agent}: ` : ""}${group.last_text}`
+                  : `${t("society.groups.members")} · ${group.members.length}`}</span>
+              </span>
+            </button>
+          </li>)}
+        </ul>}
         <ul className="flex flex-col gap-0.5 px-2 pb-3">
           {loading && !leadVisible && rows.length === 0 ? (
             <li className="px-2 py-3 text-xs text-muted-foreground">{t("society.roster.loading")}</li>
           ) : null}
-          {!loading && !leadVisible && rows.length === 0 ? (
+          {!loading && !leadVisible && rows.length === 0 && visibleGroups.length === 0 ? (
             <li className="px-2 py-3 text-xs text-muted-foreground">{t("society.roster.empty")}</li>
           ) : null}
           {rows.map((agent) => (
@@ -254,6 +291,7 @@ export function RosterRail({
       {menu && menuAgent && <AgentRosterActions key={menu.agentId} agent={menuAgent} roster={agents} sample={sample}
         hidden={hiddenIds.includes(menu.agentId)} x={menu.x} y={menu.y} onVisibilityChange={setHidden} onDismiss={closeMenu} />}
       {profile && <Suspense fallback={null}><AgentProfileDialog key={profile.agentId} agent={profile} sample={sample} onClose={() => setProfileId(null)} /></Suspense>}
+      {creatingGroup && <ChatGroupDialog agents={agents} onClose={() => setCreatingGroup(false)} onSaved={(id) => onOpenGroup?.(id)} />}
     </aside>
   );
 }

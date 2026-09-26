@@ -371,6 +371,128 @@ class SocietyStore:
         await cur.close()
         return [_row_to_envelope(r) for r in rows]
 
+    # ------------------------------------------------------- persistent groups
+
+    async def list_chat_groups(self) -> list[dict[str, Any]]:
+        async with self.conn.execute(
+            "SELECT group_id, name, members_json, created_ms, updated_ms "
+            "FROM society_chat_groups ORDER BY created_ms ASC"
+        ) as cur:
+            rows = await cur.fetchall()
+        groups = [
+            {
+                "group_id": row[0],
+                "name": row[1],
+                "members": json.loads(row[2]),
+                "created_ms": row[3],
+                "updated_ms": row[4],
+            }
+            for row in rows
+        ]
+        for group in groups:
+            messages = await self.chat_group_messages(group["group_id"])
+            latest = messages[-1] if messages else None
+            group["last_text"] = latest["text"] if latest else ""
+            group["last_ms"] = latest["ts_ms"] if latest else None
+            group["last_from_agent"] = latest["from_agent"] if latest else None
+        return groups
+
+    async def get_chat_group(self, group_id: str) -> dict[str, Any] | None:
+        async with self.conn.execute(
+            "SELECT group_id, name, members_json, created_ms, updated_ms "
+            "FROM society_chat_groups WHERE group_id = ?",
+            (group_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        group = {
+            "group_id": row[0],
+            "name": row[1],
+            "members": json.loads(row[2]),
+            "created_ms": row[3],
+            "updated_ms": row[4],
+        }
+        messages = await self.chat_group_messages(group_id)
+        latest = messages[-1] if messages else None
+        group["last_text"] = latest["text"] if latest else ""
+        group["last_ms"] = latest["ts_ms"] if latest else None
+        group["last_from_agent"] = latest["from_agent"] if latest else None
+        return group
+
+    async def create_chat_group(
+        self, group_id: str, name: str, members: list[str]
+    ) -> dict[str, Any]:
+        stamp = now_ms()
+        await self.conn.execute(
+            "INSERT INTO society_chat_groups VALUES (?, ?, ?, ?, ?)",
+            (group_id, name, json.dumps(members), stamp, stamp),
+        )
+        return (await self.get_chat_group(group_id)) or {}
+
+    async def update_chat_group(
+        self, group_id: str, name: str, members: list[str]
+    ) -> dict[str, Any]:
+        await self.conn.execute(
+            "UPDATE society_chat_groups SET name = ?, members_json = ?, updated_ms = ? "
+            "WHERE group_id = ?",
+            (name, json.dumps(members), now_ms(), group_id),
+        )
+        return (await self.get_chat_group(group_id)) or {}
+
+    async def delete_chat_group(self, group_id: str) -> None:
+        await self.conn.execute("DELETE FROM society_chat_groups WHERE group_id = ?", (group_id,))
+
+    async def add_chat_group_post(
+        self, post_id: str, group_id: str, trace_id: str, text: str
+    ) -> None:
+        await self.conn.execute(
+            "INSERT INTO society_chat_group_posts VALUES (?, ?, ?, ?, ?)",
+            (post_id, group_id, trace_id, text, now_ms()),
+        )
+
+    async def chat_group_messages(self, group_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        """Return user posts and correlated replies without unrelated board traffic."""
+        async with self.conn.execute(
+            "SELECT post_id, trace_id, text, created_ms FROM "
+            "(SELECT * FROM society_chat_group_posts WHERE group_id = ? "
+            "ORDER BY created_ms DESC LIMIT ?) ORDER BY created_ms ASC",
+            (group_id, limit),
+        ) as cur:
+            posts = await cur.fetchall()
+        messages: list[dict[str, Any]] = [
+            {"id": post_id, "from_agent": "user", "text": body, "ts_ms": stamp}
+            for post_id, _trace_id, body, stamp in posts
+        ]
+        if not posts:
+            return messages
+        async with self.conn.execute(
+            "SELECT answer.event_id, answer.from_agent, answer.ts_ms, answer.payload_json "
+            "FROM society_events answer "
+            "JOIN society_events request ON request.event_id = answer.parent_event_id "
+            "WHERE answer.trace_id IN ("
+            "SELECT trace_id FROM society_chat_group_posts WHERE group_id = ? "
+            "ORDER BY created_ms DESC LIMIT ?) "
+            "AND answer.msg_type = 'ANSWER' AND answer.to_agent = 'user' "
+            "AND request.trace_id = answer.trace_id AND request.from_agent = 'user' "
+            "AND request.msg_type = 'QUERY' AND request.to_agent = answer.from_agent",
+            (group_id, limit),
+        ) as cur:
+            replies = await cur.fetchall()
+        messages.extend(
+            {
+                "id": event_id,
+                "from_agent": sender,
+                "text": str(json.loads(payload).get("text", "")),
+                "ts_ms": stamp,
+            }
+            for event_id, sender, stamp, payload in replies
+        )
+        return sorted(
+            messages,
+            key=lambda item: (item["ts_ms"], item["from_agent"] != "user", item["id"]),
+        )
+
     async def last_seq(self) -> int:
         cur = await self.conn.execute("SELECT COALESCE(MAX(seq), 0) FROM society_events")
         row = await cur.fetchone()

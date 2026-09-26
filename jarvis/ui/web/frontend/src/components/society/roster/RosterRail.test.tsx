@@ -55,6 +55,18 @@ const baseProps = {
 };
 
 describe("RosterRail status", () => {
+  it("shows a team as one row and keeps its members out of the sidebar", () => {
+    const openGroup = vi.fn();
+    render(<RosterRail {...baseProps} activeAgentId={null}
+      agents={[agent({ agentId: "scout", name: "Scout" }), agent({ agentId: "writer", name: "Writer" })]}
+      groups={[{ group_id: "team", name: "Launch team", members: ["scout", "writer"], created_ms: 1, updated_ms: 1, last_text: "Draft complete", last_ms: 2, last_from_agent: "scout" }]}
+      onOpenGroup={openGroup} />);
+    expect(screen.queryByText("Scout")).toBeNull();
+    expect(screen.queryByText("Writer")).toBeNull();
+    expect(screen.getByText("Scout: Draft complete")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("society-group-team"));
+    expect(openGroup).toHaveBeenCalledWith("team");
+  });
   it("shows a loading spinner while an agent is thinking", () => {
     render(
       <RosterRail

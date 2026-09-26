@@ -71,6 +71,26 @@ CREATE INDEX IF NOT EXISTS idx_society_events_inbox ON society_events(to_agent, 
 CREATE INDEX IF NOT EXISTS idx_society_events_trace ON society_events(trace_id, seq);
 CREATE INDEX IF NOT EXISTS idx_society_events_from ON society_events(from_agent, seq);
 
+-- Persistent, user-owned chat groups. A group keeps roster identities, while
+-- each post has one trace shared by the receiving agents and their replies.
+CREATE TABLE IF NOT EXISTS society_chat_groups (
+    group_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    members_json TEXT NOT NULL,
+    created_ms INTEGER NOT NULL,
+    updated_ms INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS society_chat_group_posts (
+    post_id TEXT PRIMARY KEY,
+    group_id TEXT NOT NULL REFERENCES society_chat_groups(group_id) ON DELETE CASCADE,
+    trace_id TEXT NOT NULL UNIQUE,
+    text TEXT NOT NULL,
+    created_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_society_chat_group_posts
+    ON society_chat_group_posts(group_id, created_ms);
+
 -- Bounded group discussions: state lives here, history in society_events
 -- (msg_type ROOM_OPEN / SAY / ROOM_SETTLE sharing the room's trace_id).
 CREATE TABLE IF NOT EXISTS society_rooms (
