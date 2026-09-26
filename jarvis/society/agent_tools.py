@@ -29,7 +29,7 @@ from jarvis.core.protocols import ToolResult
 
 from .communication import REPLY_POLICY_SCHEMA, reply_policy, select_reply_policy
 from .delivery import incoming_context
-from .events import MsgType
+from .events import MsgType, SocietyEnvelope
 from .failure_reasons import FailureReason, retry_action
 from .memory import MemoryRefused
 from .roster import AgentState
@@ -40,11 +40,13 @@ __all__ = [
     "MEMORY_RECALL_TOOL_NAME",
     "MESSAGE_TOOL_NAME",
     "PROPOSE_TOOL_NAME",
+    "REPORT_OUTCOME_TOOL_NAME",
     "SHELL_TOOL_NAME",
     "WIKI_NOTE_TOOL_NAME",
     "MemoryRecallTool",
     "MessageAgentTool",
     "ProposeChangeTool",
+    "ReportOutcomeTool",
     "ShellTool",
     "WikiNoteTool",
 ]
@@ -54,6 +56,7 @@ WIKI_NOTE_TOOL_NAME: Final[str] = "society_wiki_note"
 SHELL_TOOL_NAME: Final[str] = "society_shell"
 MEMORY_RECALL_TOOL_NAME: Final[str] = "society_memory_recall"
 PROPOSE_TOOL_NAME: Final[str] = "society_propose_change"
+REPORT_OUTCOME_TOOL_NAME: Final[str] = "society_report_outcome"
 _KINDS: Final[dict[str, MsgType]] = {
     "say": MsgType.SAY,
     "query": MsgType.QUERY,
@@ -70,6 +73,79 @@ def _failure(reason: FailureReason, detail: str) -> ToolResult:
         output={"reason": str(reason), "retry": str(retry_action(reason))},
         error=f"{reason}: {detail}",
     )
+
+
+class ReportOutcomeTool:
+    """Record a typed outcome for the assignment currently being worked on."""
+
+    name: str = REPORT_OUTCOME_TOOL_NAME
+    risk_tier: str = "safe"
+    description: str = (
+        "Report the actual outcome of your current assigned task. Use blocked when a login, "
+        "approval, missing information or failed tool prevents completion. Use partial when "
+        "some requested work remains. Use done only after checking the result. Include the "
+        "specific user action in open when blocked. This records a report; it does not "
+        "prove that a claimed file or external action exists."
+    )
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "status": {"type": "string", "enum": ["done", "partial", "blocked"]},
+            "summary": {"type": "string"},
+            "output": {"type": "array", "items": {"type": "string"}},
+            "evidence": {"type": "array", "items": {"type": "string"}},
+            "open": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["status", "summary"],
+    }
+
+    def __init__(self, runtime: Any, agent_id: str) -> None:
+        self._runtime = runtime
+        self._agent_id = agent_id
+
+    async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
+        incoming = incoming_context.get()
+        caller = await self._runtime.roster.get(self._agent_id)
+        if caller is None or caller.state is not AgentState.ACTIVE:
+            return _failure(FailureReason.BLOCKED_BY_POLICY, "caller is not an active agent")
+        if incoming is None or not incoming.message_id or not incoming.trace_id:
+            return _failure(FailureReason.BLOCKED_BY_POLICY, "no active assignment")
+        parent = await self._runtime.store.get_event(incoming.message_id)
+        if (
+            parent is None
+            or parent.msg_type is not MsgType.ASSIGN
+            or parent.to_agent != self._agent_id
+        ):
+            return _failure(FailureReason.BLOCKED_BY_POLICY, "outcome needs the current assignment")
+        status = args.get("status")
+        summary = str(args.get("summary") or "").strip()
+        if status not in {"done", "partial", "blocked"} or not summary or len(summary) > 2000:
+            return _failure(
+                FailureReason.BLOCKED_BY_POLICY, "valid status and summary are required"
+            )
+        lists: dict[str, list[str]] = {}
+        for key in ("output", "evidence", "open"):
+            value = args.get(key, [])
+            if (
+                not isinstance(value, list)
+                or len(value) > 20
+                or any(not isinstance(item, str) or len(item) > 500 for item in value)
+            ):
+                return _failure(FailureReason.BLOCKED_BY_POLICY, f"invalid {key}")
+            lists[key] = [item.strip() for item in value if item.strip()]
+        if status != "done" and not lists["open"]:
+            lists["open"] = [summary]
+        await self._runtime.store.append_and_publish(
+            SocietyEnvelope(
+                msg_type=MsgType.DIGEST,
+                from_agent=self._agent_id,
+                to_agent=None,
+                trace_id=parent.trace_id,
+                parent_event_id=parent.event_id,
+                payload={"kind": "task_outcome", "status": status, "summary": summary, **lists},
+            )
+        )
+        return ToolResult(success=True, output={"status": "recorded"})
 
 
 class MessageAgentTool:

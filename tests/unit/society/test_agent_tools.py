@@ -8,9 +8,10 @@ from uuid import uuid4
 
 import pytest
 
-from jarvis.society.agent_tools import MessageAgentTool, WikiNoteTool
+from jarvis.society.agent_tools import MessageAgentTool, ReportOutcomeTool, WikiNoteTool
 from jarvis.society.capabilities import NEVER_GRANTED, build_catalog
-from jarvis.society.events import MsgType
+from jarvis.society.delivery import IncomingMessage, incoming_context
+from jarvis.society.events import MsgType, SocietyEnvelope
 from jarvis.society.runtime import SocietyRuntime
 
 
@@ -67,6 +68,55 @@ def test_message_tool_is_never_in_the_catalog():
     assert build_catalog(fake) == []
 
 
+async def test_outcome_is_bound_to_the_current_assignment(rt: SocietyRuntime):
+    async def dispatch(_target, _env):
+        return "run-1"
+
+    rt.scheduler._dispatch = dispatch  # noqa: SLF001 - avoid a real runner
+    assignment = await rt.store.append_and_publish(
+        SocietyEnvelope(
+            msg_type=MsgType.ASSIGN,
+            from_agent="user",
+            to_agent="scout",
+            trace_id="quest:test-report",
+            payload={"text": "Prüfe die Quellen."},  # i18n-allow: user request
+        )
+    )
+    tool = ReportOutcomeTool(rt, "scout")
+    assert not (await tool.execute({"status": "done", "summary": "Checked."}, CTX)).success
+    context = IncomingMessage(
+        message_id=assignment.event_id,
+        sender_id="user",
+        sender_name="user",
+        sender_kind="user",
+        text="Prüfe die Quellen.",  # i18n-allow: user request
+        prompt="Prüfe die Quellen.",  # i18n-allow: user request
+        trace_id=assignment.trace_id,
+    )
+    token = incoming_context.set(context)
+    try:
+        result = await tool.execute(
+            {"status": "blocked", "summary": "Login needed.", "open": ["Sign in to the site."]},
+            CTX,
+        )
+        assert result.success
+        assert not (
+            await ReportOutcomeTool(rt, "archivist").execute(
+                {"status": "done", "summary": "Wrong owner."}, CTX
+            )
+        ).success
+    finally:
+        incoming_context.reset(token)
+    reports = [
+        event
+        for event in await rt.store.events_for_trace(assignment.trace_id)
+        if event.msg_type is MsgType.DIGEST and event.payload.get("kind") == "task_outcome"
+    ]
+    assert len(reports) == 1
+    assert reports[0].parent_event_id == assignment.event_id
+    assert reports[0].payload["open"] == ["Sign in to the site."]
+
+
 async def test_wiki_note_writes_into_the_namespace_only(rt: SocietyRuntime, tmp_path: Path):
     vault = tmp_path / "vault"
     tool = WikiNoteTool(rt, "scout", vault_root=vault)
@@ -87,7 +137,9 @@ async def test_wiki_note_writes_into_the_namespace_only(rt: SocietyRuntime, tmp_
     assert again.output["path"] != res.output["path"]
 
     # Memory appends to one page.
-    m1 = await tool.execute({"kind": "memory", "target": "memory", "text": "The user prefers Hetzner."}, CTX)
+    m1 = await tool.execute(
+        {"kind": "memory", "target": "memory", "text": "The user prefers Hetzner."}, CTX
+    )
     m2 = await tool.execute({"kind": "memory", "text": "Budget is 5 EUR/month."}, CTX)
     assert m1.output["path"] == m2.output["path"] == "society/scout/MEMORY.md"
     memory = (vault / "society" / "scout" / "MEMORY.md").read_text(encoding="utf-8")

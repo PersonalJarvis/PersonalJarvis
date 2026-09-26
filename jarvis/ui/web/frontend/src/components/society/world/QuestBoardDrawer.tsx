@@ -13,6 +13,7 @@ import { ChevronDown, ChevronRight, Plus, RotateCcw, X } from "lucide-react";
 import { fill, useT } from "@/i18n";
 import type { QuestState, SocietyQuestRow } from "@/lib/societyApi";
 import { cn } from "@/lib/utils";
+import { TaskOutputLinks } from "@/components/agentchat/TaskOutputLinks";
 
 import { useSocietyRoster } from "../data";
 import { ageOf, groupQuests, takerKind } from "./questBoard";
@@ -117,6 +118,10 @@ function QuestCard({
           {row.state === "done" && (row.result?.done || row.result?.text) && (
             <p className="whitespace-pre-wrap text-foreground">{row.result.done || row.result.text}</p>
           )}
+          {row.state === "done" && row.result?.status === "reported" && (
+            <p className="text-muted-foreground">{t("society.world.quest_result_reported")}</p>
+          )}
+          <TaskOutputLinks output={row.result?.output} evidence={row.result?.evidence} />
           {row.result?.open && row.result.open.length > 0 && (
             <ul className="list-disc pl-4 text-foreground">
               {row.result.open.map((item) => (

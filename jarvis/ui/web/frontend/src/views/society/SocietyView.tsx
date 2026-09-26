@@ -9,6 +9,7 @@ import { AgentCardOverlay } from "@/components/society/card/AgentCardOverlay";
 import { BuildingCardOverlay } from "@/components/society/card/BuildingCardOverlay";
 import { isBuildingPlace, type BuildingPlace } from "@/components/society/card/buildingCards";
 import { CreateAgentDialog } from "@/components/society/create/CreateAgentDialog";
+import { TeamTasks } from "@/components/society/chat/TeamTasks";
 import type { PlaceId } from "@/components/society/world/islandLayout";
 import { useSocietyRoster } from "@/components/society/data";
 import { RosterRail } from "@/components/society/roster/RosterRail";
@@ -145,6 +146,7 @@ export function SocietyView() {
         </div>
         ) : null}
         <div className={mode === "agents" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
+        <TeamTasks agents={agents} onOpenAgent={selectAgent} />
         {openAgent ? (
           <AgentCardOverlay embedded agent={openAgent} roster={agents} rosterLoading={roster.isLoading}
             sample={sample} onSelectAgent={selectAgent} onCreate={() => setCreating(true)}
