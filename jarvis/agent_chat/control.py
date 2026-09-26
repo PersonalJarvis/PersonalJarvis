@@ -708,7 +708,7 @@ class ChatControls:
                     event = await queue.get()
                     if relevant(event):
                         return json.dumps(event["payload"], ensure_ascii=False)
-        except TimeoutError:
+        except TimeoutError:  # The caller receives a pending update notice.
             return "No background update yet. Check the existing task; do not submit it again."
         finally:
             self.service.unsubscribe(sid, queue)

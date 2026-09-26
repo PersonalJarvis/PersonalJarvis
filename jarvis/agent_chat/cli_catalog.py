@@ -59,7 +59,7 @@ def catalog_key(argv: list[str], env: Mapping[str, str], cwd: Path) -> str:
         try:
             stat = path.stat()
             stamps.append((str(path), stat.st_mtime_ns, stat.st_size))
-        except OSError:
+        except OSError:  # Missing optional CLI metadata gets an empty cache stamp.
             stamps.append((str(path), None, None))
     payload = json.dumps([argv, sorted(env.items()), str(cwd), stamps], sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()

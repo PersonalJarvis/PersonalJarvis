@@ -276,7 +276,7 @@ class TaskScheduler:
                 status = await self.receive_hook(
                     task_id, payload, str(event.trace_id), source="source", lineage=path
                 )
-            except ValueError:
+            except ValueError:  # The source is marked blocked with payload_invalid below.
                 status = "payload_invalid"
             if status not in {"queued", "duplicate", "filtered"}:
                 await self._store.sources.status(task_id, "blocked", status)
@@ -384,7 +384,7 @@ class TaskScheduler:
                     and current["state"] == "scheduled"
                 ):
                     await self._store.update_state(tid, "completed")
-        except RoutineDeferred:
+        except RoutineDeferred:  # Keep the hook pending and retry after a short delay.
             await self._store.hooks.mark(tid, delivery, "pending")
             self._hook_retry_at[tid] = time.monotonic() + 2
         except asyncio.CancelledError:
@@ -805,7 +805,7 @@ class TaskScheduler:
         if trig.type == "at_time":
             try:
                 return parse_iso_timestamp_to_ns(trig.iso_timestamp)
-            except ValueError:
+            except ValueError:  # Invalid ISO times have no schedulable due date.
                 return None
         if trig.type == "cron":
             return next_every_due_ns(spec, time.time_ns())
@@ -815,7 +815,7 @@ class TaskScheduler:
             if trig.start_at:
                 try:
                     return parse_iso_timestamp_to_ns(trig.start_at)
-                except ValueError:
+                except ValueError:  # Invalid start times have no schedulable due date.
                     return None
             return time.time_ns() + int(trig.interval_seconds * 1e9)
         return None
@@ -858,7 +858,7 @@ class TaskScheduler:
                     await self._wakeup.wait()
                 else:
                     await asyncio.wait_for(self._wakeup.wait(), timeout=timeout)
-            except TimeoutError:
+            except TimeoutError:  # The periodic wake interval elapsed without a signal.
                 pass
             self._wakeup.clear()
 
@@ -990,7 +990,7 @@ def next_every_due_ns(spec: TaskSpec, now_ns: int) -> int:
     if start_at:
         try:
             anchor = parse_iso_timestamp_to_ns(start_at)
-        except ValueError:
+        except ValueError:  # An invalid anchor falls back to the current interval.
             anchor = None
         if anchor is not None:
             if anchor > now_ns:
@@ -1067,7 +1067,7 @@ def _match_filter(event: Event, filter_expr: str | None) -> bool:
 
     try:
         tree = ast.parse(filter_expr, mode="eval")
-    except SyntaxError:
+    except SyntaxError:  # Malformed filters are rejected before evaluation.
         return False
 
     for node in ast.walk(tree):

@@ -143,7 +143,7 @@ class MarsStationService:
             # A queued command's grants/agent state may have changed while waiting.
             try:
                 await self._authorize(claimed.agent_id)
-            except StationError as exc:
+            except StationError as exc:  # Authorization failure is recorded against the command.
                 await self.store.apply(
                     claimed.command_id,
                     claimed.fence,
@@ -172,7 +172,7 @@ class MarsStationService:
             receipt = ExecutionReceipt.model_validate(raw, strict=False)
             if operation != "cancel" and receipt.cancel_attempt is not None:
                 raise ValueError("cancellation attempt evidence belongs only to cancel receipts")
-        except DispatchRejected as exc:
+        except DispatchRejected as exc:  # The receipt records the dispatch refusal.
             if operation == "dispatch":
                 receipt = ExecutionReceipt(state=CommandState.FAILED)
                 reason = exc.reason

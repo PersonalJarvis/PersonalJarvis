@@ -116,7 +116,7 @@ def stop_cli_at_cwd(cwd: str) -> int:
     root = Path(cwd).expanduser()
     try:
         root = root.resolve()
-    except OSError:
+    except OSError:  # An unresolvable workspace cannot match a running process.
         return 0
     if not root.is_dir():
         return 0
@@ -905,7 +905,7 @@ class AgentChatService:
         assert run is not None and run.task is not None
         try:
             await asyncio.wait_for(asyncio.shield(run.task), timeout=15.0)
-        except TimeoutError:
+        except TimeoutError:  # Stop escalates to task cancellation after the bounded wait.
             run.task.cancel()
             await asyncio.gather(run.task, return_exceptions=True)
         except asyncio.CancelledError:
