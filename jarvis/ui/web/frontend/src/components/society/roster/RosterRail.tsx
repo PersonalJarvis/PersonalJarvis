@@ -27,7 +27,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/i18n";
+import { societyDisplayName } from "@/lib/societyDisplayName";
 import { cn } from "@/lib/utils";
+import { useEventStore } from "@/store/events";
 
 import { AgentSwatch } from "../AgentSwatch";
 import type { AgentRunState, SocietyAgent } from "../data";
@@ -111,6 +113,9 @@ export function RosterRail({
   const profile = agents.find((agent) => agent.agentId === profileId);
   const menuAgent = agents.find((agent) => agent.agentId === menu?.agentId);
   const unread = useRosterUnread(agents, activeAgentId);
+  // The lead's visible name follows the wake word (e.g. "Hanna" for
+  // "Hey Hanna"); every other agent keeps its roster name.
+  const assistantName = useEventStore((s) => s.assistantName);
 
   const setHidden = useCallback((agentId: string, hidden: boolean) => {
     setHiddenIds((current) => {
@@ -130,10 +135,14 @@ export function RosterRail({
 
   const { leadVisible, rows } = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const filtered = agents.filter((a) =>
-      (showHidden || !hiddenIds.includes(a.agentId)) &&
-      (!q || `${a.name} ${a.title}`.toLowerCase().includes(q)),
-    );
+    const filtered = agents.filter((a) => {
+      if (!showHidden && hiddenIds.includes(a.agentId)) return false;
+      if (!q) return true;
+      // The lead is shown under the wake-word name, so the search matches
+      // both the display name and the stored roster name.
+      const display = societyDisplayName(a, assistantName);
+      return `${a.name} ${display} ${a.title}`.toLowerCase().includes(q);
+    },);
     const masterVisible = lead ? filtered.some((a) => a.agentId === lead.agentId) : false;
     // Orchestrators, then specialists; stable within a tier. The lead lives
     // in its own centered hero above and never repeats in the list.
@@ -157,7 +166,7 @@ export function RosterRail({
       return rank[a.tier] - rank[b.tier];
     });
     return { leadVisible: masterVisible, rows: rest };
-  }, [agents, hiddenIds, lead, orderIds, query, showHidden]);
+  }, [agents, assistantName, hiddenIds, lead, orderIds, query, showHidden]);
 
   // While searching, the list is a filtered excerpt — dragging there would
   // file agents by where they happen to sit in the excerpt, so rows stay put.
@@ -510,7 +519,7 @@ export function RosterRail({
                 lead.agentId === activeAgentId && "bg-secondary",
               )}
             >
-              <button type="button" onClick={() => openProfile(lead.agentId)} aria-label={t("society.profile_card.open").replace("{0}", lead.name)} className="relative rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <button type="button" onClick={() => openProfile(lead.agentId)} aria-label={t("society.profile_card.open").replace("{0}", societyDisplayName(lead, assistantName))} className="relative rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <AgentSwatch agent={lead} size={56} />
                 {lead.state === "working" ? (
                   <span
@@ -530,7 +539,7 @@ export function RosterRail({
                 ) : null}
               </button>
               <button type="button" onClick={() => openAgent(lead.agentId)} aria-current={lead.agentId === activeAgentId ? "true" : undefined} className="flex max-w-full items-center justify-center gap-1.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                <span className="truncate text-sm font-medium text-foreground">{lead.name}</span>
+                <span className="truncate text-sm font-medium text-foreground">{societyDisplayName(lead, assistantName)}</span>
                 <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-xs">
                   {t("society.tier.lead")}
                 </Badge>

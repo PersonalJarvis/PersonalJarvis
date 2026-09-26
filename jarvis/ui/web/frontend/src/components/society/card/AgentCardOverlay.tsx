@@ -9,6 +9,8 @@ import { X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { useLocaleChunk, useT } from "@/i18n";
+import { societyDisplayName } from "@/lib/societyDisplayName";
+import { useEventStore } from "@/store/events";
 
 import { AgentSwatch } from "../AgentSwatch";
 import type { SocietyAgent } from "../data";
@@ -48,6 +50,8 @@ export function AgentCardOverlay({
 }: AgentCardOverlayProps) {
   const t = useT();
   useLocaleChunk("society");
+  const assistantName = useEventStore((s) => s.assistantName);
+  const displayName = agent ? societyDisplayName(agent, assistantName) : "";
   // The modal keeps a real dialog title plus its close control. The embedded
   // workspace hides this row entirely: the left rail already marks the active
   // agent and the right rail names it, so the row was a second, boring band.
@@ -63,7 +67,7 @@ export function AgentCardOverlay({
               <AgentSwatch agent={agent} size={32} />
               <div className="min-w-0 flex-1">
                 <Title className="truncate font-display text-base font-semibold tracking-tight text-foreground">
-                  {agent.name}
+                  {displayName}
                 </Title>
                 <Description className="truncate text-xs text-muted-foreground">
                   {agent.title}

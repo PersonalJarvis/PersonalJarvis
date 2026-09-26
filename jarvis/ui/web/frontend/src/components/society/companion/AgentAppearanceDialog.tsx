@@ -3,6 +3,8 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useT } from "@/i18n";
+import { societyDisplayName } from "@/lib/societyDisplayName";
+import { useEventStore } from "@/store/events";
 import { Button } from "@/components/ui/button";
 import type { SocietyAgent } from "../data";
 import { AgentSwatch } from "../AgentSwatch";
@@ -49,6 +51,8 @@ function CharacterEditor({ value, onChange, disabled, lead }: { value: FigureRec
 export function AgentAppearanceDialog({ agent, sample, onClose }: { agent: SocietyAgent; sample: boolean; onClose: () => void }) {
   const t = useT();
   const client = useQueryClient();
+  const assistantName = useEventStore((s) => s.assistantName);
+  const displayName = societyDisplayName(agent, assistantName);
   const [recipe, setRecipe] = useState<FigureRecipe>(() => ({ ...(agent.figure ?? defaultRecipe()), companion: resolveCompanion(agent.agentId, agent.figure?.companion) }));
   const [saved, setSaved] = useState(() => JSON.stringify(recipe));
   const [tab, setTab] = useState<"character" | "companion">("companion");
@@ -71,7 +75,7 @@ export function AgentAppearanceDialog({ agent, sample, onClose }: { agent: Socie
   return <Dialog.Root open onOpenChange={open => { if (!open) close(); }}><Dialog.Portal>
     <Dialog.Overlay className="fixed inset-0 z-50 bg-scrim/60 backdrop-blur-sm" />
     <Dialog.Content data-testid="agent-appearance-dialog" onCloseAutoFocus={e => { e.preventDefault(); opener.current?.focus(); }} className="fixed left-1/2 top-1/2 z-50 flex max-h-[90dvh] w-[min(640px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-border bg-popover text-foreground shadow-float">
-      <header className="flex items-center gap-3 border-b border-border p-4"><AgentSwatch agent={{ ...agent, figure: recipe }} size={48} /><div className="flex-1"><Dialog.Title className="font-semibold">{agent.name}</Dialog.Title><Dialog.Description className="text-sm text-muted-foreground">{t("society.companion.appearance")}</Dialog.Description></div><button aria-label={t("society.card.close")} onClick={close} className="rounded p-2 hover:bg-secondary"><X size={18} /></button></header>
+      <header className="flex items-center gap-3 border-b border-border p-4"><AgentSwatch agent={{ ...agent, figure: recipe }} size={48} /><div className="flex-1"><Dialog.Title className="font-semibold">{displayName}</Dialog.Title><Dialog.Description className="text-sm text-muted-foreground">{t("society.companion.appearance")}</Dialog.Description></div><button aria-label={t("society.card.close")} onClick={close} className="rounded p-2 hover:bg-secondary"><X size={18} /></button></header>
       <div className="flex shrink-0 gap-2 border-b border-border p-3" role="tablist" aria-label={t("society.companion.appearance")}>{(["character", "companion"] as const).map(value => <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => setTab(value)} className={`rounded-md px-3 py-2 text-sm ${tab === value ? "bg-secondary text-foreground" : "text-muted-foreground"}`}>{t(`society.companion.${value}`)}</button>)}</div>
       <div className="min-h-0 overflow-y-auto">{tab === "character" ? <CharacterEditor value={recipe} onChange={setRecipe} disabled={saving || sample} lead={agent.tier === "lead"} /> : <CompanionEditor value={resolveCompanion(agent.agentId, recipe.companion)} onChange={companion => setRecipe(r => ({ ...r, companion }))} disabled={saving || sample} lead={agent.tier === "lead"} />}</div>
       <footer className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border p-4">

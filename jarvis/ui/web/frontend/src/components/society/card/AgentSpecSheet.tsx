@@ -37,7 +37,9 @@ import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { useT } from "@/i18n";
+import { societyDisplayName } from "@/lib/societyDisplayName";
 import { cn } from "@/lib/utils";
+import { useEventStore } from "@/store/events";
 
 import { AgentRoutinesList } from "./AgentRoutinesList";
 import { RetireButton } from "./RetireButton";
@@ -210,6 +212,8 @@ export interface AgentSpecSheetProps {
 
 export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetProps) {
   const t = useT();
+  const assistantName = useEventStore((s) => s.assistantName);
+  const displayName = societyDisplayName(agent, assistantName);
   const capabilities = useSocietyCapabilities();
   const activity = useAgentActivity(agent.agentId);
   const skills = useAgentSkills(agent.agentId);
@@ -265,7 +269,7 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
     <div className="ac-card" data-testid="agent-card-sheet">
       <header className="ac-band" data-tier={agent.tier}>
         <span className="min-w-0 flex-1">
-          <span className="ac-band-name block truncate">{agent.name}</span>
+          <span className="ac-band-name block truncate">{displayName}</span>
           {/* Jarvis' title IS "Lead", so the tier would otherwise read twice. */}
           <span className="ac-band-title block truncate">
             {[t(`society.tier.${agent.tier}`), agent.title]

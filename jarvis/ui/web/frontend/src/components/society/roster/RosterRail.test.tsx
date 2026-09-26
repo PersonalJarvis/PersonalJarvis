@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SocietyAgent } from "@/components/society/data";
 import { useRetireStore } from "@/components/society/world/retireStore";
+import { useEventStore } from "@/store/events";
 import { RosterRail } from "./RosterRail";
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
@@ -13,6 +14,7 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
   vi.unstubAllGlobals();
+  useEventStore.setState({ assistantName: "Assistant" });
 });
 
 function agent(over: Partial<SocietyAgent> & Pick<SocietyAgent, "agentId" | "name">): SocietyAgent {
@@ -346,5 +348,33 @@ describe("RosterRail press-drag", () => {
     const { container } = renderRail(trio());
     expect(container.querySelector(".lucide-grip-vertical")).toBeNull();
     expect(rowOf("A").className).toContain("cursor-grab");
+  });
+});
+
+describe("RosterRail lead display name", () => {
+  const renderRail = (agents: SocietyAgent[]) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(<QueryClientProvider client={client}>
+      <RosterRail {...baseProps} agents={agents} activeAgentId={null} />
+    </QueryClientProvider>);
+  };
+
+  it("shows the wake-word name for the lead instead of the backend name", () => {
+    useEventStore.setState({ assistantName: "Hanna" });
+    renderRail([agent({ agentId: "jarvis", name: "Jarvis", tier: "lead", title: "Lead" })]);
+    expect(screen.getByTestId("society-lead-hero")).toBeTruthy();
+    expect(screen.getByText("Hanna")).toBeTruthy();
+    expect(screen.queryByText("Jarvis")).toBeNull();
+  });
+
+  it("finds the lead by display name and by stored name", () => {
+    useEventStore.setState({ assistantName: "Hanna" });
+    const lead = agent({ agentId: "jarvis", name: "Jarvis", tier: "lead", title: "Lead" });
+    const { unmount } = renderRail([lead]);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "hanna" } });
+    expect(screen.getByText("Hanna")).toBeTruthy();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "jarvis" } });
+    expect(screen.getByText("Hanna")).toBeTruthy();
+    unmount();
   });
 });

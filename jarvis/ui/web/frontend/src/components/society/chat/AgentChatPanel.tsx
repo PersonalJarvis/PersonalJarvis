@@ -55,6 +55,7 @@ import { VoiceStage } from "@/components/home/VoiceStage";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { societyDisplayName } from "@/lib/societyDisplayName";
 import { createAgentChatStore, useAgentChatStore } from "@/store/agentChat";
 import type { AgentChatSurface, ApprovalDecision } from "@/lib/agentChatApi";
 
@@ -144,7 +145,9 @@ export function AgentChatPanel(props: AgentChatPanelProps) {
   const disconnect = useCallback(() => {
     (props.agent.tier === "lead" ? useAgentChatStore : useSocietyChatStore).getState().disconnect();
   }, [props.agent.tier]);
-  return <PairConversationBoundary key={props.agent.agentId} recipient={{ id: props.agent.agentId, name: props.agent.name }}>
+  const assistantName = useEventStore((s) => s.assistantName);
+  const displayName = societyDisplayName(props.agent, assistantName);
+  return <PairConversationBoundary key={props.agent.agentId} recipient={{ id: props.agent.agentId, name: displayName }}>
     <RoutineChatHost agentId={props.agent.agentId} onOpen={disconnect}><AgentChatPanelContent {...props} /></RoutineChatHost>
   </PairConversationBoundary>;
 }
@@ -218,10 +221,11 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
     }
   }, [visibleItems, agent.agentId]);
   const outgoing = useOutgoingMessages(sessionReady ? agent.agentId : null);
+  const assistantNameForRoster = useEventStore((s) => s.assistantName);
   const allItems = useMemo(() => mergeOutgoingMessages(
-    visibleItems, outgoing, agent.agentId, agent.name,
-    new Map(roster.map((member) => [member.agentId, member.name])),
-  ), [visibleItems, outgoing, agent.agentId, agent.name, roster]);
+    visibleItems, outgoing, agent.agentId, societyDisplayName(agent, assistantNameForRoster),
+    new Map(roster.map((member) => [member.agentId, societyDisplayName(member, assistantNameForRoster)])),
+  ), [visibleItems, outgoing, agent, assistantNameForRoster, roster]);
   const view = useTranscriptView(sessionReady ? sessionId : null, allItems);
 
   // Open the agent's own session before the browser paints. Waiting on bind /
@@ -642,6 +646,8 @@ export function Transcript({
 }) {
   const t = useT();
   const sessionId = useAgentChat((state) => state.activeSessionId);
+  const assistantName = useEventStore((s) => s.assistantName);
+  const displayName = societyDisplayName(agent, assistantName);
   // Follow the newest while the view sits at the end — the rule every
   // conversation surface shares (hooks/useStickToBottom). This used to scroll
   // a bottom sentinel into view on `[items.length, busy]` only, so a
@@ -660,7 +666,7 @@ export function Transcript({
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
         <AgentSwatch agent={agent} size={56} />
-        <p className="text-sm font-medium text-foreground">{t("society.chat.empty_title").replace("{0}", agent.name)}</p>
+        <p className="text-sm font-medium text-foreground">{t("society.chat.empty_title").replace("{0}", displayName)}</p>
         <p className="max-w-[32ch] text-xs text-muted-foreground">{t("society.chat.empty_hint")}</p>
       </div>
     );
@@ -999,6 +1005,8 @@ interface ComposerProps {
 
 export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onClear, onSend, onCancel }: ComposerProps) {
   const t = useT();
+  const assistantName = useEventStore((s) => s.assistantName);
+  const displayName = societyDisplayName(agent, assistantName);
   const [modelSaving, setModelSaving] = useState(false);
   const [value, setValue] = useState("");
   const [plusOpen, setPlusOpen] = useState(false);
@@ -1116,7 +1124,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     if (named.agents.length > 0 && surface === "society") {
       const teammates = named.agents.map((a) => `${JSON.stringify(a.name)} (id ${JSON.stringify(a.agentId)})`).join(", ");
       lines.push(
-        `${MENTION_MARK} Current sender: the user. Current recipient: ${JSON.stringify(agent.name)} (id ${JSON.stringify(agent.agentId)}). ` +
+        `${MENTION_MARK} Current sender: the user. Current recipient: ${JSON.stringify(displayName)} (id ${JSON.stringify(agent.agentId)}). ` +
         `Mentioned teammates: ${teammates}. For teammate contact requested by the user, use society_message_agent; ` +
         "use kind 'query' when asking for information. If a work assignment is needed, contact Jarvis or an orchestrator with that tool. " +
         "Reply to the user here. An @mention or prose addressed to a teammate does not deliver a message.",
@@ -1245,7 +1253,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
         </div>
         <ComposerChipField
           ref={fieldRef}
-          placeholder={t("society.chat.placeholder").replace("{0}", agent.name)}
+          placeholder={t("society.chat.placeholder").replace("{0}", displayName)}
           disabled={false}
           onSubmit={() => void submit()}
           onDraftChange={onDraftChange}
