@@ -32,10 +32,16 @@ passed lint. These test selections overlap.
 Frontend integration retains rich-text input and collapsed tool details,
 current provider navigation, and themed selection controls. The rebuilt
 production bundle passed type checking and build. The 13 tests covering the final
-UI corrections passed in Linux. Complete Linux qualification and the final
-startup-budget measurement are still being collected.
+UI corrections passed in Linux. A subsequent complete Linux run passed 4,758
+tests; its remaining full-tree AST guard exceeded the existing five-second test
+timeout at 5.62 seconds. The guard now skips AST construction when the required
+literal tag token is absent, retaining the same structural check and timeout.
+The complete repeat is still being collected.
+
 The first loaded startup sample passed window and interactive budgets but
 missed the 20-second voice budget by 185 ms; it is not counted as a pass.
+The repeat after local build/test processes exited passed all unchanged limits:
+window 1.896 s, interactive 16.612 s and voice usable 16.856 s (8/20/20 s budgets).
 
 The current browser plugin fails during bootstrap because a packaged service
 module is missing. No new browser walkthrough or actual prompt-file selection

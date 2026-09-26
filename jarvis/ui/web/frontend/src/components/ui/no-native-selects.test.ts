@@ -19,9 +19,13 @@ describe("dropdown design guard", () => {
     const violations: string[] = [];
 
     for (const path of sourceFiles(SOURCE_ROOT)) {
+      const text = readFileSync(path, "utf8");
+      // Any tag whose source spelling equals "select" contains this token.
+      // Avoid building ASTs for unrelated components as the source tree grows.
+      if (!text.includes("select")) continue;
       const source = ts.createSourceFile(
         path,
-        readFileSync(path, "utf8"),
+        text,
         ts.ScriptTarget.Latest,
         true,
         ts.ScriptKind.TSX,
