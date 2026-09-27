@@ -296,7 +296,7 @@ def _error(exc: StationError) -> HTTPException:
 
 
 @router.get("/definition")
-async def get_mars_definition() -> dict[str, Any]:
+def get_mars_definition() -> dict[str, Any]:
     """Read the packaged canonical world without starting agents or a renderer."""
     return load_definition()
 

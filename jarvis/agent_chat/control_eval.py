@@ -165,7 +165,7 @@ async def evaluate_goal(
                 continue
             try:
                 data = json.loads(str(event["payload"].get("output") or "null"))
-            except ValueError:
+            except ValueError:  # Ignore malformed tool output; other events still determine status.
                 continue
             if isinstance(data, dict):
                 status = str(data.get("status") or data.get("state") or "").lower()
