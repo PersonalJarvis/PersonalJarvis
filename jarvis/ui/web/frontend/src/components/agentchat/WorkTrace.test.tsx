@@ -185,6 +185,7 @@ describe("work trace", () => {
     expect(screen.getByText("Upload failed")).toBeTruthy();
     expect(container.querySelector('[data-trace-tool="err"]')).toBeTruthy();
     expect(screen.getByTestId("tool-failure-warning").textContent).toContain("A tool action failed");
+    expect(screen.getByRole("status").textContent).toContain("A tool action failed");
     expect(screen.getAllByRole("status").at(-1)?.textContent).toContain("Done");
     const fold = screen.getByTestId("conversation-work-fold").querySelector("button")!;
     fireEvent.click(fold);
