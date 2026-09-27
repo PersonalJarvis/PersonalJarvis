@@ -66,8 +66,14 @@ _OWN_PREFIX: Final[str] = "society_"
 #: through its own contained shell (never the free-cwd shell tools).
 _SOCIETY_DENIED: Final[frozenset[str]] = frozenset(
     {
-        "wiki-ingest", "run-shell", "run_shell", "RunCommand",
-        "remember", "update_profile", "profile-update", "update-profile",
+        "wiki-ingest",
+        "run-shell",
+        "run_shell",
+        "RunCommand",
+        "remember",
+        "update_profile",
+        "profile-update",
+        "update-profile",
     }
 )
 
@@ -518,12 +524,9 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
         return None
     agent = rt.cached_agent(agent_id)
     if agent is None:
-        # The briefing fills the cache before the override is built; a miss
-        # means a turn without a briefing — keep the own hands, deny the rest
-        # of the write paths the agent must not have.
-        return lambda tools: {
-            n: t for n, t in tools.items() if n.startswith(_OWN_PREFIX) or n not in _SOCIETY_DENIED
-        }
+        # The briefing fills the cache before the override is built. A miss
+        # cannot establish the agent's mode or grants, so offer no hands.
+        return lambda _tools: {}
 
     def _apply(tools: dict[str, Tool]) -> dict[str, Tool]:
         own = {
@@ -539,20 +542,52 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
             focus=agent.focus,
             denies=agent.denies,
         )
-        # Every granted hand obeys the agent's own approval rules and ceiling
-        # (agent-definition §3.4): the gate rides on the executor's per-call
-        # tier hook, so the chat card and the queue stay the one approval path.
+        # Every granted hand obeys the agent's own approval rules and mode.
+        # The gate rides on the executor's per-call tier hook, so the chat
+        # card and the queue stay the one approval path.
         picked = {
             name: cast(Tool, _GatedTool(tool, agent, cap_id))
             for name, tool in picked.items()
             if (cap_id := capability_id_for_tool(name)) is not None
         }
         ordered: dict[str, Tool] = {}
-        ordered.update(own)
+        if agent.approval_mode is not None:
+            ordered.update(
+                {
+                    name: cast(
+                        Tool,
+                        _GatedTool(tool, agent, capability_id_for_tool(name) or "core:society"),
+                    )
+                    for name, tool in own.items()
+                }
+            )
+        else:
+            ordered.update(own)
         ordered.update(picked)
         return ordered
 
     return _apply
+
+
+def requires_explicit_approval(session_id: str, tool_name: str, args: dict[str, Any]) -> bool:
+    """Keep an agent's explicit ask rules effective even in Bypass mode."""
+    from .approvals import matches
+
+    rt = current_runtime()
+    agent_id = agent_id_of(session_id)
+    if rt is None or agent_id is None:
+        return True
+    agent = rt.cached_agent(agent_id)
+    if agent is None:
+        return True
+    bare = tool_name.split("__", 2)[-1] if tool_name.startswith("mcp__") else tool_name
+    capability = capability_id_for_tool(bare)
+    if capability is None:
+        return True
+    return any(
+        matches(pattern, capability, _verb_of(args))
+        for pattern in agent.approval_rules.get("require_approval", [])
+    )
 
 
 async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:

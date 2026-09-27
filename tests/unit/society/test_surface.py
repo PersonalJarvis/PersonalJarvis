@@ -198,8 +198,8 @@ async def test_a_granted_tool_is_gated_by_the_agents_rules(rt: SocietyRuntime, t
     assert gmail.name == "gmail" and gmail.schema == TOOLS["gmail"].schema
     assert gmail.risk_tier_for_args({"action": "list"}) in (None, "monitor")
     assert gmail.risk_tier_for_args({"action": "send"}) == "ask"  # require_approval
-    # Own hands are never wrapped: the society tools gate themselves.
-    assert not hasattr(picked[SHELL_TOOL_NAME], "_capability_id")
+    # Explicit modes also gate own hands so Always ask covers every tool.
+    assert hasattr(picked[SHELL_TOOL_NAME], "_capability_id")
     # An always-allow rule is the person's standing yes: an ask-tier call runs.
     await rt.roster.update(
         "mailbox",

@@ -223,27 +223,24 @@ def build_server() -> Any:
     async def _call_tool(name: str, arguments: dict[str, Any] | None) -> Any:
         from jarvis.core.protocols import SupervisorToolRequest, current_chat_turn
 
+        def failed(message: str) -> Any:
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text=message)], isError=True
+            )
+
         gateway = _gateway()
         if gateway is None:
-            return [types.TextContent(type="text", text="Jarvis is still starting up.")]
+            return failed("Jarvis is still starting up.")
         if name in _WITHHELD:
-            return [
-                types.TextContent(
-                    type="text",
-                    text=(
-                        f"{name} is not available from the chat — you ARE the worker. "
-                        "Do the work yourself."
-                    ),
-                )
-            ]
+            return failed(
+                f"{name} is not available from the chat — you ARE the worker. Do the work yourself."
+            )
         try:
             from jarvis.agent_chat.tool_context import restore_turn
 
             entry = (await _session_wire_catalog()).get(name)
             if entry is None:
-                return [
-                    types.TextContent(type="text", text="Tool is no longer available in this chat.")
-                ]
+                return failed("Tool is no longer available in this chat.")
             name = str(entry.name)
             with restore_turn(CHAT_SESSION_REF.get()):
                 turn = current_chat_turn.get()
@@ -251,9 +248,9 @@ def build_server() -> Any:
 
                 task_scope = scope_for(CHAT_SESSION_REF.get())
                 if (CHAT_SESSION_REF.get() or "").startswith("task-") and task_scope is None:
-                    return [types.TextContent(type="text", text="The task grant has expired.")]
+                    return failed("The task grant has expired.")
                 if task_scope is not None and name not in task_scope.names:
-                    return [types.TextContent(type="text", text="Tool outside the task grant.")]
+                    return failed("Tool outside the task grant.")
                 trace_id = task_scope.trace_id if task_scope else uuid4()
                 if name == "society_browser" and turn is not None and task_scope is None:
                     try:
@@ -272,9 +269,7 @@ def build_server() -> Any:
                 result = await gateway.execute(name, dict(arguments or {}), request)
         except Exception as exc:  # noqa: BLE001 — a tool failure is data for the model, not a crash
             log.warning("jarvis MCP: %s raised", name, exc_info=True)
-            return [
-                types.TextContent(type="text", text=f"Tool failed: {type(exc).__name__}: {exc}")
-            ]
+            return failed(f"Tool failed: {type(exc).__name__}: {exc}")
         if name == "society_browser":
             success = bool(getattr(result, "success", False))
             text = _render(result)
@@ -295,7 +290,10 @@ def build_server() -> Any:
             return types.CallToolResult(
                 content=[types.TextContent(type="text", text=text)], isError=not success
             )
-        return [types.TextContent(type="text", text=_render(result))]
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=_render(result))],
+            isError=not bool(getattr(result, "success", False)),
+        )
 
     return server
 

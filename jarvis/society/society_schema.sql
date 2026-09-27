@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS society_agents (
                         CHECK (knowledge_scope IN ('shared', 'own')),
     permission_ceiling  TEXT NOT NULL DEFAULT 'monitor'
                         CHECK (permission_ceiling IN ('safe', 'monitor', 'ask')),
+    approval_mode       TEXT DEFAULT NULL
+                        CHECK (approval_mode IN ('bypass', 'ask', 'always_ask')),
     approval_rules_json TEXT NOT NULL DEFAULT '{}',
     daily_budget_usd    REAL NOT NULL DEFAULT 2.0,
     browser_mode        TEXT NOT NULL DEFAULT 'own'

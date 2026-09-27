@@ -38,9 +38,10 @@ async def test_verdict_order(world):
     agent, _ = await roster.create(
         name="Mailbox",
         permission_ceiling="monitor",
+        approval_mode="ask",
         approval_rules={"require_approval": ["plugin:gmail:send"], "always_allow": ["cli:gh"]},
     )
-    assert decide(agent, "plugin:gmail", "monitor", verb="read") is Verdict.RUN
+    assert decide(agent, "plugin:gmail", "monitor", verb="read") is Verdict.QUEUE
     assert decide(agent, "plugin:gmail", "monitor", verb="send") is Verdict.QUEUE
     assert decide(agent, "cli:gh", "monitor") is Verdict.RUN
     assert decide(agent, "cli:gh", "ask") is Verdict.RUN  # always_allow = a standing yes up to ask
@@ -49,12 +50,12 @@ async def test_verdict_order(world):
     assert decide(agent, "core:run-shell", "ask") is Verdict.QUEUE
     assert decide(agent, "plugin:spotify", "block") is Verdict.BLOCK
 
-    strict, _ = await roster.create(name="Reader", permission_ceiling="safe")
+    strict, _ = await roster.create(name="Reader", permission_ceiling="safe", approval_mode="ask")
     assert decide(strict, "core:search-web", "safe") is Verdict.RUN
     assert decide(strict, "plugin:gmail", "monitor") is Verdict.QUEUE
 
-    trusting, _ = await roster.create(name="Doer", permission_ceiling="ask")
-    assert decide(trusting, "plugin:gmail", "monitor") is Verdict.RUN
+    trusting, _ = await roster.create(name="Doer", permission_ceiling="ask", approval_mode="ask")
+    assert decide(trusting, "plugin:gmail", "monitor") is Verdict.QUEUE
     assert decide(trusting, "plugin:gmail", "ask") is Verdict.QUEUE  # ask still asks a human
 
 
@@ -97,7 +98,9 @@ async def test_inline_browser_approval_does_not_queue_a_second_chat_turn(world):
     store, roster, approvals = world
     await roster.create(name="Browser")
     item = await approvals.enqueue(
-        agent_id="browser", trace_id="inline", capability="core:browser",
+        agent_id="browser",
+        trace_id="inline",
+        capability="core:browser",
         action={"action": {"input": {"text": "test"}}, "resume_in_place": True},
         summary="Type in the disposable form",
     )
@@ -135,9 +138,26 @@ async def test_an_always_allow_pattern_runs_an_ask_tier_call(world):
     agent, _ = await roster.create(
         name="Mailbox",
         permission_ceiling="ask",
+        approval_mode="ask",
         approval_rules={"require_approval": [], "always_allow": ["plugin:gmail:send"]},
     )
     assert decide(agent, "plugin:gmail", "ask", verb="send") is Verdict.RUN
     assert decide(agent, "plugin:gmail", "monitor", verb="send") is Verdict.RUN
     assert decide(agent, "plugin:gmail", "block", verb="send") is Verdict.BLOCK
     assert decide(agent, "plugin:gmail", "ask", verb="read") is Verdict.QUEUE
+
+
+async def test_new_modes_keep_blocks_and_explicit_rules(world):
+    _, roster, _ = world
+    bypass, _ = await roster.create(
+        name="Autonomous",
+        approval_rules={"require_approval": ["plugin:gmail:send"], "always_allow": []},
+    )
+    assert str(bypass.approval_mode) == "bypass"
+    assert decide(bypass, "plugin:gmail", "ask", verb="read") is Verdict.RUN
+    assert decide(bypass, "plugin:gmail", "monitor", verb="send") is Verdict.QUEUE
+    assert decide(bypass, "plugin:gmail", "block", verb="read") is Verdict.BLOCK
+
+    always, _ = await roster.create(name="Cautious", approval_mode="always_ask")
+    assert decide(always, "core:search-web", "safe") is Verdict.QUEUE
+    assert decide(always, "plugin:gmail", "block") is Verdict.BLOCK

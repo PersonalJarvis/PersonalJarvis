@@ -5414,6 +5414,18 @@
       "monitor": "Monitor",
       "ask": "Ask first"
     },
+    "approval_mode": {
+      "title": "Agent permissions",
+      "bypass": "Bypass permissions",
+      "ask": "Ask",
+      "always_ask": "Always ask",
+      "bypass_hint": "Jarvis tools run without prompts; Jarvis blocks and denied tools still apply. A subscription CLI's native tools follow that runner's controls.",
+      "ask_hint": "Read freely; ask in this chat before changes or other actions.",
+      "always_ask_hint": "Ask in this chat before every Jarvis tool call, including reads.",
+      "legacy_hint": "This agent keeps its existing chat permissions until you choose a mode.",
+      "legacy_ceiling": "Existing permission ceiling",
+      "unavailable": "This runner cannot show a usable approval card for this mode."
+    },
     "grant": {
       "all": "All connected tools",
       "allowlist": "Allow-list only"

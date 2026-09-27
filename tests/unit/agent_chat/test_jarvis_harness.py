@@ -99,10 +99,16 @@ async def test_plugin_wire_listing_and_execution_preserve_canonical_gateway_name
     wire = tools[0].name
     assert "github/get_me" in tools[0].description
     request = types.CallToolRequest(params=types.CallToolRequestParams(name=wire, arguments={}))
-    await instance.request_handlers[types.CallToolRequest](request)
+    succeeded = await instance.request_handlers[types.CallToolRequest](request)
+    assert succeeded.root.isError is False
     assert gateway.calls[-1][0] == "github/get_me"
+    gateway.raises = True
+    failed = await instance.request_handlers[types.CallToolRequest](request)
+    assert failed.root.isError is True
+    gateway.raises = False
     gateway.names = ()
-    await instance.request_handlers[types.CallToolRequest](request)
+    missing = await instance.request_handlers[types.CallToolRequest](request)
+    assert missing.root.isError is True
     assert len(gateway.calls) == 1
 
 

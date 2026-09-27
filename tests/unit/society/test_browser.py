@@ -177,6 +177,7 @@ async def test_tool_runs_and_writes_digests(rt, tmp_path, fake_runner, monkeypat
 
 
 async def test_tool_gates(rt, tmp_path, fake_runner):
+    await rt.roster.update("scout", {"approval_mode": "ask"})
     jobs = _jobs(tmp_path, fake_runner)
     tool = BrowserTool(rt, "scout", jobs)
     assert tool.risk_tier_for_args({"task": "delete the old posts"}) == "ask"

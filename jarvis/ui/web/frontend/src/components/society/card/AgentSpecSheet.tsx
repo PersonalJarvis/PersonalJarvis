@@ -31,6 +31,7 @@
  * Every string goes through the locale files.
  */
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { MessageSquare, Pause, Play } from "lucide-react";
 
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
@@ -43,7 +44,7 @@ import { AgentRoutinesList } from "./AgentRoutinesList";
 import { RetireButton } from "./RetireButton";
 import { CapabilityChip } from "../CapabilityChip";
 import { useAgentActivity, useAgentSkills, type AgentActivity } from "../cardData";
-import { PERMISSION_CEILINGS } from "@/lib/societyApi";
+import { AGENT_APPROVAL_MODES, PERMISSION_CEILINGS, fetchSocietyProviders, type AgentApprovalMode } from "@/lib/societyApi";
 
 import {
   useSetAgentPaused,
@@ -503,6 +504,9 @@ function LimitsSection({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [ceiling, setCeiling] = useState<PermissionCeiling>(agent.permissionCeiling);
+  const [approvalMode, setApprovalMode] = useState<AgentApprovalMode | null>(agent.approvalMode ?? null);
+  const providerRows = useQuery({ queryKey: ["society", "providers"], queryFn: fetchSocietyProviders });
+  const runner = providerRows.data?.find((row) => row.id === agent.provider)?.runner;
   const [budget, setBudget] = useState(String(agent.dailyBudgetUsd));
   // The stored 0 IS 'no cap' (the scheduler skips the gate), so the switch
   // reads it back rather than asking the person to know that.
@@ -511,6 +515,7 @@ function LimitsSection({
 
   const begin = () => {
     setCeiling(agent.permissionCeiling);
+    setApprovalMode(agent.approvalMode ?? null);
     setBudget(String(agent.dailyBudgetUsd || 2));
     setBudgetOn(agent.dailyBudgetUsd > 0);
     setJobs(String(agent.maxConcurrentRuns));
@@ -523,6 +528,7 @@ function LimitsSection({
     try {
       await update(agent, {
         permissionCeiling: ceiling,
+        approvalMode,
         dailyBudgetUsd: budgetOn ? Math.max(0, Number.parseFloat(budget) || 0) : 0,
         maxConcurrentRuns: Number.parseInt(jobs, 10) || 1,
       });
@@ -552,8 +558,37 @@ function LimitsSection({
 
       {editing ? (
         <div className="ac-prose flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">{t("society.card.permission")}</span>
+          {agent.tier !== "lead" && <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">{t("society.approval_mode.title")}</span>
+            <div className="flex flex-wrap gap-1">
+              {AGENT_APPROVAL_MODES.map((mode) => {
+                const unknownRunner = Boolean(agent.provider) && runner == null;
+                const unavailable = mode === "always_ask"
+                  ? unknownRunner || (runner != null && runner !== "codex-cli" && runner !== "brain")
+                  : mode === "ask" && (unknownRunner || (runner != null
+                    && !["codex-cli", "claude-cli", "glm-cli", "brain"].includes(runner)));
+                return <button
+                  key={mode}
+                  type="button"
+                  disabled={saving || unavailable}
+                  title={unavailable ? t("society.approval_mode.unavailable") : t(`society.approval_mode.${mode}_hint`)}
+                  onClick={() => setApprovalMode(mode)}
+                  aria-pressed={approvalMode === mode}
+                  className={cn(
+                    "rounded-md border px-2.5 py-1 text-xs transition-colors disabled:opacity-50",
+                    approvalMode === mode
+                      ? "border-border-strong bg-secondary text-foreground"
+                      : "border-border text-muted-foreground hover:bg-secondary",
+                  )}
+                >{t(`society.approval_mode.${mode}`)}</button>;
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {approvalMode ? t(`society.approval_mode.${approvalMode}_hint`) : t("society.approval_mode.legacy_hint")}
+            </p>
+          </div>}
+          {(agent.tier === "lead" || !agent.approvalMode) && <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">{t("society.approval_mode.legacy_ceiling")}</span>
             <div className="flex flex-wrap gap-1">
               {PERMISSION_CEILINGS.map((step) => (
                 <button
@@ -573,7 +608,7 @@ function LimitsSection({
                 </button>
               ))}
             </div>
-          </div>
+          </div>}
 
           <div className="flex flex-wrap items-end gap-4">
             <div className="flex flex-col gap-1">
@@ -643,12 +678,18 @@ function LimitsSection({
         </div>
       ) : (
         <>
-          <StepMeter
-            label={t("society.card.permission")}
-            steps={3}
-            filled={CEILING_STEP[agent.permissionCeiling] ?? 0}
-            value={t(`society.ceiling.${agent.permissionCeiling}`)}
-          />
+          {agent.tier !== "lead" && agent.approvalMode ? (
+            <div className="text-xs text-muted-foreground">
+              {t("society.approval_mode.title")}: <span className="text-foreground">{t(`society.approval_mode.${agent.approvalMode}`)}</span>
+            </div>
+          ) : (
+            <StepMeter
+              label={t("society.approval_mode.legacy_ceiling")}
+              steps={3}
+              filled={CEILING_STEP[agent.permissionCeiling] ?? 0}
+              value={t(`society.ceiling.${agent.permissionCeiling}`)}
+            />
+          )}
           <StepMeter
             label={t("society.card.meter_reach")}
             steps={REACH_STEPS}

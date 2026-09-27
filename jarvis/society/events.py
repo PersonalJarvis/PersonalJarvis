@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from jarvis.missions.ids import uuid7_str
 
 __all__ = [
+    "AgentApprovalMode",
     "AgentState",
     "ApprovalState",
     "BrowserMode",
@@ -117,6 +118,14 @@ class PermissionCeiling(StrEnum):
     SAFE = "safe"
     MONITOR = "monitor"
     ASK = "ask"
+
+
+class AgentApprovalMode(StrEnum):
+    """Per-agent approval behavior; capability denies and global blocks still apply."""
+
+    BYPASS = "bypass"
+    ASK = "ask"
+    ALWAYS_ASK = "always_ask"
 
 
 class BrowserMode(StrEnum):

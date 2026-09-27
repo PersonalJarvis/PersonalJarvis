@@ -135,7 +135,8 @@ async def test_ui_create_without_session_keeps_defaults_and_explicit_seat(tmp_pa
     assert blank["provider"] == ""
     assert blank["model"] == ""
     assert blank["account_id"] == ""
-    assert blank["permission_ceiling"] == "monitor"
+    assert blank["permission_ceiling"] == "ask"
+    assert blank["approval_mode"] == "bypass"
     assert blank["grant_mode"] == "all"
     assert blank["parent_agent_id"] is None
     assert picked["provider"] == "openai"
@@ -161,5 +162,6 @@ async def test_paused_creator_session_does_not_inherit(tmp_path: Path) -> None:
             headers={"X-Jarvis-Chat-Session": creator.session_id},
         ).json()["agent"]
     assert agent["provider"] == ""
-    assert agent["permission_ceiling"] == "monitor"
+    assert agent["permission_ceiling"] == "ask"
+    assert agent["approval_mode"] == "bypass"
     assert agent["parent_agent_id"] is None

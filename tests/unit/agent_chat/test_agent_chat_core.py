@@ -396,6 +396,31 @@ def test_codex_stream_translation_maps_items_to_tools():
     assert st.emitted_text
 
 
+def test_codex_mcp_failure_is_not_counted_as_a_successful_tool():
+    st = _CodexState(turn_id="t")
+    failed = {
+        "type": "item.completed",
+        "item": {
+            "id": "call-1",
+            "type": "mcp_tool_call",
+            "server": "jarvis",
+            "tool": "society-create-agent",
+            "arguments": {"name": "A"},
+            "result": {"content": [{"type": "text", "text": "Tool failed"}], "isError": True},
+            "status": "completed",
+        },
+    }
+    events = translate_codex_line(failed, st)
+    assert events[-1]["kind"] == "tool_result"
+    assert events[-1]["payload"]["is_error"] is True
+    assert st.failed_tools == {"society-create-agent"}
+
+    retried = {**failed, "item": {**failed["item"], "id": "call-2", "result": {"content": []}}}
+    events = translate_codex_line(retried, st)
+    assert events[-1]["payload"]["is_error"] is False
+    assert not st.failed_tools
+
+
 def test_claude_redacted_thinking_is_announced_and_tokens_count_live():
     """Claude Code redacts thinking: the UI still learns WHEN it thinks and how many tokens flow."""
     st = _ClaudeState(turn_id="t")

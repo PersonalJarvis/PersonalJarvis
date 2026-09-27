@@ -1,5 +1,32 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Society agent approvals (2026-09-27, T3)
+
+New Society agents store Bypass permissions by default. Ask requires a visible
+chat decision for actions, and Always ask requires one for every Jarvis tool
+call. Legacy agents without a stored approval mode keep their existing chat
+setting. Explicit approval rules, capability denies and ToolExecutor blocks
+remain in force. A child's mode cannot exceed its creator's explicit mode.
+Bypass denies actions above an inherited risk ceiling instead of escalating
+them without asking.
+
+The policy, SQLite migration, MCP gateway and chat card use portable Python and
+TypeScript on Windows, macOS and Linux, including headless servers. Codex CLI
+seats use only app-owned MCP hands with a read-only native sandbox, so the CLI's
+noninteractive approval policy cannot strand a Jarvis action. API seats support
+all three modes. Claude-shaped CLI seats support Ask through their control
+channel. Other print-mode CLIs expose Bypass only; their approval prompts have
+no usable bridge and the UI disables those choices. Their native vendor tools
+remain under the vendor's own execution controls; Jarvis capability calls
+continue through ToolExecutor.
+
+The portable contracts cover five-agent creation/adoption, migration, mode
+decisions and blocked actions. A Windows `codex exec` probe called a disposable
+MCP `society-create-agent` once under `approval_policy=never` and received
+`created=true`, without creating a real roster row. Native macOS and Linux CLI
+sessions require CI or device verification; no OS-specific code or import was
+added to boot.
+
 ## Window caption (2026-09-21, T2)
 
 The desktop window is frameless on Windows, macOS and Linux. The page draws

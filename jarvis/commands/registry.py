@@ -172,6 +172,10 @@ def _society_profile_properties() -> dict[str, Any]:
             "type": "array", "items": {"type": "string"},
             "description": "Skill ids explicitly requested by the user.",
         },
+        "approval_mode": _str_param(
+            "Agent approval mode. Omit to inherit the creator or use Bypass permissions.",
+            enum=["bypass", "ask", "always_ask"],
+        ),
         "daily_budget_usd": {
             "type": "number", "minimum": 0,
             "description": "Daily spending limit requested by the user.",
@@ -196,7 +200,8 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "capabilities through the same service as the Agents UI. When a team agent "
                 "creates a teammate, the new agent inherits that creator's model seat "
                 "(provider, model, effort, subscription account) and permission setup "
-                "(ceiling, grant mode, grants, denies) and cannot exceed them. Read the "
+                "(approval mode, ceiling, grant mode, grants, denies) and cannot exceed "
+                "them. Read the "
                 "returned agent and created flag: an existing name is adopted, never "
                 "duplicated. Use society-switch-agent-model only if a different provider "
                 "is requested."

@@ -939,7 +939,24 @@ def plan_codex(
     # stdin; the sandbox decides what may happen. Plan is the read-only
     # sandbox plus an instruction to plan instead of act. The sandbox goes
     # through ``-c sandbox_mode`` because ``exec resume`` has no ``-s``.
-    if mode == "full-access":
+    society_seat = identity is not None and identity.session_id.startswith("society:")
+    if society_seat:
+        # The headless CLI cannot relay native approval prompts into Jarvis.
+        # Give it only the app-owned MCP hands; all actions then pass through
+        # the session grant, ToolExecutor and the visible chat approval card.
+        argv += ["-c", 'sandbox_mode="read-only"', "-c", 'approval_policy="never"']
+        for feature in (
+            "shell_tool",
+            "apps",
+            "hooks",
+            "multi_agent",
+            "browser_use",
+            "computer_use",
+            "plugins",
+            "web_search_request",
+        ):
+            argv += ["--disable", feature]
+    elif mode == "full-access":
         argv += ["--dangerously-bypass-approvals-and-sandbox"]
     elif mode == "approve-for-me":
         argv += [
@@ -1617,6 +1634,7 @@ class _CodexState:
     started_at: dict[str, float] = field(default_factory=dict)
     #: The last top-level ``error`` notification (retryable until turn.failed).
     last_error: str | None = None
+    failed_tools: set[str] = field(default_factory=set)
 
 
 def translate_codex_line(obj: dict[str, Any], st: _CodexState) -> list[dict[str, Any]]:
@@ -1748,10 +1766,18 @@ def translate_codex_line(obj: dict[str, Any], st: _CodexState) -> list[dict[str,
                 )
                 is_error = str(item.get("status") or "") == "failed"
             elif itype == "mcp_tool_call":
-                output = json.dumps(
-                    item.get("result") or item.get("error") or {}, ensure_ascii=False
+                result = item.get("result")
+                output = json.dumps(result or item.get("error") or {}, ensure_ascii=False)
+                is_error = (
+                    bool(item.get("error"))
+                    or str(item.get("status") or "") == "failed"
+                    or (isinstance(result, dict) and bool(result.get("isError")))
                 )
-                is_error = bool(item.get("error"))
+                if is_error:
+                    st.failed_tools.add(name)
+                    st.last_error = f"{name} failed: {output[:300]}"
+                else:
+                    st.failed_tools.discard(name)
             else:
                 output = "done"
                 is_error = False
@@ -2623,6 +2649,7 @@ async def run_cli_turn(
         )
         if bridge is not None:
             from jarvis.agent_chat.approval_bridge import ChatGrant
+            from jarvis.society.surface import requires_explicit_approval
 
             bridge.arm(
                 ref,
@@ -2632,6 +2659,13 @@ async def run_cli_turn(
                     stance=handle.stance or "ask",
                     always_allowed=always_allowed if always_allowed is not None else set(),
                     ask=handle.request_approval,
+                    force_ask=(
+                        lambda name, args: requires_explicit_approval(
+                            session.session_id, name, args
+                        )
+                    )
+                    if session.surface == "society"
+                    else lambda _name, _args: False,
                 ),
             )
     tool_context = register_turn(session.session_id) if identity else None
@@ -3040,6 +3074,9 @@ async def _run_cli_once(
                 or "\n".join(stderr_tail[-8:]).strip()
                 or f"{runner} exited with code {proc.returncode}."
             )
+        elif plan.shape == "codex" and state.failed_tools:
+            status = "error"
+            error_text = "Unresolved tool failure: " + ", ".join(sorted(state.failed_tools))
 
     usage = dict(state.usage)
     cost_usd = getattr(state, "cost_usd", None)

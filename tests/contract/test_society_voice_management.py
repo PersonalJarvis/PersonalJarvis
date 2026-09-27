@@ -80,6 +80,60 @@ async def test_management_persists_and_echoes_same_roster_without_starting_work(
     assert not await runtime.store.events_since(0)
 
 
+async def test_explicit_request_creates_five_distinct_persistent_agents(society):
+    runtime, commands = society
+    names = [f"Test Agent {number}" for number in range(1, 6)]
+    for name in names:
+        result = await commands["society-create-agent"].execute({"name": name}, context())
+        assert result.success, result.error
+        assert result.output["response"]["created"] is True
+        assert result.output["response"]["agent"]["approval_mode"] == "bypass"
+
+    adopted = await commands["society-create-agent"].execute({"name": names[0]}, context())
+    assert adopted.success and adopted.output["response"]["created"] is False
+    agents = [agent for agent in await runtime.roster.list() if agent.name in names]
+    assert {agent.name for agent in agents} == set(names)
+    assert len({agent.agent_id for agent in agents}) == 5
+    assert all(runtime.scheduler.active_runs(agent.agent_id) == 0 for agent in agents)
+
+
+async def test_approval_modes_persist_and_child_cannot_bypass_ask(tmp_path):
+    runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
+    app = FastAPI()
+    app.include_router(router)
+    app.state.society_factory = lambda: runtime
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            created = await client.post(
+                "/api/society/agents",
+                json={"name": "Test", "provider": "openai-codex", "approval_mode": "ask"},
+            )
+            assert created.status_code == 200, created.text
+            assert created.json()["agent"]["approval_mode"] == "ask"
+            child = await client.post(
+                "/api/society/agents",
+                headers={"x-jarvis-chat-session": "society:test"},
+                json={"name": "Child", "approval_mode": "bypass"},
+            )
+            assert child.status_code == 200, child.text
+            assert child.json()["agent"]["approval_mode"] == "ask"
+            assert child.json()["agent"]["provider"] == "openai-codex"
+
+            changed = await client.patch(
+                "/api/society/agents/test", json={"approval_mode": "always_ask"}
+            )
+            assert changed.status_code == 200, changed.text
+            assert (await runtime.roster.get("test")).approval_mode == "always_ask"
+            unsupported = await client.patch(
+                "/api/society/agents/test", json={"provider": "antigravity"}
+            )
+            assert unsupported.status_code == 422
+    finally:
+        await runtime.close()
+
+
 async def test_management_preserves_learned_focus_and_explicit_approval_rules(society):
     runtime, commands = society
     await runtime.ensure_started()

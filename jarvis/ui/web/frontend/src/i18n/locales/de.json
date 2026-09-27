@@ -5381,6 +5381,18 @@
       "monitor": "Beobachten",
       "ask": "Erst fragen"
     },
+    "approval_mode": {
+      "title": "Agentenberechtigungen",
+      "bypass": "Berechtigungen umgehen",
+      "ask": "Fragen",
+      "always_ask": "Immer fragen",
+      "bypass_hint": "Jarvis-Werkzeuge laufen ohne Nachfragen; Sperren und verweigerte Werkzeuge gelten weiter. Eigene Werkzeuge einer Abo-CLI folgen deren Regeln.",
+      "ask_hint": "Lesen ohne Nachfrage; vor Änderungen und anderen Aktionen hier im Chat fragen.",
+      "always_ask_hint": "Vor jedem Jarvis-Werkzeugaufruf hier im Chat fragen, auch beim Lesen.",
+      "legacy_hint": "Dieser Agent behält seine bisherigen Chat-Berechtigungen, bis du einen Modus auswählst.",
+      "legacy_ceiling": "Bisherige Berechtigungsgrenze",
+      "unavailable": "Dieser Runner kann für diesen Modus keine nutzbare Freigabekarte anzeigen."
+    },
     "grant": {
       "all": "Alle verbundenen Werkzeuge",
       "allowlist": "Nur Erlaubnisliste"

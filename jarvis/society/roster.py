@@ -24,6 +24,7 @@ from pydantic import ValidationError
 
 from .companion import validate_avatar_companion
 from .events import (
+    AgentApprovalMode,
     AgentState,
     BrowserMode,
     Checkpoint,
@@ -119,6 +120,8 @@ class AgentRecord:
     created_ms: int
     updated_ms: int
     stats: dict[str, Any] = field(default_factory=dict)
+    # NULL on pre-migration rows: their existing chat mode remains authoritative.
+    approval_mode: AgentApprovalMode | None = None
 
     @property
     def session_id(self) -> str:
@@ -152,6 +155,7 @@ class AgentRecord:
             "wiki_namespace": self.wiki_namespace,
             "knowledge_scope": str(self.knowledge_scope),
             "permission_ceiling": str(self.permission_ceiling),
+            "approval_mode": str(self.approval_mode) if self.approval_mode else None,
             "approval_rules": {
                 "require_approval": list(self.approval_rules.get("require_approval", [])),
                 "always_allow": list(self.approval_rules.get("always_allow", [])),
@@ -196,6 +200,9 @@ class AgentRecord:
             wiki_namespace=str(row.get("wiki_namespace") or ""),
             knowledge_scope=KnowledgeScope(str(row.get("knowledge_scope") or "shared")),
             permission_ceiling=PermissionCeiling(str(row.get("permission_ceiling") or "monitor")),
+            approval_mode=(
+                AgentApprovalMode(str(row["approval_mode"])) if row.get("approval_mode") else None
+            ),
             approval_rules={
                 "require_approval": [str(x) for x in rules.get("require_approval", [])],
                 "always_allow": [str(x) for x in rules.get("always_allow", [])],
@@ -234,6 +241,7 @@ _EDITABLE: Final[frozenset[str]] = frozenset(
         "wiki_namespace",
         "knowledge_scope",
         "permission_ceiling",
+        "approval_mode",
         "approval_rules",
         "daily_budget_usd",
         "max_concurrent_runs",
@@ -309,6 +317,8 @@ def _coerce(field_name: str, value: Any) -> Any:
         return _enum(KnowledgeScope, value, field_name)
     if field_name == "permission_ceiling":
         return _enum(PermissionCeiling, value, field_name)
+    if field_name == "approval_mode":
+        return _enum(AgentApprovalMode, value, field_name)
     if field_name == "browser_mode":
         return _enum(BrowserMode, value, field_name)
     if field_name == "browser_allowed_domains":
@@ -427,6 +437,11 @@ class Roster:
             raise RosterError(
                 FailureReason.TIER_NOT_ALLOWED, "exactly one lead exists and it is Jarvis"
             )
+        if tier_value is Tier.LEAD and "approval_mode" in fields:
+            raise RosterError(
+                FailureReason.BLOCKED_BY_POLICY,
+                "the Jarvis lead uses the app chat permission policy",
+            )
         same_slug = await self._store.get_agent_row(agent_id)
         if same_slug is not None:
             # Same slug, different spelling ("Mail Bot" vs "mail-bot"): adopt.
@@ -445,6 +460,12 @@ class Roster:
             "updated_ms": now,
             "workspace_dir": f"society/{agent_id}/workspace",
             "wiki_namespace": f"society/{agent_id}/",
+            "approval_mode": (None if tier_value is Tier.LEAD else str(AgentApprovalMode.BYPASS)),
+            "permission_ceiling": (
+                str(PermissionCeiling.MONITOR)
+                if tier_value is Tier.LEAD
+                else str(PermissionCeiling.ASK)
+            ),
         }
         if tier_value is Tier.ORCHESTRATOR:
             row["max_concurrent_runs"] = 3
@@ -496,6 +517,11 @@ class Roster:
                 raise RosterError(FailureReason.BLOCKED_BY_POLICY, f"field {key!r} is not editable")
             if key == "tier" and agent_id == LEAD_AGENT_ID and str(value) != str(Tier.LEAD):
                 raise RosterError(FailureReason.TIER_NOT_ALLOWED, "Jarvis stays the lead")
+            if key == "approval_mode" and agent_id == LEAD_AGENT_ID:
+                raise RosterError(
+                    FailureReason.BLOCKED_BY_POLICY,
+                    "the Jarvis lead uses the app chat permission policy",
+                )
             if key == "tier" and str(value) == str(Tier.LEAD) and agent_id != LEAD_AGENT_ID:
                 raise RosterError(FailureReason.TIER_NOT_ALLOWED, "only Jarvis is the lead")
             if key == "parent_agent_id" and value:

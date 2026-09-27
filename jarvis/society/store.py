@@ -135,6 +135,13 @@ class SocietyStore:
                 "TEXT NOT NULL DEFAULT '[]'"
             )
             log.info("society store: migration applied — added browser_allowed_domains")
+        if "approval_mode" not in existing:
+            # NULL preserves legacy sessions until the person chooses a mode.
+            await self.conn.execute(
+                "ALTER TABLE society_agents ADD COLUMN approval_mode TEXT DEFAULT NULL "
+                "CHECK (approval_mode IN ('bypass', 'ask', 'always_ask'))"
+            )
+            log.info("society store: migration applied — added approval_mode")
         await self._migrate_checkpoint_vocabulary()
 
     async def _migrate_checkpoint_vocabulary(self) -> None:

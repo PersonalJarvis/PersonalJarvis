@@ -86,6 +86,7 @@ class CreateAgentBody(BaseModel):
     denies: list[str] | None = None
     skills: list[str] | None = None
     permission_ceiling: str | None = None
+    approval_mode: str | None = None
     approval_rules: dict[str, list[str]] | None = None
     daily_budget_usd: float | None = None
     max_concurrent_runs: int | None = None
@@ -112,6 +113,7 @@ class PatchAgentBody(BaseModel):
     skills: list[str] | None = None
     knowledge_scope: str | None = None
     permission_ceiling: str | None = None
+    approval_mode: str | None = None
     approval_rules: dict[str, list[str]] | None = None
     daily_budget_usd: float | None = None
     max_concurrent_runs: int | None = None
@@ -197,6 +199,16 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
         from jarvis.society.inherit import inherit_creator_fields
 
         fields = inherit_creator_fields(fields, creator)
+    requested_mode = str(fields.get("approval_mode") or "bypass")
+    provider = str(fields.get("provider") or body.provider)
+    if provider:
+        from jarvis.agent_chat.permissions import society_mode_supported
+        from jarvis.agent_chat.service import resolve_runner
+
+        if not society_mode_supported(resolve_runner(provider, surface="society"), requested_mode):
+            raise HTTPException(
+                422, "This runner cannot provide an actionable approval for that mode."
+            )
     derived_focus, derived_rules = rt.derive(body.title, body.description)
     if body.focus is None and derived_focus:
         fields["focus"] = derived_focus
@@ -240,6 +252,18 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
     if agent is None:
         raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
     fields = body.model_dump(exclude_none=True)
+    requested_mode = body.approval_mode or (
+        str(agent.approval_mode) if body.provider and agent.approval_mode else ""
+    )
+    if requested_mode:
+        from jarvis.agent_chat.permissions import society_mode_supported
+        from jarvis.agent_chat.service import resolve_runner
+
+        provider = body.provider or agent.provider
+        if not society_mode_supported(resolve_runner(provider, surface="society"), requested_mode):
+            raise HTTPException(
+                422, "This runner cannot provide an actionable approval for that mode."
+            )
     if ("title" in fields or "description" in fields) and "focus" not in fields:
         # A prose edit must not wipe what the agent earned in its chat: the
         # derived focus is APPENDED to the existing order (existing first,
@@ -261,6 +285,10 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
         updated = await rt.roster.update(agent.agent_id, fields)
     except RosterError as exc:
         raise _typed_error(exc) from exc
+    if "approval_mode" in fields:
+        svc = rt.chat_service()
+        if svc is not None and svc.store.get_session(updated.session_id) is not None:
+            svc.store.update_session(updated.session_id, permission_mode=str(updated.approval_mode))
     if "state" in fields:
         await rt.checkpoints.refresh(agent.agent_id)
         updated = await rt.roster.get(agent.agent_id) or updated
@@ -281,7 +309,10 @@ async def bind_agent_chat(agent_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(503, "agent chat service unavailable")
     from jarvis.society.chat_binding import ensure_session
 
-    session = ensure_session(svc, rt.config(), agent)
+    try:
+        session = ensure_session(svc, rt.config(), agent)
+    except PermissionError as exc:
+        raise HTTPException(422, str(exc)) from exc
     return {"session": session.to_dict(), "agent_id": agent.agent_id}
 
 
@@ -560,6 +591,7 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
     """Move the agent onto another provider / model / effort / subscription seat.
     Its canonical chat is re-seated at once (transcript kept)."""
     from jarvis.agent_chat.catalog import offers
+    from jarvis.agent_chat.permissions import society_mode_supported
     from jarvis.agent_chat.service import resolve_runner
 
     rt = await _runtime(request)
@@ -571,6 +603,10 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
             422,
             {"reason": str(FailureReason.BLOCKED_BY_POLICY), "detail": "provider not offered"},
         )
+    if agent.approval_mode and not society_mode_supported(
+        resolve_runner(body.provider, surface="society"), str(agent.approval_mode)
+    ):
+        raise HTTPException(422, "This runner cannot provide an actionable approval for that mode.")
     fields = {
         "provider": body.provider.strip().lower(),
         "model": body.model.strip(),
@@ -623,7 +659,7 @@ async def agent_knowledge(agent_id: str, request: Request) -> dict[str, Any]:
     last = await rt.store.get_meta(f"review:last:{agent.agent_id}", "")
     return {
         "files": files,
-        "learned_instructions": [e.text[len(PREFIX):] for e in rules(entries)],
+        "learned_instructions": [e.text[len(PREFIX) :] for e in rules(entries)],
         "reviews": rt.conversations.review_counts(agent.agent_id),
         "last_review": json.loads(last) if last else None,
     }

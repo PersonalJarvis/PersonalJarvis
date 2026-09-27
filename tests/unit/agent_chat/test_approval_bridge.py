@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from jarvis.agent_chat import folder_tools as ft
@@ -18,6 +19,7 @@ from jarvis.core.events import ActionApprovalRequired, ActionDenied
 from jarvis.safety.approval import ApprovalWorkflow
 from jarvis.safety.risk_tier import RiskTierEvaluator
 from jarvis.safety.tool_executor import APPROVAL_DENIED_PREFIX, ToolExecutor
+from jarvis.society.surface import _GatedTool
 
 SESSION = "sess-1"
 REF = approval_ref(SESSION)
@@ -123,6 +125,37 @@ async def test_reads_never_ask(tmp_path: Path):
     read = ft.folder_tools(tmp_path)["Read"]
     result = await executor.execute(read, {"file_path": "r.txt"}, config_snapshot=_snapshot())
     assert result.success and card.asked == []
+
+
+async def test_always_ask_cards_a_safe_read(tmp_path: Path):
+    (tmp_path / "r.txt").write_text("x", encoding="utf-8")
+    executor, bridge, _ = _stack()
+    card = _Card("deny")
+    bridge.arm(REF, _grant(card, "always_ask"))
+    agent = SimpleNamespace(approval_mode="always_ask", approval_rules={}, permission_ceiling="ask")
+    read = _GatedTool(ft.folder_tools(tmp_path)["Read"], agent, "core:Read")
+    result = await executor.execute(read, {"file_path": "r.txt"}, config_snapshot=_snapshot())
+    assert not result.success
+    assert card.asked and card.asked[0][1] == "Read"
+
+
+async def test_bypass_still_cards_an_explicit_require_rule(tmp_path: Path):
+    executor, bridge, _ = _stack()
+    card = _Card("deny")
+    grant = _grant(card, "bypass")
+    grant.force_ask = lambda name, args: name == "Write" and args.get("file_path") == "a.txt"
+    bridge.arm(REF, grant)
+    agent = SimpleNamespace(
+        approval_mode="bypass",
+        approval_rules={"require_approval": ["core:Write"]},
+        permission_ceiling="ask",
+    )
+    write = _GatedTool(ft.folder_tools(tmp_path)["Write"], agent, "core:Write")
+    result = await executor.execute(
+        write, {"file_path": "a.txt", "content": "x"}, config_snapshot=_snapshot()
+    )
+    assert not result.success
+    assert card.asked and not (tmp_path / "a.txt").exists()
 
 
 async def test_the_bridge_never_blocks_the_executors_publish(tmp_path: Path):

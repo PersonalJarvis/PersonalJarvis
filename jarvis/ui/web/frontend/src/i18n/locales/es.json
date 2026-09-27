@@ -5381,6 +5381,18 @@
       "monitor": "Supervisar",
       "ask": "Preguntar primero"
     },
+    "approval_mode": {
+      "title": "Permisos del agente",
+      "bypass": "Omitir permisos",
+      "ask": "Preguntar",
+      "always_ask": "Preguntar siempre",
+      "bypass_hint": "Las herramientas de Jarvis se ejecutan sin preguntas; sus bloqueos siguen activos. Las herramientas nativas de una CLI de suscripción siguen sus propias reglas.",
+      "ask_hint": "Lee libremente; pregunta en este chat antes de cambios u otras acciones.",
+      "always_ask_hint": "Pregunta en este chat antes de cada herramienta de Jarvis, incluso para leer.",
+      "legacy_hint": "Este agente conserva los permisos actuales del chat hasta que elijas un modo.",
+      "legacy_ceiling": "Límite de permisos anterior",
+      "unavailable": "Este ejecutor no puede mostrar una aprobación utilizable para este modo."
+    },
     "grant": {
       "all": "Todas las herramientas conectadas",
       "allowlist": "Solo lista permitida"

@@ -40,7 +40,8 @@ async def test_create_then_adopt_by_name(roster: Roster):
     assert scout.tier is Tier.SPECIALIST
     assert scout.state is AgentState.ACTIVE
     assert scout.grant_mode is GrantMode.ALL
-    assert scout.permission_ceiling is PermissionCeiling.MONITOR
+    assert scout.permission_ceiling is PermissionCeiling.ASK
+    assert str(scout.approval_mode) == "bypass"
     assert scout.wiki_namespace == "society/scout/"
     assert scout.session_id == "society:scout"
 

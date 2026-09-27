@@ -61,7 +61,7 @@ async def test_ensure_session_is_deterministic_and_reseats(world):
     assert first.session_id == "society:scout"
     assert first.surface == "society"
     assert first.provider == "openai" and first.model == "gpt-5.2"
-    assert first.permission_mode == "accept-edits"
+    assert first.permission_mode == "bypass"
     assert first.title == "Scout"
     assert Path(first.cwd).name == "workspace" and os.path.isdir(first.cwd)  # noqa: ASYNC240
     assert Path(first.cwd).is_absolute()
@@ -78,10 +78,24 @@ async def test_ensure_session_is_deterministic_and_reseats(world):
 
 async def test_ceiling_maps_to_stance(world):
     rt, svc, cfg = world
-    safe, _ = await rt.roster.create(name="Reader", provider="openai", permission_ceiling="safe")
-    ask, _ = await rt.roster.create(name="Asker", provider="openai", permission_ceiling="ask")
+    await rt.roster.create(name="Reader", provider="openai", permission_ceiling="safe")
+    await rt.roster.create(name="Asker", provider="openai", permission_ceiling="ask")
+    # Pre-migration rows have no explicit mode and retain their old ceiling.
+    await rt.store.update_agent("reader", {"approval_mode": None})
+    await rt.store.update_agent("asker", {"approval_mode": None})
+    safe = await rt.roster.get("reader")
+    ask = await rt.roster.get("asker")
+    assert safe is not None and ask is not None
     assert ensure_session(svc, cfg, safe).permission_mode == "plan"
     assert ensure_session(svc, cfg, ask).permission_mode == "ask"
+
+
+async def test_explicit_mode_updates_existing_canonical_session(world):
+    rt, svc, cfg = world
+    agent, _ = await rt.roster.create(name="Doer", provider="openai")
+    assert ensure_session(svc, cfg, agent).permission_mode == "bypass"
+    updated = await rt.roster.update("doer", {"approval_mode": "always_ask"})
+    assert ensure_session(svc, cfg, updated).permission_mode == "always_ask"
 
 
 async def test_without_provider_the_agents_tier_answers(world, monkeypatch):
