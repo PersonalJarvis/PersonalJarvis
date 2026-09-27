@@ -52,7 +52,7 @@ test("an interface reload identifies itself without claiming the assistant resta
   expect(session.size).toBe(0);
 });
 
-test("a native recovery fragment identifies a late reload and is cleared", () => {
+test("a native recovery query identifies a late reload and is cleared", () => {
   const script = (HTML.match(/<script>([\s\S]*?)<\/script>/g) ?? []).find((s) =>
     s.includes('localStorage.getItem("jarvis.assistantName")'),
   );
@@ -61,9 +61,9 @@ test("a native recovery fragment identifies a late reload and is cleared", () =>
     '<div id="jarvis-boot-splash"><div class="name"></div><div class="sub">Starting…</div></div>';
   const replaceState = vi.fn();
   const locationStub = {
-    hash: "#jarvis-interface-recovery",
+    hash: "",
     pathname: "/",
-    search: "",
+    search: "?dev=1&jarvis_recovery=1",
   };
   // eslint-disable-next-line no-new-func
   new Function("localStorage", "sessionStorage", "location", "history", script!.slice(8, -9))(
@@ -75,7 +75,7 @@ test("a native recovery fragment identifies a late reload and is cleared", () =>
   expect(document.querySelector("#jarvis-boot-splash .sub")?.textContent).toBe(
     "Restoring interface…",
   );
-  expect(replaceState).toHaveBeenCalledWith(null, "", "/");
+  expect(replaceState).toHaveBeenCalledWith(null, "", "/?dev=1");
 });
 
 /** The one inline script that owns the reload guard. */

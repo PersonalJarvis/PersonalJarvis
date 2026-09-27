@@ -44,6 +44,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from loguru import logger
 
@@ -621,11 +622,19 @@ class BlankWindowWatchdog:
         """
         detail = ""
         if verdict.action is Action.RELOAD:
-            target = (
-                f"{self._url}#jarvis-interface-recovery"
-                if verdict.after_up
-                else self._url
-            )
+            target = self._url
+            if verdict.after_up:
+                parts = urlsplit(target)
+                query = f"{parts.query}&" if parts.query else ""
+                target = urlunsplit(
+                    (
+                        parts.scheme,
+                        parts.netloc,
+                        parts.path,
+                        f"{query}jarvis_recovery=1",
+                        parts.fragment,
+                    )
+                )
             answered, _ = self._action_caller.call(lambda: window.load_url(target))
         elif verdict.action is Action.EXPLAIN and verdict.reason is not None:
             detail = self._safe(self._failure_detail, default="")

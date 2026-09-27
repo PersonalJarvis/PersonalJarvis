@@ -141,7 +141,10 @@
           /* storage blocked (private mode) — keep the neutral fallback */
         }
         var updating = false;
-        var recovering = location.hash === "#jarvis-interface-recovery";
+        var recoveryQuery = new URLSearchParams(location.search);
+        var recoveryFromQuery = recoveryQuery.get("jarvis_recovery") === "1";
+        var recoveryFromHash = location.hash === "#jarvis-interface-recovery";
+        var recovering = recoveryFromQuery || recoveryFromHash;
         try {
           updating = sessionStorage.getItem("jarvis:interface-update") === "1";
           recovering = recovering || sessionStorage.getItem("jarvis:interface-recovery") === "1";
@@ -150,11 +153,16 @@
         } catch (e) {
           /* storage blocked — the native recovery fragment still works */
         }
-        if (location.hash === "#jarvis-interface-recovery") {
+        if (recoveryFromQuery || recoveryFromHash) {
           try {
-            history.replaceState(null, "", location.pathname + location.search);
+            recoveryQuery.delete("jarvis_recovery");
+            var remaining = recoveryQuery.toString();
+            history.replaceState(
+              null, "", location.pathname + (remaining ? "?" + remaining : "") +
+              (recoveryFromHash ? "" : location.hash)
+            );
           } catch (e) {
-            /* a restricted view may keep the fragment until it navigates again */
+            /* a restricted view may keep the marker until it navigates again */
           }
         }
         var status = document.querySelector("#jarvis-boot-splash .sub");

@@ -116,7 +116,17 @@ def test_confirmed_late_blank_recovers_even_when_later_probes_time_out() -> None
     assert verdict.action is Action.RELOAD
     assert verdict.after_up is True
     assert wd._apply(window, verdict)
-    assert window.loaded_urls == ["http://127.0.0.1:47821#jarvis-interface-recovery"]
+    assert window.loaded_urls == ["http://127.0.0.1:47821?jarvis_recovery=1"]
+
+
+def test_late_recovery_preserves_existing_url_query() -> None:
+    window = _FakeWindow()
+    wd = _watchdog(window, url="http://127.0.0.1:47821/?dev=1", policy=_policy())
+    wd._policy.decide(_obs(0.0, page="up"))
+    wd._policy.decide(_obs(10.0, page="blank"))
+    verdict = wd._policy.decide(_obs(10.0 + GRACE + 1, page="blank"))
+    assert wd._apply(window, verdict)
+    assert window.loaded_urls == ["http://127.0.0.1:47821/?dev=1&jarvis_recovery=1"]
 
 
 # --- the recoverable freeze -------------------------------------------------
