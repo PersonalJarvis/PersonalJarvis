@@ -50,6 +50,9 @@ jobs:
     name: Release credential preflight
     runs-on: ubuntu-latest
     env:
+      WINDOWS_SIGNING_PROVIDER: ${{ vars.WINDOWS_SIGNING_PROVIDER || 'signpath' }}
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -71,7 +74,12 @@ jobs:
         run: |
           set -euo pipefail
           missing=()
-          for name in AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_SIGNING_ENDPOINT AZURE_CODE_SIGNING_ACCOUNT AZURE_CERTIFICATE_PROFILE APPLE_SIGNING_IDENTITY APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_CERTIFICATE_P12_BASE64 APPLE_CERTIFICATE_PASSWORD WAVE2_OFFLINE_KEY_B64 WAVE4_MLDSA65_KEY_B64; do
+          case "$WINDOWS_SIGNING_PROVIDER" in
+            signpath) signing_credentials=(SIGNPATH_API_TOKEN SIGNPATH_ORGANIZATION_ID) ;;
+            azure) signing_credentials=(AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_SIGNING_ENDPOINT AZURE_CODE_SIGNING_ACCOUNT AZURE_CERTIFICATE_PROFILE) ;;
+            *) echo "::error::Unsupported WINDOWS_SIGNING_PROVIDER: $WINDOWS_SIGNING_PROVIDER"; exit 1 ;;
+          esac
+          for name in "${signing_credentials[@]}" APPLE_SIGNING_IDENTITY APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_CERTIFICATE_P12_BASE64 APPLE_CERTIFICATE_PASSWORD WAVE2_OFFLINE_KEY_B64 WAVE4_MLDSA65_KEY_B64; do
             if [ -z "${!name:-}" ]; then missing+=("$name"); fi
           done
           if [ "${#missing[@]}" -ne 0 ]; then
@@ -167,14 +175,12 @@ jobs:
     needs: [credentials, previous-release, ci-proof]
     runs-on: windows-latest
     timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
     env:
-      # Manual branch runs intentionally remain unsigned diagnostics.
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-      AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-      AZURE_CODE_SIGNING_ACCOUNT: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT }}
-      AZURE_CERTIFICATE_PROFILE: ${{ secrets.AZURE_CERTIFICATE_PROFILE }}
+      # Manual branch runs remain unsigned even when signing secrets exist.
+      WINDOWS_SIGNING_PROVIDER: ${{ vars.WINDOWS_SIGNING_PROVIDER || 'signpath' }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -235,8 +241,42 @@ jobs:
       # Signs the SETUP executable. Windows attaches Mark-of-the-Web to the
       # downloaded installer, so this signature is the one SmartScreen weighs;
       # files the installer then writes inherit no MOTW.
+      - name: Upload the unsigned installer for SignPath
+        id: unsigned_installer
+        if: github.ref_type == 'tag' && env.WINDOWS_SIGNING_PROVIDER == 'signpath'
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: signpath-input-windows-x64
+          path: dist/installers/PersonalJarvis-Setup-x64.exe
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Sign the installer (SignPath Foundation)
+        if: github.ref_type == 'tag' && env.WINDOWS_SIGNING_PROVIDER == 'signpath'
+        # Reuse the pinned SignPath action integration from PR #105.
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'PersonalJarvis' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.unsigned_installer.outputs['artifact-id'] }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: dist/signed
+
+      - name: Verify and stage the SignPath installer
+        if: github.ref_type == 'tag' && env.WINDOWS_SIGNING_PROVIDER == 'signpath'
+        shell: pwsh
+        run: |
+          $signedFiles = @(Get-ChildItem -Path dist/signed -Recurse -File -Filter PersonalJarvis-Setup-x64.exe)
+          if ($signedFiles.Count -ne 1) { throw "SignPath returned $($signedFiles.Count) matching installers; expected exactly one" }
+          $signature = Get-AuthenticodeSignature -LiteralPath $signedFiles[0].FullName
+          if ($signature.Status -ne 'Valid') { throw "SignPath Authenticode status: $($signature.Status)" }
+          Copy-Item -LiteralPath $signedFiles[0].FullName -Destination dist/installers/PersonalJarvis-Setup-x64.exe -Force
+
       - name: Sign the installer (Azure Trusted Signing)
-        if: env.AZURE_CLIENT_ID != ''
+        if: github.ref_type == 'tag' && env.WINDOWS_SIGNING_PROVIDER == 'azure'
         # pin: azure/trusted-signing-action@v2.0.0 - pinned by commit SHA.
         uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82
         with:
@@ -253,10 +293,10 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Report the signing state honestly
-        if: env.AZURE_CLIENT_ID == ''
+        if: github.ref_type != 'tag'
         shell: bash
         run: |
-          echo "::notice::AZURE_* signing secrets are not configured - the installer is UNSIGNED."
+          echo "::notice::Manual branch installer is UNSIGNED and cannot qualify a release."
 
       - name: Install and reinstall the Windows package
         shell: pwsh

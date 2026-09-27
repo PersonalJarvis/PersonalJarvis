@@ -86,8 +86,8 @@ for trusted Windows signing plus Apple notarization would be incorrect.
 | --- | --- |
 | Standard GitHub-hosted CI for this public repository | Runner usage is free; avoid larger paid runners and keep artifact retention bounded. Check storage allowances separately. |
 | Ed25519 manifest and Linux package integrity | No certificate subscription. The existing signing key stays in GitHub Actions secrets. |
-| Windows SignPath Foundation | Free for accepted open-source projects; requires application, policy setup and Foundation approval. Approval is not automatic. |
-| Existing Azure Artifact Signing integration | Paid option: Basic is USD 9.99/account/month, with usage limits. Do not provision it under a strict zero-cost requirement. |
+| Windows SignPath Foundation | The default release route is free for accepted open-source projects; it requires application, policy setup and Foundation approval. Approval is not automatic. |
+| Existing Azure Artifact Signing integration | Optional paid route, used only when `WINDOWS_SIGNING_PROVIDER=azure` is explicitly set as a repository variable. Basic is USD 9.99/account/month, with usage limits. Do not provision it under a strict zero-cost requirement. |
 | macOS Developer ID and notarization | Apple Developer Program: USD 99/year, or an approved fee waiver for eligible nonprofits, educational institutions or government entities. Being open source alone does not grant a waiver. |
 
 Sources: [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions),
@@ -102,8 +102,20 @@ Keep private signing keys outside Git, including encrypted copies. Existing
 requires `APPLE_CERTIFICATE_P12_BASE64`, `APPLE_CERTIFICATE_PASSWORD`,
 `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_TEAM_ID` and
 `APPLE_APP_SPECIFIC_PASSWORD`. Import the certificate into a temporary runner
-keychain and remove it after the job. Azure, if explicitly chosen, uses the
-existing `AZURE_*` secret fields in the workflow. Never print secret values.
+keychain and remove it after the job. The default Windows route needs an
+approved SignPath Foundation organization and project, the
+`SIGNPATH_API_TOKEN` and `SIGNPATH_ORGANIZATION_ID` Actions secrets, and a
+release signing policy. The workflow uses project slug `PersonalJarvis` and
+policy slug `release-signing` unless the repository variables
+`SIGNPATH_PROJECT_SLUG` and `SIGNPATH_SIGNING_POLICY_SLUG` override them.
+Its signing request uses the unsigned installer artifact from the same run;
+SignPath approval is an external prerequisite, and this workflow does not
+grant it. This reuses the signing integration from PR #105 without its MSIX
+packaging. Azure, if explicitly chosen through `WINDOWS_SIGNING_PROVIDER`,
+uses the existing `AZURE_*` secret fields. Never print secret values.
+Manual branch runs remain unsigned even when signing secrets are configured.
+Tag runs block when the selected signing route lacks credentials or the signed
+installer fails Authenticode verification.
 Certificate and notarization setup are maintainer responsibilities, not
 downloaders' setup steps.
 
