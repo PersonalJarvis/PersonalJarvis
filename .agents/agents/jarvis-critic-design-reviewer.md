@@ -7,7 +7,7 @@ role: reviewer
 domain: specialist
 phase: 6
 must_read:
-  - CLAUDE.md
+  - AGENTS.md
   - docs/adr/0009-self-healing-worker-critic.md
 when_to_use: Phase-6 Critic-Loop design review — checks prompts, verdict schema, MAX_CRITIC_LOOPS=3 hardcoding, anchor token, adversarial framing
 ---
