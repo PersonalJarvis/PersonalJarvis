@@ -25,21 +25,24 @@ disabled. Admin enforcement is off. A draft PR is reviewable work, not a merge
 request. Agents may merge ordinary authorized PRs after required checks and
 scoped review; releases still require explicit authorization.
 
-## Proposed branch-protection change
+## Required-check transition
 
-Only change this after `contract guards (router / voice / parity / language)`
-and `code policy (changed routes / config / handlers)` pass on the workflow PR.
-Preserve the GitHub Actions app restriction
-(`app_id=15368`), `strict=false`, and every other protection field.
+The **five live required check names stay the same**, including GitHub Actions
+`app_id=15368` and `strict=false`. No GitHub settings write is needed, so an
+in-flight PR without the new workflow cannot be stranded by a missing check.
+The workflow changes what the existing `test (ubuntu-latest)` check proves:
 
-| Before: required checks | After: required checks |
-| --- | --- |
-| `repo-hygiene (keys / bundle / logos)` | Same |
-| `privacy-gate (no secrets / no private identity)` | Same |
-| `language-policy (no new German)` | Same |
-| `frontend (test + production build)` | Same |
-| `test (ubuntu-latest)` | `contract guards (router / voice / parity / language)` |
-| — | `code policy (changed routes / config / handlers)` |
+| Required check | Before | After this workflow merges |
+| --- | --- | --- |
+| `repo-hygiene`, `privacy-gate`, `language-policy` | Required | Required, unchanged |
+| `frontend (test + production build)` | Required; a test failure skips build | Required; test, build, and bundle budget all report their results |
+| `test (ubuntu-latest)` | Two-hour broad suite with a passed-count floor | Fast aggregator; passes only if the four core contracts and exact-base code policy pass |
+
+The two-hour Linux/Windows matrix moves to `broad suite (...)` and retains a
+red result for failing tests. The fast jobs have their own visible check
+results and feed the existing required context. A failed or skipped dependency
+therefore makes `test (ubuntu-latest)` fail. This keeps branch protection
+effective throughout the transition and avoids an admin bypass.
 
 The full Python suite becomes a **red advisory signal**, not a silent success:
 its pytest step returns failure and the minimum-passed floor runs even after

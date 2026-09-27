@@ -16,8 +16,8 @@
 #     contract. A regression here breaks Mac/Linux outright.
 #   * pytest + min-passed floor  -> RED EVIDENCE. The full suite reports any
 #     failure, collection error, or mass-skip regression. Agents compare a red
-#     PR result with the exact base before merging; the fast contract guards
-#     below remain required even while the full-suite baseline is red.
+#     PR result with the exact base before merging; the existing required
+#     `test (ubuntu-latest)` context now waits for the fast safety jobs.
 #
 # Cost policy (added 2026-06-23): macOS runners bill at ~10x the Linux rate, so
 # the macOS leg is OFF for ordinary push/PR runs and ON only for a manual
@@ -26,7 +26,7 @@
 # `concurrency` group cancels a superseded in-flight run so a burst of commits
 # can't stack billable minutes. To prove macOS on demand: the Actions tab ->
 # "Run workflow", or `gh workflow run ci.yml`. The `configure` job is the single
-# source of truth for which OS legs run (consumed by both `test` and `jarvisctl`).
+  # source of truth for which OS legs run (consumed by `broad-suite` and `jarvisctl`).
 #
 # Action SHAs are pinned to 40-char commits already vetted elsewhere in this
 # repo's workflows (CVE-2025-30066 hardening).
@@ -79,7 +79,7 @@ jobs:
   # Single source of truth for which OS legs run. macOS bills at ~10x the Linux
   # rate, so it is included ONLY for a manual workflow_dispatch with include_macos
   # (default true). Every ordinary push/PR runs the cheap Linux + Windows legs,
-  # which catch almost all cross-platform regressions. Both `test` and `jarvisctl`
+  # which catch almost all cross-platform regressions. Both `broad-suite` and `jarvisctl`
   # consume this output so the policy lives in exactly one place.
   configure:
     name: configure matrix (cost-aware)
@@ -161,8 +161,8 @@ jobs:
             echo "No drop-path file changed since $base — drag-drop proof SKIPPED."
           fi
 
-  test:
-    name: test (${{ matrix.os }})
+  broad-suite:
+    name: broad suite (${{ matrix.os }})
     needs: configure
     strategy:
       fail-fast: false # we want to see ALL OS legs, not just the first red one
@@ -302,7 +302,7 @@ jobs:
   # Small, independent required proof. The full-suite job above can be red on
   # unrelated baseline failures or take over an hour; neither can skip these
   # four core contracts. Keep this job name stable for branch protection.
-  contract-guards:
+  contract_guards:
     name: contract guards (router / voice / parity / language)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -399,7 +399,7 @@ jobs:
   # Repository-wide static checks report their own result. An unrelated
   # baseline drift must not make the CLI unit suite appear broken, while any
   # newly introduced finding remains visible and requires base comparison.
-  code-policy:
+  code_policy:
     name: code policy (changed routes / config / handlers)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -446,6 +446,24 @@ jobs:
           fi
           python scripts/ci/gen_cli_reference.py --check || failed=1
           exit "$failed"
+
+  # Keep the existing branch-protection context stable. This check is always
+  # created and passes only when both independent fast safety jobs pass. The
+  # long broad-suite remains visible without blocking an unrelated scoped PR.
+  test:
+    name: test (ubuntu-latest)
+    needs: [contract_guards, code_policy]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require contract and changed-code policy success
+        env:
+          CONTRACT_RESULT: ${{ needs.contract_guards.result }}
+          CODE_POLICY_RESULT: ${{ needs.code_policy.result }}
+        run: |
+          test "$CONTRACT_RESULT" = success
+          test "$CODE_POLICY_RESULT" = success
 
   # Dependency-manifest sync gate (BLOCKING). requirements.in (the source for the
   # hash-pinned requirements.txt lockfile) must mirror pyproject.toml
