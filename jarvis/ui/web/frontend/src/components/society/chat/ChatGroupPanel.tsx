@@ -31,6 +31,8 @@ export function ChatGroupPanel({
   const [leftId, setLeftId] = useState(group.members[0] ?? "");
   const [rightId, setRightId] = useState(group.members[1] ?? "");
   const [editing, setEditing] = useState(false);
+  const [confirmUngroup, setConfirmUngroup] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const [error, setError] = useState("");
   const leftStore = useMemo(() => createAgentChatStore("society", `group:${group.group_id}:left`), [group.group_id]);
   const rightStore = useMemo(() => createAgentChatStore("society", `group:${group.group_id}:right`), [group.group_id]);
@@ -48,7 +50,7 @@ export function ChatGroupPanel({
     ?? members.find((agent) => agent.agentId !== left?.agentId);
 
   const remove = async () => {
-    if (!window.confirm(t("society.groups.delete_confirm"))) return;
+    setRemoving(true);
     setError("");
     try {
       await deleteSocietyChatGroup(group.group_id);
@@ -56,6 +58,7 @@ export function ChatGroupPanel({
       onDeleted();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+      setRemoving(false);
     }
   };
 
@@ -102,9 +105,25 @@ export function ChatGroupPanel({
         </div>
         <button type="button" onClick={() => setEditing(true)} aria-label={t("society.groups.edit")}
           className="rounded-md p-2 text-muted-foreground hover:bg-secondary hover:text-foreground"><Pencil className="h-4 w-4" /></button>
-        <button type="button" onClick={() => void remove()} aria-label={t("society.groups.delete")}
-          className="rounded-md p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-4 w-4" /></button>
+        <button type="button" onClick={() => setConfirmUngroup(true)}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+          <Trash2 className="h-4 w-4" aria-hidden />{t("society.groups.delete")}
+        </button>
       </header>
+      {confirmUngroup && <div role="alertdialog" aria-label={t("society.groups.delete")}
+        className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-secondary/50 px-5 py-3 text-sm text-foreground">
+        <p>{t("society.groups.delete_confirm")}</p>
+        <div className="flex gap-2">
+          <button type="button" onClick={() => setConfirmUngroup(false)} disabled={removing}
+            className="rounded-md px-3 py-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground">
+            {t("society.groups.cancel")}
+          </button>
+          <button type="button" onClick={() => void remove()} disabled={removing}
+            className="rounded-md bg-destructive px-3 py-1.5 font-medium text-destructive-foreground disabled:opacity-50">
+            {t("society.groups.delete")}
+          </button>
+        </div>
+      </div>}
       {error && <p role="alert" className="px-5 py-1 text-sm text-destructive">{error}</p>}
       <div className="grid min-h-0 flex-1 grid-cols-2 divide-x divide-border" data-testid="society-group-split">
         {pane("left", left)}

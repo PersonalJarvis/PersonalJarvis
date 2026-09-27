@@ -1,10 +1,12 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, it, vi } from "vitest";
 import type { SocietyAgent } from "../data";
 import { ChatGroupPanel } from "./ChatGroupPanel";
 
+const groupApi = vi.hoisted(() => ({ remove: vi.fn(async () => undefined) }));
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
+vi.mock("@/lib/societyChatGroups", () => ({ deleteSocietyChatGroup: groupApi.remove }));
 vi.mock("../roster/RosterRail", () => ({ RosterRail: () => <aside /> }));
 vi.mock("./AgentChatPanel", () => ({
   AgentChatPanel: ({ agent, chatStore }: { agent: SocietyAgent; chatStore: any }) => {
@@ -17,7 +19,7 @@ vi.mock("./AgentChatPanel", () => ({
   },
 }));
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); groupApi.remove.mockClear(); });
 
 it("opens two existing agent chats in separate stores and keeps each pane independent", () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -42,4 +44,29 @@ it("opens two existing agent chats in separate stores and keeps each pane indepe
   fireEvent.click(within(right).getByRole("button", { name: "Open Test" }));
   expect(within(right).getByTestId("chat-test").getAttribute("data-session")).toBe("society:test");
   expect(within(left).getByTestId("chat-other").getAttribute("data-session")).toBe("society:other");
+});
+
+it("shows an explicit ungroup confirmation and restores individual chats on confirmation", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const onDeleted = vi.fn();
+  const scout = { agentId: "scout", name: "Scout", tier: "specialist", chatSessionId: "society:scout" } as SocietyAgent;
+  const writer = { agentId: "writer", name: "Writer", tier: "specialist", chatSessionId: "society:writer" } as SocietyAgent;
+  render(<QueryClientProvider client={client}><ChatGroupPanel
+    group={{ group_id: "team", name: "Team", members: ["scout", "writer"], created_ms: 1, updated_ms: 1 }}
+    groups={[]} roster={[scout, writer]} onOpenAgent={() => undefined} onOpenGroup={() => undefined}
+    onCreateAgent={() => undefined} onDeleted={onDeleted}
+    onGroupAgents={() => undefined} onAddAgentToGroup={() => undefined}
+  /></QueryClientProvider>);
+
+  fireEvent.click(screen.getByRole("button", { name: "society.groups.delete" }));
+  expect(groupApi.remove).not.toHaveBeenCalled();
+  const confirmation = screen.getByRole("alertdialog", { name: "society.groups.delete" });
+  expect(within(confirmation).getByText("society.groups.delete_confirm")).toBeTruthy();
+  fireEvent.click(within(confirmation).getByRole("button", { name: "society.groups.cancel" }));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: "society.groups.delete" }));
+  fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "society.groups.delete" }));
+  await waitFor(() => expect(groupApi.remove).toHaveBeenCalledWith("team"));
+  await waitFor(() => expect(onDeleted).toHaveBeenCalledOnce());
 });
