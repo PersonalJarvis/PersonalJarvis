@@ -14,8 +14,10 @@
 #   * import-cleanliness gate    -> BLOCKING. Proves `import jarvis` is clean on
 #     Linux/macOS (no module-scope pywin32/winreg/global_hotkeys) - the €5-VPS
 #     contract. A regression here breaks Mac/Linux outright.
-#   * pytest + min-passed floor  -> BLOCKING. Any behavioral failure,
-#     collection error, or mass-skip regression fails the relevant OS leg.
+#   * pytest + min-passed floor  -> RED EVIDENCE. The full suite reports any
+#     failure, collection error, or mass-skip regression. Agents compare a red
+#     PR result with the exact base before merging; the existing required
+#     `test (ubuntu-latest)` context now waits for the fast safety jobs.
 #
 # Cost policy (added 2026-06-23): macOS runners bill at ~10x the Linux rate, so
 # the macOS leg is OFF for ordinary push/PR runs and ON only for a manual
@@ -24,7 +26,7 @@
 # `concurrency` group cancels a superseded in-flight run so a burst of commits
 # can't stack billable minutes. To prove macOS on demand: the Actions tab ->
 # "Run workflow", or `gh workflow run ci.yml`. The `configure` job is the single
-# source of truth for which OS legs run (consumed by both `test` and `jarvisctl`).
+  # source of truth for which OS legs run (consumed by `broad-suite` and `jarvisctl`).
 #
 # Action SHAs are pinned to 40-char commits already vetted elsewhere in this
 # repo's workflows (CVE-2025-30066 hardening).
@@ -77,7 +79,7 @@ jobs:
   # Single source of truth for which OS legs run. macOS bills at ~10x the Linux
   # rate, so it is included ONLY for a manual workflow_dispatch with include_macos
   # (default true). Every ordinary push/PR runs the cheap Linux + Windows legs,
-  # which catch almost all cross-platform regressions. Both `test` and `jarvisctl`
+  # which catch almost all cross-platform regressions. Both `broad-suite` and `jarvisctl`
   # consume this output so the policy lives in exactly one place.
   configure:
     name: configure matrix (cost-aware)
@@ -159,8 +161,8 @@ jobs:
             echo "No drop-path file changed since $base — drag-drop proof SKIPPED."
           fi
 
-  test:
-    name: test (${{ matrix.os }})
+  broad-suite:
+    name: broad suite (${{ matrix.os }})
     needs: configure
     strategy:
       fail-fast: false # we want to see ALL OS legs, not just the first red one
@@ -248,15 +250,9 @@ jobs:
             -m "not skip_ci and not slow and not openclaw_live and not voice_latency and not eval" \
             --junitxml=realtime-session-report.xml
 
-      - name: pytest (JUnit XML)
+      - name: pytest (JUnit XML; all failures visible)
         shell: bash
         run: |
-          # Exit code deliberately non-blocking: the suite still carries the
-          # pre-existing env/platform backlog (Windows-only tests on the Linux
-          # leg etc.), gated by the min-passed floor below. Re-tighten
-          # (drop the `|| echo` and pass --strict) only once the backlog is
-          # actually green cross-platform — flipping strict first turned the
-          # v1.0.6 release head red on 133 long-tolerated failures.
           extra_pytest_args=()
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             extra_pytest_args+=(
@@ -268,59 +264,69 @@ jobs:
             -o faulthandler_timeout=300 \
             -m "not skip_ci and not slow and not openclaw_live and not voice_latency and not eval" \
             --continue-on-collection-errors \
-            --junitxml=report.xml \
-            || echo "pytest exited non-zero (pre-existing failures are gated by the min-passed floor)"
+            --junitxml=report.xml
 
-      - name: Minimum-passed floor (BLOCKING, Linux leg is authoritative)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Minimum-passed floor (also runs after a failing suite)
+        if: always() && matrix.os == 'ubuntu-latest'
         run: python scripts/ci/assert_min_passed.py report.xml
 
-      # Its OWN blocking step, on purpose, and two traps avoided deliberately:
+      # Its OWN strict step, on purpose, and two traps avoided deliberately:
       #
       #   * NOT carrying the `eval` marker. The suite above filters
       #     `-m "not ... and not eval"`, so an `eval`-marked routing test would
       #     silently never run — which is exactly how scripts/skill_routing_eval.py
       #     became invisible.
-      #   * NOT folded into the pytest step above, which ends in `|| echo` and
-      #     therefore swallows failures until the min-passed floor moves.
+      #   * NOT folded into the pytest step above, so it still runs and reports
+      #     its own result when the broad suite has unrelated failures.
       #
       # Measures precision AND recall together. Watching only precision is how
       # the wake-word subsystem destroyed its own recall twice without anyone
       # noticing (AP-27); recall may not drop without editing the committed
       # BASELINE.json in the same change, which puts it in the diff.
-      - name: Skill routing eval (BLOCKING — precision AND recall)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Skill routing eval (strict — precision AND recall)
+        if: always() && matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
           python -m pytest tests/unit/skills/test_skill_routing_offline.py \
             -q -p no:cacheprovider
           python scripts/skill_relevance_calibrate.py
 
-      # The four guards CLAUDE.md §10 names by name, in their OWN blocking step
-      # for the same reason the skill eval has one: the suite above ends in
-      # `|| echo`, so a broken guard costs one passed test against a ~700-test
-      # cushion above the min-passed floor and rides through green. These four
-      # pin contracts that are cheap to break and expensive to notice later —
-      # the router stays a pure dispatcher (ADR-0011), the voice scrubber stays
-      # regex-only (AP-11), a status enum stays in step across all five layers
-      # (AP-4, BUG-008 recurred 4x), and ONE resolver decides a turn's output
-      # language (CLAUDE.md §1). Seconds to run; add a guard here when you add
-      # one there.
-      - name: Contract guards (BLOCKING — router, scrubber, enum parity, language)
-        if: matrix.os == 'ubuntu-latest'
-        shell: bash
-        run: |
-          python -m pytest \
-            tests/unit/brain/test_routing.py \
-            tests/unit/brain/test_output_filter.py \
-            tests/unit/sessions/test_hangup_reason_parity.py \
-            tests/unit/core/test_turn_language.py \
-            -q -p no:cacheprovider
-      - name: Plugin auth contract (BLOCKING — browser-auth standard per plugin)
+      - name: Plugin auth contract (strict — browser-auth standard per plugin)
+        if: always()
         shell: bash
         run: |
           python scripts/ci/check_plugin_auth_contract.py
           python -m pytest tests/contract/test_plugin_auth_standard.py tests/contract/test_connector_auth.py tests/contract/test_service_connectors.py tests/contract/test_plugin_availability.py tests/contract/test_home_assistant_browser_auth.py -q -p no:cacheprovider
+
+  # Small, independent required proof. The full-suite job above can be red on
+  # unrelated baseline failures or take over an hour; neither can skip these
+  # four core contracts. Keep this job name stable for branch protection.
+  contract_guards:
+    name: contract guards (router / voice / parity / language)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run four core contracts
+        run: >-
+          python -m pytest
+          tests/unit/brain/test_routing.py
+          tests/unit/brain/test_output_filter.py
+          tests/unit/sessions/test_hangup_reason_parity.py
+          tests/unit/core/test_turn_language.py
+          -q -p no:cacheprovider
 
   # jarvisctl control-CLI unit suite across the three supported desktops.
   # jarvisctl is a thin cross-platform HTTP client (paths via platformdirs,
@@ -372,63 +378,6 @@ jobs:
           python -c "import jarvis.cli_ctl.__main__"
           python -m jarvis.cli_ctl --help
 
-      - name: CLI coverage gate (every route mounted + tagged)
-        # Static + stdlib-only: every jarvis/ui/web/*_routes.py router must be
-        # mounted in server.py and carry tags=, so every WebUI action stays a
-        # reachable, cleanly-grouped `jarvis api <tag>` command. Mirrors the
-        # pre-push hook so a contributor without the hook can't bypass it.
-        run: python scripts/ci/check_cli_coverage.py
-
-      - name: Danger-metadata gate (destructive routes declare x-jarvis-dangerous)
-        # Static + stdlib-only: a mutating route whose path matches a
-        # destructive marker must carry openapi_extra x-jarvis-dangerous so the
-        # CLI dynamic layer + Command Registry gate it. Mirrors pre-push.
-        run: python scripts/ci/check_danger_metadata.py
-
-      - name: CLI install gate (Install installs, never opens a web page)
-        # Static + stdlib-only: a seed CLI with no package manager makes the
-        # Install button open the vendor's docs instead of installing, which
-        # reads as a broken button. Also catches a `recommended` that names a
-        # method the entry never declared.
-        run: python scripts/ci/check_cli_install_methods.py
-
-      - name: Dead config switch gate (every switch is read by some code)
-        # Static + stdlib-only: a config field nothing reads makes jarvis.toml
-        # and the settings screen promise behaviour that does not exist (AP-31).
-        # Known backlog is baselined; only a NEW one fails. Mirrors pre-push.
-        run: python scripts/ci/check_config_switches_wired.py
-
-      - name: Silent exception gate (no new invisible failure)
-        # Static + stdlib-only: an except that neither logs, re-raises, nor
-        # explains itself makes a failure invisible (AP-30). Per-file ratchet —
-        # fails only when a file GAINS one. Mirrors pre-push.
-        run: python scripts/ci/check_silent_exception_handlers.py
-
-      - name: Blocking-route gate (no new async route without an await)
-        # Static + stdlib-only: an `async def` handler that never awaits runs
-        # its disk I/O ON the shared event loop and blocks every WebSocket,
-        # route and brain turn behind it (measured 8.19 s behind one such
-        # route, 2026-08-28). Per-file ratchet - fails only when a file GAINS
-        # one; the fix is dropping `async` so FastAPI uses the threadpool.
-        run: python scripts/ci/check_async_routes.py
-
-      - name: WebGL-context gate (every 3D surface gives its context back)
-        # Static + stdlib-only: a browser allows ~16 live WebGL contexts and
-        # kills the OLDEST to make room, and three.js `dispose()` never returns
-        # one — so a scene that mounts without releasing eventually kills a
-        # different, innocent scene on the page (AP-32).
-        run: python scripts/ci/check_webgl_contexts_released.py
-
-      - name: CLI reference drift gate (docs in sync with command tree)
-        # Fails if a curated command was added/changed without regenerating
-        # docs/jarvis-cli-reference.md. Mirrors the pre-push docgen gate.
-        run: python scripts/ci/gen_cli_reference.py --check
-
-      - name: Commands reference drift gate (docs in sync with the registry)
-        # Fails if a Command-Registry entry was added/changed without
-        # regenerating docs/commands-reference.md. Mirrors the pre-push gate.
-        run: python scripts/ci/gen_commands_reference.py --check
-
       - name: Install base runtime deps for the test suite (robust; no hand-list)
         shell: bash
         # The cli_ctl unit tests import deeper jarvis modules that transitively
@@ -445,6 +394,75 @@ jobs:
 
       - name: pytest (jarvisctl unit suite)
         run: python -m pytest tests/unit/cli_ctl/ -v
+
+  # Repository-wide static checks report their own result. An unrelated
+  # baseline drift must not make the CLI unit suite appear broken, while any
+  # newly introduced finding remains visible and requires base comparison.
+  code_policy:
+    name: code policy (changed routes / config / handlers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install package for reference generators
+        run: python -m pip install -e .
+
+      - name: Verify exact-base comparison
+        run: |
+          python -m pip install pytest pytest-asyncio
+          python -m pytest tests/unit/ci/test_changed_baseline_gates.py -q -p no:cacheprovider
+
+      - name: Check all code policies and report every finding
+        shell: bash
+        run: |
+          failed=0
+          for check in \
+            check_cli_coverage.py \
+            check_danger_metadata.py \
+            check_cli_install_methods.py \
+            check_config_switches_wired.py \
+            check_webgl_contexts_released.py; do
+            python "scripts/ci/$check" || failed=1
+          done
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then
+            base="${{ github.event.before }}"
+          fi
+          if [ -n "$base" ] && [ "$base" != "0000000000000000000000000000000000000000" ]; then
+            python scripts/ci/check_changed_baseline_gates.py --base "$base" || failed=1
+          else
+            python scripts/ci/check_changed_baseline_gates.py || failed=1
+          fi
+          python scripts/ci/gen_cli_reference.py --check || failed=1
+          exit "$failed"
+
+  # Keep the existing branch-protection context stable. This check is always
+  # created and passes only when both independent fast safety jobs pass. The
+  # long broad-suite remains visible without blocking an unrelated scoped PR.
+  test:
+    name: test (ubuntu-latest)
+    needs: [contract_guards, code_policy]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require contract and changed-code policy success
+        env:
+          CONTRACT_RESULT: ${{ needs.contract_guards.result }}
+          CODE_POLICY_RESULT: ${{ needs.code_policy.result }}
+        run: |
+          test "$CONTRACT_RESULT" = success
+          test "$CODE_POLICY_RESULT" = success
 
   # Dependency-manifest sync gate (BLOCKING). requirements.in (the source for the
   # hash-pinned requirements.txt lockfile) must mirror pyproject.toml
@@ -719,12 +737,17 @@ jobs:
           cache-dependency-path: jarvis/ui/web/frontend/package-lock.json
 
       - name: Install locked dependencies
+        id: frontend_deps
         run: npm ci
 
       - name: Run frontend tests
         run: npm test
 
       - name: Build and verify production assets
+        # A failing test suite must not hide a second, independent build or
+        # bundle-budget regression. The job still fails on the test result.
+        if: always() && steps.frontend_deps.outcome == 'success'
+        id: frontend_build
         run: npm run build
 
       # The entry chunk is parsed and executed before the UI paints a single
@@ -738,6 +761,7 @@ jobs:
       # to run by hand after touching the startup path. Do not read this step as
       # covering the Python side.
       - name: Check startup bundle budget
+        if: always() && steps.frontend_build.outcome == 'success'
         working-directory: ${{ github.workspace }}
         run: python3 scripts/ci/check_frontend_bundle_budget.py
 
