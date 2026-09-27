@@ -1,0 +1,66 @@
+# Coding-agent workflow audit
+
+Snapshot: 2026-09-27, `PersonalJarvis/PersonalJarvis`, `main`. This records the
+live GitHub API state, not a remembered setting. Re-read protection before any
+change. GitHub documents the [status-check protection API](https://docs.github.com/en/rest/branches/branch-protection#update-status-check-protection)
+and warns that a required workflow skipped by a path filter can remain
+[pending](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/skip-workflow-runs).
+
+## Current contract and cost
+
+| Mechanism | Protection | Cost or failure mode | Decision |
+| --- | --- | --- | --- |
+| Commit hook: knowledge mirrors, added German, private keys, withheld paths, staged bundle | Prevents inconsistent agent guidance, privacy leaks, and a broken shipped WebView | Diff-scoped and cheap; CI repeats the irreversible checks | Keep |
+| Push hook: credentials and private keys | Stops a public leak before network transfer | About two seconds; other whole-tree gates were already removed from this hook | Keep; no full-tree test here |
+| Required `privacy-gate`, `repo-hygiene`, `language-policy` | Secrets, public identity, keys, bundled assets, English policy, agent mirrors | Fast and tied to shipped safety | Keep |
+| Required `frontend (test + production build)` | Tests, production compilation, entry bundle budget | Main has 19 stale test failures; PR #208 repairs these, but its bundle-budget failure remains separate | Keep strict; run build even if tests fail so both results appear |
+| Required `test (ubuntu-latest)` | Full Python suite, import check, routing and voice guards | Around two hours; the old minimum-passed floor let new individual failures disappear inside a red baseline or a green count | Make the suite's own failure visible; require an independent fast four-contract job instead |
+| `jarvisctl unit` with nine repository-wide policy scripts before its tests | API metadata, config wiring, silent handlers, async routes, WebGL cleanup, generated references | Existing drift in unrelated route files turns a healthy CLI unit suite red before it runs | Put policy scripts in their own required job; findings in changed files block while unchanged baseline findings remain visible |
+| Other CI jobs: dependency portability, realtime, docs privacy, desktop installers | Platform, package, and release evidence | Some are slow or need specialized runners; they remain visible and are mandatory when the change affects their contract | Keep their checks; let the agent select extra local proof |
+| PR template and fixed T1/T2/T3 rules | Encourage test evidence and cross-platform care | Blanket commands and automatic escalation turn a small patch into unrelated cleanup | Require a reasoned scope and named evidence instead |
+
+The live branch has **no repository rulesets**, no required approving review,
+`strict=false`, conversation resolution enabled, and force pushes/deletions
+disabled. Admin enforcement is off. A draft PR is reviewable work, not a merge
+request. Agents may merge ordinary authorized PRs after required checks and
+scoped review; releases still require explicit authorization.
+
+## Proposed branch-protection change
+
+Only change this after `contract guards (router / voice / parity / language)`
+and `code policy (changed routes / config / handlers)` pass on the workflow PR.
+Preserve the GitHub Actions app restriction
+(`app_id=15368`), `strict=false`, and every other protection field.
+
+| Before: required checks | After: required checks |
+| --- | --- |
+| `repo-hygiene (keys / bundle / logos)` | Same |
+| `privacy-gate (no secrets / no private identity)` | Same |
+| `language-policy (no new German)` | Same |
+| `frontend (test + production build)` | Same |
+| `test (ubuntu-latest)` | `contract guards (router / voice / parity / language)` |
+| — | `code policy (changed routes / config / handlers)` |
+
+The full Python suite becomes a **red advisory signal**, not a silent success:
+its pytest step returns failure and the minimum-passed floor runs even after
+that failure. The separate policy job fails if a changed file has a static
+finding; unchanged findings are logged against the exact base. Before merging,
+compare each red advisory job with the exact PR base commit under
+the same dependencies and runner. Record failing test identities and causes;
+counts or a generic “pre-existing” label do not suffice. New or unexplained
+failures block the PR. A required check is never waived because main is red.
+Never add path filtering to the required workflow: GitHub may leave its check
+pending when the workflow is skipped.
+
+## Representative decisions
+
+- **T1 UI:** a layout fix needs focused component tests, production build,
+  light/dark inspection, and a strict bundle budget. PR #206's unrelated 19
+  failures are being repaired in PR #208; no waiver is proposed here.
+- **T2 runtime:** a desktop startup fix needs its focused behavior tests and a
+  boot/lifecycle check. Whole-tree async-route drift reports from `code policy`
+  without being mislabeled as a CLI unit failure; compare it to exact base.
+- **T3 contract:** a shared provider, credential, or OS change needs affected
+  contract families and platform proof. The four core guards always run in the
+  fast required job. A new key path also needs one-key fresh-install proof;
+  unrelated schema edits do not.
