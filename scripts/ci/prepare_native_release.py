@@ -10,13 +10,11 @@ from pathlib import Path
 
 ASSETS = (
     "PersonalJarvis-Setup-x64.exe",
-    "PersonalJarvis-macOS-arm64.dmg",
-    "PersonalJarvis-macOS-x64.dmg",
     "PersonalJarvis-Linux-x86_64.AppImage",
     "personal-jarvis-src.tar.gz",
 )
-TARGETS = ("windows-x64", "macos-arm64", "macos-x64", "linux-x86_64")
-TARGET_ASSETS = dict(zip(TARGETS, ASSETS[:4], strict=True))
+TARGETS = ("windows-x64", "linux-x86_64")
+TARGET_ASSETS = dict(zip(TARGETS, ASSETS[:2], strict=True))
 
 
 def _version_tuple(tag: str) -> tuple[int, int, int]:
@@ -76,8 +74,6 @@ def prepare(directory: Path, tag: str, commit: str) -> None:
             raise ValueError(f"native proof prior version is not older: {target}")
         if target == "windows-x64" and proof.get("signed") is not True:
             raise ValueError("Windows installer signature is unverified")
-        if target.startswith("macos-") and proof.get("notarized") is not True:
-            raise ValueError(f"macOS notarization is unverified: {target}")
         proofs[target] = proof
 
     qualification = {

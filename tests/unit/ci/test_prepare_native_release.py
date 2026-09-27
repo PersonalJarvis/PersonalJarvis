@@ -28,12 +28,17 @@ def _stage(directory, *, signed=True):
             "database_preserved": True,
             "credential_preserved": True,
             "signed": signed,
-            "notarized": signed,
         }
         (directory / f"proof-{target}.json").write_text(json.dumps(proof))
 
 
 def test_prepare_binds_tag_and_requires_every_native_target(tmp_path):
+    assert TARGETS == ("windows-x64", "linux-x86_64")
+    assert ASSETS == (
+        "PersonalJarvis-Setup-x64.exe",
+        "PersonalJarvis-Linux-x86_64.AppImage",
+        "personal-jarvis-src.tar.gz",
+    )
     _stage(tmp_path)
     prepare(tmp_path, "v1.2.3", "a" * 40)
     lines = (tmp_path / "installers-SHA256SUMS.txt").read_text().splitlines()
@@ -57,7 +62,7 @@ def test_prepare_rejects_missing_asset_or_native_proof(tmp_path):
         prepare(tmp_path, "v1.2.3", "a" * 40)
     (tmp_path / ASSETS[0]).write_bytes(b"installer")
     _stage(tmp_path)
-    (tmp_path / "proof-macos-arm64.json").unlink()
+    (tmp_path / "proof-linux-x86_64.json").unlink()
     with pytest.raises(ValueError, match="missing native smoke proof"):
         prepare(tmp_path, "v1.2.3", "a" * 40)
 
@@ -104,15 +109,13 @@ def test_prepare_rejects_proof_for_different_commit_or_asset(tmp_path, field):
         prepare(tmp_path, "v1.2.3", "a" * 40)
 
 
-@pytest.mark.parametrize("target", ["macos-arm64", "macos-x64"])
-def test_prepare_rejects_unnotarized_mac(tmp_path, target):
+def test_prepare_ignores_mac_diagnostics_without_publishing_them(tmp_path):
     _stage(tmp_path)
-    proof_path = tmp_path / f"proof-{target}.json"
-    proof = json.loads(proof_path.read_text())
-    proof["notarized"] = False
-    proof_path.write_text(json.dumps(proof))
-    with pytest.raises(ValueError, match="notarization"):
-        prepare(tmp_path, "v1.2.3", "a" * 40)
+    (tmp_path / "PersonalJarvis-macOS-arm64.dmg").write_bytes(b"diagnostic only")
+    prepare(tmp_path, "v1.2.3", "a" * 40)
+    qualification = json.loads((tmp_path / "release-qualification.json").read_text())
+    assert set(qualification["targets"]) == {"windows-x64", "linux-x86_64"}
+    assert "PersonalJarvis-macOS-arm64.dmg" not in qualification["asset_sha256"]
 
 
 @pytest.mark.parametrize("prior", ["v1.2.3", "v1.2.4", "garbage"])

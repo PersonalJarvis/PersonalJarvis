@@ -1,17 +1,18 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
-## Signed native releases and update recovery (2026-09-26, T3; acceptance open)
+## Signed native releases and update recovery (2026-09-27, T3; acceptance open)
 
-Native targets are Windows x64, macOS arm64/x64 and Linux x86_64 AppImage.
-They share the frozen-install capability probe and a version-bound Ed25519
-manifest contract. Unsupported architectures and Debian package installations
-must not receive an incompatible automatic installer. Manual managed/source
-installations retain their existing update transaction.
+Public native targets are Windows x64 and Linux x86_64 AppImage. They share a
+version-bound Ed25519 manifest contract. macOS remains supported through the
+Python package or source/CLI install; no macOS DMG is qualified or published.
+Unsupported architectures and Debian package installations must not receive
+an incompatible automatic installer. Managed/source installations retain their
+existing update transaction on all three operating systems.
 
 The release workflow requires native installation, previous-version upgrade
-and rollback evidence for every supported target, plus Windows signing and
-macOS notarization. Local tests cannot establish those native properties.
-Missing signing accounts block publication. See [the release pipeline](release-pipeline.md)
+and rollback evidence for both native targets, plus Windows signing. Local
+tests cannot establish those native properties. Missing signing accounts block
+publication. See [the release pipeline](release-pipeline.md)
 for public scripts, account requirements, cost constraints and open evidence.
 
 Linux AppImage launches resolve the default memory store through the writable
@@ -540,17 +541,17 @@ experiences today.
 
 ## Native installers (added 2026-08-25)
 
-Personal Jarvis is downloadable as a native installer on all three systems,
-next to the one-line installer and pipx. Every artifact comes out of the same
-PyInstaller freeze of `jarvis.spec` and is published on the GitHub Release for
-the tag together with `installers-SHA256SUMS.txt`, which the in-app updater
-verifies against before it replaces anything.
+Windows and Linux have public native installers alongside the signed CLI
+installer and Python package. macOS uses the source/CLI path; its local bundle
+builder is optional and does not publish a DMG. The two public native artifacts
+come out of the same PyInstaller freeze of `jarvis.spec` and are published with
+the signed `installers-SHA256SUMS.txt` manifest.
 
 | OS | Artifact | Built by | Native window | Signing | Shell registration | Where it has actually run |
 |---|---|---|---|---|---|---|
 | Windows 10/11 x64 | `PersonalJarvis-Setup-x64.exe` (Inno Setup, per-user, no admin prompt, fixed AppId for in-place upgrades) | `packaging/windows/build.ps1` | Yes — WebView2, the shipping desktop window | Owned by the Windows packaging work; see `packaging/windows/` | The installer creates and removes the Start-Menu / Desktop entries | Owned by the Windows packaging work — not verified from here |
-| macOS 12+, arm64 and x64 | `PersonalJarvis-macOS-arm64.dmg`, `PersonalJarvis-macOS-x64.dmg` (`Personal Jarvis.app` + an `/Applications` symlink) | `packaging/macos/build.sh` | Yes — WKWebView through pywebview | Developer ID + Hardened Runtime + notarization when `APPLE_SIGNING_IDENTITY`/`APPLE_ID`/`APPLE_TEAM_ID`/`APPLE_APP_SPECIFIC_PASSWORD` are set; ad-hoc signing and a printed "right-click > Open" notice otherwise | The user drags the app to `/Applications`; the app registers nothing | **No real run yet.** `bash -n`, ShellCheck 0.11.0 `-S style` (zero findings) and a full `DRY_RUN=1` rehearsal of both the signed and unsigned paths. A macOS runner or a physical Mac is the outstanding gate |
-| Linux x86_64 | `PersonalJarvis-Linux-x86_64.AppImage`, `personal-jarvis_<version>_amd64.deb` | `packaging/linux/build.sh` | **No** — serves its interface over loopback HTTP and opens the default browser (P-38) | None. AppImage has no signing story in this project; the release's SHA-256 sums are the integrity check | `.deb` installs a `.desktop` entry, the hicolor icon, `/usr/bin/jarvis` and `/usr/bin/personal-jarvis`. The AppImage carries its `.desktop` inside itself for AppImageLauncher/`appimaged` | Full build proven in a `python:3.12-bookworm` container on 2026-08-25 (~2 min, 156 MB AppImage + 172 MB `.deb`): `appimagetool` digest check, `desktop-file-validate`, both executables out of one freeze, `--version` through the packaged AppImage and through `AppRun`, `AppRun serve` answering `/api/health` in 1-3 s, and the browser hand-off calling the opener with the right URL. Not run on a real desktop distribution or with FUSE |
+| macOS 12+, arm64 and x64 | Source/CLI or Python package; no public DMG | Optional local `packaging/macos/build.sh` diagnostic | Desktop support remains in source | No Apple signing or notarization required for this release path | Managed/source installer owns its shell integration | Portable install checks remain required; a native macOS bundle is outside this release gate |
+| Linux x86_64 | `PersonalJarvis-Linux-x86_64.AppImage`; `.deb` remains diagnostic | `packaging/linux/build.sh` | Browser fallback when native WebView is unavailable | AppImage digest is bound to the signed release manifest | The AppImage carries its `.desktop` inside itself for AppImageLauncher/`appimaged` | Native install, update and rollback evidence are required by the release gate |
 
 **Frozen builds register nothing themselves.** For a native install the
 installer owns every shell artifact, so `jarvis/setup/desktop_integration.py`
