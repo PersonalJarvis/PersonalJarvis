@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Pencil, Trash2, UsersRound } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { useT } from "@/i18n";
 import { BrandedSelect } from "@/components/ui/select";
 import { deleteSocietyChatGroup, type SocietyChatGroup } from "@/lib/societyChatGroups";
 import { createAgentChatStore } from "@/store/agentChat";
 import type { SocietyAgent } from "../data";
+import { AgentSwatch } from "../AgentSwatch";
 import { RosterRail } from "../roster/RosterRail";
 import { AgentChatPanel } from "./AgentChatPanel";
 import { ChatGroupDialog } from "./ChatGroupDialog";
@@ -65,10 +66,16 @@ export function ChatGroupPanel({
   const pane = (side: "left" | "right", agent: SocietyAgent | undefined) => (
     <section key={side} data-testid={`society-group-pane-${side}`} className="flex min-h-0 min-w-0 flex-col bg-background">
       {agent ? <>
-        <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-          <div className="min-w-0 flex-1 text-xs font-medium text-muted-foreground">
-            <span>{t(side === "left" ? "society.groups.left_chat" : "society.groups.right_chat")}</span>
-            <BrandedSelect
+        <header data-testid={`society-group-identity-${side}`}
+          className="flex shrink-0 items-center gap-3 border-b border-border-strong bg-secondary/25 px-4 py-3">
+          <span data-testid={`society-group-avatar-${side}`} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-secondary">
+            <AgentSwatch agent={agent} size={38} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              {t(side === "left" ? "society.groups.left_chat" : "society.groups.right_chat")}
+            </p>
+            {members.length > 2 ? <BrandedSelect
               ariaLabel={t(side === "left" ? "society.groups.left_chat" : "society.groups.right_chat")}
               testId={`society-group-select-${side}`}
               value={agent.agentId}
@@ -76,7 +83,8 @@ export function ChatGroupPanel({
               className="mt-1 w-full"
               options={members.filter((member) => member.agentId !== (side === "left" ? right?.agentId : left?.agentId))
                 .map((member) => ({ value: member.agentId, label: member.name }))}
-            />
+            /> : <h2 className="truncate text-base font-semibold text-foreground">{agent.name}</h2>}
+            <p className="truncate text-xs text-muted-foreground">{agent.title}</p>
           </div>
           <button type="button" onClick={() => onOpenAgent(agent.agentId)}
             className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -92,43 +100,44 @@ export function ChatGroupPanel({
     </section>
   );
 
+  const teamFooter = <div className="shrink-0 border-t border-border bg-sidebar px-3 py-3">
+    {confirmUngroup ? <div role="alertdialog" aria-label={t("society.groups.delete")}
+      className="space-y-3 text-xs text-foreground">
+      <p>{t("society.groups.delete_confirm")}</p>
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={() => setConfirmUngroup(false)} disabled={removing}
+          className="rounded-md px-2 py-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground">
+          {t("society.groups.cancel")}
+        </button>
+        <button type="button" onClick={() => void remove()} disabled={removing}
+          className="rounded-md bg-destructive px-2 py-1.5 font-medium text-destructive-foreground disabled:opacity-50">
+          {t("society.groups.delete")}
+        </button>
+      </div>
+    </div> : <div className="flex items-center gap-2">
+      <button type="button" onClick={() => setEditing(true)}
+        className="inline-flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground">
+        <Pencil className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        <span className="truncate">{t("society.groups.edit")}</span>
+      </button>
+      <button type="button" onClick={() => setConfirmUngroup(true)}
+        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+        <Trash2 className="h-3.5 w-3.5" aria-hidden />{t("society.groups.delete")}
+      </button>
+    </div>}
+    {error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}
+  </div>;
+
   return <div className="grid min-h-0 flex-1 grid-cols-[minmax(240px,300px)_minmax(0,1fr)] bg-card" data-testid="society-group-chat">
     <RosterRail agents={roster} groups={groups} activeGroupId={group.group_id} activeAgentId={null}
       onOpen={onOpenAgent} onOpenGroup={onOpenGroup} onCreate={onCreateAgent}
       onGroupAgents={onGroupAgents} onAddAgentToGroup={onAddAgentToGroup}
-      loading={false} sample={false} side="left" className="w-full border-0 jarvis-nav-surface" />
-    <div className="flex min-h-0 min-w-0 flex-col overflow-hidden border-l border-border bg-background">
-      <header className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-3">
-        <UsersRound className="h-5 w-5 text-muted-foreground" aria-hidden />
-        <div className="min-w-0 flex-1"><h2 className="truncate font-display text-base font-semibold">{group.name}</h2>
-          <p className="text-xs text-muted-foreground">{members.length} {t("society.groups.members")}</p>
-        </div>
-        <button type="button" onClick={() => setEditing(true)} aria-label={t("society.groups.edit")}
-          className="rounded-md p-2 text-muted-foreground hover:bg-secondary hover:text-foreground"><Pencil className="h-4 w-4" /></button>
-        <button type="button" onClick={() => setConfirmUngroup(true)}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
-          <Trash2 className="h-4 w-4" aria-hidden />{t("society.groups.delete")}
-        </button>
-      </header>
-      {confirmUngroup && <div role="alertdialog" aria-label={t("society.groups.delete")}
-        className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-secondary/50 px-5 py-3 text-sm text-foreground">
-        <p>{t("society.groups.delete_confirm")}</p>
-        <div className="flex gap-2">
-          <button type="button" onClick={() => setConfirmUngroup(false)} disabled={removing}
-            className="rounded-md px-3 py-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground">
-            {t("society.groups.cancel")}
-          </button>
-          <button type="button" onClick={() => void remove()} disabled={removing}
-            className="rounded-md bg-destructive px-3 py-1.5 font-medium text-destructive-foreground disabled:opacity-50">
-            {t("society.groups.delete")}
-          </button>
-        </div>
-      </div>}
-      {error && <p role="alert" className="px-5 py-1 text-sm text-destructive">{error}</p>}
-      <div className="grid min-h-0 flex-1 grid-cols-2 divide-x divide-border" data-testid="society-group-split">
-        {pane("left", left)}
-        {pane("right", right)}
-      </div>
+      loading={false} sample={false} side="left" className="w-full border-0 jarvis-nav-surface"
+      footer={teamFooter} />
+    <div className="grid min-h-0 min-w-0 grid-cols-2 divide-x-2 divide-border-strong overflow-hidden border-l border-border bg-background"
+      data-testid="society-group-split">
+      {pane("left", left)}
+      {pane("right", right)}
     </div>
     {editing && <ChatGroupDialog group={group} agents={roster} onClose={() => setEditing(false)} onSaved={onOpenGroup} />}
   </div>;

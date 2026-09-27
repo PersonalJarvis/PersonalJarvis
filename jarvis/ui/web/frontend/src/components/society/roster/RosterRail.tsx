@@ -97,6 +97,8 @@ export interface RosterRailProps {
   className?: string;
   /** Sits above the title — the way back to the rest of the app. */
   header?: ReactNode;
+  /** Team actions stay visible below the scrolling roster. */
+  footer?: ReactNode;
 }
 
 export function RosterRail({
@@ -114,6 +116,7 @@ export function RosterRail({
   side = "right",
   className,
   header,
+  footer,
 }: RosterRailProps) {
   const t = useT();
   const [query, setQuery] = useState("");
@@ -640,6 +643,7 @@ export function RosterRail({
           })}
         </ul>
       </ScrollArea>
+      {footer}
       {menu && menuAgent && <AgentRosterActions key={menu.agentId} agent={menuAgent} roster={agents} sample={sample}
         hidden={hiddenIds.includes(menu.agentId)} x={menu.x} y={menu.y} onVisibilityChange={setHidden} onDismiss={closeMenu} />}
       {profile && <Suspense fallback={null}><AgentProfileDialog key={profile.agentId} agent={profile} sample={sample} onClose={() => setProfileId(null)} /></Suspense>}
