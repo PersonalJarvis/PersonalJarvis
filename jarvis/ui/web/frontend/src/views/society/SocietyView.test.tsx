@@ -10,6 +10,10 @@ vi.mock("@/hooks/useAppInstance", () => ({ useAppInstance: () => app.instance })
 beforeEach(() => { app.instance = { name: "default", isDev: false }; groupsState.groups = []; });
 
 vi.mock("@/lib/mapFullscreen", () => ({ setMapFullscreen: vi.fn(async () => undefined) }));
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
+  useQueryClient: () => ({ invalidateQueries: async () => undefined }),
+}));
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, useLocaleChunk: () => true }));
 vi.mock("@/components/society/chat/useModelMenuData", () => ({ useModelMenuData: () => undefined }));
 vi.mock("@/lib/societyChatGroups", () => ({ useSocietyChatGroups: () => ({ data: groupsState.groups }) }));

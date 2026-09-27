@@ -55,7 +55,7 @@ import { VoiceStage } from "@/components/home/VoiceStage";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { createAgentChatStore, useAgentChatStore } from "@/store/agentChat";
+import { createAgentChatStore, useAgentChatStore, type AgentChatStoreHook } from "@/store/agentChat";
 import type { AgentChatSurface, ApprovalDecision } from "@/lib/agentChatApi";
 
 import { AgentSwatch } from "../AgentSwatch";
@@ -101,6 +101,8 @@ let onboardingAsked = false;
 export interface AgentChatPanelProps {
   agent: SocietyAgent;
   roster: SocietyAgent[];
+  /** An isolated store lets two canonical agent sessions remain open side by side. */
+  chatStore?: AgentChatStoreHook;
 }
 
 /**
@@ -142,14 +144,14 @@ export function itemsForOpenSession(
 
 export function AgentChatPanel(props: AgentChatPanelProps) {
   const disconnect = useCallback(() => {
-    (props.agent.tier === "lead" ? useAgentChatStore : useSocietyChatStore).getState().disconnect();
-  }, [props.agent.tier]);
+    (props.agent.tier === "lead" ? useAgentChatStore : props.chatStore ?? useSocietyChatStore).getState().disconnect();
+  }, [props.agent.tier, props.chatStore]);
   return <PairConversationBoundary key={props.agent.agentId} recipient={{ id: props.agent.agentId, name: props.agent.name }}>
     <RoutineChatHost agentId={props.agent.agentId} onOpen={disconnect}><AgentChatPanelContent {...props} /></RoutineChatHost>
   </PairConversationBoundary>;
 }
 
-function AgentChatPanelContent({ agent, roster }: AgentChatPanelProps) {
+function AgentChatPanelContent({ agent, roster, chatStore }: AgentChatPanelProps) {
   if (agent.tier === "lead") {
     return (
       <AgentChatStoreProvider store={useAgentChatStore}>
@@ -159,7 +161,7 @@ function AgentChatPanelContent({ agent, roster }: AgentChatPanelProps) {
   }
   if (!agent.chatSessionId) return <NotBoundYet />;
   return (
-    <AgentChatStoreProvider store={useSocietyChatStore}>
+    <AgentChatStoreProvider store={chatStore ?? useSocietyChatStore}>
       <SpecialistChat agent={agent} roster={roster} />
     </AgentChatStoreProvider>
   );

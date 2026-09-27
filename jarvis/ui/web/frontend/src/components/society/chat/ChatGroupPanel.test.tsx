@@ -1,44 +1,45 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, it, vi } from "vitest";
 import type { SocietyAgent } from "../data";
 import { ChatGroupPanel } from "./ChatGroupPanel";
 
-const mocks = vi.hoisted(() => ({ send: vi.fn(async () => ({ post_id: "next", recipients: ["scout", "writer"], skipped: [] as string[] })) }));
-vi.mock("@/i18n", () => ({ useT: () => (key: string) => key === "society.groups.skipped" ? "Unavailable: {0}" : key }));
-vi.mock("@/lib/societyChatGroups", () => ({
-  useSocietyChatGroupMessages: () => ({
-    data: [
-      { id: "post", from_agent: "user", text: "Status?", ts_ms: 1 },
-      { id: "answer", from_agent: "scout", text: "Ready.", ts_ms: 2 },
-    ],
-    error: null,
-    refetch: async () => undefined,
-  }),
-  sendSocietyChatGroupMessage: mocks.send,
-  deleteSocietyChatGroup: vi.fn(),
-}));
+vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
 vi.mock("../roster/RosterRail", () => ({ RosterRail: () => <aside /> }));
-vi.mock("../AgentSwatch", () => ({ AgentSwatch: () => <span /> }));
+vi.mock("./AgentChatPanel", () => ({
+  AgentChatPanel: ({ agent, chatStore }: { agent: SocietyAgent; chatStore: any }) => {
+    const session = chatStore((state: { activeSessionId: string | null }) => state.activeSessionId);
+    return <div data-testid={`chat-${agent.agentId}`} data-session={session ?? ""}>
+      <button onClick={() => chatStore.setState({ activeSessionId: agent.chatSessionId })}>
+        Open {agent.name}
+      </button>
+    </div>;
+  },
+}));
 
-afterEach(() => { cleanup(); mocks.send.mockClear(); });
+afterEach(cleanup);
 
-it("shows named agent replies and sends to the whole group by default", async () => {
+it("opens two existing agent chats in separate stores and keeps each pane independent", () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const scout = { agentId: "scout", name: "Scout", tier: "specialist" } as SocietyAgent;
-  const writer = { agentId: "writer", name: "Writer", tier: "specialist" } as SocietyAgent;
+  const other = { agentId: "other", name: "hdckjashx", tier: "specialist", chatSessionId: "society:other" } as SocietyAgent;
+  const test = { agentId: "test", name: "Test", tier: "specialist", chatSessionId: "society:test" } as SocietyAgent;
   render(<QueryClientProvider client={client}><ChatGroupPanel
-    group={{ group_id: "team", name: "Launch team", members: ["scout", "writer"], created_ms: 1, updated_ms: 1, last_text: "", last_ms: null, last_from_agent: null }}
-    groups={[]} roster={[scout, writer]} onOpenAgent={() => undefined} onOpenGroup={() => undefined}
+    group={{ group_id: "team", name: "hdckjashx + Test", members: ["other", "test"], created_ms: 1, updated_ms: 1 }}
+    groups={[]} roster={[other, test]} onOpenAgent={() => undefined} onOpenGroup={() => undefined}
     onCreateAgent={() => undefined} onDeleted={() => undefined}
+    onGroupAgents={() => undefined} onAddAgentToGroup={() => undefined}
   /></QueryClientProvider>);
-  expect(screen.getByText("Ready.")).toBeTruthy();
-  expect(screen.getByText("Status?")).toBeTruthy();
-  fireEvent.change(screen.getByRole("textbox", { name: "society.groups.placeholder" }), { target: { value: "Next step?" } });
-  fireEvent.click(screen.getByRole("button", { name: "society.groups.send" }));
-  await waitFor(() => expect(mocks.send).toHaveBeenCalledWith("team", "Next step?", undefined));
-  mocks.send.mockResolvedValueOnce({ post_id: "later", recipients: ["scout"], skipped: ["writer"] });
-  fireEvent.change(screen.getByRole("textbox", { name: "society.groups.placeholder" }), { target: { value: "Another update?" } });
-  fireEvent.click(screen.getByRole("button", { name: "society.groups.send" }));
-  expect((await screen.findByRole("alert")).textContent).toContain("Unavailable: Writer");
+
+  const left = screen.getByTestId("society-group-pane-left");
+  const right = screen.getByTestId("society-group-pane-right");
+  expect((within(left).getByRole("combobox") as HTMLSelectElement).value).toBe("other");
+  expect((within(right).getByRole("combobox") as HTMLSelectElement).value).toBe("test");
+  expect(within(left).getByTestId("chat-other")).toBeTruthy();
+  expect(within(right).getByTestId("chat-test")).toBeTruthy();
+  fireEvent.click(within(left).getByRole("button", { name: "Open hdckjashx" }));
+  expect(within(left).getByTestId("chat-other").getAttribute("data-session")).toBe("society:other");
+  expect(within(right).getByTestId("chat-test").getAttribute("data-session")).toBe("");
+  fireEvent.click(within(right).getByRole("button", { name: "Open Test" }));
+  expect(within(right).getByTestId("chat-test").getAttribute("data-session")).toBe("society:test");
+  expect(within(left).getByTestId("chat-other").getAttribute("data-session")).toBe("society:other");
 });

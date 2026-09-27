@@ -135,11 +135,6 @@ class ChatGroupBody(BaseModel):
     members: list[str] = Field(min_length=2, max_length=50)
 
 
-class ChatGroupMessageBody(BaseModel):
-    text: str = Field(min_length=1, max_length=20_000)
-    recipients: list[str] | None = None
-
-
 class AssignBody(BaseModel):
     task: str = Field(min_length=1, max_length=20_000)
     from_agent: str = "user"
@@ -351,76 +346,12 @@ async def update_chat_group(group_id: str, body: ChatGroupBody, request: Request
 
 @router.delete("/chat-groups/{group_id}", openapi_extra={"x-jarvis-dangerous": True})
 async def delete_chat_group(group_id: str, request: Request) -> dict[str, bool]:
-    """Ungroup agents and remove the group transcript."""
+    """Ungroup agents while preserving their individual conversations."""
     rt = await _runtime(request)
     if await rt.store.get_chat_group(group_id) is None:
         raise HTTPException(404, "chat group not found")
     await rt.store.delete_chat_group(group_id)
     return {"deleted": True}
-
-
-@router.get("/chat-groups/{group_id}/messages")
-async def chat_group_messages(group_id: str, request: Request) -> dict[str, Any]:
-    """Read user posts and correlated agent replies in a group chat."""
-    rt = await _runtime(request)
-    if await rt.store.get_chat_group(group_id) is None:
-        raise HTTPException(404, "chat group not found")
-    return {"messages": await rt.store.chat_group_messages(group_id)}
-
-
-@router.post("/chat-groups/{group_id}/messages", openapi_extra={"x-jarvis-dangerous": True})
-async def send_chat_group_message(
-    group_id: str, body: ChatGroupMessageBody, request: Request
-) -> dict[str, Any]:
-    """Ask all or selected group members and append one shared user post."""
-    rt = await _runtime(request)
-    group = await rt.store.get_chat_group(group_id)
-    if group is None:
-        raise HTTPException(404, "chat group not found")
-    members = group["members"]
-    recipients = body.recipients if body.recipients is not None else members
-    if not recipients or len(set(recipients)) != len(recipients) or set(recipients) - set(members):
-        raise HTTPException(422, "recipients must be distinct group members")
-    active = []
-    skipped = []
-    for member_id in recipients:
-        agent = await rt.roster.get(member_id)
-        if agent is None or agent.state != "active":
-            if body.recipients is not None:
-                raise HTTPException(409, f"agent {member_id} is not active")
-            skipped.append(member_id)
-            continue
-        active.append(agent)
-    if not active:
-        raise HTTPException(409, "no group members are active")
-    history = await rt.store.chat_group_messages(group_id, limit=8)
-    names = {agent.agent_id: agent.name for agent in active}
-    recent = "\n".join(
-        f"{names.get(item['from_agent'], item['from_agent'])}: {item['text'][:300]}"
-        for item in history[-8:]
-    )
-    trace_id = f"group:{uuid4().hex}"
-    post_id = uuid4().hex
-    await rt.store.add_chat_group_post(post_id, group_id, trace_id, body.text)
-    prompt = (
-        f"Group chat '{group['name']}'. Members: {', '.join(members)}.\n"
-        + (f"Recent group messages:\n{recent}\n" if recent else "")
-        + f"User: {body.text}\nReply to the group request."
-    )
-    for agent in active:
-        await rt.say(
-            from_agent="user",
-            to_agent=agent.agent_id,
-            text=prompt,
-            trace_id=trace_id,
-            msg_type=MsgType.QUERY,
-            payload={"group_id": group_id, "reply_policy": "always"},
-        )
-    return {
-        "post_id": post_id,
-        "recipients": [agent.agent_id for agent in active],
-        "skipped": skipped,
-    }
 
 
 @router.post("/agents/{agent_id}/message", openapi_extra={"x-jarvis-dangerous": True})

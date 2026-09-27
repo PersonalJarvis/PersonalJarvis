@@ -5177,9 +5177,9 @@
   },
   "society": {
     "groups": {
-      "create": "Neuer Gruppenchat", "edit": "Gruppenchat bearbeiten", "description": "Agents in einem Chat bündeln. Nachrichten gehen an alle Mitglieder, sofern du keine Empfänger auswählst.",
-      "name": "Gruppenname", "members": "Mitglieder", "cancel": "Abbrechen", "save": "Gruppe speichern", "delete": "Gruppe auflösen", "delete_confirm": "Diese Gruppe auflösen? Der Gruppenverlauf wird gelöscht; die einzelnen Agent-Chats bleiben erhalten.",
-      "send": "Senden", "placeholder": "Nachricht an die Gruppe", "empty": "Schreib eine Nachricht, um diesen Gruppenchat zu starten.", "recipients": "Empfänger", "everyone": "Alle", "error": "Die Gruppe konnte nicht geladen werden.", "skipped": "Nicht verfügbare Mitglieder haben diese Nachricht nicht erhalten: {0}."
+      "create": "Neues Agent-Team", "edit": "Agent-Team bearbeiten", "description": "Agents in einem Eintrag bündeln. Jeder Agent behält seinen eigenen Chat.",
+      "name": "Teamname", "members": "Mitglieder", "cancel": "Abbrechen", "save": "Team speichern", "delete": "Gruppe auflösen", "delete_confirm": "Diese Gruppe auflösen? Die einzelnen Agent-Chats bleiben erhalten.",
+      "left_chat": "Linker Chat", "right_chat": "Rechter Chat", "open": "Öffnen", "open_individual": "Einzelchat von {0} öffnen", "missing_member": "Wähle einen verfügbaren Agent für diesen Chat.", "hold_to_group": "Halten zum Gruppieren", "release_to_group": "Loslassen zum Gruppieren"
     },
     "chat": {
       "placeholder": "Nachricht an {0}",

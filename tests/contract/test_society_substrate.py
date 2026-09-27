@@ -19,7 +19,7 @@ class FakeManager:
         return "m-1"
 
 
-def test_persistent_group_chat_routes_to_members_headless(tmp_path: Path) -> None:
+def test_persistent_group_membership_headless(tmp_path: Path) -> None:
     runtime = SocietyRuntime(
         tmp_path, seed_starter_team=False, mission_manager=lambda: FakeManager()
     )
@@ -34,23 +34,28 @@ def test_persistent_group_chat_routes_to_members_headless(tmp_path: Path) -> Non
             json={"name": "Research", "members": ["scout", "writer"]},
         ).json()["group"]
         group_id = group["group_id"]
-        sent = client.post(
-            f"/api/society/chat-groups/{group_id}/messages",
-            json={"text": "Summarize the result."},
-        )
-        assert sent.status_code == 200, sent.text
-        assert sent.json()["recipients"] == ["scout", "writer"]
-        for member in group["members"]:
-            inbox = client.get(f"/api/society/agents/{member}/inbox").json()["events"]
-            assert len(inbox) == 1
-            assert inbox[0]["msg_type"] == "QUERY"
-            assert inbox[0]["payload"]["group_id"] == group_id
-        assert [
-            (item["from_agent"], item["text"])
-            for item in client.get(f"/api/society/chat-groups/{group_id}/messages").json()[
-                "messages"
-            ]
-        ] == [("user", "Summarize the result.")]
+        sessions = {
+            agent["agent_id"]: agent["session_id"]
+            for agent in client.get("/api/society/agents").json()["agents"]
+        }
+        assert client.get("/api/society/chat-groups").json()["groups"][0]["members"] == [
+            "scout",
+            "writer",
+        ]
+        assert client.portal is not None
+        client.portal.call(runtime.close)
+
+    restarted = SocietyRuntime(tmp_path, seed_starter_team=False)
+    app2 = FastAPI()
+    app2.include_router(router)
+    app2.state.society_factory = lambda: restarted
+    with TestClient(app2) as client:
+        assert client.get("/api/society/chat-groups").json()["groups"][0]["group_id"] == group_id
+        after = {
+            agent["agent_id"]: agent["session_id"]
+            for agent in client.get("/api/society/agents").json()["agents"]
+        }
+        assert after == sessions
 
 
 def test_two_agents_exchange_typed_messages_headless(tmp_path: Path) -> None:

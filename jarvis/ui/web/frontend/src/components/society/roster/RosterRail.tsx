@@ -13,8 +13,14 @@
  * It sits on either edge. Beside the island it is the RIGHT rail with its own
  * fixed width; inside the agent card it is the LEFT eighth and takes its width
  * from the grid cell — same rows, same sizes, only the divider swaps sides.
+ *
+ * Reordering is press-and-drag: pressing the left mouse button anywhere on a
+ * row and moving it files the agent before or after the row under the
+ * pointer. A small movement threshold keeps plain clicks (open chat /
+ * profile) working; the drop position shows as a line above or below the
+ * target row. HTML5 drag events and Alt + Arrow keys stay as fallbacks.
  */
-import { lazy, Suspense, useCallback, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Eye, Loader2, Plus, Search, UsersRound } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -31,10 +37,30 @@ import { useRosterUnread } from "./useRosterUnread";
 import { ChatGroupDialog } from "../chat/ChatGroupDialog";
 
 const HIDDEN_AGENTS_KEY = "society.roster.hidden-agent-ids";
+const ORDER_KEY = "society.roster.order";
+/** How far the pointer must travel before a press becomes a drag. */
+const PRESS_DRAG_THRESHOLD_PX = 6;
+/** A deliberate pause over another row creates a team; a quick drop reorders. */
+const GROUP_HOLD_MS = 750;
+type GroupDropTarget = { kind: "agent" | "group"; id: string };
 
 function readHiddenAgents(): string[] {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(HIDDEN_AGENTS_KEY) ?? "[]");
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The person's own row order, newest drag last. Unknown ids (retired agents,
+ * a fresh install) are ignored when sorting; agents missing from the list
+ * keep their default place at the end until the next drag persists them.
+ */
+function readRosterOrder(): string[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(ORDER_KEY) ?? "[]");
     return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : [];
   } catch {
     return [];
@@ -55,6 +81,8 @@ export interface RosterRailProps {
   groups?: SocietyChatGroup[];
   activeGroupId?: string | null;
   onOpenGroup?: (groupId: string) => void;
+  onGroupAgents?: (sourceId: string, targetId: string) => void;
+  onAddAgentToGroup?: (agentId: string, groupId: string) => void;
   loading: boolean;
   /** True while rows come from the sample roster rather than society.db. */
   sample: boolean;
@@ -74,6 +102,8 @@ export function RosterRail({
   groups = [],
   activeGroupId = null,
   onOpenGroup,
+  onGroupAgents,
+  onAddAgentToGroup,
   loading,
   sample,
   activeAgentId,
@@ -88,6 +118,12 @@ export function RosterRail({
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [hiddenIds, setHiddenIds] = useState(readHiddenAgents);
+  const [orderIds, setOrderIds] = useState(readRosterOrder);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropId, setDropId] = useState<string | null>(null);
+  const [dropAfter, setDropAfter] = useState(false);
+  const [groupHover, setGroupHover] = useState<GroupDropTarget | null>(null);
+  const [groupReady, setGroupReady] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
   const [menu, setMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
   const profile = agents.find((agent) => agent.agentId === profileId);
@@ -114,24 +150,314 @@ export function RosterRail({
 
   const { leadVisible, rows } = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const filtered = agents.filter((a) =>
-      (showHidden || !hiddenIds.includes(a.agentId)) &&
-      (!q || `${a.name} ${a.title}`.toLowerCase().includes(q)),
-    );
+    const filtered = agents.filter((a) => {
+      if (!showHidden && hiddenIds.includes(a.agentId)) return false;
+      if (!q) return true;
+      return `${a.name} ${a.title}`.toLowerCase().includes(q);
+    },);
     const masterVisible = lead ? filtered.some((a) => a.agentId === lead.agentId) : false;
     // Orchestrators, then specialists; stable within a tier. The lead lives
     // in its own centered hero above and never repeats in the list.
     const rank = { lead: 0, orchestrator: 1, specialist: 2 } as const;
     const rest = filtered
-      .filter((a) => a.agentId !== lead?.agentId && !groupedIds.has(a.agentId))
-      .sort((a, b) => rank[a.tier] - rank[b.tier]);
+      .filter((a) => a.agentId !== lead?.agentId && !groupedIds.has(a.agentId));
+    // A drag persists the full visible order, so from then on the person's
+    // own arrangement wins over the tier grouping. Agents the list never saw
+    // (freshly created, or a retired id still stored) settle at the end in
+    // tier order until the next drag files them in.
+    const position = new Map(orderIds.map((id, index) => [id, index] as const));
+    const custom = rest.some((a) => position.has(a.agentId));
+    rest.sort((a, b) => {
+      if (custom) {
+        const ai = position.get(a.agentId);
+        const bi = position.get(b.agentId);
+        if (ai !== undefined && bi !== undefined) return ai - bi;
+        if (ai !== undefined) return -1;
+        if (bi !== undefined) return 1;
+      }
+      return rank[a.tier] - rank[b.tier];
+    });
     return { leadVisible: masterVisible, rows: rest };
-  }, [agents, groupedIds, hiddenIds, lead, query, showHidden]);
+  }, [agents, groupedIds, hiddenIds, lead, orderIds, query, showHidden]);
+
+  // While searching, the list is a filtered excerpt — dragging there would
+  // file agents by where they happen to sit in the excerpt, so rows stay put.
+  const reorderable = query.trim() === "";
+
+  /**
+   * File `fromId` directly before `toId`, or directly after it when `after`
+   * is set. Unlike the native-drop path this can also land behind the last
+   * row, which is what moving an agent down needs.
+   */
+  const moveToPosition = useCallback((fromId: string, toId: string, after: boolean) => {
+    if (fromId === toId) return;
+    setOrderIds((current) => {
+      const base = rows.map((a) => a.agentId);
+      const known = new Set(base);
+      for (const id of current) if (!known.has(id)) base.push(id);
+      const without = base.filter((id) => id !== fromId);
+      const at = without.indexOf(toId);
+      if (at === -1) {
+        const next = [...without, fromId];
+        try {
+          localStorage.setItem(ORDER_KEY, JSON.stringify(next));
+        } catch {
+          // Private mode: the order holds for this window.
+        }
+        return next;
+      }
+      const insert = after ? at + 1 : at;
+      const next = [...without.slice(0, insert), fromId, ...without.slice(insert)];
+      try {
+        localStorage.setItem(ORDER_KEY, JSON.stringify(next));
+      } catch {
+        // Private mode: the order holds for this window.
+      }
+      return next;
+    });
+  }, [rows]);
+
+  /** Keyboard twin of the drag: Alt + Arrow Up / Down steps the row. */
+  const moveStep = useCallback((agentId: string, delta: -1 | 1) => {
+    setOrderIds((current) => {
+      const base = rows.map((a) => a.agentId);
+      const known = new Set(base);
+      for (const id of current) if (!known.has(id)) base.push(id);
+      const at = base.indexOf(agentId);
+      const swap = at + delta;
+      if (at === -1 || swap < 0 || swap >= base.length) return current;
+      const next = [...base];
+      [next[at], next[swap]] = [next[swap], next[at]];
+      try {
+        localStorage.setItem(ORDER_KEY, JSON.stringify(next));
+      } catch {
+        // Private mode: the order holds for this window.
+      }
+      return next;
+    });
+  }, [rows]);
+
+  const onRowKeyDown = (event: KeyboardEvent, agentId: string) => {
+    if (!reorderable || !event.altKey) return;
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      event.preventDefault();
+      moveStep(agentId, event.key === "ArrowUp" ? -1 : 1);
+    }
+  };
+
+  // --- Press-and-drag: the whole row is the handle. -----------------------
+  // One pointer gesture owns both actions. Native HTML drag competes with
+  // pointermove in WebView and can cancel the gesture before release.
+  // A quick drop reorders; holding over a row or group makes a team.
+  const listRef = useRef<HTMLUListElement | null>(null);
+  const railRef = useRef<HTMLElement | null>(null);
+  const pendingRef = useRef<{ id: string; startX: number; startY: number; pointerId: number } | null>(null);
+  const pointerDragRef = useRef(false);
+  const suppressClickRef = useRef(false);
+  const dragIdRef = useRef<string | null>(null);
+  const dropIdRef = useRef<string | null>(null);
+  const dropAfterRef = useRef(false);
+  const groupHoverRef = useRef<GroupDropTarget | null>(null);
+  const groupReadyRef = useRef(false);
+  const holdTimerRef = useRef<number | null>(null);
+  const reorderableRef = useRef(reorderable);
+  const moveToRef = useRef(moveToPosition);
+  const groupAgentsRef = useRef(onGroupAgents);
+  const addToGroupRef = useRef(onAddAgentToGroup);
+  dragIdRef.current = dragId;
+  dropIdRef.current = dropId;
+  dropAfterRef.current = dropAfter;
+  reorderableRef.current = reorderable;
+  moveToRef.current = moveToPosition;
+  groupAgentsRef.current = onGroupAgents;
+  addToGroupRef.current = onAddAgentToGroup;
+
+  useEffect(() => {
+    const rowElements = () => {
+      const list = listRef.current;
+      if (!list) return [] as HTMLElement[];
+      return [...list.querySelectorAll("[data-agent-id]")] as HTMLElement[];
+    };
+    const hit = (element: HTMLElement, x: number, y: number) => {
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && x >= rect.left && x <= rect.right
+        && y >= rect.top && y <= rect.bottom;
+    };
+    const groupTargetAt = (x: number, y: number, sourceId: string): GroupDropTarget | null => {
+      if (groupAgentsRef.current) {
+        const agent = rowElements().find((element) =>
+          element.dataset.agentId !== sourceId && hit(element, x, y));
+        if (agent?.dataset.agentId) return { kind: "agent", id: agent.dataset.agentId };
+      }
+      if (addToGroupRef.current) {
+        const group = [...(railRef.current?.querySelectorAll("[data-group-id]") ?? [])]
+          .find((element) => hit(element as HTMLElement, x, y)) as HTMLElement | undefined;
+        if (group?.dataset.groupId) return { kind: "group", id: group.dataset.groupId };
+      }
+      return null;
+    };
+    const clearHold = () => {
+      if (holdTimerRef.current !== null) window.clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+      groupHoverRef.current = null;
+      groupReadyRef.current = false;
+      setGroupHover(null);
+      setGroupReady(false);
+    };
+    const updateHold = (target: GroupDropTarget | null) => {
+      const previous = groupHoverRef.current;
+      if (previous?.kind === target?.kind && previous?.id === target?.id) return;
+      clearHold();
+      if (!target) return;
+      groupHoverRef.current = target;
+      setGroupHover(target);
+      holdTimerRef.current = window.setTimeout(() => {
+        groupReadyRef.current = true;
+        setGroupReady(true);
+      }, GROUP_HOLD_MS);
+    };
+    const onMove = (event: PointerEvent) => {
+      if (!reorderableRef.current) return;
+      let sourceId = pointerDragRef.current ? dragIdRef.current : null;
+      if (!sourceId) {
+        const pending = pendingRef.current;
+        if (!pending) return;
+        if (event.pointerId !== pending.pointerId) return;
+        const moved = Math.max(Math.abs(event.clientX - pending.startX), Math.abs(event.clientY - pending.startY));
+        if (moved < PRESS_DRAG_THRESHOLD_PX) return;
+        pointerDragRef.current = true;
+        sourceId = pending.id;
+        setDragId(pending.id);
+        setDropId(null);
+        setDropAfter(false);
+      }
+      if (!sourceId) return;
+      {
+        const elements = rowElements();
+        const sourceEl = elements.find((el) => el.getAttribute("data-agent-id") === sourceId);
+        if (sourceEl) {
+          const rect = sourceEl.getBoundingClientRect();
+          if (rect.height > 0 && event.clientY >= rect.top && event.clientY <= rect.bottom) {
+            updateHold(null);
+            if (dropIdRef.current !== null) {
+              setDropId(null);
+              setDropAfter(false);
+            }
+            return;
+          }
+        }
+        const groupTarget = groupTargetAt(event.clientX, event.clientY, sourceId);
+        updateHold(groupTarget);
+        if (groupTarget?.kind === "group") {
+          if (dropIdRef.current !== null) setDropId(null);
+          if (event.cancelable) event.preventDefault();
+          return;
+        }
+        let target: { id: string; after: boolean } | null = null;
+        for (const el of elements) {
+          const id = el.getAttribute("data-agent-id");
+          if (!id || id === sourceId) continue;
+          const rect = el.getBoundingClientRect();
+          if (rect.height === 0) continue;
+          if (event.clientY < rect.top + rect.height / 2) {
+            target = { id, after: false };
+            break;
+          }
+        }
+        if (!target) {
+          const others = elements.filter((el) => el.getAttribute("data-agent-id") !== sourceId);
+          const last = others[others.length - 1];
+          const lastId = last?.getAttribute("data-agent-id");
+          if (lastId) target = { id: lastId, after: true };
+        }
+        if (target) {
+          if (dropIdRef.current !== target.id || dropAfterRef.current !== target.after) {
+            setDropId(target.id);
+            setDropAfter(target.after);
+          }
+        } else if (dropIdRef.current !== null) {
+          setDropId(null);
+          setDropAfter(false);
+        }
+        if (event.cancelable) event.preventDefault();
+        return;
+      }
+    };
+    const finish = (commit: boolean, event?: PointerEvent) => {
+      if (pointerDragRef.current && dragIdRef.current) {
+        const from = dragIdRef.current;
+        const toId = dropIdRef.current;
+        const after = dropAfterRef.current;
+        const held = groupReadyRef.current ? groupHoverRef.current : null;
+        const releasedOn = event ? groupTargetAt(event.clientX, event.clientY, from) : null;
+        pendingRef.current = null;
+        pointerDragRef.current = false;
+        setDragId(null);
+        setDropId(null);
+        setDropAfter(false);
+        clearHold();
+        if (commit && held && releasedOn?.kind === held.kind && releasedOn.id === held.id) {
+          if (held.kind === "agent") groupAgentsRef.current?.(from, held.id);
+          else addToGroupRef.current?.(from, held.id);
+        } else if (commit && releasedOn?.kind !== "group" && toId && toId !== from) {
+          moveToRef.current(from, toId, after);
+        }
+        suppressClickRef.current = true;
+        window.setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 0);
+      } else {
+        pendingRef.current = null;
+        clearHold();
+      }
+    };
+    const onUp = (event: PointerEvent) => finish(true, event);
+    const onCancel = () => finish(false);
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") finish(false);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("keydown", onKey);
+      if (holdTimerRef.current !== null) window.clearTimeout(holdTimerRef.current);
+    };
+  }, []);
+
+  const onRowPointerDown = (event: ReactPointerEvent, agentId: string) => {
+    if (!reorderable) return;
+    if (event.pointerType === "touch") return;
+    if (event.button !== undefined && event.button !== 0) return;
+    pendingRef.current = { id: agentId, startX: event.clientX, startY: event.clientY, pointerId: event.pointerId };
+  };
+
+  const onRowClickCapture = (event: MouseEvent) => {
+    if (suppressClickRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+
+  const openAgent = (agentId: string) => {
+    if (suppressClickRef.current) return;
+    onOpen(agentId);
+  };
+
+  const openProfile = (agentId: string) => {
+    if (suppressClickRef.current) return;
+    setProfileId(agentId);
+  };
 
   const hiddenCount = agents.filter((agent) => hiddenIds.includes(agent.agentId)).length;
 
   return (
     <aside
+      ref={railRef}
       data-testid="society-roster-rail"
       className={cn(
         "flex h-full min-h-0 flex-col border-border bg-sidebar",
@@ -197,7 +523,7 @@ export function RosterRail({
                 lead.agentId === activeAgentId && "bg-secondary",
               )}
             >
-              <button type="button" onClick={() => setProfileId(lead.agentId)} aria-label={t("society.profile_card.open").replace("{0}", lead.name)} className="relative rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <button type="button" onClick={() => openProfile(lead.agentId)} aria-label={t("society.profile_card.open").replace("{0}", lead.name)} className="relative rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <AgentSwatch agent={lead} size={56} />
                 {lead.state === "working" ? (
                   <span
@@ -216,7 +542,7 @@ export function RosterRail({
                   />
                 ) : null}
               </button>
-              <button type="button" onClick={() => onOpen(lead.agentId)} aria-current={lead.agentId === activeAgentId ? "true" : undefined} className="flex max-w-full items-center justify-center gap-1.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <button type="button" onClick={() => openAgent(lead.agentId)} aria-current={lead.agentId === activeAgentId ? "true" : undefined} className="flex max-w-full items-center justify-center gap-1.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <span className="truncate text-sm font-medium text-foreground">{lead.name}</span>
                 <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-xs">
                   {t("society.tier.lead")}
@@ -230,8 +556,8 @@ export function RosterRail({
         ) : null}
         {visibleGroups.length > 0 && <ul className="flex flex-col gap-0.5 px-2 pb-2">
           {visibleGroups.map((group) => <li key={group.group_id}>
-            <button type="button" onClick={() => onOpenGroup?.(group.group_id)} aria-current={activeGroupId === group.group_id ? "true" : undefined}
-              className={cn("flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", activeGroupId === group.group_id && "bg-secondary")}
+            <button type="button" data-group-id={group.group_id} onClick={() => onOpenGroup?.(group.group_id)} aria-current={activeGroupId === group.group_id ? "true" : undefined}
+              className={cn("flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", activeGroupId === group.group_id && "bg-secondary", groupHover?.kind === "group" && groupHover.id === group.group_id && (groupReady ? "ring-2 ring-primary" : "ring-1 ring-border-strong"))}
               data-testid={`society-group-${group.group_id}`}>
               <span className="flex w-12 shrink-0 items-center justify-center">
                 {group.members.slice(0, 3).map((id, index) => {
@@ -239,37 +565,51 @@ export function RosterRail({
                   return member ? <span key={id} className={cn("rounded-full ring-2 ring-sidebar", index > 0 && "-ml-3")}><AgentSwatch agent={member} size={26} /></span> : null;
                 })}
               </span>
-              <span className="min-w-0 flex-1"><span className="flex items-center gap-1"><span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{group.name}</span>
-                {group.last_ms && <time className="shrink-0 text-[10px] text-muted-foreground" dateTime={new Date(group.last_ms).toISOString()}>{new Date(group.last_ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</time>}
-                </span>
-                <span className="block truncate text-xs text-muted-foreground">{group.last_text
-                  ? `${group.last_from_agent && group.last_from_agent !== "user" ? `${agents.find((agent) => agent.agentId === group.last_from_agent)?.name ?? group.last_from_agent}: ` : ""}${group.last_text}`
-                  : `${t("society.groups.members")} · ${group.members.length}`}</span>
+              <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-foreground">{group.name}</span>
+                <span className="block truncate text-xs text-muted-foreground">{groupHover?.kind === "group" && groupHover.id === group.group_id
+                  ? t(groupReady ? "society.groups.release_to_group" : "society.groups.hold_to_group")
+                  : group.members.map((id) => agents.find((agent) => agent.agentId === id)?.name ?? id).join(", ")}</span>
               </span>
             </button>
           </li>)}
         </ul>}
-        <ul className="flex flex-col gap-0.5 px-2 pb-3">
+        <ul ref={listRef} className="flex flex-col gap-0.5 px-2 pb-3">
           {loading && !leadVisible && rows.length === 0 ? (
             <li className="px-2 py-3 text-xs text-muted-foreground">{t("society.roster.loading")}</li>
           ) : null}
           {!loading && !leadVisible && rows.length === 0 && visibleGroups.length === 0 ? (
             <li className="px-2 py-3 text-xs text-muted-foreground">{t("society.roster.empty")}</li>
           ) : null}
-          {rows.map((agent) => (
-            <li key={agent.agentId}>
+          {rows.map((agent) => {
+            const isDragging = dragId === agent.agentId;
+            const isDropTarget = dropId === agent.agentId && dragId !== agent.agentId;
+            return (
+            <li key={agent.agentId} className="relative">
+              {isDropTarget && !dropAfter && !groupReady ? (
+                <div aria-hidden className="pointer-events-none absolute inset-x-2 top-0 z-10 h-0.5 -translate-y-1/2 rounded-full bg-sky-400" />
+              ) : null}
               <div
+                data-agent-id={agent.agentId}
+                onPointerDown={(event) => onRowPointerDown(event, agent.agentId)}
+                onClickCapture={onRowClickCapture}
+                onKeyDown={(event) => onRowKeyDown(event, agent.agentId)}
                 onContextMenu={(event) => openMenu(event, agent.agentId)}
+                title={reorderable ? `${t("society.roster.reorder")} · ${t("society.roster.reorder_keys")}` : undefined}
+                aria-keyshortcuts={reorderable ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
                 className={cn(
-                  "flex w-full items-center rounded-md px-2 text-left transition-colors hover:bg-secondary",
+                  "flex w-full select-none items-center rounded-md px-2 text-left transition-colors hover:bg-secondary",
+                  reorderable ? "cursor-grab" : null,
+                  isDragging ? "cursor-grabbing opacity-40" : null,
                   agent.agentId === activeAgentId && "bg-secondary",
                   hiddenIds.includes(agent.agentId) && "opacity-60",
+                  isDropTarget && "bg-secondary ring-1 ring-inset ring-border-strong",
+                  groupHover?.kind === "agent" && groupHover.id === agent.agentId && groupReady && "ring-2 ring-primary",
                 )}
               >
-                <button type="button" onClick={() => setProfileId(agent.agentId)} aria-label={t("society.profile_card.open").replace("{0}", agent.name)} className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <button type="button" onClick={() => openProfile(agent.agentId)} aria-label={t("society.profile_card.open").replace("{0}", agent.name)} className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                   <AgentSwatch agent={agent} size={48} />
                 </button>
-                <button type="button" onClick={() => onOpen(agent.agentId)} aria-current={agent.agentId === activeAgentId ? "true" : undefined} className="flex min-w-0 flex-1 select-none items-center gap-2.5 rounded-md py-2 pl-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <button type="button" onClick={() => openAgent(agent.agentId)} aria-current={agent.agentId === activeAgentId ? "true" : undefined} className="flex min-w-0 flex-1 select-none items-center gap-2.5 rounded-md py-2 pl-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
                     <span className="truncate text-sm font-medium text-foreground">{agent.name}</span>
@@ -284,8 +624,17 @@ export function RosterRail({
                 <RowStatus agent={agent} hasUnread={unread.has(agent.agentId)} />
                 </button>
               </div>
+              {groupHover?.kind === "agent" && groupHover.id === agent.agentId && (
+                <span data-testid="society-group-drop-hint" className="pointer-events-none absolute right-2 top-1 rounded bg-primary px-1.5 py-0.5 text-[10px] text-primary-foreground">
+                  {t(groupReady ? "society.groups.release_to_group" : "society.groups.hold_to_group")}
+                </span>
+              )}
+              {isDropTarget && dropAfter && !groupReady ? (
+                <div aria-hidden className="pointer-events-none absolute inset-x-2 bottom-0 z-10 h-0.5 translate-y-1/2 rounded-full bg-sky-400" />
+              ) : null}
             </li>
-          ))}
+            );
+          })}
         </ul>
       </ScrollArea>
       {menu && menuAgent && <AgentRosterActions key={menu.agentId} agent={menuAgent} roster={agents} sample={sample}

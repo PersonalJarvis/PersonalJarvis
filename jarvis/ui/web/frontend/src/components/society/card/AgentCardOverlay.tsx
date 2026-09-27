@@ -23,6 +23,8 @@ export interface AgentCardOverlayProps {
   roster: SocietyAgent[];
   groups?: SocietyChatGroup[];
   onSelectGroup?: (groupId: string) => void;
+  onGroupAgents?: (sourceId: string, targetId: string) => void;
+  onAddAgentToGroup?: (agentId: string, groupId: string) => void;
   /** True while the roster is still loading; the rail says so. */
   rosterLoading?: boolean;
   /** True while rows come from the sample roster rather than society.db. */
@@ -43,6 +45,8 @@ export function AgentCardOverlay({
   roster,
   groups = [],
   onSelectGroup,
+  onGroupAgents,
+  onAddAgentToGroup,
   rosterLoading = false,
   sample = false,
   onSelectAgent,
@@ -87,6 +91,8 @@ export function AgentCardOverlay({
               agents={roster}
               groups={groups}
               onOpenGroup={onSelectGroup}
+              onGroupAgents={onGroupAgents}
+              onAddAgentToGroup={onAddAgentToGroup}
               loading={rosterLoading}
               sample={sample}
               activeAgentId={agent.agentId}

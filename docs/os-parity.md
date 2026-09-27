@@ -465,7 +465,7 @@ implementations, not stubs.
 
 | Typed chat on the Jarvis surface (brain runner, folder tools, approval card, CLI seats as Jarvis) | Clean; pure asyncio + SQLite, no OS API. Every CLI spawn keeps `NO_WINDOW_CREATIONFLAGS` and UTF-8 stdio. The identity for a Claude Code seat travels as a FILE under the app data dir (`jarvis_harness.write_identity_file`, removed after the turn) because Windows caps a command line at 32 767 characters; Codex and agy take it on stdin (no limit), Grok Build a compact cut on argv (`COMPACT_MAX_CHARS`). The MCP session header and the approval bridge are transport-level and OS-neutral |
 
-Persistent Society chat groups use the same SQLite and FastAPI capability on Windows, macOS, and Linux. Group membership and posts live in `society.db`; user messages fan out through the existing typed delivery queue, and correlated replies appear in one group transcript. No new OS API or provider gate is involved. Headless routing is covered by `tests/contract/test_society_substrate.py::test_persistent_group_chat_routes_to_members_headless`; a live model reply still depends on an available configured agent provider.
+Persistent Society agent teams use the same SQLite and FastAPI capability on Windows, macOS, and Linux. Membership lives in `society.db`; the frontend opens two existing canonical agent chats side by side with separate socket stores. Grouping never changes agent permissions, routing, or chat history. Headless membership persistence is covered by `tests/contract/test_society_substrate.py::test_persistent_group_membership_headless`.
 
 ## Open parity gaps
 

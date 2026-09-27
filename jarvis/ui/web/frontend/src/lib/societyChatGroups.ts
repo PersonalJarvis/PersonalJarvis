@@ -6,16 +6,6 @@ export interface SocietyChatGroup {
   members: string[];
   created_ms: number;
   updated_ms: number;
-  last_text: string;
-  last_ms: number | null;
-  last_from_agent: string | null;
-}
-
-export interface SocietyChatGroupMessage {
-  id: string;
-  from_agent: string;
-  text: string;
-  ts_ms: number;
 }
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
@@ -41,17 +31,6 @@ export function useSocietyChatGroups(enabled = true) {
   });
 }
 
-export function useSocietyChatGroupMessages(groupId: string | null) {
-  return useQuery({
-    queryKey: ["society", "chat-groups", groupId, "messages"],
-    queryFn: async () => (await json<{ messages: SocietyChatGroupMessage[] }>(
-      `/api/society/chat-groups/${encodeURIComponent(groupId!)}/messages`,
-    )).messages,
-    enabled: Boolean(groupId),
-    refetchInterval: 3000,
-  });
-}
-
 export async function createSocietyChatGroup(name: string, members: string[]) {
   return (await json<{ group: SocietyChatGroup }>("/api/society/chat-groups", body({ name, members }))).group;
 }
@@ -64,10 +43,4 @@ export async function updateSocietyChatGroup(groupId: string, name: string, memb
 
 export async function deleteSocietyChatGroup(groupId: string) {
   await json(`/api/society/chat-groups/${encodeURIComponent(groupId)}`, { method: "DELETE" });
-}
-
-export async function sendSocietyChatGroupMessage(groupId: string, text: string, recipients?: string[]) {
-  return json<{ post_id: string; recipients: string[]; skipped: string[] }>(
-    `/api/society/chat-groups/${encodeURIComponent(groupId)}/messages`, body({ text, recipients }),
-  );
 }
