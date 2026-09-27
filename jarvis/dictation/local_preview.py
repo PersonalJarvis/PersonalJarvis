@@ -678,7 +678,7 @@ class LocalPreviewTranscriber:
             self._loading = True
         try:
             loop = asyncio.get_running_loop()
-        except RuntimeError:
+        except RuntimeError:  # Without a running loop, model loading uses a daemon thread.
             threading.Thread(
                 target=self._load_model, name="dictation-preview-load", daemon=True
             ).start()
@@ -736,7 +736,7 @@ class LocalPreviewTranscriber:
         if callable(close):
             try:
                 loop = asyncio.get_running_loop()
-            except RuntimeError:
+            except RuntimeError:  # Without a running loop, close the preview synchronously.
                 close()
             else:
 

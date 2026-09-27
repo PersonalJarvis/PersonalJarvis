@@ -345,7 +345,7 @@ class SocietyScheduler:
         assert isinstance(target, AgentRecord)
         try:
             await self._deliver(target, env)
-        except DeliveryBusy:
+        except DeliveryBusy:  # A busy destination keeps the delivery pending for retry.
             return False
         except Exception as exc:  # noqa: BLE001 — persist the failure and report it
             await self._store.mark_delivery(env.event_id, "failed", str(exc))

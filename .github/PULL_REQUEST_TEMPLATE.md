@@ -11,7 +11,7 @@ the same evidence as a new speech provider, and we do not pretend otherwise.
 
 ## Related issue
 
-<!-- "Closes #123", or "none" if there isn't one. Small fixes don't need an issue first. -->
+<!-- "Closes #123", or "none" if there isn't one. Small fixes don't need an issue first. For larger changes, link the design discussion. -->
 
 ---
 
@@ -28,7 +28,8 @@ the same evidence as a new speech provider, and we do not pretend otherwise.
 <details open>
 <summary><b>Docs, comments, or translations only</b></summary>
 
-- [ ] Nothing else. Open it — this is the whole checklist.
+- [ ] Links and media touched by this change resolve in the rendered page.
+- [ ] Public text contains no personal data or credentials.
 
 </details>
 

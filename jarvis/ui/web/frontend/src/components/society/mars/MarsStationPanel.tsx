@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { BrandedSelect } from "@/components/ui/select";
 import { useLocaleChunk, useT } from "@/i18n";
 import { containsCredential } from "./credentialInput";
 import { MarsNavigationPanel } from "./MarsNavigationPanel";
@@ -96,12 +97,12 @@ export function MarsStationPanel({ onClose, onOpenAgent }: {
         <button type="button" onClick={onClose} className="rounded px-2 py-1 hover:bg-accent">{t("society.mars.close")}</button>
       </div>
       <p className="text-sm text-muted-foreground">{t("society.mars.station_scope")}</p>
-      <label className="grid gap-1 text-sm">
-        {t("society.mars.agent")}
-        <select value={selectedAgent} disabled={busy || !!attempt.current} onChange={(event) => setAgentId(event.target.value)} className="rounded border border-border bg-background p-2">
-          {activeAgents.map((agent) => <option key={agent.agent_id} value={agent.agent_id}>{agent.name}</option>)}
-        </select>
-      </label>
+      <div className="grid gap-1 text-sm">
+        <span>{t("society.mars.agent")}</span>
+        <BrandedSelect value={selectedAgent} disabled={busy || !!attempt.current} onValueChange={setAgentId}
+          ariaLabel={t("society.mars.agent")} className="rounded border border-border bg-background p-2"
+          options={activeAgents.map((agent) => ({ value: agent.agent_id, label: agent.name }))} />
+      </div>
       {!activeAgents.length && <p role="status" className="text-sm">{t(roster.isError ? "society.mars.offline" : "society.mars.no_agents")}</p>}
       <label className="grid gap-1 text-sm">
         {t("society.mars.draft")}
