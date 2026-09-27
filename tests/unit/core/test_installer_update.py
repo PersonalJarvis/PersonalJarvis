@@ -390,6 +390,7 @@ def test_macos_handover_replaces_the_running_app_and_relaunches(
     ).read_text(encoding="utf-8") == "old"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="macOS bundle swaps require POSIX directory renames")
 def test_macos_failed_relaunch_restores_prior_bundle(tmp_path: Path) -> None:
     dmg = tmp_path / "PersonalJarvis-macOS-arm64.dmg"
     dmg.write_bytes(PAYLOAD)

@@ -922,6 +922,18 @@ async def _frozen_status(current: str) -> dict[str, object]:
     return result
 
 
+def _schedule_native_update_shutdown(desktop: Any, receipt: Path) -> None:
+    """Return the ASGI task before shutdown waits for outstanding requests."""
+    # A non-daemon thread keeps the process alive until state is flushed and
+    # the receipt is written. Its watchdog still bounds a stalled shutdown.
+    threading.Thread(
+        target=_quit_for_native_update,
+        args=(desktop, receipt),
+        name="native-update-shutdown",
+        daemon=False,
+    ).start()
+
+
 def _quit_for_native_update(desktop: Any, receipt: Path) -> None:
     """Flush app state after the HTTP response, then authorize the sidecar swap."""
     watchdog = threading.Timer(30.0, os._exit, args=(1,))
@@ -1095,7 +1107,7 @@ async def _apply_frozen(request: Request, background_tasks: BackgroundTasks) -> 
     # The signed payload was handed off; the sidecar still has to prove health.
     _progress.finish(version=release_version, restart_required=False)
     if supervised:
-        background_tasks.add_task(_quit_for_native_update, desktop, shutdown_receipt)
+        background_tasks.add_task(_schedule_native_update_shutdown, desktop, shutdown_receipt)
 
     # The download is deliberately NOT deleted: on Windows the installer that
     # replaces this app is running from it right now. The OS reclaims the temp

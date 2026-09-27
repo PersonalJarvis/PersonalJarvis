@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import urllib.error
 import urllib.request
+from collections import Counter
 from pathlib import Path
 
 from jarvis.agent_chat.store import AgentChatStore
@@ -27,12 +28,32 @@ from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 
 class TrackingRunner(SubprocessCommandRunner):
-    def __init__(self) -> None:
+    def __init__(self, evidence_dir: Path, profile: Path, base_env: dict[str, str]) -> None:
         super().__init__()
+        self.evidence_dir = evidence_dir
+        self.profile = profile
+        self.base_env = base_env
         self.spawned: list[int] = []
 
     def spawn_detached(self, command, *, env=None):
-        pid = super().spawn_detached(command, env=env)
+        child_env = self.base_env.copy()
+        child_env.update(env or {})
+        child_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+        log_path = self.evidence_dir / f"child-{len(self.spawned) + 1:02d}.log"
+        with log_path.open("wb") as output:
+            process = subprocess.Popen(
+                list(command),
+                cwd=self.profile,
+                env=child_env,
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                close_fds=True,
+                start_new_session=True,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+        pid = process.pid
+        self._children[pid] = process
         self.spawned.append(pid)
         return pid
 
@@ -43,6 +64,49 @@ class TrackingRunner(SubprocessCommandRunner):
             except (OSError, ValueError, InstallerUpdateError):
                 # A child already stopped by the supervisor needs no second stop.
                 pass
+
+    def record(self, phase: str) -> None:
+        statuses = [
+            {
+                "pid": pid,
+                "returncode": self._children[pid].poll() if pid in self._children else "reaped",
+            }
+            for pid in self.spawned
+        ]
+        (self.evidence_dir / f"{phase}-children.json").write_text(
+            json.dumps(statuses, indent=2), encoding="utf-8"
+        )
+
+
+def _isolated_env(profile: Path, config: Path, data: Path) -> dict[str, str]:
+    """Keep only OS launch requirements and this smoke's controlled profile."""
+    allowed = {
+        "PATH",
+        "TMP",
+        "TEMP",
+        "TMPDIR",
+        "LANG",
+        "LANGUAGE",
+        "LC_ALL",
+        "LC_CTYPE",
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XDG_RUNTIME_DIR",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "SYSTEMROOT",
+        "WINDIR",
+    }
+    child_env = {key: value for key, value in os.environ.items() if key.upper() in allowed}
+    child_env.update(
+        HOME=str(profile),
+        JARVIS_CONFIG=str(config),
+        JARVIS_DATA_DIR=str(data),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+        PYTHONIOENCODING="utf-8",
+    )
+    for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"):
+        child_env[name] = str(profile / name.lower())
+    return child_env
 
 
 def _run(*args: str) -> None:
@@ -133,7 +197,9 @@ def check(
     tag: str,
     commit: str,
     proof: Path,
+    evidence_dir: Path,
 ) -> None:
+    evidence_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="jarvis-native-smoke-") as scratch:
         root = Path(scratch)
         os.environ["HOME"] = str(root)
@@ -152,6 +218,8 @@ def check(
         config = root / "jarvis.toml"
         data = root / "data"
         data.mkdir()
+        os.environ["JARVIS_CONFIG"] = str(config)
+        os.environ["JARVIS_DATA_DIR"] = str(data)
         with _WRITE_LOCK:
             _atomic_write(
                 config, f"[ui]\nadmin_api_port = {port}\n# Native release smoke setting\n"
@@ -170,9 +238,9 @@ def check(
         store.close()
         _FileCredStore().set(KEYRING_SERVICE_NAME, "release_smoke_key", "native-smoke-secret")
         config_bytes = config.read_bytes()
-        os.environ["JARVIS_CONFIG"] = str(config)
-        os.environ["JARVIS_DATA_DIR"] = str(data)
+        child_env = _isolated_env(root, config, data)
         seen_previous_health = False
+        observations: Counter[str] = Counter()
 
         def health(health_port: int, version: str, nonce: str) -> bool:
             nonlocal seen_previous_health
@@ -181,8 +249,16 @@ def check(
                     f"http://127.0.0.1:{health_port}/api/health", timeout=2
                 ) as response:
                     payload = json.load(response)
-            except (OSError, ValueError, TypeError, urllib.error.URLError):
+            except (OSError, ValueError, TypeError, urllib.error.URLError) as exc:
+                code = getattr(exc, "code", None)
+                observations[f"probe_error:{code or type(exc).__name__}"] += 1
                 return False
+            if not isinstance(payload, dict):
+                observations["probe_error:invalid_payload"] += 1
+                return False
+            observations[f"response_version:{payload.get('version', '<missing>')}"] += 1
+            if payload.get("update_nonce") == nonce:
+                observations["matching_nonce"] += 1
             matching = payload.get("ok") is True and payload.get("version") == version
             if version == previous_version and matching:
                 # Releases predating the nonce contract can only be verified by
@@ -204,7 +280,8 @@ def check(
             port=port,
             receipt=receipt,
         )
-        runner = TrackingRunner()
+        runner = TrackingRunner(evidence_dir / "failed-upgrade", root, child_env)
+        runner.evidence_dir.mkdir(parents=True, exist_ok=True)
         try:
             if run_native_update_supervisor(
                 failed,
@@ -218,6 +295,10 @@ def check(
                 raise RuntimeError("failed update did not restore the previous app")
         finally:
             runner.stop_spawned()
+            runner.record("failed-upgrade")
+            (evidence_dir / "health-observations.json").write_text(
+                json.dumps(observations, indent=2), encoding="utf-8"
+            )
 
         receipt.write_text("graceful shutdown\n")
         successful = root / "successful-update.json"
@@ -231,7 +312,8 @@ def check(
             port=port,
             receipt=receipt,
         )
-        runner = TrackingRunner()
+        runner = TrackingRunner(evidence_dir / "successful-upgrade", root, child_env)
+        runner.evidence_dir.mkdir(parents=True, exist_ok=True)
         try:
             if not run_native_update_supervisor(
                 successful,
@@ -246,6 +328,7 @@ def check(
                 raise RuntimeError("successful update did not install candidate")
         finally:
             runner.stop_spawned()
+            runner.record("successful-upgrade")
 
         if config.read_bytes() != config_bytes:
             raise RuntimeError("native update changed persisted settings")
@@ -294,6 +377,7 @@ def main() -> None:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--proof", type=Path, required=True)
+    parser.add_argument("--evidence-dir", type=Path, required=True)
     args = parser.parse_args()
     check(**vars(args))
 

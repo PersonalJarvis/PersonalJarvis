@@ -479,7 +479,16 @@ jobs:
             --candidate "dist/installers/PersonalJarvis-macOS-${{ matrix.arch }}.dmg" \
             --previous-tag "$PREVIOUS_TAG" --candidate-version "$version" \
             --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" \
-            --proof "dist/installers/proof-macos-${{ matrix.arch }}.json"
+            --proof "dist/installers/proof-macos-${{ matrix.arch }}.json" \
+            --evidence-dir native-upgrade-proof
+
+      - name: Preserve macOS native upgrade diagnostics
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: native-upgrade-macos-${{ matrix.arch }}
+          path: native-upgrade-proof/
+          if-no-files-found: warn
 
       - name: Upload macOS native smoke proof
         if: needs.previous-release.outputs.tag != ''
@@ -574,7 +583,16 @@ jobs:
             --candidate dist/installers/PersonalJarvis-Linux-x86_64.AppImage \
             --previous-tag "$PREVIOUS_TAG" --candidate-version "$version" \
             --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" \
-            --proof dist/installers/proof-linux-x86_64.json
+            --proof dist/installers/proof-linux-x86_64.json \
+            --evidence-dir native-upgrade-proof
+
+      - name: Preserve Linux native upgrade diagnostics
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: native-upgrade-linux-x86_64
+          path: native-upgrade-proof/
+          if-no-files-found: warn
 
       - name: Upload Linux native smoke proof
         if: needs.previous-release.outputs.tag != ''

@@ -14,6 +14,7 @@ pinned here:
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from typing import Any
 
@@ -326,16 +327,28 @@ def test_posix_apply_stages_supervisor_then_quits_after_response(
     _patch_latest(monkeypatch, _release("1.6.0"))
     seen = _capture_install(monkeypatch)
     quit_calls: list[str] = []
+    response_finished = Event()
+    shutdown_finished = Event()
+
+    def wait_for_request_to_drain(_desktop: Any, _receipt: Path) -> None:
+        # Uvicorn drains the requesting ASGI task before completing shutdown.
+        drained = response_finished.wait(timeout=2)
+        quit_calls.append("quit" if drained else "request blocked shutdown")
+        shutdown_finished.set()
+
     monkeypatch.setattr(
-        u, "_quit_for_native_update",
-        lambda _desktop, _receipt: quit_calls.append("quit"),
+        u, "_quit_for_native_update", wait_for_request_to_drain,
     )
     client.app.state.desktop_app = SimpleNamespace(
         request_quit=lambda: quit_calls.append("quit"), shutdown=lambda **_kwargs: None
     )
     client.app.state.config = SimpleNamespace(ui=SimpleNamespace(admin_api_port=47821))
 
-    response = client.post("/api/update/apply")
+    try:
+        response = client.post("/api/update/apply")
+    finally:
+        response_finished.set()
+    assert shutdown_finished.wait(timeout=2)
 
     assert response.status_code == 200
     assert response.json()["restart_required"] is False

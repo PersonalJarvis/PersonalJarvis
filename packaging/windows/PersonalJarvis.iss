@@ -100,7 +100,7 @@ Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#GuiExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#GuiExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#GuiExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent; Check: IsCandidateVerified
 
 [Messages]
 ConfirmUninstall=Do you really want to remove %1?%n%nYour settings, memory, skills and logs are NOT deleted - they stay in {#UserDataDirDisplay}.
@@ -117,9 +117,26 @@ const
 var
   RollbackDir: string;
   RollbackReady: Boolean;
+  CandidateVerified: Boolean;
+  VerificationFailed: Boolean;
   InstallSucceeded: Boolean;
   BootExitCode: Integer;
   LaunchExitCode: Integer;
+
+function IsCandidateVerified: Boolean;
+begin
+  Result := CandidateVerified and not VerificationFailed;
+end;
+
+function GetCustomSetupExitCode: Integer;
+begin
+  { ssPostInstall exceptions alone do not reliably terminate Setup. A failed
+    candidate must return nonzero even if Inno reaches its nominal done page. }
+  if IsCandidateVerified then
+    Result := 0
+  else
+    Result := 42;
+end;
 
 function LaunchAfterSilentSetup: Boolean;
 begin
@@ -337,24 +354,41 @@ begin
   if CurStep = ssPostInstall then
   begin
     #ifdef SimulateInstallFailure
-    RaiseException('Simulated failure after replacement for native upgrade smoke');
+    VerificationFailed := True;
+    Log('Simulated failure after replacement for native upgrade smoke.');
+    Exit;
     #endif
-    ExtractTemporaryFile('check_installed_boot.ps1');
-    if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-      '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
-      ExpandConstant('{tmp}\check_installed_boot.ps1') + '" -AppDir "' +
-      ExpandConstant('{app}') + '" -ExpectedVersion "{#AppVersion}"',
-      '', SW_HIDE, ewWaitUntilTerminated, BootExitCode) or (BootExitCode <> 0) then
-      RaiseException('Installed backend failed its first boot; restoring the previous version.');
-    if WizardIsTaskSelected('addtopath') then
-      AddDirToUserPath(ExpandConstant('{app}'))
-    else
-      { An upgrade where the user cleared the task must also take the entry
-        back out, or the choice silently does nothing. }
-      RemoveDirFromUserPath(ExpandConstant('{app}'));
+    try
+      ExtractTemporaryFile('check_installed_boot.ps1');
+      if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+        '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
+        ExpandConstant('{tmp}\check_installed_boot.ps1') + '" -AppDir "' +
+        ExpandConstant('{app}') + '" -ExpectedVersion "{#AppVersion}"',
+        '', SW_HIDE, ewWaitUntilTerminated, BootExitCode) or (BootExitCode <> 0) then
+      begin
+        VerificationFailed := True;
+        Log('Installed backend failed its first boot; restoring the previous version.');
+        Exit;
+      end;
+      if WizardIsTaskSelected('addtopath') then
+        AddDirToUserPath(ExpandConstant('{app}'))
+      else
+        { An upgrade where the user cleared the task must also take the entry
+          back out, or the choice silently does nothing. }
+        RemoveDirFromUserPath(ExpandConstant('{app}'));
+      CandidateVerified := True;
+    except
+      VerificationFailed := True;
+      Log('Post-install verification failed: ' + GetExceptionMessage);
+    end;
   end;
   if CurStep = ssDone then
   begin
+    if not IsCandidateVerified then
+    begin
+      Log('Candidate was not verified; refusing success and candidate launch.');
+      Exit;
+    end;
     InstallSucceeded := True;
     WriteUpdateResult('true', 'false');
     if LaunchAfterSilentSetup then
