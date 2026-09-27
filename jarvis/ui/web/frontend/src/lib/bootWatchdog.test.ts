@@ -28,6 +28,16 @@ function indexHtmlPath(): string {
 
 const HTML = readFileSync(indexHtmlPath(), "utf8");
 
+test("the first paint shows the mascot and an honest startup state", () => {
+  const page = new DOMParser().parseFromString(HTML, "text/html");
+  const splash = page.querySelector("#jarvis-boot-splash");
+  expect(splash?.querySelector(".boot-mark")?.getAttribute("src")).toBe(
+    "/jarvis-gigi-256.png",
+  );
+  expect(splash?.querySelector('[role="status"]')?.textContent).toBe("Starting…");
+  expect(splash?.querySelector(".name")?.textContent).toBe("");
+});
+
 test("an interface reload identifies itself without claiming the assistant restarted", () => {
   const script = (HTML.match(/<script>([\s\S]*?)<\/script>/g) ?? []).find((s) =>
     s.includes('localStorage.getItem("jarvis.assistantName")'),
@@ -174,6 +184,14 @@ describe("the blank-window watchdog in index.html", () => {
     expect(run.reloads()).toBe(1);
   });
 
+  test("the mounted auth splash can wait through a long backend warm-up", async () => {
+    setRoot(`<main id="jarvis-auth-splash">${SPLASH}</main>`);
+    const run = runWatchdog();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(run.reloads()).toBe(0);
+    expect(document.querySelector("#jarvis-boot-splash")).not.toBeNull();
+  });
+
   test("it reloads into the REAL index.html, whose own script names the holding marker", async () => {
     // The regression of 2026-08-22/23: this very document spells out the
     // holding marker in the watchdog's source, so a test for the bare word
@@ -207,7 +225,12 @@ describe("the blank-window watchdog in index.html", () => {
     await vi.advanceTimersByTimeAsync(3_000);
     const root = document.getElementById("root")!;
     expect(root.querySelector("#jarvis-boot-splash")).not.toBeNull();
-    expect(root.textContent).toContain("Updating");
+    expect(root.querySelector(".boot-mark")?.getAttribute("src")).toBe(
+      "/jarvis-gigi-256.png",
+    );
+    expect(root.querySelector('[role="status"]')?.textContent).toBe(
+      "Updating interface…",
+    );
   });
 
   test("it does NOT reload into a build that is half-written", async () => {
@@ -236,6 +259,7 @@ describe("the blank-window watchdog in index.html", () => {
     expect(root.textContent).toContain("The interface did not load.");
     expect(root.textContent).toContain("No reason was reported.");
     expect(root.querySelector("button")?.textContent).toBe("Reload");
+    expect(root.querySelector(".boot-emblem")).toBeNull();
   });
 
   test("it names the error it caught, so the window is never a mystery", () => {

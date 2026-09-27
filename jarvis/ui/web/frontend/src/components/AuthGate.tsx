@@ -1,6 +1,7 @@
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { LockKeyhole } from "lucide-react";
 import { useT } from "@/i18n";
+import { readCachedAssistantName } from "@/lib/assistantNameCache";
 
 declare global {
   interface Window {
@@ -169,15 +170,18 @@ export function AuthGate({ children }: AuthGateProps) {
 
   if (state === "checking") {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-background text-foreground">
-        <div className="flex flex-col items-center gap-4">
-          <div
-            aria-hidden="true"
-            className="h-9 w-9 animate-spin rounded-full border-[3px] border-primary/20 border-t-primary"
-          />
-          <span className="text-sm text-muted-foreground" role="status">
+      <main id="jarvis-auth-splash">
+        <div id="jarvis-boot-splash">
+          <div className="boot-emblem" aria-hidden="true">
+            <span className="boot-orbit outer" />
+            <span className="boot-orbit inner" />
+            <img className="boot-mark" src="/jarvis-gigi-256.png" alt="" width="104" height="104" />
+          </div>
+          <div className="name">{readCachedAssistantName("")}</div>
+          <div className="sub" role="status" aria-live="polite">
             {t(backendWarming ? "auth_gate.starting" : "auth_gate.checking")}
-          </span>
+          </div>
+          <div className="boot-track" aria-hidden="true" />
         </div>
       </main>
     );

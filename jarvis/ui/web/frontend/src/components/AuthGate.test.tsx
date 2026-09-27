@@ -39,6 +39,7 @@ describe("AuthGate", () => {
 
     render(<AuthGate><div>Application</div></AuthGate>);
     expect(screen.getByText("Checking access…")).toBeTruthy();
+    expect(document.querySelector("#jarvis-boot-splash .boot-mark")).toBeTruthy();
 
     await act(async () => {
       vi.advanceTimersByTime(1100);
@@ -48,6 +49,7 @@ describe("AuthGate", () => {
     });
 
     expect(screen.getByText("Starting up…")).toBeTruthy();
+    expect(document.querySelector("#jarvis-boot-splash .boot-mark")).toBeTruthy();
     expect(screen.queryByText("Application")).toBeNull();
   });
 
@@ -58,6 +60,7 @@ describe("AuthGate", () => {
     render(<AuthGate><div>Application</div></AuthGate>);
 
     expect(await screen.findByText("Application")).toBeTruthy();
+    expect(document.querySelector("#jarvis-boot-splash")).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith("/api/config", {
       cache: "no-store",
       credentials: "same-origin",

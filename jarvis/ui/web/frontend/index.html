@@ -72,6 +72,8 @@
         --jbs-bg: #ffffff;
         --jbs-accent: #096cdc;
         --jbs-ring: rgba(9, 108, 220, 0.22);
+        --jbs-orbit: rgba(9, 108, 220, 0.13);
+        --jbs-glow: rgba(9, 108, 220, 0.08);
         --jbs-name: #171717;
         --jbs-sub: #666666;
       }
@@ -79,45 +81,100 @@
         --jbs-bg: #0a0a0a;
         --jbs-accent: #3d8bff;
         --jbs-ring: rgba(61, 139, 255, 0.2);
+        --jbs-orbit: rgba(61, 139, 255, 0.16);
+        --jbs-glow: rgba(61, 139, 255, 0.12);
         --jbs-name: #fafafa;
         --jbs-sub: #a1a1a1;
       }
       html, body { margin: 0; height: 100%; background: var(--jbs-bg); }
       #jarvis-boot-splash {
         position: fixed; inset: 0; display: flex; flex-direction: column;
-        align-items: center; justify-content: center; gap: 18px;
-        background: var(--jbs-bg);
+        align-items: center; justify-content: center; gap: 13px;
+        background: radial-gradient(circle at 50% 45%, var(--jbs-glow), transparent 38%), var(--jbs-bg);
         font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
         color: var(--jbs-accent);
       }
-      #jarvis-boot-splash .ring {
-        width: 38px; height: 38px; border-radius: 50%;
-        border: 3px solid var(--jbs-ring);
-        border-top-color: var(--jbs-accent);
-        animation: jbs-spin 0.8s linear infinite;
+      #jarvis-boot-splash .boot-emblem {
+        position: relative; width: 208px; height: 208px;
+        display: grid; place-items: center;
+        margin-bottom: 4px;
+      }
+      #jarvis-boot-splash .boot-emblem::before {
+        content: ""; position: absolute; inset: 24px; border-radius: 50%;
+        background: radial-gradient(circle, var(--jbs-glow), transparent 70%);
+        animation: jbs-breathe 3.4s ease-in-out infinite;
+      }
+      #jarvis-boot-splash .boot-orbit {
+        position: absolute; border: 1px solid var(--jbs-orbit);
+        border-radius: 50%; pointer-events: none;
+      }
+      #jarvis-boot-splash .boot-orbit.outer {
+        inset: 8px; border-top-color: var(--jbs-accent);
+        animation: jbs-spin 9s linear infinite;
+      }
+      #jarvis-boot-splash .boot-orbit.inner {
+        inset: 27px; border-bottom-color: var(--jbs-ring);
+        animation: jbs-spin-reverse 14s linear infinite;
+      }
+      #jarvis-boot-splash .boot-orbit.outer::after {
+        content: ""; position: absolute; top: 17px; right: 17px;
+        width: 5px; height: 5px; border-radius: 50%;
+        background: var(--jbs-accent); box-shadow: 0 0 12px var(--jbs-accent);
+      }
+      #jarvis-boot-splash .boot-mark {
+        position: relative; width: 104px; height: 104px; border-radius: 25px;
+        box-shadow: 0 12px 36px rgba(0, 0, 0, 0.2), 0 0 0 1px var(--jbs-ring);
       }
       #jarvis-boot-splash .name {
-        font-size: 15px; font-weight: 600; letter-spacing: 0.04em;
+        font-size: 20px; font-weight: 650; letter-spacing: 0.015em;
         color: var(--jbs-name);
       }
+      #jarvis-boot-splash .name:empty { display: none; }
       #jarvis-boot-splash .sub {
-        font-size: 12px; color: var(--jbs-sub); letter-spacing: 0.06em;
-        text-transform: uppercase;
+        font-size: 12px; color: var(--jbs-sub); letter-spacing: 0.11em;
+        text-transform: uppercase; text-align: center;
+      }
+      #jarvis-boot-splash .boot-track {
+        width: 112px; height: 2px; overflow: hidden; border-radius: 2px;
+        background: var(--jbs-ring); margin-top: 7px;
+      }
+      #jarvis-boot-splash .boot-track::after {
+        content: ""; display: block; width: 38%; height: 100%;
+        background: var(--jbs-accent);
+        animation: jbs-travel 2.2s ease-in-out infinite;
       }
       @keyframes jbs-spin { to { transform: rotate(360deg); } }
+      @keyframes jbs-spin-reverse { to { transform: rotate(-360deg); } }
+      @keyframes jbs-breathe { 50% { opacity: 0.4; transform: scale(1.12); } }
+      @keyframes jbs-travel { from { transform: translateX(-100%); } to { transform: translateX(270%); } }
+      @media (prefers-reduced-motion: reduce) {
+        #jarvis-boot-splash .boot-emblem::before,
+        #jarvis-boot-splash .boot-orbit,
+        #jarvis-boot-splash .boot-track::after { animation: none; }
+        #jarvis-boot-splash .boot-track::after { width: 100%; opacity: 0.5; }
+      }
+      @media (max-height: 420px) {
+        #jarvis-boot-splash .boot-emblem { width: 150px; height: 150px; }
+        #jarvis-boot-splash .boot-mark { width: 76px; height: 76px; border-radius: 19px; }
+      }
     </style>
   </head>
   <body>
     <div id="root">
       <div id="jarvis-boot-splash">
-        <div class="ring"></div>
+        <div class="boot-emblem" aria-hidden="true">
+          <span class="boot-orbit outer"></span>
+          <span class="boot-orbit inner"></span>
+          <img class="boot-mark" src="/jarvis-gigi-256.png" alt="" width="104" height="104" />
+        </div>
         <!-- Painted synchronously by the inline script below from the cached
              assistant name (the user's chosen wake word, e.g. "Nico"). Left
              empty in static HTML so the very first run — before any name is
-             cached — shows only the spinner, never a hardcoded / trademarked
+             cached — shows only the emblem, never a hardcoded / trademarked
              name. -->
         <div class="name"></div>
-        <div class="sub">Starting…</div>
+        <div class="sub" role="status" aria-live="polite">Starting…</div>
+        <div class="boot-track" aria-hidden="true"></div>
       </div>
     </div>
     <script>
@@ -127,7 +184,7 @@
       // adds effectively zero startup latency. The cache is written by the app
       // after each name resolve (see src/lib/assistantNameCache.ts; keep this
       // storage key in lockstep). On the very first run the cache is empty and
-      // the splash keeps just its spinner. A trademarked placeholder such as
+      // the splash keeps just its emblem. A trademarked placeholder such as
       // "Jarvis" is never painted here.
       (function () {
         try {
@@ -319,21 +376,30 @@
           if (!root || root.childElementCount > 0) return;
           var box = document.createElement("div");
           box.id = "jarvis-boot-splash";
-          var ring = document.createElement("div");
-          ring.className = "ring";
+          var visual = document.createElement("div");
+          visual.className = "boot-emblem";
+          visual.setAttribute("aria-hidden", "true");
+          visual.innerHTML = '<span class="boot-orbit outer"></span>' +
+            '<span class="boot-orbit inner"></span>' +
+            '<img class="boot-mark" src="/jarvis-gigi-256.png" alt="" width="104" height="104">';
           var name = document.createElement("div");
           name.className = "name";
           try {
             name.textContent = (localStorage.getItem("jarvis.assistantName") || "").trim();
           } catch (e) {
-            /* storage blocked — the spinner alone is enough */
+            /* storage blocked — the emblem alone is enough */
           }
           var sub = document.createElement("div");
           sub.className = "sub";
-          sub.textContent = "Updating…";
-          box.appendChild(ring);
+          sub.setAttribute("role", "status");
+          sub.textContent = "Updating interface…";
+          var track = document.createElement("div");
+          track.className = "boot-track";
+          track.setAttribute("aria-hidden", "true");
+          box.appendChild(visual);
           box.appendChild(name);
           box.appendChild(sub);
+          box.appendChild(track);
           root.appendChild(box);
         }
 
