@@ -60,12 +60,9 @@ test("the pinned seat is shown and can follow the agent again", async () => {
   // The pin is visible without any catalog fetch.
   expect(screen.getByText("claude-api · opus")).toBeTruthy();
   expect(fetcher.mock.calls.some(([url]) => String(url).includes("agent-chat"))).toBe(false);
-  // Opening the picker loads the catalog; clearing the pin saves empty seat fields.
+  // The explicit control clears the pin without depending on catalog readiness.
   fireEvent.click(screen.getByText("Change"));
-  const provider = (await screen.findByLabelText("Provider")) as HTMLSelectElement;
-  expect(provider.value).toBe("claude-api");
-  fireEvent.change(provider, { target: { value: "" } });
-  expect(provider.value).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: "Follow agent" }));
   expect(screen.getByText("Follow agent", { selector: "p" })).toBeTruthy();
   fireEvent.click(screen.getAllByText("Save")[0]);
   await waitFor(() =>

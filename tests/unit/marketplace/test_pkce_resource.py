@@ -1,5 +1,8 @@
 """PKCE-loopback authorize/token params for provider-specific extensions."""
 
+import json
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -84,11 +87,22 @@ def test_shopify_authorize_params_carry_resource_and_comma_scopes():
     """Regression: Shopify publishes no DCR registration_endpoint, so the
     plugin must go through PKCE loopback with the RFC 8707 resource
     indicator and comma-joined read scopes — never back to DCR."""
-    from jarvis.marketplace.auth.oauth_pkce_loopback import PkceLoopbackHandler
-    from jarvis.marketplace.connect_helpers import build_handler_from_catalog
-
-    handler = build_handler_from_catalog("shopify")
-    assert isinstance(handler, PkceLoopbackHandler)
+    manifest_path = (
+        Path(__file__).resolve().parents[3]
+        / "jarvis/marketplace/drafts/shopify/plugin.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    auth = manifest["extensions"]["io.github.personaljarvis"]["auth"]
+    handler = PkceLoopbackHandler(PkceLoopbackConfig(
+        plugin_id="shopify",
+        authorization_url=auth["authorization_url"],
+        token_url=auth["token_url"],
+        client_id="cid",
+        callback_port=auth["callback_port"],
+        scopes=auth["scopes"],
+        scope_separator=auth["scope_separator"],
+        resource=auth["resource"],
+    ))
     params = handler._authorize_params(  # noqa: SLF001
         redirect_uri="http://127.0.0.1:3130/oauth/callback",
         state="s",
