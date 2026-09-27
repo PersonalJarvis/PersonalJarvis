@@ -18,7 +18,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 
 import { DictationHistoryGroup } from "@/views/voice/DictationHistoryGroup";
 import type { DictationEntry } from "@/hooks/useDictation";
-import { setUiLanguage } from "@/i18n";
+import { loadUiLocale, setUiLanguage } from "@/i18n";
 
 function entry(over: Partial<DictationEntry> = {}): DictationEntry {
   return {
@@ -133,7 +133,8 @@ describe("DictationHistoryGroup — cleanup-reason badge", () => {
     expect(screen.queryByTestId("dictation-cleanup-reason-badge")).toBeNull();
   });
 
-  it("translates both badges into the user's language", () => {
+  it("translates both badges into the user's language", async () => {
+    await loadUiLocale("de");
     setUiLanguage("de");
     renderRows([entry({ polish_status: "applied", cleanup_reason: "no_rules" })]);
 

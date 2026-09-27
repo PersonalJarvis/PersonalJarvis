@@ -1263,7 +1263,7 @@ async def memory_file(request: Request, path: str = "") -> dict[str, Any]:
         content = content[-200_000:]
     try:
         updated_ms = int(target.stat().st_mtime * 1000)
-    except OSError:
+    except OSError:  # Missing source metadata uses an unknown update timestamp.
         updated_ms = 0
     parts = Path(rel).parts
     agent_id = parts[1] if len(parts) >= 3 else ""

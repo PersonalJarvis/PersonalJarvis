@@ -66,6 +66,6 @@ it("finds the character's actual style for older recipes without style metadata"
   setup(false, true);
   fireEvent.click(screen.getByRole("tab", { name: "society.companion.character" }));
   await screen.findByTestId("character-preview");
-  expect((screen.getByLabelText("society.create.style") as HTMLSelectElement).value).toBe("fantasy");
-  expect((screen.getByLabelText("society.create.base") as HTMLSelectElement).value).toBe("rogue");
+  expect(screen.getByLabelText("society.create.style").getAttribute("data-value")).toBe("fantasy");
+  expect(screen.getByLabelText("society.create.base").getAttribute("data-value")).toBe("rogue");
 });

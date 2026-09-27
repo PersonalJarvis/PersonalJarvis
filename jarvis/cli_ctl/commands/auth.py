@@ -20,7 +20,7 @@ def _probe(url: str, key: str) -> bool:
         with make_client(url=url, key=key) as client:
             client.request("GET", _PROBE)
         return True
-    except ApiError:
+    except ApiError:  # The probe reports an unreachable server through its Boolean result.
         return False
 
 
@@ -69,7 +69,7 @@ def status(
         try:
             client.request("GET", _PROBE)
             reachable = True
-        except ApiError:
+        except ApiError:  # The command emits reachable=false and exits with a failure code.
             reachable = False
     render.emit({"base_url": target, "reachable": reachable}, as_json=as_json())
     if not reachable:
