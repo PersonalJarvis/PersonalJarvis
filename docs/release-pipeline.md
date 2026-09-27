@@ -94,7 +94,7 @@ Sources: [GitHub Actions billing](https://docs.github.com/en/billing/concepts/pr
 [SignPath Foundation](https://signpath.org/),
 [SignPath eligibility](https://signpath.org/terms.html),
 [Azure pricing](https://learn.microsoft.com/en-us/azure/artifact-signing/how-to-change-sku),
-[Apple membership](https://developer.apple.com/support/compare-memberships/),
+[Apple membership](https://developer.apple.com/programs/enroll/),
 [Apple fee waivers](https://developer.apple.com/help/account/membership/fee-waivers).
 
 Keep private signing keys outside Git, including encrypted copies. Existing
