@@ -1,5 +1,6 @@
 import { PairConversationBoundary } from "@/components/agentchat/PairConversation";
 import { AgentMessageActivity, ChatActivity, RoutineActivity, routineTask } from "./ChatActivity";
+import { MemoryUpdateNotice } from "./MemoryUpdateNotice";
 import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentchat/useOutgoingMessages";
 /**
  * The model card's chat column, kept deliberately plain (maintainer,
@@ -22,6 +23,10 @@ import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentch
  * runner can drive. The header says so while voice is showing.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useRoutineNavigation } from "./routineNavigation";
+import { notifyRoutineChanged } from "../cardData";
+import { routineTaskId } from "./routineExecution";
+import { RoutineChatHost } from "./RoutineChatHost";
 import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 
@@ -38,11 +43,12 @@ import { useComposerDictation } from "@/components/agentchat/useComposerDictatio
 import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { startNewVoiceRun } from "@/lib/chatsApi";
-import type {
-  NoticeItem,
-  TimelineItem,
-  TurnItem,
-  UserItem,
+import {
+  runningTurn,
+  type NoticeItem,
+  type TimelineItem,
+  type TurnItem,
+  type UserItem,
 } from "@/components/agentchat/reduce";
 import { TurnTrace } from "@/components/agentchat/WorkTrace";
 import { VoiceStage } from "@/components/home/VoiceStage";
@@ -135,7 +141,12 @@ export function itemsForOpenSession(
 }
 
 export function AgentChatPanel(props: AgentChatPanelProps) {
-  return <PairConversationBoundary key={props.agent.agentId} recipient={{ id: props.agent.agentId, name: props.agent.name }}><AgentChatPanelContent {...props} /></PairConversationBoundary>;
+  const disconnect = useCallback(() => {
+    (props.agent.tier === "lead" ? useAgentChatStore : useSocietyChatStore).getState().disconnect();
+  }, [props.agent.tier]);
+  return <PairConversationBoundary key={props.agent.agentId} recipient={{ id: props.agent.agentId, name: props.agent.name }}>
+    <RoutineChatHost agentId={props.agent.agentId} onOpen={disconnect}><AgentChatPanelContent {...props} /></RoutineChatHost>
+  </PairConversationBoundary>;
 }
 
 function AgentChatPanelContent({ agent, roster }: AgentChatPanelProps) {
@@ -185,6 +196,27 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
   const sessionId = agent.chatSessionId;
   const sessionReady = Boolean(sessionId) && activeSessionId === sessionId;
   const visibleItems = itemsForOpenSession(sessionId, activeSessionId, items);
+  const refreshedRoutineReceipts = useRef(new Set<string>());
+  useEffect(() => {
+    for (const item of visibleItems) {
+      if (item.type === "turn") {
+        for (const block of item.blocks) {
+          if (block.kind !== "tool" || block.name !== "society_propose_change" || block.output === null || block.isError) continue;
+          const input = block.input as { kind?: string; mode?: string } | null;
+          if (input?.kind !== "routine" || input.mode !== "apply") continue;
+          const key = `tool:${block.callId}`;
+          if (refreshedRoutineReceipts.current.has(key)) continue;
+          refreshedRoutineReceipts.current.add(key);
+          notifyRoutineChanged(agent.agentId);
+        }
+      } else if (item.type === "notice" && item.kind === "proposal" && item.resolved === "applied" && item.data.proposal_kind === "routine") {
+        const key = `proposal:${item.id}`;
+        if (refreshedRoutineReceipts.current.has(key)) continue;
+        refreshedRoutineReceipts.current.add(key);
+        notifyRoutineChanged(agent.agentId);
+      }
+    }
+  }, [visibleItems, agent.agentId]);
   const outgoing = useOutgoingMessages(sessionReady ? agent.agentId : null);
   const allItems = useMemo(() => mergeOutgoingMessages(
     visibleItems, outgoing, agent.agentId, agent.name,
@@ -609,6 +641,7 @@ export function Transcript({
   onDecide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
 }) {
   const t = useT();
+  const sessionId = useAgentChat((state) => state.activeSessionId);
   // Follow the newest while the view sits at the end — the rule every
   // conversation surface shares (hooks/useStickToBottom). This used to scroll
   // a bottom sentinel into view on `[items.length, busy]` only, so a
@@ -617,7 +650,11 @@ export function Transcript({
   // watches the content's own size too, so growth follows; scrolled up, the
   // reader keeps their place and gets a button back.
   const { rootRef, contentRef, atEnd, jumpToEnd, follow } = useStickToBottom();
-  useLayoutEffect(follow, [follow, items.length]);
+  // `items` itself, not its length: a reasoning trace or tool row grows
+  // the same turn in place, so the length does not change. Pin in this
+  // layout pass — waiting for ResizeObserver is one frame too late, and
+  // that frame is when overflow anchoring would unstick the view.
+  useLayoutEffect(follow, [follow, items]);
 
   if (items.length === 0) {
     return (
@@ -644,7 +681,7 @@ export function Transcript({
               {item.type === "internal" ? (
                 <AgentMessageActivity item={item} roster={roster} />
               ) : item.type === "user" ? (
-                <UserBubble item={item} />
+                <UserBubble item={item} agentId={agent.agentId} sessionId={sessionId ?? agent.chatSessionId ?? undefined} />
               ) : item.type === "turn" ? (
                 <TurnBubble item={item} onDecide={onDecide} />
               ) : item.type === "notice" ? (
@@ -682,6 +719,7 @@ function TimeStamp({ ms }: { ms: number }) {
  */
 function NoticeLine({ item }: { item: NoticeItem }) {
   const t = useT();
+  if (item.kind === "memory_updated") return <MemoryUpdateNotice item={item} />;
   if (item.kind === "native_goal_verdict") return <p className="py-1 text-xs text-muted-foreground">{t("slash.verifying")}</p>;
   const headline =
     item.kind === "society_result"
@@ -872,13 +910,17 @@ function visibleUserText(text: string): string {
     .trimEnd();
 }
 
-export function UserBubble({ item }: { item: UserItem }) {
+export function UserBubble({ item, agentId, sessionId }: { item: UserItem; agentId?: string; sessionId?: string }) {
   const t = useT();
   const choices = messageChoices(item);
   const text = visibleUserText(item.text);
   if (item.origin === "control") return <div className="self-start px-1 py-2 text-xs text-muted-foreground">{t("slash.control_turn")}{item.attachments.map((file) => <span key={file.name} className="ml-2">{file.name}</span>)}</div>;
   const task = routineTask(item.text);
-  if (task !== null && item.attachments.length === 0) return <RoutineActivity task={task} original={item.text} />;
+  if (task !== null && item.attachments.length === 0) return <RoutineActivity task={task} original={item.text}
+    onOpen={agentId && sessionId ? () => useRoutineNavigation.getState().open({
+      agentId, sessionId, title: task.split(/\r?\n/)[0], timestamp: item.tsMs,
+      ...(!sessionId.includes(":routine:") ? { legacy: { taskId: routineTaskId(item.text)!, messageId: item.id } } : {}),
+    }) : undefined} />;
   return (
     <div className="flex min-w-0 max-w-[min(85%,42rem)] flex-col items-end gap-1 self-end">
       <div className="min-w-0 rounded-2xl rounded-br-md bg-secondary px-4 py-2.5 text-sm leading-relaxed text-foreground [overflow-wrap:anywhere]">
@@ -979,6 +1021,11 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     setValue(text);
     fieldRef.current?.setText(text);
   });
+  const timeline = useAgentChat((s) => s.timeline);
+  const sending = useAgentChat((s) => s.busy);
+  // `busy` on this composer also covers "session not open yet". Stop is only
+  // for a live turn: the HTTP send, or the stream after it (reasoning, tools).
+  const live = runningTurn(timeline) !== null || sending;
 
   // "@" completes teammates AND the capability catalog — plugins, MCP
   // servers, CLIs, skills, Jarvis tools — on every agent card, including
@@ -1051,7 +1098,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     const selected = selectedTools;
     const text = draftText;
     if (await commands.execute(text)) return;
-    if (!text || busy && !commands.canSteer || modelSaving) return;
+    if (!text || (busy || live) && !commands.canSteer || modelSaving) return;
     const chosenIds = new Set((draft?.choices ?? []).map((row) => row.id));
     const chosen = [...chosenIds].map((id) => catalog.find((item) => item.key === id));
     if (chosen.some((item) => !item || !item.connected)) {
@@ -1120,6 +1167,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
         activeIndex={activeIndex}
         onHover={setActiveIndex}
         onPick={insertMention}
+        grouped={!mention?.query.trim()}
       />
       <div
         ref={composerRef}
@@ -1250,12 +1298,14 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
         >
           {dictation.dictating ? <Square className="h-4 w-4" aria-hidden /> : <Mic className="h-4 w-4" aria-hidden />}
         </button>
-        {busy && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
+        {live && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
           <button
             type="button"
             onClick={() => void onCancel()}
             aria-label={t("society.chat.stop")}
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-foreground hover:bg-popover"
+            title={t("society.chat.stop")}
+            data-testid="composer-stop"
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background transition-colors hover:bg-foreground/90"
           >
             <Square className="h-3.5 w-3.5" aria-hidden />
           </button>
@@ -1265,6 +1315,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
             onClick={() => void submit()}
             disabled={modelSaving || (!value.trim() && selectedTools.length === 0)}
             aria-label={t("society.chat.send")}
+            data-testid="composer-send"
             className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-40"
           >
             <Send className="h-3.5 w-3.5" aria-hidden />

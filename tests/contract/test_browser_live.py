@@ -1,12 +1,14 @@
 """Actual Browser-Use/Chromium checks; opt in with an isolated installed runtime."""
 
 from __future__ import annotations
+
 import asyncio
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
+
 import pytest
 
 from jarvis.society.browser import install
@@ -20,14 +22,21 @@ pytestmark = pytest.mark.skipif(
 @pytest.mark.skipif(os.name != "nt", reason="requires native Windows widgets")
 def test_native_mouse_routes_text_to_the_webpage_widget(tmp_path):
     import subprocess
+
     from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
     result = subprocess.run(
-        [os.environ["JARVIS_BROWSER_TEST_PYTHON"],
-         str(Path(__file__).with_name("native_window_probe.py")),
-         os.environ["JARVIS_BROWSER_TEST_EXECUTABLE"], str(tmp_path / "profile")],
-        env=install.worker_env(tmp_path), capture_output=True, encoding="utf-8",
-        timeout=30, creationflags=NO_WINDOW_CREATIONFLAGS,
+        [
+            os.environ["JARVIS_BROWSER_TEST_PYTHON"],
+            str(Path(__file__).with_name("native_window_probe.py")),
+            os.environ["JARVIS_BROWSER_TEST_EXECUTABLE"],
+            str(tmp_path / "profile"),
+        ],
+        env=install.worker_env(tmp_path),
+        capture_output=True,
+        encoding="utf-8",
+        timeout=30,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert '"badge": true' in result.stdout
@@ -35,21 +44,44 @@ def test_native_mouse_routes_text_to_the_webpage_widget(tmp_path):
 
 def test_actual_browser_click_emits_pointer_telemetry(tmp_path):
     import subprocess
+
     from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
     result = subprocess.run(
-        [os.environ["JARVIS_BROWSER_TEST_PYTHON"],
-         str(Path(__file__).with_name("browser_pointer_probe.py")),
-         os.environ["JARVIS_BROWSER_TEST_EXECUTABLE"], str(tmp_path / "profile")],
-        env=install.worker_env(tmp_path), capture_output=True, encoding="utf-8",
-        timeout=40, creationflags=NO_WINDOW_CREATIONFLAGS,
+        [
+            os.environ["JARVIS_BROWSER_TEST_PYTHON"],
+            str(Path(__file__).with_name("browser_pointer_probe.py")),
+            os.environ["JARVIS_BROWSER_TEST_EXECUTABLE"],
+            str(tmp_path / "profile"),
+        ],
+        env=install.worker_env(tmp_path),
+        capture_output=True,
+        encoding="utf-8",
+        timeout=40,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert '"clicked": true' in result.stdout
 
 
 class PageHandler(BaseHTTPRequestHandler):
+    profile_requests = []
+
     def do_GET(self):
+        if self.path.startswith(("/login", "/account")):
+            signed_in = "fixture_session=verified" in self.headers.get("Cookie", "")
+            self.profile_requests.append((self.path, signed_in))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            if self.path == "/login":
+                self.send_header(
+                    "Set-Cookie",
+                    "fixture_session=verified; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax",
+                )
+                signed_in = True
+            self.end_headers()
+            self.wfile.write(b"<h1>Signed in</h1>" if signed_in else b"<h1>Sign in required</h1>")
+            return
         if self.path == "/download":
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")
@@ -60,7 +92,8 @@ class PageHandler(BaseHTTPRequestHandler):
         body = b"""<!doctype html><title>Live browser fixture</title>
         <input aria-label="Name"><a href="/download">Download fixture</a>
         <form method="POST" action="/upload" enctype="multipart/form-data">
-        <input type="file" name="attachment" aria-label="Upload" onchange="this.form.requestSubmit()"></form>
+        <input type="file" name="attachment" aria-label="Upload"
+        onchange="this.form.requestSubmit()"></form>
         <h1 id="counter">0</h1>
         <script>let n=0;function paint(){document.querySelector('#counter').textContent=++n;
         document.body.style.background=n%2?'#fdd':'#ddf';requestAnimationFrame(paint)}
@@ -83,6 +116,7 @@ class PageHandler(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def site():
+    PageHandler.profile_requests = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), PageHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -127,17 +161,25 @@ async def test_live_pixels_change_between_tasks_and_sessions_stay_open(live, sit
         await live.close()
 
 
-async def test_second_viewer_receives_static_page_without_new_browser(live):
+async def test_second_viewer_receives_static_page_without_new_browser(live, record_property):
+    import time
+
     agent = SimpleNamespace(agent_id="static", model="", browser_allowed_domains=[])
     try:
+        started = time.monotonic()
         session, first = await live.subscribe(agent)
         while (await asyncio.wait_for(first.get(), 5))["kind"] != "frame":
             pass  # Drain initial state before attaching the second viewer.
+        record_property("cold_first_frame_ms", round((time.monotonic() - started) * 1000, 2))
         await asyncio.sleep(1)
+        started = time.monotonic()
         same, second = await live.subscribe(agent)
         assert same is session
         while (await asyncio.wait_for(second.get(), 5))["kind"] != "frame":
             pass  # State can precede the first image for a new viewer.
+        warm_ms = (time.monotonic() - started) * 1000
+        record_property("warm_first_frame_ms", round(warm_ms, 2))
+        assert warm_ms <= 2000
         assert len(live.sessions) == 1
         assert len(session.subscribers) == 2
     finally:
@@ -161,7 +203,9 @@ async def test_viewer_replaces_idle_legacy_page_session(live):
 
 @pytest.mark.skipif(os.name != "nt", reason="requires the native Windows window transport")
 async def test_native_chrome_toolbar_keyboard_and_agent_handoff(live, site):
-    agent = SimpleNamespace(agent_id="native", model="", browser_allowed_domains=["http*://127.0.0.1"])
+    agent = SimpleNamespace(
+        agent_id="native", model="", browser_allowed_domains=["http*://127.0.0.1"]
+    )
     try:
         session, queue = await live.subscribe(agent)
         while True:
@@ -194,8 +238,8 @@ async def test_native_chrome_toolbar_keyboard_and_agent_handoff(live, site):
 
 
 async def test_takeover_pauses_and_resumes_the_same_browser_job(live, site):
-    import json
     import contextvars
+    import json
 
     agent = SimpleNamespace(
         agent_id="paused", model="", browser_allowed_domains=["http*://127.0.0.1"]
@@ -344,7 +388,7 @@ async def test_agent_download_is_a_current_task_workspace_artifact(live, site):
         )
         path = Path(result["artifacts"][0])
         assert path.is_relative_to(live.data_dir / "society" / "files" / "workspace")
-        assert path.read_bytes() == b"isolated browser download"
+        assert await asyncio.to_thread(path.read_bytes) == b"isolated browser download"
         again = await live.run(
             agent,
             task="Finish without downloading",
@@ -517,5 +561,129 @@ async def test_idle_animation_stream_soak(live, site, record_property):
         assert p95 <= 0.5, f"Frame age p95: {p95:.3f}s"
         assert len(changed) >= duration * 5
         assert not session.run_lock.locked()
+    finally:
+        await live.close()
+
+
+async def test_finished_chat_releases_real_browser_for_the_next_task(live, monkeypatch):
+    import json
+
+    from jarvis.society.browser.tool import stop_chat_browser
+
+    agent = SimpleNamespace(agent_id="orphan", model="", browser_allowed_domains=[])
+    thinking = asyncio.Event()
+    release = asyncio.Event()
+
+    async def model(payload):
+        if payload["schema"].get("title") == "JudgementResult":
+            return {"ok": True, "text": json.dumps({"verdict": True, "reasoning": "Finished"})}
+        thinking.set()
+        await release.wait()
+        return {
+            "ok": True,
+            "text": json.dumps(
+                {
+                    "thinking": "",
+                    "evaluation_previous_goal": "Ready",
+                    "memory": "",
+                    "next_goal": "Finish",
+                    "action": [{"done": {"text": "Finished", "success": True}}],
+                }
+            ),
+        }
+
+    async def apply(payload):
+        await payload["apply"]()
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "jarvis.society.runtime.current_runtime",
+        lambda: SimpleNamespace(browser=SimpleNamespace(live=live)),
+    )
+    job = asyncio.create_task(
+        live.run(
+            agent,
+            task="Wait",
+            max_steps=2,
+            llm=model,
+            action=apply,
+            vision=False,
+            chat_session_id="ended",
+        )
+    )
+    try:
+        await asyncio.wait_for(thinking.wait(), 45)
+        await stop_chat_browser("ended")
+        await asyncio.wait_for(asyncio.gather(job, return_exceptions=True), 5)
+        assert not live.sessions[agent.agent_id].run_lock.locked()
+        assert not live.sessions[agent.agent_id].closed
+        release.set()
+        result = await live.run(
+            agent,
+            task="Finish",
+            max_steps=2,
+            llm=model,
+            action=apply,
+            vision=False,
+            chat_session_id="next",
+        )
+        assert result["ok"]
+    finally:
+        release.set()
+        job.cancel()
+        await asyncio.gather(job, return_exceptions=True)
+        await live.close()
+
+
+async def test_login_profile_survives_restart_and_stays_with_its_agent(live, site):
+    first = SimpleNamespace(
+        agent_id="signed-in", model="", browser_allowed_domains=["http*://127.0.0.1"]
+    )
+    other = SimpleNamespace(
+        agent_id="isolated", model="", browser_allowed_domains=["http*://127.0.0.1"]
+    )
+
+    async def visit(agent, path):
+        session, _ = await live.subscribe(agent)
+        await live.control(session, "viewer", "takeover", {"enabled": True})
+        await live.control(session, "viewer", "navigate", {"url": site + path})
+        await live.control(session, "viewer", "takeover", {"enabled": False})
+        return session
+
+    try:
+        await visit(first, "/login")
+        await live.close()
+        restored = await visit(first, "/account?restored")
+        isolated = await visit(other, "/account?other")
+        assert restored is not isolated
+        assert ("/account?restored", True) in PageHandler.profile_requests
+        assert ("/account?other", False) in PageHandler.profile_requests
+    finally:
+        await live.close()
+
+
+async def test_crashed_worker_recovers_without_touching_the_other_agent(live):
+    import psutil
+
+    one = SimpleNamespace(agent_id="crash", model="", browser_allowed_domains=[])
+    two = SimpleNamespace(agent_id="survivor", model="", browser_allowed_domains=[])
+    try:
+        old, _ = await live.subscribe(one)
+        survivor, _ = await live.subscribe(two)
+        children = await asyncio.to_thread(
+            lambda: psutil.Process(old.proc.pid).children(recursive=True)
+        )
+        old.proc.kill()  # Only this disposable test worker; containment owns its children.
+        await asyncio.wait_for(old.proc.wait(), 10)
+        await asyncio.wait_for(old.readers[0], 10)
+        assert old.closed
+        recovered, frames = await live.subscribe(one)
+        while (await asyncio.wait_for(frames.get(), 5))["kind"] != "frame":
+            pass  # Drain initial state until real recovered pixels arrive.
+        assert recovered.proc.pid != old.proc.pid
+        assert await live.ensure(two) is survivor
+        assert not survivor.closed and survivor.proc.returncode is None
+        _, alive = await asyncio.to_thread(psutil.wait_procs, children, timeout=10)
+        assert not alive
     finally:
         await live.close()

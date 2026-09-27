@@ -15,10 +15,14 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Final
 
+from pydantic import ValidationError
+
+from .companion import validate_avatar_companion
 from .events import (
     AgentState,
     BrowserMode,
@@ -209,6 +213,7 @@ class AgentRecord:
 
 _EDITABLE: Final[frozenset[str]] = frozenset(
     {
+        "name",
         "title",
         "description",
         "tier",
@@ -286,6 +291,8 @@ def _enum(kind: Any, value: Any, field_name: str) -> str:
 
 def _coerce(field_name: str, value: Any) -> Any:
     """Validate one editable field and return its column value."""
+    if field_name == "name":
+        return _validate_name(value)
     if field_name == "title":
         return str(value or "")[:_MAX_TITLE]
     if field_name == "description":
@@ -335,6 +342,12 @@ def _coerce(field_name: str, value: Any) -> Any:
     if field_name == "avatar":
         if not isinstance(value, dict):
             raise RosterError(FailureReason.BLOCKED_BY_POLICY, "avatar must be an object")
+        try:
+            value = validate_avatar_companion(value)
+        except ValidationError as exc:
+            raise RosterError(
+                FailureReason.BLOCKED_BY_POLICY, "invalid companion appearance"
+            ) from exc
         return json.dumps(value, ensure_ascii=False)
     if field_name == "approval_rules":
         return json.dumps(_validate_rules(value))
@@ -470,6 +483,13 @@ class Roster:
         current = await self._store.get_agent_row(agent_id)
         if current is None:
             raise RosterError(FailureReason.TARGET_UNKNOWN, f"agent {agent_id!r} not found")
+        if "name" in fields:
+            clean_name = _validate_name(fields["name"])
+            if agent_id == LEAD_AGENT_ID and clean_name != current["name"]:
+                raise RosterError(FailureReason.TIER_NOT_ALLOWED, "Jarvis keeps the lead name")
+            existing = await self._store.get_agent_row_by_name(clean_name)
+            if existing is not None and existing["agent_id"] != agent_id:
+                raise RosterError(FailureReason.BLOCKED_BY_POLICY, "agent name already exists")
         columns: dict[str, Any] = {}
         for key, value in fields.items():
             if key not in _EDITABLE:
@@ -486,7 +506,12 @@ class Roster:
                 if await self._store.get_agent_row(str(value)) is None:
                     raise RosterError(FailureReason.TARGET_UNKNOWN, f"parent {value!r} not found")
             columns[_JSON_FIELDS.get(key, key)] = _coerce(key, value)
-        await self._store.update_agent(agent_id, columns)
+        try:
+            await self._store.update_agent(agent_id, columns)
+        except sqlite3.IntegrityError as exc:
+            if "name" not in fields:
+                raise
+            raise RosterError(FailureReason.BLOCKED_BY_POLICY, "agent name already exists") from exc
         row = await self._store.get_agent_row(agent_id)
         assert row is not None
         record = await self._hydrate(row)

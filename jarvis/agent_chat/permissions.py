@@ -149,13 +149,15 @@ _GROK: Final[tuple[PermissionMode, ...]] = (
     PermissionMode(
         "default",
         "Ask before acting",
-        "Grok Build's default: edits and commands would ask; in the chat the "
-        "CLI cannot ask back, so they are declined and reported.",
+        "Grok Build's default would ask; in this chat the CLI cannot ask back — "
+        "a prompt that still wanted confirmation used to abort the whole turn — "
+        "so tools run (`--always-approve`). Plan is the read-only stance.",
     ),
     PermissionMode(
         "acceptEdits",
         "Auto-accept edits",
-        "Edits in the working folder run without asking.",
+        "Edits and commands run without asking. Print-mode Grok cannot answer a "
+        "permission prompt, so this chat also auto-approves shell calls.",
     ),
     PermissionMode(
         "plan",

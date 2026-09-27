@@ -63,7 +63,15 @@ def test_only_the_chat_package_hands_out_jarvis_tools():
         if module.parent.name == "agent_chat":
             continue
         text = module.read_text(encoding="utf-8", errors="replace")
-        if "mcp_config_json" in text or "codex_config_args" in text:
+        if any(
+            name in text
+            for name in (
+                "mcp_config_json",
+                "codex_config_args",
+                "install_grok_jarvis_mcp",
+                "grok_mcp_server_entry",
+            )
+        ):
             callers.append(str(module.relative_to(_ROOT)))
     assert callers == [], f"unexpected callers of the Jarvis MCP config: {callers}"
 

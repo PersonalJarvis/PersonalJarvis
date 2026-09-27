@@ -130,18 +130,9 @@ function Count({ n }: { n: number }) {
   );
 }
 
-/** Keep the full title for hover and accessibility; only shorten the visible label. */
+/** One line of the title. The row truncates it to the sidebar's real width. */
 export function compactChatTitle(title: string): string {
-  const normalized = title.trim().replace(/\s+/g, " ");
-  const words = normalized.split(" ");
-  const candidate = words.slice(0, 6).join(" ");
-  const characters = Array.from(candidate);
-  if (characters.length <= 42 && words.length <= 6) return normalized;
-  let short = characters.slice(0, 42).join("");
-  if (characters.length > 42 && short.lastIndexOf(" ") >= 20) {
-    short = short.slice(0, short.lastIndexOf(" "));
-  }
-  return `${short.trimEnd()}…`;
+  return title.trim().replace(/\s+/g, " ");
 }
 
 function ChatRowItem({

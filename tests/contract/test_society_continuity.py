@@ -251,7 +251,16 @@ async def test_routine_uses_current_rules_and_memory(world):
     briefing = kwargs["turn_override"].system_extra
     assert "Use plain text and never send mail." in briefing and "Cedar" in briefing
     assert "Prepare drafts only." not in prompt
-    assert kwargs["conversation_id"] == session.session_id
+    routine_session_id = kwargs["conversation_id"]
+    assert routine_session_id.startswith(f"{session.session_id}:routine:{spec.id}:")
+    assert svc.store.get_session(routine_session_id).permission_mode == "bypass"
+    assert all(event["kind"] == "notice" and event["payload"].get("kind") == "memory_updated"
+               for event in svc.store.list_events(session.session_id))
+
+    await run_owned_routine(rt, str(spec.id), spec.tags, spec.action.prompt)
+    assert brain.calls[-1][1]["conversation_id"] != routine_session_id
+    assert all(event["kind"] == "notice" and event["payload"].get("kind") == "memory_updated"
+               for event in svc.store.list_events(session.session_id))
 
 
 async def test_routine_update_preserves_id_and_pause_state(tmp_path):
@@ -335,6 +344,13 @@ def test_configuration_capability_does_not_unlock_actual_data_lookup():
     assert (
         _gate("Read my inbox now", live_tools=("society_propose_change",)).kind == "honest_refusal"
     )
+
+
+def test_routine_creation_uses_the_configuration_tool_not_a_github_read_mandate():
+    from tests.unit.brain.test_evidence_gate import _gate
+
+    request = "Erstelle eine Routine für GitHub Issues."  # i18n-allow: input fixture
+    assert _gate(request, live_tools=("society_propose_change",)).kind == "pass"
 
 
 def test_live_capabilities_include_filtered_turn_tools():

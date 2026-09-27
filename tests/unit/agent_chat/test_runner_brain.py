@@ -205,6 +205,43 @@ async def test_a_brain_error_ends_the_turn_honestly(
     assert finished["status"] == "error" and "provider down" in (finished["error"] or "")
 
 
+@pytest.mark.parametrize("reason", ["mandated_tool_unfulfilled", "unbacked_action_claim"])
+async def test_guarded_reply_is_visible_but_never_finishes_as_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_cli, reason
+):
+    safe_reply = "The requested action has not been completed."
+    fake = FakeBrainManager(reply=safe_reply, chunks=())
+    original_generate = fake.generate
+
+    async def guarded_generate(text, **kwargs):
+        reply = await original_generate(text, **kwargs)
+        kwargs["turn_override"].receipt.mark_guard_failure(reason)
+        return reply
+
+    monkeypatch.setattr(fake, "generate", guarded_generate)
+    monkeypatch.setattr(runner_brain, "brain_manager", lambda: fake)
+    svc = _service(None)
+    session = _jarvis_session(svc, tmp_path)
+    queue = svc.subscribe(session.session_id)
+    try:
+        await svc.send(session.session_id, "Create a folder named drafts.")
+        events = await _drain(queue, "turn_finished")
+        final = next(event["payload"] for event in events if event["kind"] == "assistant_text")
+        assert final["text"] == safe_reply
+        terminal = events[-1]["payload"]
+        assert terminal["status"] == "error" and terminal["error"] == reason
+        assert terminal["usage"] == {"input_tokens": 12, "output_tokens": 4, "cost_usd": 0.002}
+        saved = svc.store.list_events(session.session_id)
+        saved_terminal = next(
+            event["payload"] for event in saved if event["kind"] == "turn_finished"
+        )
+        assert saved_terminal["status"] == "error"
+    finally:
+        svc.unsubscribe(session.session_id, queue)
+        await svc.wait_turn(session.session_id)
+        svc.store.close()
+
+
 async def test_no_brain_yet_is_a_clear_error_not_a_hang(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_cli
 ):

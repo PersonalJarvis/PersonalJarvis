@@ -12,6 +12,8 @@ import { Html } from "@react-three/drei";
 import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import type { Group } from "three";
 
+import { AgentFollower } from "../companion/AgentFollower";
+import { resolveCompanion } from "../companion/appearance";
 import type { AgentCheckpoint, AgentRunState, SocietyAgent } from "../data";
 import { useBuildingPoses } from "./buildingPoses";
 import { useCameraStore } from "./cameraStore";
@@ -380,6 +382,7 @@ function Walker({
   };
 
   return (
+    <>
     <group
       ref={group}
       rotation-order="YXZ"
@@ -398,6 +401,8 @@ function Walker({
         </div>
       </Html>
     </group>
+    <AgentFollower owner={group} appearance={resolveCompanion(agent.agentId, agent.figure?.companion)} paused={paused} lead={agent.tier === "lead"} />
+    </>
   );
 }
 

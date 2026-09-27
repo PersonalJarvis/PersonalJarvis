@@ -22,6 +22,8 @@ set -euo pipefail
 # available even when a broken venv prevents importing the installed package.
 DEFAULT_INSTALL_DIR_NAME=".personal-jarvis"
 MACOS_APP_DIR_NAME="Personal Jarvis.app"
+MACOS_BUNDLE_ID="com.personal-jarvis.desktop"
+MACOS_AUTOSTART_LABEL="com.personal-jarvis.autostart"
 LINUX_DESKTOP_ENTRY_FILE_NAME="personal-jarvis.desktop"
 KEYRING_SERVICE_NAME="personal-jarvis"
 
@@ -130,7 +132,23 @@ else
     fi
     case "$(uname -s)" in
         Darwin)
-            rm -rf -- "$HOME/Applications/$MACOS_APP_DIR_NAME"
+            # Both install locations, but only OUR bundle: the DMG build has
+            # the same name and its own bundle id, and is not ours to delete.
+            for apps_dir in "/Applications" "$HOME/Applications"; do
+                app="$apps_dir/$MACOS_APP_DIR_NAME"
+                [ -e "$app" ] || continue
+                app_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+                    "$app/Contents/Info.plist" 2>/dev/null || true)
+                if [ -n "$app_id" ] && [ "$app_id" != "$MACOS_BUNDLE_ID" ]; then
+                    note "kept $app (a separately installed app)"
+                    continue
+                fi
+                rm -rf -- "$app"
+            done
+            # Without this the login item keeps firing at a deleted app.
+            agent="$HOME/Library/LaunchAgents/${MACOS_AUTOSTART_LABEL}.plist"
+            launchctl unload -w "$agent" >/dev/null 2>&1 || true
+            rm -f -- "$agent"
             ;;
         Linux)
             rm -f -- "${XDG_DATA_HOME:-$HOME/.local/share}/applications/$LINUX_DESKTOP_ENTRY_FILE_NAME"

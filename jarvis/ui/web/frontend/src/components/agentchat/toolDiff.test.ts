@@ -21,7 +21,7 @@ function render(lines: Array<{ kind: string; text: string }>): string {
 
 describe("which calls carry a diff", () => {
   it("knows the editing tools of every CLI, and leaves the rest alone", () => {
-    for (const name of ["Edit", "MultiEdit", "Write", "apply_patch", "str_replace_based_edit_tool", "NotebookEdit"]) {
+    for (const name of ["Edit", "MultiEdit", "Write", "apply_patch", "str_replace_based_edit_tool", "NotebookEdit", "society_wiki_note"]) {
       expect(isDiffTool(name)).toBe(true);
     }
     for (const name of ["Bash", "Read", "Grep", "WebFetch", "Task"]) {
@@ -149,5 +149,32 @@ describe("long changes stay readable", () => {
     // Painted up to the cap, and honest about the rest.
     expect(files![0].lines.length).toBeLessThanOrEqual(400);
     expect(files![0].truncated).toBeGreaterThan(0);
+  });
+});
+
+describe("society memory writes", () => {
+  it("paints a memory.md change red/green from the tool result", () => {
+    const before = "---\ntype: society\n---\n\nold fact\n";
+    const after = "---\ntype: society\n---\n\nold fact\n\nnew fact\n";
+    const files = toolDiff(
+      "society_wiki_note",
+      { kind: "memory", text: "new fact" },
+      JSON.stringify({ path: "society/scout/memory.md", before, after }),
+    );
+    expect(files).not.toBeNull();
+    expect(files![0].path).toBe("society/scout/memory.md");
+    expect(render(files![0].lines)).toContain("+new fact");
+    expect(diffStat(files!).added).toBeGreaterThanOrEqual(1);
+    expect(diffStat(files!).removed).toBe(0);
+  });
+
+  it("treats a new note as a file being started", () => {
+    const after = "---\ntype: society\n---\n\n# Title\n\nbody\n";
+    const files = toolDiff(
+      "society_wiki_note",
+      { kind: "note", title: "Title", text: "body" },
+      JSON.stringify({ path: "society/scout/2026-01-01-title.md", before: "", after }),
+    );
+    expect(files![0].created).toBe(true);
   });
 });

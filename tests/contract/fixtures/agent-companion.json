@@ -1,0 +1,19 @@
+{
+  "valid": [
+    {"shape":"circle","color":"#8b5cf6"},
+    {"shape":"cloud","color":"#112233","eyes":"lines","enabled":false,"sizeM":0.25,"followDistanceM":2},
+    {"shape":"drop","color":"#FFAA00","eyes":"dots","enabled":true,"sizeM":0.8,"followDistanceM":0.5}
+  ],
+  "invalid": [
+    {"shape":"unknown","color":"#123456"},
+    {"shape":"circle","color":"url(remote)"},
+    {"shape":"circle","color":"#fff"},
+    {"shape":"circle","color":"#123456","eyes":"human"},
+    {"shape":"circle","color":"#123456","enabled":"false"},
+    {"shape":"circle","color":"#123456","sizeM":10},
+    {"shape":"circle","color":"#123456","sizeM":0},
+    {"shape":"circle","color":"#123456","followDistanceM":-1},
+    {"shape":"circle","color":"#123456","followDistanceM":"1"},
+    {"shape":"circle","color":"#123456","url":"https://example.org"}
+  ]
+}

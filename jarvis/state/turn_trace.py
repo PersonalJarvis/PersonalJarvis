@@ -46,6 +46,7 @@ TRACE_EVENT_KINDS: frozenset[str] = frozenset(
     {
         "BrainTurnStarted",
         "BrainTurnCompleted",
+        "ReasoningSummaryUpdated",
         "ToolCallStarted",
         "ToolCallCompleted",
         "ActionProposed",
@@ -62,6 +63,7 @@ TRACE_EVENT_KINDS: frozenset[str] = frozenset(
 
 #: Per event kind, the payload keys worth keeping. Free text is previewed.
 _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
+    "ReasoningSummaryUpdated": ("response_id", "text", "done"),
     "BrainTurnStarted": ("provider", "model", "intent_level"),
     "BrainTurnCompleted": ("provider", "model", "finish_reason", "tokens_in", "tokens_out"),
     "ToolCallStarted": ("tool_name", "args_preview"),
@@ -114,7 +116,8 @@ def trace_payload_for(name: str, event: Any) -> dict[str, Any]:
                     args[str(k)] = _scalar(v, max_chars=_ARG_MAX)
                 out[key] = args
             continue
-        out[key] = _scalar(value, max_chars=_TEXT_MAX)
+        maximum = 4000 if name == "ReasoningSummaryUpdated" and key == "text" else _TEXT_MAX
+        out[key] = _scalar(value, max_chars=maximum)
     return out
 
 

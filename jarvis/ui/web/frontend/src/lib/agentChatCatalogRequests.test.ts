@@ -43,3 +43,21 @@ test("a rejected discovery request is released so a later retry can succeed", as
   await expect(fetchAgentChatCatalog("society")).resolves.toEqual({ providers: [] });
   expect(request).toHaveBeenCalledTimes(2);
 });
+
+
+test("catalog requests are isolated by account, session and working folder", async () => {
+  const request = vi.fn(async (_url: string) => ({ ok: true, json: async () => ({ providers: [] }) }) as Response);
+  vi.stubGlobal("fetch", request);
+  const first = fetchAgentChatCatalog("society", { accountId: "one" });
+  const same = fetchAgentChatCatalog("society", { accountId: "one" });
+  const second = fetchAgentChatCatalog("society", { accountId: "two" });
+  const session = fetchAgentChatCatalog("society", { sessionId: "chat-two", cwd: "/project" });
+  expect(first).toBe(same);
+  expect(first).not.toBe(second);
+  await Promise.all([first, second, session]);
+  expect(request.mock.calls.map(([url]) => url)).toEqual([
+    "/api/agent-chat/catalog?surface=society&account_id=one",
+    "/api/agent-chat/catalog?surface=society&account_id=two",
+    "/api/agent-chat/catalog?surface=society&session_id=chat-two&cwd=%2Fproject",
+  ]);
+});

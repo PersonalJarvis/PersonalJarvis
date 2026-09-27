@@ -1,10 +1,9 @@
 /**
  * The thin layer of DOM over the canvas: the population chip (top-left),
- * whatever the section hands in for the top-right corner (the World / Ledger
- * switch — app chrome, not world content), the controls hint, the zoom
- * buttons and the minimap (bottom-right).
+ * the controls hint, the zoom buttons and the minimap (bottom-right).
+ * The Map / Agents switch is app chrome and lives in the window caption —
+ * never in this HUD, where fullscreen would strand the user on the island.
  */
-import type { ReactNode } from "react";
 import { Minus, Plus, RotateCcw, ScrollText } from "lucide-react";
 
 import { fill, useT } from "@/i18n";
@@ -20,7 +19,6 @@ interface Props {
   sample: boolean;
   awake: boolean;
   reducedMotion: boolean;
-  topRight?: ReactNode;
   /** The Quest Board button: how many quests are on the board and whether its drawer is open. */
   questsOnBoard?: number;
   questsOpen?: boolean;
@@ -32,7 +30,6 @@ export function WorldHud({
   sample,
   awake,
   reducedMotion,
-  topRight,
   questsOnBoard = 0,
   questsOpen = false,
   onOpenQuests,
@@ -76,7 +73,6 @@ export function WorldHud({
           {sample && <div className="sw-chip sw-chip-note">{t("society.world.sample_badge")}</div>}
           {reducedMotion && <div className="sw-chip sw-chip-note">{t("society.world.reduced_motion_note")}</div>}
         </div>
-        {topRight ? <div className="sw-hud-topright">{topRight}</div> : null}
       </div>
       <div className="sw-hud-bottom">
         <div className="sw-hint-row">

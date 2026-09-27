@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { browserPlaybackIsActive } from "@/lib/voiceOutputLevel";
 import type { MessageRole } from "@/types/messages";
 import { readCachedAssistantName } from "@/lib/assistantNameCache";
 import {
@@ -626,7 +627,10 @@ export const useEventStore = create<EventStore>((set, get) => ({
       return { events: next };
     }),
 
-  setVoice: (v) => set({ voiceState: v }),
+  setVoice: (v) => set({
+    voiceState: browserPlaybackIsActive() && ["thinking", "listening", "speaking"].includes(v)
+      ? "speaking" : v,
+  }),
   setVoiceReady: (ready) => set({ voiceReady: ready }),
   setConnected: (c) => set({ connected: c }),
   setWarming: (warming) => set({ wsWarming: warming }),

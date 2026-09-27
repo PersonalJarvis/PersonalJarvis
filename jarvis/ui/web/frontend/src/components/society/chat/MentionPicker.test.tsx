@@ -86,4 +86,50 @@ describe("MentionPicker", () => {
     fireEvent.click(gmail!);
     expect(picked).toEqual(["gmail"]);
   });
+
+  it("keeps search hits in the given order without regrouping by kind", () => {
+    const items = filterMentions(
+      buildMentionCatalog(
+        [],
+        [
+          cap({
+            id: "cli:gws",
+            label: "Google Workspace CLI",
+            one_liner: "Google Workspace: Gmail, Drive.",
+          }),
+          cap({
+            id: "mcp:notebooklm-mcp/notebook_add_drive",
+            one_liner: "Add Google Drive document as source.",
+          }),
+          cap({
+            id: "mcp:notebooklm-mcp/notebook_list",
+            one_liner: "List notebooks.",
+          }),
+        ],
+      ),
+      "google",
+    );
+    const anchor = createRef<HTMLDivElement>();
+    render(
+      <>
+        <div ref={anchor} />
+        <MentionPicker
+          anchorRef={anchor}
+          open
+          items={items}
+          loading={false}
+          activeIndex={0}
+          grouped={false}
+          onHover={() => undefined}
+          onPick={() => undefined}
+        />
+      </>,
+    );
+    expect(screen.queryByText("MCP servers")).toBeNull();
+    expect(screen.queryByText("CLIs")).toBeNull();
+    const rows = screen.getAllByTestId("mention-picker-item");
+    expect(rows[0]?.textContent).toContain("@gws");
+    expect(rows[0]?.getAttribute("aria-selected")).toBe("true");
+    expect(rows.some((row) => (row.textContent ?? "").includes("notebook_add_drive"))).toBe(false);
+  });
 });

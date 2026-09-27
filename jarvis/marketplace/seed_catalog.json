@@ -259,14 +259,32 @@
     {
       "id": "discord",
       "display_name": "Discord",
-      "description": "Chat with Jarvis from Discord (your bot)",
+      "description": "Chat with Jarvis from Discord — browser sign-in, your bot",
       "category": "Messaging",
       "logo_slug": "discord",
       "logo_color": "5865F2",
       "featured": false,
-      "longevity": "permanent",
-      "longevity_note": "A bot token stays valid until you reset it in the Discord developer portal.",
+      "longevity": "self_renewing",
+      "longevity_note": "OAuth tokens refresh automatically. A pasted bot token stays valid until you reset it in the Discord developer portal.",
+      "oauth_client_family": "discord",
+      "browser_flow": "publisher_pkce",
       "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://discord.com/oauth2/authorize",
+        "token_url": "https://discord.com/api/oauth2/token",
+        "revocation_url": "https://discord.com/api/oauth2/token/revoke",
+        "client_id": "REPLACE_WITH_JARVIS_DISCORD_APP_CLIENT_ID",
+        "callback_port": 3129,
+        "scopes": [
+          "identify",
+          "guilds",
+          "guilds.members.read",
+          "connections"
+        ],
+        "scope_separator": "space",
+        "refresh_supported": true
+      },
+      "fallback_auth": {
         "mode": "pat_paste",
         "auth_scheme": "bot",
         "token_creation_url": "https://discord.com/developers/applications",
@@ -274,7 +292,7 @@
         "validation_endpoint": "https://discord.com/api/v10/users/@me",
         "instruction_md": "1. Open https://discord.com/developers/applications and click 'New Application'.\n2. Go to the 'Bot' page, click 'Reset Token', and copy it (shown once).\n3. Under 'Privileged Gateway Intents', enable 'Message Content Intent' so the bot can read message text.\n4. Invite the bot to your server: OAuth2 -> URL Generator -> scope 'bot' + the permissions you want (View Channels, Read Message History, Send Messages), open the link, pick your server, Authorize.\n5. Paste the bot token below, plus your numeric Discord user id (Developer Mode -> right-click yourself -> Copy User ID) so only you can command the bot."
       },
-      "post_install_hint_md": "This enables the Discord channel — message your bot to talk to Jarvis. Outbound replies pass through the voice scrubber and your allowlist."
+      "post_install_hint_md": "Sign in with Discord in the browser to link your identity. To let the bot receive and answer messages, also paste a bot token via the token fallback — the gateway still runs on a bot credential, which OAuth alone cannot replace."
     },
     {
       "id": "telegram",
@@ -714,7 +732,7 @@
         },
         "risk_tier": "ask"
       },
-      "post_install_hint_md": "Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration.  Permissions: offline_access, User.Read, Mail.Read, Mail.Send, Calendars.ReadWrite.",
+      "post_install_hint_md": "Click Connect and sign in with your Microsoft account in the browser. The shared sign-in is already included, so you do not create an Azure app. A company directory may ask an administrator to approve Personal Jarvis once.  Permissions: offline_access, User.Read, Mail.Read, Mail.Send, Calendars.ReadWrite.",
       "oauth_client_family": "microsoft"
     },
     {
@@ -754,7 +772,7 @@
         },
         "risk_tier": "ask"
       },
-      "post_install_hint_md": "Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration. Uploads through this connector support files up to 20 MiB; larger transfers use OneDrive. Permissions: offline_access, User.Read, Files.ReadWrite.",
+      "post_install_hint_md": "Click Connect and sign in with your Microsoft account in the browser. The shared sign-in is already included, so you do not create an Azure app. A company directory may ask an administrator to approve Personal Jarvis once. Uploads through this connector support files up to 20 MiB; larger transfers use OneDrive. Permissions: offline_access, User.Read, Files.ReadWrite.",
       "oauth_client_family": "microsoft"
     },
     {
@@ -796,7 +814,7 @@
         },
         "risk_tier": "ask"
       },
-      "post_install_hint_md": "Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration. Work or school account required. Meeting creation returns a join link; it does not ring participants or open the Teams app. Permissions: offline_access, User.Read, Chat.Read, ChatMessage.Send, OnlineMeetings.ReadWrite.",
+      "post_install_hint_md": "Click Connect and sign in with your Microsoft account in the browser. The shared sign-in is already included, so you do not create an Azure app. A company directory may ask an administrator to approve Personal Jarvis once. Work or school account required. Meeting creation returns a join link; it does not ring participants or open the Teams app. Permissions: offline_access, User.Read, Chat.Read, ChatMessage.Send, OnlineMeetings.ReadWrite.",
       "oauth_client_family": "microsoft"
     },
     {
@@ -837,7 +855,7 @@
         },
         "risk_tier": "ask"
       },
-      "post_install_hint_md": "Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration. Work or school account required. Access is limited to sites your account can read. Permissions: offline_access, User.Read, Sites.Read.All, Files.Read.All.",
+      "post_install_hint_md": "Click Connect and sign in with your Microsoft account in the browser. The shared sign-in is already included, so you do not create an Azure app. A company directory may ask an administrator to approve Personal Jarvis once. Work or school account required. Access is limited to sites your account can read. Permissions: offline_access, User.Read, Sites.Read.All, Files.Read.All.",
       "oauth_client_family": "microsoft"
     },
     {
@@ -877,7 +895,7 @@
         },
         "risk_tier": "ask"
       },
-      "post_install_hint_md": "Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration.  Permissions: offline_access, User.Read, Notes.ReadWrite.",
+      "post_install_hint_md": "Click Connect and sign in with your Microsoft account in the browser. The shared sign-in is already included, so you do not create an Azure app. A company directory may ask an administrator to approve Personal Jarvis once.  Permissions: offline_access, User.Read, Notes.ReadWrite.",
       "oauth_client_family": "microsoft"
     },
     {
@@ -917,7 +935,7 @@
         },
         "risk_tier": "ask"
       },
-      "post_install_hint_md": "Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration.  Permissions: offline_access, User.Read, Tasks.ReadWrite.",
+      "post_install_hint_md": "Click Connect and sign in with your Microsoft account in the browser. The shared sign-in is already included, so you do not create an Azure app. A company directory may ask an administrator to approve Personal Jarvis once.  Permissions: offline_access, User.Read, Tasks.ReadWrite.",
       "oauth_client_family": "microsoft"
     },
     {
@@ -981,7 +999,7 @@
         },
         "risk_tier": "ask"
       },
-      "post_install_hint_md": "Create your own Microsoft Entra public/native application with redirect URI http://127.0.0.1:43891/oauth/callback, then enter its client ID in this dialog. Enable personal and work/school accounts when supported; no client secret is needed for a public app. Grant only the delegated permissions listed below. Tenant policies may require administrator consent. Each plugin is connected separately and shares only your app registration. Azure requires a work/school account, Azure Service Management delegated permission and Cost Management Reader or equivalent for billing.",
+      "post_install_hint_md": "Click Connect and sign in with your Microsoft account in the browser. The shared sign-in is already included, so you do not create an Azure app. A company directory may ask an administrator to approve Personal Jarvis once. Azure requires a work/school account, Azure Service Management delegated permission and Cost Management Reader or equivalent for billing.",
       "oauth_client_family": "microsoft"
     },
     {
@@ -1509,6 +1527,41 @@
         "env_template": {}
       },
       "post_install_hint_md": "Requires AMD SMI on a compatible AMD host. The connect button checks actual device data before enabling. Native Windows and macOS telemetry are unavailable; the base app remains usable without AMD tooling."
+    },
+    {
+      "id": "shopify",
+      "display_name": "Shopify",
+      "description": "Products, orders, customers and discounts through the official Shopify MCP server",
+      "category": "Knowledge & Reading",
+      "logo_slug": "shopify",
+      "logo_color": "95BF47",
+      "featured": false,
+      "longevity": "self_renewing",
+      "oauth_client_family": "shopify",
+      "auth": {
+        "mode": "oauth_pkce_loopback",
+        "authorization_url": "https://setup.shopify.com/oauth/authorize",
+        "token_url": "https://setup.shopify.com/oauth/token",
+        "client_id": "REPLACE_WITH_JARVIS_SHOPIFY_CLIENT_ID",
+        "callback_port": 3130,
+        "callback_path": "/oauth/callback",
+        "scopes": [
+          "read_products",
+          "read_orders",
+          "read_customers",
+          "read_discounts"
+        ],
+        "scope_separator": "comma",
+        "refresh_supported": true,
+        "resource": "https://setup.shopify.com/mcp"
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://setup.shopify.com/mcp",
+        "auth_header_template": "Authorization: Bearer $plugin_shopify_access_token",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Connect signs you in at Shopify in the browser with read access to products, orders, customers and discounts. If the shared sign-in is not provisioned yet, register your own Shopify app and enter its client ID through the dialog's expert option instead."
     }
   ]
 }

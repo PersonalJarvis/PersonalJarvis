@@ -108,8 +108,18 @@ async def execute_live(
     provider = caller.provider or _default_provider(runtime)
     key = get_jarvis_agent_secret(provider)
     overrides = {provider: key} if key else {}
-    with override_provider_secrets(overrides):
-        brain = live.model_resolver(caller)
+    try:
+        with override_provider_secrets(overrides):
+            brain = await asyncio.to_thread(live.model_resolver, caller)
+    except LookupError:
+        # A chat-only CLI can be connected without an inference implementation.
+        # Do not silently move its browser work to an API-billed provider.
+        return ToolResult(
+            False,
+            None,
+            "This agent's selected model connection cannot currently drive the browser. "
+            "Choose another connected model in its Model menu.",
+        )
     if brain is None or not callable(getattr(brain, "complete", None)):
         return ToolResult(False, None, "This agent has no browser-capable model connection")
     usage_total = {"input_tokens": 0, "output_tokens": 0, "cache_hit_tokens": 0}
@@ -155,7 +165,18 @@ async def execute_live(
                 if (
                     attempt == 0
                     and any(m.images for m in request.messages)
-                    and ("support image" in detail or "image input" in detail)
+                    and (
+                        not getattr(brain, "supports_vision", True)
+                        or any(
+                            marker in detail
+                            for marker in (
+                                "support image",
+                                "image input",
+                                "cannot see images",
+                                "does not support vision",
+                            )
+                        )
+                    )
                 ):
                     vision_available = False
                     text = ""
@@ -256,8 +277,8 @@ async def execute_live(
     task = str(args.get("task") or "").strip()
     if read_only:
         task = (
-            "READ-ONLY: use navigation, reading and extraction only; no clicks, inputs, uploads or writes. "
-            + task
+            "READ-ONLY: use navigation, reading and extraction only; "
+            "no clicks, inputs, uploads or writes. " + task
         )
     workspace = (Path(runtime.data_dir) / "society" / caller.agent_id / "workspace").resolve()
     files = []

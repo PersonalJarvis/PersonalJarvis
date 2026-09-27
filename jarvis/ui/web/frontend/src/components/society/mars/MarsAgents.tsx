@@ -1,0 +1,113 @@
+import { useEffect, useMemo, useRef } from "react";
+import { Html } from "@react-three/drei";
+import { useFrame, useThree } from "@react-three/fiber";
+import { Group, Vector3 } from "three";
+import { useT } from "@/i18n";
+import { type NavigationRecord } from "./navigationApi";
+import { useSocietyRoster, type SocietyAgent } from "../data";
+import { FigureRig, type FigureDrive } from "../figures/FigureRig";
+import { AgentFollower } from "../companion/AgentFollower";
+import { resolveCompanion } from "../companion/appearance";
+import type { TrailPoint } from "../companion/trail";
+import { WORLD, BUILDING_COLLIDERS, surfaceHeight } from "./world";
+import { useReducedMotion } from "framer-motion";
+
+function companionClear(point: TrailPoint, radius: number): boolean {
+  // Corners of the footprint must stay on the same floor/bridge. Expanded
+  // obstacle boxes keep the offset clear of walls, rails and door jambs.
+  for (const x of [point[0] - radius, point[0] + radius]) {
+    for (const z of [point[2] - radius, point[2] + radius]) {
+      if (Math.abs(surfaceHeight(x, z) - point[1]) > 0.3) return false;
+    }
+  }
+  return !BUILDING_COLLIDERS.some(box => point[0] > box.min[0] - radius && point[0] < box.max[0] + radius
+    && point[2] > box.min[2] - radius && point[2] < box.max[2] + radius
+    && point[1] + 0.08 < box.max[1] && point[1] + radius * 2 > box.min[1]);
+}
+
+function companionStart(record: NavigationRecord, gap: number): TrailPoint {
+  const current = WORLD.navigation.nodes.find(node => node.id === record.current_node);
+  if (!current) return [...record.position];
+  let anchor = current.position;
+  if (Math.hypot(anchor[0] - record.position[0], anchor[2] - record.position[2]) < 0.05) {
+    const edge = WORLD.navigation.edges.find(e => e.from === current.id || e.to === current.id);
+    const other = edge && WORLD.navigation.nodes.find(n => n.id === (edge.from === current.id ? edge.to : edge.from));
+    if (other) anchor = other.position;
+  }
+  const distance = Math.hypot(...anchor.map((value, i) => value - record.position[i]));
+  const fraction = distance > 0 ? Math.min(1, gap / distance) : 0;
+  return record.position.map((value, i) => value + (anchor[i] - value) * fraction) as TrailPoint;
+}
+
+function AgentLocation({ record, agent, name, stale, awake, onSelect, following, followAvailable, onFollow, onStopFollow }: {
+  record: NavigationRecord; agent?: SocietyAgent; name: string; stale: boolean; awake: boolean; onSelect?: (id: string) => void;
+  following: boolean; followAvailable: boolean; onFollow: (id: string) => void; onStopFollow: () => void;
+}) {
+  const t = useT();
+  const reduced = useReducedMotion() ?? false;
+  const appearance = resolveCompanion(record.agent_id, agent?.figure?.companion);
+  const group = useRef<Group>(null);
+  const drive = useRef<FigureDrive>({ mode: "idle", speed: 0 });
+  const heading = useRef(0);
+  const corner = useRef<TrailPoint | null>(null);
+  const initialPosition = useRef(record.position);
+  const previous = useRef(record);
+  const remaining = useRef(0);
+  const target = useRef(new Vector3(...record.position));
+  const { invalidate } = useThree();
+  useEffect(() => {
+    const old = previous.current;
+    target.current.fromArray(record.position);
+    const dx = record.position[0] - old.position[0], dz = record.position[2] - old.position[2];
+    if (Math.hypot(dx, dz) > 0.025) heading.current = Math.atan2(dx, dz);
+    if (old.edge_id !== record.edge_id) {
+      const node = WORLD.navigation.nodes.find(n => n.id === record.current_node);
+      corner.current = node ? [...node.position] as TrailPoint : null;
+    }
+    drive.current = { mode: record.state === "moving" && !stale ? "walk" : "idle", speed: Math.hypot(dx, dz) / 0.25 };
+    // Interpolate only on the same verified segment. A straight shortcut across
+    // a corner could pass through geometry; new segments use reported placement.
+    remaining.current = !stale && old.edge_id !== null && old.edge_id === record.edge_id && old.current_node === record.current_node ? 0.18 : 0;
+    if (!remaining.current) group.current?.position.copy(target.current);
+    previous.current = record; invalidate();
+  }, [record, stale, awake, invalidate]);
+  useFrame((_state, delta) => {
+    if (group.current) group.current.rotation.y = heading.current;
+    if (!awake || !group.current || remaining.current <= 0) return;
+    const step = Math.min(Math.max(delta, 0), remaining.current);
+    group.current.position.lerp(target.current, step / remaining.current);
+    remaining.current -= step;
+    if (remaining.current > 0) invalidate();
+  });
+  return <><group ref={group} position={initialPosition.current} userData={{ agentId: record.agent_id }}>
+    {agent?.figure && <FigureRig recipe={agent.figure} drive={drive} paused={stale || !awake || reduced} />}
+    <Html center position={[0, 2.2, 0]} zIndexRange={[16, 1]}>
+      <div className="flex items-center gap-1" data-mars-ui>
+      <button type="button" data-mars-ui onClick={(event) => { event.stopPropagation(); onSelect?.(record.agent_id); }}
+        className="whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-sm">
+        <strong>{name}</strong><span className="ml-2 text-muted-foreground">{t(stale ? "society.mars.last_known_position" : `society.mars.move_state_${record.state}`)}</span>
+      </button>
+      <button type="button" aria-label={t(following ? "society.mars.stop_follow_agent" : "society.mars.follow_named_agent").replace("{0}", name)} aria-pressed={following}
+        disabled={!following && !followAvailable} onClick={(event) => { event.stopPropagation(); if (following) onStopFollow(); else onFollow(record.agent_id); }}
+        className="whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-sm disabled:opacity-50">
+        {t(following ? "society.mars.stop_follow" : "society.mars.follow")}
+      </button>
+      </div>
+    </Html>
+  </group>
+    {agent && <AgentFollower owner={group} appearance={appearance} paused={stale || !awake} lead={agent.tier === "lead"} waypoint={corner} initialPosition={companionStart(record, appearance.followDistanceM)} clear={companionClear} />}
+  </>;
+}
+
+/** Stored characters and their independent companions share authoritative placement. */
+export function MarsAgents({ records, names, stale, awake, onSelect, followAgentId, followAvailable, onFollow, onStopFollow }: {
+  records: NavigationRecord[]; names: ReadonlyMap<string, string>; stale: boolean; awake: boolean; onSelect?: (id: string) => void;
+  followAgentId: string | null; followAvailable: boolean; onFollow: (id: string) => void; onStopFollow: () => void;
+}) {
+  const roster = useSocietyRoster();
+  const agents = useMemo(() => new Map((roster.data?.agents ?? []).map(agent => [agent.agentId, agent])), [roster.data]);
+  return <group>{records.filter((row) => row.presence === "placed" && agents.has(row.agent_id)).slice(0, 64).map((record) =>
+    <AgentLocation key={record.agent_id} record={record} agent={agents.get(record.agent_id)} name={names.get(record.agent_id) ?? record.agent_id} stale={stale} awake={awake} onSelect={onSelect}
+      following={followAgentId === record.agent_id} followAvailable={followAvailable && names.has(record.agent_id)} onFollow={onFollow} onStopFollow={onStopFollow} />,
+  )}</group>;
+}

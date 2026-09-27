@@ -1,14 +1,15 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { groupTrace, groupActivityTrace, WorkTrace, traceDuration } from "./WorkTrace";
+import { groupTrace, groupActivityTrace, splitConversationTurn, WorkTrace, traceDuration } from "./WorkTrace";
 import { traceToolIdentity } from "./traceActivity";
-import type { ToolBlock, TurnBlock, TurnStatus } from "./reduce";
+import type { TextBlock, ToolBlock, TurnBlock, TurnStatus } from "./reduce";
 
 const tool = (id: string, over: Partial<ToolBlock> = {}): ToolBlock => ({
   kind: "tool", callId: id, name: "read_file", input: { path: `${id}.ts` }, output: `Contents of ${id}`,
   isError: false, durationMs: 800, approval: null, startedMs: 1000, ...over,
 });
 const thought: TurnBlock = { kind: "reasoning", id: "reason", text: "**Check** the input.", live: false, durationMs: 8000, startedMs: 1000 };
+const reply = (id: string, text: string): TextBlock => ({ kind: "text", id, text });
 const props = { startedMs: 1000, durationMs: 12000, status: "done" as TurnStatus };
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
@@ -162,5 +163,23 @@ describe("work trace", () => {
     render(<WorkTrace {...props} blocks={[tool("shell", { name, input: { command: "read skill instructions" }, durationMs: 49 })]} />);
     expect(screen.getByRole("button", { name: /Run command.*49ms/ })).toBeTruthy();
     expect(screen.queryByText("0.0s")).toBeNull();
+  });
+
+  it("keeps the last reply visible and treats earlier text as foldable work", () => {
+    const blocks = [tool("a"), reply("plan", "I will inspect the files."), tool("b"), reply("done", "Everything is ready.")];
+    expect(splitConversationTurn(blocks)).toEqual({
+      work: [tool("a"), reply("plan", "I will inspect the files."), tool("b")],
+      answer: [reply("done", "Everything is ready.")],
+      after: [],
+    });
+  });
+
+  it("keeps failures after the last reply in view", () => {
+    const failed = tool("err", { isError: true, output: "Upload failed" });
+    expect(splitConversationTurn([tool("a"), reply("done", "Ready."), failed]).after).toEqual([failed]);
+  });
+
+  it("treats a tool-only turn as work", () => {
+    expect(splitConversationTurn([tool("a")])).toEqual({ work: [tool("a")], answer: [], after: [] });
   });
 });

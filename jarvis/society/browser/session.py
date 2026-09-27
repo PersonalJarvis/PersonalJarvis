@@ -180,18 +180,28 @@ class BrowserJobs:
         }
 
     async def close(self) -> None:
-        await self.live.close()
-        for agent_id in list(self._procs):
-            await self.kill(agent_id)
+        try:
+            await self.live.close()
+        finally:
+            # A cancelled live-browser shutdown still owns the one-shot jobs.
+            results = await asyncio.gather(
+                *(self.kill(agent_id) for agent_id in list(self._procs)), return_exceptions=True
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
 
     async def kill(self, agent_id: str) -> bool:
-        proc = self._procs.pop(agent_id, None)
-        if proc is None or proc.returncode is not None:
+        proc = self._procs.get(agent_id)
+        if proc is None:
+            return False
+        if proc.returncode is not None:
+            self._procs.pop(agent_id, None)
             return False
         with contextlib.suppress(ProcessLookupError, OSError):
             proc.kill()
-        with contextlib.suppress(ProcessLookupError, OSError):
-            await proc.wait()
+        await asyncio.wait_for(proc.wait(), timeout=2)
+        self._procs.pop(agent_id, None)
         return True
 
     # -------------------------------------------------------------- jobs

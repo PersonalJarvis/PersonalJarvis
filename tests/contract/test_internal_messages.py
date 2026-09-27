@@ -132,11 +132,19 @@ async def test_queue_survives_runtime_restart(world, tmp_path):
     rt.set_deliver(None)
     env = await rt.say(from_agent=rt.lead_id, to_agent="scout", text="recover me")
     await rt.close()
-    await rt.ensure_started()
+    restarted = SocietyRuntime(tmp_path, seed_starter_team=False, chat_service=lambda: svc)
+    await restarted.ensure_started()
     cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path)))
-    rt.set_deliver(make_deliver_hook(lambda: svc, lambda: cfg))
-    await drain(rt)
-    assert await rt.store.delivery_status(env.event_id) == "delivered"
+    try:
+        assert any(item.event_id == env.event_id for item in await restarted.store.pending_deliveries())
+        restarted.set_deliver(make_deliver_hook(lambda: svc, lambda: cfg))
+        await drain(restarted)
+        async with asyncio.timeout(2):
+            while await restarted.store.delivery_status(env.event_id) != "delivered":
+                await asyncio.sleep(0.01)
+        assert await restarted.store.delivery_status(env.event_id) == "delivered"
+    finally:
+        await restarted.close()
 
 
 async def test_failure_updates_a_visible_queued_message(world):
@@ -155,11 +163,20 @@ async def test_agent_reply_keeps_conversation_and_cannot_forge_sender(world):
     rt, _, _ = world
     rt.set_deliver(None)
     tool = MessageAgentTool(rt, "scout")
+    from jarvis.society.events import MsgType
+
+    request = await rt.say(
+        from_agent="gmail-agent",
+        to_agent="scout",
+        text="What did you find?",
+        msg_type=MsgType.QUERY,
+        trace_id="conversation",
+    )
     incoming = IncomingMessage(
-        message_id="parent",
-        sender_id=rt.lead_id,
-        sender_name="Jarvis",
-        sender_kind="jarvis",
+        message_id=request.event_id,
+        sender_id="gmail-agent",
+        sender_name="Gmail agent",
+        sender_kind="agent",
         text="hello",
         prompt="hello",
         trace_id="conversation",
@@ -178,8 +195,8 @@ async def test_agent_reply_keeps_conversation_and_cannot_forge_sender(world):
     finally:
         incoming_context.reset(token)
     events = await rt.store.events_for_trace(result.output["trace_id"])
-    assert events[0].from_agent == "scout"
-    assert events[0].parent_event_id == "parent"
+    assert events[-1].from_agent == "scout"
+    assert events[-1].parent_event_id == request.event_id
     assert result.output["trace_id"] == "conversation"
     first = await tool.execute({"target": "Gmail agent", "text": "new"}, CTX)
     second = await tool.execute({"target": "Gmail agent", "text": "another"}, CTX)

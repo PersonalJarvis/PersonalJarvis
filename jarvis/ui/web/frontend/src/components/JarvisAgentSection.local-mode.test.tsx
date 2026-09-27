@@ -156,4 +156,15 @@ describe("JarvisAgentSection — Local Mode", () => {
     expect(screen.getAllByText("openai card").length).toBeGreaterThan(0);
     expect(screen.queryAllByText("gemini card")).toHaveLength(0);
   });
+
+  it("shows subscription sign-ins in onboarding even when Local Mode is on", async () => {
+    setLocalMode(true);
+    vi.stubGlobal("fetch", mockFetch());
+    render(<JarvisAgentSection hideHeader subscriptionsOnly />);
+
+    await screen.findByTestId("onboarding-subscription-list");
+    expect(screen.getByTestId("agent-group-clis")).toBeTruthy();
+    expect(screen.queryByTestId("agent-group-api")).toBeNull();
+    expect(screen.queryByTestId("local-mode-notice")).toBeNull();
+  });
 });

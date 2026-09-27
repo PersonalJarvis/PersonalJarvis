@@ -3,6 +3,7 @@
  * The workspace can be embedded in the section or opened as a modal.
  * Radix Dialog provides focus containment and Escape-to-close.
  */
+import type { ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 
@@ -30,6 +31,8 @@ export interface AgentCardOverlayProps {
   onClose: () => void;
   /** Render as the section workspace instead of a modal. */
   embedded?: boolean;
+  /** Drawn at the top of the agent list, in the gray column. */
+  railHeader?: ReactNode;
 }
 
 export function AgentCardOverlay({
@@ -41,18 +44,23 @@ export function AgentCardOverlay({
   onCreate,
   onClose,
   embedded = false,
+  railHeader,
 }: AgentCardOverlayProps) {
   const t = useT();
   useLocaleChunk("society");
+  // The modal keeps a real dialog title plus its close control. The embedded
+  // workspace hides this row entirely: the left rail already marks the active
+  // agent and the right rail names it, so the row was a second, boring band.
   const Title = embedded ? "h2" : Dialog.Title;
   const Description = embedded ? "p" : Dialog.Description;
   const content = (
     <>
       {agent ? (
         <>
-          <header className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-3">
-            <div data-testid="agent-card-identity" className="flex min-w-0 flex-1 items-center gap-3">
-              <AgentSwatch agent={agent} size={40} />
+          {!embedded && (
+          <header className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-1.5">
+            <div data-testid="agent-card-identity" className="flex min-w-0 flex-1 items-center gap-2">
+              <AgentSwatch agent={agent} size={32} />
               <div className="min-w-0 flex-1">
                 <Title className="truncate font-display text-base font-semibold tracking-tight text-foreground">
                   {agent.name}
@@ -63,14 +71,13 @@ export function AgentCardOverlay({
               </div>
             </div>
             <Badge variant="outline">{t(`society.state.${agent.state}`)}</Badge>
-            {!embedded && (
-              <button type="button" onClick={onClose} aria-label={t("society.card.close")}
-                className="rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground">
-                <X className="h-4 w-4" aria-hidden />
-              </button>
-            )}
+            <button type="button" onClick={onClose} aria-label={t("society.card.close")}
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground">
+              <X className="h-4 w-4" aria-hidden />
+            </button>
           </header>
-          <div className="grid min-h-0 flex-1 grid-cols-[minmax(220px,1fr)_minmax(0,5fr)_minmax(300px,320px)]">
+          )}
+          <div className="grid min-h-0 flex-1 grid-cols-[minmax(240px,300px)_minmax(0,1fr)]">
             <RosterRail
               agents={roster}
               loading={rosterLoading}
@@ -79,8 +86,15 @@ export function AgentCardOverlay({
               onOpen={(id) => { if (id !== agent.agentId) onSelectAgent?.(id); }}
               onCreate={() => onCreate?.()}
               side="left"
-              className="w-full"
+              className="w-full border-0 jarvis-nav-surface"
+              header={railHeader}
             />
+            {/* Inner reading pane: same ground, divider and corner as the
+                window sheet, but WITHOUT its top border. Top + left borders
+                meet exactly at the rounded corner, and on a fractional grid
+                seam that joint rasterizes as a small step. The gray caption
+                above already separates by ground, so one border is enough. */}
+            <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(280px,320px)] overflow-hidden rounded-tl-[12px] border-l border-border bg-background">
             <section
               className="flex min-h-0 flex-col"
               aria-label={t("society.card.chat")}
@@ -89,6 +103,7 @@ export function AgentCardOverlay({
               <AgentChatPanel key={agent.agentId} agent={agent} roster={roster} />
             </section>
             <OptionsRail agent={agent} onRetired={onClose} sample={sample} />
+            </div>
           </div>
         </>
       ) : null}

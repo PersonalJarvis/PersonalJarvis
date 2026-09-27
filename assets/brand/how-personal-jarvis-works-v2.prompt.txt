@@ -1,0 +1,20 @@
+README architecture illustration
+
+Generated using the built-in image_gen tool. The tool exposes no model-version selector.
+Reviewed against the README's original request-routing diagram.
+Output: how-personal-jarvis-works-v2.png
+
+Generation prompt:
+Use case: infographic-diagram.
+Asset type: landscape architecture diagram for the public Personal Jarvis GitHub README.
+Create a polished, sharply readable technical flowchart as a raster image. Landscape approximately 3:2. Flat editorial diagram, dark charcoal background #0d1117, off-white typography, thin gray borders, restrained warm gold accents for the core and connector arrowheads. No glowing effects, no 3D, no decorative machinery, no mascots, no trademark logos, no tiny text. Generous spacing, precise alignment, large clean sans-serif type. This must remain legible displayed at 900px wide. All text English.
+Title top left: "How Personal Jarvis works"
+Structure: four horizontal tiers, flowing downward, using simple directional connectors.
+Top tier five equal small rounded boxes, labeled exactly "Desktop", "Browser", "Voice", "CLI", "Channels". A shared horizontal connector gathers these inputs into a centered downward arrow to the second tier.
+Second tier one wide emphasized box: large label "Jarvis core"; smaller subtitle "Context · Capabilities · Routing · Cancellation".
+Third tier exactly three equal-width boxes side by side, connected from the core by branching down arrows:
+Left: "Model response", subtitle "Voice or text".
+Middle: "Protected tools", subtitle on two lines "Plugins · MCP" and "CLI · Desktop".
+Right: "Delegated work", subtitle on two lines "Persistent agents" and "Coding missions".
+Fourth tier one wide output box, connected from ALL THREE middle boxes by merging down arrows. Main label "Live events & saved results", subtitle "History · Memory · Artifacts".
+Important: coding missions and persistent agents are distinct alternatives inside delegated work. No arrows directly between the three middle boxes. No circular loops, no extra nodes or invented text. All lines stop at box edges, arrowheads clearly show downward flow. Enough internal padding for every word. Keep the full diagram and title inside the canvas with generous outer margins. Deliver just the finished graphic.

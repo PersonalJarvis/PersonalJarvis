@@ -1,4 +1,49 @@
 {
+  "live": {
+    "active": "Aktiv",
+    "pipeline_fallback": "Dieses Gespräch nutzt ersatzweise die Pipeline. Neue Einstellungen gelten ab dem nächsten Gespräch.",
+    "open_browser": "Sprache im Browser öffnen",
+    "loading": "Spracheinstellungen werden geladen…",
+    "description": "Natürlich sprechen, Denkmodell selbst wählen und Jarvis-Tools nutzen — mit einem OpenAI-Key.",
+    "key_required": "Verbinde oben deinen OpenAI-Key für Sprache und Denken.",
+    "voice_model": "Sprachmodell",
+    "voice": "Stimme",
+    "thinking_model": "Denkmodell",
+    "choose_model": "Modell auswählen",
+    "reasoning": "Denkaufwand",
+    "model_default": "Modellstandard",
+    "web_search": "Websuche",
+    "prompts": "Erweitert · Anweisungen & Modell-ID",
+    "conversation_prompt": "Gesprächsstil",
+    "backend_prompt": "Anweisungen für Denken und Tools",
+    "billing": "Sprachdauer und Denkmodell werden getrennt abgerechnet. Cloud-Aufzeichnung ist aus.",
+    "save": "Speichern und GPT-Live nutzen",
+    "saved": "Gespeichert. Dein nächstes Gespräch nutzt diese Einstellungen.",
+    "use_for_agents": "Diesen Key und dieses Modell für Agenten und Textchat nutzen",
+    "agent_saved": "Agenten und Textchat nutzen jetzt dieses OpenAI-Modell.",
+    "setup_title": "Sprache & Denken",
+    "setup_description": "Wähle, wie Jarvis zuhört, antwortet und deine Werkzeuge nutzt.",
+    "provider_selection": "Sprachanbieter einrichten",
+    "call_active": "Gespräch läuft",
+    "next_call": "Änderungen gelten ab dem nächsten Gespräch",
+    "connected": "Key verbunden",
+    "connect": "Einrichten",
+    "local_provider": "Auf deiner Hardware",
+    "show_cloud": "Cloud-Anbieter anzeigen",
+    "agents_separate": "Textchat und Hintergrundaufgaben nutzen deine Auswahl unter Agents. Die Sprache hat ihre eigenen Modelleinstellungen.",
+    "shared_key_ready": "OpenAI verbunden · ein Key für Sprache und Denken",
+    "shared_key_help": "Dieser OpenAI-Key versorgt GPT-Live und sein Denkmodell.",
+    "manage_key": "Key verwalten",
+    "conversation_heading": "Gespräch",
+    "conversation_help": "Kontinuierliches Zuhören und natürliche Sprache, auch bei Unterbrechungen.",
+    "thinking_heading": "Denken & Werkzeuge",
+    "thinking_help": "Dieses Modell denkt nach, nutzt Jarvis-Werkzeuge und steuert den Computer mit demselben Key.",
+    "search_models": "Denkmodell suchen…",
+    "web_search_help": "Das Denkmodell darf aktuelle Informationen im Web nachschlagen.",
+    "custom_model": "Eigene Denkmodell-ID",
+    "ready": "Gespeichert & aktiv",
+    "save_changes": "Änderungen speichern"
+  },
   "input_isolation": {
     "title": "Diktier- und Tipphilfen erreichen dieses Fenster nicht",
     "impact": "Diese App läuft mit Administratorrechten, deshalb lässt Windows andere Programme nicht in ihr Fenster schreiben. Diktier-Apps, Textbausteine, Zwischenablage-Tools und das automatische Ausfüllen von Passwort-Managern scheinen hier nichts zu tun, während sie in jeder anderen App weiterhin funktionieren.",
@@ -69,7 +114,13 @@
     "detached_title": "Diese Ansicht ist in einem eigenen Fenster geöffnet",
     "detached_body": "Arbeite dort weiter oder hole sie hierher zurück.",
     "detach_focus": "Fenster zeigen",
-    "detach_bring_back": "Zurückholen"
+    "detach_bring_back": "Zurückholen",
+    "minimize": "Minimieren",
+    "maximize": "Vergrößern",
+    "restore": "Wiederherstellen",
+    "close": "Schließen",
+    "nav_back": "Zurück",
+    "nav_forward": "Vor"
   },
   "nav": {
     "chat_workspace": "Chat",
@@ -541,7 +592,7 @@
     "realtime_transport_socket_unreachable": "Der Kanal für den Abo-Transport war nicht erreichbar. Starte die App neu und versuche es erneut."
   },
   "provider_billing": {
-    "api": "API, Abrechnung pro Token",
+    "api": "API, nutzungsabhängige Abrechnung",
     "subscription": "Subscription-Login",
     "subscription_or_api": "Subscription-Login oder API-Key",
     "local": "Lokal, kein Key nötig"
@@ -567,6 +618,7 @@
     "navigate": "Öffnet",
     "app": "Öffnet App",
     "memory": "Merkt sich",
+    "memory_update": "Updating Memory",
     "profile": "Aktualisiert Profil",
     "contact": "Sucht Kontakt",
     "call": "Ruft an",
@@ -1940,7 +1992,7 @@
     "mode_active_badge": "Aktiv",
     "mode_recommended": "Empfohlen",
     "voice_engine_label": "Sprach-Engine",
-    "voice_engine_desc": "Wie {name} zuhört und spricht — die klassische Pipeline oder ein einzelnes Realtime-Modell.",
+    "voice_engine_desc": "Wie {name} zuhört und spricht — Live-Gespräche mit Tools oder lokale Sprache.",
     "mode_needs_credentials": "Verbinde oder konfiguriere unten einen Realtime-Anbieter, um umzuschalten.",
     "mode_desc_pipeline": "Drei Schritte: Sprache zu Text, das Brain denkt, Text zu Sprache.",
     "mode_desc_realtime": "Ein Modell hört zu und antwortet im selben Live-Audiostrom.",
@@ -2002,7 +2054,7 @@
     "guide_computer_use_title": "Welcher Provider soll das Tool Model antreiben?",
     "guide_computer_use_body": "Das Tool Model übernimmt jede Aktion, die Jarvis für dich ausführt — auch Computer-Use, das Screenshots deines Bildschirms liest und deshalb ein Modell braucht, das Bilder versteht; die Auswahl blendet reine Text-Modelle aus. Im Zweifel: beim Haupt-Brain-Provider und seinem Standard-Modell bleiben.",
     "reco_title": "Persönliche Empfehlung",
-    "reco_realtime_pick": "OpenAI Realtime",
+    "reco_realtime_pick": "OpenAI GPT-Live",
     "reco_realtime_why": "Gemini Live ist genauso in Ordnung, beides funktioniert.",
     "reco_computer_use_pick": "Gemini 3.5 Flash",
     "reco_computer_use_why": "die schnellste Latenz für Tool-Aufrufe.",
@@ -2197,6 +2249,10 @@
         "title": "Eingabesteuerung",
         "description": "Erforderlich, damit Computer-Use Maus- und Tastaturereignisse senden kann."
       },
+      "automation": {
+        "title": "Automation (Musik & Spotify)",
+        "description": "Erlaubt Jarvis, Musik und Spotify beim Diktieren leiser zu stellen und danach wieder lauter. Wird einmal pro Player gefragt — ein geschlossener Player wird für den Dialog kurz im Hintergrund geöffnet."
+      },
       "credential_store": {
         "title": "Schlüsselbund (API-Keys)",
         "description": "Speichert deine API-Keys verschlüsselt im macOS-Schlüsselbund statt in einer Klartextdatei — genau dafür fragt macOS beim Start der App. Deine Keys bleiben auf deinem Mac und werden nirgendwohin gesendet."
@@ -2214,12 +2270,33 @@
       "computer_use": "Computer-Use",
       "global_hotkeys": "Globale Kurzbefehle",
       "window_control": "Fenstersteuerung",
+      "audio_ducking": "Musik leiser beim Diktieren",
       "api_keys": "Sichere API-Key-Ablage"
     },
     "restart_deferred": "Neu erteilte Freigaben werden mit dem automatischen Neustart am Ende der Einrichtung aktiv - jetzt ist nichts zu tun.",
+    "setup_all": "Alles einrichten",
+    "setup_all_hint": "Ein Klick führt dich durch alle fehlenden Berechtigungen und übernimmt sie am Ende.",
+    "setup_running": "Schritt {0} von {1}: {2}",
+    "setup_wait_prompt": "Beantworte den macOS-Dialog — es geht automatisch weiter.",
+    "setup_wait_settings": "Schalte Personal Jarvis in der gerade geöffneten Systemeinstellungen-Seite ein und komm zurück — es geht automatisch weiter.",
+    "setup_cancel": "Abbrechen",
+    "setup_restarting": "Fertig — Personal Jarvis startet einmal neu, um den neuen Zugriff zu übernehmen.",
+    "setup_timeout": "Einrichtung pausiert: Eine Berechtigung wurde nicht rechtzeitig erteilt. Nutze „Alles einrichten“ jederzeit erneut.",
     "ask_again": "Erneut fragen",
     "stale_grant_hint": "macOS fragt für diesen Zugriff nicht mehr nach. Steht der Haken in den Systemeinstellungen schon, gehört er zu einer älteren Version der App — tippe auf „Erneut fragen“ und erlaube den Zugriff danach neu.",
     "identity_reset": "macOS sieht Personal Jarvis seit dem letzten Neuaufbau der App als neue App an und hat dabei alle erteilten Zugriffe verworfen. Bitte einmal neu erlauben — danach bleiben sie erhalten."
+  },
+  "settings_hub": {
+    "subtitle": "Alles über dich, deine Schlüssel und diese App — an einem Ort.",
+    "search_placeholder": "Einstellungen durchsuchen...",
+    "back_to_app": "Zurück zur App",
+    "search_results": "Einstellungsoptionen",
+    "search_pages": "Einstellungsseiten",
+    "no_results": "Keine Einstellungen gefunden",
+    "clear_search": "Suche löschen",
+    "group_general": "Allgemein",
+    "group_system": "System",
+    "group_activity": "Aktivität"
   },
   "settings_view": {
     "silence_window": {
@@ -2874,9 +2951,9 @@
         "hint": "Oberfläche und Antworten dürfen sich unterscheiden. Beides lässt sich später in den Einstellungen ändern."
       },
       "api-keys": {
-        "label": "Dein Schlüssel",
-        "title": "Ein Schlüssel genügt zum Start",
-        "hint": "Füge einen API-Schlüssel eines Anbieters ein, den du schon nutzt — oder arbeite komplett lokal. Sprachanbieter kannst du später unter API-Schlüssel ergänzen."
+        "label": "Verbindungen",
+        "title": "Live-Sprache und Jarvis-Agenten einrichten",
+        "hint": "Wähle den Anbieter für Live-Sprache und verbinde danach einen API-Key oder ein Abo für Jarvis-Agenten."
       },
       "permissions": {
         "label": "Berechtigungen",
@@ -2928,6 +3005,23 @@
       "summary": "{0} · Antworten {1}"
     },
     "api_keys": {
+      "voice_label": "01 · Real-Time-Sprache",
+      "voice_key_label": "Live-API-Key",
+      "voice_key_hint": "Ein Key für Live-Gespräche. OpenAI ist empfohlen; Gemini Live funktioniert ebenfalls.",
+      "agents_label": "02 · Jarvis-Agenten",
+      "agents_title": "Jarvis-Agenten verbinden",
+      "agents_hint": "Verbinde ein Abo oder nutze einen API-Key für Hintergrundaufgaben.",
+      "agents_ready": "Jarvis-Agenten verbunden",
+      "agents_missing": "Für Jarvis-Agenten fehlt noch ein API-Key oder Abo",
+      "agents_api_title": "API-Keys",
+      "agents_api_hint": "Du möchtest einen API-Key nutzen? Wähle einen Anbieter; das Key-Feld öffnet sich darunter.",
+      "agents_loading": "Agenten-Anbieter werden geladen…",
+      "agents_unavailable": "Agenten-Anbieter sind gerade nicht verfügbar.",
+      "agents_active": "Aktiv",
+      "agents_use_key": "Für Jarvis-Agenten nutzen",
+      "agents_subscriptions_label": "Abonnements",
+      "agents_subscriptions_hint": "Mit einem bestehenden Abo anmelden",
+      "gap_agents": "Live-Sprache ist eingerichtet, aber Jarvis-Agenten brauchen noch einen API-Key oder ein Abo.",
       "providers_label": "Anbieter",
       "loading": "Anbieter werden geladen…",
       "load_failed": "Die Anbieterliste konnte nicht geladen werden. Du kannst später unter API-Schlüssel einen Schlüssel hinzufügen.",
@@ -2948,16 +3042,16 @@
       "local_missing_link": "Ollama holen",
       "security_note": "Schlüssel liegen im Schlüsselbund deines Systems und gehen nur an den Anbieter, den du gewählt hast — nie in Chat oder Sprache.",
       "later": "Später — Schlüssel in den Einstellungen hinzufügen",
-      "later_hint": "Chat und Sprache bleiben aus, bis ein Schlüssel gespeichert ist.",
+      "later_hint": "Live-Sprache braucht einen Key; Jarvis-Agenten brauchen einen separaten Key oder ein Abo.",
       "summary_none": "Noch kein Schlüssel",
       "summary_local": "Lokal · Ollama",
       "plan_label": "Wie willst du starten?",
-      "plan_custom_title": "Alles selbst auswählen",
+      "plan_custom_title": "Erweitert: Anbieter selbst wählen oder ein lokales Modell nutzen",
       "plan_custom_body": "Die komplette Provider-Liste — jeden Teil einzeln wählen.",
       "plan_applying": "Richte alles für {0} ein…",
-      "plan_applied": "{0} ist eingerichtet: Denken, Tool-Modell, Agenten und Stimme zeigen alle auf deinen Schlüssel.",
+      "plan_applied": "{0} ist für Live-Sprache eingerichtet. Verbinde unten die Jarvis-Agenten.",
       "plan_partial": "Das meiste ist eingerichtet; das hier hat nicht geklappt: {0}. Du kannst es später unter API-Keys nachholen.",
-      "plan_explainer": "Wähle, wie {name} laufen soll. Jede Option sagt, wie viele Schlüssel sie braucht und welche Sprach-Engine sie nutzt — die meisten brauchen genau einen Schlüssel.",
+      "plan_explainer": "Real-Time wird automatisch eingerichtet. Wähle den Anbieter für deine Live-Gespräche.",
       "keys_one": "1 Schlüssel",
       "keys_n": "{0} Schlüssel",
       "keys_several": "Mehrere Schlüssel",
@@ -2966,7 +3060,7 @@
       "plan_keys_from": "Schlüssel: {0}.",
       "mode_explainer": "Pipeline = zuhören, denken, sprechen in drei Schritten; läuft mit jedem Anbieter. Realtime = ein Live-Sprachmodell, das antwortet, während du sprichst; das bieten nur Google Gemini und OpenAI — ein Claude- oder OpenRouter-Schlüssel allein kann kein Realtime.",
       "plan_progress": "Schlüssel für diesen Plan · {0} von {1} gespeichert",
-      "gap_none": "Kein API-Schlüssel gespeichert — Chat und Sprache bleiben aus, bis du unter API-Schlüssel einen einträgst.",
+      "gap_none": "Kein Live-API-Key gespeichert — Live-Sprache bleibt aus, bis du ihn unter API-Schlüssel hinzufügst.",
       "gap_plan_partial": "Bei {0} fehlt der Schlüssel für {1} — die Teile, die ihn brauchen (zum Beispiel die Live-Stimme), bleiben aus, bis du ihn unter API-Schlüssel einträgst.",
       "gap_custom": "Du hast die Anbieter selbst gewählt — Spracheingabe, Sprachausgabe und die Agenten brauchen eventuell eigene Schlüssel. Prüfe das unter API-Schlüssel."
     },
@@ -3038,6 +3132,10 @@
       "gap_skipped_wake_word": "Die Aktivierung wurde übersprungen — nutze das Anruf-Kürzel oder lege in den Einstellungen ein Aktivierungswort fest."
     },
     "plans": {
+      "openai_live_label": "OpenAI GPT-Live",
+      "openai_live_summary": "Live-Sprache und Denken mit einem OpenAI-API-Key.",
+      "gemini_live_label": "Gemini Live",
+      "gemini_live_summary": "Live-Sprache mit einem Google-Gemini-API-Key.",
       "gemini_pipeline_label": "Pipeline mit Gemini",
       "gemini_pipeline_summary": "Ein Google-Gemini-Schlüssel für alles: Denken, Tool-Modell, Agenten, Stimme rein und raus.",
       "gemini_realtime_label": "Realtime mit Gemini",
@@ -5249,7 +5347,23 @@
       "create": "Neu",
       "search": "Agenten suchen",
       "loading": "Agenten werden geladen…",
-      "empty": "Kein Agent passt."
+      "empty": "Kein Agent passt.",
+      "thinking": "Denkt nach…",
+      "unread": "Neues Ergebnis — öffnen zum Lesen",
+      "menu": "Agentenaktionen",
+      "rename": "Agent umbenennen",
+      "rename_hint": "Gib dem Agenten einen neuen Namen. Chat und Dateien bleiben verknüpft.",
+      "name": "Agentenname",
+      "rename_error": "Der Agent konnte nicht umbenannt werden. Prüfe den Namen oder wähle einen anderen.",
+      "hide": "Aus der Seitenleiste ausblenden",
+      "show": "In der Seitenleiste anzeigen",
+      "show_hidden": "Ausgeblendete Agenten anzeigen ({0})",
+      "hide_hidden": "Ausgeblendete Agenten verbergen ({0})",
+      "delete": "Löschen",
+      "delete_confirm": "{0} löschen? Der Agent wird aus deinem aktiven Team entfernt.",
+      "delete_error": "Der Agent konnte nicht gelöscht werden. Versuche es erneut.",
+      "cancel": "Abbrechen",
+      "save": "Speichern"
     },
     "tier": {
       "lead": "Leitung",
@@ -5539,6 +5653,7 @@
     "activity_read": "Dateien gelesen",
     "activity_list": "Dateien aufgelistet",
     "activity_search": "Dateien durchsucht",
+    "activity_memory": "Updating Memory",
     "activity_tools": "Werkzeuge verwendet",
     "live_integration_used": "{service} wird verwendet",
     "live_activity_command": "Befehle werden ausgeführt",
@@ -5547,6 +5662,7 @@
     "live_activity_read": "Dateien werden gelesen",
     "live_activity_list": "Dateien werden aufgelistet",
     "live_activity_search": "Dateien werden durchsucht",
+    "live_activity_memory": "Updating Memory",
     "live_activity_tools": "Werkzeuge werden verwendet",
     "thought": "Nachgedacht",
     "thinking_for": "Denkt seit {duration}",
@@ -5579,7 +5695,8 @@
     "done": "Fertig",
     "command": "Befehl ausführen",
     "edit": "Datei bearbeiten",
-    "write": "Datei schreiben"
+    "write": "Datei schreiben",
+    "memory": "Updating Memory"
   },
   "chat_media": {
     "unavailable": "Dieses Medium kann nicht geladen oder abgespielt werden. Du kannst die Datei weiterhin öffnen.",

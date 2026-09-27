@@ -60,11 +60,24 @@ DEFAULT_STRONG_PHRASES: tuple[str, ...] = (
 # Vision/read verbs + a LOCATIVE anchor (hier/da/dort/here/there). The
 # demonstratives das/this/that are intentionally NOT anchors — a verb + bare
 # demonstrative ("zeig mir das wetter") is a normal object, not deictic.
+# Active writing verbs need an observational question (below), not a composition
+# command. A locative cannot come from an unrelated sentence or instruction.
+# Direct line wraps ("written\nhere") and short embedded questions
+# ("see,\nwhat is here") still describe one visual reference.
+_VISUAL_LOCATION_TAIL = (
+    r"(?:[^.!?;\r\n]*?|\s*(?:,\s*)?(?:(?:was|what(?:\s+(?:is|was))?)\s+)?)"
+    r"\b(?:hier|da|dort|drueben|drüben|here|there)\b"
+)
 _VISION_VERB_RE = re.compile(
     r"\b(?:siehst|sehe|seh|sehen|siehe|liest|lies|lese|lesen|vorlesen|vorliest|"
     r"steht|stehen|stehst|zeigst|zeig|zeige|"
-    r"read|reads|reading|see|sees|write|writes|written|wrote)\b"
-    r".*?\b(?:hier|da|dort|drueben|drüben|here|there)\b"
+    r"read|reads|reading|see|sees|written)\b"
+    + _VISUAL_LOCATION_TAIL
+)
+_WRITING_QUESTION_RE = re.compile(
+    r"\b(?:what\s+(?:did|do|does)\s+(?:i|you|we|they|he|she)|who)"
+    r"\s+(?:write|writes|wrote)\b"
+    + _VISUAL_LOCATION_TAIL
 )
 
 # Bare deictic command ("lies das" / "show me that") — fires only when NOT
@@ -102,11 +115,13 @@ class PointingGate:
     def matches(self, text: str) -> bool:
         if not text or not text.strip():
             return False
-        t = _WS_RE.sub(" ", text.strip().lower())
+        lowered = text.strip().lower()
+        t = _WS_RE.sub(" ", lowered)
         # Locative deictic signals win over everything (incl. the für-ein veto).
         if self._strong_re.search(t):
             return True
-        if _VISION_VERB_RE.search(t):
+        # Do not fold line boundaries into spaces for the weak locative match.
+        if _VISION_VERB_RE.search(lowered) or _WRITING_QUESTION_RE.search(lowered):
             return True
         # "das für ein <noun>" → category question, not deictic.
         if _VETO_RE.search(t):

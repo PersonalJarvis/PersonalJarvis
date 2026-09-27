@@ -374,6 +374,7 @@ class HostedMcpDcrHandler:
             plugin_id=self.plugin_id,
             kind="browser_redirect",
             open_url=authorize_url,
+            redirect_uri=redirect_uri,
             expires_at_ms=int((datetime.now(UTC) + timedelta(minutes=15)).timestamp() * 1000),
         )
 

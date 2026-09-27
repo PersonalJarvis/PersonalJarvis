@@ -2,19 +2,22 @@ import { useTranscriptViewStore } from "./useTranscriptView";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { EMPTY_TIMELINE, type Timeline, type UserItem } from "@/components/agentchat/reduce";
+import { EMPTY_TIMELINE, reduceEvents, type Timeline, type UserItem } from "@/components/agentchat/reduce";
 import type { SocietyAgent } from "../data";
 import {
   AgentChatPanel,
+  UserBubble,
   itemsForOpenSession,
   useSocietyChatStore,
   setJarvisCardMode,
 } from "./AgentChatPanel";
 import { useAgentChatStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
-import type { AgentChatSession } from "@/lib/agentChatApi";
+import type { AgentChatEvent, AgentChatSession } from "@/lib/agentChatApi";
 import { useHomeStore } from "@/store/home";
 import { JarvisHistoryRail } from "./JarvisHistoryRail";
+import { useRoutineNavigation } from "./routineNavigation";
+import * as cardData from "../cardData";
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, fill: (text: string) => text }));
 vi.mock("./AgentModelPicker", () => ({ AgentModelPicker: () => null }));
@@ -88,10 +91,26 @@ function timelineWith(text: string): Timeline {
   return { ...EMPTY_TIMELINE, items: [item], lastSeq: 1 };
 }
 
+let seq = 0;
+function ev(kind: string, payload: Record<string, unknown>): AgentChatEvent {
+  seq += 1;
+  return { seq, ts_ms: seq, kind, payload };
+}
+
+function reasoningTurn(): Timeline {
+  return reduceEvents(EMPTY_TIMELINE, [
+    ev("user_message", { text: "go" }),
+    ev("turn_started", { turn_id: "t-live", provider: "openai", model: "gpt", effort: "", runner: "api" }),
+    ev("reasoning_started", { turn_id: "t-live", message_id: "m1" }),
+  ]);
+}
+
 const visual = agent({ agentId: "visual-qa", name: "Visual QA" });
 const gmail = agent({ agentId: "gmail-agent", name: "Gmail Agent" });
 
 beforeEach(() => {
+  useRoutineNavigation.getState().close();
+  seq = 0;
   useTranscriptViewStore.setState({ boundaries: {} });
   useHomeStore.setState({ transcript: [], liveReply: "", jarvisCardMode: "voice", freshVoicePending: false });
   useEventStore.setState({ activeKind: "text", activeThreadId: null, messages: [], voiceState: "idle" });
@@ -122,6 +141,19 @@ it("hides another session's items until that session is the open one", () => {
   expect(itemsForOpenSession("society:gmail-agent", "society:visual-qa", visualItems)).toEqual([]);
   expect(itemsForOpenSession("society:gmail-agent", "society:gmail-agent", visualItems)).toEqual(visualItems);
   expect(itemsForOpenSession(null, "society:visual-qa", visualItems)).toEqual([]);
+});
+
+it("refreshes the agent's routines when a chat save succeeds", async () => {
+  const notify = vi.spyOn(cardData, "notifyRoutineChanged");
+  const timeline = reduceEvents(EMPTY_TIMELINE, [
+    ev("turn_started", { turn_id: "routine-turn", provider: "ollama", model: "local", runner: "brain" }),
+    ev("tool_call", { turn_id: "routine-turn", call_id: "save-routine", name: "society_propose_change", input: { kind: "routine", mode: "apply" } }),
+    ev("tool_result", { turn_id: "routine-turn", call_id: "save-routine", output: "routine scheduled", is_error: false }),
+  ]);
+  useSocietyChatStore.setState({ activeSessionId: visual.chatSessionId, timeline });
+  render(<AgentChatPanel agent={visual} roster={[visual]} />);
+  await waitFor(() => expect(notify).toHaveBeenCalledWith(visual.agentId));
+  notify.mockRestore();
 });
 
 it("does not paint the previous specialist's transcript after a click onto another agent", () => {
@@ -232,4 +264,47 @@ it.each(["specialist", "lead"] as const)("/clear empties only the %s view and ke
   render(<AgentChatPanel agent={current} roster={[current]} />);
   expect(screen.getByText("FIRST_VISIBLE_MESSAGE")).toBeTruthy();
   expect(screen.queryByText("PREVIOUS_CONTEXT_TO_KEEP")).toBeNull();
+});
+
+it.each(["specialist", "lead"] as const)("turns send into stop while the %s is reasoning, then back when the turn ends", async (tier) => {
+  const current = tier === "lead" ? agent({ agentId: "jarvis", name: "Jarvis", tier }) : gmail;
+  const store = tier === "lead" ? useAgentChatStore : useSocietyChatStore;
+  store.getState().disconnect();
+  store.getState().openSession(current.chatSessionId!);
+  store.setState({ activeSessionId: current.chatSessionId, timeline: reasoningTurn(), busy: false });
+  setJarvisCardMode("chat");
+  render(<AgentChatPanel agent={current} roster={[current]} />);
+  expect(screen.getByTestId("composer-stop")).toBeTruthy();
+  expect(screen.queryByTestId("composer-send")).toBeNull();
+  fireEvent.click(screen.getByTestId("composer-stop"));
+  await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, options]) =>
+    String(url).includes("/cancel") && options?.method === "POST",
+  )).toBe(true));
+  act(() => store.setState({
+    timeline: reduceEvents(store.getState().timeline, [
+      ev("turn_finished", { turn_id: "t-live", status: "done", duration_ms: 12 }),
+    ]),
+  }));
+  expect(screen.getByTestId("composer-send")).toBeTruthy();
+  expect(screen.queryByTestId("composer-stop")).toBeNull();
+});
+
+it("routine-check opens the clicked execution instead of folding its instruction", () => {
+  const text = "Scheduled routine daily. Follow your CURRENT standing instructions and permissions.\nUse your memory and conversation archive for prior results. For information watches, check sources and dates, remember last-seen items, and report only meaningful new findings.\n\nInspect this execution.";
+  render(<UserBubble agentId={gmail.agentId} sessionId={gmail.chatSessionId!} item={{ type: "user", id: "u-88", tsMs: 10000, text, attachments: [] }} />);
+  expect(useRoutineNavigation.getState().target).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /routine_check/ }));
+  expect(useRoutineNavigation.getState().target).toEqual({
+    agentId: gmail.agentId, sessionId: gmail.chatSessionId, title: "Inspect this execution.", timestamp: 10000,
+    legacy: { taskId: "daily", messageId: "u-88" },
+  });
+});
+
+it("shows stop while the send request is in flight, before the turn stream starts", () => {
+  useSocietyChatStore.getState().disconnect();
+  useSocietyChatStore.getState().openSession(gmail.chatSessionId!);
+  useSocietyChatStore.setState({ activeSessionId: gmail.chatSessionId, timeline: EMPTY_TIMELINE, busy: true });
+  render(<AgentChatPanel agent={gmail} roster={[gmail]} />);
+  expect(screen.getByTestId("composer-stop")).toBeTruthy();
+  expect(screen.queryByTestId("composer-send")).toBeNull();
 });

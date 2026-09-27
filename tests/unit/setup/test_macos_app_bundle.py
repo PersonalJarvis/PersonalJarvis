@@ -22,6 +22,18 @@ from jarvis.setup.macos_app_bundle import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_signing_identity(monkeypatch):
+    """Default to the ad-hoc world; identity tests opt in explicitly.
+
+    Without this every ``sys.platform = "darwin"`` test would shell out to
+    the real ``security`` binary of the machine running the suite.
+    """
+    import jarvis.setup.macos_app_bundle as mab
+
+    monkeypatch.setattr(mab, "ensure_local_signing_identity", lambda *, create: None)
+
+
 def _build(tmp_path: Path, monkeypatch) -> Path:
     import jarvis.setup.macos_app_bundle as mab
 
@@ -91,7 +103,7 @@ def test_failed_runtime_probe_rebuilds_instead_of_preserving(tmp_path: Path, mon
     )
     rebuilt: list[tuple[Path, Path]] = []
 
-    def _rebuild(install_root: Path, destination: Path) -> Path:
+    def _rebuild(install_root: Path, destination: Path, *, identity: str | None = None) -> Path:
         rebuilt.append((install_root, destination))
         return destination
 
@@ -194,7 +206,7 @@ def test_ensure_bundle_records_last_error_reason(tmp_path: Path, monkeypatch) ->
     monkeypatch.setattr(mab.sys, "platform", "darwin")
     monkeypatch.setattr(mab, "macos_app_bundle_is_launchable", lambda _bundle: False)
 
-    def _explode(_install_root: Path, _bundle: Path) -> Path:
+    def _explode(_install_root: Path, _bundle: Path, *, identity: str | None = None) -> Path:
         raise RuntimeError("stub launcher compilation failed: no cc")
 
     monkeypatch.setattr(mab, "_install_native_bundle", _explode)
@@ -581,6 +593,9 @@ def test_reset_stale_tcc_grants_scopes_every_service_to_our_bundle_id() -> None:
         "Accessibility",
         "ListenEvent",
         "PostEvent",
+        # The Music/Spotify Automation consent is pinned to the same code
+        # requirement; leaving it out is how the Music prompt kept coming back.
+        "AppleEvents",
     }
 
 
@@ -613,18 +628,18 @@ def test_a_recurring_rebuild_wipes_the_grants_only_once(tmp_path: Path, monkeypa
 
     marker = tmp_path / "macos-tcc-reset.json"
     monkeypatch.setattr(permissions, "identity_reset_marker_path", lambda: marker)
-    hashes = iter(["cdhash-two", "cdhash-three"])
-    monkeypatch.setattr(mab, "_bundle_cdhash", lambda _bundle: next(hashes))
+    hashes = iter(['cdhash H"two"', 'cdhash H"three"'])
+    monkeypatch.setattr(mab, "_bundle_tcc_identity", lambda _bundle: next(hashes))
     sweeps: list[int] = []
     monkeypatch.setattr(mab, "_reset_stale_tcc_grants", lambda: sweeps.append(1))
 
     bundle = tmp_path / APP_DIR_NAME
-    mab._reset_or_explain(bundle, "cdhash-one")
+    mab._reset_or_explain(bundle, 'cdhash H"one"')
     assert sweeps == [1]
     assert marker.is_file()
 
     # Second rebuild, first reset still unanswered: explain, never wipe again.
-    mab._reset_or_explain(bundle, "cdhash-two")
+    mab._reset_or_explain(bundle, 'cdhash H"two"')
 
     assert sweeps == [1]
     assert marker.is_file()
@@ -659,7 +674,7 @@ def test_a_rebuild_that_reproduces_the_same_app_is_not_repeated(
     )
     rebuilds: list[Path] = []
 
-    def _rebuild(install_root: Path, destination: Path) -> Path:
+    def _rebuild(install_root: Path, destination: Path, *, identity: str | None = None) -> Path:
         rebuilds.append(destination)
         return destination
 
@@ -706,7 +721,10 @@ def test_a_changed_interpreter_still_earns_a_fresh_rebuild(tmp_path: Path, monke
     monkeypatch.setattr(
         mab,
         "_install_native_bundle",
-        lambda install_root, destination: (rebuilds.append(destination), destination)[1],
+        lambda install_root, destination, identity=None: (
+            rebuilds.append(destination),
+            destination,
+        )[1],
     )
 
     # The recorded note carries Python 3.11; this interpreter is a different
@@ -737,7 +755,10 @@ def test_a_broken_bundle_is_always_rebuilt_however_often_it_recurs(
     monkeypatch.setattr(
         mab,
         "_install_native_bundle",
-        lambda install_root, destination: (rebuilds.append(destination), destination)[1],
+        lambda install_root, destination, identity=None: (
+            rebuilds.append(destination),
+            destination,
+        )[1],
     )
     install_dir = tmp_path / "install"
     applications = tmp_path / "Applications"
@@ -766,7 +787,7 @@ def test_the_running_app_is_accepted_wherever_the_user_keeps_it(
     monkeypatch.setattr(
         mab,
         "_install_native_bundle",
-        lambda *_args: pytest.fail("a running managed app must never be rebuilt"),
+        lambda *_args, **_kwargs: pytest.fail("a running managed app must never be rebuilt"),
     )
     registered: list[Path] = []
     monkeypatch.setattr(mab, "register_with_launch_services", registered.append)
@@ -818,3 +839,242 @@ def test_a_foreign_bundle_id_is_never_taken_for_the_managed_app(monkeypatch) -> 
         mab._running_managed_bundle(install_root=Path.cwd(), diagnostics=diagnostics) is None
     )
     assert any("bundle id" in reason for reason in diagnostics)
+
+
+# --- Rebuild-proof identity: certificate signature instead of ad-hoc
+
+
+def test_designated_requirement_parsing_covers_both_signature_kinds() -> None:
+    import jarvis.setup.macos_app_bundle as mab
+
+    adhoc = (
+        "Executable=/x/Personal Jarvis.app/Contents/MacOS/PersonalJarvis\n"
+        '# designated => cdhash H"aa28"\n'
+    )
+    cert = (
+        "Executable=/x\n"
+        '# designated => identifier "com.personal-jarvis.desktop" and certificate leaf = H"0e14"\n'
+    )
+    assert mab._parse_designated_requirement(adhoc) == 'cdhash H"aa28"'
+    assert (
+        mab._parse_designated_requirement(cert)
+        == 'identifier "com.personal-jarvis.desktop" and certificate leaf = H"0e14"'
+    )
+    assert mab._parse_designated_requirement("nothing here") is None
+
+
+def test_sign_bundle_uses_the_identity_when_there_is_one(tmp_path: Path, monkeypatch) -> None:
+    import jarvis.setup.macos_app_bundle as mab
+
+    commands: list[list[str]] = []
+
+    def runner(command, **_kwargs):
+        commands.append(list(command))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(mab.subprocess, "run", runner)
+    monkeypatch.setattr(mab, "_codesign_issue", lambda _bundle: None)
+
+    mab._sign_bundle(tmp_path / APP_DIR_NAME)
+    mab._sign_bundle(tmp_path / APP_DIR_NAME, "ABCDEF")
+
+    assert [command[4] for command in commands] == ["-", "ABCDEF"]
+
+
+def test_a_healthy_adhoc_bundle_is_moved_onto_the_identity_once(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The one migration the user pays for; after it no rebuild costs a grant."""
+    import jarvis.setup.macos_app_bundle as mab
+
+    bundle = _build(tmp_path, monkeypatch)
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+    monkeypatch.setattr(mab, "ensure_local_signing_identity", lambda *, create: "ABCDEF")
+    monkeypatch.setattr(mab, "_codesign_issue", lambda _bundle: None)
+    monkeypatch.setattr(mab, "_running_managed_bundle", lambda *, install_root, **_kw: None)
+    monkeypatch.setattr(
+        mab,
+        "_runtime_identity_valid",
+        lambda _bundle, *, install_root, diagnostics=None: True,
+    )
+    signed_with_certificate = iter([False, True])
+    monkeypatch.setattr(mab, "_signed_with_certificate", lambda _b: next(signed_with_certificate))
+    resigned: list[tuple[Path, str]] = []
+    monkeypatch.setattr(
+        mab,
+        "_resign_bundle_in_place",
+        lambda target, identity: (resigned.append((target, identity)), target)[1],
+    )
+    monkeypatch.setattr(
+        mab,
+        "_install_native_bundle",
+        lambda *_args, **_kwargs: pytest.fail("a healthy bundle is re-signed, never rebuilt"),
+    )
+    marker = tmp_path / "macos-bundle-rebuild.json"
+    monkeypatch.setattr(mab, "_rebuild_marker_path", lambda: marker)
+    monkeypatch.setattr(mab, "_bundle_cdhash", lambda _bundle: "cdhash-cert")
+    install_dir = tmp_path / "install"
+    applications = tmp_path / "Applications"
+
+    first = ensure_macos_app_bundle(install_dir=install_dir, applications_dir=applications)
+    second = ensure_macos_app_bundle(install_dir=install_dir, applications_dir=applications)
+
+    assert first == second == bundle
+    assert resigned == [(bundle, "ABCDEF")]
+    assert json.loads(marker.read_text(encoding="utf-8"))["identity"] == "ABCDEF"
+
+
+def test_the_running_app_is_never_resigned_underneath_itself(tmp_path: Path, monkeypatch) -> None:
+    """The reset that follows a re-sign would strip the grants of this process."""
+    import jarvis.setup.macos_app_bundle as mab
+
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+    monkeypatch.setattr(mab, "ensure_local_signing_identity", lambda *, create: "ABCDEF")
+    running = tmp_path / "Applications" / APP_DIR_NAME
+    monkeypatch.setattr(mab, "_running_managed_bundle", lambda *, install_root, **_kw: running)
+    monkeypatch.setattr(mab, "_signed_with_certificate", lambda _b: False)
+    monkeypatch.setattr(
+        mab,
+        "_resign_bundle_in_place",
+        lambda *_args: pytest.fail("the running app must not be re-signed"),
+    )
+    monkeypatch.setattr(mab, "register_with_launch_services", lambda _b: True)
+
+    assert ensure_macos_app_bundle(
+        install_dir=tmp_path / "install", applications_dir=tmp_path / "Applications"
+    ) == running
+
+
+def test_resign_in_place_keeps_the_files_and_resets_against_the_old_identity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import jarvis.setup.macos_app_bundle as mab
+
+    bundle = _build(tmp_path, monkeypatch)
+    before = (bundle / "Contents" / "Info.plist").read_bytes()
+    identities = iter(['cdhash H"old"'])
+    monkeypatch.setattr(mab, "_bundle_tcc_identity", lambda _b: next(identities, None))
+    signed: list[tuple[Path, str | None]] = []
+    monkeypatch.setattr(
+        mab, "_sign_bundle", lambda target, identity=None: signed.append((target, identity))
+    )
+    monkeypatch.setattr(mab, "_signed_with_certificate", lambda _b: True)
+    monkeypatch.setattr(mab, "macos_app_bundle_is_launchable", lambda _b: True)
+    resets: list[tuple[Path, str | None]] = []
+    monkeypatch.setattr(mab, "_reset_or_explain", lambda b, previous: resets.append((b, previous)))
+
+    result = mab._resign_bundle_in_place(bundle, "ABCDEF")
+
+    assert result == bundle
+    assert (bundle / "Contents" / "Info.plist").read_bytes() == before
+    assert len(signed) == 1 and signed[0][1] == "ABCDEF" and signed[0][0] != bundle
+    assert resets == [(bundle, 'cdhash H"old"')]
+    assert not [p for p in bundle.parent.iterdir() if p.name.startswith(".jarvis-resign-")]
+
+
+def test_resign_in_place_rolls_back_when_the_result_cannot_launch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import jarvis.setup.macos_app_bundle as mab
+
+    bundle = _build(tmp_path, monkeypatch)
+    before = (bundle / "Contents" / "Info.plist").read_bytes()
+    monkeypatch.setattr(mab, "_bundle_tcc_identity", lambda _b: None)
+    monkeypatch.setattr(mab, "_sign_bundle", lambda target, identity=None: None)
+    monkeypatch.setattr(mab, "_signed_with_certificate", lambda _b: True)
+    monkeypatch.setattr(mab, "macos_app_bundle_is_launchable", lambda _b: False)
+    monkeypatch.setattr(mab, "_reset_or_explain", lambda *_a: pytest.fail("no reset on rollback"))
+
+    with pytest.raises(RuntimeError):
+        mab._resign_bundle_in_place(bundle, "ABCDEF")
+
+    assert (bundle / "Contents" / "Info.plist").read_bytes() == before
+
+
+def test_a_rebuild_with_the_identity_never_resets_the_grants(tmp_path: Path, monkeypatch) -> None:
+    """Same certificate before and after: TCC sees the same app, nothing to reset."""
+    import jarvis.platform.permissions as permissions
+    import jarvis.setup.macos_app_bundle as mab
+
+    same ='identifier "com.personal-jarvis.desktop" and certificate leaf = H"0e14"'
+    monkeypatch.setattr(mab, "_bundle_tcc_identity", lambda _b: same)
+    monkeypatch.setattr(mab, "_reset_stale_tcc_grants", lambda: pytest.fail("must not reset"))
+    marker = tmp_path / "macos-tcc-reset.json"
+    monkeypatch.setattr(permissions, "identity_reset_marker_path", lambda: marker)
+
+    mab._reset_or_explain(tmp_path / APP_DIR_NAME, same)
+
+    assert not marker.exists()
+
+
+def _healthy_darwin_bundle(tmp_path: Path, monkeypatch, *, identity: str | None):
+    import jarvis.setup.macos_app_bundle as mab
+
+    bundle = _build(tmp_path, monkeypatch)
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+    monkeypatch.setattr(mab, "ensure_local_signing_identity", lambda *, create: identity)
+    monkeypatch.setattr(mab, "_codesign_issue", lambda _bundle: None)
+    monkeypatch.setattr(mab, "_running_managed_bundle", lambda *, install_root, **_kw: None)
+    monkeypatch.setattr(
+        mab,
+        "_runtime_identity_valid",
+        lambda _bundle, *, install_root, diagnostics=None: True,
+    )
+    monkeypatch.setattr(mab, "_signed_with_certificate", lambda _b: identity is not None)
+    monkeypatch.setattr(mab, "_bundle_tcc_identity", lambda _b: "identifier and certificate")
+    monkeypatch.setattr(
+        mab,
+        "_install_native_bundle",
+        lambda *_args, **_kwargs: pytest.fail("a healthy bundle is never rebuilt"),
+    )
+    return mab, bundle
+
+
+def test_an_update_brings_the_bundle_version_along(tmp_path: Path, monkeypatch) -> None:
+    """Finder's "Get Info" froze at the version that first built the bundle."""
+    mab, bundle = _healthy_darwin_bundle(tmp_path, monkeypatch, identity="ABCDEF")
+    signed: list[str | None] = []
+    monkeypatch.setattr(mab, "_sign_bundle", lambda _target, identity=None: signed.append(identity))
+    monkeypatch.setattr(
+        mab, "_reset_stale_tcc_grants", lambda: pytest.fail("same identity, nothing to reset")
+    )
+    monkeypatch.setattr(mab, "_version", lambda: "9.9.9")
+
+    result = ensure_macos_app_bundle(
+        install_dir=tmp_path / "install", applications_dir=tmp_path / "Applications"
+    )
+
+    assert result == bundle
+    with (bundle / "Contents" / "Info.plist").open("rb") as stream:
+        info = plistlib.load(stream)
+    assert info["CFBundleShortVersionString"] == info["CFBundleVersion"] == "9.9.9"
+    assert signed == ["ABCDEF"]
+    assert not [p for p in bundle.parent.iterdir() if p.name.startswith(".jarvis-")]
+
+
+def test_an_adhoc_bundle_keeps_its_stale_version(tmp_path: Path, monkeypatch) -> None:
+    """For an ad-hoc bundle a new signature is a new TCC identity: every grant
+    would be the price of a cosmetic version string."""
+    mab, bundle = _healthy_darwin_bundle(tmp_path, monkeypatch, identity=None)
+    before = (bundle / "Contents" / "Info.plist").read_bytes()
+    monkeypatch.setattr(
+        mab, "_sign_bundle", lambda *_a, **_kw: pytest.fail("an ad-hoc bundle is never re-signed")
+    )
+    monkeypatch.setattr(mab, "_version", lambda: "9.9.9")
+
+    ensure_macos_app_bundle(
+        install_dir=tmp_path / "install", applications_dir=tmp_path / "Applications"
+    )
+
+    assert (bundle / "Contents" / "Info.plist").read_bytes() == before
+
+
+def test_a_removed_app_is_dropped_from_launch_services(tmp_path: Path, monkeypatch) -> None:
+    import jarvis.setup.macos_app_bundle as mab
+
+    bundle = _build(tmp_path, monkeypatch)
+    unregistered: list[Path] = []
+    monkeypatch.setattr(mab, "unregister_from_launch_services", unregistered.append)
+
+    assert mab.remove_macos_app_bundle(applications_dir=bundle.parent) is True
+    assert unregistered == [bundle]

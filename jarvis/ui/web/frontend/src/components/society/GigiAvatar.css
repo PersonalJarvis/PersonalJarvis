@@ -1,0 +1,82 @@
+.gigi-avatar { display: inline-flex; flex: none; pointer-events: none; isolation: isolate; }
+.gigi-avatar svg { display: block; overflow: visible; }
+.gigi-avatar__pose { transform-origin: 120px 132px; }
+.gigi-avatar__shadow { transform-origin: 120px 242px; }
+.gigi-avatar__eye--left { transform-origin: 89px 93px; }
+.gigi-avatar__eye--right { transform-origin: 151px 93px; }
+.gigi-avatar__arm--left { transform-origin: 46px 139px; }
+.gigi-avatar__arm--right { transform-origin: 194px 139px; }
+.gigi-avatar__eyes-happy, .gigi-avatar__wink, .gigi-avatar__smile, .gigi-avatar__sparks { opacity: 0; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .gigi-avatar[data-animated="true"] .gigi-avatar__float { animation: gigi-avatar-hover 3.8s ease-in-out infinite; }
+  .gigi-avatar[data-animated="true"] .gigi-avatar__shadow { animation: gigi-avatar-shadow 3.8s ease-in-out infinite; }
+  .gigi-avatar[data-animated="true"] .gigi-avatar__pose { animation: gigi-avatar-sway 16s ease-in-out infinite; }
+  .gigi-avatar[data-animated="true"] .gigi-avatar__eye--left { animation: gigi-avatar-blink 6.2s infinite; }
+  .gigi-avatar[data-animated="true"] .gigi-avatar__eye--right { animation: gigi-avatar-blink 6.2s infinite, gigi-avatar-wink-open 16s infinite; }
+  .gigi-avatar[data-animated="true"] .gigi-avatar__wink { animation: gigi-avatar-wink 16s infinite; }
+  .gigi-avatar[data-animated="true"] .gigi-avatar__arm--right { animation: gigi-avatar-wave 16s ease-in-out infinite; }
+  .gigi-avatar[data-animated="true"] .gigi-avatar__arm--left { animation: gigi-avatar-lift 16s ease-in-out infinite; }
+  .gigi-avatar[data-animated="true"] :is(.gigi-avatar__eyes-open, .gigi-avatar__mouth-open) { animation: gigi-avatar-neutral 16s infinite; }
+  .gigi-avatar[data-animated="true"] :is(.gigi-avatar__eyes-happy, .gigi-avatar__smile) { animation: gigi-avatar-happy 16s infinite; }
+  .gigi-avatar[data-animated="true"] .gigi-avatar__sparks { animation: gigi-avatar-spark 16s infinite; }
+
+  /* The host keeps its click/focus behaviour; the portrait adds no tab stop. */
+  button:is(:hover, :focus-visible) .gigi-avatar[data-animated="true"] .gigi-avatar__arm--right { animation: gigi-avatar-greeting 1.4s ease-in-out infinite; }
+  button:is(:hover, :focus-visible) .gigi-avatar[data-animated="true"] :is(.gigi-avatar__eyes-open, .gigi-avatar__mouth-open, .gigi-avatar__wink) { animation: none; opacity: 0; }
+  button:is(:hover, :focus-visible) .gigi-avatar[data-animated="true"] :is(.gigi-avatar__eyes-happy, .gigi-avatar__smile, .gigi-avatar__sparks) { animation: none; opacity: 1; }
+}
+
+@keyframes gigi-avatar-hover {
+  0%, 100% { transform: translateY(2px); }
+  50% { transform: translateY(-5px); }
+}
+@keyframes gigi-avatar-shadow {
+  0%, 100% { transform: scaleX(1); opacity: .8; }
+  50% { transform: scaleX(.8); opacity: .45; }
+}
+@keyframes gigi-avatar-blink {
+  0%, 42%, 46%, 100% { transform: scaleY(1); }
+  44% { transform: scaleY(.08); }
+}
+@keyframes gigi-avatar-sway {
+  0%, 18%, 35%, 60%, 83%, 100% { transform: rotate(0); }
+  24%, 30% { transform: rotate(-7deg); }
+  68%, 76% { transform: rotate(6deg); }
+}
+@keyframes gigi-avatar-wave {
+  0%, 18%, 35%, 60%, 83%, 100% { transform: rotate(0); }
+  22%, 28%, 33% { transform: rotate(-115deg); }
+  25%, 31% { transform: rotate(-85deg); }
+  66%, 73%, 79% { transform: rotate(-105deg); }
+  69%, 76% { transform: rotate(-80deg); }
+}
+@keyframes gigi-avatar-lift {
+  0%, 60%, 83%, 100% { transform: rotate(0); }
+  67%, 77% { transform: rotate(90deg); }
+}
+@keyframes gigi-avatar-wink-open {
+  0%, 20%, 33%, 100% { opacity: 1; }
+  21%, 32% { opacity: 0; }
+}
+@keyframes gigi-avatar-wink {
+  0%, 20%, 33%, 100% { opacity: 0; }
+  21%, 32% { opacity: 1; }
+}
+@keyframes gigi-avatar-neutral {
+  0%, 64%, 80%, 100% { opacity: 1; }
+  65%, 79% { opacity: 0; }
+}
+@keyframes gigi-avatar-happy {
+  0%, 64%, 80%, 100% { opacity: 0; }
+  65%, 79% { opacity: 1; }
+}
+@keyframes gigi-avatar-spark {
+  0%, 21%, 25%, 29%, 33%, 65%, 70%, 75%, 80%, 100% { opacity: 0; }
+  23%, 27%, 31%, 68%, 73%, 78% { opacity: 1; }
+}
+@keyframes gigi-avatar-greeting {
+  0%, 100% { transform: rotate(-85deg); }
+  30%, 70% { transform: rotate(-120deg); }
+  50% { transform: rotate(-95deg); }
+}

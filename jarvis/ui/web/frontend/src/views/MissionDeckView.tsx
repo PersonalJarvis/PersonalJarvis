@@ -13,8 +13,7 @@ import { useDeckStore } from "@/store/deck";
 import { VoiceWaveform, type WaveformPhase } from "@/components/overlay/VoiceWaveform";
 import { voiceInputLevelRef } from "@/lib/voiceInputLevel";
 import { DockRail } from "@/components/layout/DockRail";
-import { TopBarActions } from "@/components/layout/TopBar";
-import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
+
 import { GigiMark } from "@/components/GigiMark";
 import { DeckOrb, type OrbReadouts } from "@/components/deck/DeckOrb";
 import type { ThinkingStep } from "@/lib/thinkingSteps";
@@ -242,9 +241,8 @@ export function MissionDeckView({
   return (
     <MotionConfig reducedMotion="user">
     <div className="flex h-full min-h-0 flex-col">
-      {/* One header. The shell TopBar steps aside on this screen (same
-          rule as the IDE): Gigi and the chrome actions live here so the
-          front page is not two bars with a hole between them. */}
+      {/* The deck's own instruments. Theme, restart and the window buttons
+          live in the window caption, not in a second row here. */}
       <header className="relative flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2">
         <span
           className="flex h-8 w-8 shrink-0 items-center justify-center"
@@ -300,8 +298,6 @@ export function MissionDeckView({
             onClick={() => setActiveSection("apikeys")}
           />
           {headerAccessory}
-          <CodingModeBadge />
-          <TopBarActions />
         </div>
 
         <svg

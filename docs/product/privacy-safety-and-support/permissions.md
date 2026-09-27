@@ -19,8 +19,8 @@ Use App Permissions to grant only the local access required by the features
 you use. Personal Jarvis has no master permission that unlocks your computer,
 accounts, and tool actions at once.
 
-The current card manages six items for the installed macOS desktop app. Five
-are macOS privacy permissions. The sixth reports whether API keys use macOS
+The current card manages seven items for the installed macOS desktop app. Six
+are macOS privacy permissions. The seventh reports whether API keys use macOS
 Keychain. Browser permissions, connected-account access, and Jarvis safety
 approvals remain separate.
 
@@ -37,7 +37,7 @@ approvals remain separate.
   screen. A system permission prompt never needs an API key, password, token,
   or recovery code.
 
-During first-run setup, an interactive Mac shows all six rows. **Continue** is
+During first-run setup, an interactive Mac shows all seven rows. **Continue** is
 enabled when every row is ready or is waiting for the final setup restart.
 Choose **Continue with text only** to skip the remaining grants. Completing
 setup restarts the installed desktop app when that restart is available.
@@ -46,7 +46,7 @@ setup restarts the installed desktop app when that restart is available.
 
 | Platform | What App Permissions shows | What you still need to check |
 |---|---|---|
-| macOS desktop | Six permission rows and available actions | The installed app identity, native prompts, and any restart notice |
+| macOS desktop | Seven permission rows, **Set up everything**, and the per-row actions | The installed app identity, native prompts, and any restart notice |
 | Windows desktop | **No extra desktop privacy permissions are required on this operating system.** | Windows microphone privacy, User Account Control, file access, and the feature itself |
 | Linux desktop | The same **Not required** message | Audio device access, file ownership, desktop session, and required desktop tools |
 | Headless or remote browser | No local desktop grant can create a microphone or live display | Browser site access and whether the host has the required device or desktop session |
@@ -68,6 +68,7 @@ these visible row names:
 | **Accessibility** | Read supported interface structure, focus or move windows, and support reliable input | Computer Use, window control, and global shortcuts | Yes |
 | **Input Monitoring** | Listen for configured system-wide keyboard shortcuts | Global shortcuts | Yes |
 | **Input control** | Post mouse and keyboard events | Computer Use | No |
+| **Automation (Music & Spotify)** | Send Apple Events to Music and Spotify | Mute music while dictating | No |
 | **Keychain (API keys)** | Store API keys in macOS Keychain | Encrypted operating-system credential storage | No |
 
 Current macOS versions may name the Screen Recording pane **Screen & System
@@ -75,7 +76,20 @@ Audio Recording**. **Input control** is Jarvis's label for posting input
 events. Its state can follow **Accessibility**, and **Open Settings** may open
 the Accessibility pane rather than a separate pane named Input control.
 
-Grant one item at a time:
+**Set up everything** runs the whole list for you: it raises each native
+dialog in turn, opens the matching System Settings pane for the rows macOS
+only grants there, waits until the switch is on, and finishes with one
+automatic restart when a grant needs a fresh process. **Stop** ends the flow at
+any point; nothing already granted is lost. **Automation** briefly opens a
+closed Music or Spotify in the background so macOS can ask, and closes it
+again.
+
+Grants made this way are recorded against the app's local signing
+certificate, which the installer creates once (macOS asks for your login
+password that one time). They survive every later update and rebuild of the
+app.
+
+Grant one item at a time instead:
 
 1. Move focus to **Allow** for the row you need and activate it. Read the
    native macOS prompt before you approve or deny it.
@@ -121,13 +135,12 @@ screenshots, action records, or provider data that already exists.
 
 ## Permissions This Card Does Not Manage
 
-### Automation, Files, and Notifications
+### Files and Notifications
 
-The optional **Mute music while dictating** setting can ask for macOS
-**Automation** access to Music or Spotify. Automation is not one of the six
-rows. If you deny it, Jarvis skips player-specific volume control and voice can
-continue. Review that access in macOS **System Settings > Privacy & Security >
-Automation**.
+The **Mute music while dictating** setting uses the **Automation (Music &
+Spotify)** row above. If you deny it, Jarvis skips player-specific volume
+control and voice can continue; **Ask again** clears the recorded decision so
+macOS can prompt once more.
 
 There is no general **Files** row, and this flow does not require **Full Disk
 Access**. File access depends on the operating-system account running Jarvis,

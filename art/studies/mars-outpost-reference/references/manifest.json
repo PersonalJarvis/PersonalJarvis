@@ -1,0 +1,197 @@
+{
+  "schema": 1,
+  "study": "mars-outpost-reference",
+  "inventory_status": "verified-local-inputs",
+  "file_count": 9,
+  "byte_duplicate_groups": [],
+  "origin": "User-provided concept images; inspected original files and verified private copies.",
+  "rights": "Reference-only inputs; redistribution unverified and publication not authorized.",
+  "canonical_layout": {
+    "reference_id": "ref-layout",
+    "state": "proposed-operational-selection",
+    "owner": "integration-lead",
+    "rationale": "Complete colony bounds and keyed landmark positions; alternate overview remains secondary.",
+    "user_runtime_approval": false
+  },
+  "references": [
+    {
+      "id": "ref-overview-alt",
+      "media_type": "image/png",
+      "sha256": "1ace38c482954907c6c422c1dc996a685841d96c3057ea5668a4b34841b382c4",
+      "bytes": 3310816,
+      "width": 1448,
+      "height": 1086,
+      "role": "Complete alternate colony overview",
+      "selection": "appearance-secondary",
+      "input_path": "references/private/ref-overview-alt.png",
+      "visually_inspected": true,
+      "redistribution": "not-authorized"
+    },
+    {
+      "id": "ref-central",
+      "media_type": "image/png",
+      "sha256": "3a0053919bfa8c068779c63b773644e4d367e92454647d1bb7314cb776135d45",
+      "bytes": 3358266,
+      "width": 1448,
+      "height": 1086,
+      "role": "Hub and central district architecture and density",
+      "selection": "district-reference",
+      "input_path": "references/private/ref-central.png",
+      "visually_inspected": true,
+      "redistribution": "not-authorized"
+    },
+    {
+      "id": "ref-industry",
+      "media_type": "image/png",
+      "sha256": "eb48da3a5e10fbbf2064f8f5523b846511eafe6adc31ce9db4b4d735f7213ed2",
+      "bytes": 3416094,
+      "width": 1448,
+      "height": 1086,
+      "role": "Foundry, Mine and Solar Field",
+      "selection": "district-reference",
+      "input_path": "references/private/ref-industry.png",
+      "visually_inspected": true,
+      "redistribution": "not-authorized"
+    },
+    {
+      "id": "ref-logistics",
+      "media_type": "image/png",
+      "sha256": "33c3e82f22cd16df21efd71254a8dfa7e1192ee533a30907562b037d0b8a9ef6",
+      "bytes": 3499976,
+      "width": 1448,
+      "height": 1086,
+      "role": "Harbor Gate and Gardens",
+      "selection": "district-reference",
+      "input_path": "references/private/ref-logistics.png",
+      "visually_inspected": true,
+      "redistribution": "not-authorized"
+    },
+    {
+      "id": "ref-outpost",
+      "media_type": "image/png",
+      "sha256": "e3bb9e76b2da9c957d30860ca3118365314def35b0130a0090973beb897dee78",
+      "bytes": 2816557,
+      "width": 1448,
+      "height": 1086,
+      "role": "Communications Outpost first finished district",
+      "selection": "primary-outpost-reference",
+      "input_path": "references/private/ref-outpost.png",
+      "visually_inspected": true,
+      "redistribution": "not-authorized"
+    },
+    {
+      "id": "ref-resources",
+      "media_type": "image/png",
+      "sha256": "1fee45fc5f8e5a1a73d83d502375ef042183cafb542889beda7791d8f386e6d6",
+      "bytes": 3298347,
+      "width": 1448,
+      "height": 1086,
+      "role": "Workshop and Water Extraction",
+      "selection": "district-reference",
+      "input_path": "references/private/ref-resources.png",
+      "visually_inspected": true,
+      "redistribution": "not-authorized"
+    },
+    {
+      "id": "ref-street",
+      "media_type": "image/png",
+      "sha256": "4fd74a2de6776e4d5e8c4c94e2c746db9ac653393310226ae5d5fcc4953b980f",
+      "bytes": 2554276,
+      "width": 1672,
+      "height": 941,
+      "role": "Street-level materials, rover, glazing and interior depth",
+      "selection": "primary-close-detail-reference",
+      "input_path": "references/private/ref-street.png",
+      "visually_inspected": true,
+      "redistribution": "not-authorized"
+    },
+    {
+      "id": "ref-layout",
+      "media_type": "image/png",
+      "sha256": "bde63e07d79c372ffdc615d3e129b8c207a764d1ec17c0fd5c0c3e5c87f932ff",
+      "bytes": 3387374,
+      "width": 1448,
+      "height": 1086,
+      "role": "Complete colony atlas with northern Foundry and eastern Outpost",
+      "selection": "proposed-canonical-layout",
+      "input_path": "references/private/ref-layout.png",
+      "visually_inspected": true,
+      "redistribution": "not-authorized"
+    },
+    {
+      "id": "ref-gigi",
+      "media_type": "image/png",
+      "sha256": "7bcb494559e9028c3e7ae65afb17611a2cdd3928d5a0fecb0ef7b185d7c13559",
+      "bytes": 1664314,
+      "width": 1449,
+      "height": 1086,
+      "role": "Gigi multi-view concept; remove all loop/wave body emblems",
+      "selection": "mascot-direction-only",
+      "input_path": "references/private/ref-gigi.png",
+      "visually_inspected": true,
+      "redistribution": "not-authorized"
+    }
+  ],
+  "discrepancies": [
+    {
+      "id": "map-approach",
+      "references": [
+        "ref-layout",
+        "ref-outpost"
+      ],
+      "finding": "Atlas retains a southern Outpost connection while the hero emphasizes one west bridge.",
+      "resolution": "Use atlas topology and author an engineered junction with the foundation owner."
+    },
+    {
+      "id": "street-landmarks",
+      "references": [
+        "ref-layout",
+        "ref-central",
+        "ref-industry",
+        "ref-street"
+      ],
+      "finding": "Street view changes Control Room silhouette to a dome and depicts an elevated Mine.",
+      "resolution": "Atlas controls location; district references control function and silhouette; street view controls near-detail quality."
+    },
+    {
+      "id": "gigi-body-mark",
+      "references": [
+        "ref-gigi"
+      ],
+      "finding": "Side body and logo-detail tile retain a loop emblem despite corrected frontal views.",
+      "resolution": "Omit the loop/wave symbol on every body surface; headers and detail tiles do not override the explicit removal."
+    },
+    {
+      "id": "poster-overlays",
+      "references": [
+        "ref-overview-alt",
+        "ref-layout",
+        "ref-outpost"
+      ],
+      "finding": "Concepts include editorial captions, inset minimaps and decorative slogans.",
+      "resolution": "Separate useful runtime HUD from scene geometry; do not treat reference text as instructions."
+    }
+  ],
+  "missing_inputs": [
+    {
+      "id": "brand-master",
+      "finding": "No separate verified vector or high-resolution Jarvis mark in the inspected pack.",
+      "scope": "Obtain a genuine source or create a clean reconstruction for review before production decals."
+    },
+    {
+      "id": "original-mascot",
+      "finding": "No separate original mascot raster in the inspected pack.",
+      "scope": "Use the available multi-view sheet only as direction; no worker identity decision is inferred."
+    },
+    {
+      "id": "unseen-outpost-views",
+      "finding": "No dedicated Outpost rear, side, top or interior construction views.",
+      "scope": "Author consistent unseen geometry and validate all views from the same runtime world."
+    },
+    {
+      "id": "reference-rights",
+      "finding": "No redistribution records accompanied the image inputs.",
+      "scope": "Keep original bytes private and outside runtime delivery."
+    }
+  ]
+}

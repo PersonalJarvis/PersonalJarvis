@@ -37,9 +37,12 @@ and headless Linux hosts are deliberately not registered.
 
 On macOS, every launch path enters through the same app bundle so privacy
 grants stay attached to one identity. The source installer builds a native
-py2app alias launcher, ad-hoc signs it for that machine, verifies the identity
-from inside a LaunchServices process, and preserves the bundle unchanged across
-ordinary updates. A separately distributed binary still requires the release
+py2app alias launcher, signs it with a per-user code-signing certificate it
+creates on the first run (macOS asks for the login password once to trust
+it; grants then survive every rebuild and update), verifies the identity from
+inside a LaunchServices process, and preserves the bundle unchanged across
+ordinary updates. Without that certificate the launcher is ad-hoc signed and a
+rebuild costs one round of re-granting. A separately distributed binary still requires the release
 pipeline's Developer-ID signing and notarization. Apple does not permit an installer to
 silently grant Microphone, Screen Recording, Accessibility, Input Monitoring,
 or input-control access. The app therefore presents one explicit button per

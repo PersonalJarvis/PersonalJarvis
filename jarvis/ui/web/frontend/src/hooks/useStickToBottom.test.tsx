@@ -118,4 +118,40 @@ describe("useStickToBottom", () => {
     });
     expect(scroller.scrollTop).toBe(2000);
   });
+
+  it("stays at the end when a thought grows past the near-end slack before the observer runs", () => {
+    render(<Thread />);
+    const scroller = screen.getByTestId("scroller");
+    measure(scroller, 950, 1000, 50);
+    act(() => {
+      fireEvent.scroll(scroller);
+    });
+
+    // A live reasoning block is taller than NEAR_END_PX in one frame.
+    // Overflow anchoring fires `scroll` with the old top; that must not
+    // read as "the reader moved away".
+    measure(scroller, 950, 2000, 50);
+    act(() => {
+      fireEvent.scroll(scroller);
+    });
+    expect(scroller.scrollTop).toBe(2000);
+    expect(screen.queryByTestId("back")).toBeNull();
+  });
+
+  it("does not pin a reader who scrolled up when the answer then grows", () => {
+    render(<Thread />);
+    const scroller = screen.getByTestId("scroller");
+    measure(scroller, 100, 1000, 50);
+    act(() => {
+      fireEvent.scroll(scroller);
+    });
+    expect(screen.getByTestId("back")).toBeTruthy();
+
+    measure(scroller, 100, 2000, 50);
+    act(() => {
+      fireEvent.scroll(scroller);
+    });
+    expect(scroller.scrollTop).toBe(100);
+    expect(screen.getByTestId("back")).toBeTruthy();
+  });
 });

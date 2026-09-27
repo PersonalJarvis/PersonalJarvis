@@ -1,6 +1,6 @@
-"""search_web tool: DuckDuckGo Instant-Answer API (no key needed).
+"""search_web tool: key-free DuckDuckGo search, optional prepaid Apifare hop.
 
-Risk-Tier: safe — reines Readonly.
+Risk tier: safe — read-only.
 
 Weather path (live forensic 2026-06-10 23:12, data/jarvis_desktop.log):
 "What's weather like tomorrow?" fired three DDG instant-answer calls that ALL
@@ -19,6 +19,31 @@ from typing import Any, Final
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.plugins.tool.search_backends import run_search
+
+
+def _load_apifare_key() -> str:
+    """Optional prepaid search token. Empty means the key-free DuckDuckGo chain.
+
+    Keyring failures must not sink the turn: an unreadable secret degrades to
+    DuckDuckGo rather than failing search (AP-30).
+    """
+    try:
+        from jarvis.core.config import get_secret_any
+    except Exception:  # noqa: BLE001 — import-time config blip
+        return ""
+    try:
+        return (
+            get_secret_any(
+                (
+                    ("apifare_api_key", "APIPAY_TOKEN"),
+                    ("apifare_api_key", "APIFARE_TOKEN"),
+                )
+            )
+            or ""
+        ).strip()
+    except Exception:  # noqa: BLE001 — keyring / env read must not block search
+        return ""
+
 
 # Hard ceiling for the DuckDuckGo round-trip. This tool is router-tier since
 # 2026-06-10 (ADR-0011 amendment "Inline web search"), so the call sits on the
@@ -371,15 +396,19 @@ class SearchWebTool:
                     },
                 )
 
-        # General web search: real DuckDuckGo web search, with the DDG
-        # Instant-Answer box as a cheap encyclopedic fallback. All query
-        # variants run CONCURRENTLY and share the single voice-path deadline,
-        # so three variants cost the same wall time as one.
+        # General web search: optional prepaid Apifare hop, then DuckDuckGo
+        # SERP, with the Instant-Answer box as a cheap encyclopedic fallback.
+        # All query variants run CONCURRENTLY and share the single voice-path
+        # deadline, so three variants cost the same wall time as one.
+        apifare_key = _load_apifare_key()
         try:
             async with asyncio.timeout(_TIMEOUT_S):
                 async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
                     outcomes = await asyncio.gather(*[
-                        run_search(variant, max_results, client=client)
+                        run_search(
+                            variant, max_results,
+                            client=client, apifare_key=apifare_key,
+                        )
                         for variant in variants
                     ])
         except Exception:  # noqa: BLE001 — incl. TimeoutError: never sink the turn

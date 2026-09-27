@@ -242,6 +242,33 @@ def test_macos_identity_uses_verified_canonical_designated_requirement(
     ]
 
 
+def test_macos_identity_rejects_a_bundle_outside_both_install_folders(
+    monkeypatch, tmp_path
+) -> None:
+    """/Applications joined ~/Applications as canonical (BUG-216); any other
+    copy of the app still never owns the Keychain item."""
+    bundle_path = tmp_path / "Downloads" / "Personal Jarvis.app"
+    executable = bundle_path / "Contents" / "MacOS" / "PersonalJarvis"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"Mach-O test fixture")
+    bundle = SimpleNamespace(
+        bundleIdentifier=lambda: "com.personal-jarvis.desktop",
+        bundlePath=lambda: str(bundle_path),
+        executablePath=lambda: str(executable),
+    )
+    foundation = SimpleNamespace(NSBundle=SimpleNamespace(mainBundle=lambda: bundle))
+    monkeypatch.setattr(ck.sys, "platform", "darwin")
+    monkeypatch.setattr(ck.Path, "home", classmethod(lambda _cls: tmp_path))
+    monkeypatch.setitem(sys.modules, "Foundation", foundation)
+    monkeypatch.setattr(
+        ck.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("codesign must not run for a stray copy"),
+    )
+
+    assert _REAL_MACOS_APP_IDENTITY_TOKEN() is None
+
+
 def test_macos_identity_rejects_direct_python_before_codesign(monkeypatch, tmp_path) -> None:
     bundle = SimpleNamespace(
         bundleIdentifier=lambda: "org.python.python",

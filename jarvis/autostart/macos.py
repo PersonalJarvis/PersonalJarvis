@@ -22,6 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from jarvis.core.branding import MACOS_APP_DIR_NAME as _APP_DIR_NAME
 from jarvis.core.branding import MACOS_AUTOSTART_LABEL as _LABEL
 
 from .protocol import AutostartStatus, LaunchSpec
@@ -70,6 +71,64 @@ def _launchctl(*argv: str) -> bool:
             (proc.stderr or proc.stdout or "").strip(),
         )
         return False
+    return True
+
+
+def _write_plist_atomically(path: Path, plist: dict) -> None:
+    tmp = path.with_suffix(".plist.tmp")
+    try:
+        with tmp.open("wb") as fh:
+            plistlib.dump(plist, fh)
+        tmp.replace(path)
+    except BaseException:
+        # A half-written .plist.tmp left next to the real entry in
+        # ~/Library/LaunchAgents is confusing at best; the successful
+        # replace() consumes the temp file, so anything still there is
+        # debris from a failed write.
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def retarget_launch_agent(bundle: Path) -> bool:
+    """Point an existing LaunchAgent at ``bundle`` after the app moved.
+
+    The entry names the app by absolute path. Whoever moves the bundle has to
+    move the entry with it IN THE SAME STEP: the boot-time reconcile only runs
+    once the app is up, and an entry aimed at the old path is exactly what
+    keeps it from coming up at login — the app would stay gone from login
+    until the user happened to start it by hand.
+
+    Only ever edits an entry that already exists, so a user who switched
+    autostart off keeps it off. Returns ``True`` when the entry was rewritten;
+    never raises.
+    """
+    path = _agents_dir() / _ENTRY_NAME
+    try:
+        if not path.is_file():
+            return False
+        with path.open("rb") as fh:
+            plist = plistlib.load(fh)
+        arguments = plist.get("ProgramArguments")
+        if not isinstance(arguments, list):
+            return False
+        target = str(bundle)
+        updated = [
+            target
+            if isinstance(arg, str) and Path(arg).name == _APP_DIR_NAME and arg != target
+            else arg
+            for arg in arguments
+        ]
+        if updated == arguments:
+            return False
+        plist["ProgramArguments"] = updated
+        _write_plist_atomically(path, plist)
+    except Exception as exc:  # noqa: BLE001 - the boot reconcile is the second line of defence
+        log.warning("Could not point the LaunchAgent at %s: %s", bundle, exc)
+        return False
+    # Deliberately no ``launchctl load`` here: RunAtLoad would start the app on
+    # the spot, in the middle of the installer run that moved it. launchd reads
+    # the file again at the next login, which is the only moment it matters.
+    log.info("macOS LaunchAgent now starts the app from %s", bundle)
     return True
 
 
@@ -132,18 +191,7 @@ class MacOSAutostart:
             # Keep voice and Computer-Use inside the signed-in GUI session.
             "LimitLoadToSessionType": "Aqua",
         }
-        tmp = self._path.with_suffix(".plist.tmp")
-        try:
-            with tmp.open("wb") as fh:
-                plistlib.dump(plist, fh)
-            tmp.replace(self._path)
-        except BaseException:
-            # A half-written .plist.tmp left next to the real entry in
-            # ~/Library/LaunchAgents is confusing at best; the successful
-            # replace() consumes the temp file, so anything still there is
-            # debris from a failed write.
-            tmp.unlink(missing_ok=True)
-            raise
+        _write_plist_atomically(self._path, plist)
         log.info("macOS LaunchAgent written: %s", self._path)
         # Re-arm in the current session so it also works before the next login.
         # unload WITHOUT -w (a plain refresh must not write Disabled=true into
@@ -192,4 +240,4 @@ class MacOSAutostart:
         )
 
 
-__all__ = ["MacOSAutostart"]
+__all__ = ["MacOSAutostart", "retarget_launch_agent"]

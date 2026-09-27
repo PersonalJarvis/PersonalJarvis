@@ -2,6 +2,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useRef } from "react";
 import { X } from "lucide-react";
 import { useT } from "@/i18n";
+import { isComboboxPanelEvent } from "@/components/ui/combobox";
 import { PluginsView } from "@/views/PluginsView";
 import { SkillsView } from "@/views/SkillsView";
 import { McpsView } from "@/views/McpsView";
@@ -40,8 +41,20 @@ export function PluginsDialog({ onClose, area = "plugins", onAreaChange }: {
             target.focus({ preventScroll: true });
             if (needsTabIndex) target.removeAttribute("tabindex");
           }}
+          onPointerDownOutside={(event) => {
+            if (isComboboxPanelEvent(event) || content.current?.querySelector('[aria-modal="true"]')) {
+              event.preventDefault();
+            }
+          }}
+          onFocusOutside={(event) => {
+            if (isComboboxPanelEvent(event) || content.current?.querySelector('[aria-modal="true"]')) {
+              event.preventDefault();
+            }
+          }}
           onInteractOutside={(event) => {
-            if (content.current?.querySelector('[aria-modal="true"]')) event.preventDefault();
+            if (isComboboxPanelEvent(event) || content.current?.querySelector('[aria-modal="true"]')) {
+              event.preventDefault();
+            }
           }}
           onEscapeKeyDown={(event) => {
             // The existing credential dialogs own Escape while they are open.

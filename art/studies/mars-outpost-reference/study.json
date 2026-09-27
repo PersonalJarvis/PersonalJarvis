@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "study": "mars-outpost-reference",
+  "brief": "brief.md",
+  "assets": [
+    {
+      "id": "communications-outpost-reference",
+      "kind": "building",
+      "source": "source/communications-outpost.blend",
+      "collection": "Export",
+      "export": "exports/communications-outpost.glb"
+    }
+  ],
+  "runtime_evidence": [],
+  "technical_report": "",
+  "approval": {
+    "status": "pending",
+    "record": "review.md",
+    "evidence_sha256": ""
+  },
+  "reference_manifest": {
+    "path": "references/manifest.json",
+    "sha256": "c2367be8a0328851253f70695cb12c0c6b8976887986fa5c4907bf0fec5aade5"
+  }
+}

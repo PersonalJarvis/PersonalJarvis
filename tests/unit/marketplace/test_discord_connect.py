@@ -5,6 +5,10 @@ bot token into the canonical `discord_bot_token` secret and flips
 `[integrations.discord].enabled`, so the existing bidirectional channel boots.
 An explicit owner user id locks the allowlist and turns trust-on-first-DM off.
 Disconnecting reverses the secret + enable flag.
+
+Browser-first helpers (identity/invite) live in the same module: the OAuth
+login links the Discord identity, the token fallback still enables the
+gateway, and the invite builder opens the official guild picker.
 """
 # ruff: noqa: S106
 
@@ -13,7 +17,8 @@ import types
 import pytest
 
 from jarvis.marketplace import discord_connect as dc
-from jarvis.marketplace.catalog import PatPasteAuth, PluginSpec
+from jarvis.marketplace import oauth_discord as do
+from jarvis.marketplace.catalog import OAuthPkceLoopbackAuth, PatPasteAuth, PluginSpec
 from jarvis.ui.web import marketplace_routes as mr
 
 
@@ -212,3 +217,104 @@ async def test_disconnect_discord_disables_and_applies_live(monkeypatch):
     assert out["status"] == "not_connected"
     assert fired["called"] is True
     assert captured["apply"] == ("STATE", "discord")
+
+
+# --- browser-first helpers: identity + invite -------------------------------
+
+
+def _pkce_discord_spec(client_id: str) -> PluginSpec:
+    return PluginSpec(
+        id="discord",
+        display_name="Discord",
+        description="d",
+        category="Messaging",
+        logo_slug="discord",
+        auth=OAuthPkceLoopbackAuth(
+            mode="oauth_pkce_loopback",
+            authorization_url="https://discord.com/oauth2/authorize",
+            token_url="https://discord.com/api/oauth2/token",
+            client_id=client_id,
+            scopes=["identify"],
+        ),
+    )
+
+
+def _token_store(access: str | None):
+    tokens = None
+    if access is not None:
+        from jarvis.marketplace.token_store import Tokens
+
+        tokens = Tokens(access=access)
+    return type("S", (), {"load": lambda self, _pid: tokens})()
+
+
+@pytest.mark.asyncio
+async def test_discord_identity_returns_verified_user(monkeypatch):
+    monkeypatch.setattr(mr, "TokenStore", lambda: _token_store("user-token"))
+
+    async def _me(_token):
+        assert _token == "user-token"  # noqa: S105 — throwaway fixture token, not a credential
+        return do.DiscordIdentity(user_id="4242", username="alice", global_name="Alice")
+
+    monkeypatch.setattr(do, "fetch_current_user", _me)
+
+    out = await mr.discord_identity()
+
+    assert out["user_id"] == "4242"
+    assert out["username"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_discord_identity_404_without_browser_grant(monkeypatch):
+    monkeypatch.setattr(mr, "TokenStore", lambda: _token_store(None))
+
+    with pytest.raises(mr.HTTPException) as exc:
+        await mr.discord_identity()
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_discord_identity_rejects_stored_bot_token(monkeypatch):
+    # The fallback stores the Bot credential under the same plugin slot; it
+    # must never pass as a Bearer identity.
+    monkeypatch.setattr(mr, "TokenStore", lambda: _token_store("bot-token"))
+
+    async def _denied(_token):
+        raise do.DiscordApiError("Discord rejected the token (HTTP 401)")
+
+    monkeypatch.setattr(do, "fetch_current_user", _denied)
+
+    with pytest.raises(mr.HTTPException) as exc:
+        await mr.discord_identity()
+
+    assert exc.value.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_discord_invite_returns_guild_picker_url(monkeypatch):
+    spec = _pkce_discord_spec("123456789")
+    monkeypatch.setattr(
+        mr, "load_catalog", lambda: type("C", (), {"by_id": lambda self, _: spec})()
+    )
+
+    out = await mr.discord_invite()
+
+    assert out["invite_url"].startswith("https://discord.com/oauth2/authorize")
+    assert "scope=bot" in out["invite_url"]
+    assert f"permissions={do.MINIMAL_BOT_PERMISSIONS}" in out["invite_url"]
+    assert "123456789" in out["invite_url"]
+    assert "client_secret" not in out["invite_url"]
+
+
+@pytest.mark.asyncio
+async def test_discord_invite_409_while_client_pending(monkeypatch):
+    spec = _pkce_discord_spec("REPLACE_WITH_JARVIS_DISCORD_APP_CLIENT_ID")
+    monkeypatch.setattr(
+        mr, "load_catalog", lambda: type("C", (), {"by_id": lambda self, _: spec})()
+    )
+
+    with pytest.raises(mr.HTTPException) as exc:
+        await mr.discord_invite()
+
+    assert exc.value.status_code == 409

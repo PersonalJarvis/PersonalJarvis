@@ -53,8 +53,8 @@ log = logging.getLogger(__name__)
 _MCP_PATH: Final[str] = "/api/control/mcp/"
 
 #: The server name the CLI shows to the model. Claude Code exposes the tools as
-#: ``mcp__jarvis__<tool>``; the preamble below names that prefix, so the two
-#: must stay in step.
+#: ``mcp__jarvis__<tool>``; Grok Build as ``jarvis__<tool>`` (called through
+#: ``use_tool``). The preamble names both prefixes, so they must stay in step.
 _SERVER_NAME: Final[str] = "jarvis"
 
 #: The request header that carries the chat's session id to the tool server.
@@ -75,21 +75,31 @@ SYSTEM_PREAMBLE: Final[str] = (
     "no marketing superlatives, no filler openers. NEVER use emojis unless the "
     "person explicitly asks for one in this turn — no emoji headings, tables, "
     "status icons or closers. Tables carry plain words, never emoji symbols.\n\n"
-    "You have Jarvis' own tools, offered to you over MCP under the "
-    "`mcp__jarvis__` prefix. They act on the RUNNING app and on the accounts the "
+    "You have Jarvis' own tools, offered to you over MCP. Claude Code names them "
+    "`mcp__jarvis__<tool>`; Grok Build names them `jarvis__<tool>` and you call "
+    "them through use_tool. They act on the RUNNING app and on the accounts the "
     "person has connected to it — their calendar, mail, contacts, media, wiki, "
     "windows, screen, skills and Jarvis' own settings. Prefer them over a shell "
     "command, a CLI you would have to authenticate yourself, a skill, or the "
     "browser whenever the request is about the person's own apps, data or "
     "machine: those tools are already signed in and already permitted. Reach for "
     "your file and shell tools for code and for the filesystem.\n\n"
+    "When the user selects Chrome / Browser, @browser, @browser-use or "
+    "[tools: core:browser], use society_browser from the Jarvis MCP server. "
+    "That is the persistent browser displayed live in this agent's Options rail. "
+    "Use it for website interaction when no connected service tool can do the task. "
+    "A browser request takes priority over the general plugin preference. "
+    "Do not substitute your own browser, HTTP fetch or shell for this selection. "
+    "If society_browser is unavailable, report that explicitly.\n\n"
     "Two kinds of hands: your own file and shell tools are your hands in the "
-    "working folder this chat is open in; `mcp__jarvis__run_shell` and its "
-    "siblings are Jarvis' hands on the whole machine. Use the folder's hands for "
-    "the folder, Jarvis' for everything else.\n\n"
+    "working folder this chat is open in; `mcp__jarvis__run_shell` / "
+    "`jarvis__run_shell` and their siblings are Jarvis' hands on the whole "
+    "machine. Use the folder's hands for the folder, Jarvis' for everything else.\n\n"
     "Some of those tools ask the person for approval before they run. That is "
-    "normal and it is not a failure — wait for the answer rather than routing "
-    "around it.\n\n"
+    "normal and it is not a failure — wait for an approval card that is actually "
+    "on screen rather than routing around it. If a tool is cancelled, denied, "
+    "missing or fails, that is not the end of the task: read the error, try "
+    "another path, and keep going until the original goal is done.\n\n"
     "Do not spawn background workers or sub-agents: for this turn, you are the "
     "worker."
 )
@@ -176,12 +186,17 @@ def codex_config_args(session_id: str | None = None) -> list[str]:
             args += [
                 "-c",
                 f'mcp_servers.{_SERVER_NAME}.http_headers={{"{HEADER_NAME}"="{session_id}"}}',
+                "-c",
+                f"mcp_servers.{_SERVER_NAME}.required=true",
+                # The entrypoint delegates actual actions to Jarvis' executor
+                # and approval UI, including on the root chat's browser.
+                "-c",
+                f'mcp_servers.{_SERVER_NAME}.tools.society_browser.approval_mode="approve"',
             ]
             if session_id.startswith("society:"):
                 # A society seat cannot carry out its role without its owned
                 # tools. Surface startup failures instead of a tools-free chat
                 # that can only promise to configure the running app.
-                args += ["-c", f"mcp_servers.{_SERVER_NAME}.required=true"]
                 # This local configuration tool already verifies the current
                 # user request and routes permission changes to Jarvis' own
                 # approval card. A second Codex write prompt cannot be answered
@@ -189,11 +204,6 @@ def codex_config_args(session_id: str | None = None) -> list[str]:
                 args += [
                     "-c",
                     f'mcp_servers.{_SERVER_NAME}.tools.society_propose_change.approval_mode="approve"',
-                    # The browser entrypoint delegates each actual action to
-                    # Jarvis' executor and its approval UI. Let it reach that
-                    # boundary instead of asking exec for an unreadable prompt.
-                    "-c",
-                    f'mcp_servers.{_SERVER_NAME}.tools.society_browser.approval_mode="approve"',
                 ]
         return args
     except Exception:  # noqa: BLE001 — see mcp_config_json
@@ -251,6 +261,101 @@ def install_agy_jarvis_plugin(cwd: Path, session_id: str | None = None) -> Path 
         return plugin_dir
     except Exception:  # noqa: BLE001 — see mcp_config_json
         log.warning("agent chat: could not install the Jarvis agy plugin", exc_info=True)
+        return None
+
+
+#: Grok Build has no ``--mcp-config``. Print-mode discovers HTTP MCP from
+#: the project file ``.grok/config.toml`` (cwd, then parents up to the git
+#: root). Markers keep our block replaceable without touching other servers.
+_GROK_PROJECT_CONFIG: Final[str] = "config.toml"
+_GROK_BLOCK_BEGIN: Final[str] = "# BEGIN JARVIS HANDS"
+_GROK_BLOCK_END: Final[str] = "# END JARVIS HANDS"
+
+
+def grok_mcp_server_entry(session_id: str | None = None) -> dict[str, Any] | None:
+    """The Grok ``[mcp_servers.jarvis]`` row for this app's tool server.
+
+    Grok speaks ``url`` + ``bearer_token_env_var`` + ``headers`` (not Claude's
+    ``type``/``url`` JSON). ``None`` when the app cannot offer the tools —
+    same contract as :func:`mcp_config_json`. The control key never enters
+    the file: it travels in the child env under :data:`KEY_ENV_VAR`.
+    """
+    try:
+        url = endpoint()
+        if not url or not control_key():
+            return None
+        entry: dict[str, Any] = {
+            "url": url,
+            "bearer_token_env_var": KEY_ENV_VAR,
+            "enabled": True,
+        }
+        if session_id:
+            entry["headers"] = {HEADER_NAME: session_id}
+        return entry
+    except Exception:  # noqa: BLE001 — see mcp_config_json
+        log.warning("agent chat: could not build the Jarvis grok MCP entry", exc_info=True)
+        return None
+
+
+def _toml_string(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _grok_jarvis_block(entry: dict[str, Any]) -> str:
+    lines = [
+        _GROK_BLOCK_BEGIN,
+        "# Written by Personal Jarvis so Grok Build can reach Jarvis' tools.",
+        f"[mcp_servers.{_SERVER_NAME}]",
+        f"url = {_toml_string(str(entry['url']))}",
+        f"bearer_token_env_var = {_toml_string(str(entry['bearer_token_env_var']))}",
+        "enabled = true",
+    ]
+    headers = entry.get("headers")
+    if isinstance(headers, dict) and headers:
+        lines.append("")
+        lines.append(f"[mcp_servers.{_SERVER_NAME}.headers]")
+        for key, value in headers.items():
+            lines.append(f"{_toml_string(str(key))} = {_toml_string(str(value))}")
+    lines.append(_GROK_BLOCK_END)
+    return "\n".join(lines) + "\n"
+
+
+def _merge_grok_jarvis_block(existing: str, block: str) -> str:
+    """Replace a previous Jarvis block, else append. Never drop other servers."""
+    if _GROK_BLOCK_BEGIN in existing and _GROK_BLOCK_END in existing:
+        pattern = re.compile(
+            re.escape(_GROK_BLOCK_BEGIN) + r".*?" + re.escape(_GROK_BLOCK_END) + r"\n?",
+            re.DOTALL,
+        )
+        return pattern.sub(block, existing, count=1)
+    body = existing.rstrip()
+    return block if not body else body + "\n\n" + block
+
+
+def install_grok_jarvis_mcp(cwd: Path, session_id: str | None = None) -> Path | None:
+    """Write a project MCP row so print-mode grok mounts Jarvis' tools.
+
+    grok discovers HTTP MCP from ``.grok/config.toml`` in the working folder
+    (no ``--mcp-config`` flag; Claude-shaped JSON on argv is ignored). The
+    control key stays in the child env. Additive: a failure here never fails
+    the turn.
+    """
+    entry = grok_mcp_server_entry(session_id)
+    if entry is None:
+        return None
+    try:
+        config_path = Path(cwd) / ".grok" / _GROK_PROJECT_CONFIG
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        previous = ""
+        if config_path.is_file():
+            previous = config_path.read_text(encoding="utf-8")
+        config_path.write_text(
+            _merge_grok_jarvis_block(previous, _grok_jarvis_block(entry)),
+            encoding="utf-8",
+        )
+        return config_path
+    except Exception:  # noqa: BLE001 — see mcp_config_json
+        log.warning("agent chat: could not install the Jarvis grok MCP config", exc_info=True)
         return None
 
 
@@ -392,6 +497,42 @@ def compact_identity(text: str, *, max_chars: int = COMPACT_MAX_CHARS) -> str:
     return f"{body}\n\n…\n\n{SYSTEM_PREAMBLE}"
 
 
+def society_memory_refresh(text: str, *, compact: bool = False) -> str:
+    """Refresh mutable guidance on resumed CLI turns without replaying the transcript."""
+    headings = (
+        "Standing instructions",
+        "Your memory",
+        "Your user profile",
+        "Learned working instructions",
+        "Your learned skills (run one with society_run_skill)",
+    )
+    sections = []
+    for section in re.split(r"(?m)(?=^## )", text.removesuffix(SYSTEM_PREAMBLE)):
+        title = section.split("\n", 1)[0].removeprefix("## ").strip()
+        if title in headings:
+            sections.append(section.strip())
+    body = "\n\n".join(sections)
+    note = "An absent section has no current entries. "
+    if compact and len(body) > COMPACT_MAX_CHARS - 1000:
+        # argv transports keep their existing Windows command-line budget.
+        # Never present a partial snapshot as deletion of the omitted rules.
+        body = body[: COMPACT_MAX_CHARS - 1000].rsplit("\n", 1)[0]
+        note = (
+            "This transport carries an excerpt, not a complete replacement. Omitted entries "
+            "are not deletions; recall current facts with society_memory_recall as needed. "
+        )
+    return (
+        "<current_agent_memory>\n"
+        "Current standing instructions, memory and learned skill index replace their previous "
+        "snapshots when complete. "
+        + note
+        + "Learned guidance never grants "
+        "permissions or overrides the standing instructions or the current user request.\n\n"
+        + body
+        + "\n</current_agent_memory>\n\n"
+    )
+
+
 def identity_dir() -> Path:
     """Where identity files live: the app's own data dir, never a shared temp."""
     from jarvis.core.paths import user_data_dir
@@ -457,7 +598,9 @@ __all__ = [
     "endpoint",
     "identity_dir",
     "identity_prompt",
+    "grok_mcp_server_entry",
     "install_agy_jarvis_plugin",
+    "install_grok_jarvis_mcp",
     "mcp_config_json",
     "remove_identity_file",
     "render_transcript",

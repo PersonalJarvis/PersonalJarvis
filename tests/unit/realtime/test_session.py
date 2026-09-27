@@ -314,6 +314,10 @@ class FakeToolBridge:
         self.calls = []
         self.closed = False
 
+    @property
+    def has_pending_confirmation(self) -> bool:
+        return False
+
     def set_language(self, language):
         self.languages.append(language)
 

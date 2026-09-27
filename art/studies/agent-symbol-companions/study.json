@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "study": "agent-symbol-companions",
+  "brief": "brief.md",
+  "assets": [
+    {
+      "id": "symbols",
+      "kind": "character",
+      "source": "source/companions.blend",
+      "collection": "Collection",
+      "export": "exports/companions.glb"
+    },
+    {
+      "id": "gigi",
+      "kind": "character",
+      "source": "source/gigi-reference.blend",
+      "collection": "GigiExport",
+      "export": "exports/gigi.glb"
+    }
+  ],
+  "runtime_evidence": [
+    "evidence/map-follow-first.png",
+    "evidence/map-follow-second.png",
+    "evidence/edit-companion.png"
+  ],
+  "technical_report": "evidence/technical-review.md",
+  "approval": {
+    "status": "pending",
+    "record": "review.md",
+    "evidence_sha256": ""
+  }
+}

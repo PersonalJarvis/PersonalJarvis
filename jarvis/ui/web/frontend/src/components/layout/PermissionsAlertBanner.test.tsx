@@ -27,6 +27,10 @@ vi.mock("@/hooks/usePermissions", () => ({
     request,
     openSettings,
     reset,
+    setupAll: vi.fn().mockResolvedValue("complete"),
+    cancelSetup: vi.fn(),
+    setupProgress: null,
+    setupNeeded: false,
   }),
 }));
 
