@@ -167,12 +167,11 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.configure.outputs.os-matrix) }}
     runs-on: ${{ matrix.os }}
-    # 75, not 30 (2026-08-07): the suite outgrew the old budget without any
-    # test hanging — at cancellation macOS sat at 95% and Windows at 40%,
-    # both still advancing (Windows runners pace the suite at ~65 min). A
-    # genuine wedge no longer hides in the budget either way: the main pytest
-    # step below dumps every thread stack once a single test exceeds 300 s.
-    timeout-minutes: 75
+    # The complete suite was still advancing at 70% when the 75-minute job
+    # limit canceled both Linux and Windows on 2026-09-26. Give the full run
+    # room to finish; the pytest step still dumps thread stacks when one test
+    # exceeds 300 seconds, so a genuine stall remains diagnosable.
+    timeout-minutes: 150
 
     steps:
       - name: Checkout

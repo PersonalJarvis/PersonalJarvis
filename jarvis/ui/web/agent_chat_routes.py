@@ -90,7 +90,7 @@ router = APIRouter(prefix="/api/agent-chat", tags=["agent-chat"])
 
 
 @router.get("/commands", summary="List chat slash commands and their availability")
-async def list_chat_commands(request: Request, session_id: str | None = None) -> dict[str, Any]:
+def list_chat_commands(request: Request, session_id: str | None = None) -> dict[str, Any]:
     try:
         return _service(request).controls.catalog(session_id)
     except ValueError as exc:
@@ -98,7 +98,7 @@ async def list_chat_commands(request: Request, session_id: str | None = None) ->
 
 
 @router.get("/sessions/{session_id}/control", summary="Read this chat's mode and goal state")
-async def get_chat_control(session_id: str, request: Request) -> dict[str, Any]:
+def get_chat_control(session_id: str, request: Request) -> dict[str, Any]:
     try:
         return _service(request).controls.state(session_id).model_dump()
     except ValueError as exc:

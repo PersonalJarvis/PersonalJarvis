@@ -58,6 +58,11 @@ class _StubPkceHandler:
 async def test_connect_start_rejects_placeholder_client(monkeypatch):
     spec = _pkce_spec("REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID")
     monkeypatch.setattr(mr, "load_catalog", lambda: _Catalog([spec]))
+    # Model a fresh downloader even when this test host has a publisher client.
+    monkeypatch.setattr(
+        "jarvis.marketplace.connect_helpers.resolve_pkce_client",
+        lambda _pid, cid, csec: (cid, csec),
+    )
     with pytest.raises(HTTPException) as exc_info:
         await mr.connect_start(spec.id, BackgroundTasks())
     assert exc_info.value.status_code == 409

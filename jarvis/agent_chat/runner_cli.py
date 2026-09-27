@@ -671,8 +671,17 @@ def agy_model_args(
         # Default model: agy accepts ``--effort`` alone.
         return ["--effort", effort] if effort in _AGY_EFFORT_SUFFIXES else []
     row = by_id.get(model)
+    if row is None or not row.get("efforts"):
+        # The installed CLI can know a newer Gemini base model than our cached
+        # catalog. Its base id still requires --effort, even when discovery
+        # failed or returned a bare id without suffixed variants.
+        if model.startswith("gemini-") and not model.endswith(
+            tuple(f"-{level}" for level in _AGY_EFFORT_SUFFIXES)
+        ):
+            level = effort if effort in _AGY_EFFORT_SUFFIXES else "high"
+            return ["--model", model, "--effort", level]
     if row is None:
-        # A suffixed or unknown id: pass it through untouched.
+        # A suffixed or unknown non-Gemini id: pass it through untouched.
         return ["--model", model]
     ladder = list(row.get("efforts") or [])
     if not ladder:
@@ -760,11 +769,13 @@ _CODEX_CATALOG = CatalogCache()
 
 
 def read_codex_models(*, required_model: str = "") -> list[dict[str, Any]] | None:
-    """Ask the installed CLI, never trust another client's models_cache.json."""
+    """Ask the installed CLI, never trust another client's models_cache.json.
+
+    Config-isolation flags belong to ``codex exec`` and are not accepted by
+    ``codex app-server``. Discovery only reads model/list; it starts no turn.
+    """
     env = _account_env("codex")
     argv = codex_argv_prefix()
-    if _CATALOG_IGNORE_CONFIG.get():
-        argv = [*argv, "--ignore-user-config", "--ignore-rules"]
     cwd = _catalog_cwd()
     rows = _CODEX_CATALOG.read(
         catalog_key(argv, env, cwd),

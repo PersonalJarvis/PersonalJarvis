@@ -107,13 +107,12 @@ it("navigates back through the window caption instead of a sections toggle", () 
   expect(screen.getByTestId("mode-switch")).toBeTruthy();
 });
 
-it("requests fullscreen for Map and leaves it on Escape", async () => {
+it("leaves Map on Escape without requesting native fullscreen in a browser", async () => {
   render(<SocietyView />);
   fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
   await screen.findByTestId("map");
-  expect(setMapFullscreen).toHaveBeenLastCalledWith(true);
+  expect(setMapFullscreen).not.toHaveBeenCalledWith(true);
   fireEvent.keyDown(document, { key: "Escape" });
-  expect(setMapFullscreen).toHaveBeenLastCalledWith(false);
   expect(screen.queryByTestId("map")).toBeNull();
 });
 
