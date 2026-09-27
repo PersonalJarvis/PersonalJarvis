@@ -220,7 +220,7 @@ class SocietyRuntime:
             self._context_start_task = task
         try:
             return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_s)
-        except TimeoutError:
+        except TimeoutError:  # A bounded wait reports that the task is still running.
             return False
 
     async def _start_for_context(self) -> bool:
@@ -823,7 +823,7 @@ class SocietyRuntime:
                         status = "blocked"
                         error = str(payload.get("error") or payload.get("status") or "")
                     break
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # Session cancellation is normal shutdown.
             return
         finally:
             svc.unsubscribe(session_id, queue)

@@ -199,7 +199,7 @@ def _windows_default_browser_exe() -> str | None:
     """
     try:
         import winreg
-    except ImportError:
+    except ImportError:  # Registry integration is optional outside Windows.
         return None
     try:
         with winreg.OpenKey(
@@ -212,7 +212,7 @@ def _windows_default_browser_exe() -> str | None:
             winreg.HKEY_CLASSES_ROOT, rf"{progid}\shell\open\command"
         ) as key:
             command, _ = winreg.QueryValueEx(key, "")  # "" = the (Default) value
-    except OSError:
+    except OSError:  # An absent registry association leaves no executable to open.
         return None
     exe = _parse_exe_from_shell_command(command)
     if exe and exe.lower().endswith(".exe") and Path(exe).exists():
@@ -572,7 +572,7 @@ def _inside(root: Path, candidate: Path) -> bool:
     try:
         resolved_root = root.resolve()
         resolved = candidate.resolve()
-    except OSError:
+    except OSError:  # Unresolvable candidates fail the containment check closed.
         return False
     return resolved == resolved_root or resolved_root in resolved.parents
 
@@ -617,7 +617,7 @@ def _existing_absolute(native: str) -> Path | None:
         return None
     try:
         target = path.resolve()
-    except OSError:
+    except OSError:  # An unresolvable target is not an openable local path.
         return None
     if target.exists() and (target.is_file() or target.is_dir()):
         return target

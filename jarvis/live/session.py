@@ -800,7 +800,7 @@ class LiveVoiceSession:
                     result = await self._tools.execute(
                         f"{self._wire_epoch}:{item['call_id']}", item["name"], arguments, revision
                     )
-                except (ValueError, TypeError):
+                except (ValueError, TypeError):  # The tool receives an invalid-arguments result.
                     result = {"success": False, "error": "Invalid function arguments."}
                 if self._closing:
                     return
