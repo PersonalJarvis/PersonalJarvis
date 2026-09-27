@@ -284,6 +284,30 @@ describe("AgenticTerminal layout", () => {
     expect(screen.queryByTestId("pane-scroll-history-Dana")).toBeNull();
   });
 
+  it("opts into compact chrome without recreating the terminal or exposing recap hover controls", () => {
+    const onFocus = vi.fn();
+    const props = { name: "Dana", displayName: "Codex", agent: "codex", appearance: "dark" as const, fontSize: 13, recap: "Detailed work summary", onFocus };
+    const { rerender } = render(<AgenticTerminal {...props} />);
+    const host = screen.getByTestId("agentic-terminal-host-Dana");
+    const instances = terminalHarness.instances.length;
+    expect(screen.getByTestId("pane-header-Dana")).toBeTruthy();
+    rerender(<AgenticTerminal {...props} headerMode="compact" />);
+    expect(screen.queryByTestId("pane-header-Dana")).toBeNull();
+    expect(screen.getByTestId("workspace-terminal-header-Dana")).toBeTruthy();
+    expect(screen.queryByTestId("pane-recap-Dana")).toBeNull();
+    expect(screen.queryByTestId("pane-header-tip-Dana")).toBeNull();
+    expect(screen.getByTestId("agentic-terminal-host-Dana")).toBe(host);
+    expect(terminalHarness.instances.length).toBe(instances);
+    expect(screen.getByTestId("agentic-pane-Dana").className).toContain("rounded-2xl");
+    const title = screen.getByTestId("pane-move-Dana");
+    title.focus();
+    const focuses = terminalHarness.focus.mock.calls.length;
+    fireEvent.click(title);
+    expect(onFocus).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(title);
+    expect(terminalHarness.focus.mock.calls.length).toBe(focuses);
+  });
+
   it("keeps the wheel on terminal history even while the CLI tracks the mouse", () => {
     render(
       <AgenticTerminal

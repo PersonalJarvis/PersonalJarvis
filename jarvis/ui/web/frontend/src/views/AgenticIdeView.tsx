@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FolderPlus, Loader2, Mic, Moon, MoreHorizontal, Plus, Sun, X, ZoomIn, ZoomOut } from "lucide-react";
+import { FolderPlus, Loader2, X } from "lucide-react";
 import { FolderPicker } from "@/components/agentic/FolderPicker";
 import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/components/agentic/VoiceBubble";
 import { WorkspaceTerminalGrid } from "@/components/agentic/WorkspaceTerminalGrid";
 import { WorkspaceAgentSetup } from "@/components/agentic/WorkspaceAgentSetup";
+import { WorkspaceToolbar } from "@/components/agentic/WorkspaceToolbar";
+import { AgentMark } from "@/components/agentic/AgentMark";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
@@ -16,6 +18,14 @@ import {
 
 const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
 const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
+const COLUMNS_KEY = "jarvis.agenticIde.columns.v1";
+
+function rememberedColumns(): number {
+  try {
+    const value = Number(localStorage.getItem(COLUMNS_KEY));
+    return Number.isInteger(value) && value >= 0 && value <= 4 ? value : 0;
+  } catch { return 0; /* Display preferences are optional when storage is blocked. */ }
+}
 
 export interface AgenticIdeViewProps { onScreen?: boolean }
 
@@ -24,6 +34,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const pushToast = useEventStore((state) => state.pushToast);
   const action = useIdeProjectsStore((state) => state.action);
   const publishProjects = useIdeProjectsStore((state) => state.publish);
+  const refreshRequest = useIdeProjectsStore((state) => state.refreshRequest);
   const setWorkspace = useIdeChatStore((state) => state.setWorkspace);
   const setWorkspaces = useIdeChatStore((state) => state.setWorkspaces);
   const [state, setState] = useState<IdeState | null>(null);
@@ -36,8 +47,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceAgents, setWorkspaceAgents] = useState<string[]>([]);
   const [selected, setSelected] = useState("");
-  const [agentMenu, setAgentMenu] = useState(false);
-  const [workspaceMenu, setWorkspaceMenu] = useState(false);
+  const [agentPicker, setAgentPicker] = useState<{ id: string; name: string } | null>(null);
+  const [columns, setColumns] = useState(rememberedColumns);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -51,10 +62,11 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const refreshEpoch = useRef(0);
   const activationRunning = useRef(false);
   const pendingActivation = useRef<string | null>(null);
+  const gridMutations = useRef(0);
   const session = state?.session ?? null;
   const activeProject = projects.find((project) => project.id === session?.project_id || project.workspaces.some((workspace) => workspace.id === session?.id));
   const installed = agents.filter((agent) => agent.installed && agent.kind !== "shell" && agent.accepts_prompts !== false);
-  const dialogOpen = projectDialog || workspaceProject !== null || renameOpen;
+  const dialogOpen = projectDialog || workspaceProject !== null || renameOpen || agentPicker !== null;
 
   useEffect(() => {
     if (!dialogOpen) return;
@@ -67,7 +79,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       if (event.key === "Escape") {
         event.preventDefault();
         if (workspaceProject && busy) { event.stopPropagation(); return; }
-        setProjectDialog(false); setWorkspaceProject(null); setRenameOpen(false);
+        setProjectDialog(false); setWorkspaceProject(null); setRenameOpen(false); setAgentPicker(null);
         return;
       }
       if (event.key !== "Tab") return;
@@ -79,10 +91,10 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => { document.removeEventListener("keydown", onKeyDown, true); previous?.focus(); };
-  }, [dialogOpen, projectDialog, workspaceProject, renameOpen, busy]);
+  }, [dialogOpen, projectDialog, workspaceProject, renameOpen, agentPicker, busy]);
 
   const refresh = useCallback(async (allowDuringActivation = false) => {
-    if (activationRunning.current && !allowDuringActivation) return;
+    if ((activationRunning.current || gridMutations.current > 0) && !allowDuringActivation) return;
     const epoch = ++refreshEpoch.current;
     let [nextState, listing] = await Promise.all([fetchIdeState(), fetchIdeProjects()]);
     // A workspace switch can fall between the two reads. Never publish a tree
@@ -90,11 +102,25 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     if (nextState.active_id !== listing.active_workspace_id) {
       [nextState, listing] = await Promise.all([fetchIdeState(), fetchIdeProjects()]);
     }
-    if (epoch !== refreshEpoch.current || pendingActivation.current || (activationRunning.current && !allowDuringActivation) || nextState.active_id !== listing.active_workspace_id) return;
+    if (epoch !== refreshEpoch.current || pendingActivation.current || ((activationRunning.current || gridMutations.current > 0) && !allowDuringActivation) || nextState.active_id !== listing.active_workspace_id) return;
     setState(nextState);
     setProjects(listing.projects);
     publishProjects(listing.projects, listing.active_workspace_id);
   }, [publishProjects]);
+
+  useEffect(() => {
+    if (refreshRequest) void refresh().catch((error) => pushToast("error", (error as Error).message));
+  }, [refreshRequest, refresh, pushToast]);
+
+  const beginGridMutation = useCallback(() => {
+    gridMutations.current += 1;
+    ++refreshEpoch.current;
+  }, []);
+  const endGridMutation = useCallback(() => {
+    gridMutations.current = Math.max(0, gridMutations.current - 1);
+    ++refreshEpoch.current;
+    if (gridMutations.current === 0) void refresh().catch((error) => pushToast("error", (error as Error).message));
+  }, [refresh, pushToast]);
 
   useEffect(() => {
     void refresh().catch((error) => pushToast("error", (error as Error).message));
@@ -126,13 +152,16 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
 
   const activateFromTree = useCallback(async (workspaceId: string) => {
     pendingActivation.current = workspaceId;
+    useIdeProjectsStore.getState().setPendingWorkspaceId(workspaceId);
     if (activationRunning.current) return;
     activationRunning.current = true;
     ++refreshEpoch.current;
     setBusy(true);
+    let lastAttempt = workspaceId;
     try {
       while (pendingActivation.current) {
         const targetId = pendingActivation.current;
+        lastAttempt = targetId;
         pendingActivation.current = null;
         const target = useIdeProjectsStore.getState().projects.flatMap((project) => project.workspaces).find((workspace) => workspace.id === targetId);
         try {
@@ -144,11 +173,19 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
           await refresh(true);
         } catch (error) {
           pushToast("error", (error as Error).message);
+          // A superseded activation may already have changed the backend.
+          // Reconcile before clearing the pending marker; refresh's guards
+          // discard this snapshot if another workspace click arrives meanwhile.
+          if (!pendingActivation.current) {
+            try { await refresh(true); }
+            catch (refreshError) { pushToast("error", (refreshError as Error).message); }
+          }
         }
       }
     } finally {
       activationRunning.current = false;
       setBusy(false);
+      if (useIdeProjectsStore.getState().pendingWorkspaceId === lastAttempt) useIdeProjectsStore.getState().setPendingWorkspaceId(null);
     }
   }, [pushToast, refresh]);
 
@@ -184,20 +221,24 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     setWorkspaceProject(null);
   });
 
-  const addAgent = (agentName?: string) => void run(async () => {
-    if (!session) return;
-    if (session.terminals.length >= 8) throw new Error("This workspace already has eight sessions.");
-    const next = await addTerminal({ workspace_id: session.id, agent: agentName ?? installed[0]?.name, direction: "down" });
-    setState((current) => current ? { ...current, session: next } : current);
+  const addAgent = (agentName: string, workspaceId: string) => void run(async () => {
+    const next = await addTerminal({ workspace_id: workspaceId, agent: agentName, direction: "down" });
+    setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current);
   });
 
   const closeAgent = (terminal: TerminalState) => void run(async () => {
     if (!session || !window.confirm(`Close ${terminal.name}? Its coding agent will stop.`)) return;
-    await closeTerminal(terminal.name, session.id);
+    await closeTerminal(terminal.history_id ? `pane:${terminal.history_id}` : terminal.name, session.id);
   });
 
   const saveFont = (size: number) => { const next = Math.max(9, Math.min(22, size)); setFontSize(next); localStorage.setItem(FONT_KEY, String(next)); };
   const saveAppearance = (next: "light" | "dark" | null) => { setAppearance(next); if (next) localStorage.setItem(APPEARANCE_KEY, next); else localStorage.removeItem(APPEARANCE_KEY); };
+  const saveColumns = (next: number) => {
+    setColumns(next);
+    try { localStorage.setItem(COLUMNS_KEY, String(next)); }
+    catch { /* Keep the current display choice if storage is unavailable. */ }
+  };
+  const openAgentPicker = () => { if (session) setAgentPicker({ id: session.id, name: session.name ?? session.project.name }); };
   const closeVoice = () => { setVoiceOpen(false); storeVoiceBubbleOpen(false); };
   const jumpToPane = (workspaceId: string, pane: string) => void run(async () => {
     if (workspaceId !== session?.id) setState(await activateWorkspace(workspaceId));
@@ -211,43 +252,22 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const stopWorkspace = () => void run(async () => {
     if (!session || !window.confirm(`Close ${session.name ?? session.project.name}? Its coding agents will stop.`)) return;
     setState(await closeWorkspace(session.id));
-    setWorkspaceMenu(false);
   });
 
   if (state === null) return <div data-testid="agentic-ide-loading" className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading projects…</div>;
 
   return <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="igentic-ide">
-    <header className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border/70 px-4">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <span className="truncate">{activeProject?.name ?? "Projects"}</span>
-          {session && <><span className="text-muted-foreground">/</span><span className="truncate text-muted-foreground">{session.name ?? session.project.name}</span></>}
-        </div>
-        {session && <div className="truncate text-[11px] text-muted-foreground" title={session.folder}>{session.folder}</div>}
-      </div>
-      {session && <>
-        <span className="hidden text-xs tabular-nums text-muted-foreground sm:inline">{session.terminals.length} / 8 agents</span>
-        <div className="relative"><button type="button" aria-label="Add coding agent" title="Add coding agent" aria-expanded={agentMenu} disabled={busy || session.terminals.length >= 8 || installed.length === 0} onClick={() => setAgentMenu((value) => !value)} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"><Plus className="h-4 w-4" /></button>
-          {agentMenu && <div className="absolute right-0 top-full z-30 mt-1 min-w-40 rounded-lg border border-border bg-popover p-1 shadow-lg">{installed.map((agent) => <button key={agent.name} type="button" onClick={() => { setAgentMenu(false); addAgent(agent.name); }} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-accent">{agent.display_name}</button>)}</div>}
-        </div>
-        <div className="mx-1 h-4 w-px bg-border" />
-        <button type="button" aria-label="Decrease terminal text size" onClick={() => saveFont(fontSize - 1)} className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"><ZoomOut className="h-4 w-4" /></button>
-        <span className="w-5 text-center text-xs tabular-nums text-muted-foreground">{fontSize}</span>
-        <button type="button" aria-label="Increase terminal text size" onClick={() => saveFont(fontSize + 1)} className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"><ZoomIn className="h-4 w-4" /></button>
-        <button type="button" aria-label="Toggle terminal appearance" title="Toggle terminal light and dark appearance" onClick={() => saveAppearance((appearance ?? "dark") === "dark" ? "light" : "dark")} className="ml-1 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground">{appearance === "light" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}</button>
-        <div className="relative"><button type="button" aria-label="Workspace actions" aria-expanded={workspaceMenu} onClick={() => setWorkspaceMenu((value) => !value)} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><MoreHorizontal className="h-4 w-4" /></button>
-          {workspaceMenu && <div className="absolute right-0 top-full z-30 mt-1 min-w-40 rounded-lg border border-border bg-popover p-1 shadow-lg">
-            <button type="button" onClick={() => { setWorkspaceMenu(false); setRenameValue(session.name ?? session.project.name); setRenameOpen(true); }} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-accent">Rename workspace</button>
-            <button type="button" onClick={stopWorkspace} className="block w-full rounded px-2 py-1.5 text-left text-xs text-destructive hover:bg-accent">Close workspace</button>
-          </div>}
-        </div>
-      </>}
-      <button type="button" aria-label="Jarvis Live" title="Jarvis Live" onClick={() => { const next = !voiceOpen; setVoiceOpen(next); storeVoiceBubbleOpen(next); }} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Mic className="h-4 w-4" /></button>
-    </header>
+    <WorkspaceToolbar project={activeProject?.name} workspace={session?.name ?? session?.project.name}
+      folder={session?.folder} count={session?.terminals.length ?? 0} busy={busy} canAdd={installed.length > 0}
+      onAdd={openAgentPicker} onRename={() => { setRenameValue(session?.name ?? session?.project.name ?? ""); setRenameOpen(true); }}
+      onClose={stopWorkspace} fontSize={fontSize} onFontSize={saveFont} appearance={appearance} onAppearance={saveAppearance}
+      columns={columns} onColumns={saveColumns} voiceOpen={voiceOpen}
+      onVoice={() => { const next = !voiceOpen; setVoiceOpen(next); storeVoiceBubbleOpen(next); }} />
 
     <main className="min-h-0 flex-1">
       {session ? <WorkspaceTerminalGrid key={session.id} session={session} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
-        onAdd={() => setAgentMenu(true)} onClose={closeAgent} onSelect={setSelected} selected={selected} fontSize={fontSize} appearance={appearance} />
+        onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} fontSize={fontSize} appearance={appearance} columnPreference={columns}
+        onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} />
       : <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
         <FolderPlus className="h-8 w-8 text-muted-foreground/70" />
         <h1 className="text-lg font-medium">{projects.some((project) => !project.scratch && !project.archived) ? "Choose a workspace" : "Connect a project"}</h1>
@@ -257,6 +277,25 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     </main>
 
     <VoiceBubble open={voiceOpen} onClose={closeVoice} onScreen={onScreen} onJumpToPane={jumpToPane} promptTarget={selected} />
+
+    {agentPicker && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm"
+      role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAgentPicker(null); }}>
+      <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="Add coding agent"
+        className="w-full max-w-lg rounded-2xl border border-border bg-card p-5 shadow-2xl">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div><h2 className="text-base font-semibold">Add coding agent</h2><p className="mt-1 text-xs text-muted-foreground">{agentPicker.name}</p></div>
+          <button type="button" aria-label="Close" onClick={() => setAgentPicker(null)} className="rounded-md p-1.5 hover:bg-muted"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {installed.map((agent) => <button key={agent.name} type="button" disabled={busy}
+            onClick={() => { const owner = agentPicker.id; setAgentPicker(null); addAgent(agent.name, owner); }}
+            className="flex min-h-12 items-center gap-3 rounded-lg border border-border px-3 py-2 text-left text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <AgentMark agent={agent.name} label={agent.display_name} logoUrl={agent.logo_url} variant="plain" />{agent.display_name}
+          </button>)}
+        </div>
+        {installed.length === 0 && <p className="text-sm text-muted-foreground">Connect a coding agent in CLIs to continue.</p>}
+      </section>
+    </div>}
 
     {projectDialog && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setProjectDialog(false); }}>
       <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="Connect project" className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl">

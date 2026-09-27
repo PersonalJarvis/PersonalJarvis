@@ -14,7 +14,7 @@ vi.mock("@/lib/chatLibraryApi", () => ({ openProject }));
 vi.mock("@/store/events", () => ({ useEventStore: (select: (value: unknown) => unknown) => select({ pushToast: vi.fn() }) }));
 vi.mock("@/components/agentic/FolderPicker", () => ({ FolderPicker: ({ onSelect }: { onSelect: (path: string) => void }) => <button onClick={() => onSelect("/code/app")}>Pick folder</button> }));
 vi.mock("@/components/agentic/VoiceBubble", () => ({ VoiceBubble: () => null, storedVoiceBubbleOpen: () => false, storeVoiceBubbleOpen: vi.fn() }));
-vi.mock("@/components/agentic/WorkspaceTerminalGrid", () => ({ WorkspaceTerminalGrid: ({ session }: { session: { id: string } }) => <div data-testid="live-grid">{session.id}</div> }));
+vi.mock("@/components/agentic/WorkspaceTerminalGrid", () => ({ WorkspaceTerminalGrid: ({ session, onAdd }: { session: { id: string }; onAdd: () => void }) => <><div data-testid="live-grid">{session.id}</div><button onClick={onAdd}>Pane add</button></> }));
 
 const emptyState = { active: false, session: null, max_terminals: 8, workspaces: [], active_id: null };
 const project = { id: "p1", path: "/code/app", name: "App", color: null, pinned: false, archived: false,
@@ -26,7 +26,7 @@ beforeEach(() => {
   api.fetchIdeState.mockResolvedValue(emptyState);
   api.fetchIdeProjects.mockResolvedValue({ projects: [], active_project_id: null, active_workspace_id: null, max_terminals: 8 });
   api.fetchIdeAgents.mockResolvedValue({ terminal_available: true, max_terminals: 8, suggested_names: [], agents: [agent] });
-  useIdeProjectsStore.setState({ projects: [], activeWorkspaceId: null, action: null });
+  useIdeProjectsStore.setState({ projects: [], activeWorkspaceId: null, pendingWorkspaceId: null, refreshRequest: null, action: null });
 });
 afterEach(cleanup);
 
@@ -104,6 +104,20 @@ describe("Agentic IDE project flow", () => {
     expect(api.activateWorkspace).not.toHaveBeenCalled();
   });
 
+  it("shows add-agent choices in a dialog and pins the new session to its workspace", async () => {
+    const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "App work", created_at: 0,
+      focus_mode: false, project: { name: "App" }, terminals: [] };
+    const current = { ...emptyState, active: true, active_id: "w1", session };
+    api.fetchIdeState.mockResolvedValue(current);
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
+    api.addTerminal.mockResolvedValue(session);
+    render(<AgenticIdeView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pane add" }));
+    expect(screen.getByRole("dialog", { name: "Add coding agent" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith({ workspace_id: "w1", agent: "codex", direction: "down" }));
+  });
+
   it("exposes compact workspace rename and close actions", async () => {
     const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "App work", created_at: 0,
       focus_mode: false, project: { name: "App" }, terminals: [] };
@@ -115,7 +129,7 @@ describe("Agentic IDE project flow", () => {
     }] }], active_project_id: "p1", active_workspace_id: "w1", max_terminals: 8 });
     api.renameWorkspace.mockResolvedValue(current);
     render(<AgenticIdeView />);
-    fireEvent.click(await screen.findByRole("button", { name: "Workspace actions" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace options" }));
     fireEvent.click(screen.getByRole("button", { name: "Rename workspace" }));
     fireEvent.change(screen.getByLabelText("Workspace name"), { target: { value: "Installer" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
