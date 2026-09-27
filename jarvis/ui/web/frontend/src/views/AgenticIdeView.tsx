@@ -3,6 +3,7 @@ import { FolderPlus, Loader2, Mic, Moon, MoreHorizontal, Plus, Sun, X, ZoomIn, Z
 import { FolderPicker } from "@/components/agentic/FolderPicker";
 import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/components/agentic/VoiceBubble";
 import { WorkspaceTerminalGrid } from "@/components/agentic/WorkspaceTerminalGrid";
+import { WorkspaceAgentSetup } from "@/components/agentic/WorkspaceAgentSetup";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
@@ -65,6 +66,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
+        if (workspaceProject && busy) { event.stopPropagation(); return; }
         setProjectDialog(false); setWorkspaceProject(null); setRenameOpen(false);
         return;
       }
@@ -77,7 +79,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => { document.removeEventListener("keydown", onKeyDown, true); previous?.focus(); };
-  }, [dialogOpen, projectDialog, workspaceProject, renameOpen]);
+  }, [dialogOpen, projectDialog, workspaceProject, renameOpen, busy]);
 
   const refresh = useCallback(async (allowDuringActivation = false) => {
     if (activationRunning.current && !allowDuringActivation) return;
@@ -266,15 +268,34 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       </section>
     </div>}
 
-    {workspaceProject && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setWorkspaceProject(null); }}>
-      <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="New workspace" className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-2xl">
-        <div className="mb-4 flex items-center justify-between"><h2 className="text-base font-semibold">New workspace</h2><button type="button" aria-label="Close" onClick={() => setWorkspaceProject(null)}><X className="h-4 w-4" /></button></div>
-        <p className="mb-4 truncate text-xs text-muted-foreground" title={workspaceProject.path}>{workspaceProject.name} · {workspaceProject.path}</p>
-        <label className="block text-xs text-muted-foreground">Name (optional)<input value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} placeholder="Workspace" className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" /></label>
-        <label className="mt-3 block text-xs text-muted-foreground">Sessions<select value={workspaceAgents.length} onChange={(event) => setWorkspaceAgents((old) => Array.from({ length: Number(event.target.value) }, (_, index) => old[index] ?? installed[0]?.name ?? ""))} className="mt-1 w-full rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground">{[1, 2, 3, 4, 5, 6, 7, 8].map((count) => <option value={count} key={count}>{count}</option>)}</select></label>
-        <div className="mt-3 max-h-48 space-y-2 overflow-auto">{workspaceAgents.map((agent, index) => <label key={index} className="flex items-center gap-3 text-xs text-muted-foreground"><span className="w-16 shrink-0">Agent {index + 1}</span><select value={agent} onChange={(event) => setWorkspaceAgents((old) => old.map((value, at) => at === index ? event.target.value : value))} className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground">{installed.map((choice) => <option value={choice.name} key={choice.name}>{choice.display_name}</option>)}</select></label>)}</div>
-        {installed.length === 0 && <p className="mt-3 text-xs text-destructive">Install a coding agent from CLIs before creating a workspace.</p>}
-        <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setWorkspaceProject(null)} className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent">Cancel</button><button type="button" disabled={busy || installed.length === 0} onClick={createWorkspace} className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50">Create workspace</button></div>
+    {workspaceProject && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) setWorkspaceProject(null); }}>
+      <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="New workspace" aria-busy={busy}
+        className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+        <header className="shrink-0 px-6 pb-5 pt-6 sm:px-8 sm:pt-7">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-xl font-semibold tracking-tight">New workspace</h2>
+            <button type="button" aria-label="Close" disabled={busy} onClick={() => setWorkspaceProject(null)}
+              className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><X className="h-5 w-5" /></button>
+          </div>
+          <p className="mt-1 truncate text-sm text-muted-foreground" title={workspaceProject.path}>
+            <span className="text-foreground">{workspaceProject.name}</span><span className="mx-2 opacity-50">/</span>{workspaceProject.path}
+          </p>
+        </header>
+        <div className="min-h-0 space-y-6 overflow-y-auto px-6 pb-6 sm:px-8">
+          <label className="block text-xs font-medium text-muted-foreground">Name (optional)
+            <input value={workspaceName} disabled={busy} onChange={(event) => setWorkspaceName(event.target.value)}
+              placeholder="Workspace" className="mt-2 h-11 w-full rounded-lg border border-input bg-background/60 px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring/30" />
+          </label>
+          <WorkspaceAgentSetup agents={installed} sessions={workspaceAgents} onChange={setWorkspaceAgents} disabled={busy} />
+        </div>
+        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-6 py-4 sm:px-8">
+          <span className="text-xs text-muted-foreground" aria-live="polite">{workspaceAgents.length} {workspaceAgents.length === 1 ? "session" : "sessions"} · {new Set(workspaceAgents.filter(Boolean)).size} {new Set(workspaceAgents.filter(Boolean)).size === 1 ? "agent" : "agents"}</span>
+          <div className="flex gap-2">
+            <button type="button" disabled={busy} onClick={() => setWorkspaceProject(null)} className="rounded-lg px-4 py-2.5 text-sm text-muted-foreground hover:bg-muted disabled:opacity-50">Cancel</button>
+            <button type="button" disabled={busy || workspaceAgents.length === 0 || workspaceAgents.some((name) => !installed.some((agent) => agent.name === name))}
+              onClick={createWorkspace} className="rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50">{busy ? "Starting…" : "Create workspace"}</button>
+          </div>
+        </footer>
       </section>
     </div>}
     {renameOpen && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setRenameOpen(false); }}>
