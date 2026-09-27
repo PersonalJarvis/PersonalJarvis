@@ -26,7 +26,9 @@ afterEach(cleanup);
 it("keeps a manual collapse across polling and remount", () => {
   const { unmount } = render(<IdeProjectTree />);
   const selected = screen.getByTestId("ide-workspace-p1-w1");
-  expect(selected.className).toContain("bg-muted");
+  expect(selected.parentElement?.className).toContain("bg-muted");
+  expect(selected.className).toContain("min-h-10");
+  expect(screen.getByTestId("ide-project-p1").firstElementChild?.className).toContain("min-h-11");
   fireEvent.click(screen.getByRole("button", { name: "Collapse App" }));
   expect(screen.queryByTestId("ide-workspace-p1-w1")).toBeNull();
   act(() => useIdeProjectsStore.getState().publish([{ ...project() }], "p1-w1"));
@@ -81,6 +83,17 @@ it("marks a queued workspace before the active workspace changes", () => {
   const row = screen.getByTestId("ide-workspace-p1-w1");
   expect(row.getAttribute("aria-busy")).toBe("true");
   expect(row.textContent).toContain("Switching workspace");
+});
+
+it("offers workspace options only on the active row and dispatches Jarvis Live", () => {
+  const second = { ...project("p2"), workspaces: [{ ...project("p2").workspaces[0], name: "Other" }] };
+  useIdeProjectsStore.setState({ projects: [project(), second] });
+  render(<IdeProjectTree />);
+  fireEvent.click(screen.getByRole("button", { name: "Workspace options for Work" }));
+  expect(useIdeProjectsStore.getState().action).toMatchObject({ kind: "workspace-options", workspaceId: "p1-w1" });
+  expect(screen.queryByRole("button", { name: "Workspace options for Other" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Jarvis Live" }));
+  expect(useIdeProjectsStore.getState().action?.kind).toBe("toggle-voice");
 });
 
 it("pins and renames via the project API, then requests a guarded refresh", async () => {

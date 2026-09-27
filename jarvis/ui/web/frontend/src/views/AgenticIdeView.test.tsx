@@ -2,16 +2,17 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgenticIdeView } from "./AgenticIdeView";
 import { useIdeProjectsStore } from "@/store/ideProjects";
+import { balancedLayout } from "@/components/agentic/workspaceDocking";
 
 const api = vi.hoisted(() => ({
   fetchIdeState: vi.fn(), fetchIdeProjects: vi.fn(), fetchIdeAgents: vi.fn(),
   startIdeSession: vi.fn(), activateWorkspace: vi.fn(), restoreIdeWorkspace: vi.fn(),
-  addTerminal: vi.fn(), closeTerminal: vi.fn(), closeWorkspace: vi.fn(), renameWorkspace: vi.fn(),
+  addTerminal: vi.fn(), closeTerminal: vi.fn(), closeWorkspace: vi.fn(), renameWorkspace: vi.fn(), reorderIdeTerminals: vi.fn(), pushToast: vi.fn(),
 }));
 const openProject = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/agenticIdeApi", () => api);
 vi.mock("@/lib/chatLibraryApi", () => ({ openProject }));
-vi.mock("@/store/events", () => ({ useEventStore: (select: (value: unknown) => unknown) => select({ pushToast: vi.fn() }) }));
+vi.mock("@/store/events", () => ({ useEventStore: (select: (value: unknown) => unknown) => select({ pushToast: api.pushToast }) }));
 vi.mock("@/components/agentic/FolderPicker", () => ({ FolderPicker: ({ onSelect }: { onSelect: (path: string) => void }) => <button onClick={() => onSelect("/code/app")}>Pick folder</button> }));
 vi.mock("@/components/agentic/VoiceBubble", () => ({ VoiceBubble: () => null, storedVoiceBubbleOpen: () => false, storeVoiceBubbleOpen: vi.fn() }));
 vi.mock("@/components/agentic/WorkspaceTerminalGrid", () => ({ WorkspaceTerminalGrid: ({ session, onAdd }: { session: { id: string }; onAdd: () => void }) => <><div data-testid="live-grid">{session.id}</div><button onClick={onAdd}>Pane add</button></> }));
@@ -129,12 +130,70 @@ describe("Agentic IDE project flow", () => {
     }] }], active_project_id: "p1", active_workspace_id: "w1", max_terminals: 8 });
     api.renameWorkspace.mockResolvedValue(current);
     render(<AgenticIdeView />);
-    fireEvent.click(await screen.findByRole("button", { name: "Workspace options" }));
+    await screen.findByTestId("live-grid");
+    expect(screen.queryByTestId("workspace-toolbar")).toBeNull();
+    act(() => useIdeProjectsStore.getState().openWorkspaceOptions("w1"));
     fireEvent.click(screen.getByRole("button", { name: "Rename workspace" }));
     fireEvent.change(screen.getByLabelText("Workspace name"), { target: { value: "Installer" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(api.renameWorkspace).toHaveBeenCalledWith("w1", "Installer"));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Rename workspace" })).toBeNull());
+  });
+
+  it("keeps six incrementally added agents in a balanced 3 by 2 layout", async () => {
+    const terminals = Array.from({ length: 6 }, (_, index) => ({ key: `t${index}`, history_id: `id${index}`, name: `T${index}` }));
+    const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "App work", created_at: 0,
+      focus_mode: false, project: { name: "App" }, terminals: terminals.slice(0, 5), layout: balancedLayout(terminals.slice(0, 5).map((terminal) => terminal.key)) };
+    const current = { ...emptyState, active: true, active_id: "w1", session };
+    api.fetchIdeState.mockResolvedValue(current);
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
+    api.addTerminal.mockResolvedValue({ ...session, terminals, layout: { direction: "row", children: [session.layout, { pane: "t5" }], weights: [3, 1] } });
+    api.reorderIdeTerminals.mockResolvedValue({ ...current, session: { ...session, terminals, layout: balancedLayout(terminals.map((terminal) => terminal.key)) } });
+    render(<AgenticIdeView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pane add" }));
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    await waitFor(() => expect(api.reorderIdeTerminals).toHaveBeenCalledWith("w1", terminals.map((terminal) => terminal.history_id)));
+  });
+
+  it("persists a balanced correction for an oversized restored layout", async () => {
+    const terminals = Array.from({ length: 6 }, (_, index) => ({ key: `t${index}`, history_id: `id${index}`, name: `T${index}` }));
+    const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "Restored", created_at: 0,
+      focus_mode: false, project: { name: "App" }, terminals, layout: { direction: "row", children: terminals.map((terminal) => ({ pane: terminal.key })), weights: terminals.map(() => 1) } };
+    const current = { ...emptyState, active: true, active_id: "w1", session };
+    api.fetchIdeState.mockResolvedValue(current);
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
+    api.reorderIdeTerminals.mockResolvedValue({ ...current, session: { ...session, layout: balancedLayout(terminals.map((terminal) => terminal.key)) } });
+    render(<AgenticIdeView onScreen={false} />);
+    await screen.findByTestId("live-grid");
+    expect(api.reorderIdeTerminals).toHaveBeenCalledOnce();
+    expect(api.reorderIdeTerminals).toHaveBeenCalledWith("w1", terminals.map((terminal) => terminal.history_id));
+  });
+
+  it("never rebalances a different workspace returned by a delayed add", async () => {
+    const terminals = ["a", "b"].map((key) => ({ key, history_id: key, name: key }));
+    const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "A", created_at: 0,
+      focus_mode: false, project: { name: "App" }, terminals, layout: balancedLayout(["a", "b"]) };
+    const current = { ...emptyState, active: true, active_id: "w1", session };
+    const otherSession = { ...session, id: "w2", name: "B", layout: { direction: "column", children: [{ pane: "a" }, { pane: "b" }], weights: [1, 1] } };
+    const other = { ...current, active_id: "w2", session: otherSession };
+    api.fetchIdeState.mockResolvedValue(current);
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
+    let finishAdd!: (value: unknown) => void;
+    api.addTerminal.mockImplementation(() => new Promise((resolve) => { finishAdd = resolve; }));
+    api.activateWorkspace.mockImplementation(async () => {
+      api.fetchIdeState.mockResolvedValue(other);
+      api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w2" });
+      return other;
+    });
+    render(<AgenticIdeView onScreen={false} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pane add" }));
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    await waitFor(() => expect(api.addTerminal).toHaveBeenCalled());
+    act(() => useIdeProjectsStore.getState().activateWorkspace("w2"));
+    await waitFor(() => expect(screen.getByTestId("live-grid").textContent).toBe("w2"));
+    await act(async () => finishAdd(otherSession));
+    expect(api.reorderIdeTerminals).not.toHaveBeenCalled();
+    expect(screen.getByTestId("live-grid").textContent).toBe("w2");
   });
 
 });

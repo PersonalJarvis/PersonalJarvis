@@ -12,6 +12,27 @@ import { NAV_GROUPS, NAV_FOOTER_ITEMS, SETTINGS_HUB_IDS } from "@/components/lay
 import { isSectionId, useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { useIdeChatStore } from "@/store/ideChat";
+import { useIdeProjectsStore } from "@/store/ideProjects";
+
+test("IDE rail keeps workspace options and Jarvis Live reachable", () => {
+  act(() => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+    useIdeProjectsStore.setState({ activeWorkspaceId: null, action: null });
+  });
+  renderSidebar(SIDEBAR_RAIL_WIDTH);
+  expect(screen.queryByTestId("ide-project-tree")).toBeNull();
+  const options = screen.getByRole("button", { name: "Workspace options" }) as HTMLButtonElement;
+  expect(options.disabled).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Jarvis Live" }));
+  expect(useIdeProjectsStore.getState().action?.kind).toBe("toggle-voice");
+  act(() => useIdeProjectsStore.setState({ activeWorkspaceId: "w1" }));
+  expect(options.disabled).toBe(false);
+  fireEvent.click(options);
+  expect(useIdeProjectsStore.getState().action).toMatchObject({ kind: "workspace-options", workspaceId: "w1" });
+  fireEvent.click(screen.getByTestId("ide-back-to-jarvis"));
+  expect(useEventStore.getState().activeSection).toBe("chats");
+  cleanup();
+});
 
 test("IDE sidebar puts Projects first and returns to the normal chat navigation", () => {
   act(() => useEventStore.setState({ activeSection: "agentic-ide" }));

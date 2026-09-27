@@ -4,7 +4,8 @@ import { FolderPicker } from "@/components/agentic/FolderPicker";
 import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/components/agentic/VoiceBubble";
 import { WorkspaceTerminalGrid } from "@/components/agentic/WorkspaceTerminalGrid";
 import { WorkspaceAgentSetup } from "@/components/agentic/WorkspaceAgentSetup";
-import { WorkspaceToolbar } from "@/components/agentic/WorkspaceToolbar";
+import { WorkspaceOptionsDialog } from "@/components/agentic/WorkspaceOptionsDialog";
+import { fitsWorkspace, isBalancedWorkspace } from "@/components/agentic/workspaceDocking";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
@@ -12,20 +13,12 @@ import { useIdeProjectsStore } from "@/store/ideProjects";
 import { openProject } from "@/lib/chatLibraryApi";
 import {
   activateWorkspace, addTerminal, closeTerminal, closeWorkspace, fetchIdeAgents, fetchIdeProjects, fetchIdeState, renameWorkspace,
-  restoreIdeWorkspace, startIdeSession,
+  reorderIdeTerminals, restoreIdeWorkspace, startIdeSession,
   type AgentStatus, type IdeProject, type IdeState, type TerminalState,
 } from "@/lib/agenticIdeApi";
 
 const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
 const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
-const COLUMNS_KEY = "jarvis.agenticIde.columns.v1";
-
-function rememberedColumns(): number {
-  try {
-    const value = Number(localStorage.getItem(COLUMNS_KEY));
-    return Number.isInteger(value) && value >= 0 && value <= 4 ? value : 0;
-  } catch { return 0; /* Display preferences are optional when storage is blocked. */ }
-}
 
 export interface AgenticIdeViewProps { onScreen?: boolean }
 
@@ -48,7 +41,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [workspaceAgents, setWorkspaceAgents] = useState<string[]>([]);
   const [selected, setSelected] = useState("");
   const [agentPicker, setAgentPicker] = useState<{ id: string; name: string } | null>(null);
-  const [columns, setColumns] = useState(rememberedColumns);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -63,10 +56,14 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const activationRunning = useRef(false);
   const pendingActivation = useRef<string | null>(null);
   const gridMutations = useRef(0);
+  const normalizingLayout = useRef(false);
   const session = state?.session ?? null;
-  const activeProject = projects.find((project) => project.id === session?.project_id || project.workspaces.some((workspace) => workspace.id === session?.id));
   const installed = agents.filter((agent) => agent.installed && agent.kind !== "shell" && agent.accepts_prompts !== false);
   const dialogOpen = projectDialog || workspaceProject !== null || renameOpen || agentPicker !== null;
+
+  useEffect(() => {
+    setOptionsOpen(false);
+  }, [session?.id]);
 
   useEffect(() => {
     if (!dialogOpen) return;
@@ -94,7 +91,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   }, [dialogOpen, projectDialog, workspaceProject, renameOpen, agentPicker, busy]);
 
   const refresh = useCallback(async (allowDuringActivation = false) => {
-    if ((activationRunning.current || gridMutations.current > 0) && !allowDuringActivation) return;
+    if (normalizingLayout.current || ((activationRunning.current || gridMutations.current > 0) && !allowDuringActivation)) return;
     const epoch = ++refreshEpoch.current;
     let [nextState, listing] = await Promise.all([fetchIdeState(), fetchIdeProjects()]);
     // A workspace switch can fall between the two reads. Never publish a tree
@@ -103,6 +100,17 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       [nextState, listing] = await Promise.all([fetchIdeState(), fetchIdeProjects()]);
     }
     if (epoch !== refreshEpoch.current || pendingActivation.current || ((activationRunning.current || gridMutations.current > 0) && !allowDuringActivation) || nextState.active_id !== listing.active_workspace_id) return;
+    const incoming = nextState.session;
+    if (incoming?.layout && incoming.terminals.length <= 8 && !fitsWorkspace(incoming.layout)) {
+      // Older snapshots and terminals opened outside this view may exceed the
+      // grid bounds. Persist the same balanced fallback the grid displays.
+      normalizingLayout.current = true;
+      try {
+        nextState = await reorderIdeTerminals(incoming.id, incoming.terminals.map((terminal) => terminal.history_id ?? terminal.key));
+        listing = await fetchIdeProjects();
+      } finally { normalizingLayout.current = false; }
+      if (epoch !== refreshEpoch.current || pendingActivation.current || nextState.active_id !== listing.active_workspace_id) return;
+    }
     setState(nextState);
     setProjects(listing.projects);
     publishProjects(listing.projects, listing.active_workspace_id);
@@ -193,13 +201,18 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     if (!action || handledAction.current === action.nonce) return;
     handledAction.current = action.nonce;
     if (action.kind === "connect-project") { setProjectDialog(true); return; }
+    if (action.kind === "workspace-options") { if (action.workspaceId === session?.id) setOptionsOpen(true); return; }
+    if (action.kind === "toggle-voice") {
+      setVoiceOpen((current) => { const next = !current; storeVoiceBubbleOpen(next); return next; });
+      return;
+    }
     if (action.kind === "new-workspace") {
       const project = projects.find((entry) => entry.id === action.projectId);
       if (project) { setWorkspaceProject(project); setWorkspaceName(""); setWorkspaceAgents([installed[0]?.name ?? ""]); }
       return;
     }
     void activateFromTree(action.workspaceId);
-  }, [action, activateFromTree, installed, projects]);
+  }, [action, activateFromTree, installed, projects, session?.id]);
 
   const connect = () => void run(async () => {
     if (!projectPath) throw new Error("Choose a folder for this project.");
@@ -222,7 +235,14 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   });
 
   const addAgent = (agentName: string, workspaceId: string) => void run(async () => {
-    const next = await addTerminal({ workspace_id: workspaceId, agent: agentName, direction: "down" });
+    const wasBalanced = session?.id === workspaceId && isBalancedWorkspace(session.layout, session.terminals);
+    let next = await addTerminal({ workspace_id: workspaceId, agent: agentName, direction: "down" });
+    // Grow an automatic grid evenly; keep a custom arrangement until another
+    // pane would exceed the workspace bounds.
+    if (next.id === workspaceId && next.terminals.length > 1 && (wasBalanced || (next.layout && !fitsWorkspace(next.layout)))) {
+      const balanced = await reorderIdeTerminals(next.id, next.terminals.map((terminal) => terminal.history_id ?? terminal.key));
+      next = balanced.session ?? next;
+    }
     setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current);
   });
 
@@ -233,11 +253,11 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
 
   const saveFont = (size: number) => { const next = Math.max(9, Math.min(22, size)); setFontSize(next); localStorage.setItem(FONT_KEY, String(next)); };
   const saveAppearance = (next: "light" | "dark" | null) => { setAppearance(next); if (next) localStorage.setItem(APPEARANCE_KEY, next); else localStorage.removeItem(APPEARANCE_KEY); };
-  const saveColumns = (next: number) => {
-    setColumns(next);
-    try { localStorage.setItem(COLUMNS_KEY, String(next)); }
-    catch { /* Keep the current display choice if storage is unavailable. */ }
-  };
+  const balanceLayout = () => void run(async () => {
+    if (!session) return;
+    const next = await reorderIdeTerminals(session.id, session.terminals.map((terminal) => terminal.history_id ?? terminal.key));
+    setState((current) => current?.session?.id === next.session?.id ? next : current);
+  });
   const openAgentPicker = () => { if (session) setAgentPicker({ id: session.id, name: session.name ?? session.project.name }); };
   const closeVoice = () => { setVoiceOpen(false); storeVoiceBubbleOpen(false); };
   const jumpToPane = (workspaceId: string, pane: string) => void run(async () => {
@@ -257,16 +277,15 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   if (state === null) return <div data-testid="agentic-ide-loading" className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading projects…</div>;
 
   return <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="igentic-ide">
-    <WorkspaceToolbar project={activeProject?.name} workspace={session?.name ?? session?.project.name}
-      folder={session?.folder} count={session?.terminals.length ?? 0} busy={busy} canAdd={installed.length > 0}
-      onAdd={openAgentPicker} onRename={() => { setRenameValue(session?.name ?? session?.project.name ?? ""); setRenameOpen(true); }}
+    <WorkspaceOptionsDialog open={optionsOpen && !!session} onOpenChange={setOptionsOpen} workspace={session?.name ?? session?.project.name ?? ""}
+      count={session?.terminals.length ?? 0} busy={busy} canAdd={installed.length > 0}
+      onAdd={openAgentPicker} onBalance={balanceLayout} onRename={() => { setRenameValue(session?.name ?? session?.project.name ?? ""); setRenameOpen(true); }}
       onClose={stopWorkspace} fontSize={fontSize} onFontSize={saveFont} appearance={appearance} onAppearance={saveAppearance}
-      columns={columns} onColumns={saveColumns} voiceOpen={voiceOpen}
-      onVoice={() => { const next = !voiceOpen; setVoiceOpen(next); storeVoiceBubbleOpen(next); }} />
+      />
 
     <main className="min-h-0 flex-1">
       {session ? <WorkspaceTerminalGrid key={session.id} session={session} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
-        onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} fontSize={fontSize} appearance={appearance} columnPreference={columns}
+        onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} fontSize={fontSize} appearance={appearance} disabled={busy}
         onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} />
       : <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
         <FolderPlus className="h-8 w-8 text-muted-foreground/70" />

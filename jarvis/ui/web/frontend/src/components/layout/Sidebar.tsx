@@ -30,6 +30,7 @@ import { useConversations } from "@/hooks/useConversations";
 import { useHomeStore } from "@/store/home";
 import { useAgentChatStore } from "@/store/agentChat";
 import { IdeProjectTree } from "@/components/agentic/IdeProjectTree";
+import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useAppInstance } from "@/hooks/useAppInstance";
 import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
 import { GigiMark } from "@/components/GigiMark";
@@ -168,6 +169,9 @@ export function Sidebar({
   const t = useT();
   const active = useEventStore((s) => s.activeSection);
   const setActive = useEventStore((s) => s.setActiveSection);
+  const activeIdeWorkspaceId = useIdeProjectsStore((s) => s.activeWorkspaceId);
+  const openIdeWorkspaceOptions = useIdeProjectsStore((s) => s.openWorkspaceOptions);
+  const toggleIdeVoice = useIdeProjectsStore((s) => s.toggleVoice);
   const voiceState = useEventStore((s) => s.voiceState);
   const assistantName = useEventStore((s) => s.assistantName);
   // The dev instance (a second, restartable app beside the live one — see
@@ -468,6 +472,18 @@ export function Sidebar({
             <ChevronLeft aria-hidden className="h-3.5 w-3.5 shrink-0" />
             {!railed && <span>Back to Jarvis</span>}
           </button>
+          {railed && <div className="mt-2 flex flex-col items-center gap-1 border-t border-border/60 pt-2">
+            <button type="button" aria-label="Workspace options" title="Workspace options"
+              disabled={!activeIdeWorkspaceId}
+              onClick={() => { if (activeIdeWorkspaceId) openIdeWorkspaceOptions(activeIdeWorkspaceId); }}
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-35">
+              <MoreHorizontal aria-hidden className="h-4 w-4" />
+            </button>
+            <button type="button" aria-label="Jarvis Live" title="Jarvis Live" onClick={toggleIdeVoice}
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <Mic aria-hidden className="h-4 w-4" />
+            </button>
+          </div>}
         </nav> : <nav aria-label={t("sidebar.sections")} className="space-y-1 px-2 py-2">
           <ul className="space-y-1">
             <li><Dialog.Root open={newChatOpen} onOpenChange={(open) => { if (!startingVoiceRef.current) setNewChatOpen(open); }}>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Folder, Loader2, MoreHorizontal, Pin, Plus, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Folder, Loader2, Mic, MoreHorizontal, Pin, Plus, X } from "lucide-react";
 import { ChatLibraryError, openProject, patchProject } from "@/lib/chatLibraryApi";
 import type { IdeProject, ProjectWorkspace } from "@/lib/agenticIdeApi";
 import { useEventStore } from "@/store/events";
@@ -28,6 +28,8 @@ export function IdeProjectTree() {
   const connectProject = useIdeProjectsStore((state) => state.connectProject);
   const newWorkspace = useIdeProjectsStore((state) => state.newWorkspace);
   const activateWorkspace = useIdeProjectsStore((state) => state.activateWorkspace);
+  const openWorkspaceOptions = useIdeProjectsStore((state) => state.openWorkspaceOptions);
+  const toggleVoice = useIdeProjectsStore((state) => state.toggleVoice);
   const requestRefresh = useIdeProjectsStore((state) => state.requestRefresh);
   const pushToast = useEventStore((state) => state.pushToast);
   const [expansion, setExpansion] = useState(readExpansion);
@@ -117,7 +119,7 @@ export function IdeProjectTree() {
     const working = mutatingId === project.id;
     const count = project.workspaces.reduce((total, workspace) => total + workspace.terminals, 0);
     return <div key={project.id} className="mb-0.5" data-testid={`ide-project-${project.id}`}>
-      <div className={`group relative flex min-h-9 items-center rounded-lg border border-transparent transition-colors hover:bg-muted/70 ${active ? "border-border/60 bg-muted" : ""}`}>
+      <div className={`group relative flex min-h-11 items-center rounded-xl border border-transparent transition-colors hover:bg-muted/70 ${active ? "border-border/50 bg-muted/55" : ""}`}>
         {renamingId === project.id ? <form className="flex min-w-0 flex-1 items-center gap-1 px-2" onSubmit={(event) => { event.preventDefault(); const name = draftName.trim(); if (name && name !== project.name) void mutate(project, { name }); else setRenamingId(null); }}>
           <input autoFocus aria-label={`Rename ${project.name}`} value={draftName} maxLength={80} disabled={working}
             onChange={(event) => setDraftName(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setRenamingId(null); } }}
@@ -127,13 +129,14 @@ export function IdeProjectTree() {
         </form> : <>
           <button type="button" aria-label={`${open ? "Collapse" : "Expand"} ${project.name}`} aria-expanded={open}
             onClick={() => setProjectOpen(project.id, !open)}
-            className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            title={project.name}
+            className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2.5 text-left text-[16px] font-medium text-foreground group-hover:pr-16 group-focus-within:pr-16 [@media(hover:none)]:pr-16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
-            <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <Folder className="h-[18px] w-[18px] shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1 truncate">{project.name}</span>
-            {count > 0 && <span className="rounded bg-background/50 px-1.5 text-[11px] tabular-nums text-muted-foreground" aria-label={`${count} agent ${count === 1 ? "session" : "sessions"}`}>{count}</span>}
+            {count > 0 && <span className="rounded-md bg-background/50 px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground" aria-label={`${count} agent ${count === 1 ? "session" : "sessions"}`}>{count}</span>}
           </button>
-          <div className="relative flex shrink-0 items-center pr-1" data-project-menu={project.id}>
+          <div className={`absolute right-1 top-1/2 flex -translate-y-1/2 items-center transition-opacity ${menuId === project.id ? "opacity-100" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"}`} data-project-menu={project.id}>
             <button type="button" aria-label={`Project actions for ${project.name}`} title="Project actions" aria-expanded={menuId === project.id}
               onClick={() => setMenuId((current) => current === project.id ? null : project.id)}
               className="rounded p-1.5 text-muted-foreground/70 hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -152,33 +155,44 @@ export function IdeProjectTree() {
           </div>
         </>}
       </div>
-      {open && <div className="ml-5 border-l border-border/70 pl-2">
+      {open && <div className="ml-5 border-l border-border/70 pl-2 pt-0.5">
         {project.workspaces.map((workspace: ProjectWorkspace) => {
           const pending = workspace.id === pendingWorkspaceId;
           const selected = workspace.id === activeWorkspaceId;
-          return <button key={workspace.id} type="button" data-testid={`ide-workspace-${workspace.id}`}
+          return <div key={workspace.id} className={`group/space flex min-h-10 items-center rounded-xl border border-transparent transition-colors hover:bg-muted/70 ${selected ? "border-border/50 bg-muted text-foreground" : ""} ${pending ? "bg-muted/80 text-foreground" : ""}`}>
+            <button type="button" data-testid={`ide-workspace-${workspace.id}`}
             aria-current={selected ? "page" : undefined} aria-busy={pending || undefined}
             title={workspace.status === "closed" && !workspace.restorable ? "This workspace cannot be restored on this machine" : undefined}
             disabled={workspace.status === "closed" && !workspace.restorable}
             onClick={() => activateWorkspace(workspace.id)}
-            className={`flex min-h-8 w-full items-center gap-2 rounded-md border border-transparent px-2 text-left text-xs transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${selected ? "border-border/60 bg-muted text-foreground" : "text-muted-foreground"} ${pending ? "bg-muted/80 text-foreground" : ""}`}>
-            {pending ? <Loader2 aria-hidden className="h-3 w-3 shrink-0 animate-spin" />
-              : <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${workspace.status === "open" && workspace.live_terminals > 0 ? "bg-emerald-500" : "bg-muted-foreground/40"}`} />}
+            className={`flex min-h-10 min-w-0 flex-1 items-center gap-2.5 rounded-xl px-2.5 text-left text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${selected || pending ? "text-foreground" : "text-muted-foreground"}`}>
+            {pending ? <Loader2 aria-hidden className="h-3.5 w-3.5 shrink-0 animate-spin" />
+              : <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${workspace.status === "open" && workspace.live_terminals > 0 ? "bg-emerald-500" : "bg-muted-foreground/40"}`} />}
             <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
-            <span className="tabular-nums opacity-70">{workspace.terminals}</span>
+            <span className="text-xs tabular-nums opacity-70">{workspace.terminals}</span>
             {pending && <span className="sr-only">Switching workspace</span>}
-          </button>;
+            </button>
+            {selected && <button type="button" aria-label={`Workspace options for ${workspace.name}`} title="Workspace options"
+              onClick={() => openWorkspaceOptions(workspace.id)}
+              className="mr-1 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-background/70 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/space:opacity-100 group-focus-within/space:opacity-100 [@media(hover:none)]:opacity-100">
+              <MoreHorizontal className="h-4 w-4" />
+            </button>}
+          </div>;
         })}
-        {project.workspaces.length === 0 && <button type="button" onClick={() => newWorkspace(project.id)} className="px-2 py-2 text-left text-xs text-muted-foreground hover:text-foreground">Create workspace</button>}
+        {project.workspaces.length === 0 && <button type="button" onClick={() => newWorkspace(project.id)} className="px-2 py-2 text-left text-sm text-muted-foreground hover:text-foreground">Create workspace</button>}
       </div>}
     </div>;
   };
 
-  return <div data-testid="ide-project-tree" className="mt-1 px-2 pb-2">
-    <div className="flex items-center justify-between px-2 pb-1 text-xs font-medium text-muted-foreground">
-      <span>Projects</span>
-      <button type="button" aria-label="Connect project" title="Connect project folder" onClick={connectProject}
-        className="rounded p-1 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Plus className="h-3.5 w-3.5" /></button>
+  return <div data-testid="ide-project-tree" className="mx-2 mt-2 flex-1 rounded-2xl border border-border/50 bg-card/40 p-2 pb-3">
+    <div className="flex items-center justify-between px-2 pb-2 pt-1 text-[17px] font-semibold text-foreground">
+      <span>Workspaces</span>
+      <div className="flex items-center gap-0.5">
+        <button type="button" aria-label="Jarvis Live" title="Jarvis Live" onClick={toggleVoice}
+          className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Mic className="h-4 w-4" /></button>
+        <button type="button" aria-label="Connect project" title="Connect project folder" onClick={connectProject}
+          className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Plus className="h-4 w-4" /></button>
+      </div>
     </div>
     {visible.some((project) => project.pinned) && <>
       <div className="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">Pinned</div>

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from jarvis.agentic_ide import library, resume_store, session, workspace_catalog
+from jarvis.agentic_ide import layout_tree, library, resume_store, session, workspace_catalog
 from jarvis.ui.web import agentic_ide_routes as routes
 from tests.fakes.fake_pty_manager import FakePtyManager
 
@@ -109,6 +109,22 @@ async def test_eight_cap_applies_to_create_add_and_batch(registry, tmp_path):
     with pytest.raises(session.SessionError, match="maximum of 8"):
         await registry.add_terminal(agent="claude")
     assert len(space.terminals) == 8
+
+
+@pytest.mark.parametrize(
+    ("count", "columns"),
+    [(1, 1), (2, 2), (3, 2), (4, 2), (5, 3), (6, 3), (7, 4), (8, 4)],
+)
+async def test_new_workspace_balances_one_to_eight_sessions(registry, tmp_path, count, columns):
+    space = await registry.start(str(tmp_path), [{"agent": "claude"}] * count)
+    hints = layout_tree.grid_hints(space.layout)
+
+    assert layout_tree.leaves(space.layout) == [term.key for term in space.terminals]
+    assert [hints[term.key] for term in space.terminals] == [
+        (index % columns, index // columns) for index in range(count)
+    ]
+    assert len({term.history_id for term in space.terminals}) == count
+    assert registry._pty.spawns == []
 
 
 async def test_closed_sibling_stays_restorable_when_project_has_an_open_workspace(

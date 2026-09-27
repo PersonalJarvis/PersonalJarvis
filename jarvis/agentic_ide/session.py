@@ -2376,11 +2376,10 @@ class Registry:
         """Keep legacy geometry consistent with the persistent terminal order."""
         # Rebuild the legacy split tree from the new order. Old geometry
         # must never sort the terminals back into their previous positions.
-        columns = (
-            len(session.terminals)
-            if len(session.terminals) <= 4
-            else (len(session.terminals) + 1) // 2
-        )
+        count = len(session.terminals)
+        # Two panes read best side by side. From three onward, balance the
+        # group into at most two rows and four columns (six becomes 3 x 2).
+        columns = 2 if count == 2 else min(4, (count + 1) // 2)
         rows = [
             layout_tree.normalize(
                 layout_tree.Split(
