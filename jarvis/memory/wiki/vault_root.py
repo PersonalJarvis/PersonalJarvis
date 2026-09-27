@@ -1,8 +1,8 @@
 """Single canonical vault-root resolution (spec A7).
 
 Every consumer of ``[wiki_integration].vault_root`` resolves through
-:func:`resolve_vault_root`. A relative root anchors to the repo root
-(``jarvis/core/paths.repo_root()``), never to ``Path.cwd()`` — a desktop
+:func:`resolve_vault_root`. A relative root anchors to the source repository
+or frozen configuration profile, never to ``Path.cwd()`` — a desktop
 launch from another directory used to read/write a different vault than
 the UI displayed.
 
@@ -12,13 +12,15 @@ legacy vault is populated and the anchored one is empty/missing, the
 populated one wins; the ambiguity is flagged for the health surface
 instead of silently forking the vault.
 """
+
 from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis.core.paths import repo_root
+from jarvis.core.frozen import is_frozen
+from jarvis.core.paths import repo_root, runtime_root
 
 _DEFAULT_RELATIVE = Path("wiki/obsidian-vault")
 
@@ -56,16 +58,15 @@ def resolve_vault_root(
         res = VaultRootResolution(raw_path.resolve(), "absolute", False)
         return _remember(res)
 
-    anchored = ((anchor or repo_root()) / raw_path).resolve()
+    base = anchor or (runtime_root() if is_frozen() else repo_root())
+    anchored = (base / raw_path).resolve()
     legacy = ((cwd or Path.cwd()) / raw_path).resolve()
     if legacy == anchored:
         return _remember(VaultRootResolution(anchored, "repo_root", False))
     legacy_populated = _non_empty_dir(legacy)
     if legacy_populated and not _non_empty_dir(anchored):
         return _remember(VaultRootResolution(legacy, "legacy_cwd", True))
-    return _remember(
-        VaultRootResolution(anchored, "repo_root", legacy_populated)
-    )
+    return _remember(VaultRootResolution(anchored, "repo_root", legacy_populated))
 
 
 def _remember(res: VaultRootResolution) -> VaultRootResolution:

@@ -70,6 +70,7 @@ def status(
             client.request("GET", _PROBE)
             reachable = True
         except ApiError:
+            # The emitted reachability result and nonzero exit expose this refusal.
             reachable = False
     render.emit({"base_url": target, "reachable": reachable}, as_json=as_json())
     if not reachable:

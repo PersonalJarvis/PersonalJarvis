@@ -483,6 +483,7 @@ class RoverServiceMixin:
             try:
                 await self._authorize(ride.agent_id, ride.vehicle_id, TravelMode.ROVER, rover=True)
             except StationError as exc:
+                # The durable rover decision records the refused or unavailable action.
                 return ride.ride_id, "denied" if exc.status_code in {
                     401,
                     403,

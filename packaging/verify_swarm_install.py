@@ -656,6 +656,15 @@ def run(installer: Path, report: Path, *, live_provider: str = "", live_model: s
             result["failure"] = str(exc)
         if isinstance(exc, WorkspaceCleanupError):
             result["cleanup"] = "failed"
+            cause = exc.__cause__
+            if cause is not None:
+                # Keep failure diagnostics useful without recording paths,
+                # subprocess output or any provider response body.
+                result["cleanup_error"] = {
+                    "type": type(cause).__name__,
+                    "errno": getattr(cause, "errno", None),
+                    "winerror": getattr(cause, "winerror", None),
+                }
         report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
         raise
     result.update(status="pass", cleanup="pass")

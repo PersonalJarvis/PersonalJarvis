@@ -172,6 +172,7 @@ class MessageAgentTool:
         try:
             policy = select_reply_policy(args.get("reply_policy"), msg_type)
         except (TypeError, ValueError) as exc:
+            # The structured policy failure is returned to the invoking agent.
             return _failure(FailureReason.BLOCKED_BY_POLICY, str(exc))
         reply_status = args.get("reply_status", "done")
         if reply_status not in ("done", "blocked"):
@@ -359,6 +360,7 @@ class WikiNoteTool:
             vault = rt.memory.root(self._vault_root)
             after_page = (vault / rel).read_text(encoding="utf-8")
         except OSError:
+            # The write already succeeded; its receipt can show the submitted text.
             after_page = text
         return ToolResult(
             success=True,

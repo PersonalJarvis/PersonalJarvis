@@ -20,9 +20,9 @@ describe("dropdown design guard", () => {
 
     for (const path of sourceFiles(SOURCE_ROOT)) {
       const text = readFileSync(path, "utf8");
-      // Any tag whose source spelling equals "select" contains this token.
-      // Avoid building ASTs for unrelated components as the source tree grows.
-      if (!text.includes("select")) continue;
+      // Valid intrinsic JSX allows whitespace after "<". Only candidates
+      // need an AST; imports and selection-state names cannot open a popup.
+      if (!/<\s*select\b/.test(text)) continue;
       const source = ts.createSourceFile(
         path,
         text,

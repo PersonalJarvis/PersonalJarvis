@@ -206,6 +206,7 @@ class DelegateToAgentTool:
         try:
             policy = select_reply_policy(args.get("reply_policy"), MsgType.ASSIGN)
         except (TypeError, ValueError) as exc:
+            # ToolResult reports invalid reply policy through the caller's error channel.
             return ToolResult(success=False, output=None, error=str(exc))
         context = str(args.get("context") or "").strip()
         criteria = str(args.get("completion_criteria") or "").strip()

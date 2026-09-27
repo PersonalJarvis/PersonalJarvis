@@ -155,7 +155,9 @@ def test_native_report_pass_requires_completed_workspace_cleanup(
         assert json.loads(report.read_text(encoding="utf-8"))["status"] == "running"
         if cleanup_fails:
             retained.append(root)
-            raise NATIVE_SMOKE["WorkspaceCleanupError"]("Synthetic persistent file lock")
+            raise NATIVE_SMOKE["WorkspaceCleanupError"](
+                "Synthetic persistent file lock"
+            ) from PermissionError(13, "PRIVATE-FILESYSTEM-DETAIL")
         actual_cleanup(root)
 
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
@@ -176,6 +178,13 @@ def test_native_report_pass_requires_completed_workspace_cleanup(
         assert saved["same_artifact_replacement"]["persistent_team_and_lead"] == "pass"
         assert saved["status"] == ("failed" if cleanup_fails else "pass")
         assert saved["cleanup"] == ("failed" if cleanup_fails else "pass")
+        if cleanup_fails:
+            assert saved["cleanup_error"] == {
+                "type": "PermissionError",
+                "errno": 13,
+                "winerror": None,
+            }
+            assert "PRIVATE-FILESYSTEM-DETAIL" not in report.read_text(encoding="utf-8")
     finally:
         for root in retained:
             actual_cleanup(root)

@@ -245,6 +245,7 @@ class MarsNavigationService(RoverServiceMixin):
                 try:
                     await self._authorize(record.agent_id, record.station_id, record.mode)
                 except StationError as exc:
+                    # The durable navigation decision records denied/unavailable below.
                     return record.command_id, (
                         "denied" if exc.status_code in {401, 403, 404} else "unavailable"
                     )

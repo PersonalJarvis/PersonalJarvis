@@ -228,6 +228,7 @@ class SocietyRuntime:
         try:
             return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_s)
         except TimeoutError:
+            # Shielded startup continues; its owner logs failures while context degrades.
             return False
 
     async def _start_for_context(self) -> bool:

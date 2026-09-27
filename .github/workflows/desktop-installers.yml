@@ -179,6 +179,7 @@ jobs:
           retention-days: 14
 
       - name: Upload the installer
+        if: always() && hashFiles('dist/installers/PersonalJarvis-Setup-x64.exe') != ''
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: installer-windows-x64
@@ -287,6 +288,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload the DMG
+        if: always() && hashFiles('dist/installers/*.dmg') != ''
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: installer-macos-${{ matrix.arch }}
@@ -374,6 +376,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload the AppImage
+        if: always() && hashFiles('dist/installers/*.AppImage') != ''
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: installer-linux-x86_64

@@ -4,8 +4,10 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
 from jarvis.society.browser import install
 
 
@@ -39,6 +41,9 @@ def installer(monkeypatch, tmp_path):
             )
         return ""
 
+    from jarvis.society.browser import bootstrap
+
+    monkeypatch.setattr(bootstrap, "ensure_uv", lambda root: str(root / "test-uv"))
     monkeypatch.setattr(install, "_run", run)
     monkeypatch.setattr(install, "managed_python_request", lambda *_: "3.12")
     monkeypatch.setattr(install.sys, "frozen", False, raising=False)
@@ -98,3 +103,31 @@ def test_lock_identity_survives_platform_line_endings(installer, monkeypatch, tm
     assert install.is_installed(data)
     copy.write_bytes(original + b"# changed dependency manifest\n")
     assert not install.is_installed(data)
+
+
+@pytest.mark.parametrize("version", [(3, 11, 0), (3, 12, 0), (3, 13, 0)])
+def test_only_the_locked_python_minor_can_be_reused(installer, monkeypatch, version):
+    data, root, _, _ = installer
+    original_run = install._run
+    commands = []
+
+    def capture(command, **kwargs):
+        commands.append(command)
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(
+        install,
+        "sys",
+        SimpleNamespace(
+            version_info=version,
+            platform=install.sys.platform,
+            executable=install.sys.executable,
+            frozen=False,
+        ),
+    )
+    monkeypatch.setattr(install, "_run", capture)
+    install.ensure_installed(data)
+    if version[:2] == (3, 12):
+        assert commands[0][:3] == [install.sys.executable, "-m", "venv"]
+    else:
+        assert commands[0][:4] == [str(root / "bootstrap" / "test-uv"), "venv", "--python", "3.12"]

@@ -8,6 +8,8 @@ import { AuthGate } from "./components/AuthGate";
 import { installPreloadRecovery } from "./lib/preloadRecovery";
 import { POLL_MS, installBundleWatch } from "./lib/bundleWatch";
 import { browserSafeReloadDeps, reloadWhenServable } from "./lib/safeReload";
+import { prepareUiTranslations, useI18nStore, warmUiTranslations } from "./i18n";
+import { LOCALE_BOOT_ERROR } from "./i18n/coreLocales";
 import "./index.css";
 
 // When the frontend is rebuilt while the window is open, the old main bundle
@@ -101,7 +103,8 @@ const queryClient = new QueryClient({
   },
 });
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
+void prepareUiTranslations().then(() => {
+  ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
@@ -118,3 +121,20 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     </QueryClientProvider>
   </React.StrictMode>,
 );
+  const warm = () => { void warmUiTranslations().catch((error: unknown) => console.warn("[i18n] optional language warmup failed", error)); };
+  if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(warm);
+  else window.setTimeout(warm, 500);
+}).catch((error: unknown) => {
+  console.error("[i18n] initial language resources unavailable", error);
+  const copy = LOCALE_BOOT_ERROR[useI18nStore.getState().ui];
+  const root = document.getElementById("root")!;
+  root.className = "grid min-h-screen place-content-center gap-4 p-6 bg-background text-foreground";
+  const message = document.createElement("p");
+  message.setAttribute("role", "alert");
+  message.textContent = copy.message;
+  const retry = document.createElement("button");
+  retry.className = "rounded border border-border p-2";
+  retry.textContent = copy.retry;
+  retry.onclick = () => { void reloadWhenServable(browserSafeReloadDeps()); };
+  root.replaceChildren(message, retry);
+});

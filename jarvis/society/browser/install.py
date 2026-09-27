@@ -250,7 +250,7 @@ def ensure_installed(
             request = managed_python_request(sys.platform, platform.machine())
             if (
                 not getattr(sys, "frozen", False)
-                and (3, 11) <= sys.version_info[:2] < (3, 14)
+                and sys.version_info[:2] == (3, 12)
                 and request == "3.12"
             ):
                 _run([sys.executable, "-m", "venv", str(runtime)], env=env)

@@ -1,5 +1,38 @@
 # Ultra Agent Swarm integration evidence
 
+## September 27 native follow-up
+
+The bounded four-platform Grok test was explicitly approved on September 26.
+No model key has been uploaded yet, and the native model budget remains unused
+while installation failures are diagnosed.
+
+The offline campaign on `06a0214e4` passed Windows installation, replacement,
+Wasm and cleanup. Both Mac variants passed those Swarm checks, then failed the
+separate browser-provisioning check because frozen OpenSSL lacked public CA
+roots. Linux passed fresh/replacement Swarm checks but failed workspace removal;
+the original report did not preserve its underlying OS error. The verifier now
+records only error type and numeric OS codes, and failed verification retains
+built installer artifacts for diagnosis without enabling release publication.
+
+The browser bootstrap now uses verified bundled CA roots unless an explicit
+trust override is configured. A source host on Python 3.11 or 3.13 provisions the
+locked managed Python 3.12 instead of reusing an incompatible interpreter. Frozen
+relative state/wiki paths now follow the configuration profile rather than the
+read-only or temporary program bundle; resource imports and absolute paths keep
+their existing meaning. These changes passed 730 path/wiki tests with one skip,
+114 packaging/browser tests with one skip, and 24 final focused tests. The sets
+overlap, and native requalification is still required.
+
+The entry-bundle regression was traced to eagerly importing every core language.
+Restored lazy loading preserves the updated translations and reduces the entry
+from 1,982 KB to 1,278 KB, below the unchanged 1,350 KB limit. Before this locale
+follow-up, all 4,759 UI tests passed; its Linux build lacked a copied test-harness
+asset, while the canonical build passed. The subsequent locale run passed 4,761
+tests and again exceeded the static guard's timeout. Its candidate filter now
+looks for the opening JSX tag rather than common selection-state identifiers;
+the structural AST check and five-second limit remain unchanged. A complete
+repeat, including the previously omitted authored asset, is running.
+
 ## September 26 integration
 
 The candidate integrates main revision `57e472439`, including the current

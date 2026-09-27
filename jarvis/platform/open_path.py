@@ -573,6 +573,7 @@ def _inside(root: Path, candidate: Path) -> bool:
         resolved_root = root.resolve()
         resolved = candidate.resolve()
     except OSError:
+        # An unresolvable path cannot establish containment; deny the link.
         return False
     return resolved == resolved_root or resolved_root in resolved.parents
 
@@ -618,6 +619,7 @@ def _existing_absolute(native: str) -> Path | None:
     try:
         target = path.resolve()
     except OSError:
+        # An unresolvable candidate is not a usable local-file link.
         return None
     if target.exists() and (target.is_file() or target.is_dir()):
         return target

@@ -1264,6 +1264,7 @@ async def memory_file(request: Request, path: str = "") -> dict[str, Any]:
     try:
         updated_ms = int(target.stat().st_mtime * 1000)
     except OSError:
+        # Content was read already; zero marks unavailable optional timestamp metadata.
         updated_ms = 0
     parts = Path(rel).parts
     agent_id = parts[1] if len(parts) >= 3 else ""

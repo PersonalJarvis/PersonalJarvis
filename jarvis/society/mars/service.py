@@ -144,6 +144,7 @@ class MarsStationService:
             try:
                 await self._authorize(claimed.agent_id)
             except StationError as exc:
+                # Persist the authorization failure on the claimed command.
                 await self.store.apply(
                     claimed.command_id,
                     claimed.fence,
@@ -173,6 +174,7 @@ class MarsStationService:
             if operation != "cancel" and receipt.cancel_attempt is not None:
                 raise ValueError("cancellation attempt evidence belongs only to cancel receipts")
         except DispatchRejected as exc:
+            # The rejected dispatch becomes a durable failure receipt below.
             if operation == "dispatch":
                 receipt = ExecutionReceipt(state=CommandState.FAILED)
                 reason = exc.reason

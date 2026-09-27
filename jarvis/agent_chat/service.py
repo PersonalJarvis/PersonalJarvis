@@ -906,6 +906,7 @@ class AgentChatService:
         try:
             await asyncio.wait_for(asyncio.shield(run.task), timeout=15.0)
         except TimeoutError:
+            # The grace period expired; cancel and join the owned task below.
             run.task.cancel()
             await asyncio.gather(run.task, return_exceptions=True)
         except asyncio.CancelledError:

@@ -576,6 +576,23 @@ experiences today.
 
 ## Native installers (added 2026-08-25)
 
+September 26 continuation (T2, existing installation surface): frozen builds on
+Windows, macOS and Linux anchor writable relative state and wiki paths to their
+configuration profile, while bundled resources retain their separate location.
+Source installations keep their existing repository anchor; explicit absolute
+wiki and database paths remain authoritative. Relative environment overrides are
+normalized before changing directory. `test_frozen_storage_paths.py` and the
+frozen-hook/CWD contracts cover these boundaries.
+
+Browser bootstrap uses a verified SSL context with the bundled CA roots when no
+explicit trust override is configured. The same path applies on all three OSes.
+Only Python 3.12 can satisfy the bundled browser lock through direct reuse;
+other supported host interpreters provision the managed 3.12 runtime. TLS,
+checksum rejection and interpreter-selection contracts are in
+`test_browser_bootstrap.py` and `test_browser_install.py`. Current native
+qualification results and remaining failures are recorded in
+`verification/ultra-swarm-integration.md`; unit coverage is not a native pass.
+
 Personal Jarvis is downloadable as a native installer on all three systems,
 next to the one-line installer and pipx. Every artifact comes out of the same
 PyInstaller freeze of `jarvis.spec` and is published on the GitHub Release for
