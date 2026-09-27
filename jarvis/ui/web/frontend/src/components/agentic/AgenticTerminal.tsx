@@ -137,6 +137,7 @@ import {
 import { PromptReceipt } from "./PromptReceipt";
 import { PromptHistoryButton } from "./PromptHistoryButton";
 import { PaneConversationDialog } from "./PaneConversationDialog";
+import { WorkspaceTerminalHeader } from "./WorkspaceTerminalHeader";
 import { useT } from "@/i18n";
 
 /**
@@ -414,6 +415,11 @@ interface AgenticTerminalProps {
   workspaceId?: string;
   /** Agent label shown in the pane header ("Claude Code"). */
   displayName: string;
+  /** Compact workspace chrome is opt-in; legacy grids retain their existing header. */
+  headerMode?: "legacy" | "compact";
+  /** Registry identity and optional custom logo for the compact header. */
+  agent?: string;
+  agentLogoUrl?: string;
   /**
    * What this session is doing, in one clause — the header's main label.
    *
@@ -538,6 +544,9 @@ export function AgenticTerminal({
   name,
   workspaceId,
   displayName,
+  headerMode = "legacy",
+  agent,
+  agentLogoUrl,
   recap,
   recapDetail,
   recapMeta,
@@ -2241,7 +2250,8 @@ export function AgenticTerminal({
         // click landed, and the ring around it faded in over the next 150 ms.
         // On a grid where the focused pane is the one standing accent, that
         // read as a flicker rather than as a pane taking focus.
-        "relative flex h-full w-full flex-col overflow-hidden rounded-lg border backdrop-blur-[4px]",
+        "relative flex h-full w-full flex-col overflow-hidden border backdrop-blur-[4px]",
+        headerMode === "compact" ? "rounded-2xl" : "rounded-lg",
         "transition-[box-shadow,border-color,opacity] duration-150 ease-out motion-reduce:transition-none",
         // Focus steps the RIM one notch, from the structural hairline to
         // `--border-strong`, and stops there. It used to add a translucent
@@ -2288,7 +2298,28 @@ export function AgenticTerminal({
       }}
       data-testid={`agentic-pane-${name}`}
     >
-      <PaneHeader
+      {headerMode === "compact" ? <WorkspaceTerminalHeader
+        name={name}
+        workspaceId={workspaceId}
+        promptCount={promptCount}
+        agent={agent ?? ""}
+        agentLogoUrl={agentLogoUrl}
+        displayName={displayName}
+        status={visibleStatus}
+        appearance={appearance}
+        arranging={arranging}
+        maximized={maximized}
+        addDisabled={splitDisabled}
+        onArrangeStart={onArrangeStart}
+        onActivate={() => { onFocus?.(); takeOwnershipRef.current?.(); }}
+        onToggleMaximize={onToggleMaximize}
+        onAdd={onSplit ? () => onSplit("right") : undefined}
+        onClose={onClose}
+        onRename={onRename}
+        onOpenConversation={() => setHistoryOpen(true)}
+        onOpenChat={onOpenChat}
+        onRestart={onRestart}
+      /> : <PaneHeader
         workspaceId={workspaceId}
         status={visibleStatus}
         statusDetail={statusDetail}
@@ -2315,7 +2346,7 @@ export function AgenticTerminal({
         splitDisabled={splitDisabled}
         onOpenConversation={() => setHistoryOpen(true)}
         onOpenChat={onOpenChat}
-      />
+      />}
       {/*
         What went wrong, kept on screen for as long as it is true — and the one
         way out of it. See PaneStatusNotice for why this is a row of its own
