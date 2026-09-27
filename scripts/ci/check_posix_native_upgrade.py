@@ -335,12 +335,13 @@ def check(
         runner = TrackingRunner(evidence_dir / "failed-upgrade", root, child_env)
         runner.evidence_dir.mkdir(parents=True, exist_ok=True)
         try:
+            # Use the supervisor's production health window for both the
+            # deliberately broken candidate and the restored cold-start app.
             if run_native_update_supervisor(
                 failed,
                 runner=runner,
                 alive=lambda _: False,
                 health=health,
-                health_seconds=20,
             ):
                 raise RuntimeError("broken candidate unexpectedly passed health")
             if not seen_previous_health or _version(old_cli) != previous_version:
@@ -372,7 +373,6 @@ def check(
                 runner=runner,
                 alive=lambda _: False,
                 health=health,
-                health_seconds=90,
             ):
                 raise RuntimeError("candidate did not become healthy")
             new_cli = target if platform == "linux" else target / "Contents/MacOS/jarvis"

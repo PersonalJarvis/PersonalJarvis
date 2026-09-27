@@ -220,6 +220,10 @@ jobs:
             choco install innosetup --no-progress -y
           }
 
+      - name: Test Windows boot cleanup ownership
+        shell: powershell
+        run: ./tests/unit/packaging/test_windows_boot_cleanup.ps1
+
       - name: Build the installer
         shell: pwsh
         run: pwsh packaging/windows/build.ps1
@@ -304,6 +308,29 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PREVIOUS_TAG: ${{ needs.previous-release.outputs.tag }}
         run: |
+          function Invoke-InstallerPass {
+            param([string] $FilePath, [string[]] $Arguments, [string] $Phase)
+            $logPath = Join-Path $env:RUNNER_TEMP "jarvis-native-install-$Phase.log"
+            $phaseArgs = $Arguments + @('/LOGCLOSEAPPLICATIONS', ('/LOG="' + $logPath + '"'))
+            Write-Host "Starting Windows installer phase $Phase (log: $logPath)"
+            $installerProcess = Start-Process -FilePath $FilePath -ArgumentList $phaseArgs -PassThru -WindowStyle Hidden
+            try {
+              if (-not $installerProcess.WaitForExit(600000)) {
+                Write-Host "::error::Windows installer phase $Phase exceeded 10 minutes (PID $($installerProcess.Id)); inspect $logPath"
+                # Terminate only this installer and its descendants on timeout.
+                & taskkill.exe /PID $installerProcess.Id /T /F | Out-Null
+                if ($LASTEXITCODE -ne 0 -and -not $installerProcess.HasExited) {
+                  throw "Timed-out installer could not be terminated; rollback is NOT verified"
+                }
+                Write-Host '::error::Forced termination bypasses installer rollback. Recovery is NOT verified; retain phase logs and runner temporary backup files for diagnosis.'
+                throw "Windows installer phase $Phase timed out"
+              }
+              Write-Host "Windows installer phase $Phase exited with $($installerProcess.ExitCode)"
+              return $installerProcess.ExitCode
+            } finally {
+              $installerProcess.Dispose()
+            }
+          }
           $installer = (Resolve-Path 'dist/installers/PersonalJarvis-Setup-x64.exe').Path
           $installDir = Join-Path $env:RUNNER_TEMP 'Personal Jarvis'
           $stateDir = Join-Path $env:RUNNER_TEMP 'jarvis-native-state'
@@ -330,8 +357,8 @@ jobs:
           $args = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOLAUNCH', ('/DIR="' + $installDir + '"'))
           $freshInstallDir = Join-Path $env:RUNNER_TEMP 'jarvis-clean-candidate-install'
           $freshArgs = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOLAUNCH', ('/DIR="' + $freshInstallDir + '"'))
-          $freshProcess = Start-Process -FilePath $installer -ArgumentList $freshArgs -PassThru -Wait -WindowStyle Hidden
-          if ($freshProcess.ExitCode -ne 0) { throw "Fresh candidate installation failed: $($freshProcess.ExitCode)" }
+          $freshExitCode = Invoke-InstallerPass -FilePath $installer -Arguments $freshArgs -Phase 'fresh'
+          if ($freshExitCode -ne 0) { throw "Fresh candidate installation failed: $freshExitCode" }
           $freshVersion = & (Join-Path $freshInstallDir 'jarvis.exe') --version
           if ($LASTEXITCODE -ne 0 -or $freshVersion -notmatch [regex]::Escape($version)) { throw 'Fresh candidate installer has the wrong version' }
           if ($env:PREVIOUS_TAG) {
@@ -341,8 +368,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Could not download previous Windows installer' }
             $priorInstaller = Join-Path $priorDir 'PersonalJarvis-Setup-x64.exe'
             $oldVersion = $env:PREVIOUS_TAG.Substring(1)
-            $process = Start-Process -FilePath $priorInstaller -ArgumentList $args -PassThru -Wait -WindowStyle Hidden
-            if ($process.ExitCode -ne 0) { throw "Previous Windows installer failed: $($process.ExitCode)" }
+            $priorExitCode = Invoke-InstallerPass -FilePath $priorInstaller -Arguments $args -Phase 'previous'
+            if ($priorExitCode -ne 0) { throw "Previous Windows installer failed: $priorExitCode" }
             $actual = & (Join-Path $installDir 'jarvis.exe') --version
             if ($LASTEXITCODE -ne 0 -or $actual -notmatch [regex]::Escape($oldVersion)) { throw "Previous Windows version mismatch: $actual" }
             Set-Content -LiteralPath (Join-Path $installDir 'release-smoke-sentinel') -Value 'preserve'
@@ -350,15 +377,15 @@ jobs:
             pwsh packaging/windows/build.ps1 -SkipFrontend -SkipPyInstaller -OutputDirectory $failureDir -SimulateInstallFailure
             if ($LASTEXITCODE -ne 0) { throw 'Could not build failure-injection installer' }
             $failureInstaller = Join-Path $failureDir 'PersonalJarvis-Setup-x64.exe'
-            $process = Start-Process -FilePath $failureInstaller -ArgumentList $args -PassThru -Wait -WindowStyle Hidden
-            if ($process.ExitCode -eq 0) { throw 'Failure-injection installer unexpectedly succeeded' }
+            $failureExitCode = Invoke-InstallerPass -FilePath $failureInstaller -Arguments $args -Phase 'injected-failure'
+            if ($failureExitCode -eq 0) { throw 'Failure-injection installer unexpectedly succeeded' }
             $actual = & (Join-Path $installDir 'jarvis.exe') --version
             if ($LASTEXITCODE -ne 0 -or $actual -notmatch [regex]::Escape($oldVersion)) { throw "Failed upgrade damaged previous Windows version: $actual" }
             if (-not (Test-Path (Join-Path $installDir 'release-smoke-sentinel'))) { throw 'Windows rollback lost prior installation sentinel' }
           }
           foreach ($pass in 1..2) {
-            $process = Start-Process -FilePath $installer -ArgumentList $args -PassThru -Wait -WindowStyle Hidden
-            if ($process.ExitCode -ne 0) { throw "Windows installation pass $pass failed: $($process.ExitCode)" }
+            $passExitCode = Invoke-InstallerPass -FilePath $installer -Arguments $args -Phase "candidate-$pass"
+            if ($passExitCode -ne 0) { throw "Windows installation pass $pass failed: $passExitCode" }
             $actual = & (Join-Path $installDir 'jarvis.exe') --version
             if ($LASTEXITCODE -ne 0 -or $actual -notmatch [regex]::Escape($version)) { throw "Installed Windows CLI version mismatch: $actual" }
             if ($pass -eq 1 -and -not $env:PREVIOUS_TAG) { Set-Content -LiteralPath (Join-Path $installDir 'release-smoke-sentinel') -Value 'preserve' }
@@ -372,6 +399,15 @@ jobs:
           $assetHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
           @{target='windows-x64'; tag='${{ github.ref_name }}'; commit='${{ github.sha }}'; asset_sha256=$assetHash; installed=$true; reinstalled=$true; upgraded=[bool]$env:PREVIOUS_TAG; rollback_tested=[bool]$env:PREVIOUS_TAG; previous_tag=$env:PREVIOUS_TAG; signed=$signed; settings_preserved=$true; database_preserved=$true; credential_preserved=$true} |
             ConvertTo-Json -Compress | Set-Content -Encoding utf8 'dist/installers/proof-windows-x64.json'
+
+      - name: Preserve Windows installer phase logs
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: windows-native-installer-logs
+          path: ${{ runner.temp }}/jarvis-native-install-*.log
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload Windows native smoke proof
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
