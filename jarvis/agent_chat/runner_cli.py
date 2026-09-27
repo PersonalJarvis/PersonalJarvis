@@ -760,11 +760,13 @@ _CODEX_CATALOG = CatalogCache()
 
 
 def read_codex_models(*, required_model: str = "") -> list[dict[str, Any]] | None:
-    """Ask the installed CLI, never trust another client's models_cache.json."""
+    """Ask the installed CLI, never trust another client's models_cache.json.
+
+    Config-isolation flags belong to ``codex exec`` and are not accepted by
+    ``codex app-server``. Discovery only reads model/list; it starts no turn.
+    """
     env = _account_env("codex")
     argv = codex_argv_prefix()
-    if _CATALOG_IGNORE_CONFIG.get():
-        argv = [*argv, "--ignore-user-config", "--ignore-rules"]
     cwd = _catalog_cwd()
     rows = _CODEX_CATALOG.read(
         catalog_key(argv, env, cwd),
