@@ -1,14 +1,15 @@
-# CLAUDE.md
+# Personal Jarvis agent rules
 
 The binding rules for every coding agent in this repo — Claude Code, Codex,
 Gemini CLI, whichever. This is the whole rulebook; there is no longer a fuller
 version to read first. Write everything here so it addresses ANY agent.
 
-**Twin:** `AGENTS.md` is byte-identical to this file. `.claude/{agents,skills}/`
-↔ `.agents/{…}`, and `.codex/agents/*.toml` is a generated projection of
-`.claude/agents/*.md` — never hand-edit it. Three sync engines hold all of it
-(`sync_agents_md.py`, `sync_agents_dir.py`, `sync_codex_agents.py`); a hook,
-pre-commit and CI run them. Edit the canonical side and let them work.
+**Source of truth:** Edit `AGENTS.md` and `.agents/{agents,skills}/`.
+`CLAUDE.md` and `.claude/{agents,skills}/` are compatibility copies because
+Claude Code does not discover project subagents or skills under `.agents/`, and
+its `AGENTS.md` support is conditional. `.codex/agents/*.toml` is generated
+from `.agents/agents/*.md` for Codex. The sync scripts and CI check these
+copies; never edit a generated copy directly.
 
 ---
 
