@@ -29,6 +29,7 @@ import { routineTaskId } from "./routineExecution";
 import { RoutineChatHost } from "./RoutineChatHost";
 import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
+import { TaskOutputLinks } from "@/components/agentchat/TaskOutputLinks";
 
 import { AgentChatStoreProvider, useAgentChat } from "@/components/agentchat/AgentChatStoreContext";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
@@ -723,7 +724,7 @@ function NoticeLine({ item }: { item: NoticeItem }) {
   if (item.kind === "native_goal_verdict") return <p className="py-1 text-xs text-muted-foreground">{t("slash.verifying")}</p>;
   const headline =
     item.kind === "society_result"
-      ? t(item.status === "done" ? "society.chat.result_done" : "society.chat.result_blocked").replace(
+      ? t(item.status === "done" ? "society.chat.result_done" : item.status === "reported" ? "society.chat.result_reported" : item.status === "partial" ? "society.chat.result_partial" : "society.chat.result_blocked").replace(
           "{0}",
           item.agentName || t("society.chat.result_agent"),
         )
@@ -731,6 +732,7 @@ function NoticeLine({ item }: { item: NoticeItem }) {
   return (
     <ChatActivity label={headline || item.text.split("\n")[0]} failed={item.status === "blocked" || item.resolved === "failed"}>
       {item.text ? <ChatMarkdown text={item.text} className="leading-relaxed" /> : null}
+      <TaskOutputLinks output={item.data.output} evidence={item.data.evidence} />
     </ChatActivity>
   );
 }

@@ -70,8 +70,8 @@ def validate_result(payload: dict[str, Any]) -> str | None:
     if not output and not open_items:
         return "RESULT needs output (where the work is) or open (what remains)"
     status = payload.get("status", "done")
-    if status not in ("done", "partial", "blocked"):
-        return "RESULT.status must be done | partial | blocked"
+    if status not in ("done", "reported", "partial", "blocked"):
+        return "RESULT.status must be done | reported | partial | blocked"
     return None
 
 

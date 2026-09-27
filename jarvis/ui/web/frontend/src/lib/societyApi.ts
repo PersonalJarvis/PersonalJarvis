@@ -193,6 +193,8 @@ export interface SocietyQuestRow {
     status?: string;
     done?: string;
     output?: string[];
+    evidence?: string[];
+    chat_session?: string;
     open?: string[];
     text?: string;
     reason?: string;

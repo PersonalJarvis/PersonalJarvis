@@ -32,6 +32,7 @@ from .agent_tools import (
     MemoryRecallTool,
     MessageAgentTool,
     ProposeChangeTool,
+    ReportOutcomeTool,
     ShellTool,
     WikiNoteTool,
 )
@@ -66,8 +67,14 @@ _OWN_PREFIX: Final[str] = "society_"
 #: through its own contained shell (never the free-cwd shell tools).
 _SOCIETY_DENIED: Final[frozenset[str]] = frozenset(
     {
-        "wiki-ingest", "run-shell", "run_shell", "RunCommand",
-        "remember", "update_profile", "profile-update", "update-profile",
+        "wiki-ingest",
+        "run-shell",
+        "run_shell",
+        "RunCommand",
+        "remember",
+        "update_profile",
+        "profile-update",
+        "update-profile",
     }
 )
 
@@ -80,6 +87,10 @@ mission workers.
 - Coding: when granted, coding-session controls external coding CLIs in the existing IDE.
 Discover projects and connected CLIs first; use explicit project paths and persistent pane IDs.
 Opening and sending obey your approval rules. Read recorded context before claiming completion.
+- Assigned work: use society_report_outcome once before your final reply. Report done only \
+after checking the requested result, partial for unfinished work, or blocked for a login, \
+approval or decision only the user can supply. Name the concrete next action and output. \
+The runtime checks local file links separately; never claim an unverified file exists.
 - Teammates: send ONE teammate a message with society_message_agent (kinds: say, query, \
 answer, propose). Compose it yourself. When handing work to a teammate, include the result, \
 its location and any unresolved dependency they need to continue. A reply to the user is a \
@@ -323,6 +334,7 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
     tools.update(
         {
             MessageAgentTool.name: cast(Tool, MessageAgentTool(rt, agent_id)),
+            ReportOutcomeTool.name: cast(Tool, ReportOutcomeTool(rt, agent_id)),
             WikiNoteTool.name: cast(Tool, WikiNoteTool(rt, agent_id, vault_root=_vault_root(cfg))),
             MemoryRecallTool.name: cast(
                 Tool, MemoryRecallTool(rt, agent_id, vault_root=_vault_root(cfg))

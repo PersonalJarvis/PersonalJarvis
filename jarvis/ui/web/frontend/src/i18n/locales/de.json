@@ -5231,6 +5231,8 @@
       "coding_use_folder": "Ordner übernehmen",
       "coding_retry": "Coding-Agents konnten nicht geladen werden. Erneut versuchen.",
       "result_done": "{0} ist fertig",
+      "result_reported": "{0} hat ein Ergebnis gemeldet",
+      "result_partial": "{0} hat einen Teil erledigt",
       "result_blocked": "{0} kam nicht weiter",
       "result_agent": "Ein Agent",
       "delegate_line": "Hand this to the agent '{0}' (id {1}) with delegate-to-agent and report back here when it is done.",

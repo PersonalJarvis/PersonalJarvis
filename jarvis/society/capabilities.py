@@ -62,6 +62,7 @@ NEVER_GRANTED: Final[frozenset[str]] = frozenset(
         "reveal-key-preview",
         "profile-update",
         "society_message_agent",
+        "society_report_outcome",
         "message_agent",
         "message-agent",
     }

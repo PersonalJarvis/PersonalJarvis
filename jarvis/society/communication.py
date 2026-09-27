@@ -70,17 +70,17 @@ def reply_policy(env: SocietyEnvelope) -> str:
 
 def should_report(env: SocietyEnvelope, status: str) -> bool:
     policy = reply_policy(env)
-    return policy == "always" or (policy == "on_error" and status != "done")
+    return policy == "always" or (policy == "on_error" and status not in {"done", "reported"})
 
 
 def response_instruction(env: SocietyEnvelope) -> str:
     policy = reply_policy(env)
     if env.msg_type is MsgType.ASSIGN:
         return (
-            f"Reply expectation: {policy}. Record the actual outcome and evidence in your "
-            "final response. The runtime routes the completion; do not send a second "
-            "success message. If blocked or unable to finish, send an answer to the "
-            "requesting agent with reply_status=blocked and the specific obstacle. "
+            f"Reply expectation: {policy}. Before your final response, call "
+            "society_report_outcome with the actual status, result, output and open work. "
+            "Use blocked for a missing login, approval or decision and partial for unfinished "
+            "work. The runtime routes completion; do not send a second success message. "
             "A finished chat turn alone does not prove the task succeeded."
         )
     if policy == "always":

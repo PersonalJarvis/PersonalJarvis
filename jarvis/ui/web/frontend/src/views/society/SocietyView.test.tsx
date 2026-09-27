@@ -5,12 +5,15 @@ import { LAST_AGENT_STORAGE_KEY } from "./lastAgent";
 import { SocietyView } from "./SocietyView";
 
 const app = vi.hoisted(() => ({ instance: { name: "default", isDev: false } }));
+const shell = vi.hoisted(() => ({ desktop: false }));
 vi.mock("@/hooks/useAppInstance", () => ({ useAppInstance: () => app.instance }));
-beforeEach(() => { app.instance = { name: "default", isDev: false }; });
+beforeEach(() => { app.instance = { name: "default", isDev: false }; shell.desktop = false; });
 
 vi.mock("@/lib/mapFullscreen", () => ({ setMapFullscreen: vi.fn(async () => undefined) }));
+vi.mock("@/lib/nativeDrop", () => ({ inDesktopShell: () => shell.desktop }));
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, useLocaleChunk: () => true }));
 vi.mock("@/components/society/chat/useModelMenuData", () => ({ useModelMenuData: () => undefined }));
+vi.mock("@/components/society/chat/TeamTasks", () => ({ TeamTasks: () => <section data-testid="team-tasks" /> }));
 vi.mock("@/components/society/data", () => ({ useSocietyRoster: () => ({ data: { sample: false, agents: [
   { agentId: "lead", name: "Lead", tier: "lead", state: "idle" },
   { agentId: "specialist", name: "Specialist", tier: "specialist", state: "idle" },
@@ -39,6 +42,7 @@ it("defaults to the embedded Agents workspace even with a saved legacy ledger pr
   render(<SocietyView />);
   expect(screen.getByTestId("workspace").getAttribute("data-embedded")).toBe("true");
   expect(screen.getByText("Lead")).toBeTruthy();
+  expect(screen.getByTestId("team-tasks")).toBeTruthy();
   expect(screen.queryByTestId("map")).toBeNull();
   localStorage.removeItem("jarvis.agents.mode.v2");
 });
@@ -108,6 +112,7 @@ it("navigates back through the window caption instead of a sections toggle", () 
 });
 
 it("requests fullscreen for Map and leaves it on Escape", async () => {
+  shell.desktop = true;
   render(<SocietyView />);
   fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
   await screen.findByTestId("map");

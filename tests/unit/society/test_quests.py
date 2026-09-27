@@ -47,6 +47,13 @@ class FakeDispatcher:
 async def rt(tmp_path: Path):
     runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
     runtime.catalog = lambda: CATALOG  # type: ignore[method-assign]
+
+    async def lexical_focus(_runtime, text, catalog):
+        from jarvis.society.focus import derive_focus
+
+        return derive_focus("", text, catalog)
+
+    runtime.quests._infer_focus = lexical_focus  # noqa: SLF001 - deterministic fixture
     await runtime.ensure_started()
     dispatcher = FakeDispatcher()
     runtime.scheduler._dispatch = dispatcher  # noqa: SLF001 — swap the hook for the fake
@@ -84,6 +91,43 @@ async def test_focus_match_picks_the_specialist(rt: SocietyRuntime):
     assert choice.agent_id == mailbox.agent_id
     assert choice.reason == "focus-match"
     assert choice.forge is None
+
+
+@pytest.mark.parametrize(
+    "task_text",
+    [
+        "Summarize my inbox today.",
+        "Fasse heute mein Postfach zusammen.",
+        "Resume mi bandeja de entrada hoy.",
+        "今日の受信トレイを要約して。",
+    ],
+)
+async def test_semantic_capability_hint_routes_all_scripts_through_trusted_scheduler(
+    rt: SocietyRuntime, task_text: str
+):
+    mailbox, _ = await rt.roster.create(name="Mailbox", focus=["plugin:gmail"])
+
+    async def semantic_focus(_runtime, task, catalog):
+        assert task == task_text
+        assert any(row.id == "plugin:gmail" for row in catalog)
+        return ["plugin:gmail"]
+
+    rt.quests._infer_focus = semantic_focus  # noqa: SLF001 - fake model hint
+    quest = await rt.quests.create(task_text)
+    assert quest.state is QuestState.RUNNING
+    assert quest.agent_id == mailbox.agent_id
+    assert quest.routing["reason"] == "focus-match"
+
+
+async def test_unavailable_multilingual_hint_still_starts_a_generalist(rt: SocietyRuntime):
+    async def unavailable(_runtime, _task, _catalog):
+        raise RuntimeError("provider unavailable")
+
+    rt.quests._infer_focus = unavailable  # noqa: SLF001 - simulate a provider failure
+    quest = await rt.quests.create("今日の受信トレイを要約して。")
+    assert quest.state is QuestState.RUNNING
+    assert quest.agent_id == "runner"
+    assert quest.routing["reason"] == "forged:generalist"
 
 
 async def test_name_in_the_quest_wins_without_focus(rt: SocietyRuntime):

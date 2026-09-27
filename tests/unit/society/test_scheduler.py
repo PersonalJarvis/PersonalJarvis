@@ -215,6 +215,10 @@ async def test_invalid_result_is_vetoed(world):
 
 def test_validate_result_rules():
     assert validate_result({"done": "x", "output": ["a"]}) is None
+    assert (
+        validate_result({"done": "Agent replied", "output": ["chat:session"], "status": "reported"})
+        is None
+    )
     assert validate_result({"done": "x", "open": ["a"]}) is None
     assert validate_result({"done": "", "output": ["a"]}) is not None
     assert validate_result({"done": "x"}) is not None

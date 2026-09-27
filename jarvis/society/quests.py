@@ -8,12 +8,13 @@ board carries CLAIM / RESULT / VETO on the quest's trace, and this module
 only *reads* those envelopes back into the quest's state. Nothing here
 starts work on its own and no model decides who takes what (AP-3/AP-5).
 
-Routing (``choose_taker``) is deterministic and free, like ``focus.py``:
+Routing (``choose_taker``) is a trusted, deterministic decision. An optional
+provider call supplies capability-id hints from the connected catalog in any
+language; invalid or unavailable hints fall back to the lexical matcher:
 
-1. the quest text is folded into capability ids the way an agent description
-   is (``derive_focus``), then every active non-lead agent is scored — focus
-   overlap, its name or title named in the quest, description words shared
-   with the quest; a busy agent loses a point per running task;
+1. capability ids are scored against each agent's own focus, then the quest
+   text is folded into words for explicit names and description overlap;
+   a busy agent loses a point per running task;
 2. the best agent takes it when it scores at all;
 3. nobody fits → the Agent Foundry forges a teammate: the seed proposal
    whose capability the quest points at (a mail quest forges "Mailbox" when
@@ -32,7 +33,7 @@ import asyncio
 import json
 import logging
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
 
@@ -43,6 +44,7 @@ from .events import USER_ACTOR, MsgType, QuestState, SocietyEnvelope, Tier, now_
 from .focus import derive_focus
 from .roster import AgentRecord, AgentState
 from .seeds import proposal_for_capability
+from .semantic_routing import infer_task_focus
 
 log = logging.getLogger(__name__)
 
@@ -201,9 +203,15 @@ def choose_taker(
     catalog: list[CapabilityRow],
     *,
     busy: Mapping[str, int] | None = None,
+    focus_hint: list[str] | None = None,
 ) -> RoutingChoice:
     """Pure: the taker for ``text`` among ``agents``, or what to forge."""
-    focus = derive_focus("", text, catalog)
+    allowed = {row.id for row in catalog if row.connected}
+    focus = (
+        [item for item in focus_hint if item in allowed]
+        if focus_hint
+        else derive_focus("", text, catalog)
+    )
     busy = busy or {}
     candidates = [a for a in agents if a.state is AgentState.ACTIVE and a.tier is not Tier.LEAD]
     ranked = sorted(
@@ -308,10 +316,14 @@ class Quests:
         *,
         publish: Callable[[Any], Any] | None = None,
         retry_delay_s: float = RETRY_DELAY_S,
+        infer_focus: Callable[
+            [Any, str, list[CapabilityRow]], Awaitable[list[str]]
+        ] = infer_task_focus,
     ) -> None:
         self._runtime = runtime
         self._publish = publish
         self._retry_delay = retry_delay_s
+        self._infer_focus = infer_focus
         self._unsubscribe: Callable[[], None] | None = None
         self._timers: dict[str, asyncio.TimerHandle] = {}
         self._attempts: dict[str, int] = {}
@@ -470,7 +482,13 @@ class Quests:
         roster = self._runtime.roster
         agents = await roster.list()
         busy = {a.agent_id: self._runtime.scheduler.active_runs(a.agent_id) for a in agents}
-        choice = choose_taker(quest.text, agents, self._runtime.catalog(), busy=busy)
+        catalog = self._runtime.catalog()
+        try:
+            hint = await self._infer_focus(self._runtime, quest.text, catalog)
+        except Exception as exc:  # noqa: BLE001 - a hint can never prevent trusted routing
+            log.info("society quests: semantic hint unavailable (%s)", type(exc).__name__)
+            hint = []
+        choice = choose_taker(quest.text, agents, catalog, busy=busy, focus_hint=hint)
         agent_id = choice.agent_id
         if choice.forge is not None:
             spec = dict(choice.forge)
@@ -498,7 +516,7 @@ class Quests:
             "quest_id": quest_id,
             "title": quest.title,
         }
-        if lang in ("de", "en"):
+        if lang in ("de", "en", "es"):
             payload["lang"] = lang
         await self._set(
             quest,
@@ -573,10 +591,12 @@ class Quests:
                 "status": status,
                 "done": env.payload.get("done", ""),
                 "output": env.payload.get("output", []),
+                "evidence": env.payload.get("evidence", []),
                 "open": env.payload.get("open", []),
+                "chat_session": env.payload.get("chat_session", ""),
                 "text": env.text,
             }
-            state = QuestState.FAILED if status == "blocked" else QuestState.DONE
+            state = QuestState.FAILED if status in {"blocked", "partial"} else QuestState.DONE
             result["progress"] = list(quest.result.get("progress") or [])
             await self._set(quest, state=state, result_json=json.dumps(result), done_ms=env.ts_ms)
             self._attempts.pop(quest.quest_id, None)

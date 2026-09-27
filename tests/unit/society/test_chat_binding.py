@@ -11,9 +11,26 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jarvis.agent_chat.store import SURFACES, AgentChatStore
-from jarvis.society.chat_binding import ensure_session, frame_incoming, make_deliver_hook
+from jarvis.society.chat_binding import (
+    ensure_session,
+    frame_assignment,
+    frame_incoming,
+    make_deliver_hook,
+)
 from jarvis.society.events import MsgType, SocietyEnvelope
 from jarvis.society.runtime import SocietyRuntime
+
+
+def test_assignment_keeps_non_latin_request_as_the_turn_text():
+    task = "今日の受信トレイを要約して。"
+    env = SocietyEnvelope(
+        msg_type=MsgType.ASSIGN,
+        from_agent="user",
+        to_agent="mailbox",
+        trace_id="quest:language",
+        payload={"text": task},
+    )
+    assert frame_assignment(env) == task
 
 
 class FakeService:
@@ -229,10 +246,10 @@ async def test_assign_runs_in_the_canonical_chat_and_ends_as_a_result(tmp_path: 
         env = await rt.say(
             from_agent="user", to_agent="scout", text="Find the best VPS.", msg_type=MsgType.ASSIGN
         )
-        # The assignment became a framed chat turn on Scout's own session.
+        # The original request reaches the agent without English metadata
+        # changing the shared turn-language decision.
         assert svc.sent[0][0] == "society:scout"
-        assert svc.sent[0][1].startswith("[assignment from the user]\nFind the best VPS.")
-        assert "handoff" in svc.sent[0][1]
+        assert svc.sent[0][1] == "Find the best VPS."
         assert rt.scheduler.running == {"turn:turn-1": "scout"}
         await svc.finish("society:scout", "Hetzner CX22 wins. Done.")
         await asyncio.sleep(0.05)
@@ -240,7 +257,7 @@ async def test_assign_runs_in_the_canonical_chat_and_ends_as_a_result(tmp_path: 
         thread = await rt.store.events_for_trace(env.trace_id)
         assert [e.msg_type for e in thread] == [MsgType.ASSIGN, MsgType.CLAIM, MsgType.RESULT]
         result = thread[-1]
-        assert result.from_agent == "scout" and result.payload["status"] == "done"
+        assert result.from_agent == "scout" and result.payload["status"] == "reported"
         assert result.payload["done"] == "Hetzner CX22 wins. Done."
         assert result.payload["output"] == ["chat:society:scout"]
     finally:

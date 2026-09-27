@@ -40,6 +40,7 @@ from .focus import derive_approval_rules, derive_focus
 from .learning import AgentSkills, LearningPass, TurnDigest, default_creator_factory
 from .memory import SocietyMemory
 from .quests import Quests
+from .result_links import reviewable_outputs
 from .rooms import Rooms
 from .roster import LEAD_AGENT_ID, AgentRecord, Roster
 from .scheduler import DeliverHook, SocietyScheduler
@@ -69,6 +70,11 @@ _LEAD_BLOCKED: dict[str, str] = {
     "de": "{name} kam nicht weiter: {text}",  # i18n-allow: spoken completion
     "en": "{name} got stuck: {text}",
     "es": "{name} se quedó atascado: {text}",
+}
+_LEAD_REPORTED: dict[str, str] = {
+    "de": "{name} meldet: {text}",  # i18n-allow: spoken report
+    "en": "{name} reports: {text}",
+    "es": "{name} informa: {text}",
 }
 
 #: What the person hears when an agent answers Jarvis directly (SAY / QUERY /
@@ -791,7 +797,7 @@ class SocietyRuntime:
     ) -> None:
         """Turn the chat turn's end into a RESULT on the board and free the slot."""
         final_text = ""
-        status = "done"
+        status = "reported"
         error = ""
         tool_steps: list[str] = []
         used_browser = False
@@ -828,12 +834,13 @@ class SocietyRuntime:
         finally:
             svc.unsubscribe(session_id, queue)
         self.scheduler.note_run_ended(run_id)
-        summary = (final_text or error or "turn finished").strip()
+        summary = (final_text or error or "turn finished without a response").strip()
         # A successful model turn can still report an unfinished task. Use the
         # correlated, typed report, never a keyword guess over the final prose.
+        events = await self.store.events_for_trace(env.trace_id)
         reports = [
             item
-            for item in await self.store.events_for_trace(env.trace_id)
+            for item in events
             if item.parent_event_id == env.event_id
             and item.from_agent == target.agent_id
             and item.to_agent == env.from_agent
@@ -843,6 +850,42 @@ class SocietyRuntime:
         if reports:
             status = "blocked"
             error = summary = reports[-1].text
+        outcomes = [
+            item.payload
+            for item in events
+            if item.parent_event_id == env.event_id
+            and item.from_agent == target.agent_id
+            and item.msg_type is MsgType.DIGEST
+            and item.payload.get("kind") == "task_outcome"
+        ]
+        report = outcomes[-1] if outcomes else {}
+        session = svc.store.get_session(session_id)
+        workspace = str(getattr(session, "cwd", "") or "")
+        reported_output = report.get("output")
+        output, evidence = reviewable_outputs(
+            reported_output if isinstance(reported_output, list) else [], workspace
+        )
+        if status != "blocked":
+            reported_status = report.get("status")
+            if reported_status in {"blocked", "partial"}:
+                status = reported_status
+            elif not final_text and not report:
+                status = "blocked"
+                error = summary
+            elif reported_status == "done" and evidence:
+                status = "done"
+            else:
+                status = "reported"
+        if report and status != "blocked":
+            summary = str(report.get("summary") or summary).strip()[:2000]
+        elif report and report.get("status") == "blocked":
+            summary = str(report.get("summary") or summary).strip()[:2000]
+        remaining = report.get("open")
+        open_items = (
+            [str(item)[:500] for item in remaining[:20]] if isinstance(remaining, list) else []
+        )
+        if status in {"blocked", "partial"} and not open_items:
+            open_items = [error[:500] or summary[:500]]
         try:
             await self.store.append_and_publish(
                 SocietyEnvelope(
@@ -855,9 +898,10 @@ class SocietyRuntime:
                         "run_id": run_id,
                         "status": status,
                         "done": summary[:2000],
-                        "output": [f"chat:{session_id}"],
-                        "evidence": [],
-                        "open": [] if status == "done" else [error[:500] or "turn failed"],
+                        "output": [f"chat:{session_id}", *output],
+                        "evidence": evidence,
+                        "open": open_items,
+                        "chat_session": session_id,
                         "next_owner": None,
                         "text": summary[:500],
                     },
@@ -866,7 +910,9 @@ class SocietyRuntime:
         except Exception:  # noqa: BLE001 - the slot is free either way; the loss is one RESULT row
             log.warning("society: RESULT for %s could not be written", run_id, exc_info=True)
         if env.from_agent == LEAD_AGENT_ID:
-            await self.report_to_lead(target, env, status=status, summary=summary)
+            await self.report_to_lead(
+                target, env, status=status, summary=summary, output=output, evidence=evidence
+            )
         digest = TurnDigest(
             task=env.text or str(env.payload.get("task") or ""),
             final_text=final_text,
@@ -882,7 +928,14 @@ class SocietyRuntime:
     # ------------------------------------------------------------ the lead
 
     async def report_to_lead(
-        self, target: AgentRecord, env: SocietyEnvelope, *, status: str, summary: str
+        self,
+        target: AgentRecord,
+        env: SocietyEnvelope,
+        *,
+        status: str,
+        summary: str,
+        output: list[str] | None = None,
+        evidence: list[str] | None = None,
     ) -> None:
         """Close the loop on a task Jarvis handed out: tell the person.
 
@@ -897,9 +950,14 @@ class SocietyRuntime:
         if not should_report(env, status):
             return
         lang = str(env.payload.get("lang") or "en").lower()
-        line = (_LEAD_DONE if status == "done" else _LEAD_BLOCKED).get(
-            lang, (_LEAD_DONE if status == "done" else _LEAD_BLOCKED)["en"]
+        templates = (
+            _LEAD_DONE
+            if status == "done"
+            else _LEAD_REPORTED
+            if status == "reported"
+            else _LEAD_BLOCKED
         )
+        line = templates.get(lang, templates["en"])
         text = line.format(name=target.name, text=" ".join(summary.split())[:400])
         svc = self._get_chat()
         post = getattr(svc, "post_notice", None)
@@ -917,6 +975,8 @@ class SocietyRuntime:
                             "text": summary[:1000],
                             "session_id": target.session_id,
                             "trace_id": env.trace_id,
+                            "output": output or [],
+                            "evidence": evidence or [],
                         },
                     )
             except Exception:  # noqa: BLE001 - the chat notice is a courtesy; the voice leg still runs

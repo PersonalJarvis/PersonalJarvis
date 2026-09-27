@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
+import { TaskOutputLinks } from "./TaskOutputLinks";
 import { CircleAlert, FileText, ImageIcon } from "lucide-react";
 import { InternalMessageBubble, type InternalParticipant } from "./InternalMessageBubble";
 import { MessageWithChips } from "./ToolChoiceChips";
@@ -136,7 +137,7 @@ export function AgentTimeline({
           // centred like a stamp — it is not Jarvis speaking.
           const headline =
             item.kind === "society_result"
-              ? t(item.status === "done" ? "society.chat.result_done" : "society.chat.result_blocked").replace(
+              ? t(item.status === "done" ? "society.chat.result_done" : item.status === "reported" ? "society.chat.result_reported" : item.status === "partial" ? "society.chat.result_partial" : "society.chat.result_blocked").replace(
                   "{0}",
                   item.agentName || t("society.chat.result_agent"),
                 )
@@ -149,6 +150,7 @@ export function AgentTimeline({
             >
               {headline ? <span className="font-medium text-foreground">{headline}</span> : null}
               {item.text ? <ChatMarkdown text={item.text} className="text-muted-foreground" /> : null}
+              <TaskOutputLinks output={item.data.output} evidence={item.data.evidence} />
             </div>
           );
         }

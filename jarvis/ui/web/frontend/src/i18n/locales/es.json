@@ -5231,6 +5231,8 @@
       "coding_use_folder": "Usar carpeta",
       "coding_retry": "No se pudieron cargar los agentes. Reintentar.",
       "result_done": "{0} ha terminado",
+      "result_reported": "{0} informó un resultado",
+      "result_partial": "{0} terminó parte del trabajo",
       "result_blocked": "{0} se quedó atascado",
       "result_agent": "Un agente",
       "delegate_line": "Hand this to the agent '{0}' (id {1}) with delegate-to-agent and report back here when it is done.",
