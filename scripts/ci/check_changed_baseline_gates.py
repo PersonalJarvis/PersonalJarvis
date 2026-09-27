@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import ast
 import collections
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -19,7 +20,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: E402
+from jarvis.core.process_utils import (  # noqa: E402
+    NO_WINDOW_CREATIONFLAGS,
+    ensure_standard_streams,
+)
 from scripts.ci import check_async_routes as async_gate  # noqa: E402
 from scripts.ci import check_silent_exception_handlers as silent_gate  # noqa: E402
 
@@ -38,6 +42,7 @@ def run(*args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         check=False,
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
@@ -130,6 +135,7 @@ def reference_drift_is_new(changed: set[str]) -> bool:
 
 
 def main() -> int:
+    ensure_standard_streams()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", help="Exact PR base commit; omit for strict full scan")
     args = parser.parse_args()
