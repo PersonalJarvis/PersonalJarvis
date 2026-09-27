@@ -97,11 +97,11 @@ run_spin() {
     _spin_label="$1"; shift
     if [ ! -t 1 ]; then
         note "$_spin_label…"
-        "$@"
+        "$@" </dev/null
         return $?
     fi
     _spin_log=$(mktemp)
-    "$@" >"$_spin_log" 2>&1 &
+    "$@" </dev/null >"$_spin_log" 2>&1 &
     _spin_pid=$!
     _spin_i=0
     while kill -0 "$_spin_pid" 2>/dev/null; do
@@ -516,10 +516,12 @@ request_prerequisite_consent() {
 }
 
 run_privileged() {
+    # `curl | bash` makes stdin the remaining installer source. Package managers
+    # must not consume it, even when they claim to be noninteractive.
     if [ "$(id -u)" -eq 0 ]; then
-        "$@"
+        "$@" </dev/null
     elif command -v sudo >/dev/null 2>&1; then
-        sudo "$@"
+        sudo "$@" </dev/null
     else
         note 'Administrator access is required, but sudo is unavailable.'
         return 126
@@ -537,7 +539,7 @@ install_with_prerequisite_manager() {
             _packages=()
             if [ "$_python_ready" -eq 0 ]; then _packages+=(python); fi
             if [ "$_git_ready" -eq 0 ]; then _packages+=(git); fi
-            if "$PREREQ_MANAGER_CMD" install "${_packages[@]}" >"$_log" 2>&1; then _result=0; fi
+            if "$PREREQ_MANAGER_CMD" install "${_packages[@]}" </dev/null >"$_log" 2>&1; then _result=0; fi
             ;;
         apt-get)
             _packages=()
@@ -925,10 +927,10 @@ git_stream_pretty() {
 # the pipe preserves the git exit code via PIPESTATUS (this is bash).
 pretty_git() {
     if [ "$GIT_VERBOSITY" = '--progress' ]; then
-        "$@" 2>&1 | git_stream_pretty
+        "$@" </dev/null 2>&1 | git_stream_pretty
         return "${PIPESTATUS[0]}"
     fi
-    "$@"
+    "$@" </dev/null
 }
 
 clone_with_retry() {

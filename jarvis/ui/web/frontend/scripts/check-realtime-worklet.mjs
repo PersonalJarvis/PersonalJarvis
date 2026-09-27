@@ -13,7 +13,7 @@ if (worklets.length !== 1) {
 }
 
 const source = await readFile(new URL(worklets[0], assetsUrl), "utf8");
-for (const processor of ["pcm-capture", "pcm-playback"]) {
+for (const processor of ["pcm-capture", "pcm-playback", "pcm-level", "pcm-startup"]) {
   if (!source.includes(`registerProcessor("${processor}"`)) {
     throw new Error(`Compiled PCM AudioWorklet is missing ${processor}`);
   }

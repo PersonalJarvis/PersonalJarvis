@@ -204,6 +204,21 @@ def _normalized_messages(
             return None
         turns = session_store.get_turns(cid)
         events = _voice_events(session_store, cid)
+        live_messages = _live_voice_messages(events)
+        if live_messages:
+            return live_messages
+        # Older GPT-Live sessions retained every fragment even while the chat
+        # rendered only the current caption. Recover them without a migration.
+        from jarvis.core.paths import user_data_dir
+        from jarvis.live.transcript import read_legacy_transcript
+
+        legacy = read_legacy_transcript(user_data_dir() / "live.sqlite3", cid)
+        if legacy:
+            origin = legacy[0].start_ms
+            return [ChatTurn(
+                role=caption.role, text=caption.text,
+                ts_ms=int(session.started_ms) + caption.start_ms - origin,
+            ) for caption in legacy]
         out: list[ChatTurn] = []
         for turn in turns:
             if getattr(turn, "user_text", ""):
@@ -244,6 +259,42 @@ def _voice_events(session_store: Any, session_id: str) -> list[Any]:
     except Exception as exc:  # noqa: BLE001 — a trace is sugar, the transcript must load
         log.debug("voice events unavailable for %s: %s", session_id, exc)
         return []
+
+
+def _live_voice_messages(events: list[Any]) -> list[ChatTurn]:
+    """Replay continuous speaker snapshots without collapsing a whole call."""
+    segments: dict[str, dict[str, Any]] = {}
+    for event in events:
+        if event.kind != "VoiceTranscriptUpdated":
+            continue
+        payload = event.payload
+        segment_id = str(payload.get("segment_id", ""))
+        role = payload.get("role")
+        if not segment_id or role not in {"user", "assistant"}:
+            continue
+        previous = segments.get(segment_id)
+        revision = int(payload.get("revision", 0))
+        if previous and revision <= previous["revision"]:
+            continue
+        segments[segment_id] = {
+            "role": role, "text": str(payload.get("text", "")), "revision": revision,
+            "start": previous["start"] if previous else event.ts_ms,
+            "end": event.ts_ms, "audio_start": int(payload.get("start_ms", 0)),
+        }
+    ordered = sorted(segments.values(), key=lambda item: (item["audio_start"], item["start"]))
+    messages = []
+    trace_start = min((item["start"] for item in ordered), default=0)
+    for item in ordered:
+        if not item["text"].strip():
+            continue
+        trace = None
+        if item["role"] == "assistant":
+            trace = trace_from_events(events, since_ms=trace_start, until_ms=item["end"])
+            trace_start = item["end"] + 1
+        messages.append(ChatTurn(
+            role=item["role"], text=item["text"], ts_ms=item["start"], trace=trace,
+        ))
+    return messages
 
 
 def _voice_turn_trace(turn: Any, events: list[Any]) -> dict[str, Any] | None:

@@ -15,6 +15,7 @@ const fakes = vi.hoisted(() => ({
   mode: "realtime",
   available: true,
   requiresWebRtcOffer: false,
+  browserAudio: false,
   connect: vi.fn(async () => undefined),
   disconnect: vi.fn(async () => undefined),
   supportIssue: null as
@@ -39,6 +40,7 @@ vi.mock("@/hooks/useVoiceMode", () => ({
     mode: fakes.mode,
     realtimeAvailable: fakes.available,
     requiresWebRtcOffer: fakes.requiresWebRtcOffer,
+    browserAudio: fakes.browserAudio,
     setMode: vi.fn(),
     isLoading: false,
     isSaving: false,
@@ -70,6 +72,7 @@ describe("BrowserRealtimeControl", () => {
     fakes.mode = "realtime";
     fakes.available = true;
     fakes.requiresWebRtcOffer = false;
+    fakes.browserAudio = false;
     fakes.connect.mockClear();
     fakes.disconnect.mockClear();
     fakes.supportIssue = null;
@@ -78,10 +81,51 @@ describe("BrowserRealtimeControl", () => {
     setBrowserVoiceInputOwnership(false);
     delete (window as unknown as { pywebview?: unknown }).pywebview;
     useEventStore.setState({
+      events: [],
       voiceState: "idle",
       transcription: "",
       transcriptionFinal: true,
+      solo: false,
+      activeSection: "chats",
+      detachedViews: [],
     });
+  });
+
+  it("offers a browser recovery link when the hidden media host cannot start", async () => {
+    fakes.browserAudio = true;
+    fakes.connect.mockRejectedValueOnce(new Error("Microphone unavailable"));
+    useEventStore.setState({ events: [{
+      id: "live-start-test", name: "BrowserVoiceRequested", ts: Date.now(),
+      payload: { action: "start" },
+    }] });
+    render(<BrowserRealtimeControl controlOnly />);
+    expect(await screen.findByRole("link", { name: "live.open_browser" })).toBeTruthy();
+  });
+
+  it("parks a wake start while hidden and fires it when the tab returns", async () => {
+    fakes.browserAudio = true;
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      const { unmount } = render(<BrowserRealtimeControl controlOnly />);
+      act(() => {
+        useEventStore.setState({ events: [{
+          id: "wake-hidden", name: "BrowserVoiceRequested", ts: Date.now(),
+          payload: { action: "start" },
+        }] });
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      expect(fakes.connect).not.toHaveBeenCalled();
+      visibility.mockReturnValue("visible");
+      act(() => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+      unmount();
+    } finally {
+      visibility.mockRestore();
+    }
   });
 
   it("is hidden in the desktop shell to prevent a second microphone", () => {
@@ -89,6 +133,65 @@ describe("BrowserRealtimeControl", () => {
     (window as unknown as { pywebview?: unknown }).pywebview = { api: {} };
     render(<BrowserRealtimeControl />);
     expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("starts a desktop wake immediately even when the WebView is hidden", async () => {
+    fakes.native = true;
+    fakes.browserAudio = true;
+    (window as unknown as { pywebview?: unknown }).pywebview = { api: {} };
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      render(<BrowserRealtimeControl controlOnly />);
+      act(() => useEventStore.getState().pushEvent({
+        id: "background-wake", name: "BrowserVoiceRequested", ts: Date.now(),
+        payload: { action: "start" },
+      }));
+      await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
+  it("handles the latest stop and a second wake without replaying the first", async () => {
+    fakes.browserAudio = true;
+    render(<BrowserRealtimeControl controlOnly />);
+    const request = (id: string, action: string) => act(() => useEventStore.getState().pushEvent({
+      id, name: "BrowserVoiceRequested", ts: Date.now(), payload: { action },
+    }));
+    request("start-1", "start");
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+    request("stop-1", "stop");
+    await waitFor(() => expect(fakes.disconnect).toHaveBeenCalledTimes(1));
+    request("start-2", "start");
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not consume a wake before the provider becomes available", async () => {
+    fakes.browserAudio = true;
+    fakes.available = false;
+    const view = render(<BrowserRealtimeControl controlOnly />);
+    act(() => useEventStore.getState().pushEvent({
+      id: "early-wake", name: "BrowserVoiceRequested", ts: Date.now(), payload: { action: "start" },
+    }));
+    expect(fakes.connect).not.toHaveBeenCalled();
+    fakes.available = true;
+    view.rerender(<BrowserRealtimeControl controlOnly />);
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+  });
+
+  it.each([false, true])("keeps other desktop windows from claiming the microphone (embedded=%s)", async embedded => {
+    fakes.native = true;
+    fakes.browserAudio = true;
+    if (embedded) {
+      (window as unknown as { pywebview?: unknown }).pywebview = { api: {} };
+      useEventStore.setState({ solo: true, activeSection: "settings" });
+    }
+    render(<BrowserRealtimeControl controlOnly />);
+    act(() => useEventStore.getState().pushEvent({
+      id: "wrong-owner", name: "BrowserVoiceRequested", ts: Date.now(), payload: { action: "start" },
+    }));
+    await act(async () => undefined);
+    expect(fakes.connect).not.toHaveBeenCalled();
   });
 
   it("stays visible in external Chrome connected to the desktop backend", () => {
@@ -123,7 +226,7 @@ describe("BrowserRealtimeControl", () => {
     fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
 
     await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
-    expect(fakes.options).toEqual({ requiresWebRtcOffer: true });
+    expect(fakes.options).toMatchObject({ requiresWebRtcOffer: true, browserAudio: false });
   });
 
   it("returns to thinking after an interim realtime sentence", async () => {
@@ -136,6 +239,32 @@ describe("BrowserRealtimeControl", () => {
 
     act(() => fakes.callbacks?.onStatus?.("thinking", {}));
     expect(useEventStore.getState().voiceState).toBe("thinking");
+  });
+
+  it("shows speaking on the live tts_start frame without binary audio", async () => {
+    // GPT-Live talks over WebRTC: no PCM sideband, no onAudio — the
+    // backend's explicit frame is the only speaking signal the bar gets.
+    render(<BrowserRealtimeControl />);
+    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+
+    act(() => fakes.callbacks?.onStatus?.("thinking", {}));
+    expect(useEventStore.getState().voiceState).toBe("thinking");
+
+    act(() => fakes.callbacks?.onStatus?.("tts_start", {}));
+    expect(useEventStore.getState().voiceState).toBe("speaking");
+  });
+
+  it("returns to listening when the live session clears audio on barge-in", async () => {
+    render(<BrowserRealtimeControl />);
+    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+
+    act(() => fakes.callbacks?.onStatus?.("speaking", {}));
+    expect(useEventStore.getState().voiceState).toBe("speaking");
+
+    act(() => fakes.callbacks?.onStatus?.("audio_clear", {}));
+    expect(useEventStore.getState().voiceState).toBe("listening");
   });
 
   it("keeps thinking after a progress surface line finishes speaking", async () => {

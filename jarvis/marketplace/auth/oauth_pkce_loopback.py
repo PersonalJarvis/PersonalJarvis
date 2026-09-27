@@ -170,6 +170,7 @@ class PkceLoopbackHandler:
             plugin_id=self.plugin_id,
             kind="browser_redirect",
             open_url=url,
+            redirect_uri=redirect_uri,
             expires_at_ms=int((datetime.now(UTC) + timedelta(minutes=5)).timestamp() * 1000),
         )
 

@@ -16,6 +16,7 @@ import pytest
 from jarvis.agent_chat import jarvis_harness, runner_cli
 from jarvis.agent_chat.events import make_event
 from jarvis.core import runtime_refs
+from jarvis.core.response_style import KEEP_GOING_ON_TOOL_FAILURE
 from jarvis.mcp import jarvis_tools_server as server
 from jarvis.ui.web import mcp_server_routes
 
@@ -189,6 +190,68 @@ def test_grok_takes_the_compact_identity_on_argv(monkeypatch, tmp_path: Path):
     )
     prompt = plan.argv[plan.argv.index("-p") + 1]
     assert prompt.startswith("<jarvis_identity>\nSHORT IDENTITY") and prompt.endswith("hi")
+    assert "--always-approve" in plan.argv
+    assert "--permission-mode" not in plan.argv
+    assert "--rules" in plan.argv
+    assert plan.argv[plan.argv.index("--rules") + 1] == KEEP_GOING_ON_TOOL_FAILURE
+
+
+def test_grok_plan_mode_does_not_auto_approve(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(runner_cli, "grok_argv_prefix", lambda: ["grok"])
+    plan = runner_cli.plan_grok(
+        prompt="hi",
+        cwd=tmp_path,
+        model="",
+        effort="",
+        permission_mode="plan",
+        resume=None,
+        identity=_identity(tmp_path),
+    )
+    assert plan.argv[plan.argv.index("--permission-mode") + 1] == "plan"
+    assert "--always-approve" not in plan.argv
+    assert plan.argv[plan.argv.index("--rules") + 1] == KEEP_GOING_ON_TOOL_FAILURE
+
+
+def test_grok_with_identity_writes_a_project_mcp_config(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(runner_cli, "grok_argv_prefix", lambda: ["grok"])
+    monkeypatch.setattr(runner_cli.jarvis_harness, "control_key", lambda: "k")
+    runtime_refs.set_api_base_url("http://127.0.0.1:47821")
+    (tmp_path / ".grok").mkdir()
+    (tmp_path / ".grok" / "config.toml").write_text(
+        '[mcp_servers.linear]\nurl = "https://mcp.linear.app/mcp"\n',
+        encoding="utf-8",
+    )
+    plan = runner_cli.plan_grok(
+        prompt="hi",
+        cwd=tmp_path,
+        model="",
+        effort="",
+        permission_mode="accept-edits",
+        resume=None,
+        identity=_identity(tmp_path),
+    )
+    config = (tmp_path / ".grok" / "config.toml").read_text(encoding="utf-8")
+    assert "[mcp_servers.linear]" in config
+    assert "https://mcp.linear.app/mcp" in config
+    assert "[mcp_servers.jarvis]" in config
+    assert config.count("[mcp_servers.jarvis]") == 1
+    assert "/api/control/mcp/" in config
+    assert 'bearer_token_env_var = "JARVIS_CONTROL_API_KEY"' in config
+    assert "sess-1" in config
+    assert plan.env["JARVIS_CONTROL_API_KEY"] == "k"
+    # A second turn rewrites the Jarvis block instead of duplicating it.
+    runner_cli.plan_grok(
+        prompt="again",
+        cwd=tmp_path,
+        model="",
+        effort="",
+        permission_mode="accept-edits",
+        resume=None,
+        identity=_identity(tmp_path),
+    )
+    again = (tmp_path / ".grok" / "config.toml").read_text(encoding="utf-8")
+    assert again.count("[mcp_servers.jarvis]") == 1
+    assert "[mcp_servers.linear]" in again
 
 
 def test_agy_takes_the_identity_on_stdin(monkeypatch, tmp_path: Path):

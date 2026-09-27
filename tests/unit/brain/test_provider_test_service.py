@@ -242,14 +242,14 @@ def test_realtime_test_opens_the_exact_duplex_provider() -> None:
 
     res = _run(
         run_provider_test(
-            get_spec("openai-realtime"),
+            get_spec("openai-live"),
             _cfg(),
             present=True,
             realtime_probe=probe,
         )
     )
     assert res.status == "ok"
-    assert probed == ["openai-realtime"]
+    assert probed == ["openai-live"]
     assert res.latency_ms == pytest.approx(42.0)
     assert "handshake accepted" in res.detail.lower()
 

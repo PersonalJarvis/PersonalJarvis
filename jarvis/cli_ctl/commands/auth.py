@@ -1,4 +1,5 @@
 """auth: store/verify the control key for a Jarvis target."""
+
 from __future__ import annotations
 
 import typer
@@ -27,11 +28,12 @@ def _probe(url: str, key: str) -> bool:
 def login(
     url: str = typer.Option(..., "--url", help="Base URL, e.g. http://127.0.0.1:47821"),
     key: str = typer.Option(
-        None, "--key",
+        None,
+        "--key",
         prompt="Control key (jctl_…)",
         hide_input=True,
         help="Control key. Omit to be prompted (hidden), or pass '-' to read it "
-             "from stdin. Avoid an inline value — it leaks into shell history.",
+        "from stdin. Avoid an inline value — it leaks into shell history.",
     ),
 ) -> None:
     """Verify the key against the server and persist it for future calls.
@@ -60,15 +62,16 @@ def status(
     key: str = typer.Option(None, "--key"),
 ) -> None:
     """Report whether the configured (or given) target is reachable."""
-    from jarvis.cli_ctl.__main__ import as_json
+    from jarvis.cli_ctl.__main__ import as_json, make_client
 
-    prof = config.resolve_profile()
-    target = url or prof.base_url
-    use_key = key or prof.control_key or ""
-    reachable = _probe(target, use_key)
-    render.emit(
-        {"base_url": target, "reachable": reachable}, as_json=as_json()
-    )
+    with make_client(url=url, key=key) as client:
+        target = client.base_url
+        try:
+            client.request("GET", _PROBE)
+            reachable = True
+        except ApiError:
+            reachable = False
+    render.emit({"base_url": target, "reachable": reachable}, as_json=as_json())
     if not reachable:
         raise typer.Exit(code=1)
 

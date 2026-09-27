@@ -56,7 +56,7 @@ describe("DocsContent", () => {
     );
     const openSpy = vi
       .spyOn(openExternal, "openExternalUrl")
-      .mockResolvedValue(undefined);
+      .mockResolvedValue(true);
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });

@@ -58,7 +58,7 @@ export function VoiceHubView() {
         title={t("nav.voice")}
         subtitle={t("voice.hub.subtitle")}
       />
-      <SectionTabBar tabs={TABS} />
+      <SectionTabBar tabs={TABS} align="center" />
       {/* min-h-0 is load-bearing: without it a flex child with its own
           scroll container grows past the viewport instead of scrolling. */}
       <div className="min-h-0 flex-1 overflow-hidden">

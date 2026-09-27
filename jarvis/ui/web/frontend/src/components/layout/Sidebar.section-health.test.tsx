@@ -8,7 +8,7 @@
  * fresh install isn't permanently flagged.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render as rtlRender, screen } from "@testing-library/react";
+import { cleanup, render as rtlRender, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { SectionHealth } from "@/hooks/useProviders";
@@ -65,15 +65,16 @@ afterEach(() => {
 });
 
 describe("Sidebar — API-Keys alert dot", () => {
-  it("shows a red alert dot on API Keys when a section reports error", () => {
+  it("shows a red attention dot on the profile button when a section reports error", () => {
     mockHealth = {
       brain: { status: "error", reason: "rate_limited", detail: "OpenRouter: rate limited", subject_id: "openrouter" },
       tts: { status: "ok", reason: "ok", detail: "", subject_id: "gemini-flash-tts" },
     };
     render(<Sidebar />);
-    expect(screen.getByTestId("sidebar-profile-attention")).toBeTruthy();
-    fireEvent.click(screen.getByTestId("sidebar-profile-toggle"));
-    const dot = screen.getByTestId("nav-alert-apikeys");
+    // The profile button IS the Settings hub's entry point now, so its dot is
+    // the app-wide signal; the per-row dot lives on the hub's own nav (see
+    // SettingsHubView.test).
+    const dot = screen.getByTestId("sidebar-profile-attention");
     expect(dot).toBeTruthy();
     expect(dot.className).toMatch(/bg-destructive/);
   });

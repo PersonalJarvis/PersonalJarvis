@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib
 import logging
 import os
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -65,6 +66,8 @@ def record_identity_reset(services: tuple[str, ...] | list[str]) -> None:
         )
     except OSError:
         log.debug("Could not record the macOS TCC reset marker.", exc_info=True)
+    # The Automation answers on file belonged to the old identity too.
+    _clear_automation_consent()
 
 
 def _read_identity_reset() -> dict[str, Any] | None:
@@ -101,6 +104,52 @@ def _clear_identity_reset() -> None:
         log.debug("Could not clear the macOS TCC reset marker.", exc_info=True)
 
 
+# Automation (Apple Events) has no query API for a target that is not
+# running: macOS only answers for a live process. The answer the user gave the
+# last time a target WAS running is kept here so the row does not flip back
+# to "not requested" every time Music quits. It is a record of the user's
+# decision, never a cached probe — a running target is always asked live and
+# overrides it — and every reset path (tccutil, identity change) drops it.
+_AUTOMATION_CONSENT_FILENAME = "macos-automation-consent.json"
+
+
+def automation_consent_path() -> Path:
+    from jarvis.core.paths import user_data_dir
+
+    return user_data_dir() / _AUTOMATION_CONSENT_FILENAME
+
+
+def _read_automation_consent() -> dict[str, str]:
+    import json
+
+    try:
+        payload = json.loads(automation_consent_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        # Missing, unreadable or not JSON all mean the same: nothing recorded.
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {str(key): str(value) for key, value in payload.items() if isinstance(value, str)}
+
+
+def _write_automation_consent(answers: dict[str, str]) -> None:
+    import json
+
+    path = automation_consent_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(answers, sort_keys=True), encoding="utf-8")
+    except OSError:
+        log.debug("Could not record the macOS Automation answers.", exc_info=True)
+
+
+def _clear_automation_consent() -> None:
+    try:
+        automation_consent_path().unlink(missing_ok=True)
+    except OSError:
+        log.debug("Could not clear the macOS Automation answers.", exc_info=True)
+
+
 class PermissionId(StrEnum):
     """Stable identifiers shared by the API and desktop permission UI."""
 
@@ -109,11 +158,24 @@ class PermissionId(StrEnum):
     ACCESSIBILITY = "accessibility"
     INPUT_MONITORING = "input_monitoring"
     EVENT_POSTING = "event_posting"
+    # Apple Events consent for the media players the ducking scripts talk to
+    # (Music, Spotify). Invisible before this row existed: the dialog fired
+    # mid-dictation, a rebuild orphaned the answer, and nothing could reset it.
+    AUTOMATION = "automation"
     # Not a TCC grant: the macOS Keychain prompts per item at first access
     # (typically right at app start, when API keys are read). Users who deny
     # it silently land on the file fallback and read the prompt as suspicious
     # unless the UI names and explains it like every other permission.
     CREDENTIAL_STORE = "credential_store"
+
+
+# ``(display name, bundle id)`` of every app Jarvis scripts through Apple
+# Events. The ducking backend reads this list too, so the permission row and
+# the scripts can never disagree about which apps need consent.
+AUTOMATION_TARGETS: tuple[tuple[str, str], ...] = (
+    ("Music", "com.apple.Music"),
+    ("Spotify", "com.spotify.client"),
+)
 
 
 class PermissionState(StrEnum):
@@ -140,6 +202,7 @@ FEATURE_REQUIREMENTS: dict[str, tuple[PermissionId, ...]] = {
         PermissionId.INPUT_MONITORING,
     ),
     "window_control": (PermissionId.ACCESSIBILITY,),
+    "audio_ducking": (PermissionId.AUTOMATION,),
     "api_keys": (PermissionId.CREDENTIAL_STORE,),
 }
 
@@ -149,6 +212,7 @@ _LABELS: dict[PermissionId, str] = {
     PermissionId.ACCESSIBILITY: "Accessibility",
     PermissionId.INPUT_MONITORING: "Input Monitoring",
     PermissionId.EVENT_POSTING: "Input Control",
+    PermissionId.AUTOMATION: "Automation (Music & Spotify)",
     PermissionId.CREDENTIAL_STORE: "Keychain (API keys)",
 }
 
@@ -168,7 +232,81 @@ _SETTINGS_URLS: dict[PermissionId, str] = {
     PermissionId.EVENT_POSTING: (
         "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
     ),
+    PermissionId.AUTOMATION: (
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"
+    ),
 }
+
+# Apple Event Manager constants for AEDeterminePermissionToAutomateTarget
+# (macOS 10.14+). Four-char codes are big-endian uint32; the OSStatus values
+# are stable ABI (AE.framework / MacErrors.h).
+_AE_TYPE_APPLICATION_BUNDLE_ID = 0x62756E64  # 'bund'
+_AE_TYPE_WILDCARD = 0x2A2A2A2A  # '****'
+_AE_NO_ERR = 0
+_AE_PROC_NOT_FOUND = -600  # target not running: no answer possible
+_AE_EVENT_NOT_PERMITTED = -1743  # the user denied
+_AE_EVENT_WOULD_REQUIRE_USER_CONSENT = -1744  # not asked yet
+_AUTOMATION_STATES: dict[int, PermissionState] = {
+    _AE_NO_ERR: PermissionState.GRANTED,
+    _AE_EVENT_NOT_PERMITTED: PermissionState.DENIED,
+    _AE_EVENT_WOULD_REQUIRE_USER_CONSENT: PermissionState.NOT_DETERMINED,
+}
+_CONSENT_ANSWERS = frozenset({PermissionState.GRANTED, PermissionState.DENIED})
+# A hidden launch of Music/Spotify for the consent dialog: how long to wait
+# for the process before giving up on that target for this request.
+_AUTOMATION_LAUNCH_TIMEOUT_S = 10.0
+
+
+def _default_automation_probe(bundle_id: str, ask: bool) -> int | None:
+    """``AEDeterminePermissionToAutomateTarget`` for one bundle id.
+
+    Returns the raw OSStatus, or ``None`` when the framework cannot be
+    called. With ``ask`` the call blocks until the user answers the system
+    dialog — the only supported way to obtain Automation consent up front
+    instead of in the middle of a dictation.
+    """
+    if sys.platform != "darwin":
+        return None
+    import ctypes
+
+    class _AEDesc(ctypes.Structure):
+        _fields_ = [("descriptorType", ctypes.c_uint32), ("dataHandle", ctypes.c_void_p)]
+
+    try:
+        services = ctypes.CDLL(
+            "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
+        )
+        services.AECreateDesc.argtypes = [
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+            ctypes.c_long,
+            ctypes.POINTER(_AEDesc),
+        ]
+        services.AECreateDesc.restype = ctypes.c_int32
+        services.AEDisposeDesc.argtypes = [ctypes.POINTER(_AEDesc)]
+        services.AEDisposeDesc.restype = ctypes.c_int32
+        determine = services.AEDeterminePermissionToAutomateTarget
+        determine.argtypes = [
+            ctypes.POINTER(_AEDesc),
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_ubyte,
+        ]
+        determine.restype = ctypes.c_int32
+    except (OSError, AttributeError) as exc:
+        log.debug("Apple Event Manager is unavailable for the Automation probe: %s", exc)
+        return None
+    target = _AEDesc()
+    data = bundle_id.encode("utf-8")
+    if services.AECreateDesc(_AE_TYPE_APPLICATION_BUNDLE_ID, data, len(data), ctypes.byref(target)):
+        return None
+    try:
+        return int(
+            determine(ctypes.byref(target), _AE_TYPE_WILDCARD, _AE_TYPE_WILDCARD, 1 if ask else 0)
+        )
+    finally:
+        services.AEDisposeDesc(ctypes.byref(target))
+
 
 # IOKit HID access constants (IOHIDCheckAccess, macOS 10.15+). The SDK header
 # (IOKit/hidsystem/IOHIDLib.h) declares both as PLAIN C enums — 32-bit int,
@@ -290,6 +428,7 @@ _TCC_RESET_SERVICES: dict[PermissionId, str] = {
     PermissionId.ACCESSIBILITY: "Accessibility",
     PermissionId.INPUT_MONITORING: "ListenEvent",
     PermissionId.EVENT_POSTING: "PostEvent",
+    PermissionId.AUTOMATION: "AppleEvents",
 }
 
 _READY_STATES = frozenset({PermissionState.GRANTED, PermissionState.NOT_REQUIRED})
@@ -366,6 +505,7 @@ class SystemPermissionPort:
         screen_capture_live_check: Callable[[], bool | None] = _default_screen_capture_live_check,
         credential_store_backend: Callable[[], str] = _default_credential_store_backend,
         credential_store_recover: Callable[[], bool] = _default_credential_store_recover,
+        automation_probe: Callable[[str, bool], int | None] = _default_automation_probe,
     ) -> None:
         self._platform_name = platform_name
         self._module_loader = module_loader
@@ -373,6 +513,7 @@ class SystemPermissionPort:
         self._screen_capture_live_check = screen_capture_live_check
         self._credential_store_backend = credential_store_backend
         self._credential_store_recover = credential_store_recover
+        self._automation_probe = automation_probe
         # This is operation state, not a cached permission probe. The set lives
         # only for the current process and therefore clears exactly when the
         # required app restart has happened.
@@ -552,11 +693,147 @@ class SystemPermissionPort:
             return PermissionState.NOT_GRANTED
         return PermissionState.UNAVAILABLE
 
+    # ---- Automation (Apple Events) ---------------------------------------
+
+    def _installed_automation_targets(self) -> list[str] | None:
+        """Bundle ids of the scriptable players present; ``None`` = no AppKit."""
+        appkit = self._load("AppKit")
+        if appkit is None:
+            return None
+        try:
+            workspace = appkit.NSWorkspace.sharedWorkspace()
+        except Exception:  # noqa: BLE001 - a broken native bridge fails closed
+            return None
+        locate = getattr(workspace, "URLForApplicationWithBundleIdentifier_", None)
+        if not callable(locate):
+            # No lookup API: nothing can be scripted, so nothing to consent to.
+            return []
+        installed: list[str] = []
+        for _name, bundle_id in AUTOMATION_TARGETS:
+            try:
+                if locate(bundle_id) is not None:
+                    installed.append(bundle_id)
+            except Exception:  # noqa: BLE001 - one bad lookup skips one player
+                log.debug("Could not locate %s.", bundle_id, exc_info=True)
+        return installed
+
+    def _running_automation_targets(self, appkit: Any, bundle_id: str) -> list[Any]:
+        lookup = getattr(
+            getattr(appkit, "NSRunningApplication", None),
+            "runningApplicationsWithBundleIdentifier_",
+            None,
+        )
+        if not callable(lookup):
+            return []
+        try:
+            return list(lookup(bundle_id) or [])
+        except Exception:  # noqa: BLE001 - treat as not running
+            return []
+
+    def _live_automation_state(self, bundle_id: str, *, ask: bool) -> PermissionState | None:
+        """The OS answer for a RUNNING target; ``None`` when there is none."""
+        try:
+            status = self._automation_probe(bundle_id, ask)
+        except Exception:  # noqa: BLE001 - native probes never crash callers
+            log.debug("Automation probe for %s failed.", bundle_id, exc_info=True)
+            return None
+        if status is None:
+            return None
+        return _AUTOMATION_STATES.get(int(status))
+
+    def _automation_state(self) -> PermissionState:
+        """One row for every scriptable player: live when running, else recorded.
+
+        No player installed means nothing to consent to. Otherwise the
+        strictest answer wins — a single denied or unanswered player makes
+        the ducking feature incomplete, and the detail names which one.
+        """
+        installed = self._installed_automation_targets()
+        if installed is None:
+            return PermissionState.UNAVAILABLE
+        if not installed:
+            return PermissionState.NOT_REQUIRED
+        appkit = self._load("AppKit")
+        recorded = _read_automation_consent()
+        updated = dict(recorded)
+        states: list[PermissionState] = []
+        for bundle_id in installed:
+            state: PermissionState | None = None
+            if appkit is not None and self._running_automation_targets(appkit, bundle_id):
+                state = self._live_automation_state(bundle_id, ask=False)
+            if state is None:
+                try:
+                    state = PermissionState(recorded[bundle_id])
+                except (KeyError, ValueError):
+                    # Nothing recorded for this player (or an unknown value
+                    # from a newer build): "not asked yet" is the honest read.
+                    state = PermissionState.NOT_DETERMINED
+            elif state in _CONSENT_ANSWERS:
+                updated[bundle_id] = state.value
+            else:
+                updated.pop(bundle_id, None)
+            states.append(state)
+        if updated != recorded:
+            _write_automation_consent(updated)
+        if PermissionState.DENIED in states:
+            return PermissionState.DENIED
+        if PermissionState.NOT_DETERMINED in states:
+            return PermissionState.NOT_DETERMINED
+        return PermissionState.GRANTED
+
+    def _request_automation(self) -> None:
+        """Ask for every installed player up front, launching it hidden if needed.
+
+        Apple only shows the Automation dialog for a running target, so a
+        player that is closed is started hidden, asked, and closed again —
+        only the ones this call started. Each answer lands in the consent
+        record straight away, so the row is final before the dialog closes.
+        """
+        appkit = self._load("AppKit")
+        if appkit is None:
+            raise RuntimeError("AppKit is unavailable")
+        workspace = appkit.NSWorkspace.sharedWorkspace()
+        answers = _read_automation_consent()
+        launched: list[Any] = []
+        try:
+            for bundle_id in self._installed_automation_targets() or []:
+                if not self._running_automation_targets(appkit, bundle_id):
+                    url = workspace.URLForApplicationWithBundleIdentifier_(bundle_id)
+                    configuration = appkit.NSWorkspaceOpenConfiguration.configuration()
+                    configuration.setActivates_(False)
+                    configuration.setHides_(True)
+                    workspace.openApplicationAtURL_configuration_completionHandler_(
+                        url, configuration, lambda _app, _error: None
+                    )
+                    deadline = time.monotonic() + _AUTOMATION_LAUNCH_TIMEOUT_S
+                    running: list[Any] = []
+                    while time.monotonic() < deadline and not running:
+                        time.sleep(0.1)
+                        running = self._running_automation_targets(appkit, bundle_id)
+                    if not running:
+                        log.warning("%s did not start; Automation consent skipped.", bundle_id)
+                        continue
+                    launched.extend(running)
+                state = self._live_automation_state(bundle_id, ask=True)
+                if state in _CONSENT_ANSWERS:
+                    answers[bundle_id] = state.value
+                else:
+                    answers.pop(bundle_id, None)
+        finally:
+            _write_automation_consent(answers)
+            for app in launched:
+                try:
+                    app.terminate()
+                except Exception:  # noqa: BLE001 - closing what we opened is best-effort
+                    log.debug("Could not close a player opened for consent.", exc_info=True)
+
     def _state(self, permission_id: PermissionId) -> PermissionState:
         if self.platform != "darwin":
             return PermissionState.NOT_REQUIRED
         if permission_id is PermissionId.CREDENTIAL_STORE:
             return self._credential_store_state()
+        if permission_id is PermissionId.AUTOMATION:
+            return self._automation_state()
         if permission_id is PermissionId.MICROPHONE:
             return self._microphone_state()
         if permission_id is PermissionId.SCREEN_RECORDING:
@@ -644,6 +921,9 @@ class SystemPermissionPort:
     def _requester_available(self, permission_id: PermissionId) -> bool:
         if permission_id is PermissionId.CREDENTIAL_STORE:
             return True
+        if permission_id is PermissionId.AUTOMATION:
+            module = self._load("AppKit")
+            return callable(getattr(getattr(module, "NSWorkspace", None), "sharedWorkspace", None))
         if permission_id is PermissionId.MICROPHONE:
             module = self._load("AVFoundation")
             owner = getattr(module, "AVCaptureDevice", None)
@@ -855,6 +1135,11 @@ class SystemPermissionPort:
             # make macOS show the prompt again; the outcome (allowed or denied
             # once more) lands honestly in the after-snapshot.
             self._credential_store_recover()
+            return None
+        if permission_id is PermissionId.AUTOMATION:
+            # Synchronous: every dialog is answered by the time this returns,
+            # so the after-snapshot already carries the final state.
+            self._request_automation()
             return None
         if permission_id is PermissionId.MICROPHONE:
             av = self._load("AVFoundation")
@@ -1081,6 +1366,9 @@ class SystemPermissionPort:
                 before,
             )
         self._restart_required.discard(permission_id)
+        if permission_id is PermissionId.AUTOMATION:
+            # The recorded answers described rows tccutil just deleted.
+            _clear_automation_consent()
         return PermissionOperation(
             True,
             permission_id.value,
@@ -1176,6 +1464,7 @@ def get_system_permission_port() -> SystemPermissionPort:
 
 __all__ = [
     "APP_NAME",
+    "AUTOMATION_TARGETS",
     "EXPECTED_BUNDLE_ID",
     "FEATURE_REQUIREMENTS",
     "AppIdentity",

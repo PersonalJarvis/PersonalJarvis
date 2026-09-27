@@ -13,7 +13,7 @@ import typer
 from jarvis.cli_ctl import invoke, options, render
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.platform import detect_platform
-from jarvis.platform.permissions import APP_NAME, EXPECTED_BUNDLE_ID, PermissionId
+from jarvis.platform.permissions import EXPECTED_BUNDLE_ID, PermissionId
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -22,7 +22,9 @@ app = typer.Typer(
 
 
 def _installed_macos_app() -> Path:
-    return Path.home() / "Applications" / f"{APP_NAME}.app"
+    from jarvis.setup.macos_app_bundle import macos_app_bundle_path
+
+    return macos_app_bundle_path()
 
 
 def _activation_error(message: str) -> NoReturn:

@@ -11,6 +11,7 @@ import ipaddress
 import json
 import logging
 import os
+import random
 import socket
 import sys
 import time
@@ -73,6 +74,8 @@ class Worker:
         self.pending: dict[str, asyncio.Future] = {}
         self.context: Any = None
         self.browser: Any = None
+        self.browser_lock = asyncio.Lock()
+        self.browser_args: dict[str, Any] = {}
         self.page: Any = None
         self.playwright: Any = None
         self.agent: Any = None
@@ -103,6 +106,8 @@ class Worker:
         self.branding: asyncio.Task | None = None
         self.pointer: Any = None
         self.visual_action = False
+        self.cursor_on = False
+        self.cursor_jobs: set[asyncio.Task] = set()
 
     async def rpc(self, kind: str, payload: dict) -> dict:
         key = uuid.uuid4().hex
@@ -123,7 +128,6 @@ class Worker:
                 "Chrome needs an unlocked Windows desktop and the managed capture runtime"
             )
 
-        from browser_use import Browser  # type: ignore[import-not-found]
         from playwright.async_api import async_playwright
 
         profile = Path(args["profile_dir"])
@@ -137,7 +141,7 @@ class Worker:
             connection = await self.playwright.chromium.connect_over_cdp(cdp_url)
             self.context = connection.contexts[0]
         else:
-            self.context = await self.playwright.chromium.launch_persistent_context(
+            self.context = await self.launch_context(
                 str(profile),
                 executable_path=args["executable"],
                 headless=not native_enabled,
@@ -186,28 +190,18 @@ class Worker:
                         if not 0 < port < 65536:
                             raise ValueError("Invalid browser debugging port")
                         break
-                    except (FileNotFoundError, IndexError, ValueError):
-                        # A missing or partially written file is normal during launch.
+                    except (FileNotFoundError, PermissionError, IndexError, ValueError):
+                        # Chromium can briefly hold an exclusive Windows handle
+                        # while publishing this file; the startup deadline still applies.
                         await asyncio.sleep(0.05)
             cdp_url = f"http://127.0.0.1:{port}"
-        self.browser = Browser(
-            cdp_url=cdp_url,
-            keep_alive=True,
-            enable_default_extensions=False,
-            use_cloud=False,
-            downloads_path=str(self.workspace / "downloads"),
-            allowed_domains=args.get("allowed_domains") or None,
-        )
-        await self.browser.start()
-        from pointer import PointerTracker  # type: ignore[import-not-found]
+        self.browser_args = {"cdp_url": cdp_url, "allowed_domains": args.get("allowed_domains")}
+        try:
+            from page_cursor import install_cursor  # type: ignore[import-not-found]
 
-        self.pointer = PointerTracker(
-            self.generation,
-            emit,
-            lambda: self.visual_action and not self.manual,
-            lambda x, y: self.native.viewport_point(x, y) if self.native else (x, y, 1280, 800),
-        )
-        self.browser.cdp_client.send_raw = self.pointer.wrap(self.browser.cdp_client.send_raw)
+            await install_cursor(self.context)
+        except Exception:
+            logging.getLogger(__name__).debug("Agent cursor could not be prepared", exc_info=True)
         self.context.on("page", self.page_opened)
         for page in self.context.pages:
             self.page_opened(page)
@@ -249,8 +243,83 @@ class Worker:
             "full_window": bool(self.native),
         }
 
+    async def launch_context(self, profile: str, **options: Any) -> Any:
+        """Chrome may release its profile mutex just after its parent exits."""
+        for attempt in range(4):
+            try:
+                return await self.playwright.chromium.launch_persistent_context(profile, **options)
+            except Exception as exc:
+                if "ProcessSingleton" not in str(exc) or attempt == 3:
+                    raise
+                logging.getLogger(__name__).debug("Waiting for the managed Chrome profile to close")
+                await asyncio.sleep(random.SystemRandom().uniform(0.05, 0.15) * (2**attempt))
+        raise RuntimeError("Managed browser profile is still in use")
+
+    async def ensure_browser(self) -> None:
+        """Connect the agent engine on demand; idle pixels need only Chromium."""
+        async with self.browser_lock:
+            if self.browser is not None:
+                return
+
+            def load_browser() -> Any:
+                from browser_use import Browser  # type: ignore[import-not-found]
+
+                return Browser
+
+            browser_class = await asyncio.to_thread(load_browser)
+            browser = browser_class(
+                cdp_url=self.browser_args["cdp_url"],
+                keep_alive=True,
+                enable_default_extensions=False,
+                use_cloud=False,
+                downloads_path=str(self.workspace / "downloads"),
+                allowed_domains=self.browser_args.get("allowed_domains") or None,
+            )
+            try:
+                await browser.start()
+            except BaseException:
+                await browser.stop()
+                raise
+            from pointer import PointerTracker  # type: ignore[import-not-found]
+
+            self.pointer = PointerTracker(
+                self.generation,
+                emit,
+                lambda: self.visual_action and not self.manual,
+                lambda x, y: self.native.viewport_point(x, y) if self.native else (x, y, 1280, 800),
+            )
+            browser.cdp_client.send_raw = self.pointer.wrap(browser.cdp_client.send_raw)
+            self.browser = browser
+
     def page_opened(self, page: Any) -> None:
         page.on("dialog", self.on_dialog)
+        page.on("framenavigated", self.cursor_navigated)
+
+    def cursor_navigated(self, frame: Any) -> None:
+        if not self.cursor_on or self.manual:
+            return
+        task = asyncio.create_task(self._arm_frame(frame))
+        self.cursor_jobs.add(task)
+        task.add_done_callback(self.cursor_jobs.discard)
+
+    async def _arm_frame(self, frame: Any) -> None:
+        from page_cursor import ARM_SOURCE, CURSOR_SCRIPT  # type: ignore[import-not-found]
+
+        try:
+            await frame.evaluate(CURSOR_SCRIPT)
+            await frame.evaluate(ARM_SOURCE, True)
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "Agent cursor could not follow a navigation", exc_info=True
+            )
+
+    async def show_page_cursor(self, armed: bool) -> None:
+        from page_cursor import arm_cursor  # type: ignore[import-not-found]
+
+        try:
+            await arm_cursor(self.context, armed)
+        except Exception:
+            logging.getLogger(__name__).debug("Agent cursor could not be updated", exc_info=True)
 
     def on_dialog(self, dialog: Any) -> None:
         self.dialog = dialog
@@ -267,7 +336,7 @@ class Worker:
                 self.tabs[info["targetInfo"]["targetId"]] = page
             finally:
                 await session.detach()
-        focused = self.browser.get_focused_target()
+        focused = self.browser.get_focused_target() if self.browser is not None else None
         if self.native and self.manual:
             window_title = self.native.title()
             candidates = []
@@ -423,6 +492,7 @@ class Worker:
             await asyncio.sleep(1 / 15)
 
     async def run(self, args: dict) -> dict:
+        await self.ensure_browser()
         self.step_idle.clear()
         previous_downloads = set(self.browser.downloaded_files)
         from browser_use import Agent, Tools  # type: ignore[import-not-found]
@@ -517,6 +587,10 @@ class Worker:
             await self.agent_gate.wait()
             self.step_idle.clear()
 
+        visible = bool(self.native) or not self.owns_context
+        if visible:
+            self.cursor_on = True
+            await self.show_page_cursor(True)
         try:
             history = await self.agent.run(
                 max_steps=args.get("max_steps", 25), on_step_start=before_step, on_step_end=step
@@ -535,6 +609,9 @@ class Worker:
             }
         finally:
             self.agent = None
+            self.cursor_on = False
+            if visible:
+                await self.show_page_cursor(False)
             if self.pointer:
                 self.pointer.clear()
             self.step_idle.set()
@@ -580,8 +657,10 @@ class Worker:
                 self.manual = True
                 if self.pointer:
                     self.pointer.clear()
+                await self.show_page_cursor(False)
             else:
                 if self.native and self.manual:
+                    await self.ensure_browser()
                     from browser_use.browser import events  # type: ignore[import-not-found]
 
                     await self.focused()
@@ -592,6 +671,8 @@ class Worker:
                         )
                 self.manual = False
                 self.agent_gate.set()
+                if self.cursor_on:
+                    await self.show_page_cursor(True)
             return {"manual": self.manual}
         if op == "run":
             if self.manual:
@@ -625,6 +706,7 @@ class Worker:
         elif op == "reload":
             await page.reload()
         elif op == "tab":
+            await self.ensure_browser()
             from browser_use.browser.events import SwitchTabEvent  # type: ignore[import-not-found]
 
             if args.get("target") == "new":

@@ -43,6 +43,7 @@ _REST_PROBES: dict[str, tuple[str, dict[str, Any]]] = {
 }
 
 _NATIVE_PROBES: dict[str, tuple[str, dict[str, str], str]] = {
+    "discord": ("https://discord.com/api/v10/users/@me", {}, "id"),
     "gmail": ("https://gmail.googleapis.com/gmail/v1/users/me/profile", {}, "emailAddress"),
     "google_drive": (
         "https://www.googleapis.com/drive/v3/files",

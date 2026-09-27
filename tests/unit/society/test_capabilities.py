@@ -31,6 +31,7 @@ def _skill(slug: str, state: str = "active", desc: str = "A skill.") -> SimpleNa
 
 TOOLS = {
     "gmail": _tool("gmail", "Read and send mail via Gmail. Also drafts."),
+    "cli_gws": _tool("cli_gws", "Google Workspace CLI."),
     "cli_gh": _tool("cli_gh", "Run gh commands."),
     "github/create_issue": _tool(
         "github/create_issue", "[ACTION-ONLY · MCP: github] Create an issue."
@@ -66,6 +67,7 @@ def test_catalog_groups_orders_and_filters():
     assert ids == [
         "plugin:gmail",
         "cli:gh",
+        "cli:gws",
         "mcp:github/create_issue",
         "skill:daily-brief",
         "core:search-web",
@@ -74,10 +76,33 @@ def test_catalog_groups_orders_and_filters():
     gmail = rows[0]
     assert gmail.kind is CapabilityKind.PLUGIN
     assert gmail.one_liner == "Read and send mail via Gmail."
-    mcp = rows[2]
+    mcp = rows[3]
     assert mcp.one_liner == "Create an issue."
     assert mcp.aliases == ("github",)
     assert all("spawn" not in r.id and "navigate" not in r.id for r in rows)
+
+
+def test_cli_label_uses_display_name() -> None:
+    rows = build_catalog(
+        {
+            "cli_gws": _tool("cli_gws", "Google Workspace: Gmail, Drive."),
+        }
+    )
+    assert rows[0].id == "cli:gws"
+    assert rows[0].label == "gws"
+
+    rows = build_catalog(
+        {
+            "cli_gws": SimpleNamespace(
+                name="cli_gws",
+                description="Google Workspace: Gmail, Drive.",
+                risk_tier="monitor",
+                schema={},
+                display_name="Google Workspace CLI",
+            )
+        }
+    )
+    assert rows[0].label == "Google Workspace CLI"
 
 
 def test_catalog_marks_disconnected_and_sorts_them_last():
@@ -110,9 +135,11 @@ def test_select_tools_all_mode_focus_first_denies_out():
     )
     names = list(picked)
     assert names[0] == "gmail"
+    assert names[1] == "cli_gws"
     assert "wiki-recall" not in names
     assert "spawn-worker" not in names and "navigate" not in names
-    assert names[1:] == sorted(names[1:], key=lambda n: capability_id_for_tool(n) or "")
+    rest = names[2:]
+    assert rest == sorted(rest, key=lambda n: capability_id_for_tool(n) or "")
 
 
 def test_select_tools_allowlist_mode():
@@ -123,7 +150,18 @@ def test_select_tools_allowlist_mode():
         focus=[],
         denies=[],
     )
-    assert set(picked) == {"gmail", "search-web"}
+    assert set(picked) == {"gmail", "cli_gws", "search-web"}
+
+
+def test_allowlist_plugin_grant_includes_the_cli_for_the_same_service():
+    picked = select_tools(
+        TOOLS,
+        grant_mode="allowlist",
+        grants=["plugin:github"],
+        focus=[],
+        denies=[],
+    )
+    assert set(picked) == {"cli_gh"}
 
 
 def test_select_tools_is_deterministic():

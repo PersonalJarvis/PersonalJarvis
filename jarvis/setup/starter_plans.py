@@ -1,11 +1,9 @@
-"""Starter plans — "one key and you are done" setups for the first run.
+"""Starter plans for the live voice portion of first-run setup.
 
-A starter plan names a voice mode and the provider for every surface that
-mode needs, all served by ONE provider family (or two). Choosing a plan in
-onboarding filters the key list down to the families it needs; once every
-family key is saved, the frontend applies the plan through the ordinary
-switch routes (brain / tool model / agents / tts / stt / realtime / voice
-mode), so nothing here duplicates the switch logic — a plan is data.
+A starter plan names the live voice provider and the thinking model it needs.
+Sub-Agent access is connected separately in onboarding through an API key or
+subscription. The frontend applies each plan through the ordinary switch
+routes, so nothing here duplicates the switch logic.
 
 Provider ids are the catalog ids from ``jarvis.ui.web.provider_spec``; a
 unit test pins every id to an existing spec of the right tier so a renamed
@@ -40,59 +38,21 @@ class StarterPlan:
 
 STARTER_PLANS: tuple[StarterPlan, ...] = (
     StarterPlan(
-        id="gemini-pipeline",
-        label="Pipeline with Gemini",
-        summary=(
-            "One Google Gemini key runs everything: thinking, the tool model, "
-            "the agents, voice in and voice out."
-        ),
-        mode="pipeline",
-        key_families=("gemini",),
-        assignments={
-            "brain": "gemini",
-            "computer-use": "gemini",
-            "subagent": "gemini",
-            "tts": "gemini-flash-tts",
-            "stt": "gemini-api",
-        },
+        id="openai-live",
+        label="OpenAI GPT-Live",
+        summary="Live conversation and its thinking model use one OpenAI API key.",
+        mode="realtime",
+        key_families=("openai",),
+        assignments={"brain": "openai", "computer-use": "openai", "realtime": "openai-live"},
         recommended=True,
     ),
     StarterPlan(
-        id="gemini-realtime",
-        label="Realtime with Gemini",
-        summary=(
-            "One Google Gemini key, spoken live: Gemini Live answers in real "
-            "time; tool model and agents run on the same key."
-        ),
+        id="gemini-live",
+        label="Gemini Live",
+        summary="Live conversation uses a Gemini Live API key.",
         mode="realtime",
         key_families=("gemini",),
-        assignments={
-            "brain": "gemini",
-            "computer-use": "gemini",
-            "subagent": "gemini",
-            "tts": "gemini-flash-tts",
-            "stt": "gemini-api",
-            "realtime": "gemini-live",
-        },
-    ),
-    StarterPlan(
-        id="gemini-openai-realtime",
-        label="Gemini + OpenAI",
-        summary=(
-            "Two keys, both engines covered: OpenAI Realtime speaks live, "
-            "Gemini thinks, plans and runs the agents — and the Pipeline "
-            "engine stays ready as a fallback."
-        ),
-        mode="realtime",
-        key_families=("gemini", "openai"),
-        assignments={
-            "brain": "gemini",
-            "computer-use": "gemini",
-            "subagent": "gemini",
-            "tts": "gemini-flash-tts",
-            "stt": "gemini-api",
-            "realtime": "openai-realtime",
-        },
+        assignments={"brain": "gemini", "computer-use": "gemini", "realtime": "gemini-live"},
     ),
 )
 

@@ -37,6 +37,13 @@ import { cn } from "@/lib/utils";
  * onto `body` paints on top of the dialog and receives no clicks — every
  * option visible, none selectable. When the trigger lives in a dialog the
  * panel lands inside that layer instead.
+ *
+ * Dialogs in this app are centred with `transform: translate(-50%, -50%)` and
+ * clip with `overflow: hidden`. A transform makes the dialog the containing
+ * block for `position: fixed`, so viewport coordinates would paint the list
+ * far below the trigger; focusing it then scrolls the clipped dialog and the
+ * tab strip disappears. Inside a positioned/transformed host the panel is
+ * `absolute` and measured in that host's box instead.
  */
 
 export interface ComboboxOption {
@@ -114,6 +121,31 @@ export function isComboboxPanelEvent(event: {
  */
 function panelHost(trigger: HTMLElement | null): HTMLElement {
   return trigger?.closest<HTMLElement>('[role="dialog"]') ?? document.body;
+}
+
+function isRootHost(host: HTMLElement): boolean {
+  return host === document.body || host === document.documentElement;
+}
+
+/** Any dialog host is a containing block; `body` is the viewport. */
+function trapsPanel(host: HTMLElement): boolean {
+  return !isRootHost(host);
+}
+
+function hostBox(host: HTMLElement): {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+} {
+  const rect = host.getBoundingClientRect();
+  const left = rect.left + host.clientLeft;
+  const top = rect.top + host.clientTop;
+  const width = host.clientWidth || rect.width;
+  const height = host.clientHeight || rect.height;
+  return { left, top, width, height, right: left + width, bottom: top + height };
 }
 
 function fold(value: string): string {
@@ -250,13 +282,23 @@ export function Combobox({
   const measure = useCallback(() => {
     const trigger = triggerRef.current;
     if (!trigger) return;
+    const host = panelHost(trigger);
+    const trapped = trapsPanel(host);
+    const box = trapped
+      ? hostBox(host)
+      : {
+          left: 0,
+          top: 0,
+          right: window.innerWidth,
+          bottom: window.innerHeight,
+          width: window.innerWidth,
+          height: window.innerHeight,
+        };
     const rect = trigger.getBoundingClientRect();
-    const width = Math.min(
-      Math.max(rect.width, MIN_PANEL_WIDTH),
-      window.innerWidth - 2 * VIEWPORT_MARGIN,
-    );
-    const spaceBelow = window.innerHeight - rect.bottom - VIEWPORT_MARGIN;
-    const spaceAbove = rect.top - VIEWPORT_MARGIN;
+    const maxWidth = Math.max(MIN_PANEL_WIDTH, box.width - 2 * VIEWPORT_MARGIN);
+    const width = Math.min(Math.max(rect.width, MIN_PANEL_WIDTH), maxWidth);
+    const spaceBelow = box.bottom - rect.bottom - VIEWPORT_MARGIN;
+    const spaceAbove = rect.top - box.top - VIEWPORT_MARGIN;
     // Flip upwards only when below is genuinely too cramped AND above is
     // roomier — a panel that jumps sides on a two-pixel scroll reads as a bug.
     const flipUp = spaceBelow < 220 && spaceAbove > spaceBelow;
@@ -264,14 +306,24 @@ export function Combobox({
       160,
       Math.min(MAX_PANEL_HEIGHT, flipUp ? spaceAbove : spaceBelow),
     );
-    const left = Math.min(
-      Math.max(VIEWPORT_MARGIN, rect.left),
-      Math.max(VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN),
+    const leftViewport = Math.min(
+      Math.max(box.left + VIEWPORT_MARGIN, rect.left),
+      Math.max(box.left + VIEWPORT_MARGIN, box.right - width - VIEWPORT_MARGIN),
     );
     setPosition(
       flipUp
-        ? { left, bottom: window.innerHeight - rect.top + 6, width, maxHeight }
-        : { left, top: rect.bottom + 6, width, maxHeight },
+        ? {
+            left: leftViewport - box.left,
+            bottom: box.bottom - rect.top + 6,
+            width,
+            maxHeight,
+          }
+        : {
+            left: leftViewport - box.left,
+            top: rect.bottom + 6 - box.top,
+            width,
+            maxHeight,
+          },
     );
   }, []);
 
@@ -296,7 +348,9 @@ export function Combobox({
   // be. A callback ref fires exactly when the node appears, and once per open,
   // so repositioning on scroll does not yank focus back.
   const focusOnMount = useCallback((node: HTMLElement | null) => {
-    node?.focus();
+    // preventScroll: a mis-measured panel inside overflow:hidden would
+    // otherwise yank the dialog's scrollTop and hide the tab strip.
+    node?.focus({ preventScroll: true });
   }, []);
 
   const attachSearch = useCallback(
@@ -408,6 +462,7 @@ export function Combobox({
 
   const triggerLabel = selected?.label ?? fallbackLabel ?? value;
   const activeOption = enabled[activeIndex];
+  const trapped = trapsPanel(panelHost(triggerRef.current));
 
   return (
     <>
@@ -478,7 +533,12 @@ export function Combobox({
             // so the list has a predictable ground whatever it covers.
             // pointer-events-auto: a modal dialog sets none on body, and this
             // panel must still take the click even if it fell back to body.
-            className="pointer-events-auto fixed z-[70] flex flex-col overflow-hidden rounded-lg border border-border-strong bg-popover shadow-float"
+            // absolute inside a transformed/fixed dialog: that dialog is the
+            // containing block, and the measured left/top are in its box.
+            className={cn(
+              "pointer-events-auto z-[70] flex flex-col overflow-hidden rounded-lg border border-border-strong bg-popover shadow-float",
+              trapped ? "absolute" : "fixed",
+            )}
           >
             {searchable && (
               <div className="flex items-center gap-2 border-b border-border px-3 py-2">

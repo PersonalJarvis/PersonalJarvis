@@ -22,6 +22,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
 
+from .communication import response_instruction
 from .delivery import DeliveryBusy, IncomingMessage, incoming_context
 from .events import MsgType, SocietyEnvelope
 from .roster import LEAD_AGENT_ID, AgentRecord, PermissionCeiling
@@ -131,11 +132,8 @@ def frame_incoming(env: SocietyEnvelope, sender_name: str) -> str:
     refs = env.payload.get("refs")
     if isinstance(refs, list) and refs:
         lines.append("Refs: " + ", ".join(str(r) for r in refs))
-    if env.msg_type is MsgType.QUERY:
-        lines.append(
-            "Reply to the sender using society_message_agent with kind 'answer'. "
-            "This is internal communication; do not use an external messaging connector."
-        )
+    lines.append(f"Message id: {env.event_id}; sender id: {env.from_agent}")
+    lines.append(response_instruction(env))
     return "\n".join(lines)
 
 
@@ -151,6 +149,8 @@ def frame_assignment(env: SocietyEnvelope) -> str:
         "When you are done, end with a handoff: what is done, where the output is, "
         "what evidence you used, what remains open, who should own the next step."
     )
+    lines.append(f"Message id: {env.event_id}; sender id: {env.from_agent}")
+    lines.append(response_instruction(env))
     return "\n".join(lines)
 
 
@@ -179,7 +179,13 @@ def make_deliver_hook(
             message_id=env.event_id,
             sender_id=env.from_agent,
             sender_name=sender,
-            sender_kind=("jarvis" if env.from_agent == LEAD_AGENT_ID else "user" if env.from_agent == "user" else "agent"),
+            sender_kind=(
+                "jarvis"
+                if env.from_agent == LEAD_AGENT_ID
+                else "user"
+                if env.from_agent == "user"
+                else "agent"
+            ),
             text=env.text,
             prompt=frame_incoming(env, sender),
             trace_id=env.trace_id,

@@ -80,8 +80,13 @@ function lazyPropView<P>(
 // Ordered roughly by how likely a section is to be opened, so the warm-up
 // front-loads what the user reaches for first. Views are named exports, hence
 // the explicit unwrap into the { default } shape React.lazy expects.
-const SettingsView = lazyView(() =>
-  import("@/views/SettingsView").then((m) => ({ default: m.SettingsView })),
+// The Settings hub — Profile, {name}.md, Contacts, Socials, API Keys, Local
+// models, Wallpaper, Spend and Feedback behind one left-nav page. The hub
+// statically owns only its shell; every tab stays its own lazy chunk (see
+// SettingsHubView), so this one import replaces the eleven per-view imports
+// below without merging their chunks back together.
+const SettingsHubView = lazyView(() =>
+  import("@/views/SettingsHubView").then((m) => ({ default: m.SettingsHubView })),
 );
 // The Agents section is the society (MASTERPLAN §4.1): stage + agents rail +
 // model cards. The board it replaced is the society's stage until the island
@@ -93,12 +98,6 @@ const SocietyView = lazyView(() =>
 );
 const WikiView = lazyView(() =>
   import("@/views/WikiView").then((m) => ({ default: m.WikiView })),
-);
-const ApiKeysView = lazyView(() =>
-  import("@/views/ApiKeysView").then((m) => ({ default: m.ApiKeysView })),
-);
-const LocalModelsView = lazyView(() =>
-  import("@/views/LocalModelsView").then((m) => ({ default: m.LocalModelsView })),
 );
 type PluginArea = "plugins" | "mcps" | "skills";
 const isPluginArea = (section: string): section is PluginArea =>
@@ -122,17 +121,11 @@ const SessionsView = lazyView(() =>
 const ClisHubView = lazyView(() =>
   import("@/views/ClisHubView").then((m) => ({ default: m.ClisHubView })),
 );
-const ProfileView = lazyView(() =>
-  import("@/views/ProfileView").then((m) => ({ default: m.ProfileView })),
-);
 const DocsView = lazyView(() =>
   import("@/views/DocsView").then((m) => ({ default: m.DocsView })),
 );
 const BoardView = lazyView(() =>
   import("@/views/BoardView").then((m) => ({ default: m.BoardView })),
-);
-const CostsView = lazyView(() =>
-  import("@/views/CostsView").then((m) => ({ default: m.CostsView })),
 );
 const RunInspectorView = lazyView(() =>
   import("@/views/RunInspectorView").then((m) => ({
@@ -145,34 +138,6 @@ const RunInspectorView = lazyView(() =>
 // being prefetched as separate ones.
 const VoiceHubView = lazyView(() =>
   import("@/views/VoiceHubView").then((m) => ({ default: m.VoiceHubView })),
-);
-const AgentInstructionsView = lazyView(() =>
-  import("@/views/AgentInstructionsView").then((m) => ({
-    default: m.AgentInstructionsView,
-  })),
-);
-const SocialsView = lazyView(() =>
-  import("@/views/socials/SocialsView").then((m) => ({
-    default: m.SocialsView,
-  })),
-);
-const ContactsView = lazyView(() =>
-  import("@/views/contacts/ContactsView").then((m) => ({
-    default: m.ContactsView,
-  })),
-);
-const FeedbackView = lazyView(() =>
-  import("@/views/feedback/FeedbackView").then((m) => ({
-    default: m.FeedbackView,
-  })),
-);
-const TelephonySetupView = lazyView(() =>
-  import("@/views/TelephonyView").then((m) => ({
-    default: m.TelephonySetupView,
-  })),
-);
-const WallpaperView = lazyView(() =>
-  import("@/views/WallpaperView").then((m) => ({ default: m.WallpaperView })),
 );
 const VisualizationView = lazyView(() =>
   import("@/views/VisualizationView").then((m) => ({
@@ -523,39 +488,32 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <SessionsView />;
     case "run_inspector":
       return <RunInspectorView />;
-    case "costs":
-      return <CostsView />;
     case "board":
       return <BoardView />;
-    case "profile":
-      return <ProfileView />;
     case "memory":
       return <WikiView />;
-    // "telephony" no longer has its own screen — the telephony status /
-    // credentials / scripts / calls now live as a section inside the API-Keys
-    // view. The id stays valid so the existing "geh zur Telefonie" voice alias i18n-allow
-    // keeps working and lands on API Keys (mirrors taskbar/languages → Settings).
-    case "apikeys":
-    case "telephony":
-      return <ApiKeysView />;
-    // The local-model section: server, installed models and the catalogue.
-    // Reached from the sidebar row and the "Open" button on the Ollama row.
-    case "local-models":
-      return <LocalModelsView />;
-    // Dedicated telephony setup page (scripts + step-by-step guide). Not a
-    // sidebar entry — reached only via the "Setup script" button in the
-    // telephony credentials card.
-    case "telephony-setup":
-      return <TelephonySetupView />;
-    // "taskbar" and "languages" no longer have their own screens — the former
-    // Taskbar controls live in Settings (OverlayTaskbarGroup) and the language
-    // selectors live in Settings (LanguagesGroup) now. The ids stay valid so the
-    // existing "geh zur Taskleiste" / "zeig die Sprachen" voice aliases keep i18n-allow
-    // working and land on Settings.
+    // The Settings hub: Profile, {name}.md, Contacts, Socials, API Keys (plus
+    // the merged-in "telephony" id and the "telephony-setup" page, which lives
+    // one button inside the telephony credentials card), Local models,
+    // Wallpaper, Spend and Feedback behind one left-nav page. The hub selects
+    // its tab from the active id, so every existing deep link, deck jump and
+    // voice alias ("go to telephony", "show languages", …) keeps landing
+    // on the right tab — only the stage around the content changed.
     case "settings":
     case "taskbar":
     case "languages":
-      return <SettingsView />;
+    case "profile":
+    case "agent-instructions":
+    case "contacts":
+    case "socials":
+    case "apikeys":
+    case "telephony":
+    case "telephony-setup":
+    case "local-models":
+    case "wallpaper":
+    case "costs":
+    case "feedback":
+      return <SettingsHubView />;
     // The merged voice section: Dictation (default landing) + Dictionary +
     // Shortcuts + Language + the speech-to-text keys, behind one tab bar. The
     // active id doubles as the tab state, so a voice deep-link to any of them
@@ -566,16 +524,6 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     case "voice-language":
     case "voice-api-keys":
       return <VoiceHubView />;
-    case "socials":
-      return <SocialsView />;
-    case "contacts":
-      return <ContactsView />;
-    case "feedback":
-      return <FeedbackView />;
-    case "agent-instructions":
-      return <AgentInstructionsView />;
-    case "wallpaper":
-      return <WallpaperView />;
     // The visual stage for what a run produced. Rendered through the same
     // switch as every other section — the shell only decides what the stage
     // AROUND it looks like (see App.tsx).

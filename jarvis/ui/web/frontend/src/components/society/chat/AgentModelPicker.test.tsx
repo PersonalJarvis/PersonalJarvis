@@ -279,7 +279,7 @@ test("all connected subscription accounts are selectable for a model", async () 
   fireEvent.click(screen.getByRole("button", { name: "Account: ChatGPT / Codex subscription" }));
   expect(screen.queryByRole("menuitemradio", { name: "Expired" })).toBeNull();
   fireEvent.click(screen.getByRole("menuitemradio", { name: "Personal" }));
-  fireEvent.click(screen.getByTitle("openai-codex-large"));
+  fireEvent.click(await screen.findByTitle("openai-codex-large"));
   await waitFor(() => expect(posts[0].account_id).toBe("personal"));
   expect(posts[0].provider).toBe("openai-codex");
 });

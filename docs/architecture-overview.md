@@ -213,7 +213,7 @@ Whitelist (sacred, never scrubbed): `Datei, Email, Browser, Terminal, Notiz, Ter
 
 ### Web search (`search_web`, router-tier)
 
-The `search-web` tool (`jarvis/plugins/tool/search_web.py`) runs a **priority backend chain** in `jarvis/plugins/tool/search_backends.py`: keyed Brave API (if a key is set) → **real DuckDuckGo SERP via the key-free `ddgs` dependency (default)** → DuckDuckGo Instant Answer (last-resort encyclopedic abstract). Backend preference is `[search].backend`; the chain stays key-free so the base VPS install still searches. **Honesty contract:** each attempt returns a `SearchOutcome` with status `ok` / `empty` / `unavailable`. `empty` = searched, genuinely nothing; `unavailable` = backend unreachable — the brain must NOT say "no results" for `unavailable`, it must say search is down.
+The `search-web` tool (`jarvis/plugins/tool/search_web.py`) runs a **priority backend chain** in `jarvis/plugins/tool/search_backends.py`: optional prepaid Apifare hop (live Google via DataForSEO, if `apifare_api_key` / `APIPAY_TOKEN` is set) → **real DuckDuckGo SERP via the key-free `ddgs` dependency (default)** → DuckDuckGo Instant Answer (last-resort encyclopedic abstract). The chain stays key-free so the base VPS install still searches; there is no Tavily, Serper or Brave key requirement. A missing, empty-balance (HTTP 402) or failed prepaid hop degrades to DuckDuckGo. **Honesty contract:** each attempt returns a `SearchOutcome` with status `ok` / `empty` / `unavailable`. `empty` = searched, genuinely nothing; `unavailable` = backend unreachable — the brain must NOT say "no results" for `unavailable`, it must say search is down.
 
 ### Atomic config writes
 

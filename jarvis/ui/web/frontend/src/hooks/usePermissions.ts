@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { bootSettled } from "@/lib/bootStagger";
 
@@ -8,6 +8,7 @@ export type PermissionId =
   | "accessibility"
   | "input_monitoring"
   | "event_posting"
+  | "automation"
   | "credential_store";
 
 export type PermissionState =
@@ -67,6 +68,48 @@ export interface PermissionSnapshot {
   restart_required: boolean;
 }
 
+/**
+ * The guided flow asks in this order: the pure dialogs first (a click each),
+ * then the rows that end in a System Settings switch, so the user is never
+ * bounced between Settings and the app more than once per row.
+ */
+export const SETUP_ORDER: readonly PermissionId[] = [
+  "microphone",
+  "automation",
+  "accessibility",
+  "input_monitoring",
+  "screen_recording",
+  "event_posting",
+  "credential_store",
+];
+
+export interface SetupProgress {
+  id: PermissionId;
+  index: number;
+  total: number;
+  /** "prompt" while the native dialog is up, "settings" once only a switch in System Settings is left. */
+  phase: "prompt" | "settings";
+}
+
+export type SetupOutcome = "complete" | "cancelled" | "timeout" | "restart";
+
+const SETTLED_STATES = new Set(["granted", "not_required"]);
+
+/** A row the guided flow still has to deal with. */
+export function needsSetup(item: PermissionItem): boolean {
+  return (
+    item.required.length > 0 &&
+    !SETTLED_STATES.has(item.status) &&
+    !item.restart_required &&
+    item.status !== "unavailable" &&
+    item.status !== "restricted"
+  );
+}
+
+function settled(item: PermissionItem | undefined): boolean {
+  return !item || !needsSetup(item);
+}
+
 const EMPTY_SNAPSHOT: PermissionSnapshot = {
   platform: "unknown",
   supported: false,
@@ -113,21 +156,31 @@ export function usePermissions() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<PermissionId | null>(null);
+  const [setupProgress, setSetupProgress] = useState<SetupProgress | null>(null);
+  const setupCancelled = useRef(false);
+
+  const fetchSnapshot = useCallback(async (): Promise<PermissionSnapshot> => {
+    const next = normalizeSnapshot(await readJson(await fetch("/api/permissions/status")));
+    setSnapshot(next);
+    return next;
+  }, []);
 
   const refetch = useCallback(async () => {
     try {
-      const payload = await readJson(await fetch("/api/permissions/status"));
-      setSnapshot(normalizeSnapshot(payload));
+      await fetchSnapshot();
       setError(null);
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchSnapshot]);
 
   const mutate = useCallback(
-    async (id: PermissionId, action: "request" | "open-settings" | "reset") => {
+    async (
+      id: PermissionId,
+      action: "request" | "open-settings" | "reset",
+    ): Promise<PermissionSnapshot> => {
       setPendingId(id);
       try {
         const payload = await readJson(
@@ -135,8 +188,10 @@ export function usePermissions() {
             method: "POST",
           }),
         );
-        setSnapshot(normalizeSnapshot(payload));
+        const next = normalizeSnapshot(payload);
+        setSnapshot(next);
         setError(null);
+        return next;
       } catch (exc) {
         setError(exc instanceof Error ? exc.message : String(exc));
         throw exc;
@@ -146,6 +201,72 @@ export function usePermissions() {
     },
     [],
   );
+
+  /**
+   * The one-click flow: walk every missing row, fire its dialog (or open its
+   * Settings pane) and wait for macOS to report the grant before moving on.
+   * Ends with one automatic restart when a granted row only applies to a
+   * fresh process (Screen Recording, Input Monitoring, Accessibility) and
+   * `autoRestart` is set — onboarding owns its own final restart instead.
+   */
+  const setupAll = useCallback(
+    async (options: { autoRestart?: boolean; pollMs?: number; rowTimeoutMs?: number } = {}) => {
+      const { autoRestart = false, pollMs = 1500, rowTimeoutMs = 180_000 } = options;
+      setupCancelled.current = false;
+      let latest = await fetchSnapshot();
+      const queue = SETUP_ORDER.filter((id) =>
+        latest.permissions.some((item) => item.id === id && needsSetup(item)),
+      );
+      let outcome: SetupOutcome = "complete";
+      try {
+        for (const [index, id] of queue.entries()) {
+          const item = latest.permissions.find((entry) => entry.id === id);
+          if (settled(item)) continue;
+          setSetupProgress({ id, index: index + 1, total: queue.length, phase: "prompt" });
+          if (item?.can_request) {
+            latest = await mutate(id, "request");
+          } else if (item?.can_open_settings) {
+            latest = await mutate(id, "open-settings");
+          } else {
+            continue;
+          }
+          const deadline = Date.now() + rowTimeoutMs;
+          let current = latest.permissions.find((entry) => entry.id === id);
+          while (!settled(current)) {
+            if (setupCancelled.current) {
+              outcome = "cancelled";
+              return outcome;
+            }
+            if (Date.now() > deadline) {
+              outcome = "timeout";
+              return outcome;
+            }
+            setSetupProgress({ id, index: index + 1, total: queue.length, phase: "settings" });
+            await new Promise((resolve) => window.setTimeout(resolve, pollMs));
+            latest = await fetchSnapshot();
+            current = latest.permissions.find((entry) => entry.id === id);
+          }
+        }
+        if (autoRestart && latest.restart_required) {
+          outcome = "restart";
+          const response = await fetch("/api/settings/restart-app", { method: "POST" });
+          if (!response.ok) {
+            throw new Error(
+              response.status === 409 ? "restart-missions-running" : `restart-failed:${response.status}`,
+            );
+          }
+        }
+        return outcome;
+      } finally {
+        setSetupProgress(null);
+      }
+    },
+    [fetchSnapshot, mutate],
+  );
+
+  const cancelSetup = useCallback(() => {
+    setupCancelled.current = true;
+  }, []);
 
   useEffect(() => {
     // Non-critical: the banner can appear a few seconds late; the first-mount
@@ -183,14 +304,29 @@ export function usePermissions() {
     return () => window.clearInterval(timer);
   }, [refetch, waitingForSystemSettings]);
 
+  const setupNeeded = useMemo(
+    () => snapshot?.permissions.some(needsSetup) ?? false,
+    [snapshot],
+  );
+
   return {
     snapshot,
     loading,
     error,
     pendingId,
     refetch,
-    request: (id: PermissionId) => mutate(id, "request"),
-    openSettings: (id: PermissionId) => mutate(id, "open-settings"),
-    reset: (id: PermissionId) => mutate(id, "reset"),
+    request: async (id: PermissionId) => {
+      await mutate(id, "request");
+    },
+    openSettings: async (id: PermissionId) => {
+      await mutate(id, "open-settings");
+    },
+    reset: async (id: PermissionId) => {
+      await mutate(id, "reset");
+    },
+    setupAll,
+    cancelSetup,
+    setupProgress,
+    setupNeeded,
   };
 }

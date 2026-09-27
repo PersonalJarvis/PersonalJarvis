@@ -96,6 +96,28 @@ describe("society transcript follow", () => {
     expect(el.scrollTop).toBe(2000);
   });
 
+  it("follows in the same layout pass when the turn grows without a new item", () => {
+    const events = runningTurn("First I will check the inbox");
+    const { rerender } = draw(events);
+    const el = scroller();
+    measure(el, 950, 1000, 50);
+    act(() => {
+      fireEvent.scroll(el);
+    });
+
+    const grown = reduceEvents(EMPTY_TIMELINE, [
+      ...events,
+      ev("reasoning_delta", { turn_id: "t1", message_id: "r1", text: ", then the calendar, then the drive." }),
+    ]).items;
+    // Layout already happened: the column is taller, the view still sits
+    // where it was. The layout effect must pin before paint — not wait
+    // for a resize observer that jsdom (and one browser frame) do not have.
+    measure(el, 950, 2000, 50);
+    rerender(<Transcript items={grown} agent={agent} roster={[]} onDecide={async () => {}} />);
+    expect(el.scrollTop).toBe(2000);
+    expect(screen.queryByTestId("society-scroll-end")).toBeNull();
+  });
+
   it("pulls new turns along while the view sits at the end", () => {
     const events = runningTurn("First I will check the inbox");
     const { rerender } = draw(events);

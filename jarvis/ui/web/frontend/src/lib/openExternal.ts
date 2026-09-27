@@ -16,16 +16,22 @@
  * keep working — without depending on a shell-detection flag that can be unset.
  */
 
-function openInThisBrowser(url: string): void {
-  window.open(url, "_blank", "noopener,noreferrer");
+function openInThisBrowser(url: string): Window | null {
+  try {
+    return window.open(url, "_blank", "noopener,noreferrer");
+  } catch {
+    return null;
+  }
 }
 
 /**
- * Open `url` in the user's browser. Resolves once dispatched; never throws.
+ * Open `url` in the user's browser. Resolves true when a browser was
+ * reached (backend bridge reported opened, or a fallback tab was created),
+ * false otherwise. Never throws.
  * Tries the local bridge first, falls back to a `window.open` tab.
  */
-export async function openExternalUrl(url: string): Promise<void> {
-  if (!url) return;
+export async function openExternalUrl(url: string): Promise<boolean> {
+  if (!url) return false;
   try {
     const res = await fetch("/api/settings/open-external", {
       method: "POST",
@@ -34,10 +40,15 @@ export async function openExternalUrl(url: string): Promise<void> {
     });
     if (res.ok) {
       const data = (await res.json().catch(() => null)) as { opened?: boolean } | null;
-      if (data?.opened) return;
+      if (data?.opened) return true;
     }
   } catch {
     // Bridge unreachable — fall through to a best-effort window.open.
   }
-  openInThisBrowser(url);
+  try {
+    const tab = openInThisBrowser(url);
+    return tab !== null;
+  } catch {
+    return false;
+  }
 }

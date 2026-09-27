@@ -74,6 +74,7 @@ class CliTool:
         self._auth = auth
         self._usage = usage_log
         self.name: str = f"{TOOL_NAME_PREFIX}{spec.name}"
+        self.display_name: str = spec.display_name
         self.description: str = self._build_description(spec)
         self.risk_tier: str = spec.risk.default_tier
         self.schema: dict[str, Any] = {

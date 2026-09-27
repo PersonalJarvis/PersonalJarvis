@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from jarvis.diagnostics import doctor
 from jarvis.diagnostics.doctor import (
     check_brain_provider,
@@ -18,6 +20,15 @@ from jarvis.diagnostics.doctor import (
     has_failures,
     run_doctor,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_live_spotlight(monkeypatch) -> None:
+    """The Spotlight check waits on the host's real index; unit tests never do."""
+    from jarvis.setup import macos_search_index
+
+    monkeypatch.setattr(macos_search_index, "spotlight_volume_issue", lambda _p: None)
+    monkeypatch.setattr(macos_search_index, "wait_until_indexed", lambda _b: True)
 
 
 def test_router_tools_ok_with_real_registry() -> None:
@@ -205,3 +216,59 @@ def test_cu_prereqs_wayland_and_headless_are_info_not_failure(monkeypatch) -> No
     assert len(findings) == 1
     assert findings[0].status == "info"
     assert "Wayland" in findings[0].message
+
+
+def _spotlight_env(monkeypatch, tmp_path, *, issue=None, indexed=None):
+    """macOS with an installed bundle and scripted Spotlight probes."""
+    import sys
+
+    from jarvis.setup import macos_app_bundle, macos_search_index
+
+    bundle = tmp_path / "Personal Jarvis.app"
+    bundle.mkdir()
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(macos_app_bundle, "macos_app_bundle_path", lambda **_kw: bundle)
+    monkeypatch.setattr(macos_search_index, "spotlight_volume_issue", lambda _p: issue)
+    monkeypatch.setattr(macos_search_index, "wait_until_indexed", lambda _b: indexed)
+    return bundle
+
+
+def test_spotlight_check_names_switched_off_indexing_and_its_repair(monkeypatch, tmp_path) -> None:
+    from jarvis.setup.macos_search_index import SpotlightVolumeIssue
+
+    _spotlight_env(
+        monkeypatch,
+        tmp_path,
+        issue=SpotlightVolumeIssue("/", "Spotlight indexing is turned off"),
+    )
+    [finding] = doctor.check_macos_spotlight()
+    assert finding.status == "warn"
+    assert finding.hint is not None and finding.hint.startswith("sudo mdutil -i on / &&")
+
+
+def test_spotlight_check_flags_a_stalled_index(monkeypatch, tmp_path) -> None:
+    _spotlight_env(monkeypatch, tmp_path, indexed=False)
+    [finding] = doctor.check_macos_spotlight()
+    assert finding.status == "warn"
+    assert "stalled" in finding.message
+    assert finding.hint is not None and finding.hint.startswith("sudo mdutil -E /")
+
+
+def test_spotlight_check_ok_when_indexed(monkeypatch, tmp_path) -> None:
+    bundle = _spotlight_env(monkeypatch, tmp_path, indexed=True)
+    [finding] = doctor.check_macos_spotlight()
+    assert finding.status == "ok"
+    assert bundle.name in finding.message
+
+
+def test_spotlight_check_is_neutral_when_spotlight_cannot_be_asked(monkeypatch, tmp_path) -> None:
+    _spotlight_env(monkeypatch, tmp_path, indexed=None)
+    [finding] = doctor.check_macos_spotlight()
+    assert finding.status == "info"
+
+
+def test_spotlight_check_is_silent_off_macos(monkeypatch) -> None:
+    import sys
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert doctor.check_macos_spotlight() == []

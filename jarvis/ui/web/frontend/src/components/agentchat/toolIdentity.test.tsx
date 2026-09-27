@@ -42,6 +42,33 @@ describe("tool visual identities", () => {
     expect(identity.logo).toBeTruthy();
   });
 
+  it("uses original artwork for every raster and hyphenated catalog brand", () => {
+    const cloud = toolIdentity(row({ id: "plugin:google_cloud", brand: "google_cloud", label: "Google Cloud" }));
+    expect(cloud.logo).toBeTruthy();
+    expect(cloud.mark).toBe("colour");
+    const hyphen = toolIdentity(row({ id: "plugin:google-cloud", brand: "google-cloud", label: "Google Cloud" }));
+    expect(hyphen.logo).toBeTruthy();
+    const flare = toolIdentity(row({ id: "plugin:cloudflare", brand: "cloudflare", label: "Cloudflare" }));
+    expect(flare.logo).toBeTruthy();
+    expect(flare.mark).toBe("colour");
+    const gitlab = toolIdentity(row({ id: "plugin:gitlab", brand: "gitlab", label: "GitLab" }));
+    expect(gitlab.mark).toBe("colour");
+    const figma = toolIdentity(row({ id: "plugin:figma", brand: "figma", label: "Figma" }));
+    expect(figma.mark).toBe("colour");
+  });
+
+  it("uses the bundled PNG for AgentMail and the AMD arrow for GPU status", () => {
+    const mail = toolIdentity(row({ id: "plugin:agentmail", brand: "agentmail", label: "AgentMail" }));
+    expect(mail.key).toBe("agentmail");
+    expect(mail.logo).toMatch(/agentmail/);
+    expect(mail.logo).not.toMatch(/^https?:/);
+    const amd = toolIdentity(row({ id: "plugin:amd_gpu", brand: "amd_gpu", label: "AMD GPU Status" }));
+    expect(amd.key).toBe("amd_gpu");
+    expect(amd.logo).toBeTruthy();
+    expect(amd.logo).toMatch(/389\.9|amd_gpu/);
+    expect(amd.mark).toBe("mono");
+  });
+
   it("has a local mark for every shipped marketplace connector", () => {
     for (const plugin of seedCatalog.plugins) {
       const identity = toolIdentity(
@@ -53,7 +80,7 @@ describe("tool visual identities", () => {
         }),
       );
       expect(identity.logo, plugin.id).toBeTruthy();
-      expect(identity.key, plugin.id).toBe(plugin.id);
+      expect(identity.key?.replace(/-/g, "_"), plugin.id).toBe(plugin.id);
       expect(identity.logo).not.toMatch(/^https?:/);
     }
   });
@@ -74,6 +101,22 @@ describe("tool visual identities", () => {
       expect(identity.Glyph).toBeTruthy();
     },
   );
+
+  it("uses the Artifacts section mark for the artifact pin", async () => {
+    const artifact = toolIdentity(
+      row({
+        id: "tool:create_artifact",
+        label: "Artifact / Artefakt",
+        brand: "artifact",
+        group: "Artifact",
+        category: "system",
+      }),
+    );
+    expect(artifact.key).toBe("artifact");
+    expect(artifact.logo).toBeUndefined();
+    const { Shapes } = await import("lucide-react");
+    expect(artifact.Glyph).toBe(Shapes);
+  });
 
   it("uses distinct glyphs for unbranded documents and memory", () => {
     const pdf = toolIdentity(

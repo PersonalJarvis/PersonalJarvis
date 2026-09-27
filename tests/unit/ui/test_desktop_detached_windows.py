@@ -327,7 +327,7 @@ def test_ensure_main_window_recreates_and_rehooks(monkeypatch) -> None:
     assert app._window_visible is True
     assert len(created[0].events.closing) == 1  # quit contract re-attached
     assert len(created[0].events.closed) == 1  # null-out re-attached
-    assert len(created[0].events.loaded) == 1  # drop-path bridge re-attached
+    assert len(created[0].events.loaded) == 2  # drop bridge and authenticated shell restore
 
 
 # --- native drop bridge --------------------------------------------------------

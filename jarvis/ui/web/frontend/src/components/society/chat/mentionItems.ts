@@ -64,6 +64,8 @@ export interface MentionPlugin {
   display_name: string;
   description: string;
   native_tool?: string | null;
+  /** Marketplace token status: connected | not_connected | needs_reauth. */
+  status?: string;
 }
 
 function kindOf(cap: Capability): MentionKind {
@@ -248,7 +250,7 @@ export function buildMentionCatalog(
     const family = pluginFamily(familyId);
     const installed = livePlugins.get(familyId);
     const live = members.filter((cap) => kindOf(cap) !== "skill");
-    const connected = live.some((cap) => cap.connected);
+    const connected = live.some((cap) => cap.connected) || installed?.status === "connected";
     const representative =
       members.find((cap) => kindOf(cap) === "plugin") ?? live[0] ?? members[0] ?? {
         id: `plugin:${familyId}`, kind: "plugin", label: installed?.display_name ?? familyId,
@@ -329,18 +331,57 @@ export function buildMentionCatalog(
   return items;
 }
 
-function scoreItem(item: MentionItem, q: string): number | null {
+function wordsOf(text: string): string[] {
+  return text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+function hasWordPrefix(text: string, q: string): boolean {
+  return wordsOf(text).some((word) => word.startsWith(q));
+}
+
+function toolNameOf(item: MentionItem): string {
+  const value = item.value.toLowerCase();
+  const slash = value.lastIndexOf("/");
+  return slash === -1 ? value : value.slice(slash + 1);
+}
+
+/** Lower is better. Null = no match. */
+function scoreQuery(item: MentionItem, q: string): number | null {
   const value = item.value.toLowerCase();
   const label = item.label.toLowerCase();
+  const tool = toolNameOf(item);
   if (value.startsWith(q) || label.startsWith(q)) return 0;
-  if (value.includes(q) || label.includes(q)) return 1;
-  if (item.searchText.includes(q) || item.hint.toLowerCase().includes(q)) return 2;
+  // A single letter sits inside almost every description ("x" in "X-Marketing",
+  // "xAI", "codex", "dropbox"). Keep such queries strictly alphabetical:
+  // only a tag or label starting with that letter may match.
+  if (q.length <= 1) return null;
+  if (hasWordPrefix(label, q) || hasWordPrefix(value, q)) return 1;
+  if (value.includes(q) || label.includes(q) || tool.startsWith(q) || tool.includes(q)) return 2;
+  // Individual MCP tools unfold when the query names them, not when their
+  // description happens to mention the same product ("Google Drive" vs
+  // "Google Workspace CLI"). Server rows stay name-only for the same reason.
+  if (item.detail || item.kind === "mcp") return null;
+  if (hasWordPrefix(item.hint, q) || hasWordPrefix(item.searchText, q)) return 3;
+  if (item.searchText.includes(q) || item.hint.toLowerCase().includes(q)) return 4;
   return null;
 }
 
+function scoreItem(item: MentionItem, q: string): number | null {
+  const parts = q.split(/[\s_./-]+/).filter(Boolean);
+  if (parts.length <= 1) return scoreQuery(item, q);
+  const scores = parts.map((part) => scoreQuery(item, part));
+  if (scores.some((score) => score === null)) return null;
+  const phrase = parts.join(" ");
+  if (item.label.toLowerCase().includes(phrase) || item.value.toLowerCase().includes(q)) return 0;
+  if (item.hint.toLowerCase().includes(phrase)) return 1;
+  return Math.max(...(scores as number[]));
+}
+
 /**
- * Empty query: the browse list (no disconnected rows, no individual MCP
- * tools). A query searches everything, disconnected included, ranked.
+ * Empty query: the browse list, grouped by kind (no disconnected rows, no
+ * individual MCP tools). A query searches everything, disconnected included,
+ * and answers ONE list from A to Z across all groups — rank first, then the
+ * `@tag`, then the label — so typing more letters only ever narrows it down.
  */
 export function filterMentions(items: readonly MentionItem[], query: string): MentionItem[] {
   const q = query.trim().toLowerCase();
@@ -354,8 +395,14 @@ export function filterMentions(items: readonly MentionItem[], query: string): Me
     if (score === null) return;
     ranked.push({ score, index, item });
   });
-  ranked.sort((a, b) => a.score - b.score || a.index - b.index);
-  return groupMentions(ranked.map((r) => r.item)).flatMap((group) => group.items);
+  ranked.sort(
+    (a, b) =>
+      a.score - b.score ||
+      a.item.value.localeCompare(b.item.value, undefined, { sensitivity: "base" }) ||
+      a.item.label.localeCompare(b.item.label, undefined, { sensitivity: "base" }) ||
+      a.index - b.index,
+  );
+  return ranked.map((r) => r.item);
 }
 
 export function groupMentions(

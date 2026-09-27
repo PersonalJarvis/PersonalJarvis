@@ -1,0 +1,151 @@
+{
+  "kind": "structural-export-evidence-only",
+  "iteration": 3,
+  "runtime_visual_approval": "pending",
+  "path": "exports/communications-outpost.glb",
+  "sha256": "dde2c6c384f6c05daca459e3def952eb76b56540a220ed9bd6f272b52e27c324",
+  "bytes": 15089320,
+  "meshes": 20,
+  "materials": 20,
+  "triangles": 212724,
+  "local_runtime_bounds": {
+    "min": [
+      -195.43536376953125,
+      -63.18514633178711,
+      -49.922935485839844
+    ],
+    "max": [
+      63.38080978393555,
+      62.0,
+      51.0
+    ]
+  },
+  "world_translation": [
+    320,
+    58,
+    50
+  ],
+  "collider_nodes": 24,
+  "anchor_nodes": 15,
+  "animations": 0,
+  "external_resource_uris": [],
+  "extensions_used": [
+    "KHR_materials_transmission",
+    "KHR_materials_emissive_strength",
+    "KHR_materials_ior"
+  ],
+  "embedded_images": 19,
+  "primitives_with_vertex_tint": 13,
+  "materials_with_normal_maps": 13,
+  "materials_with_roughness_maps": 13,
+  "authored_material_sources": [
+    {
+      "path": "source/materials/ceramic-roughness.png",
+      "bytes": 21832,
+      "sha256": "7138d38bce99c4d4dcaa1c3057871471a0faee291a15b513f1ab1963a6ef65dc"
+    },
+    {
+      "path": "source/materials/ceramic-warm-roughness.png",
+      "bytes": 21601,
+      "sha256": "926df6ea323856de64b46a1e74f35257cadffcdbbd2353a1e9fc3f1af36595a4"
+    },
+    {
+      "path": "source/materials/cliff-roughness.png",
+      "bytes": 36311,
+      "sha256": "a2038e6b76817851fccb03544120662c6344e7f7f538a618f9f61d204a439c59"
+    },
+    {
+      "path": "source/materials/concrete-normal.png",
+      "bytes": 58224,
+      "sha256": "cfca0a24dfb24db7faa5655a4f38c66c5995abe33cd035dfa05d690105582bfd"
+    },
+    {
+      "path": "source/materials/concrete-roughness.png",
+      "bytes": 28684,
+      "sha256": "0a1552d60d873664f823ee3cf574170fe3bab81b8d8c421bdb44d6d8c5cc7b50"
+    },
+    {
+      "path": "source/materials/dust-coated-roughness.png",
+      "bytes": 28596,
+      "sha256": "ff690f07b6ea26ef6e09aadd5031e8a8bb81538a602d9121f9bcd94b3a140c5f"
+    },
+    {
+      "path": "source/materials/gold-roughness.png",
+      "bytes": 26256,
+      "sha256": "414893eda013522ca0cffdb8a6b120335e212ffed7e721414cd86ab75a151c8d"
+    },
+    {
+      "path": "source/materials/metal-normal.png",
+      "bytes": 30123,
+      "sha256": "b35cfc0532d94bdbe7ef174ca6a67cc2fa4d7c296314c33d452745447686ccbd"
+    },
+    {
+      "path": "source/materials/metal-roughness.png",
+      "bytes": 26370,
+      "sha256": "b266cc2606aa24788fc56f77ac5da15a82bc8ae958112cbed2d926c27d4f5c53"
+    },
+    {
+      "path": "source/materials/mineral-normal.png",
+      "bytes": 111656,
+      "sha256": "22650091823796ba41550ce7c2c586f993062a54d60d1133af896b575c3b5a54"
+    },
+    {
+      "path": "source/materials/paint-normal.png",
+      "bytes": 38208,
+      "sha256": "a5e80146adb0810356ab5d2e95705ae4e1a7cc506f9dd4ec04829457cc5ae630"
+    },
+    {
+      "path": "source/materials/painted-alloy-roughness.png",
+      "bytes": 21545,
+      "sha256": "01781249d97517606f6b389a90cd8ce88466763e0bbb23497a12cfe39611528e"
+    },
+    {
+      "path": "source/materials/paving-normal.png",
+      "bytes": 49615,
+      "sha256": "4b411cb1f4c8f485dc20e0632d52aa6e9cf535f31f74f2be74185fa42642ab56"
+    },
+    {
+      "path": "source/materials/paving-roughness.png",
+      "bytes": 26364,
+      "sha256": "03fc35fbad6b3fc923d4f845575b0175933342d77a39f9b39a21c5ceb77259fe"
+    },
+    {
+      "path": "source/materials/road-normal.png",
+      "bytes": 59985,
+      "sha256": "61e41f51babcc4d842e09d571b97dafd382bc08fb32e8385802cdc3a6aee66e3"
+    },
+    {
+      "path": "source/materials/road-roughness.png",
+      "bytes": 30650,
+      "sha256": "907b47e9f0f02765e51387bf74a4a8acc8158b7d949e5a9e943c0b321ca8de8c"
+    },
+    {
+      "path": "source/materials/rock-highlight-roughness.png",
+      "bytes": 36350,
+      "sha256": "152274ef9320659abd3ba3f4a784c6eb0911e16d543db6d98ca7180ee7048d6b"
+    },
+    {
+      "path": "source/materials/rock-shadow-roughness.png",
+      "bytes": 31865,
+      "sha256": "21fcdb40a4fc6d4f0c00e485973e1a5c9f25d9ca018c36e6c8b2d739d09b0d02"
+    },
+    {
+      "path": "source/materials/roof-alloy-roughness.png",
+      "bytes": 26366,
+      "sha256": "862bb10ab8319dd099f140afa3d58c2caf01f7a46ad8435595e23c5252838acd"
+    },
+    {
+      "path": "source/materials/structure-roughness.png",
+      "bytes": 26345,
+      "sha256": "6d6bd2fa8a13b6d01bebd7434a6ede70f70c69c37391c81facde3f1b66aae188"
+    }
+  ],
+  "numeric_material_validation": {
+    "colored_primitives": 13,
+    "linear_color_range": [
+      0.032668162137269974,
+      0.7518854141235352
+    ],
+    "uv_abs_max": 977.0883178710938
+  }
+}

@@ -1560,6 +1560,18 @@ async def _call_brain(
         # That an installed key happens to make grok the only live vision brain
         # is a *credential* fact owned by the manager, not a hardcode here — give
         # claude-api/openrouter/openai/gemini a key and CU uses them identically.
+        from jarvis.core.model_selection import operation_model
+
+        selected = operation_model.get()
+        if selected is not None:
+            selected_brain = manager._get_brain(selected.provider, selected.model)
+            if images and not getattr(selected_brain, "supports_vision", False):
+                raise CULoopError("The selected thinking model cannot interpret screenshots.")
+            result = await _agg(selected_brain.complete(req))
+            if not (result.text or "").strip():
+                raise CULoopError("The selected thinking model returned no computer action.")
+            return result.text.strip()
+
         chain: list[tuple[str, str | None]] = []
         build_chain = getattr(manager, "_build_fallback_chain", None)
         if callable(build_chain):

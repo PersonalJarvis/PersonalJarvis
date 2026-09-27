@@ -46,7 +46,8 @@ export function AgentRoutinesList({ agentId, sampleRoutines, variant = "rail", c
     </form>}
     <ul className="min-h-0 flex-1 overflow-y-auto">
       {live.error && <li role="alert" className="text-[12px] text-destructive">{t("tasks_view.load_error")}</li>}
-      {rows.length === 0 && <li className="text-[12px] text-muted-foreground">{t("society.card.no_routines")}</li>}
+      {rows.length === 0 && live.isPending && <li className="text-[12px] text-muted-foreground">{t("society.profile_card.loading")}</li>}
+      {rows.length === 0 && !live.isPending && !live.error && <li className="text-[12px] text-muted-foreground">{t("society.card.no_routines")}</li>}
       {rows.map((routine) => {
         const active = ["scheduled", "active", "enabled", ""].includes(routine.state);
         const trigger = routine.trigger as { type?: string; source?: { kind: string } } | null;

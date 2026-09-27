@@ -6,6 +6,7 @@ left such a task running with ZERO tools (it then "could not access GitHub"
 at 09:00). The brain's allowlist and the unattended-approval bridge must
 apply one and the same rule: :func:`jarvis.tasks.templates.grant_matches`.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -39,13 +40,21 @@ def _manager(names: list[str]) -> BrainManager:
     )
 
 
-LIVE = ["gmail", "github/list_issues", "github/create_issue", "linear/list_issues",
-        "github_search"]
+LIVE = [
+    "gmail",
+    "github/list_issues",
+    "github/create_issue",
+    "linear/list_issues",
+    "github_search",
+    "cli_gws",
+    "cli_gh",
+    "google_calendar",
+]
 
 
 def test_prefix_grant_covers_namespaced_tools() -> None:
     sel = _manager(LIVE)._select_task_tools(("github",))
-    assert set(sel) == {"github/list_issues", "github/create_issue"}
+    assert set(sel) == {"github/list_issues", "github/create_issue", "cli_gh"}
 
 
 def test_prefix_grant_does_not_cover_lookalike_names() -> None:
@@ -56,7 +65,19 @@ def test_prefix_grant_does_not_cover_lookalike_names() -> None:
 
 def test_exact_grant_still_works_and_mixes_with_prefix() -> None:
     sel = _manager(LIVE)._select_task_tools(("gmail", "linear"))
-    assert set(sel) == {"gmail", "linear/list_issues"}
+    assert set(sel) == {"gmail", "cli_gws", "linear/list_issues"}
+
+
+def test_a_plugin_grant_includes_the_connected_cli_for_the_same_service() -> None:
+    sel = _manager(LIVE)._select_task_tools(("gmail",))
+    assert set(sel) == {"gmail", "cli_gws"}
+    cal = _manager(LIVE)._select_task_tools(("google_calendar",))
+    assert set(cal) == {"google_calendar", "cli_gws"}
+
+
+def test_a_missing_cli_counterpart_is_skipped_not_invented() -> None:
+    sel = _manager(["gmail"])._select_task_tools(("gmail",))
+    assert set(sel) == {"gmail"}
 
 
 def test_empty_allowlist_yields_no_tools() -> None:
@@ -75,14 +96,26 @@ async def test_approver_pre_authorizes_by_prefix() -> None:
     trace = uuid4()
     approver.arm(trace, ("github",), approved_by="scheduled-task:t1")
 
-    await bus.publish(ActionApprovalRequired(
-        trace_id=trace, tool_name="github/create_issue", risk_tier="ask",
-    ))
-    await bus.publish(ActionApprovalRequired(
-        trace_id=trace, tool_name="github_search", risk_tier="ask",
-    ))
-    await bus.publish(ActionApprovalRequired(
-        trace_id=uuid4(), tool_name="github/create_issue", risk_tier="ask",
-    ))
+    await bus.publish(
+        ActionApprovalRequired(
+            trace_id=trace,
+            tool_name="github/create_issue",
+            risk_tier="ask",
+        )
+    )
+    await bus.publish(
+        ActionApprovalRequired(
+            trace_id=trace,
+            tool_name="github_search",
+            risk_tier="ask",
+        )
+    )
+    await bus.publish(
+        ActionApprovalRequired(
+            trace_id=uuid4(),
+            tool_name="github/create_issue",
+            risk_tier="ask",
+        )
+    )
     assert [e.tool_name for e in approved] == ["github/create_issue"]
     assert approved[0].approved_by == "scheduled-task:t1"

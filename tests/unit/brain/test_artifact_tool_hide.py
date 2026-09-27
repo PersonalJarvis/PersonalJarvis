@@ -1,17 +1,19 @@
 """The ``create_artifact`` tool is offered only on a turn that asked for one.
 
-Maintainer mandate (2026-08-11, artifacts 2026-08-23): an artifact is
-something the user asks for — "visualisier mir das", "mach ein Artefakt
-draus" — never something the assistant decides an answer would benefit from.
-Prompt wording does not hold that line reliably, so the enforcement is
-structural: on any other turn the tool is removed from the surface and the
-model cannot call what it cannot see.
+Maintainer mandate (2026-08-11, artifacts 2026-08-23, narrowed: literal word
+or Add pin only): an artifact is built when the user literally says the word
+("mach ein Artefakt draus", "build me an artifact") or pins the capability
+via the Add menu — never because the assistant judges an answer would look
+nicer as a page. Prompt wording does not hold that line reliably, so the
+enforcement is structural: on any other turn the tool is removed from the
+surface and the model cannot call what it cannot see.
 
 This pins the gate's placement in ``BrainManager``. The vocabulary itself is
 tested in ``test_artifact_gate.py``; here the questions are narrower — does
 the manager actually strip it, does it leave every other tool alone, and does a
 fault in the gate fail OPEN (tools unchanged) rather than blinding the brain.
 """
+
 from __future__ import annotations
 
 from jarvis.brain.manager import BrainManager
@@ -33,14 +35,24 @@ def _surface() -> dict:
 
 def test_an_explicit_request_keeps_the_tool():
     out = _mgr()._hide_artifact_tool_without_request(
-        _surface(), "visualisier mir das mal"  # i18n-allow: DE test vocabulary
+        _surface(),
+        "mach mir ein Artefakt draus",  # i18n-allow: DE test vocabulary
     )
     assert "create_artifact" in out
 
 
+def test_a_visual_verb_alone_loses_it():
+    out = _mgr()._hide_artifact_tool_without_request(
+        _surface(),
+        "visualisier mir das mal",  # i18n-allow: DE test vocabulary
+    )
+    assert "create_artifact" not in out
+
+
 def test_an_ordinary_turn_loses_it():
     out = _mgr()._hide_artifact_tool_without_request(
-        _surface(), "was haben wir gerade besprochen"  # i18n-allow: DE test vocabulary
+        _surface(),
+        "was haben wir gerade besprochen",  # i18n-allow: DE test vocabulary
     )
     assert "create_artifact" not in out
 
@@ -52,14 +64,15 @@ def test_nothing_else_is_touched():
 
 
 def test_opening_the_gallery_does_not_draw_a_new_picture():
-    """"Zeig mir die Visualisierungen" is navigate's turn, not create_artifact's.
+    """ "Zeig mir die Visualisierungen" is navigate's turn, not create_artifact's.
 
     The regression that makes this worth its own test: both features answer to
     the same word, and an artifact tool left on the surface here would start a
     background build instead of showing the pages already there.
     """
     out = _mgr()._hide_artifact_tool_without_request(
-        _surface(), "zeig mir die visualisierungen"  # i18n-allow: DE test vocabulary
+        _surface(),
+        "zeig mir die visualisierungen",  # i18n-allow: DE test vocabulary
     )
     assert "create_artifact" not in out
     assert "navigate" in out
@@ -84,4 +97,4 @@ def test_a_gate_fault_fails_open(monkeypatch):
 
 def test_a_non_dict_surface_is_passed_through():
     sentinel = ["not", "a", "dict"]
-    assert _mgr()._hide_artifact_tool_without_request(sentinel, "visualisier das") is sentinel
+    assert _mgr()._hide_artifact_tool_without_request(sentinel, "mach ein Artefakt") is sentinel

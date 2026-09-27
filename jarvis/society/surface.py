@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 from jarvis.core.protocols import Tool
-from jarvis.core.response_style import CONVERSATIONAL_RESPONSE_STYLE
+from jarvis.core.response_style import CONVERSATIONAL_RESPONSE_STYLE, KEEP_GOING_ON_TOOL_FAILURE
 
 from .agent_tools import (
     MemoryRecallTool,
@@ -37,6 +37,7 @@ from .agent_tools import (
 )
 from .capabilities import CapabilityKind, CapabilityRow, capability_id_for_tool, select_tools
 from .coding_tool import CodingSessionTool
+from .communication import COMMUNICATION_GUIDANCE
 from .conversation_tool import ConversationRecallTool, RoutineInvokeTool, RoutineListTool
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
@@ -64,7 +65,10 @@ _OWN_PREFIX: Final[str] = "society_"
 #: the wiki only through its namespaced note tool and runs commands only
 #: through its own contained shell (never the free-cwd shell tools).
 _SOCIETY_DENIED: Final[frozenset[str]] = frozenset(
-    {"wiki-ingest", "run-shell", "run_shell", "RunCommand"}
+    {
+        "wiki-ingest", "run-shell", "run_shell", "RunCommand",
+        "remember", "update_profile", "profile-update", "update-profile",
+    }
 )
 
 _ECOSYSTEM_CARD: Final[str] = """\
@@ -84,8 +88,10 @@ natural conversation, not a mandatory handoff checklist; mention only relevant d
 outside paths are refused). Destructive commands ask the user first.
 - Learning: after a finished task you may gain a learned skill of your own (listed \
 above when present); run it with society_run_skill when a task matches.
-- Memory: keep your own durable facts and findings with society_wiki_note (kind memory or \
-note), and search only your own notes with society_memory_recall. Other agents' notes and \
+- Memory: maintain your own USER.md (user profile and preferences, kind memory, target user) \
+and MEMORY.md (project knowledge and experience, kind memory, target memory) with \
+society_wiki_note. Keep dated findings as kind note. Consolidate rather than duplicate entries. \
+Search only your own notes with society_memory_recall. Other agents' notes and \
 shared knowledge are not automatically available. Use separately granted wiki tools only \
 when the task explicitly calls for the user's wiki. Never edit the user's own pages.
 - Routines: recurring work runs from the Automations section as tasks tagged with your name; \
@@ -168,10 +174,10 @@ your location, use these names."""
 
 
 def agent_id_of(session_id: str) -> str | None:
-    """``society:<agent_id>`` → ``agent_id``; ``None`` for any other session."""
+    """Resolve canonical and per-execution routine chats to their live owner."""
     if not session_id.startswith(_PREFIX):
         return None
-    agent_id = session_id[len(_PREFIX) :].strip()
+    agent_id = session_id[len(_PREFIX) :].split(":routine:", 1)[0].strip()
     return agent_id or None
 
 
@@ -236,7 +242,14 @@ async def _scoped_tool_for_session(session_id: str, capability: str) -> Tool | N
     if capability == "core:browser":
         from .browser.tool import BrowserTool
 
-        tool = cast(Tool, BrowserTool(rt, agent_id, rt.browser, read_only=read_only))
+        pick = (
+            (session.provider, session.model)
+            if service is not None and getattr(session, "surface", "") == "jarvis"
+            else None
+        )
+        tool = cast(
+            Tool, BrowserTool(rt, agent_id, rt.browser, model_pick=pick, read_only=read_only)
+        )
     else:
         tool = cast(Tool, CodingSessionTool(rt, agent_id, session_id=session_id))
     picked = select_tools(
@@ -274,7 +287,7 @@ async def tools_for_cli_session(
         or session.surface != SURFACE
         or agent is None
         or str(agent.state) != "active"
-        or agent.session_id != session_id
+        or agent_id_of(session_id) != agent.agent_id
     ):
         return {}
     rt.cache_agent(agent)
@@ -303,7 +316,9 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
     # kit's tools REPLACE the folder tools (runner_brain.build_override), so the
     # agent would otherwise have no file hands at all; and the plain folder tools
     # accept absolute paths, which its workspace rule forbids.
-    tools[CodingSessionTool.name] = cast(Tool, CodingSessionTool(rt, agent_id))
+    tools[CodingSessionTool.name] = cast(
+        Tool, CodingSessionTool(rt, agent_id, session_id=str(getattr(session, "session_id", "")))
+    )
     tools.update(_contained_folder_tools(workspace, getattr(session, "permission_mode", "")))
     tools.update(
         {
@@ -622,9 +637,11 @@ def build_briefing(
             else "You do not assign work; ask Jarvis or an orchestrator."
         )
     )
-    # API and CLI seats both consume this briefing. Put reply guidance before
-    # potentially long standing instructions so compact CLI identities retain it.
+    # API and CLI seats both consume this briefing. Put reply guidance and the
+    # keep-going rule before potentially long standing instructions so compact
+    # CLI identities retain them (a cancelled tool must not end the task).
     parts.append("## How to reply to the person\n" + CONVERSATIONAL_RESPONSE_STYLE)
+    parts.append("## When a tool fails\n" + KEEP_GOING_ON_TOOL_FAILURE)
     if agent.description.strip():
         parts.append("## Standing instructions\n" + agent.description.strip())
 
@@ -665,6 +682,7 @@ def build_briefing(
             lines.append(line)
         parts.append("\n".join(lines))
     parts.append(_ECOSYSTEM_CARD)
+    parts.append(COMMUNICATION_GUIDANCE)
 
     mates = [a for a in roster if a.agent_id != agent.agent_id and str(a.state) == "active"]
     if mates:

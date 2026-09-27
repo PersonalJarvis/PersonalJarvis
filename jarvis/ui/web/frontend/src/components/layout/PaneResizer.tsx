@@ -56,6 +56,8 @@ export interface PaneResizerProps {
   className?: string;
   /** Overrides the default test id, for screens that render several seams. */
   testId?: string;
+  /** False when a neighbouring edge already draws the line, as a rounded sheet does. */
+  showLine?: boolean;
 }
 
 /** How far one arrow-key press moves the seam. */
@@ -86,6 +88,7 @@ export const PaneResizer = forwardRef<HTMLDivElement, PaneResizerProps>(function
     style,
     className,
     testId,
+    showLine = true,
   },
   ref,
 ) {
@@ -141,6 +144,7 @@ export const PaneResizer = forwardRef<HTMLDivElement, PaneResizerProps>(function
           // Rim → strong rim → fill. Three named steps rather than three
           // opacities: a seam has to read on the page's own ground in both
           // themes, and an alpha of the ink lands differently in each.
+          !showLine && "hidden",
           active
             ? "bg-primary"
             : "bg-border group-hover:bg-border-strong group-focus-visible:bg-border-strong",
@@ -152,6 +156,7 @@ export const PaneResizer = forwardRef<HTMLDivElement, PaneResizerProps>(function
         aria-hidden
         className={cn(
           "pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors",
+          !showLine && "hidden",
           vertical ? "h-8 w-[3px]" : "h-[3px] w-8",
           active
             ? "bg-primary"

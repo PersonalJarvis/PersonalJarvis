@@ -185,11 +185,16 @@ def _macos_app_identity_token() -> str | None:
         bundle_id = str(bundle.bundleIdentifier() or "")
         bundle_path = Path(str(bundle.bundlePath() or "")).resolve()
         executable = Path(str(bundle.executablePath() or "")).resolve()
-        expected = (Path.home() / "Applications" / f"{_MACOS_APP_NAME}.app").resolve()
+        # Both install locations are canonical: the installer prefers
+        # /Applications and falls back to ~/Applications (BUG-161, BUG-216).
+        expected = {
+            (root / f"{_MACOS_APP_NAME}.app").resolve()
+            for root in (Path("/Applications"), Path.home() / "Applications")
+        }
         executable_root = bundle_path / "Contents" / "MacOS"
         if (
             bundle_id != _MACOS_BUNDLE_ID
-            or bundle_path != expected
+            or bundle_path not in expected
             or not executable.is_file()
             or not executable.is_relative_to(executable_root)
         ):

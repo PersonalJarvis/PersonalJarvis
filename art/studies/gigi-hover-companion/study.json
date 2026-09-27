@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "study": "gigi-hover-companion",
+  "brief": "brief.md",
+  "assets": [
+    {
+      "id": "gigi-companion",
+      "export": "exports/gigi.glb",
+      "source": "source/gigi.blend",
+      "kind": "character",
+      "collection": "GigiExport"
+    }
+  ],
+  "runtime_evidence": [
+    "evidence/runtime-close-v2.png"
+  ],
+  "technical_report": "evidence/technical-review.md",
+  "approval": {
+    "status": "pending",
+    "record": "review.md",
+    "evidence_sha256": ""
+  }
+}

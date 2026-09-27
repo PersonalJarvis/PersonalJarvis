@@ -542,6 +542,13 @@ describe("ChatStage (agent chat)", () => {
     expect(screen.getByTestId("composer-stop")).toBeTruthy();
   });
 
+  it("shows stop while a send is in flight, before the turn stream starts", () => {
+    useAgentChatStore.setState({ activeSessionId: "s1", busy: true, timeline: EMPTY_TIMELINE });
+    render(<ChatStage />);
+    expect(screen.getByTestId("composer-stop")).toBeTruthy();
+    expect(screen.queryByTestId("composer-send")).toBeNull();
+  });
+
   it("always shows that the turn is alive: the core, a word, the clock and the tokens", () => {
     vi.useFakeTimers();
     try {

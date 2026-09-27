@@ -60,7 +60,7 @@ export function OnboardingGate() {
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 bg-background text-foreground"
+      className="fixed inset-x-0 bottom-0 top-8 z-50 bg-background text-foreground"
     >
       {/* Fallback is empty: the stage ground is already painted while the
           first-run chunk fetches. */}

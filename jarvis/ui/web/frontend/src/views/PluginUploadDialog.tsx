@@ -82,7 +82,7 @@ export function PluginUploadDialog({
     setError(null);
     try {
       const result = await uploadPlugin(picked);
-      await qc.invalidateQueries({ queryKey: ["marketplace", "plugins"] });
+      await qc.invalidateQueries({ queryKey: ["marketplace-plugins"] });
       onInstalled?.(result.plugin.id);
       onClose();
     } catch (err) {

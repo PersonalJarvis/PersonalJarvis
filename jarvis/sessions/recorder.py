@@ -84,6 +84,8 @@ _RAW_EVENT_KINDS: frozenset[str] = frozenset(
         "ListeningStarted",
         "TranscriptFinal",
         "TranscriptionUpdate",
+        "VoiceTranscriptUpdated",
+        "ReasoningSummaryUpdated",
         "BrainTurnStarted",
         "BrainTurnCompleted",
         "BrainTTFT",
@@ -1004,6 +1006,8 @@ class SessionRecorder:
     def _maybe_append_raw(self, event: Event, kind: str) -> None:
         if self._state is None:
             return
+        if kind == "VoiceTranscriptUpdated" and getattr(event, "session_id", "") != self._state.session_id:
+            return
         if kind not in _RAW_EVENT_KINDS:
             return
         turn_id = (
@@ -1188,6 +1192,13 @@ def _payload_for(event: Event) -> dict[str, Any]:
         "new_state",
         "previous",
         "session_id",
+        "segment_id",
+        "role",
+        "start_ms",
+        "end_ms",
+        "revision",
+        "response_id",
+        "done",
         "turn_id",
         "turn_index",
         "surface",

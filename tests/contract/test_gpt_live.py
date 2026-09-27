@@ -1,0 +1,955 @@
+"""The Live contract must behave identically on every OS, without a microphone."""
+
+import asyncio
+from types import SimpleNamespace
+
+import pytest
+
+from jarvis.core.protocols import SupervisorToolDescriptor, ToolResult
+from jarvis.live.config import LiveConfig
+from jarvis.live.session import LiveVoiceSession
+from jarvis.live.state import LiveLedger, TranscriptFragment
+from jarvis.live.tools import LiveTools
+
+
+class Gateway:
+    def __init__(self):
+        self.calls = []
+
+    def catalog(self):
+        return (
+            SupervisorToolDescriptor(
+                "write-file",
+                "Write a file",
+                {
+                    "type": "object",
+                    "properties": {"text": {"type": "string"}},
+                    "required": ["text"],
+                },
+                "monitor",
+            ),
+        )
+
+    async def execute(self, name, args, request):
+        self.calls.append((name, args, request))
+        return ToolResult(True, {"verified": True})
+
+    async def cancel_pending(self, trace):
+        return True
+
+
+@pytest.fixture
+def ledger(tmp_path):
+    value = LiveLedger(tmp_path / "live.db")
+    yield value
+    value.close()
+
+
+def test_explicit_selection_and_single_backend():
+    with pytest.raises(ValueError, match="Choose"):
+        LiveConfig().session_config(language="en", tools=[])
+    config = LiveConfig(configured=True, backend_model="chosen-model")
+    wire = config.session_config(language="en", tools=[])
+    assert wire["delegation"]["responses"]["model"] == "chosen-model"
+    assert wire["store"] is False
+    assert "turn_detection" not in wire
+
+
+def test_receipts_survive_reopening(tmp_path):
+    path = tmp_path / "live.db"
+    first = LiveLedger(path)
+    assert first.claim("s", "c", "write", {}, 1) is None
+    first.close()
+    second = LiveLedger(path)
+    assert second.claim("s", "c", "write", {}, 1)["status"] == "uncertain"
+    second.finish("s", "c", {"success": True})
+    assert second.claim("s", "c", "write", {}, 1) == {"success": True}
+    assert second.claim("s", "c", "write", {"different": True}, 1)["success"] is False
+    second.close()
+
+
+def test_transcript_preserves_spaces_and_repetition(ledger):
+    for index, delta in enumerate(["Hello", " hello", " again"]):
+        f = TranscriptFragment("s", str(index), "user", delta, index, index + 1)
+        assert ledger.append(f)
+        assert not ledger.append(f)
+    rows = ledger._db.execute("SELECT delta FROM live_transcripts ORDER BY start_ms").fetchall()
+    assert "".join(r[0] for r in rows) == "Hello hello again"
+
+
+def test_usage_is_cumulative_not_additive(ledger):
+    ledger.usage("s", 12)
+    ledger.usage("s", 15)
+    ledger.usage("s", 14)
+    ledger.usage("s", 16, finalized=True)
+    assert ledger._db.execute("SELECT seconds, finalized FROM live_usage").fetchone() == (16, 1)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_calls_execute_once_and_revisions_block(ledger):
+    gateway = Gateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="chosen")
+    runtime.revision = 1
+    args = {"name": "write-file", "arguments_json": '{"text":"hello"}'}
+    first, second = await asyncio.gather(
+        runtime.execute("c", "call_tool", args, 1),
+        runtime.execute("c", "call_tool", args, 1),
+    )
+    assert first == second
+    assert len(gateway.calls) == 1
+    assert gateway.calls[0][2].config_snapshot["live_backend_model"] == "chosen"
+    assert (await runtime.execute("c2", "call_tool", args, 0))["status"] == "superseded"
+    assert len(gateway.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_empty_completion_snapshot_keeps_collected_calls(ledger):
+    sent = []
+
+    async def send(event):
+        sent.append(event)
+
+    cfg = SimpleNamespace(brain=SimpleNamespace(reply_language="en"))
+    session = LiveVoiceSession(
+        session_id="s",
+        send_binary=send,
+        send_json=send,
+        providers=[SimpleNamespace(name="test")],
+        config=cfg,
+    )
+    session._ledger = ledger
+    gateway = Gateway()
+    session._tools = LiveTools(gateway, ledger, "s", language="en", backend_model="chosen")
+    session._connection = SimpleNamespace(send=send)
+
+    async def event(payload):
+        await session._event({"type": "response.event", "delegation_id": "d", "event": payload})
+
+    await event({"type": "response.created", "response": {"id": "r"}})
+    for index in range(2):
+        await event(
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "function_call",
+                    "call_id": str(index),
+                    "name": "call_tool",
+                    "arguments": '{"name":"write-file","arguments_json":"{\\"text\\":\\"ok\\"}"}',
+                },
+            }
+        )
+    await event({"type": "response.completed", "response": {"id": "r", "output": []}})
+    await asyncio.gather(*session._jobs)
+    outputs = [e for e in sent if e["type"] == "response.item.create"]
+    assert len(outputs) == 2
+    assert sent[-1] == {"type": "response.create"}
+    assert len(gateway.calls) == 2
+
+
+def test_profile_migration_backup(tmp_path, monkeypatch):
+    from jarvis.core import config_writer
+
+    path = tmp_path / "jarvis.toml"
+    original = '[brain.realtime]\nprovider = "openai-realtime"\n[voice]\nmode = "realtime"\n'
+    path.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(config_writer, "_update_config_soll_section", lambda *a: None)  # i18n-allow
+    profile = LiveConfig(configured=True, backend_model="chosen-model")
+    config_writer.set_live_profile(profile.model_dump(), path=path)
+    assert path.with_name("jarvis.toml.pre-live.bak").read_text() == original
+    import tomllib
+
+    saved = tomllib.loads(path.read_text())
+    assert saved["brain"]["realtime"]["provider"] == "openai-live"
+    assert saved["live"]["backend_model"] == "chosen-model"
+
+
+def test_config_matches_frontend_interface():
+    import re
+    from pathlib import Path
+
+    source = Path("jarvis/ui/web/frontend/src/components/providers/LiveProfile.tsx").read_text()
+    body = source.split("export interface LiveProfileValue {", 1)[1].split("}", 1)[0]
+    assert set(re.findall(r"(\w+):", body)) == set(LiveConfig.model_fields)
+
+
+@pytest.mark.asyncio
+async def test_operation_model_does_not_change_other_tasks():
+    from jarvis.core.model_selection import ModelSelection, operation_model, use_operation_model
+
+    async def work(name):
+        with use_operation_model(ModelSelection("openai", name)):
+            await asyncio.sleep(0)
+            return operation_model.get().model
+
+    assert await asyncio.gather(work("first"), work("second")) == ["first", "second"]
+    assert operation_model.get() is None
+
+
+@pytest.mark.asyncio
+async def test_approval_requires_new_unambiguous_confirmation(ledger):
+    from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL
+
+    class ApprovalGateway(Gateway):
+        async def execute(self, name, args, request):
+            self.calls.append((name, args, request))
+            return ToolResult(False, {}, VOICE_CONFIRM_SENTINEL)
+
+        async def execute_confirmed(self, trace, request):
+            self.calls.append(("confirmed", {}, request))
+            return ToolResult(True, {"verified": True})
+
+    gateway = ApprovalGateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="chosen")
+    runtime.user_text = "yes"
+    request = {"name": "write-file", "arguments_json": '{"text":"hello"}'}
+    result = await runtime.execute("c", "call_tool", request, 0)
+    approval = {"approval_id": result["approval_id"]}
+    assert not (await runtime.execute("early", "confirm_action", approval, 0))["success"]
+    runtime.revision = 1
+    runtime.user_text = "yes change the target"
+    assert not (await runtime.execute("changed", "confirm_action", approval, 1))["success"]
+    runtime.user_text = "yes please"
+    assert (await runtime.execute("confirmed", "confirm_action", approval, 1))["success"]
+    assert len(gateway.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_gemini_native_core_does_not_dispatch_a_second_model(ledger):
+    runtime = LiveTools(Gateway(), ledger, "s", language="en", backend_model="")
+    result = await runtime.execute(
+        "c",
+        "call_tool",
+        {
+            "name": "write-file",
+            "arguments_json": '{"text":"direct"}',
+        },
+        0,
+    )
+    assert result["success"]
+    assert runtime.gateway.calls[0][2].config_snapshot["live_backend_model"] == ""
+
+
+@pytest.mark.asyncio
+async def test_vertex_namespaced_call_uses_the_same_gateway(ledger):
+    runtime = LiveTools(Gateway(), ledger, "s", language="en", backend_model="")
+    declarations = runtime.declarations()
+    name = next(d["name"] for d in declarations if d["name"].startswith("jarvis_"))
+    result = await runtime.execute("c", "default:" + name, {"text": "hello"}, 0)
+    assert result["success"]
+    assert runtime.gateway.calls[0][0] == "write-file"
+
+
+def test_browser_voice_request_actions_have_frontend_consumers():
+    from pathlib import Path
+    from typing import get_args, get_type_hints
+
+    from jarvis.core.events import BrowserVoiceRequested
+
+    source = Path(
+        "jarvis/ui/web/frontend/src/components/voice/BrowserRealtimeControl.tsx"
+    ).read_text()
+    for action in get_args(get_type_hints(BrowserVoiceRequested)["action"]):
+        assert f'action === "{action}"' in source
+
+
+@pytest.mark.asyncio
+async def test_closing_voice_does_not_cancel_started_work(ledger):
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class SlowGateway(Gateway):
+        async def execute(self, name, args, request):
+            started.set()
+            await release.wait()
+            assert not request.cancel_token.is_cancelled()
+            return ToolResult(True, "completed")
+
+    runtime = LiveTools(SlowGateway(), ledger, "s", language="en", backend_model="chosen")
+    args = {"name": "write-file", "arguments_json": '{"text":"work"}'}
+    job = asyncio.create_task(runtime.execute("started", "call_tool", args, 0))
+    await started.wait()
+    await runtime.close()
+    release.set()
+    assert (await job)["success"]
+    assert not (await runtime.execute("queued", "call_tool", args, 0))["success"]
+
+
+def test_native_declarations_are_accepted_by_google_sdk(ledger):
+    types = pytest.importorskip("google.genai.types")
+    from jarvis.plugins.realtime.gemini_live import _sanitize_declarations
+
+    tools = LiveTools(Gateway(), ledger, "s", language="en", backend_model="")
+    declarations = tuple({k: v for k, v in d.items() if k != "type"} for d in tools.declarations())
+    assert len(_sanitize_declarations(declarations, types=types)) == len(declarations)
+
+
+@pytest.mark.asyncio
+async def test_local_manual_response_does_not_block_receiving_audio(ledger):
+    from jarvis.core.protocols import AudioChunk
+    from jarvis.live.native import NativeLiveVoiceSession
+    from jarvis.realtime.protocol import RealtimeEvent
+
+    received, release = asyncio.Event(), asyncio.Event()
+
+    async def sink(data):
+        if isinstance(data, bytes):
+            received.set()
+
+    class Connection:
+        creates_responses_automatically = False
+
+        async def request_response(self):
+            await release.wait()
+
+        async def receive(self):
+            yield RealtimeEvent(type="input_transcript", text="hello", is_final=True)
+            yield RealtimeEvent(
+                type="audio_delta", audio=AudioChunk(pcm=b"\0\0", sample_rate=24000, timestamp_ns=0)
+            )
+            await release.wait()
+
+        async def close(self):
+            release.set()
+
+    cfg = SimpleNamespace(brain=SimpleNamespace(reply_language="en"))
+    session = NativeLiveVoiceSession(
+        session_id="s",
+        send_json=sink,
+        send_binary=sink,
+        config=cfg,
+        providers=[SimpleNamespace(name="local")],
+    )
+    session._connection = Connection()
+    session._ledger = ledger
+    session._tools = LiveTools(Gateway(), ledger, "s", language="en", backend_model="")
+    session._pump_task = asyncio.create_task(session._pump())
+    try:
+        await asyncio.wait_for(received.wait(), 2)
+    finally:
+        await session.end()
+
+
+@pytest.mark.asyncio
+async def test_browser_audio_keeps_wake_capture_until_the_browser_takes_over(monkeypatch):
+    from jarvis.realtime import factory
+    from jarvis.speech.pipeline import SpeechPipeline, _SessionInputBuffer
+
+    original = _SessionInputBuffer(capture=object())
+    pipeline = SpeechPipeline.__new__(SpeechPipeline)
+    pipeline._active_voice_mode = "realtime"
+    pipeline._ptt_mode = False
+    pipeline._wake_capture_released = asyncio.Event()
+    pipeline._wake_capture_released.set()
+
+    async def claim():
+        return original
+
+    pipeline._claim_wake_capture_for_session = claim
+    monkeypatch.setattr(factory, "realtime_browser_audio", lambda cfg: True)
+    async with pipeline._capture_first_session_input() as buffer:
+        assert not original._closed
+        assert buffer is original
+        from jarvis.live import startup
+
+        startup.offer("wake-capture", buffer)
+        await startup.take("wake-capture", None)
+        assert original._closed
+    assert original.released.is_set()
+
+
+def test_tool_text_is_redacted_without_corrupting_image_bytes():
+    secret = "sk-" + "x" * 48
+    result = LiveTools._result(
+        ToolResult(
+            True,
+            {
+                "text": secret,
+                "_image": {"mime": "image/png", "data": "unchanged-image"},
+            },
+        )
+    )
+    assert secret not in str(result["output"])
+    assert result["artifacts"][0]["data"] == "unchanged-image"
+
+
+def test_disabled_computer_use_does_not_expose_its_primitives(monkeypatch):
+    from jarvis.brain.tool_gateway import BrainSupervisorToolGateway
+    from jarvis.harness import computer_use_context
+
+    tool = SimpleNamespace(
+        execute=lambda *args: None,
+        schema={"type": "object"},
+        description="Click",
+        risk_tier="monitor",
+    )
+    monkeypatch.setattr(
+        computer_use_context,
+        "peek_computer_use_context",
+        lambda: SimpleNamespace(tools={"click": tool}),
+    )
+    setting = SimpleNamespace(enabled=False)
+    manager = SimpleNamespace(_tools={}, _config=SimpleNamespace(computer_use=setting))
+    gateway = BrainSupervisorToolGateway(manager)
+    assert "click" not in {d.name for d in gateway.voice_catalog()}
+    setting.enabled = True
+    assert "click" in {d.name for d in gateway.voice_catalog()}
+
+
+def test_recovery_history_is_bounded_and_keeps_user_text_as_data():
+    from jarvis.live.recovery import seed_messages
+
+    fragments = [
+        {"role": "user" if i % 2 else "assistant", "delta": "x" * 1000} for i in range(200)
+    ]
+    history = seed_messages(fragments, [])
+    assert len(history) <= 32
+    assert sum(len(m["content"][0]["text"].encode()) for m in history) <= 5000
+    assert all(m["role"] in {"user", "assistant"} for m in history)
+
+
+@pytest.mark.asyncio
+async def test_recovery_preserves_context_and_waits_for_new_input(ledger, monkeypatch):
+    import jarvis.live.session as module
+    from jarvis.live import recovery
+
+    async def permit():
+        return None
+
+    monkeypatch.setattr(recovery, "connection_permit", permit)
+    monkeypatch.setattr(module.random, "uniform", lambda *args: 0)
+    sent, opened = [], []
+
+    async def send(event):
+        sent.append(event)
+
+    class Connection:
+        answer_sdp = ""
+        session_id = "wire"
+
+        async def close(self):
+            return None
+
+        async def receive(self):
+            return {"type": "session.started", "session": {"id": "replacement"}}
+
+        async def send(self, event):
+            sent.append(event)
+
+    class Provider:
+        name = "test"
+
+        async def open_session(self, cfg):
+            opened.append(cfg)
+            return Connection()
+
+    cfg = SimpleNamespace(brain=SimpleNamespace(reply_language="en"))
+    session = LiveVoiceSession(
+        session_id="s", send_json=send, send_binary=send, config=cfg, providers=[Provider()]
+    )
+    session._connection = Connection()
+    session._ledger = ledger
+    session._tools = LiveTools(Gateway(), ledger, "s", language="en", backend_model="chosen")
+    session._base_session_config = {"model": "gpt-live-1", "instructions": "Be helpful"}
+    ledger.append(TranscriptFragment("s", "a", "user", "Remember the blue folder", 0, 10))
+    session._last_end["user"] = 10
+    assert await session._recover()
+    assert opened[0].session["input"][0]["content"][0]["text"] == "Remember the blue folder"
+    assert not session._tools.accepting
+    assert not session._tools.gateway.calls
+    await session._event(
+        {
+            "type": "session.input_transcript.delta",
+            "event_id": "new",
+            "delta": "continue",
+            "start_ms": 0,
+            "end_ms": 10,
+        }
+    )
+    assert session._tools.accepting
+    assert session._reconnect_attempts == 0
+    assert sent[-1]["start_ms"] == 11
+    await session.end()
+
+
+@pytest.mark.asyncio
+async def test_uncertain_action_blocks_automatic_recovery(ledger):
+    async def send(event):
+        raise AssertionError("Recovery must not start a connection")
+
+    cfg = SimpleNamespace(brain=SimpleNamespace(reply_language="en"))
+    session = LiveVoiceSession(
+        session_id="s",
+        send_json=send,
+        send_binary=send,
+        config=cfg,
+        providers=[SimpleNamespace(name="test")],
+    )
+    session._ledger = ledger
+    session._tools = LiveTools(Gateway(), ledger, "s", language="en", backend_model="chosen")
+    ledger.claim("s", "pending", "write-file", {"text": "x"}, 0)
+    assert not await session._recover()
+    ledger.finish("s", "pending", {"success": True, "verified": False})
+    assert not await session._recover()
+
+
+@pytest.mark.asyncio
+async def test_recovery_usage_accumulates_but_unconfirmed_segments_stay_unconfirmed(ledger):
+    async def send(event):
+        return None
+
+    cfg = SimpleNamespace(brain=SimpleNamespace(reply_language="en"))
+    session = LiveVoiceSession(
+        session_id="s",
+        send_json=send,
+        send_binary=send,
+        config=cfg,
+        providers=[SimpleNamespace(name="test")],
+    )
+    session._ledger = ledger
+    session._tools = LiveTools(Gateway(), ledger, "s", language="en", backend_model="chosen")
+    session._past_voice_seconds = 12
+    session._had_unconfirmed_wire = True
+    await session._event({"type": "session.usage.updated", "usage": {"seconds": 5}})
+    await session._event(
+        {"type": "session.closed", "reason": "close_requested", "usage": {"seconds": 6}}
+    )
+    assert ledger._db.execute("SELECT seconds, finalized FROM live_usage").fetchone() == (18, 0)
+
+
+@pytest.mark.asyncio
+async def test_late_transcript_cannot_reopen_tool_execution_after_close(ledger):
+    async def send(event):
+        return None
+
+    cfg = SimpleNamespace(brain=SimpleNamespace(reply_language="en"))
+    session = LiveVoiceSession(
+        session_id="s",
+        send_json=send,
+        send_binary=send,
+        config=cfg,
+        providers=[SimpleNamespace(name="test")],
+    )
+    session._ledger = ledger
+    session._tools = LiveTools(Gateway(), ledger, "s", language="en", backend_model="chosen")
+    session._closing = True
+    await session._tools.close()
+    await session._event(
+        {
+            "type": "session.input_transcript.delta",
+            "delta": "yes",
+            "event_id": "late",
+            "start_ms": 1,
+            "end_ms": 2,
+        }
+    )
+    assert not session._tools.accepting
+
+
+@pytest.mark.asyncio
+async def test_cancelled_work_stays_cancelled_when_a_new_request_arrives(ledger):
+    from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL
+
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class DelayedApprovalGateway(Gateway):
+        def __init__(self):
+            super().__init__()
+            self.cancelled = []
+
+        async def execute(self, name, args, request):
+            self.calls.append((name, args, request))
+            if len(self.calls) == 1:
+                started.set()
+                await release.wait()
+                assert request.cancel_token.is_cancelled()
+                return ToolResult(False, "Approval needed", VOICE_CONFIRM_SENTINEL)
+            assert not request.cancel_token.is_cancelled()
+            return ToolResult(True, "New request completed")
+
+        async def cancel_pending(self, trace):
+            self.cancelled.append(trace)
+            return True
+
+    gateway = DelayedApprovalGateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="chosen")
+    args = {"name": "write-file", "arguments_json": '{"text":"work"}'}
+    job = asyncio.create_task(runtime.execute("old", "call_tool", args, 0))
+    await started.wait()
+    await runtime.cancel_work()
+    runtime.revision += 1
+    runtime.accept_new_input()
+    release.set()
+    assert (await job)["status"] == "superseded"
+    assert gateway.cancelled == [gateway.calls[0][2].trace_id]
+    assert not runtime._pending
+    assert (await runtime.execute("new", "call_tool", args, runtime.revision))["success"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["end_call", "confirm_action", "call_tool"])
+async def test_cancelled_generation_cannot_act_after_new_input(ledger, name):
+    gateway = Gateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="chosen")
+    await runtime.cancel_work()
+    runtime.revision += 1
+    runtime.accept_new_input()
+    result = await runtime.execute("stale", name, {}, 0)
+    assert result["status"] == "superseded"
+    assert not runtime.end_requested
+    assert not gateway.calls
+
+
+@pytest.mark.asyncio
+async def test_task_keeps_starting_agent_after_settings_change():
+    from jarvis.brain.manager import BrainManager
+    from jarvis.core.model_selection import operation_model
+
+    worker = SimpleNamespace(provider="openai-api", model="original", reasoning_effort="medium")
+    config = SimpleNamespace(brain=SimpleNamespace(worker=worker))
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class Manager(BrainManager):
+        def __init__(self):
+            self._config = config
+
+        async def _run_task_with_selection(self, **kwargs):
+            started.set()
+            await release.wait()
+            assert self._task_provider_chain("deep") == [("openai", "original")]
+            assert self._tool_model_provider() == "openai"
+            assert self._tool_model_model("openai") == "original"
+            return "done"
+
+    task = asyncio.create_task(Manager().run_task(prompt="A scheduled request"))
+    await started.wait()
+    worker.provider = "claude-cli"
+    worker.model = "replacement"
+    release.set()
+    assert await task == "done"
+    assert operation_model.get() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["session.started", "error", "session.closed"])
+async def test_provider_test_uses_continuous_contract_and_closes_session(monkeypatch, terminal):
+    from jarvis.brain.provider_test import _default_realtime_probe
+    from jarvis.core import config, registry
+    from jarvis.live import recovery
+
+    opened, sent, closed = [], [], []
+
+    class Connection:
+        async def receive(self):
+            return {"type": terminal, "error": {"message": "private provider body"}}
+
+        async def send(self, event):
+            sent.append(event)
+
+        async def close(self):
+            closed.append(True)
+
+    class Provider:
+        continuous_conversation = True
+        credential_candidates = (("test", "TEST"),)
+
+        def __init__(self, *, api_key):
+            assert api_key == "synthetic"
+
+        async def open_session(self, start):
+            opened.append(start)
+            return Connection()
+
+    async def permit():
+        return None
+
+    monkeypatch.setattr(registry, "load", lambda *args, **kwargs: Provider)
+    monkeypatch.setattr(config, "get_secret_any", lambda *args: "synthetic")
+    monkeypatch.setattr(recovery, "connection_permit", permit)
+    cfg = SimpleNamespace(live=LiveConfig(configured=True, backend_model="chosen-model"))
+    if terminal == "session.started":
+        assert await _default_realtime_probe(SimpleNamespace(id="test"), cfg, timeout_s=1) >= 0
+        assert sent == [{"type": "session.close"}]
+    else:
+        with pytest.raises(RuntimeError, match="selected session") as error:
+            await _default_realtime_probe(SimpleNamespace(id="test"), cfg, timeout_s=1)
+        assert "private provider body" not in str(error.value)
+        assert not sent
+    assert opened[0].session["delegation"]["responses"]["model"] == "chosen-model"
+    assert opened[0].session["store"] is False
+    assert opened[0].offer_sdp == ""
+    assert closed == [True]
+
+
+def test_live_profile_capability_reaches_api_and_frontend(monkeypatch):
+    from pathlib import Path
+    from typing import get_args, get_type_hints
+
+    from jarvis.ui.web import provider_routes as routes
+    from jarvis.ui.web.provider_spec import ProviderSpec, get_spec
+
+    monkeypatch.setattr(routes, "_is_credential_present", lambda *args: False)
+    monkeypatch.setattr(routes.cfg_mod, "get_secret", lambda *args, **kwargs: None)
+    spec = get_spec("openai-live")
+    payload = routes._spec_to_payload(spec, active_brain=None, active_tts=None, active_stt=None)
+    assert payload["configuration_surface"] == "live"
+    source = Path("jarvis/ui/web/frontend/src/hooks/useProviders.ts").read_text(encoding="utf-8")
+    union = " | ".join(
+        f'"{value}"' for value in get_args(get_type_hints(ProviderSpec)["configuration_surface"])
+    )
+    assert f"configuration_surface?: {union};" in source
+
+
+def test_browser_audio_does_not_wait_for_a_legacy_desktop_offer(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from jarvis.realtime import factory
+    from jarvis.ui.web import settings_routes
+
+    monkeypatch.setattr(factory, "realtime_browser_audio", lambda cfg: True)
+    monkeypatch.setattr(settings_routes, "_realtime_available_provider", lambda cfg: "openai-live")
+    monkeypatch.setattr(settings_routes, "_realtime_requires_webrtc_offer", lambda cfg: True)
+    monkeypatch.setattr(settings_routes, "_realtime_handshake_budget_s", lambda cfg: 60)
+
+    async def broker_probe(required):
+        raise AssertionError("Browser-owned audio creates its offer on demand")
+
+    monkeypatch.setattr(settings_routes, "_realtime_transport_offer_ready", broker_probe)
+    app = FastAPI()
+    app.include_router(settings_routes.router)
+    app.state.config = SimpleNamespace(voice=SimpleNamespace(mode="realtime"))
+    response = TestClient(app).get("/api/settings/voice-mode")
+    assert response.status_code == 200
+    assert response.json()["browser_audio"] is True
+    assert response.json()["transport_offer_detail"] is None
+
+
+@pytest.mark.asyncio
+async def test_sdp_keeps_its_terminal_crlf_through_validation_and_broker():
+    from jarvis.realtime.offer_broker import (
+        RealtimeTransportOfferBroker,
+        validate_webrtc_offer_sdp,
+    )
+
+    offer = "v=0\r\no=- 123 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n"
+    answer = offer.replace("123", "456")
+    assert validate_webrtc_offer_sdp(offer) == offer
+    broker = RealtimeTransportOfferBroker()
+    registration = await broker.register("roundtrip", offer)
+    lease = await broker.acquire(timeout_s=0.1)
+    assert lease is not None
+    assert lease.offer_sdp == offer
+    await lease.answer(answer)
+    assert (await registration.wait()).answer_sdp == answer
+    await registration.cancel()
+
+
+@pytest.mark.asyncio
+async def test_large_catalog_fits_rtc_and_remains_fully_discoverable(ledger):
+    import json
+
+    class LargeGateway(Gateway):
+        def catalog(self):
+            return tuple(
+                SupervisorToolDescriptor(
+                    f"service/tool_{index:03d}",
+                    "Description " * 120,
+                    {"type": "object", "properties": {"text": {"type": "string"}}},
+                    "safe",
+                )
+                for index in range(90)
+            )
+
+    runtime = LiveTools(LargeGateway(), ledger, "s", language="en", backend_model="chosen")
+    assert len(json.dumps(runtime.declarations()).encode()) <= 24_000
+    offset, names = 0, []
+    while True:
+        result = await runtime.execute(
+            f"page-{offset}", "discover_tools", {"query": "", "offset": offset}, 0
+        )
+        assert len(json.dumps(result).encode()) < 25_000
+        names.extend(tool["name"] for tool in result["tools"])
+        if result["next_offset"] is None:
+            break
+        assert result["next_offset"] > offset
+        offset = result["next_offset"]
+    assert names == [tool.name for tool in runtime.catalog()]
+    assert len(set(names)) == 90
+    result = await runtime.execute(
+        "last-tool", "call_tool", {"name": names[-1], "arguments_json": "{}"}, 0
+    )
+    assert result["success"]
+
+
+@pytest.mark.asyncio
+async def test_live_drives_jarvis_bar_indicators(ledger):
+    """Thinking while the model works, speaking while it talks — on both transports."""
+    import base64
+
+    json_frames: list[dict] = []
+    binary_frames: list[bytes] = []
+
+    async def send_json(event):
+        json_frames.append(event)
+
+    async def send_binary(data):
+        binary_frames.append(data)
+
+    def make_session(*, webrtc: bool):
+        cfg = SimpleNamespace(brain=SimpleNamespace(reply_language="en"))
+        session = LiveVoiceSession(
+            session_id="s",
+            send_binary=send_binary,
+            send_json=send_json,
+            providers=[SimpleNamespace(name="test")],
+            config=cfg,
+        )
+        session._ledger = ledger
+        session._tools = LiveTools(Gateway(), ledger, "s", language="en", backend_model="chosen")
+        session._connection = SimpleNamespace(send=send_json, answer_sdp="answer" if webrtc else "")
+        return session
+
+    async def response_created(session):
+        await session._event(
+            {
+                "type": "response.event",
+                "delegation_id": "d",
+                "event": {"type": "response.created", "response": {"id": "r"}},
+            }
+        )
+
+    async def response_completed(session):
+        await session._event(
+            {
+                "type": "response.event",
+                "delegation_id": "d",
+                "event": {"type": "response.completed", "response": {"id": "r"}},
+            }
+        )
+
+    pcm = base64.b64encode(b"\x00\x01" * 160).decode("ascii")
+
+    # WebRTC (ChatGPT Live): audio travels over RTP, but the speaking
+    # signal must still reach the bar — without it the bar never leaves
+    # listening while Jarvis talks.
+    session = make_session(webrtc=True)
+    await response_created(session)
+    assert {"type": "thinking"} in json_frames
+    assert session.phase == "thinking"
+    await session._event(
+        {
+            "type": "session.output_audio.delta",
+            "delta": pcm,
+            "start_ms": 0,
+            "end_ms": 100,
+        }
+    )
+    assert {"type": "speaking"} not in json_frames
+    assert binary_frames == []
+    assert session.phase == "thinking"
+    await session.handle_control({"type": "playback_state", "active": True})
+    assert {"type": "speaking"} in json_frames
+    assert session.phase == "speaking"
+    await response_completed(session)
+    assert session.phase == "speaking"
+    await session.handle_control({"type": "playback_state", "active": False})
+    assert session.phase == "listening"
+
+    # PCM transport: the same signals plus the forwarded audio itself.
+    json_frames.clear()
+    binary_frames.clear()
+    session = make_session(webrtc=False)
+    await response_created(session)
+    assert {"type": "thinking"} in json_frames
+    await session._event(
+        {
+            "type": "session.output_audio.delta",
+            "delta": pcm,
+            "start_ms": 0,
+            "end_ms": 100,
+        }
+    )
+    assert {"type": "speaking"} in json_frames
+    assert len(binary_frames) == 1
+    await response_completed(session)
+    assert session.phase == "listening"
+
+    # A barge-in returns the bar to listening instead of freezing on speaking.
+    json_frames.clear()
+    session = make_session(webrtc=True)
+    await response_created(session)
+    await session._event(
+        {"type": "session.output_audio.delta", "delta": pcm, "start_ms": 0, "end_ms": 10}
+    )
+    await session.handle_control({"type": "playback_state", "active": True})
+    assert session.phase == "speaking"
+    await session.handle_control({"type": "barge_in"})
+    assert {"type": "tts_cancel"} in json_frames
+    assert session.phase == "listening"
+
+
+@pytest.mark.asyncio
+async def test_live_assistant_transcript_keeps_thinking_visible(ledger):
+    json_frames: list[dict] = []
+
+    async def send(event):
+        json_frames.append(event)
+
+    cfg = SimpleNamespace(brain=SimpleNamespace(reply_language="en"))
+    session = LiveVoiceSession(
+        session_id="s",
+        send_binary=send,
+        send_json=send,
+        providers=[SimpleNamespace(name="test")],
+        config=cfg,
+    )
+    session._ledger = ledger
+    session._tools = LiveTools(Gateway(), ledger, "s", language="en", backend_model="chosen")
+    session._connection = SimpleNamespace(send=send, answer_sdp="answer")
+    for index, delta in enumerate(["Hel", "lo"]):
+        await session._event(
+            {
+                "type": "session.output_transcript.delta",
+                "event_id": f"e-{index}",
+                "delta": delta,
+                "start_ms": index * 80,
+                "end_ms": index * 80 + 80,
+            }
+        )
+    thinking = [frame for frame in json_frames if frame["type"] == "thinking"]
+    assert len(thinking) == 1
+    assert session.phase == "thinking"
+
+
+@pytest.mark.asyncio
+async def test_live_usage_keeps_the_calls_model_after_a_settings_change(ledger):
+    async def send(event):
+        return None
+
+    cfg = SimpleNamespace(
+        brain=SimpleNamespace(reply_language="en"),
+        live=LiveConfig(configured=True, backend_model="next-call-model"),
+    )
+    session = LiveVoiceSession(
+        session_id="s",
+        send_json=send,
+        send_binary=send,
+        config=cfg,
+        providers=[SimpleNamespace(name="test")],
+    )
+    session._ledger = ledger
+    session._tools = LiveTools(
+        Gateway(), ledger, "s", language="en", backend_model="starting-model"
+    )
+    await session._event(
+        {
+            "type": "response.event",
+            "delegation_id": "d",
+            "event": {
+                "type": "response.completed",
+                "response": {"id": "usage", "usage": {"input_tokens": 3}},
+            },
+        }
+    )
+    assert ledger._db.execute("SELECT model FROM live_backend_usage").fetchone() == (
+        "starting-model",
+    )

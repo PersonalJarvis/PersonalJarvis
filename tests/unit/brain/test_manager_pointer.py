@@ -18,6 +18,15 @@ from jarvis.pointer import turn as pturn
 from jarvis.pointer.context import PointerContext
 from jarvis.screen_context.turn import TurnScreenContext
 from jarvis.vision.pointer_types import PointerElement
+from tests.fakes.fake_capabilities import fake_headless_capabilities
+
+_DRAFT_FOR_REVIEW = (
+    "Write an English internal announcement draft, at most 80 words total including any handoff. "
+    "Use only these fictional facts: Aurora station runs a simulation on Tuesday at 14:00; "
+    "the simulation tests a greenhouse alarm; no real systems or people are involved. "
+    "Return the draft text here for human review. "
+    "Do not use tools, research, send, publish, or change anything."
+)
 
 
 class _FakeNamed:
@@ -107,6 +116,52 @@ async def test_unrelated_utterance_skips_pointer(monkeypatch) -> None:
     assert "AI Pointer" not in call["turn_context"]
     assert call["images"] == ()
     assert resolved["called"] is False  # gate vetoed — no cursor work
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("text", "pointing"),
+    [
+        (_DRAFT_FOR_REVIEW, False),
+        (
+            "Prepare a communication draft for review. Do not send or publish it.\n\n"
+            + _DRAFT_FOR_REVIEW,
+            False,
+        ),
+        ("What is written here?", True),
+        ("What is written\nhere?", True),
+        ("Was steht\nhier?", True),
+        ("Kannst du lesen,\nwas hier steht?", True),
+        ("What did I write here?", True),
+    ],
+    ids=[
+        "draft",
+        "station-assignment",
+        "visual-question",
+        "wrapped-english-question",
+        "wrapped-german-question",
+        "wrapped-embedded-question",
+        "observational-writing-question",
+    ],
+)
+async def test_headless_pointer_instruction_requires_a_visual_request(
+    monkeypatch, text: str, pointing: bool
+) -> None:
+    """A draft must not acquire the missing-cursor refusal on a headless host."""
+    monkeypatch.setattr(
+        "jarvis.platform.capabilities.detect_capabilities", fake_headless_capabilities
+    )
+    manager, rec = _manager()
+    assert manager._config.pointer.enabled
+
+    await manager.generate(text, use_history=False)
+
+    assert len(rec.calls) == 1
+    call = rec.calls[0]
+    assert call["user_text"] == text
+    assert ("[AI Pointer]" in call["turn_context"]) is pointing
+    assert ("cannot tell what is under the cursor" in call["turn_context"]) is pointing
+    assert call["images"] == ()
 
 
 @pytest.mark.asyncio

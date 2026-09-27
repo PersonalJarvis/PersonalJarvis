@@ -59,6 +59,18 @@ async def voice_state() -> dict[str, Any]:
     running session whose supervisor cannot be read answers ``unknown`` rather
     than a guess — the caller leaves a live call alone on anything but ``idle``.
     """
+    from jarvis.live.runtime import active
+
+    sessions = active()
+    if sessions:
+        phase = getattr(sessions[0], "phase", "listening")
+        if phase not in {"speaking", "thinking", "listening"}:
+            phase = "speaking" if sessions[0].playback_active else "listening"
+        return {
+            "available": True,
+            "state": "active",
+            "voice_state": phase,
+        }
     pipeline = _pipeline()
     if pipeline is None:
         return {"available": False, "state": "unavailable", "voice_state": "idle"}
@@ -88,6 +100,11 @@ async def voice_call() -> dict[str, Any]:
 @router.post("/hangup")
 async def voice_hangup() -> dict[str, Any]:
     """End the running voice conversation — the hangup key's contract."""
+    from jarvis.live.runtime import active, close_all
+
+    if active():
+        await close_all()
+        return {"stopped": True}
     pipeline = _pipeline()
     if pipeline is None or not hasattr(pipeline, "request_voice_hangup"):
         raise HTTPException(status_code=503, detail="voice-pipeline-unavailable")

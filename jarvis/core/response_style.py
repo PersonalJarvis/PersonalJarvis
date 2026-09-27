@@ -1,5 +1,19 @@
 """Default conversational reporting for human-facing chat replies."""
 
+# Shared by the society briefing, Grok print-mode ``--rules``, and the CLI
+# resume that continues a turn after a cancelled or denied tool. One wording
+# so a compact Grok identity, a resumed vendor session and the brain runner
+# all keep going the same way.
+KEEP_GOING_ON_TOOL_FAILURE = (
+    "A cancelled, denied, missing or failed tool is not the end of the task. "
+    "Read the error. Try another path: a different tool, different arguments, "
+    "a connected account, or a question only the person can answer. Keep working "
+    "until the original goal is done, or until you have a real blocker only the "
+    "person can resolve (a missing login, a permission they must grant, a decision "
+    "only they can make). Never stop after the first failed attempt. Never claim "
+    "the task is finished just because one call failed."
+)
+
 CONVERSATIONAL_TURN_REMINDER = (
     "Reply naturally in short paragraphs, one idea per paragraph. Answer the latest "
     "point directly, with the observed result first. No mandatory report headings or "

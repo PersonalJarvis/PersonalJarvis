@@ -58,7 +58,7 @@ describe("DocsOverview", () => {
     );
     const openSpy = vi
       .spyOn(openExternal, "openExternalUrl")
-      .mockResolvedValue(undefined);
+      .mockResolvedValue(true);
 
     renderOverview();
 

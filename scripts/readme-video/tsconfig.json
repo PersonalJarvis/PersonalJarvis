@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "lib": ["ES2022", "DOM"],
+    "baseUrl": ".",
+    "paths": {
+      "react": ["node_modules/@types/react"],
+      "react/*": ["node_modules/@types/react/*"],
+      "@app/*": ["../../jarvis/ui/web/frontend/src/*"],
+      "@/*": ["../../jarvis/ui/web/frontend/src/*"],
+      "*": ["node_modules/*"]
+    }
+  },
+  "include": ["src/**/*"]
+}

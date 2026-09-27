@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from jarvis.clis.spec import CliSpec
@@ -117,8 +117,19 @@ def connected_domain_tool_map(cli_registry: Any) -> dict[str, str]:
 # "Hey Jarvis, was geht ab?" (live bug 2026-06-18, session b34a4bba). The wake
 # word can never be a domain-specific signal, so it is dropped here.
 _KEYWORD_DENYLIST: frozenset[str] = frozenset(
-    {"kosten", "cost", "costs", "preis", "preise", "price", "geld", "money",
-     "jarvis", "nachricht", "nachrichten"}
+    {
+        "kosten",
+        "cost",
+        "costs",
+        "preis",
+        "preise",
+        "price",
+        "geld",
+        "money",
+        "jarvis",
+        "nachricht",
+        "nachrichten",
+    }
 )
 
 
@@ -184,12 +195,43 @@ PLUGIN_CLI_OVERLAP: dict[str, str] = {
     "supabase": "supabase",
     "stripe": "stripe",
     "gmail": "gws",
+    "google_calendar": "gws",
+    "google_drive": "gws",
 }
 
 
-def _explicit_plugin_request(
-    user_text: str, plugin_id: str, tools: Mapping[str, Any]
-) -> bool:
+def equivalent_grants(grants: Iterable[str]) -> tuple[str, ...]:
+    """A plugin grant also names the CLI for the same service.
+
+    ``gmail`` covers ``cli_gws``; ``plugin:gmail`` covers ``cli:gws``;
+    ``github`` covers ``cli_gh``. One table (``PLUGIN_CLI_OVERLAP``); a
+    grant that has no counterpart, or a CLI grant, is returned unchanged.
+    Order is preserved; duplicates are dropped.
+    """
+    from jarvis.clis.tool import TOOL_NAME_PREFIX
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for grant in grants:
+        extras = [grant]
+        plugin_id = grant
+        if grant.startswith("plugin:"):
+            plugin_id = grant.split(":", 1)[1]
+            cli = PLUGIN_CLI_OVERLAP.get(plugin_id)
+            if cli:
+                extras.append(f"cli:{cli}")
+        elif not grant.startswith(("cli:", "mcp:", "core:", "skill:", TOOL_NAME_PREFIX)):
+            cli = PLUGIN_CLI_OVERLAP.get(plugin_id)
+            if cli:
+                extras.append(f"{TOOL_NAME_PREFIX}{cli}")
+        for name in extras:
+            if name not in seen:
+                seen.add(name)
+                out.append(name)
+    return tuple(out)
+
+
+def _explicit_plugin_request(user_text: str, plugin_id: str, tools: Mapping[str, Any]) -> bool:
     """Recognize a named plugin/MCP vehicle, not a generic service request."""
     name = re.escape(plugin_id)
     # A URL or source path mentioning a service is not a vehicle request.
@@ -284,8 +326,10 @@ def refusal_hint(domain: str, cli_registry: Any, lang: str) -> str:
 __all__ = [
     "DOMAIN_VOCAB",
     "CAP_ID_PREFIX",
+    "PLUGIN_CLI_OVERLAP",
     "capability_for_spec",
-    "sync_registry",
     "connected_domain_tool_map",
+    "equivalent_grants",
     "refusal_hint",
+    "sync_registry",
 ]

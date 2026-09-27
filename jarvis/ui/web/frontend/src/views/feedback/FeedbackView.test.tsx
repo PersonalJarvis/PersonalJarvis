@@ -106,7 +106,7 @@ describe("FeedbackView", () => {
 
   it("opens a bug on the bug issue form with every field prefilled", async () => {
     stubFeedbackApi(STATUS_NOT_CONFIGURED);
-    const openSpy = vi.spyOn(openExternal, "openExternalUrl").mockResolvedValue(undefined);
+    const openSpy = vi.spyOn(openExternal, "openExternalUrl").mockResolvedValue(true);
 
     render(<FeedbackView />);
     const submit = await screen.findByRole("button", { name: "Report the bug on GitHub" });
@@ -129,7 +129,7 @@ describe("FeedbackView", () => {
 
   it("opens a feature request on the feature issue form", async () => {
     stubFeedbackApi(STATUS_NOT_CONFIGURED);
-    const openSpy = vi.spyOn(openExternal, "openExternalUrl").mockResolvedValue(undefined);
+    const openSpy = vi.spyOn(openExternal, "openExternalUrl").mockResolvedValue(true);
 
     render(<FeedbackView />);
     await probeSettled();
@@ -157,7 +157,7 @@ describe("FeedbackView", () => {
 
   it("keeps a long report inside the URL budget and saves the full text", async () => {
     stubFeedbackApi(STATUS_NOT_CONFIGURED);
-    const openSpy = vi.spyOn(openExternal, "openExternalUrl").mockResolvedValue(undefined);
+    const openSpy = vi.spyOn(openExternal, "openExternalUrl").mockResolvedValue(true);
     const writeText = vi.fn(async (_text: string) => undefined);
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
 
@@ -180,7 +180,7 @@ describe("FeedbackView", () => {
 
   it("does not open the tracker for a question", async () => {
     stubFeedbackApi(STATUS_NOT_CONFIGURED);
-    const openSpy = vi.spyOn(openExternal, "openExternalUrl").mockResolvedValue(undefined);
+    const openSpy = vi.spyOn(openExternal, "openExternalUrl").mockResolvedValue(true);
 
     render(<FeedbackView />);
     await probeSettled();
@@ -202,7 +202,7 @@ describe("FeedbackView", () => {
 
   it("shows what others already asked for, without any login", async () => {
     stubFeedbackApi(STATUS_NOT_CONFIGURED, { board: FULL_BOARD });
-    const openSpy = vi.spyOn(openExternal, "openExternalUrl").mockResolvedValue(undefined);
+    const openSpy = vi.spyOn(openExternal, "openExternalUrl").mockResolvedValue(true);
 
     render(<FeedbackView />);
 
@@ -262,7 +262,7 @@ describe("FeedbackView", () => {
       context: { app_version: "1.0.8", os: "TestOS-1.0", python: "3.11.0" },
     };
     stubFeedbackApi(legacyStatus, { board: EMPTY_BOARD });
-    const openSpy = vi.spyOn(openExternal, "openExternalUrl").mockResolvedValue(undefined);
+    const openSpy = vi.spyOn(openExternal, "openExternalUrl").mockResolvedValue(true);
 
     render(<FeedbackView />);
     const submit = await screen.findByRole("button", { name: "Report the bug on GitHub" });

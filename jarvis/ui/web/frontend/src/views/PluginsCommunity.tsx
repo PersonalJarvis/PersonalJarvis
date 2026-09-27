@@ -176,7 +176,7 @@ const AUTH_MODE_LABEL: Record<string, string> = {
   hosted_mcp_allowlist: "Account allowlist",
 };
 
-export function CommunityTab() {
+export function CommunityTab({ onInstalled }: { onInstalled?: (pluginName: string) => void } = {}) {
   const queryClient = useQueryClient();
   // The storefront section shows the same index with room to browse it; this
   // tab keeps the plugin connect flow next to the installed plugins.
@@ -216,12 +216,15 @@ export function CommunityTab() {
       }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, name) => {
       setConsentPlugin(null);
       // The installed plugin is now a first-class store card — both lists
-      // must reflect it.
+      // must reflect it. The parent then runs its connect flow at once, so a
+      // fresh install lands on "Not connected → browser login" instead of
+      // looking done before the provider was ever opened.
       queryClient.invalidateQueries({ queryKey: ["marketplace-community"] });
       queryClient.invalidateQueries({ queryKey: ["marketplace-plugins"] });
+      onInstalled?.(name);
     },
   });
 

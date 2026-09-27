@@ -11202,6 +11202,9 @@ rebuild remains a new app to TCC. A Developer-ID signing identity is the
 structural fix; until then a rebuild costs the user one round of re-granting,
 now visible in the log and explained in the UI.
 
+**Closed 2026-09-16 by BUG-217.** The bundle is now signed with a per-user
+certificate, so a rebuild keeps the same TCC identity and resets nothing.
+
 ---
 
 ## BUG-160: a spoken question is answered with "Erledigt." and the real answer is thrown away — every Gemini/Vertex Live tool call fakes a mute provider (CRITICAL, FIXED 2026-08-20)
@@ -11368,6 +11371,10 @@ that IS necessary still costs one round of re-granting. A Developer-ID signing
 identity is the structural fix. The rebuild guard also arms only after the
 first rebuild it observes, so an install already caught in the loop pays for
 one more round before it stops.
+
+**Closed 2026-09-16 by BUG-217.** With the per-user signing certificate a
+necessary rebuild no longer changes the TCC identity; the guard is only a
+safety net now.
 
 ## BUG-162: dictation silently drops the end of what was said — a deep queue that never applied, a truncation guard that fired once in 797 recordings, and a loss nothing reported (HIGH, FIXED 2026-08-21)
 
@@ -15221,3 +15228,220 @@ boot critical path — the watchdog's first census is a full interval away), AP-
 (the probe's silence is explained by its documented "None means not ready"
 contract), BUG-113 (the pane-reconnect storm whose symptom was fixed in 2026-07
 while this cause was left standing), `docs/os-parity.md` (the ceilings table).
+
+## BUG-216: the installed macOS app did not show up in Spotlight (MEDIUM, FIXED 2026-09-16)
+
+**Symptom.** `~/Applications/Personal Jarvis.app` was installed, launchable and
+listed by `lsregister -dump`, yet typing "Personal Jarvis" into Spotlight found
+nothing.
+
+**Root cause, two layers.**
+
+1. *Product.* The 2026-08-16 fix (BUG-138 pass) assumed Spotlight answers from
+   the LaunchServices database and stopped at `lsregister`. It does not: the
+   Spotlight search field reads the per-volume metadata store kept by `mds`.
+   The bundle is built in a hidden `.jarvis-native-*` directory and renamed into
+   place, and nothing ever asked Spotlight to import it. The docstring claiming
+   "announce to LaunchServices so Spotlight can find it" was simply wrong.
+2. *Machine.* On the reporting Mac (macOS 15.7) the Spotlight index had
+   stalled: `mdutil -s /` said "Indexing enabled", yet `mdfind` returned no
+   item changed in the preceding four days. Every app installed or updated
+   since 2026-09-12 (Excel, PowerPoint, Claude, Personal Jarvis) was missing
+   from search while older apps were found, and freshly created files stayed
+   unindexed even after `mdimport`. No app can repair that; the index has to
+   be rebuilt with `sudo mdutil -E /`.
+
+**Fix.** `jarvis/setup/macos_search_index.py`: every install/repair path already
+calls `register_with_launch_services`, which now also runs `mdimport` on the
+bundle and checks the indexing switch of the volume holding it (`df -P`, then
+`mdutil -s`). Indexing switched off logs a WARNING with the exact repair
+command. `python -m jarvis --doctor` gained `macos-spotlight`: indexing off →
+warn + `mdutil -i on`; import requested and the bundle still not listed after
+20 s → warn "index looks stalled" + `sudo mdutil -E /`; indexed → ok.
+
+Two traps found live on the way, both pinned by tests:
+- `mdutil -s <folder>` echoes the folder back as the "volume", so it must be
+  given a mount point.
+- `/System/Volumes/Data` answers "unknown indexing state" and refuses
+  `mdutil -i` with error -405 on a HEALTHY Mac: the APFS system volume group is
+  indexed and administered through `/`. The first version of the check read
+  that answer as a broken store and would have warned on every Mac; it now
+  asks `/` and judges a stall only by an import that never appears.
+
+**Class rule.** "Registered" is not "searchable": verify against the index the
+user's search box actually reads, judge the OS index only on behaviour macOS
+shows, and when that index is broken say so with the command that fixes it
+instead of claiming the app is findable.
+
+**Guards.** `tests/unit/setup/test_macos_search_index.py` (verbatim data-volume
+`mdutil` output never counts as a defect, control-volume and mount-point
+resolution, stalled-index wait, import on registration, a Spotlight crash never
+blocks `lsregister`), `tests/unit/diagnostics/test_doctor_diagnostics.py`
+(`check_macos_spotlight`).
+
+## BUG-217: macOS asked for every permission again after each rebuild, and the Music prompt never stuck (HIGH, FIXED 2026-09-16)
+
+**Symptom.** After an update or reinstall, Personal Jarvis asked for
+Microphone, Screen Recording, Accessibility, Input Monitoring and Input
+Control all over again. The "Music / Spotify" Automation dialog appeared in
+the middle of a dictation, sometimes on every voice session, and no
+permission view knew it existed. The reporting Mac's install log of the day
+shows the exact moment: a bundle-format rebuild followed by five
+`Reset stale TCC rows for …` lines.
+
+**Root causes, four of them.**
+
+1. *Ad-hoc signature = CDHash identity.* macOS pins every TCC grant to the
+   app's designated requirement. For an ad-hoc signature that requirement is
+   `cdhash H"…"` — the hash of the very bytes that every rebuild changes. So
+   every rebuild was a new app to TCC, the recorded grants were orphaned, and
+   BUG-083 had to reset them so macOS would prompt at all. BUG-159 and
+   BUG-161 both closed with "the underlying churn is the ad-hoc signature
+   itself — still open". It was.
+2. *The Automation consent lived outside the model.* `kTCCServiceAppleEvents`
+   was neither in the installer's reset sweep nor in `PermissionId`; the only
+   thing that ever asked for it was a 3-second `osascript` fired when the
+   ducking toggle was flipped or mid-session. A 3 s timeout kills osascript
+   while the dialog is still up, so the user's answer was never recorded and
+   the next session asked again.
+3. *No live probe for a closed player.* Apple only answers
+   `AEDeterminePermissionToAutomateTarget` for a running target, so a row for
+   it could not simply read the OS.
+4. *Six buttons and a restart to find.* Nothing walked the user through the
+   list; each grant was its own click, its own Settings visit and its own
+   restart decision.
+
+**Fix.**
+
+- `jarvis/setup/macos_signing_identity.py` creates a self-signed
+  code-signing certificate once per user ("Personal Jarvis Local Signing"),
+  imports it into the login keychain with codesign access and trusts it for
+  code signing in the user domain — the one step macOS guards with a
+  password dialog, so only the installer (`--create-signing-identity`) may
+  run it; the app itself only looks the identity up. `macos_app_bundle`
+  signs with it, and the TCC identity is now the designated requirement
+  (`identifier "com.personal-jarvis.desktop" and certificate leaf = H"…"`)
+  instead of the CDHash: verified on macOS 15.7.4 — two differently built
+  bundles, same requirement. A rebuild resets nothing anymore. A healthy
+  ad-hoc bundle is re-signed in place once (same files, atomic swap) at the
+  cost of one final round of re-granting; the running app is never re-signed
+  under itself, because the reset that follows would strip the grants of the
+  process asking. Falls back to ad-hoc (the old behaviour) without a GUI
+  session or when the user declines the dialog.
+- `AppleEvents` joined the reset sweep, and `automation` is the seventh
+  `PermissionId` (feature `audio_ducking`): probed live through
+  `AEDeterminePermissionToAutomateTarget` (ctypes, no pyobjc binding exists)
+  for every installed player; the request flow opens a closed player hidden
+  through `NSWorkspaceOpenConfiguration`, asks with `askUserIfNeeded`, closes
+  what it opened, and records each answer in
+  `macos-automation-consent.json` so the row stays final while the player is
+  closed. Every reset path (`tccutil reset AppleEvents`, an identity change)
+  drops that record. The ducking prewarm waits 120 s for the dialog instead
+  of 3 s, and the player list is shared between the scripts and the row.
+- **Set up everything** (`usePermissions.setupAll`): walks the missing rows
+  in a fixed order — pure dialogs first, Settings-switch rows last — waits
+  for each grant by polling, then restarts the app once when a grant only
+  applies to a fresh process. Onboarding keeps its own final restart; the
+  Settings card and the app-wide banner restart themselves.
+
+**Class rule.** A per-machine build must not carry a per-build identity.
+Anything the OS keys to "which app is this" (TCC, Keychain ACLs, LaunchAgent
+ownership) needs a certificate, not a hash, or every rebuild is a stranger.
+
+**Guards.** `tests/unit/setup/test_macos_signing_identity.py` (the
+`security` choreography, GUI-session refusal, hung dialog, real certificate
+material), `tests/unit/setup/test_macos_app_bundle.py` (designated-requirement
+parsing, identity signing, one-time re-sign with rollback, no reset when the
+requirement is unchanged, the running app is never re-signed),
+`tests/unit/platform/test_permissions.py` (the Automation row: live probe,
+hidden launch and close, recorded answers, strictest player wins, reset and
+identity change forget the answers), `usePermissions.test.tsx` and
+`PermissionsPanel.test.tsx` (the guided flow: order, waiting, cancel, the
+single restart, onboarding leaves the restart to itself).
+
+**Related.** BUG-083, BUG-159, BUG-161 (all "still open" on this point until
+now), `docs/product/privacy-safety-and-support/permissions.md`,
+`docs/os-parity.md`.
+
+**Follow-up 2026-09-16 (the app was not among the user's apps).** Even with a
+healthy index the bundle sat in `~/Applications`, which Finder's
+"Applications" item and Launchpad do not show — the user reported it missing
+from their apps although it was installed. `macos_app_bundle.py` now installs
+into `/Applications` whenever the account can write there without elevation
+(every admin account) and keeps `~/Applications` only for standard accounts.
+An existing per-user install is moved over once with a plain rename, so its
+bytes, code signature and therefore every TCC grant survive (TCC never pins a
+path, BUG-161); a running app is followed to its new path instead of being
+rebuilt. Uninstall clears both folders, and the Keychain ownership check in
+`jarvis/core/control_key.py` and `jarvis permissions` accept both locations.
+Guard: `tests/unit/setup/test_macos_app_location.py`.
+
+## BUG-218: after the move to /Applications the app no longer started at login, and other loose ends of "a normal Mac app" (HIGH, FIXED 2026-09-17)
+
+**Symptom.** Checked on a real Mac the day after BUG-216's follow-up moved the
+bundle into `/Applications`: the LaunchAgent still read
+`open -W -a ~/Applications/Personal Jarvis.app`, a path that no longer existed.
+Login autostart was silently dead. Finder's "Get Info" showed version 2.1.0 on
+a 2.2.1 install. `lsregister -dump` listed about eighty
+`Personal Jarvis.app` bundles under the product's bundle id — all in pytest
+temp directories.
+
+**Cause.** Four independent gaps around the bundle's life cycle:
+
+1. *The login item did not move with the app.* The LaunchAgent names the app
+   by absolute path and was only ever refreshed by the boot-time reconcile —
+   which runs once the app is up. An entry aimed at the old path is what keeps
+   the app from coming up at login, so the self-heal could never fire by
+   itself.
+2. *Same name, different app.* The notarized DMG build is also
+   `Personal Jarvis.app` in `/Applications`, under its own bundle id. The
+   managed installer would have taken it for a broken bundle of its own and
+   rebuilt over it; the uninstaller would have deleted it. The no-venv fallback
+   in `install/uninstall.sh` only knew `~/Applications` and left the
+   LaunchAgent behind.
+3. *Frozen metadata.* A healthy bundle is kept across source updates, so its
+   `Info.plist` stayed at the version that first built it.
+4. *Tests wrote to the developer's real shell databases.* On a Mac,
+   `ensure_macos_app_bundle` registered every temp bundle with the real
+   LaunchServices database, and `MacOSAutostart.install` ran a real
+   `launchctl load` under the product's own label.
+
+**Fix.** `ensure_macos_app_bundle` now ends by calling
+`jarvis.autostart.macos.retarget_launch_agent`, which rewrites the bundle path
+of an EXISTING entry (autostart that is off stays off) and deliberately does
+not `launchctl load` — RunAtLoad would start the app in the middle of the
+installer run. `_is_foreign_bundle` keeps a same-named app with another bundle
+id from being chosen, rebuilt over, or removed, in Python and in the shell
+fallback, which now also clears both folders and the LaunchAgent. Under the
+certificate identity (BUG-217) the code requirement does not depend on the
+bundle's bytes, so `_refresh_bundle_version` brings `Info.plist` up to date
+without costing a permission; an ad-hoc bundle is never touched for it. A
+moved or removed bundle is dropped from LaunchServices
+(`unregister_from_launch_services`). The root `tests/conftest.py` points
+`lsregister`, `mdimport`, the LaunchAgents folder and `launchctl` at nothing
+for every suite.
+
+**Guards.** `tests/unit/autostart/test_macos.py`,
+`tests/unit/setup/test_macos_app_location.py`,
+`tests/unit/setup/test_macos_app_bundle.py`, `tests/unit/setup/test_uninstall.py`.
+
+**Known limit.** Spotlight answers from the per-volume metadata store. On the
+Mac this was verified on, 71 of 72 apps in `/Applications` were missing from
+it — a stalled system index that only `sudo mdutil -E /` repairs; `jarvis
+doctor` names it. No app can fix that without an administrator password.
+
+**Follow-up 2026-09-17 (installed, and still nowhere to be seen).** The user
+reported the app missing from the Dock and from Spotlight. Two separate causes.
+*Dock:* no installer path ever added a tile, so a finished install was only
+startable by someone who already knew where it lived. `jarvis/setup/macos_dock.py`
+adds the tile once per install (`--pin-to-dock`, passed by the installer only);
+a marker remembers it, so a user who drags the app out keeps it out, a
+same-named DMG build's tile is never touched, and uninstall removes ours so no
+"?" tile stays behind. *Spotlight:* the Mac's index had stopped absorbing
+anything new days earlier — a fresh probe file was not indexed either, and no
+app installed after that date was findable. `mdimport` is accepted and changes
+nothing; only `sudo mdutil -E /` repairs it. The installer now proves the stall
+(`wait_until_indexed` returns `False`) and prints that command instead of
+finishing silently on an app search cannot find. Launchpad listed the app all
+along. Guards: `tests/unit/setup/test_macos_dock.py`,
+`tests/unit/install/test_installer_flow.py`.

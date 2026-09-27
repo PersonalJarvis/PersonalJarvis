@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PatConnectDialog } from "@/views/PluginsView";
@@ -90,5 +90,72 @@ describe("PatConnectDialog owner lock", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Connect/i }));
 
     expect(onSubmit).toHaveBeenCalledWith("123:ABC", null, null);
+  });
+
+  it("shows Discord browser helpers only for discord", () => {
+    const onSubmit = vi.fn();
+    render(
+      <PatConnectDialog
+        plugin={makePlugin("discord")}
+        onClose={() => {}}
+        onSubmit={onSubmit}
+        isPending={false}
+        errorMessage={null}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Fill in my Discord ID/i }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /Add the bot to my server/i }),
+    ).toBeTruthy();
+    cleanup();
+
+    render(
+      <PatConnectDialog
+        plugin={makePlugin("telegram")}
+        onClose={() => {}}
+        onSubmit={onSubmit}
+        isPending={false}
+        errorMessage={null}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /Fill in my Discord ID/i }),
+    ).toBeNull();
+  });
+
+  it("fills the owner id from the verified browser login", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ user_id: "4242", username: "alice" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      render(
+        <PatConnectDialog
+          plugin={makePlugin("discord")}
+          onClose={() => {}}
+          onSubmit={() => {}}
+          isPending={false}
+          errorMessage={null}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /Fill in my Discord ID/i }));
+
+      await waitFor(() => {
+        expect(
+          (screen.getByLabelText(/user id/i) as HTMLInputElement).value,
+        ).toBe("4242");
+      });
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/marketplace/plugins/discord/identity",
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
