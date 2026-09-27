@@ -749,6 +749,13 @@ class SocietyRuntime:
         if svc.is_running(session.session_id):
             raise RuntimeError(f"target busy: {target.name} is running a turn")
         queue = svc.subscribe(session.session_id)
+        requested_focus = env.payload.get("focus")
+        connected = {row.id for row in self.catalog() if row.connected}
+        focus_ids = tuple(
+            item
+            for item in (requested_focus[:6] if isinstance(requested_focus, list) else [])
+            if isinstance(item, str) and item in connected
+        )
         # Both API and CLI turns inherit the same trusted request provenance.
         token = incoming_context.set(
             IncomingMessage(
@@ -759,6 +766,7 @@ class SocietyRuntime:
                 text=env.text,
                 prompt=frame_assignment(env),
                 trace_id=env.trace_id,
+                focus_ids=focus_ids,
             )
         )
         try:
@@ -799,6 +807,7 @@ class SocietyRuntime:
         final_text = ""
         status = "reported"
         error = ""
+        retry_reason = ""
         tool_steps: list[str] = []
         used_browser = False
         quest_trace = env.trace_id.startswith("quest:")
@@ -828,6 +837,7 @@ class SocietyRuntime:
                     if payload.get("status") not in (None, "ok", "done", "completed"):
                         status = "blocked"
                         error = str(payload.get("error") or payload.get("status") or "")
+                        retry_reason = str(payload.get("reason") or "")
                     break
         except asyncio.CancelledError:
             return
@@ -876,9 +886,7 @@ class SocietyRuntime:
                 status = "done"
             else:
                 status = "reported"
-        if report and status != "blocked":
-            summary = str(report.get("summary") or summary).strip()[:2000]
-        elif report and report.get("status") == "blocked":
+        if report and not final_text.strip() and not reports:
             summary = str(report.get("summary") or summary).strip()[:2000]
         remaining = report.get("open")
         open_items = (
@@ -897,6 +905,7 @@ class SocietyRuntime:
                     payload={
                         "run_id": run_id,
                         "status": status,
+                        "retry_reason": retry_reason,
                         "done": summary[:2000],
                         "output": [f"chat:{session_id}", *output],
                         "evidence": evidence,

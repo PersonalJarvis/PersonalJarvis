@@ -63,6 +63,11 @@ def managed_python_request(system: str, machine: str) -> str:
     return "3.12"
 
 
+def host_matches_managed_python(request: str, version: tuple[int, int], *, frozen: bool) -> bool:
+    """Reuse the host only when its ABI matches the browser dependency lock."""
+    return not frozen and request == "3.12" and version == (3, 12)
+
+
 def _manifest(data_dir: Path | None = None) -> dict[str, Any]:
     try:
         row = json.loads((install_root(data_dir) / "installed.json").read_text("utf-8"))
@@ -248,10 +253,8 @@ def ensure_installed(
         _set(data_dir, phase="installing", percent=5, error="", detail="Preparing browser runtime")
         try:
             request = managed_python_request(sys.platform, platform.machine())
-            if (
-                not getattr(sys, "frozen", False)
-                and (3, 11) <= sys.version_info[:2] < (3, 14)
-                and request == "3.12"
+            if host_matches_managed_python(
+                request, sys.version_info[:2], frozen=bool(getattr(sys, "frozen", False))
             ):
                 _run([sys.executable, "-m", "venv", str(runtime)], env=env)
             else:

@@ -339,6 +339,7 @@ async def test_three_plain_german_tasks_keep_honest_results(world):
         await rt.quests.create(ordinary_task),
         "Ich habe drei Quellen zusammengefasst.",
     )
+    assert chat.contexts[-1].focus_ids == ("core:search-web",)
     assert ordinary.state.value == "done" and ordinary.result["status"] == "reported", (
         ordinary.result
     )
@@ -372,8 +373,37 @@ async def test_three_plain_german_tasks_keep_honest_results(world):
         },
     )
     assert produced.state.value == "done" and produced.result["status"] == "done"
+    assert produced.result["done"] == "Der Bericht liegt als Datei bereit."  # i18n-allow
     assert produced.result["output"] == ["chat:society:scout", str(artifact.resolve())]
     assert produced.result["evidence"] == [str(artifact.resolve())]
+
+
+async def test_startup_failure_stays_owned_and_waits_for_automatic_retry(world):
+    rt, chat, _ = world
+
+    async def no_hint(_runtime, _task, _catalog):
+        return []
+
+    rt.quests._infer_focus = no_hint  # noqa: SLF001 - avoid a provider in this contract
+    rt.quests._retry_delay = 60  # noqa: SLF001 - inspect the waiting state before the timer
+    quest = await rt.quests.create("Scout, inspect the public page.")
+    assert quest.state.value == "running"
+    queue = chat.queues["society:scout"]
+    await queue.put(
+        {
+            "kind": "turn_finished",
+            "payload": {
+                "status": "error",
+                "error": "The assistant is still starting.",
+                "reason": "brain_starting",
+            },
+        }
+    )
+    await asyncio.wait_for(asyncio.gather(*list(rt._watchers)), timeout=5)
+    waiting = await rt.quests.get(quest.quest_id)
+    assert waiting is not None and waiting.state.value == "open"
+    assert waiting.result["status"] == "waiting"
+    assert waiting.result["reason"] == "brain_starting"
 
 
 @pytest.mark.parametrize(

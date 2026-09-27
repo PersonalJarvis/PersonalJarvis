@@ -19,19 +19,24 @@ Acceptance for this change:
    verified completion. Only an explicitly reported result with an existing
    workspace file is labeled `done` by this path. Partial and blocked reports
    remain retryable. Permission checks and tool execution remain unchanged.
+   The visible handoff uses the agent's final answer when present; an earlier
+   outcome report cannot replace a more useful final response.
 5. The task router accepts the original user text in any language or script.
    A configured capable model suggests only connected capability IDs; trusted
    Python chooses the agent and the scheduler applies its existing gates.
    If the model is unavailable or returns invalid IDs, the legacy lexical
    route and then a generalist or coordinator keep the task moving.
+6. The Agents HTTP path returns a durable `open` receipt before model routing.
+   A canceled request cannot assign work after routing finishes; waiting tasks
+   recover after a process restart. Brain startup waits retry automatically.
 
 ## Three one-sentence requests
 
 | Request | Before | After | Automated evidence |
 | --- | --- | --- | --- |
-| Research the latest battery news (submitted in German). | The lead chat could choose to delegate; the automatic quest entry lived in Map. A normal turn could yield `done` with no evidence. | The Agents request box routes to the research agent. A bare answer is shown as a response with no verification claim. No person intervention is required to start. | The contract test routes the German request and records a `reported` result with an empty evidence list. The content of the answer is supplied by a fake runner, so its research quality is not verified. |
-| Research data behind my login (submitted in German). | A turn could end with an unhelpful completion or a blocker visible only in the agent chat. | The assigned agent can report the exact login step as `blocked`; the task shows it, opens that agent, and offers retry after sign-in. The person must complete the login. | The contract test checks the blocker, owner, and retryable state. It does not perform a real login. |
-| Research a topic and write a report file (submitted in German). | A chat session ID counted as output and no file was shown on the task card. | The task links an existing file under the agent workspace. A missing or outside path cannot become checked evidence. No person intervention is required to start; the person can inspect the file. | The contract test creates a real file, checks the result path and evidence, and rejects invalid paths in a unit test. It does not assess the report's contents. |
+| Open a public page and report its heading and purpose. | The automatic task entry lived in Map; one live POST waited through model routing, and an early outcome summary hid the useful final answer. | The Agents box returned an `open` receipt in 0.69 seconds. Runner worked without a manual agent/model/tool choice; the card displayed the actual heading and purpose as a `reported` answer. | One sentence and one submit. The final answer and a successful page fetch were observed in the isolated Dev instance; the answer has no independently checked source citation. |
+| Read private profile settings behind a login. | A blocker could be buried in an agent chat, and a stateless shell could not carry a browser login forward. | Runner opened the exact URL in its selected browser, saw the sign-in redirect, and returned `blocked`. The card puts the sign-in step and controls before the long explanation; its sign-in action opens that exact URL in the agent's headed browser profile. | One sentence and one submit; the person must sign in and retry. The test opened and closed the sign-in window without credentials. No private settings were read. |
+| Create a short Markdown guide and leave the file in the task workspace. | A chat session ID counted as output, and the task card offered no file. | Runner wrote `verify_ai_answers.md`, the card linked an existing workspace file, and the local opener returned `opened: true`. | One sentence, one submit, one file click; no manual agent/model/tool choice. The file and its contents were inspected. |
 
 ## Scope and limits
 
@@ -48,7 +53,19 @@ English attempt failed with a transient provider error, then the same prompt
 succeeded on retry. The check used generic prompts and did not access a real
 inbox or execute the work. The router tries the configured provider's current
 model when the selected Agents model is unavailable.
-No running desktop API was reachable during this work, so live browser, login,
-file preview, macOS/Linux execution and a fresh single-key provider run remain
-unverified. The local fallback matcher remains limited by its vocabulary;
-without a usable model it may choose the generalist for a suitable specialist.
+The isolated Windows Dev desktop served the built bundle. Its browser helper
+initially failed because the Python 3.11 host was reused with a lock requiring
+Python 3.12; after fixing the helper selection, installation and the browser
+render probe passed with managed Python 3.12. The browser-backed login blocker
+was observed. The one-shot login route had mistakenly launched the live-stream
+runner; after correcting the protocol selection, a headed GitLab sign-in window
+opened and the isolated browser profile recorded the sign-in page. A real sign-in
+and resumed private result were not performed.
+The isolated browser could not reach a loopback test server that the host could
+reach, so the external sign-in page was used for the blocker check. A bearer
+test endpoint also showed that a model may answer about an HTTP 401 response
+instead of marking a differently worded task blocked; such a response remains
+`reported` with no verified evidence. Native macOS/Linux execution, a fresh
+single-key install and real protected-service acceptance remain unverified.
+The local lexical fallback remains limited by its vocabulary; without a usable
+model it may choose the generalist for a suitable specialist.

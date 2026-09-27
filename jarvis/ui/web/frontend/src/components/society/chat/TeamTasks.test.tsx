@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { TeamTasks } from "./TeamTasks";
 
@@ -16,7 +16,7 @@ vi.mock("../world/questsData", () => ({
   useCancelQuest: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
 }));
 
-afterEach(() => { cleanup(); state.rows = []; state.post.mockClear(); state.retry.mockClear(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); state.rows = []; state.post.mockClear(); state.retry.mockClear(); });
 
 it("starts a plain-language task without asking for an agent or model", () => {
   render(<TeamTasks agents={[]} onOpenAgent={vi.fn()} />);
@@ -39,4 +39,33 @@ it("shows a blocker and opens the owning agent for the required login", () => {
   expect(open).toHaveBeenCalledWith("scout");
   fireEvent.click(screen.getByRole("button", { name: "society.world.quest_retry" }));
   expect(state.retry).toHaveBeenCalledWith(["login"]);
+});
+
+it("opens a blocked web task at its exact URL in the owning browser profile", async () => {
+  const fetcher = vi.fn(async () => ({ ok: true }));
+  vi.stubGlobal("fetch", fetcher);
+  state.rows = [{
+    quest_id: "web-login", title: "Private page", text: "Read https://example.com/private.",
+    state: "failed", agent_id: "scout", routing: { focus: ["core:browser"] },
+    result: { status: "blocked", done: "Sign-in required.", open: ["Sign in."] },
+  }];
+  render(<TeamTasks agents={[{ agentId: "scout", name: "Scout" }] as any} onOpenAgent={vi.fn()} />);
+  fireEvent.click(screen.getByText("Private page"));
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "society.tasks.sign_in" }));
+  });
+  expect(fetcher).toHaveBeenCalledWith("/api/society/agents/scout/browser/login", expect.objectContaining({
+    method: "POST", body: JSON.stringify({ start_url: "https://example.com/private" }),
+  }));
+});
+
+it("shows startup as an automatic wait without asking the user to retry", () => {
+  state.rows = [{
+    quest_id: "warming", title: "Research", state: "open", agent_id: "scout",
+    result: { status: "waiting", reason: "brain_starting", blocker: "startup" },
+  }];
+  render(<TeamTasks agents={[{ agentId: "scout", name: "Scout" }] as any} onOpenAgent={vi.fn()} />);
+  fireEvent.click(screen.getByText("Research"));
+  expect(screen.getAllByText("society.tasks.starting").length).toBeGreaterThan(0);
+  expect(screen.queryByRole("button", { name: "society.world.quest_retry" })).toBeNull();
 });

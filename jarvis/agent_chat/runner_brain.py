@@ -421,7 +421,9 @@ async def run_brain_turn(
     mirror = _StepMirror(emit, turn_id, handle.bus, handle.trace_id)
     ref = approval_ref(session.session_id)
 
-    async def finish(status: str, usage: dict[str, Any], error: str | None = None) -> None:
+    async def finish(
+        status: str, usage: dict[str, Any], error: str | None = None, *, reason: str = ""
+    ) -> None:
         await emit(
             "turn_finished",
             {
@@ -430,13 +432,17 @@ async def run_brain_turn(
                 "duration_ms": int((time.monotonic() - started) * 1000),
                 "usage": usage,
                 "error": error,
+                "reason": reason,
             },
         )
 
     brain = brain_manager()
     if brain is None or not callable(getattr(brain, "generate", None)):
         await finish(
-            "error", {}, "Jarvis' brain is still starting up. Give it a moment and send again."
+            "error",
+            {},
+            "Jarvis' brain is still starting up. Give it a moment and send again.",
+            reason="brain_starting",
         )
         return
 
@@ -475,6 +481,8 @@ async def run_brain_turn(
     _note_skill_trigger(brain, text)
 
     if bridge is not None:
+        from jarvis.society.surface import requires_explicit_approval
+
         bridge.arm(
             ref,
             ChatGrant(
@@ -484,6 +492,11 @@ async def run_brain_turn(
                 always_allowed=always_allowed,
                 ask=handle.request_approval,
                 call_id_for=mirror.open_call_id,
+                force_ask=(
+                    lambda name, args: requires_explicit_approval(session.session_id, name, args)
+                )
+                if session.surface == "society"
+                else lambda _name, _args: False,
             ),
         )
 

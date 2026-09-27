@@ -33,6 +33,7 @@ import asyncio
 import json
 import logging
 import re
+import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
@@ -327,6 +328,7 @@ class Quests:
         self._unsubscribe: Callable[[], None] | None = None
         self._timers: dict[str, asyncio.TimerHandle] = {}
         self._attempts: dict[str, int] = {}
+        self._routing: set[str] = set()
         self._tasks: set[asyncio.Task[Any]] = set()
 
     # ------------------------------------------------------------ wiring
@@ -334,6 +336,9 @@ class Quests:
     def attach(self) -> None:
         if self._unsubscribe is None:
             self._unsubscribe = self._runtime.store.bus.subscribe_all(self._on_envelope)
+            recovery = asyncio.create_task(self._recover_waiting(), name="society-quest-recovery")
+            self._tasks.add(recovery)
+            recovery.add_done_callback(self._tasks.discard)
 
     def detach(self) -> None:
         if self._unsubscribe is not None:
@@ -345,6 +350,18 @@ class Quests:
         for task in list(self._tasks):
             task.cancel()
         self._tasks.clear()
+
+    async def _recover_waiting(self) -> None:
+        """Re-arm durable waits after a process restart without delaying boot."""
+        try:
+            for quest in await self.list(state=QuestState.OPEN):
+                if quest.result.get("status") == "waiting":
+                    self._attempts[quest.quest_id] = int(quest.result.get("attempts") or 0)
+                self._arm(quest.quest_id, self._retry_delay + secrets.randbelow(3000) / 1000)
+        except asyncio.CancelledError:
+            raise
+        except (OSError, TypeError, ValueError):
+            log.warning("society quests: waiting-task recovery failed", exc_info=True)
 
     # ------------------------------------------------------------ waiting
 
@@ -382,22 +399,47 @@ class Quests:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _retry_waiting(self, quest_id: str) -> None:
+    async def _retry_waiting(self, quest_id: str, *, lang: str | None = None) -> None:
         try:
             quest = await self.get(quest_id)
             if quest is None or quest.state is not QuestState.OPEN:
                 return
-            await self.route(quest_id)
+            await self.route(quest_id, lang=lang)
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001 - a failed knock is logged; the next timer knocks again
+        except Exception:  # noqa: BLE001 - persist and retry a task that has not been assigned
             log.warning("society quests: retry of %s failed", quest_id, exc_info=True)
+            quest = await self.get(quest_id)
+            if quest is None or quest.state is not QuestState.OPEN:
+                return
+            attempts = self._attempts.get(quest_id, 0) + 1
+            self._attempts[quest_id] = attempts
+            if attempts <= MAX_WAIT_ATTEMPTS:
+                result = {"status": "waiting", "reason": "routing_error", "attempts": attempts}
+                await self._set(quest, state=QuestState.OPEN, result_json=json.dumps(result))
+                fresh = await self.get(quest_id)
+                if fresh is not None:
+                    await self._announce(fresh, previous=quest.state)
+                self._arm(quest_id, self._retry_delay + secrets.randbelow(3000) / 1000)
+            else:
+                result = {
+                    "status": "blocked",
+                    "reason": "routing_error",
+                    "done": "The task could not be started after repeated attempts.",
+                    "open": ["Check the agent connection, then retry the task."],
+                }
+                await self._set(
+                    quest, state=QuestState.FAILED, result_json=json.dumps(result), done_ms=now_ms()
+                )
 
     async def _wake_waiting(self) -> None:
         """A slot was freed: the oldest waiting quests knock right away."""
         waiting = sorted(await self.list(state=QuestState.OPEN), key=lambda q: q.created_ms)
         for quest in waiting:
-            if quest.result.get("status") == "waiting":
+            if (
+                quest.result.get("status") == "waiting"
+                and quest.result.get("reason") != "brain_starting"
+            ):
                 await self.route(quest.quest_id)
 
     async def note_progress(self, trace_id: str, line: str, *, live: str | None = None) -> None:
@@ -446,8 +488,9 @@ class Quests:
         title: str = "",
         created_by: str = USER_ACTOR,
         lang: str | None = None,
+        defer: bool = False,
     ) -> QuestRecord:
-        """Post a quest and route it right away."""
+        """Persist a quest; optionally route it without holding the HTTP response."""
         clean = text.strip()
         if not clean:
             raise ValueError("a quest needs text")
@@ -468,10 +511,30 @@ class Quests:
         quest = await self.get(quest_id)
         assert quest is not None
         await self._announce(quest, previous=None)
+        if defer:
+            task = asyncio.create_task(
+                self._retry_waiting(quest_id, lang=lang), name=f"society-route-{quest_id}"
+            )
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+            return quest
         return await self.route(quest_id, lang=lang)
 
     async def route(self, quest_id: str, *, lang: str | None = None) -> QuestRecord:
         """Pick the taker (forging one when nobody fits) and put the ASSIGN on the board."""
+        if quest_id in self._routing:
+            current = await self.get(quest_id)
+            if current is None:
+                raise KeyError(quest_id)
+            return current
+        self._routing.add(quest_id)
+        try:
+            return await self._route(quest_id, lang=lang)
+        finally:
+            self._routing.discard(quest_id)
+
+    async def _route(self, quest_id: str, *, lang: str | None = None) -> QuestRecord:
+        """The serialized routing attempt for one durable quest."""
         quest = await self.get(quest_id)
         if quest is None:
             raise KeyError(quest_id)
@@ -488,6 +551,11 @@ class Quests:
         except Exception as exc:  # noqa: BLE001 - a hint can never prevent trusted routing
             log.info("society quests: semantic hint unavailable (%s)", type(exc).__name__)
             hint = []
+        latest = await self.get(quest_id)
+        if latest is None:
+            raise KeyError(quest_id)
+        if latest.state in TERMINAL and latest.state is not QuestState.FAILED:
+            return latest
         choice = choose_taker(quest.text, agents, catalog, busy=busy, focus_hint=hint)
         agent_id = choice.agent_id
         if choice.forge is not None:
@@ -511,10 +579,16 @@ class Quests:
             fresh = await self.get(quest_id)
             assert fresh is not None
             return fresh
+        latest = await self.get(quest_id)
+        if latest is None:
+            raise KeyError(quest_id)
+        if latest.state in TERMINAL and latest.state is not QuestState.FAILED:
+            return latest
         payload: dict[str, Any] = {
             "text": quest.text,
             "quest_id": quest_id,
             "title": quest.title,
+            "focus": choice.focus,
         }
         if lang in ("de", "en", "es"):
             payload["lang"] = lang
@@ -587,6 +661,19 @@ class Quests:
             await self._set(quest, state=QuestState.RUNNING, agent_id=env.from_agent, run_id=run_id)
         elif env.msg_type is MsgType.RESULT:
             status = str(env.payload.get("status") or "done")
+            if status == "blocked" and env.payload.get("retry_reason") == "brain_starting":
+                attempts = self._attempts.get(quest.quest_id, 0) + 1
+                if attempts <= MAX_WAIT_ATTEMPTS:
+                    self._attempts[quest.quest_id] = attempts
+                    result = {
+                        "status": "waiting",
+                        "reason": "brain_starting",
+                        "blocker": "startup",
+                        "attempts": attempts,
+                    }
+                    await self._set(quest, state=QuestState.OPEN, result_json=json.dumps(result))
+                    self._arm(quest.quest_id, self._retry_delay + secrets.randbelow(3000) / 1000)
+                    return
             result = {
                 "status": status,
                 "done": env.payload.get("done", ""),

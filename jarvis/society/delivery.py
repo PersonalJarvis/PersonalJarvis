@@ -20,6 +20,7 @@ class IncomingMessage(BaseModel):
     text: str
     prompt: str
     trace_id: str
+    focus_ids: tuple[str, ...] = ()
     status: Literal["queued", "delivered", "failed"] = "queued"
     turn_id: str = ""
     error: str = ""

@@ -70,7 +70,7 @@ function QuestCard({
     line = row.result?.live || progress[progress.length - 1] || fill(t("society.world.quest_taken_by"), { agent });
   } else if (waiting) {
     line = fill(
-      t(row.result?.blocker === "approval" ? "society.world.quest_wait_approval" : "society.world.quest_wait_busy"),
+      t(row.result?.blocker === "startup" ? "society.world.quest_wait_startup" : row.result?.blocker === "approval" ? "society.world.quest_wait_approval" : "society.world.quest_wait_busy"),
       { agent },
     );
   } else if (row.state === "failed") {

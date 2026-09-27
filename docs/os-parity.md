@@ -650,6 +650,22 @@ and a generalist or coordinator. No platform-specific import or native API is
 added. Unit tests use English, German, Spanish and Japanese task text and a
 fake provider on Windows; native macOS/Linux and fresh arbitrary-key runs are
 not established by those tests.
+The Agents HTTP route acknowledges a persisted `open` task before its model
+hint runs. The background router serializes attempts per task, respects a
+cancel during classification, and re-arms persisted waits after restart. A
+typed `brain_starting` result retries without user action and uses jittered
+timers. The route, store, scheduler, and React state contracts are portable;
+Windows contract tests cover immediate receipt, cancel, waiting, and restart.
+The optional Society browser helper selects a managed Python 3.12 runtime when
+the host interpreter is 3.11 or 3.13; a matching 3.12 host may be reused.
+This is the same selection on Windows, macOS, and Linux, with a separate
+Windows ARM64 request for an x64 ABI. Unit tests cover these cells; a live
+Windows 3.11 host installed and rendered the browser under managed 3.12.
+Native macOS/Linux browser installation is still unverified.
+The headed login route now uses the one-shot browser runner, while live pixel
+streaming keeps its separate persistent runner. A Windows Dev run opened a
+sign-in page in the agent's profile, then closed it without credentials.
+macOS/Linux headed login and authenticated resume remain unverified.
 
 The message tool, durable SQLite queue, task-local sender provenance, and chat
 receipts use the same Python/React implementation on Windows, macOS and Linux.

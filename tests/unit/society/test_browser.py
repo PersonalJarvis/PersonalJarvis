@@ -23,6 +23,12 @@ from jarvis.society.runtime import SocietyRuntime
 
 CTX = SimpleNamespace(trace_id=uuid4(), user_utterance="", config={}, memory_read=None)
 
+
+def test_default_browser_jobs_runner_supports_headed_login(tmp_path: Path):
+    jobs = BrowserJobs(tmp_path)
+    assert jobs._runner.name == "runner.py"  # noqa: SLF001 - protocol boundary regression
+    assert jobs._runner.is_file()  # noqa: SLF001 - installed source contains the runner
+
 #: A stand-in for runner.py: answers the protocol without browser-use.
 FAKE_RUNNER = """
 import json, sys, time
@@ -191,7 +197,8 @@ async def test_tool_gates(rt, tmp_path, fake_runner):
 
 
 async def test_briefing_and_surface_reflect_the_browser(rt, tmp_path, fake_runner):
-    from jarvis.society.surface import society_system_extra, society_tools
+    from jarvis.society.delivery import IncomingMessage, incoming_context
+    from jarvis.society.surface import society_system_extra, society_tool_filter, society_tools
 
     session = SimpleNamespace(
         session_id="society:scout", cwd=str(tmp_path / "ws"), permission_mode="ask"
@@ -202,8 +209,35 @@ async def test_briefing_and_surface_reflect_the_browser(rt, tmp_path, fake_runne
     )
     briefing = await society_system_extra(cfg, None, session)
     assert "## Your browser\nNot set up" in briefing
+    assert "report an access blocker" in briefing
     assert "society_browser" not in society_tools(cfg, None, session)
     rt.browser = _jobs(tmp_path, fake_runner)
     briefing = await society_system_extra(cfg, None, session)
     assert "runs in your own persistent browser profile" in briefing
+    assert "Open an explicit user URL in this visible browser" in briefing
+    assert "never request credentials in chat" in briefing
     assert "society_browser" in society_tools(cfg, None, session)
+    incoming = IncomingMessage(
+        message_id="assignment-1",
+        sender_id="user",
+        sender_name="user",
+        sender_kind="user",
+        text="Open the page.",
+        prompt="Open the page.",
+        trace_id="quest:browser",
+        focus_ids=("core:browser",),
+    )
+    token = incoming_context.set(incoming)
+    try:
+        briefing = await society_system_extra(cfg, None, session)
+        tools = society_tools(cfg, None, session)
+        tools["search_web"] = SimpleNamespace(
+            name="search_web", description="Search the web", risk_tier="safe", schema={}
+        )
+        chosen = society_tool_filter(session)(tools)
+    finally:
+        incoming_context.reset(token)
+    assert "For this assigned web task" in briefing
+    assert "society_browser" in chosen
+    assert "society_shell" not in chosen
+    assert "search_web" not in chosen

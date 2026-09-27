@@ -19,7 +19,7 @@ def reviewable_outputs(values: list[str], workspace: str) -> tuple[list[str], li
             continue
         try:
             url = urlsplit(value)
-        except ValueError:
+        except ValueError:  # A malformed model URL is not a deliverable.
             continue
         if url.scheme in {"http", "https"} and url.netloc and not url.username and not url.password:
             output.append(value)
@@ -35,6 +35,6 @@ def reviewable_outputs(values: list[str], workspace: str) -> tuple[list[str], li
                 path = str(candidate)
                 output.append(path)
                 evidence.append(path)
-        except (OSError, ValueError):
+        except (OSError, ValueError):  # Missing or invalid paths cannot become file evidence.
             continue
     return list(dict.fromkeys(output)), list(dict.fromkeys(evidence))

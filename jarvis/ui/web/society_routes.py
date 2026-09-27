@@ -392,11 +392,10 @@ async def list_quests(
 
 @router.post("/quests", openapi_extra={"x-jarvis-dangerous": True})
 async def create_quest(body: CreateQuestBody, request: Request) -> dict[str, Any]:
-    """Post a quest: trusted Python routes it to one agent (forging one when
-    nobody fits) and the scheduler starts the work — this spends."""
+    """Post a durable quest now; trusted Python routes it in the background."""
     rt = await _runtime(request)
     try:
-        quest = await rt.quests.create(body.text, title=body.title, lang=body.lang)
+        quest = await rt.quests.create(body.text, title=body.title, lang=body.lang, defer=True)
     except RosterError as exc:
         raise _typed_error(exc) from exc
     except ValueError as exc:

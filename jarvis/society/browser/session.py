@@ -145,7 +145,10 @@ class BrowserJobs:
 
         self.live = LiveSessions(self._data_dir)
         self._python = python
-        self._runner = runner or install_mod.runner_path()
+        # One-shot jobs and headed login use runner.py's mode protocol. The
+        # persistent live stream has a different command protocol and owns its
+        # own live_runner.py process through LiveSessions.
+        self._runner = runner or Path(__file__).with_name("runner.py")
         self._installed = installed
         self._cdp_url = cdp_url
         self.live.cdp_url = cdp_url

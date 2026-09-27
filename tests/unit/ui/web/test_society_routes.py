@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -66,6 +67,25 @@ def test_lead_is_seeded_and_listed(client):
     assert [a["agent_id"] for a in body["agents"]] == ["jarvis"]
     assert body["agents"][0]["tier"] == "lead"
     assert body["agents"][0]["run_state"] == "idle"
+
+
+def test_post_quest_returns_a_durable_receipt_before_model_routing(client):
+    c, manager = client
+    runtime = c.app.state.society_factory()
+
+    async def slow_focus(_runtime, _task, _catalog):
+        await asyncio.sleep(2)
+        return []
+
+    runtime.quests._infer_focus = slow_focus  # noqa: SLF001 - exercise the HTTP boundary
+    response = c.post("/api/society/quests", json={"text": "Write a short note."})
+    assert response.status_code == 200
+    quest = response.json()["quest"]
+    assert quest["state"] == "open"
+    assert c.get(f"/api/society/quests/{quest['quest_id']}").json()["quest"]["text"] == (
+        "Write a short note."
+    )
+    assert manager.prompts == []
 
 
 def test_create_derives_focus_and_rules(client):

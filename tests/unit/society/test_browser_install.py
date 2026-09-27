@@ -6,7 +6,22 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-from jarvis.society.browser import install
+
+from jarvis.society.browser import bootstrap, install
+
+
+@pytest.mark.parametrize(
+    "python_request,version,frozen,reuse",
+    [
+        ("3.12", (3, 11), False, False),
+        ("3.12", (3, 12), False, True),
+        ("3.12", (3, 13), False, False),
+        ("3.12", (3, 12), True, False),
+        ("cpython-3.12-windows-x86_64-none", (3, 12), False, False),
+    ],
+)
+def test_browser_runtime_reuses_only_a_matching_host_abi(python_request, version, frozen, reuse):
+    assert install.host_matches_managed_python(python_request, version, frozen=frozen) is reuse
 
 
 @pytest.fixture
@@ -40,6 +55,7 @@ def installer(monkeypatch, tmp_path):
         return ""
 
     monkeypatch.setattr(install, "_run", run)
+    monkeypatch.setattr(bootstrap, "ensure_uv", lambda _root: "uv")
     monkeypatch.setattr(install, "managed_python_request", lambda *_: "3.12")
     monkeypatch.setattr(install.sys, "frozen", False, raising=False)
     yield tmp_path, root, launches, failure

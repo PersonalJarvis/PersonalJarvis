@@ -40,6 +40,7 @@ from .capabilities import CapabilityKind, CapabilityRow, capability_id_for_tool,
 from .coding_tool import CodingSessionTool
 from .communication import COMMUNICATION_GUIDANCE
 from .conversation_tool import ConversationRecallTool, RoutineInvokeTool, RoutineListTool
+from .delivery import incoming_context
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
 from .roster import AgentRecord, canonical_session_id
@@ -559,6 +560,19 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
             for name, tool in picked.items()
             if (cap_id := capability_id_for_tool(name)) is not None
         }
+        incoming = incoming_context.get()
+        browser_task = bool(
+            incoming
+            and "core:browser" in incoming.focus_ids
+            and rt.browser.is_installed()
+            and "society_browser" in own
+        )
+        if browser_task:
+            # A stateless shell/search fetch cannot use the browser session the
+            # person signs into. Keep the selected browser as this turn's web hand.
+            own.pop(ShellTool.name, None)
+            picked.pop("search_web", None)
+            picked.pop("search-web", None)
         ordered: dict[str, Tool] = {}
         ordered.update(own)
         ordered.update(picked)
@@ -592,6 +606,14 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
 
     zone = client_timezone.get() or "unknown; ask before scheduling wall-clock work"
     context = f"\nClient timezone for this turn: {zone}."
+    incoming = incoming_context.get()
+    if incoming and "core:browser" in incoming.focus_ids:
+        context += (
+            "\nFor this assigned web task, open the exact user URL with society_browser. "
+            "Search snippets are not the page. If access requires login, keep the "
+            "browser available for user sign-in and report the blocked step; never "
+            "ask for a password or token in chat."
+        )
     return (
         build_briefing(agent, catalog, roster, browser=browser, learned=learned, memory=memory)
         + context
@@ -714,12 +736,17 @@ def _browser_line(browser: dict[str, Any] | None) -> str:
     if not browser or not browser.get("installed"):
         return (
             "## Your browser\nNot set up on this machine yet — the user can install it from your "
-            "card. Until then use plugins, CLIs and search-web for the web."
+            "card. Until then use plugins, CLIs and search-web for public web work. "
+            "A search result about a private URL is not its content: report an access blocker "
+            "rather than summarizing a page you could not open."
         )
     if browser.get("mode") == "attach":
         return (
             "## Your browser\nsociety_browser drives the user's own running Chrome (attached), "
-            "with their logins. One task per call, capped steps."
+            "with their logins. One task per call, capped steps. Open an explicit user URL "
+            "in this browser; search snippets and shell fetches do not prove private content. "
+            "If login is required, ask the user to sign in here and never request "
+            "credentials in chat."
         )
     logged = (
         "signed-in profile present"
@@ -729,7 +756,9 @@ def _browser_line(browser: dict[str, Any] | None) -> str:
     return (
         "## Your browser\nsociety_browser runs in your own persistent browser profile "
         f"({logged}). One task per call, capped steps; sending, buying, deleting or "
-        "publishing asks the user first."
+        "publishing asks the user first. Open an explicit user URL in this visible browser; "
+        "search snippets and shell fetches do not prove private content. If login is required, "
+        "ask the user to sign in here and never request credentials in chat."
     )
 
 

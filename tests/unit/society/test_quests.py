@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -180,6 +181,85 @@ async def test_busy_agents_lose_points_and_the_generalist_is_reused(rt: SocietyR
 # ---------------------------------------------------------------- lifecycle
 
 
+async def test_deferred_create_returns_before_semantic_routing_finishes(rt: SocietyRuntime):
+    await rt.roster.create(name="Mailbox", focus=["plugin:gmail"])
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_focus(_runtime, _task, _catalog):
+        started.set()
+        await release.wait()
+        return ["plugin:gmail"]
+
+    rt.quests._infer_focus = slow_focus  # noqa: SLF001 - controlled async classifier
+    quest = await rt.quests.create("Summarize my inbox", defer=True)
+    assert quest.state is QuestState.OPEN
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert rt.dispatcher.calls == []  # type: ignore[attr-defined]
+    release.set()
+    for _ in range(200):
+        current = await rt.quests.get(quest.quest_id)
+        if current is not None and current.state is QuestState.RUNNING:
+            break
+        await asyncio.sleep(0.01)
+    assert current is not None and current.state is QuestState.RUNNING
+    assert current.agent_id == "mailbox"
+
+
+async def test_cancelling_while_routing_does_not_assign_or_forge(rt: SocietyRuntime):
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_focus(_runtime, _task, _catalog):
+        started.set()
+        await release.wait()
+        return []
+
+    rt.quests._infer_focus = slow_focus  # noqa: SLF001 - controlled async classifier
+    quest = await rt.quests.create("Write a note", defer=True)
+    await asyncio.wait_for(started.wait(), timeout=1)
+    await rt.quests.cancel(quest.quest_id)
+    release.set()
+    for _ in range(20):
+        if quest.quest_id not in rt.quests._routing:  # noqa: SLF001 - wait for route cleanup
+            break
+        await asyncio.sleep(0.01)
+    assert (await rt.quests.get(quest.quest_id)).state is QuestState.CANCELLED  # type: ignore[union-attr]
+    assert rt.dispatcher.calls == []  # type: ignore[attr-defined]
+    assert await rt.roster.get("runner") is None
+
+
+async def test_unrouted_receipt_survives_process_restart(rt: SocietyRuntime, monkeypatch):
+    rt.quests._retry_delay = 0.2  # noqa: SLF001 - exercise the durable timer
+    monkeypatch.setattr("jarvis.society.quests.secrets.randbelow", lambda _max: 0)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def interrupted_focus(_runtime, _task, _catalog):
+        started.set()
+        await release.wait()
+        return []
+
+    rt.quests._infer_focus = interrupted_focus  # noqa: SLF001 - simulate an interrupted hint
+    quest = await rt.quests.create("Write a short note", defer=True)
+    await asyncio.wait_for(started.wait(), timeout=1)
+    rt.quests.detach()
+    await asyncio.sleep(0)
+
+    async def recovered_focus(_runtime, _task, _catalog):
+        return []
+
+    rt.quests._infer_focus = recovered_focus  # noqa: SLF001 - resumed process
+    rt.quests.attach()
+    for _ in range(200):
+        current = await rt.quests.get(quest.quest_id)
+        if current is not None and current.state is QuestState.RUNNING:
+            break
+        await asyncio.sleep(0.01)
+    assert current is not None and current.state is QuestState.RUNNING
+    assert current.agent_id == "runner"
+
+
 async def test_create_routes_assigns_and_the_claim_makes_it_running(rt: SocietyRuntime):
     mailbox, _ = await rt.roster.create(name="Mailbox", focus=["plugin:gmail"])
     quest = await rt.quests.create("Find the five most important mails of today")
@@ -218,6 +298,79 @@ async def test_result_closes_the_quest(rt: SocietyRuntime):
     assert fresh.result["done"] == "Five mails summarized."
     assert fresh.done_ms is not None
     assert rt.scheduler.active_runs(mailbox.agent_id) == 0
+
+
+async def test_brain_startup_retries_without_user_intervention(rt: SocietyRuntime, monkeypatch):
+    rt.quests._retry_delay = 0.2  # noqa: SLF001 - bound the timer in this contract
+    monkeypatch.setattr("jarvis.society.quests.secrets.randbelow", lambda _max: 0)
+    quest = await rt.quests.create("Summarize my inbox")
+    assert quest.state is QuestState.RUNNING
+    rt.scheduler.note_run_ended(quest.run_id)
+    await rt.store.append_and_publish(
+        SocietyEnvelope(
+            msg_type=MsgType.RESULT,
+            from_agent=quest.agent_id,
+            trace_id=quest.trace_id,
+            parent_event_id=quest.assign_event_id,
+            payload={
+                "run_id": quest.run_id,
+                "status": "blocked",
+                "retry_reason": "brain_starting",
+                "done": "The agent is still starting.",
+                "output": ["chat:society:mailbox"],
+            },
+        )
+    )
+    waiting = await rt.quests.get(quest.quest_id)
+    assert waiting is not None and waiting.state is QuestState.OPEN
+    assert waiting.result["status"] == "waiting"
+    assert waiting.result["reason"] == "brain_starting"
+    for _ in range(200):
+        current = await rt.quests.get(quest.quest_id)
+        if len(rt.dispatcher.calls) == 2 and current.state is QuestState.RUNNING:  # type: ignore[attr-defined]
+            break
+        await asyncio.sleep(0.01)
+    after_retry = await rt.quests.get(quest.quest_id)
+    trace_events = await rt.store.events_for_trace(quest.trace_id)
+    assert len(rt.dispatcher.calls) == 2, (  # type: ignore[attr-defined]
+        after_retry.state if after_retry else None,
+        after_retry.result if after_retry else None,
+        [event.msg_type for event in trace_events],
+    )
+    retried = await rt.quests.get(quest.quest_id)
+    assert retried is not None and retried.state is QuestState.RUNNING
+
+
+async def test_waiting_startup_task_recovers_after_restart(rt: SocietyRuntime, monkeypatch):
+    rt.quests._retry_delay = 0.2  # noqa: SLF001 - exercise a short durable wait
+    monkeypatch.setattr("jarvis.society.quests.secrets.randbelow", lambda _max: 0)
+    quest = await rt.quests.create("Summarize my inbox")
+    rt.scheduler.note_run_ended(quest.run_id)
+    await rt.store.append_and_publish(
+        SocietyEnvelope(
+            msg_type=MsgType.RESULT,
+            from_agent=quest.agent_id,
+            trace_id=quest.trace_id,
+            parent_event_id=quest.assign_event_id,
+            payload={
+                "run_id": quest.run_id,
+                "status": "blocked",
+                "retry_reason": "brain_starting",
+                "done": "The agent is still starting.",
+                "output": ["chat:society:mailbox"],
+            },
+        )
+    )
+    rt.quests.detach()
+    assert (await rt.quests.get(quest.quest_id)).state is QuestState.OPEN  # type: ignore[union-attr]
+    rt.quests.attach()
+    for _ in range(200):
+        current = await rt.quests.get(quest.quest_id)
+        if len(rt.dispatcher.calls) == 2 and current.state is QuestState.RUNNING:  # type: ignore[attr-defined]
+            break
+        await asyncio.sleep(0.01)
+    assert len(rt.dispatcher.calls) == 2  # type: ignore[attr-defined]
+    assert (await rt.quests.get(quest.quest_id)).state is QuestState.RUNNING  # type: ignore[union-attr]
 
 
 async def test_a_busy_taker_makes_the_quest_wait_and_a_freed_slot_starts_it(rt: SocietyRuntime):
