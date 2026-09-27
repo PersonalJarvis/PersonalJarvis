@@ -46,7 +46,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,9 +53,11 @@ from typing import Any, Protocol
 
 from jarvis.core.branding import UPDATER_USER_AGENT
 from jarvis.core.frozen import bundle_root, is_frozen
+from jarvis.core.http_pool import SyncHttpClientPool
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 log = logging.getLogger(__name__)
+_health_pool = SyncHttpClientPool(timeout_s=1.0)
 
 __all__ = [
     "CHECKSUMS_ASSET_NAME",
@@ -637,8 +638,11 @@ def apply_installer(
 
     if supervise and active_platform in {"darwin", "linux"}:
         if (
-            not expected_version or not previous_version or not health_port
-            or shutdown_receipt is None or not is_frozen()
+            not expected_version
+            or not previous_version
+            or not health_port
+            or shutdown_receipt is None
+            or not is_frozen()
         ):
             raise InstallerUpdateError(
                 "native update supervision requires a frozen app and health port"
@@ -650,8 +654,14 @@ def apply_installer(
         if target is None:
             raise InstallerUpdateError("could not locate the installed application to update")
         return _start_native_supervisor(
-            installer, target, active_platform, expected_version, previous_version,
-            health_port, shutdown_receipt, active_runner
+            installer,
+            target,
+            active_platform,
+            expected_version,
+            previous_version,
+            health_port,
+            shutdown_receipt,
+            active_runner,
         )
 
     if active_platform == "win32":
@@ -719,16 +729,19 @@ def _start_native_supervisor(
 
 
 def _health_has_version(port: int, version: str, nonce: str) -> bool:
+    import httpx
+
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=1.0) as response:
-            payload = json.load(response)
+        response = _health_pool.client().get(f"http://127.0.0.1:{port}/api/health")
+        response.raise_for_status()
+        payload = response.json()
         return (
             isinstance(payload, dict)
             and payload.get("ok") is True
             and payload.get("version") == version
             and payload.get("update_nonce") == nonce
         )
-    except (OSError, ValueError, TypeError):
+    except (httpx.HTTPError, OSError, ValueError, TypeError):
         # Refused connection and partial bootstrap responses are expected until
         # the full app binds and reports its version and launch nonce.
         return False
@@ -845,9 +858,7 @@ def run_native_update_supervisor(
             active_runner.terminate_group(child_pid)
         _restore_previous(target, previous)
         previous_nonce = secrets.token_hex(16)
-        active_runner.spawn_detached(
-            command, env={"JARVIS_UPDATE_HEALTH_NONCE": previous_nonce}
-        )
+        active_runner.spawn_detached(command, env={"JARVIS_UPDATE_HEALTH_NONCE": previous_nonce})
         deadline = time.monotonic() + health_seconds
         while time.monotonic() < deadline:
             if health(port, previous_version, previous_nonce):
@@ -861,6 +872,7 @@ def run_native_update_supervisor(
         log.error("[update] native supervisor failed: %s", exc)
         return False
     finally:
+        _health_pool.close()
         manifest_path.unlink(missing_ok=True)
         try:
             write_native_update_result(ok=success, rolled_back=rolled_back)

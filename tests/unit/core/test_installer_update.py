@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import io
 import json
 import os
 from pathlib import Path
@@ -527,8 +526,11 @@ def test_native_supervisor_checks_new_version_and_restores_on_failure(
         manifest,
         runner=runner,
         alive=lambda _pid: False,
-        health=lambda port, version, nonce: port == 47821 and bool(nonce)
-        and (version == "1.6.0" if healthy else version == "1.5.3"),
+        health=lambda port, version, nonce: (
+            port == 47821
+            and bool(nonce)
+            and (version == "1.6.0" if healthy else version == "1.5.3")
+        ),
         sleep=lambda _seconds: None,
         health_seconds=0.05,
     )
@@ -603,13 +605,23 @@ def test_native_supervisor_cancels_swap_without_graceful_shutdown_receipt(
     live = tmp_path / "PersonalJarvis.AppImage"
     live.write_bytes(b"old appimage")
     manifest = tmp_path / "transaction.json"
-    manifest.write_text(json.dumps({
-        "schema": 1, "parent_pid": 42, "platform": "linux",
-        "installer": str(installer),
-        "installer_sha256": hashlib.sha256(installer.read_bytes()).hexdigest(),
-        "target": str(live), "version": "1.6.0", "previous_version": "1.5.3",
-        "health_port": 47821, "shutdown_receipt": str(tmp_path / "missing.ok"),
-    }), encoding="utf-8")
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "parent_pid": 42,
+                "platform": "linux",
+                "installer": str(installer),
+                "installer_sha256": hashlib.sha256(installer.read_bytes()).hexdigest(),
+                "target": str(live),
+                "version": "1.6.0",
+                "previous_version": "1.5.3",
+                "health_port": 47821,
+                "shutdown_receipt": str(tmp_path / "missing.ok"),
+            }
+        ),
+        encoding="utf-8",
+    )
     runner = FakeCommandRunner()
     assert run_native_update_supervisor(manifest, runner=runner, alive=lambda _pid: False) is False
     assert live.read_bytes() == b"old appimage"
@@ -627,20 +639,36 @@ def test_macos_supervisor_restores_bundle_after_failed_health(tmp_path: Path) ->
     manifest = tmp_path / "transaction.json"
     receipt = tmp_path / "shutdown.ok"
     receipt.write_text("graceful shutdown complete", encoding="utf-8")
-    manifest.write_text(json.dumps({
-        "schema": 1, "parent_pid": 42, "platform": "darwin",
-        "installer": str(dmg),
-        "installer_sha256": hashlib.sha256(dmg.read_bytes()).hexdigest(),
-        "target": str(app), "executable_relative": "Contents/MacOS/PersonalJarvis",
-        "version": "1.6.0", "previous_version": "1.5.3", "health_port": 47821,
-        "shutdown_receipt": str(receipt),
-    }), encoding="utf-8")
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "parent_pid": 42,
+                "platform": "darwin",
+                "installer": str(dmg),
+                "installer_sha256": hashlib.sha256(dmg.read_bytes()).hexdigest(),
+                "target": str(app),
+                "executable_relative": "Contents/MacOS/PersonalJarvis",
+                "version": "1.6.0",
+                "previous_version": "1.5.3",
+                "health_port": 47821,
+                "shutdown_receipt": str(receipt),
+            }
+        ),
+        encoding="utf-8",
+    )
     runner = _mounting_runner("Personal Jarvis.app", "new")
-    assert run_native_update_supervisor(
-        manifest, runner=runner, alive=lambda _pid: False,
-        health=lambda _port, version, _nonce: version == "1.5.3",
-        sleep=lambda _seconds: None, health_seconds=0.05,
-    ) is False
+    assert (
+        run_native_update_supervisor(
+            manifest,
+            runner=runner,
+            alive=lambda _pid: False,
+            health=lambda _port, version, _nonce: version == "1.5.3",
+            sleep=lambda _seconds: None,
+            health_seconds=0.05,
+        )
+        is False
+    )
     assert executable.read_text(encoding="utf-8") == "old"
     assert runner.terminated == [10001]
     assert runner.spawned == [[str(executable)], [str(executable)]]
@@ -656,14 +684,24 @@ def test_native_supervisor_relaunches_old_app_when_staging_fails(
     manifest = tmp_path / "transaction.json"
     receipt = tmp_path / "shutdown.ok"
     receipt.write_text("graceful shutdown complete", encoding="utf-8")
-    manifest.write_text(json.dumps({
-        "schema": 1, "parent_pid": 42, "platform": "linux",
-        "installer": str(installer),
-        "installer_sha256": hashlib.sha256(installer.read_bytes()).hexdigest(),
-        "target": str(live), "version": "1.6.0", "previous_version": "1.5.3",
-        "health_port": 47821,
-        "shutdown_receipt": str(receipt),
-    }), encoding="utf-8")
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "parent_pid": 42,
+                "platform": "linux",
+                "installer": str(installer),
+                "installer_sha256": hashlib.sha256(installer.read_bytes()).hexdigest(),
+                "target": str(live),
+                "version": "1.6.0",
+                "previous_version": "1.5.3",
+                "health_port": 47821,
+                "shutdown_receipt": str(receipt),
+            }
+        ),
+        encoding="utf-8",
+    )
+
     def fail_copy(*_args: object) -> None:
         raise OSError("disk full")
 
@@ -688,12 +726,26 @@ def test_native_health_requires_this_launchs_version_and_nonce(
     returned_nonce: str,
     expected: bool,
 ) -> None:
-    def answer(*_args: object, **_kwargs: object) -> io.BytesIO:
-        return io.BytesIO(json.dumps({
-            "ok": True,
-            "version": returned_version,
-            "update_nonce": returned_nonce,
-        }).encode())
+    import httpx
 
-    monkeypatch.setattr(installer_update.urllib.request, "urlopen", answer)
-    assert installer_update._health_has_version(47821, "1.6.0", "owned-token") is expected
+    from jarvis.core.http_pool import SyncHttpClientPool
+
+    def answer(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "version": returned_version,
+                "update_nonce": returned_nonce,
+            },
+        )
+
+    pool = SyncHttpClientPool(timeout_s=1.0, transport=httpx.MockTransport(answer))
+    monkeypatch.setattr(installer_update, "_health_pool", pool)
+    try:
+        assert installer_update._health_has_version(47821, "1.6.0", "owned-token") is expected
+        client = pool.client()
+        assert installer_update._health_has_version(47821, "1.6.0", "owned-token") is expected
+        assert pool.client() is client
+    finally:
+        pool.close()

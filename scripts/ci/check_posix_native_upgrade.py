@@ -10,21 +10,24 @@ import shutil
 import socket
 import subprocess
 import tempfile
-import urllib.error
-import urllib.request
 from collections import Counter
 from pathlib import Path
+
+import httpx
 
 from jarvis.agent_chat.store import AgentChatStore
 from jarvis.core.branding import KEYRING_SERVICE_NAME
 from jarvis.core.config import _FileCredStore
 from jarvis.core.config_writer import _WRITE_LOCK, _atomic_write
+from jarvis.core.http_pool import SyncHttpClientPool
 from jarvis.core.installer_update import (
     InstallerUpdateError,
     SubprocessCommandRunner,
     run_native_update_supervisor,
 )
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+
+_probe_pool = SyncHttpClientPool(timeout_s=2.0)
 
 
 class TrackingRunner(SubprocessCommandRunner):
@@ -245,12 +248,11 @@ def check(
         def health(health_port: int, version: str, nonce: str) -> bool:
             nonlocal seen_previous_health
             try:
-                with urllib.request.urlopen(
-                    f"http://127.0.0.1:{health_port}/api/health", timeout=2
-                ) as response:
-                    payload = json.load(response)
-            except (OSError, ValueError, TypeError, urllib.error.URLError) as exc:
-                code = getattr(exc, "code", None)
+                response = _probe_pool.client().get(f"http://127.0.0.1:{health_port}/api/health")
+                response.raise_for_status()
+                payload = response.json()
+            except (httpx.HTTPError, OSError, ValueError, TypeError) as exc:
+                code = getattr(getattr(exc, "response", None), "status_code", None)
                 observations[f"probe_error:{code or type(exc).__name__}"] += 1
                 return False
             if not isinstance(payload, dict):
@@ -379,7 +381,10 @@ def main() -> None:
     parser.add_argument("--proof", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     args = parser.parse_args()
-    check(**vars(args))
+    try:
+        check(**vars(args))
+    finally:
+        _probe_pool.close()
 
 
 if __name__ == "__main__":
