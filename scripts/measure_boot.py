@@ -141,6 +141,9 @@ def _bench_env(port: int) -> dict[str, str]:
     env = dict(os.environ)
     env.update(
         {
+            # A script child must measure this checkout, not whichever editable
+            # installation another local session registered most recently.
+            "PYTHONPATH": str(REPO_ROOT),
             "JARVIS_BOOT_PROFILE": "1",
             # Exercise mission recovery + startup cleanup over the ISOLATED dirs.
             "JARVIS_PRIMARY_INSTANCE": "1",
@@ -216,7 +219,7 @@ def run_one(python: str, timeout: float) -> dict:
         for raw in proc.stdout:
             line = raw.rstrip("\r\n")
             if line.startswith("[BOOT_PROFILE] "):
-                name, _, val = line[len("[BOOT_PROFILE] "):].partition("=")
+                name, _, val = line[len("[BOOT_PROFILE] ") :].partition("=")
                 try:
                     result["phases"][name] = float(val)
                 except ValueError:
@@ -250,9 +253,7 @@ def _summarize(runs: list[dict], *, python: str, pages: int) -> dict:
     readies = [r["boot_ready_ms"] for r in runs if r["boot_ready_ms"] is not None]
     phase_names = sorted({k for r in runs for k in r["phases"]})
     phase_medians = {
-        name: statistics.median(
-            [r["phases"][name] for r in runs if name in r["phases"]]
-        )
+        name: statistics.median([r["phases"][name] for r in runs if name in r["phases"]])
         for name in phase_names
     }
     return {
@@ -260,9 +261,7 @@ def _summarize(runs: list[dict], *, python: str, pages: int) -> dict:
         "python": python,
         "vault_pages": pages,
         "median_wall_ms": round(statistics.median(walls), 1),
-        "median_boot_ready_ms": (
-            round(statistics.median(readies), 1) if readies else None
-        ),
+        "median_boot_ready_ms": (round(statistics.median(readies), 1) if readies else None),
         "wall_ms_runs": [round(w, 1) for w in walls],
         "boot_ready_ms_runs": [round(r, 1) for r in readies],
         "phase_medians_ms": {k: round(v, 1) for k, v in phase_medians.items()},

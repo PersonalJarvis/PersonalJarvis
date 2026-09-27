@@ -172,10 +172,15 @@ def _group_is_running(pid: int) -> bool:
 
 def _stop_posix(child, deadline):
     _signal_group(child.pid, signal.SIGTERM)
+    grace = min(deadline, time.monotonic() + 5.0)
     try:
-        child.wait(timeout=min(0.5, max(0.0, deadline - time.monotonic())))
+        child.wait(timeout=max(0.0, grace - time.monotonic()))
     except subprocess.TimeoutExpired:
         pass  # The whole group is killed below, including stubborn descendants.
+    # An AppImage launcher may exit before its application finishes draining.
+    # Give remaining group members the same bounded grace, not an immediate kill.
+    while _group_is_running(child.pid) and time.monotonic() < grace:
+        time.sleep(0.02)
     _signal_group(child.pid, signal.SIGKILL)
     child.wait(timeout=max(0.0, deadline - time.monotonic()))
     while _group_is_running(child.pid):

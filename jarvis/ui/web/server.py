@@ -99,6 +99,7 @@ class WebServer:
     def __init__(self, cfg: JarvisConfig, bus: EventBus | None = None) -> None:
         self.cfg = cfg
         self._browser_prepare_task: asyncio.Task[None] | None = None
+        self._browser_install_data_dir: Path | None = None
         self._stopping = False
         self._shutdown_complete = False
         self.bus = bus if bus is not None else get_default_bus()
@@ -2841,8 +2842,16 @@ class WebServer:
         async def prepare_browser() -> None:
             from jarvis.society.browser import install
 
-            data_dir = Path(getattr(self.cfg.memory, "data_dir", None) or "data")
+            if self._stopping:
+                return
+            data_dir = await asyncio.to_thread(
+                Path(getattr(self.cfg.memory, "data_dir", None) or "data").resolve
+            )
+            if self._stopping:
+                return
+            self._browser_install_data_dir = data_dir
             try:
+                install.resume_installation(data_dir)
                 install.start_install(data_dir)
                 while install.snapshot(data_dir)["running"]:  # noqa: ASYNC110 - installer exposes only snapshots
                     await asyncio.sleep(1)
@@ -3827,6 +3836,19 @@ class WebServer:
         if getattr(self, "_shutdown_complete", False):
             return
         self._stopping = True
+        from jarvis.society.browser import install as browser_install
+
+        installation_roots: set[Path] = set()
+        configured_install = getattr(self, "_browser_install_data_dir", None)
+        if configured_install is not None:
+            installation_roots.add(configured_install)
+        society = getattr(self.app.state, "society", None)
+        society_data = getattr(society, "data_dir", None)
+        if society_data is not None:
+            installation_roots.add(Path(society_data))
+        for root in installation_roots:
+            browser_install.request_stop(root)
+        browser_install_failure: str | None = None
         # Fence lazy creation even when no Society owner exists yet. The shared
         # brain factory and HTTP surface can still be called while shutdown awaits.
         self.app.state.society_stopping = True
@@ -3856,6 +3878,12 @@ class WebServer:
             self._browser_prepare_task.cancel()
             await asyncio.gather(self._browser_prepare_task, return_exceptions=True)
             self._browser_prepare_task = None
+        for root in installation_roots:
+            try:
+                await asyncio.to_thread(browser_install.wait_stopped, root)
+            except Exception as exc:  # noqa: BLE001 - independent owners must still drain
+                browser_install_failure = type(exc).__name__
+                logger.warning("Browser installer cleanup incomplete ({})", browser_install_failure)
         swarm_recovery = getattr(self, "_swarm_recovery_task", None)
         if swarm_recovery is not None:
             swarm_recovery.cancel()
@@ -4189,6 +4217,7 @@ class WebServer:
             getattr(self.app.state, "society", None) is None
             and mars_shutdown_failure is None
             and society_shutdown_failure is None
+            and browser_install_failure is None
         )
 
         if mars_shutdown_failure is not None:
@@ -4197,6 +4226,8 @@ class WebServer:
             raise RuntimeError(f"mars_station_shutdown_incomplete ({mars_shutdown_failure})")
         if society_shutdown_failure is not None:
             raise RuntimeError(f"society_runtime_shutdown_incomplete ({society_shutdown_failure})")
+        if browser_install_failure is not None:
+            raise RuntimeError(f"browser_installer_shutdown_incomplete ({browser_install_failure})")
 
     @property
     def running(self) -> bool:

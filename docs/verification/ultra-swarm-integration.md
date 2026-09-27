@@ -2,6 +2,34 @@
 
 ## September 27 native follow-up
 
+T2 follow-up: existing installer lifecycle and HTTP handlers. Windows and Linux
+exercise real child-process shutdown; macOS uses the same POSIX implementation
+but still requires the rebuilt native campaign. No provider contract changes.
+
+On `7b04675bf`, Linux passed native Swarm installation, replacement, Wasm and
+identity checks, then failed the separate browser probe during shutdown. Both
+Mac variants passed the Swarm checks but failed workspace removal with
+`ENOTEMPTY`. The background browser installer now has an owner cancellation
+signal, rejects new work during shutdown, and joins its actual setup thread.
+POSIX command groups are reaped synchronously before that thread exits. The
+native verifier gives remaining application processes bounded shutdown time
+even when their AppImage launcher exits first. Native requalification is open.
+
+The Linux lifecycle/packaging selection passed 67 tests with five platform skips;
+Windows focused installer/origin checks passed 17, combined shutdown/Mars checks
+passed 29, and the final changed-code selection passed 31. These sets overlap.
+Four inherited blocking API handlers now offload their synchronous work. Their
+CLI/contract selection passed 407 tests; all 71 route modules remain mounted and
+tagged, and regenerating the CLI reference produced no content change.
+
+Boot measurement previously could import another globally registered editable
+checkout. The harness now pins its own repository, covered by two child-process
+origin tests. The first correctly pinned sample exceeded the unchanged startup
+limits (window 7.958 s, interactive 31.661 s, voice usable 32.159 s). A subsequent
+sample after local work settled passed at 1.888/15.818/15.845 s respectively.
+Both outcomes are retained; this is not a low-variance cold-machine guarantee.
+Older samples below did not capture import origin and cannot qualify this head.
+
 The bounded four-platform Grok test was explicitly approved on September 26.
 No model key has been uploaded yet, and the native model budget remains unused
 while installation failures are diagnosed.
@@ -30,8 +58,10 @@ follow-up, all 4,759 UI tests passed; its Linux build lacked a copied test-harne
 asset, while the canonical build passed. The subsequent locale run passed 4,761
 tests and again exceeded the static guard's timeout. Its candidate filter now
 looks for the opening JSX tag rather than common selection-state identifiers;
-the structural AST check and five-second limit remain unchanged. A complete
-repeat, including the previously omitted authored asset, is running.
+the structural AST check and five-second limit remain unchanged. The complete
+Linux repeat passed all 4,762 tests, and the production build passed with the
+authored assets included. An injected multiline native select still failed the
+guard, as required. The corresponding GitHub frontend job also passed.
 
 ## September 26 integration
 
