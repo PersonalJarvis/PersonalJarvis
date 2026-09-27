@@ -4905,6 +4905,26 @@ def load_config(
     # JARVIS__BRAIN__WORKER__* if only the old names are set (process-local).
     _migrate_worker_env_vars()
     data = _apply_env_overrides(data)
+    # AppImage pins CWD inside its read-only mount. Redirect only its default
+    # relative memory store; other frozen installs may have persisted data in
+    # their existing writable program directory and must keep reading it.
+    if (
+        getattr(sys, "frozen", False)
+        and sys.platform.startswith("linux")
+        and os.environ.get("APPIMAGE")
+    ):
+        frozen_data_dir = os.environ.get("JARVIS_DATA_DIR", "").strip()
+        memory = data.get("memory")
+        if frozen_data_dir and (
+            "memory" not in data
+            or isinstance(memory, dict)
+            and memory.get("data_dir", "./data") == "./data"
+        ):
+            if "memory" not in data:
+                memory = {}
+                data["memory"] = memory
+            assert isinstance(memory, dict)
+            memory["data_dir"] = str(Path(frozen_data_dir).expanduser().resolve())
     data = _apply_instance_overrides(data)
     return JarvisConfig(**data)
 

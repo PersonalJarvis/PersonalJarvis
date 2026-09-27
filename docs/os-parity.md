@@ -14,6 +14,14 @@ macOS notarization. Local tests cannot establish those native properties.
 Missing signing accounts block publication. See [the release pipeline](release-pipeline.md)
 for public scripts, account requirements, cost constraints and open evidence.
 
+Linux AppImage launches resolve the default memory store through the writable
+runtime data directory rather than their read-only mount. Explicit memory paths
+and existing Windows, macOS and non-AppImage Linux locations are preserved;
+this change does not relocate existing stores. The native Linux check boots a
+fresh candidate with default memory settings separately from the compatibility
+fixture used to exercise the immutable previous release. Portable contracts in
+`tests/contract/test_frozen_data_dir.py` cover these platform distinctions.
+
 ## Window caption (2026-09-21, T2)
 
 The desktop window is frameless on Windows, macOS and Linux. The page draws

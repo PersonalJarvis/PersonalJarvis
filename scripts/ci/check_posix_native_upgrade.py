@@ -6,10 +6,12 @@ import argparse
 import hashlib
 import json
 import os
+import secrets
 import shutil
 import socket
 import subprocess
 import tempfile
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -160,6 +162,17 @@ def _version(executable: Path) -> str:
     return result.stdout.strip().removeprefix("jarvis ")
 
 
+def _write_fixture_config(config: Path, port: int, data: Path) -> None:
+    """Keep legacy AppImages' CWD-relative stores off their read-only mount."""
+    with _WRITE_LOCK:
+        _atomic_write(
+            config,
+            f"[ui]\nadmin_api_port = {port}\n"
+            f"[memory]\ndata_dir = {json.dumps(str(data))}\n"
+            "# Native release smoke setting\n",
+        )
+
+
 def _manifest(
     path: Path,
     *,
@@ -223,10 +236,13 @@ def check(
         data.mkdir()
         os.environ["JARVIS_CONFIG"] = str(config)
         os.environ["JARVIS_DATA_DIR"] = str(data)
-        with _WRITE_LOCK:
-            _atomic_write(
-                config, f"[ui]\nadmin_api_port = {port}\n# Native release smoke setting\n"
-            )
+        if platform == "linux":
+            _write_fixture_config(config, port, data)
+        else:
+            with _WRITE_LOCK:
+                _atomic_write(
+                    config, f"[ui]\nadmin_api_port = {port}\n# Native release smoke setting\n"
+                )
         database = data / "agent_chat.db"
         store = AgentChatStore(database)
         store.create_session(
@@ -268,6 +284,40 @@ def check(
                 seen_previous_health = True
                 return True
             return matching and payload.get("update_nonce") == nonce
+
+        if platform == "linux":
+            # A migration fixture with an explicit memory path must not hide a
+            # fresh AppImage that still writes to its read-only mount.
+            fresh_profile = root / "fresh-candidate"
+            fresh_profile.mkdir()
+            fresh_config = fresh_profile / "jarvis.toml"
+            fresh_data = fresh_profile / "data"
+            fresh_data.mkdir()
+            fresh_port = _free_port()
+            with _WRITE_LOCK:
+                _atomic_write(fresh_config, f"[ui]\nadmin_api_port = {fresh_port}\n")
+            fresh_runner = TrackingRunner(
+                evidence_dir / "fresh-candidate",
+                fresh_profile,
+                _isolated_env(fresh_profile, fresh_config, fresh_data),
+            )
+            fresh_runner.evidence_dir.mkdir(parents=True, exist_ok=True)
+            fresh_nonce = secrets.token_hex(16)
+            try:
+                fresh_runner.spawn_detached(
+                    [str(candidate.resolve())],
+                    env={"JARVIS_UPDATE_HEALTH_NONCE": fresh_nonce},
+                )
+                deadline = time.monotonic() + 90
+                while time.monotonic() < deadline:
+                    if health(fresh_port, candidate_version, fresh_nonce):
+                        break
+                    time.sleep(0.5)
+                else:
+                    raise RuntimeError("fresh candidate AppImage did not become healthy")
+            finally:
+                fresh_runner.stop_spawned()
+                fresh_runner.record("fresh-candidate")
 
         receipt = root / "shutdown-receipt"
         receipt.write_text("graceful shutdown\n")
