@@ -48,17 +48,39 @@ describe("Agentic IDE project flow", () => {
   it("creates a workspace with an explicit project and per-session agents", async () => {
     api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_project_id: null, active_workspace_id: null, max_terminals: 8 });
     api.fetchIdeAgents.mockResolvedValue({ terminal_available: true, max_terminals: 8, suggested_names: [], agents: [agent,
+      { ...agent, name: "claude", display_name: "Claude Code" },
       { ...agent, name: "harness", display_name: "Browser Harness", accepts_prompts: false }] });
     api.startIdeSession.mockResolvedValue(emptyState);
     render(<AgenticIdeView />);
     await screen.findByText("Choose a workspace");
     act(() => useIdeProjectsStore.getState().newWorkspace("p1"));
     await screen.findByRole("dialog", { name: "New workspace" });
-    expect(screen.queryByRole("option", { name: "Browser Harness" })).toBeNull();
-    fireEvent.change(screen.getByLabelText("Sessions"), { target: { value: "2" } });
+    expect(screen.queryByRole("button", { name: "Browser Harness" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "2 sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit session 2: Codex" }));
+    fireEvent.click(screen.getByRole("button", { name: "Claude Code" }));
     fireEvent.change(screen.getByLabelText("Name (optional)"), { target: { value: "Installer" } });
     fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
-    await waitFor(() => expect(api.startIdeSession).toHaveBeenCalledWith("/code/app", [{ agent: "codex" }, { agent: "codex" }], { projectId: "p1", name: "Installer" }));
+    await waitFor(() => expect(api.startIdeSession).toHaveBeenCalledWith("/code/app", [{ agent: "codex" }, { agent: "claude" }], { projectId: "p1", name: "Installer" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "New workspace" })).toBeNull());
+  });
+
+  it("keeps the launch dialog open while creation is in flight", async () => {
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_project_id: null, active_workspace_id: null, max_terminals: 8 });
+    let finish!: (state: typeof emptyState) => void;
+    api.startIdeSession.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    render(<AgenticIdeView />);
+    await screen.findByText("Choose a workspace");
+    act(() => useIdeProjectsStore.getState().newWorkspace("p1"));
+    fireEvent.click(await screen.findByRole("button", { name: "Create workspace" }));
+    await screen.findByRole("button", { name: "Starting…" });
+    fireEvent.keyDown(document, { key: "Escape" });
+    const dialog = screen.getByRole("dialog", { name: "New workspace" });
+    fireEvent.mouseDown(dialog.parentElement!);
+    expect(screen.getByRole("dialog", { name: "New workspace" })).toBe(dialog);
+    expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Close" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => finish(emptyState));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "New workspace" })).toBeNull());
   });
 
