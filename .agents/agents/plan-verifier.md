@@ -7,7 +7,7 @@ role: verifier
 domain: generic
 phase: any
 must_read:
-  - CLAUDE.md
+  - AGENTS.md
 when_to_use: Check the acceptance criteria of a named plan against the implementation, with file:line or test-name evidence; a hard-negative violation is a merge-stop
 ---
 
