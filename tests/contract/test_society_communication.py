@@ -34,6 +34,7 @@ class Chat:
         self.store = AgentChatStore(path)
         self.queues = {}
         self.sent = []
+        self.sent_kwargs = []
         self.notices = []
         self.contexts = []
 
@@ -53,6 +54,7 @@ class Chat:
 
     async def send(self, session_id, text, **kwargs):
         self.sent.append((session_id, text))
+        self.sent_kwargs.append(kwargs)
         self.contexts.append(incoming_context.get())
         return f"turn-{len(self.sent)}"
 
@@ -340,6 +342,7 @@ async def test_three_plain_german_tasks_keep_honest_results(world):
         "Ich habe drei Quellen zusammengefasst.",
     )
     assert chat.contexts[-1].focus_ids == ("core:search-web",)
+    assert chat.sent_kwargs[-1]["output_language"] == "de"
     assert ordinary.state.value == "done" and ordinary.result["status"] == "reported", (
         ordinary.result
     )
@@ -404,6 +407,21 @@ async def test_startup_failure_stays_owned_and_waits_for_automatic_retry(world):
     assert waiting is not None and waiting.state.value == "open"
     assert waiting.result["status"] == "waiting"
     assert waiting.result["reason"] == "brain_starting"
+
+
+async def test_non_latin_assignment_uses_original_turn_language_decision(world):
+    rt, chat, _ = world
+    await rt.say(
+        from_agent="user",
+        to_agent="scout",
+        text="このページの見出しを教えてください。",
+        msg_type=MsgType.ASSIGN,
+    )
+    assert chat.sent_kwargs[-1]["output_language"] == "unknown"
+    queue = chat.queues["society:scout"]
+    await queue.put({"kind": "assistant_text", "payload": {"text": "見出しを確認しました。"}})
+    await queue.put({"kind": "turn_finished", "payload": {"status": "completed"}})
+    await asyncio.wait_for(asyncio.gather(*list(rt._watchers)), timeout=5)
 
 
 @pytest.mark.parametrize(

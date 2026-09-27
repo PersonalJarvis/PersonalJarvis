@@ -666,6 +666,14 @@ The headed login route now uses the one-shot browser runner, while live pixel
 streaming keeps its separate persistent runner. A Windows Dev run opened a
 sign-in page in the agent's profile, then closed it without credentials.
 macOS/Linux headed login and authenticated resume remain unverified.
+Society assignments resolve output language from the original user task through
+`jarvis/core/turn_language.py` before the agent runner starts. Known localized
+codes keep their explicit pin; an unknown non-Latin request gets a fresh mirror
+directive instead of inheriting a previous agent-chat language. The shared
+manager skips re-detection for a caller-supplied decision. Windows live checks
+returned English, German, Spanish and Japanese answers from one persistent
+agent session, and the four routing/output/hangup/language guard suites passed.
+Native macOS/Linux and additional providers still need acceptance evidence.
 
 The message tool, durable SQLite queue, task-local sender provenance, and chat
 receipts use the same Python/React implementation on Windows, macOS and Linux.

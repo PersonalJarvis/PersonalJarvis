@@ -743,9 +743,12 @@ class SocietyRuntime:
         svc = self._get_chat()
         if svc is None:
             raise RuntimeError("agent chat service unavailable: the society cannot start work")
+        from jarvis.core.turn_language import resolve_output_language
+
         from .chat_binding import ensure_session, frame_assignment
 
-        session = ensure_session(svc, self._get_cfg(), target)
+        cfg = self._get_cfg()
+        session = ensure_session(svc, cfg, target)
         if svc.is_running(session.session_id):
             raise RuntimeError(f"target busy: {target.name} is running a turn")
         queue = svc.subscribe(session.session_id)
@@ -755,6 +758,14 @@ class SocietyRuntime:
             item
             for item in (requested_focus[:6] if isinstance(requested_focus, list) else [])
             if isinstance(item, str) and item in connected
+        )
+        configured_language = getattr(getattr(cfg, "brain", None), "reply_language", "auto")
+        requested_language = env.payload.get("lang")
+        language = resolve_output_language(
+            requested_language if requested_language in {"de", "en", "es"} else configured_language,
+            None,
+            env.text or str(env.payload.get("task") or ""),
+            default="unknown",
         )
         # Both API and CLI turns inherit the same trusted request provenance.
         token = incoming_context.set(
@@ -773,6 +784,7 @@ class SocietyRuntime:
             turn_id = await svc.send(
                 session.session_id,
                 frame_assignment(env),
+                output_language=language,
                 **({"read_only": True} if env.payload.get("read_only") is True else {}),
                 **(
                     {"direct_user": False}

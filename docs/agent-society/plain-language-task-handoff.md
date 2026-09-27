@@ -38,6 +38,17 @@ Acceptance for this change:
 | Read private profile settings behind a login. | A blocker could be buried in an agent chat, and a stateless shell could not carry a browser login forward. | Runner opened the exact URL in its selected browser, saw the sign-in redirect, and returned `blocked`. The card puts the sign-in step and controls before the long explanation; its sign-in action opens that exact URL in the agent's headed browser profile. | One sentence and one submit; the person must sign in and retry. The test opened and closed the sign-in window without credentials. No private settings were read. |
 | Create a short Markdown guide and leave the file in the task workspace. | A chat session ID counted as output, and the task card offered no file. | Runner wrote `verify_ai_answers.md`, the card linked an existing workspace file, and the local opener returned `opened: true`. | One sentence, one submit, one file click; no manual agent/model/tool choice. The file and its contents were inspected. |
 
+The isolated Dev run also completed read-only requests for the same public
+page in English, German, Spanish and Japanese, each with one sentence and one
+submit. The POST returned a persisted `open` receipt in 0.69, 0.48, 1.04 and
+1.14 seconds respectively. The browser was selected by the router, and each
+final reply used the request's language. Before the turn-language correction,
+the Japanese request had answered in German after a German turn in the same
+agent chat. The correction passes the original request to the shared language
+resolver and treats an unknown code as a fresh mirror decision rather than a
+hard pin to the previous language. These are live observations on one configured
+provider, not a guarantee for every provider or language.
+
 ## Scope and limits
 
 This is a T3 routing-contract change alongside a Society task and chat change.

@@ -50,7 +50,9 @@ class FakeService:
     def is_running(self, session_id: str) -> bool:
         return session_id in self.busy
 
-    async def send(self, session_id: str, text: str, attachments=None, *, incoming=None) -> str:
+    async def send(
+        self, session_id: str, text: str, attachments=None, *, incoming=None, output_language=""
+    ) -> str:
         self.sent.append((session_id, text))
         return "turn-1"
 
@@ -220,7 +222,9 @@ class FakeTurnService(FakeService):
     def unsubscribe(self, session_id: str, q) -> None:
         self.queues.get(session_id, []).remove(q)
 
-    async def send(self, session_id: str, text: str, attachments=None, *, incoming=None) -> str:
+    async def send(
+        self, session_id: str, text: str, attachments=None, *, incoming=None, output_language=""
+    ) -> str:
         self.sent.append((session_id, text))
         return "turn-1"
 

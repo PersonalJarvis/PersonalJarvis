@@ -4111,7 +4111,8 @@ class BrainManager:
         return (
             "REPLY LANGUAGE: Reply in the SAME language as the user's latest "
             "message — detect it fresh each turn and mirror it: English in "
-            "English, German in German, Spanish in Spanish. Do NOT default to "
+            "English, German in German, Spanish in Spanish. Those are examples; "
+            "mirror other languages and writing systems too. Do NOT default to "
             "German just because the rest of this prompt is German; the user's "
             "language always wins. Keep proper nouns, brand / product names and "
             "technical identifiers in their original form — never translate them."
@@ -10933,22 +10934,19 @@ class BrainManager:
         # the running conversation language instead of flipping it (forensic
         # 2026-06-18); ambiguous text stays "unknown" -> soft mirror; an explicit
         # reply_language pin leaves it empty -> the directive uses the pin.
-        self._update_turn_language(user_text)
-
-        # Realtime-delegate language override (live 2026-07-23): the realtime
-        # session is the ONE authoritative resolver for a voice turn — its own
-        # model reply and the recorded jarvis_lang already consume that decision.
-        # A delegated jarvis_action turn must speak the SAME language instead of
-        # re-deriving it here from a possibly code-switched transcript, which let
-        # an English realtime conversation answer a memory-save turn in German
-        # ("Notiert ..."). Pin the caller-forced language so
-        # _reply_language_directive() hard-locks it; an explicit
-        # brain.reply_language pin still wins (checked first in that directive).
-        if (
-            force_output_language in _REPLY_LANG_NAMES
-            and self._reply_language not in _REPLY_LANG_NAMES
-        ):
-            self._turn_detected_lang = force_output_language
+        # A caller with an already resolved turn language is authoritative.
+        # Re-deriving from a delegated prompt can pin the wrong language, and
+        # an unknown non-Latin request must not inherit an older language.
+        # An explicit user reply-language pin still wins.
+        if force_output_language in _REPLY_LANG_NAMES or force_output_language == "unknown":
+            if self._reply_language in _REPLY_LANG_NAMES:
+                self._turn_detected_lang = ""
+            else:
+                self._turn_detected_lang = force_output_language
+                if force_output_language in _REPLY_LANG_NAMES:
+                    self._conversation_language = force_output_language
+        else:
+            self._update_turn_language(user_text)
 
         # Two-turn voice/chat confirmation resume (turn N+1). MUST run before the
         # cancel-intent intercept: a "nein"/"stop" answer to a pending

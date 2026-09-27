@@ -13,6 +13,7 @@ language via ``generate(..., force_output_language=...)``; the manager pins it
 so ``_reply_language_directive`` hard-locks that language instead of the
 transcript's detected one. An explicit ``brain.reply_language`` pin still wins.
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -116,6 +117,23 @@ async def test_invalid_force_language_is_ignored() -> None:
         force_output_language="klingon",
     )
     assert m._turn_detected_lang == "en"
+
+
+@pytest.mark.asyncio
+async def test_unknown_assignment_language_does_not_inherit_a_german_hard_pin() -> None:
+    m = _manager("auto")
+    await m.generate(_GERMAN_FACT, trace_id=uuid4(), use_history=False)
+    assert m._conversation_language == "de"
+    await m.generate(
+        "このページの見出しと目的を教えてください。",
+        trace_id=uuid4(),
+        use_history=False,
+        force_output_language="unknown",
+    )
+    assert m._turn_detected_lang == "unknown"
+    directive = m._reply_language_directive()
+    assert "SAME language" in directive
+    assert "other languages and writing systems" in directive
 
 
 def test_router_note_prefix_is_language_relative() -> None:
