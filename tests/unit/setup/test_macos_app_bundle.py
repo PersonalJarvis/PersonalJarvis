@@ -694,13 +694,14 @@ def test_a_changed_interpreter_still_earns_a_fresh_rebuild(tmp_path: Path, monke
     import jarvis.setup.macos_app_bundle as mab
 
     bundle = _build(tmp_path, monkeypatch)
+    different_python = f"{sys.version_info.major}.{sys.version_info.minor + 1}"
     marker = tmp_path / "macos-bundle-rebuild.json"
     marker.write_text(
         json.dumps(
             {
                 "cdhash": "cdhash-one",
                 "install_root": str((tmp_path / "install").resolve()),
-                "python": "3.11",
+                "python": different_python,
                 "machine": platform.machine(),
             },
             sort_keys=True,
@@ -727,9 +728,8 @@ def test_a_changed_interpreter_still_earns_a_fresh_rebuild(tmp_path: Path, monke
         )[1],
     )
 
-    # The recorded note carries Python 3.11; this interpreter is a different
-    # minor version, so a fresh build genuinely can produce a different app.
-    assert f"{sys.version_info.major}.{sys.version_info.minor}" != "3.11"
+    # A different recorded minor triggers a fresh build on every supported
+    # interpreter, including the Python 3.11 minimum-version CI runner.
     ensure_macos_app_bundle(
         install_dir=tmp_path / "install",
         applications_dir=tmp_path / "Applications",

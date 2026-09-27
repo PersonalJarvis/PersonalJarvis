@@ -37,6 +37,42 @@ describe("TopBar update button", () => {
     vi.unstubAllGlobals();
   });
 
+  it("requires confirmation and cancellation never starts an update", async () => {
+    mockUpdateStatus({ managed: true, current: "1.0.1", latest: "1.0.2", update_available: true, notes: null });
+    render(<TopBar />);
+    fireEvent.click(await screen.findByRole("button", { name: /update available/i }));
+    expect(screen.getByRole("button", { name: /install update/i })).toBeTruthy();
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => url === "/api/update/apply")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: /update available/i })).toBeTruthy();
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => url === "/api/update/apply")).toBe(false);
+  });
+
+  it("does not claim recovery when the recorded rollback failed", async () => {
+    mockUpdateStatus({ managed: true, current: "1.0.1", latest: "1.0.2", update_available: true,
+      notes: null, last_result: { ok: false, rolled_back: false, completed_at: 9876543 } });
+    render(<TopBar />);
+    await waitFor(() => expect(useEventStore.getState().toasts.some((toast) =>
+      toast.kind === "error" && toast.message === "Update failed",
+    )).toBe(true));
+    expect(useEventStore.getState().toasts.some((toast) => toast.message.includes("rolled back"))).toBe(false);
+  });
+
+  it("lets the native installer own restart after confirmation", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
+      ok: true, status: 200,
+      json: async () => url.startsWith("/api/update/status")
+        ? { managed: true, current: "1.0.1", latest: "1.0.2", update_available: true, notes: null }
+        : { ok: true, restart_required: false },
+    })));
+    render(<TopBar />);
+    fireEvent.click(await screen.findByRole("button", { name: /update available/i }));
+    fireEvent.click(screen.getByRole("button", { name: /install update/i }));
+    await waitFor(() => expect(screen.getByRole("progressbar").textContent).toContain("Restarting"));
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/update/apply")).toHaveLength(1);
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("restart-app"))).toBe(false);
+  });
+
   it("shows the Update button with the new version when an update is available", async () => {
     mockUpdateStatus({
       managed: true,
@@ -114,6 +150,7 @@ describe("TopBar update button", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: /update available/i }),
     );
+    fireEvent.click(await screen.findByRole("button", { name: /install update/i }));
 
     await waitFor(() => {
       expect(
@@ -164,6 +201,7 @@ describe("TopBar update button", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: /update available/i }),
     );
+    fireEvent.click(await screen.findByRole("button", { name: /install update/i }));
 
     // Three restart attempts with a retry pause happen before the verdict.
     await waitFor(
@@ -257,6 +295,7 @@ describe("TopBar update button", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: /update available/i }),
     );
+    fireEvent.click(await screen.findByRole("button", { name: /install update/i }));
 
     await waitFor(() => {
       expect(

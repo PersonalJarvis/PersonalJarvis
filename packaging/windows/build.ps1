@@ -35,7 +35,9 @@
 param(
     [string] $Python = "",
     [switch] $SkipFrontend,
-    [switch] $SkipPyInstaller
+    [switch] $SkipPyInstaller,
+    [string] $OutputDirectory = "",
+    [switch] $SimulateInstallFailure
 )
 
 Set-StrictMode -Version Latest
@@ -75,7 +77,7 @@ function Invoke-Checked {
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $SpecFile = Join-Path $RepoRoot "jarvis.spec"
 $BundleDir = Join-Path $RepoRoot "dist\Jarvis"
-$InstallerDir = Join-Path $RepoRoot "dist\installers"
+$InstallerDir = if ($OutputDirectory) { $OutputDirectory } else { Join-Path $RepoRoot "dist\installers" }
 $FrontendDir = Join-Path $RepoRoot "jarvis\ui\web\frontend"
 $FrontendDist = Join-Path $RepoRoot "jarvis\ui\web\dist"
 $IssFile = Join-Path $PSScriptRoot "PersonalJarvis.iss"
@@ -205,6 +207,9 @@ $IsccArgs = @(
     "/DIconFile=$IconFile",
     $IssFile
 )
+if ($SimulateInstallFailure) {
+    $IsccArgs = @('/DSimulateInstallFailure=1') + $IsccArgs
+}
 Invoke-Checked -Executable $Iscc -Arguments $IsccArgs -WorkingDirectory $RepoRoot -What "ISCC"
 
 $Artifact = Join-Path $InstallerDir "PersonalJarvis-Setup-x64.exe"

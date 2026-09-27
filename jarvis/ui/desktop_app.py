@@ -6052,11 +6052,13 @@ class DesktopApp:
 
         threading.Thread(target=_kill, name="jarvis-force-exit", daemon=True).start()
 
-    def shutdown(self) -> int:
+    def shutdown(self, *, require_clean: bool = False) -> int:
         """Idempotent. Stops the server + backend loop, cleans the meta file."""
         if self._shutdown_done:
-            return 0
+            return 1 if require_clean and not getattr(self, "_shutdown_clean", False) else 0
         self._shutdown_done = True
+        self._shutdown_clean = False
+        cleanup_errors: list[str] = []
         self._window_visible = False
         self._destroy_background_keeper()
 
@@ -6204,6 +6206,7 @@ class DesktopApp:
                             if sched is not None:
                                 await sched.stop()
                         except Exception:  # noqa: BLE001, S110
+                            cleanup_errors.append("workflow scheduler stop")
                             # One scheduler refusing to stop must not skip the
                             # other, nor the store closes below.
                             pass
@@ -6212,6 +6215,7 @@ class DesktopApp:
                             if st is not None:
                                 await st.close()
                         except Exception:  # noqa: BLE001, S110
+                            cleanup_errors.append("workflow store close")
                             # Same: the process is exiting, so an unclosed
                             # store handle is released by the OS anyway.
                             pass
@@ -6222,6 +6226,7 @@ class DesktopApp:
                         loop,
                     ).result(timeout=2.0)
                 except Exception:  # noqa: BLE001, S110
+                    cleanup_errors.append("workflow cleanup timeout")
                     # Bounded by the 2 s timeout on purpose: a wedged cleanup
                     # must not hold the whole quit open.
                     pass
@@ -6242,6 +6247,7 @@ class DesktopApp:
             try:
                 asyncio.run_coroutine_threadsafe(_pty_cleanup(), loop).result(timeout=2.0)
             except Exception:  # noqa: BLE001, S110
+                cleanup_errors.append("PTY cleanup timeout")
                 # _pty_cleanup already logs its own failure; this only bounds
                 # how long the quit waits for it.
                 pass
@@ -6252,6 +6258,7 @@ class DesktopApp:
                         timeout=3.0
                     )
                 except Exception:  # noqa: BLE001, S110
+                    cleanup_errors.append("bootstrap stop")
                     # Timed out or already down; the loop stop below is the
                     # backstop that frees the socket either way.
                     pass
@@ -6260,9 +6267,11 @@ class DesktopApp:
                 try:
                     fut.result(timeout=3.0)
                 except Exception:  # noqa: BLE001, S110
+                    cleanup_errors.append("server stop")
                     # Server shutdown may hang; the event loop still stops forcibly.
                     pass
             except Exception:  # noqa: BLE001, S110
+                cleanup_errors.append("server stop dispatch")
                 # Could not even schedule the stop (loop already closing); the
                 # forced loop.stop below covers it.
                 pass
@@ -6274,6 +6283,8 @@ class DesktopApp:
 
         if self._backend_thread is not None:
             self._backend_thread.join(timeout=3.0)
+            if self._backend_thread.is_alive():
+                cleanup_errors.append("backend thread still running")
 
         # Tray last — pystray.stop() prevents the tray icon from lingering
         # in the taskbar after the process ends.
@@ -6306,7 +6317,12 @@ class DesktopApp:
 
             _logger.warning("Could not remove the instance sidecar: {}", exc)
 
-        return 0
+        self._shutdown_clean = not cleanup_errors
+        if cleanup_errors:
+            logging.getLogger(__name__).error(
+                "Desktop shutdown was incomplete: %s", ", ".join(cleanup_errors)
+            )
+        return 1 if require_clean and cleanup_errors else 0
 
 
 # ---------------------------------------------------------------------------

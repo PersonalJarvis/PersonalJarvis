@@ -6,19 +6,15 @@
 # so the asset names below are a contract, not a convention.
 #
 #   PersonalJarvis-Setup-x64.exe          Windows 10/11 x64, per-user Inno wizard
-#   PersonalJarvis-macOS-arm64.dmg        Apple Silicon
-#   PersonalJarvis-macOS-x64.dmg          Intel Mac
 #   PersonalJarvis-Linux-x86_64.AppImage  Linux x86_64
 #   installers-SHA256SUMS.txt             what the updater verifies against
 #
-# Each OS job runs the SAME script a maintainer runs locally
+# Each required native job runs the SAME script a maintainer runs locally
 # (packaging/<os>/build.*), so a green run here means the documented command
 # works - not that CI has its own private build path.
 #
-# Signing is optional and secret-gated. GitHub forbids secrets in a job-level
-# `if:`, so the credentials are exported as job-level `env` and the steps test
-# the environment variable instead. Without the secrets the build still
-# produces a working, unsigned installer and says so.
+# Tag builds require Windows signing and the release manifest key. Manual
+# branch runs build unsigned diagnostic artifacts.
 #
 # Action SHAs are pinned to 40-char commits (CVE-2025-30066 hardening), matching
 # the rest of this repo's workflows.
@@ -26,10 +22,13 @@
 name: Desktop installers
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
-  workflow_dispatch: {}
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      previous_tag:
+        description: "Optional older native release tag for an unsigned upgrade diagnostic"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -45,20 +44,135 @@ env:
   NODE_VERSION: "22"
 
 jobs:
-  # ------------------------------------------------------------------ Windows
-  windows:
-    name: Windows installer (x64)
-    runs-on: windows-latest
-    timeout-minutes: 90
+  credentials:
+    name: Release credential preflight
+    runs-on: ubuntu-latest
     env:
-      # Exported here (not per step) so the `if:` guards below can read them.
-      # An empty value means "this fork has no signing secrets" - not an error.
+      WINDOWS_SIGNING_PROVIDER: ${{ vars.WINDOWS_SIGNING_PROVIDER || 'signpath' }}
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
       AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
       AZURE_CODE_SIGNING_ACCOUNT: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT }}
       AZURE_CERTIFICATE_PROFILE: ${{ secrets.AZURE_CERTIFICATE_PROFILE }}
+      WAVE2_OFFLINE_KEY_B64: ${{ secrets.WAVE2_OFFLINE_KEY_B64 }}
+      WAVE4_MLDSA65_KEY_B64: ${{ secrets.WAVE4_MLDSA65_KEY_B64 }}
+    steps:
+      - name: Require all public release credentials before building
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          case "$WINDOWS_SIGNING_PROVIDER" in
+            signpath) signing_credentials=(SIGNPATH_API_TOKEN SIGNPATH_ORGANIZATION_ID) ;;
+            azure) signing_credentials=(AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_SIGNING_ENDPOINT AZURE_CODE_SIGNING_ACCOUNT AZURE_CERTIFICATE_PROFILE) ;;
+            *) echo "::error::Unsupported WINDOWS_SIGNING_PROVIDER: $WINDOWS_SIGNING_PROVIDER"; exit 1 ;;
+          esac
+          for name in "${signing_credentials[@]}" WAVE2_OFFLINE_KEY_B64 WAVE4_MLDSA65_KEY_B64; do
+            if [ -z "${!name:-}" ]; then missing+=("$name"); fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            printf '::error::Public release blocked: missing credential %s\n' "${missing[@]}"
+            exit 1
+          fi
+
+  previous-release:
+    name: Resolve previous public version for upgrade tests
+    needs: credentials
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.previous.outputs.tag }}
+    steps:
+      - name: Checkout candidate source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Require an earlier complete native release
+        id: previous
+        if: github.ref_type == 'tag' || inputs.previous_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_PREVIOUS_TAG: ${{ inputs.previous_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$REQUESTED_PREVIOUS_TAG"
+          if [ -z "$tag" ]; then tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name')"; fi
+          candidate="v$(python -c 'import re,pathlib; print(re.search(r"__version__ = \"([^\"]+)\"", pathlib.Path("jarvis/__init__.py").read_text()).group(1))')"
+          if [ -z "$tag" ] || [ "$tag" = "$candidate" ]; then
+            echo '::error::No earlier published release is available for an upgrade test.'
+            exit 1
+          fi
+          python - "$tag" "$candidate" <<'PY'
+          import re
+          import sys
+
+          def version(tag):
+              match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", tag)
+              if not match:
+                  raise SystemExit(f"Unsupported release tag: {tag}")
+              return tuple(map(int, match.groups()))
+
+          if version(sys.argv[1]) >= version(sys.argv[2]):
+              raise SystemExit("Previous release is not older than candidate")
+          PY
+          assets="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          for name in PersonalJarvis-Setup-x64.exe PersonalJarvis-Linux-x86_64.AppImage; do
+            if ! grep -Fxq "$name" <<< "$assets"; then
+              echo "::error::Previous release $tag has no $name; upgrade cannot be verified."
+              exit 1
+            fi
+          done
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  ci-proof:
+    name: Require successful functional CI for this commit
+    needs: credentials
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Check exact commit CI result
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&per_page=100" > ci-runs.json
+          jq -e --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .status == "completed" and .conclusion == "success" and (.event == "push" or .event == "workflow_dispatch"))] | length > 0' ci-runs.json
+
+  sign-installer:
+    name: Signed install scripts and provenance
+    needs: [credentials, ci-proof]
+    if: github.ref_type == 'tag'
+    permissions:
+      # Required by the nested SLSA generator's statically declared upload job.
+      # upload-assets: false prevents any release write in this workflow.
+      contents: write
+      id-token: write
+      actions: read
+    uses: ./.github/workflows/sign-installer.yml
+    secrets: inherit
+
+  # ------------------------------------------------------------------ Windows
+  windows:
+    name: Windows installer (x64)
+    needs: [credentials, previous-release, ci-proof]
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    env:
+      # Manual branch runs remain unsigned even when signing secrets exist.
+      WINDOWS_SIGNING_PROVIDER: ${{ vars.WINDOWS_SIGNING_PROVIDER || 'signpath' }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -98,6 +212,10 @@ jobs:
             choco install innosetup --no-progress -y
           }
 
+      - name: Test Windows boot cleanup ownership
+        shell: powershell
+        run: ./tests/unit/packaging/test_windows_boot_cleanup.ps1
+
       - name: Build the installer
         shell: pwsh
         run: pwsh packaging/windows/build.ps1
@@ -119,8 +237,42 @@ jobs:
       # Signs the SETUP executable. Windows attaches Mark-of-the-Web to the
       # downloaded installer, so this signature is the one SmartScreen weighs;
       # files the installer then writes inherit no MOTW.
+      - name: Upload the unsigned installer for SignPath
+        id: unsigned_installer
+        if: github.ref_type == 'tag' && env.WINDOWS_SIGNING_PROVIDER == 'signpath'
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: signpath-input-windows-x64
+          path: dist/installers/PersonalJarvis-Setup-x64.exe
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Sign the installer (SignPath Foundation)
+        if: github.ref_type == 'tag' && env.WINDOWS_SIGNING_PROVIDER == 'signpath'
+        # Reuse the pinned SignPath action integration from PR #105.
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'PersonalJarvis' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.unsigned_installer.outputs['artifact-id'] }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: dist/signed
+
+      - name: Verify and stage the SignPath installer
+        if: github.ref_type == 'tag' && env.WINDOWS_SIGNING_PROVIDER == 'signpath'
+        shell: pwsh
+        run: |
+          $signedFiles = @(Get-ChildItem -Path dist/signed -Recurse -File -Filter PersonalJarvis-Setup-x64.exe)
+          if ($signedFiles.Count -ne 1) { throw "SignPath returned $($signedFiles.Count) matching installers; expected exactly one" }
+          $signature = Get-AuthenticodeSignature -LiteralPath $signedFiles[0].FullName
+          if ($signature.Status -ne 'Valid') { throw "SignPath Authenticode status: $($signature.Status)" }
+          Copy-Item -LiteralPath $signedFiles[0].FullName -Destination dist/installers/PersonalJarvis-Setup-x64.exe -Force
+
       - name: Sign the installer (Azure Trusted Signing)
-        if: env.AZURE_CLIENT_ID != ''
+        if: github.ref_type == 'tag' && env.WINDOWS_SIGNING_PROVIDER == 'azure'
         # pin: azure/trusted-signing-action@v2.0.0 - pinned by commit SHA.
         uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82
         with:
@@ -137,10 +289,124 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Report the signing state honestly
-        if: env.AZURE_CLIENT_ID == ''
+        if: github.ref_type != 'tag'
         shell: bash
         run: |
-          echo "::notice::AZURE_* signing secrets are not configured - the installer is UNSIGNED."
+          echo "::notice::Manual branch installer is UNSIGNED and cannot qualify a release."
+
+      - name: Install and reinstall the Windows package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_TAG: ${{ needs.previous-release.outputs.tag }}
+        run: |
+          function Invoke-InstallerPass {
+            param([string] $FilePath, [string[]] $Arguments, [string] $Phase)
+            $logPath = Join-Path $env:RUNNER_TEMP "jarvis-native-install-$Phase.log"
+            $phaseArgs = $Arguments + @('/LOGCLOSEAPPLICATIONS', ('/LOG="' + $logPath + '"'))
+            Write-Host "Starting Windows installer phase $Phase (log: $logPath)"
+            $installerProcess = Start-Process -FilePath $FilePath -ArgumentList $phaseArgs -PassThru -WindowStyle Hidden
+            try {
+              if (-not $installerProcess.WaitForExit(600000)) {
+                Write-Host "::error::Windows installer phase $Phase exceeded 10 minutes (PID $($installerProcess.Id)); inspect $logPath"
+                # Terminate only this installer and its descendants on timeout.
+                & taskkill.exe /PID $installerProcess.Id /T /F | Out-Null
+                if ($LASTEXITCODE -ne 0 -and -not $installerProcess.HasExited) {
+                  throw "Timed-out installer could not be terminated; rollback is NOT verified"
+                }
+                Write-Host '::error::Forced termination bypasses installer rollback. Recovery is NOT verified; retain phase logs and runner temporary backup files for diagnosis.'
+                throw "Windows installer phase $Phase timed out"
+              }
+              Write-Host "Windows installer phase $Phase exited with $($installerProcess.ExitCode)"
+              return $installerProcess.ExitCode
+            } finally {
+              $installerProcess.Dispose()
+            }
+          }
+          $installer = (Resolve-Path 'dist/installers/PersonalJarvis-Setup-x64.exe').Path
+          $installDir = Join-Path $env:RUNNER_TEMP 'Personal Jarvis'
+          $stateDir = Join-Path $env:RUNNER_TEMP 'jarvis-native-state'
+          New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+          $env:LOCALAPPDATA = Join-Path $stateDir 'LocalAppData'
+          New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
+          $env:JARVIS_CONFIG = Join-Path $stateDir 'jarvis.toml'
+          $env:JARVIS_DATA_DIR = Join-Path $stateDir 'data'
+          New-Item -ItemType Directory -Force -Path $env:JARVIS_DATA_DIR | Out-Null
+          $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+          $listener.Start()
+          $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+          $listener.Stop()
+          python scripts/ci/write_native_smoke_config.py $env:JARVIS_CONFIG $port
+          if ($LASTEXITCODE -ne 0) { throw 'Could not write isolated Jarvis config' }
+          $configHash = (Get-FileHash -LiteralPath $env:JARVIS_CONFIG -Algorithm SHA256).Hash
+          python -c "import os; from jarvis.agent_chat.store import AgentChatStore; db=os.path.join(os.environ['JARVIS_DATA_DIR'],'agent_chat.db'); s=AgentChatStore(db); s.create_session(provider='openai',model='release-smoke',effort='',cwd=os.environ['RUNNER_TEMP'],title='Persisted native release chat',session_id='release-smoke',surface='jarvis'); s.close()"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not seed isolated agent chat database' }
+          python -c "from jarvis.core.config import _FileCredStore; from jarvis.core.branding import KEYRING_SERVICE_NAME; _FileCredStore().set(KEYRING_SERVICE_NAME,'release_smoke_key','native-smoke-secret')"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not seed isolated credential fallback' }
+          $version = (python -c 'import jarvis; print(jarvis.__version__)').Trim()
+          $signed = (Get-AuthenticodeSignature -LiteralPath $installer).Status -eq 'Valid'
+          if ('${{ github.ref_type }}' -eq 'tag' -and -not $signed) { throw 'Windows Authenticode signature is not valid' }
+          $args = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOLAUNCH', ('/DIR="' + $installDir + '"'))
+          $freshInstallDir = Join-Path $env:RUNNER_TEMP 'jarvis-clean-candidate-install'
+          $freshArgs = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOLAUNCH', ('/DIR="' + $freshInstallDir + '"'))
+          $freshExitCode = Invoke-InstallerPass -FilePath $installer -Arguments $freshArgs -Phase 'fresh'
+          if ($freshExitCode -ne 0) { throw "Fresh candidate installation failed: $freshExitCode" }
+          $freshVersion = & (Join-Path $freshInstallDir 'jarvis.exe') --version
+          if ($LASTEXITCODE -ne 0 -or $freshVersion -notmatch [regex]::Escape($version)) { throw 'Fresh candidate installer has the wrong version' }
+          if ($env:PREVIOUS_TAG) {
+            $priorDir = Join-Path $env:RUNNER_TEMP 'prior-release'
+            New-Item -ItemType Directory -Force -Path $priorDir | Out-Null
+            gh release download $env:PREVIOUS_TAG --pattern 'PersonalJarvis-Setup-x64.exe' --dir $priorDir
+            if ($LASTEXITCODE -ne 0) { throw 'Could not download previous Windows installer' }
+            $priorInstaller = Join-Path $priorDir 'PersonalJarvis-Setup-x64.exe'
+            $oldVersion = $env:PREVIOUS_TAG.Substring(1)
+            $priorExitCode = Invoke-InstallerPass -FilePath $priorInstaller -Arguments $args -Phase 'previous'
+            if ($priorExitCode -ne 0) { throw "Previous Windows installer failed: $priorExitCode" }
+            $actual = & (Join-Path $installDir 'jarvis.exe') --version
+            if ($LASTEXITCODE -ne 0 -or $actual -notmatch [regex]::Escape($oldVersion)) { throw "Previous Windows version mismatch: $actual" }
+            Set-Content -LiteralPath (Join-Path $installDir 'release-smoke-sentinel') -Value 'preserve'
+            $failureDir = Join-Path $env:RUNNER_TEMP 'failure-installer'
+            pwsh packaging/windows/build.ps1 -SkipFrontend -SkipPyInstaller -OutputDirectory $failureDir -SimulateInstallFailure
+            if ($LASTEXITCODE -ne 0) { throw 'Could not build failure-injection installer' }
+            $failureInstaller = Join-Path $failureDir 'PersonalJarvis-Setup-x64.exe'
+            $failureExitCode = Invoke-InstallerPass -FilePath $failureInstaller -Arguments $args -Phase 'injected-failure'
+            if ($failureExitCode -eq 0) { throw 'Failure-injection installer unexpectedly succeeded' }
+            $actual = & (Join-Path $installDir 'jarvis.exe') --version
+            if ($LASTEXITCODE -ne 0 -or $actual -notmatch [regex]::Escape($oldVersion)) { throw "Failed upgrade damaged previous Windows version: $actual" }
+            if (-not (Test-Path (Join-Path $installDir 'release-smoke-sentinel'))) { throw 'Windows rollback lost prior installation sentinel' }
+          }
+          foreach ($pass in 1..2) {
+            $passExitCode = Invoke-InstallerPass -FilePath $installer -Arguments $args -Phase "candidate-$pass"
+            if ($passExitCode -ne 0) { throw "Windows installation pass $pass failed: $passExitCode" }
+            $actual = & (Join-Path $installDir 'jarvis.exe') --version
+            if ($LASTEXITCODE -ne 0 -or $actual -notmatch [regex]::Escape($version)) { throw "Installed Windows CLI version mismatch: $actual" }
+            if ($pass -eq 1 -and -not $env:PREVIOUS_TAG) { Set-Content -LiteralPath (Join-Path $installDir 'release-smoke-sentinel') -Value 'preserve' }
+          }
+          if (-not (Test-Path (Join-Path $installDir 'release-smoke-sentinel'))) { throw 'Reinstall removed the existing installation sentinel' }
+          if ((Get-FileHash -LiteralPath $env:JARVIS_CONFIG -Algorithm SHA256).Hash -ne $configHash) { throw 'Upgrade changed persisted settings' }
+          $dbValue = python -c "import os; from jarvis.agent_chat.store import AgentChatStore; db=os.path.join(os.environ['JARVIS_DATA_DIR'],'agent_chat.db'); s=AgentChatStore(db); x=s.get_session('release-smoke'); print(x.title if x else 'MISSING'); s.close()"
+          if ($LASTEXITCODE -ne 0 -or $dbValue -ne 'Persisted native release chat') { throw 'Upgrade lost persisted agent chat' }
+          $keyValue = python -c "from jarvis.core.config import _FileCredStore; from jarvis.core.branding import KEYRING_SERVICE_NAME; print(_FileCredStore().get(KEYRING_SERVICE_NAME,'release_smoke_key'))"
+          if ($LASTEXITCODE -ne 0 -or $keyValue -ne 'native-smoke-secret') { throw 'Upgrade lost persisted credential fallback' }
+          $assetHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          @{target='windows-x64'; tag='${{ github.ref_name }}'; commit='${{ github.sha }}'; asset_sha256=$assetHash; installed=$true; reinstalled=$true; upgraded=[bool]$env:PREVIOUS_TAG; rollback_tested=[bool]$env:PREVIOUS_TAG; previous_tag=$env:PREVIOUS_TAG; signed=$signed; settings_preserved=$true; database_preserved=$true; credential_preserved=$true} |
+            ConvertTo-Json -Compress | Set-Content -Encoding utf8 'dist/installers/proof-windows-x64.json'
+
+      - name: Preserve Windows installer phase logs
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: windows-native-installer-logs
+          path: ${{ runner.temp }}/jarvis-native-install-*.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Windows native smoke proof
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: proof-windows-x64
+          path: dist/installers/proof-windows-x64.json
+          if-no-files-found: error
 
       - name: Upload the installer
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
@@ -150,97 +416,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # -------------------------------------------------------------------- macOS
-  macos:
-    name: macOS installer (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            arch: arm64
-          - runner: macos-15-intel
-            arch: x64
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install Personal Jarvis (desktop + dev)
-        shell: bash
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[desktop,dev]"
-
-      # The script decides what to do with these: with them it codesigns with
-      # the Developer ID identity and notarizes; without them it ad-hoc signs,
-      # skips notarization and prints a one-line notice.
-      - name: Build the DMG
-        shell: bash
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          chmod +x packaging/macos/build.sh
-          ./packaging/macos/build.sh
-
-      - name: Preserve native wheel diagnostics on build failure
-        if: failure() && hashFiles('jarvis/assets/browser/wheels/*.whl') != ''
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
-        with:
-          name: browser-wheel-diagnostic-macos-${{ matrix.arch }}
-          path: jarvis/assets/browser/wheels/*.whl
-          retention-days: 3
-
-      - name: Verify the DMG browser provisioning and restart
-        shell: bash
-        run: |
-          set -euo pipefail
-          mount_point="${RUNNER_TEMP}/jarvis-browser-dmg"
-          mkdir -p "$mount_point"
-          hdiutil attach "dist/installers/PersonalJarvis-macOS-${{ matrix.arch }}.dmg" -readonly -nobrowse -mountpoint "$mount_point"
-          trap 'hdiutil detach "$mount_point"' EXIT
-          python scripts/ci/check_frozen_browser.py --executable "$mount_point/Personal Jarvis.app/Contents/MacOS/PersonalJarvis" --output frozen-browser-proof
-
-      - name: Preserve frozen browser evidence
-        if: always()
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
-        with:
-          name: frozen-browser-macos-${{ matrix.arch }}
-          path: |
-            frozen-browser-proof/report.json
-            frozen-browser-proof/*.jpg
-            frozen-browser-proof/*.log
-          if-no-files-found: warn
-
-      - name: Upload the DMG
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
-        with:
-          name: installer-macos-${{ matrix.arch }}
-          path: dist/installers/PersonalJarvis-macOS-${{ matrix.arch }}.dmg
-          if-no-files-found: error
-          retention-days: 14
-
   # -------------------------------------------------------------------- Linux
   linux:
     name: Linux installer (x86_64)
+    needs: [credentials, previous-release, ci-proof]
     # 22.04, not latest: an AppImage inherits the glibc of the machine that
     # built it, so building on the OLDEST supported runner is what makes it run
     # on more than the newest distributions.
@@ -286,6 +465,42 @@ jobs:
           dist/installers/PersonalJarvis-Linux-x86_64.AppImage --appimage-extract > /dev/null
           python scripts/ci/check_frozen_browser.py --executable squashfs-root/AppRun --output frozen-browser-proof
 
+      - name: Upgrade previous Linux AppImage and prove rollback
+        if: needs.previous-release.outputs.tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_TAG: ${{ needs.previous-release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/previous-release"
+          gh release download "$PREVIOUS_TAG" --pattern 'PersonalJarvis-Linux-x86_64.AppImage' --dir "${RUNNER_TEMP}/previous-release"
+          version="$(python -c 'import jarvis; print(jarvis.__version__)')"
+          python scripts/ci/check_posix_native_upgrade.py \
+            --platform linux \
+            --previous-package "${RUNNER_TEMP}/previous-release/PersonalJarvis-Linux-x86_64.AppImage" \
+            --candidate dist/installers/PersonalJarvis-Linux-x86_64.AppImage \
+            --previous-tag "$PREVIOUS_TAG" --candidate-version "$version" \
+            --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" \
+            --proof dist/installers/proof-linux-x86_64.json \
+            --evidence-dir native-upgrade-proof
+
+      - name: Preserve Linux native upgrade diagnostics
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: native-upgrade-linux-x86_64
+          path: native-upgrade-proof/
+          if-no-files-found: warn
+
+      - name: Upload Linux native smoke proof
+        if: needs.previous-release.outputs.tag != ''
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: proof-linux-x86_64
+          path: dist/installers/proof-linux-x86_64.json
+          if-no-files-found: error
+
       - name: Preserve frozen browser evidence
         if: always()
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
@@ -303,20 +518,18 @@ jobs:
           name: installer-linux-x86_64
           path: |
             dist/installers/PersonalJarvis-Linux-x86_64.AppImage
-            dist/installers/personal-jarvis_*_amd64.deb
           if-no-files-found: error
           retention-days: 14
 
-  # ------------------------------------------------------- Checksums + Release
-  release:
-    name: Checksums and GitHub Release
-    needs: [windows, macos, linux]
+  # ------------------------------------------------------- Qualification gate
+  qualify:
+    name: Qualify and sign complete native release
+    needs: [windows, linux, sign-installer]
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      # The ONLY job that may write to the repository, and only to attach the
-      # assets it just verified.
-      contents: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -352,57 +565,71 @@ jobs:
           path: installers
           merge-multiple: true
 
-      - name: Write installers-SHA256SUMS.txt
+      - name: Download native smoke proofs
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          pattern: proof-*
+          path: installers
+          merge-multiple: true
+
+      - name: Download signed installer scripts
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: signed-bundle
+          path: signed-bundle
+
+      - name: Download SLSA provenance
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: personal-jarvis.intoto.jsonl
+          path: provenance
+
+      - name: Validate all native assets and produce release qualification
         shell: bash
         run: |
           set -euo pipefail
+          git archive --format=tar.gz --prefix=personal-jarvis/ -o installers/personal-jarvis-src.tar.gz HEAD
+          tar -tzf installers/personal-jarvis-src.tar.gz > source-archive-files.txt
+          grep -Fxq 'personal-jarvis/pyproject.toml' source-archive-files.txt
+          python scripts/ci/prepare_native_release.py installers --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA"
           cd installers
-          ls -la
-          # Every asset the download page and the updater promise must be here.
-          # A silently missing DMG would ship a release that only half works.
-          required=(
-            PersonalJarvis-Setup-x64.exe
-            PersonalJarvis-macOS-arm64.dmg
-            PersonalJarvis-macOS-x64.dmg
-            PersonalJarvis-Linux-x86_64.AppImage
-          )
-          for asset in "${required[@]}"; do
-            if [ ! -f "$asset" ]; then
-              echo "::error::required release asset $asset is missing"
-              exit 1
-            fi
-          done
-          # Flat names only: the updater looks each asset up by its file name.
-          rm -f installers-SHA256SUMS.txt
-          sha256sum "${required[@]}" > installers-SHA256SUMS.txt
-          for optional in personal-jarvis_*_amd64.deb; do
-            [ -e "$optional" ] || continue
-            sha256sum "$optional" >> installers-SHA256SUMS.txt
-          done
-          cat installers-SHA256SUMS.txt
           sha256sum -c installers-SHA256SUMS.txt
+          test -s ../provenance/personal-jarvis.intoto.jsonl
+          for file in install.sh install.ps1 installer.py install-verify.sh install-verify.ps1 requirements.txt payload-commit.txt; do
+            for suffix in '' .sig .pem .bundle .cosign.sig; do
+              test -s "../signed-bundle/out/${file}${suffix}"
+            done
+          done
+          test -s ../signed-bundle/install/keys/offline-ceremony.pub
 
-      - name: Upload the checksum manifest
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+      - name: Sign and verify the native checksum manifest
+        env:
+          WAVE2_OFFLINE_KEY_B64: ${{ secrets.WAVE2_OFFLINE_KEY_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          key="${RUNNER_TEMP}/native-manifest.key"
+          trap 'rm -f "$key" "$key.sig"' EXIT
+          printf '%s' "$WAVE2_OFFLINE_KEY_B64" | base64 -d > "$key"
+          chmod 600 "$key"
+          manifest=installers/installers-SHA256SUMS.txt
+          openssl pkeyutl -sign -rawin -inkey "$key" -in "$manifest" -out "$key.sig"
+          openssl pkeyutl -verify -rawin -pubin -inkey install/keys/offline-ceremony.pub -in "$manifest" -sigfile "$key.sig"
+          base64 -w0 "$key.sig" > installers/installers-SHA256SUMS.txt.cosign.sig
+
+      - name: Stage qualified release bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          cp installers/PersonalJarvis-Setup-x64.exe installers/PersonalJarvis-Linux-x86_64.AppImage installers/personal-jarvis-src.tar.gz installers/installers-SHA256SUMS.txt installers/installers-SHA256SUMS.txt.cosign.sig installers/release-qualification.json release-assets/
+          cp signed-bundle/out/* release-assets/
+          cp signed-bundle/install/keys/offline-ceremony.pub release-assets/
+          cp provenance/personal-jarvis.intoto.jsonl release-assets/
+
+      - name: Preserve complete release bundle
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
         with:
-          name: installers-checksums
-          path: installers/installers-SHA256SUMS.txt
+          name: qualified-release
+          path: release-assets/
           if-no-files-found: error
-          retention-days: 14
-
-      - name: Attach the installers to the GitHub Release
-        if: github.ref_type == 'tag'
-        # pin: softprops/action-gh-release@v3.0.2 - same pin as sign-installer.yml.
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          # The release may already exist (sign-installer.yml runs on the same
-          # tag); this adds assets to it instead of replacing it.
-          fail_on_unmatched_files: true
-          files: |
-            installers/PersonalJarvis-Setup-x64.exe
-            installers/PersonalJarvis-macOS-arm64.dmg
-            installers/PersonalJarvis-macOS-x64.dmg
-            installers/PersonalJarvis-Linux-x86_64.AppImage
-            installers/installers-SHA256SUMS.txt

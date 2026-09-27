@@ -392,7 +392,7 @@ function withDetail(message: string, detail: string | null): string {
  * Shown when the backend reports a managed install with a newer published
  * release (``status.update_available``) — or with a staged-but-not-installed
  * transaction (``status.pending_update``) left behind by an earlier attempt.
- * One click stages the new code (`POST /api/update/apply`) and then restarts
+ * An explicit confirmation stages the new code (`POST /api/update/apply`) and then restarts
  * to install it, reusing the same mission-guard (409 → force) flow as the
  * restart button. Hovering reveals the release notes. On a dev tree / manual
  * clone the status is ``managed: false``, so this renders nothing and can
@@ -403,6 +403,7 @@ function UpdateButton() {
   const pushToast = useEventStore((s) => s.pushToast);
   const { status } = useUpdate();
   const [busy, setBusy] = useState(false);
+  const [confirmArmed, setConfirmArmed] = useState(false);
   const [forceArmed, setForceArmed] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
   const [progress, setProgress] = useState<UpdateProgress | null>(null);
@@ -458,7 +459,10 @@ function UpdateButton() {
         fill(t("topbar.update_installed"), { version: status?.current ?? "" }),
       );
     } else {
-      pushToast("warning", t("topbar.update_rolled_back"));
+      pushToast(
+        lastResult.rolled_back ? "warning" : "error",
+        t(lastResult.rolled_back ? "topbar.update_rolled_back" : "topbar.update_failed"),
+      );
     }
   }, [lastResult, pushToast, status?.current, t]);
 
@@ -470,6 +474,7 @@ function UpdateButton() {
 
   async function run(force: boolean) {
     clearResetTimer();
+    setConfirmArmed(false);
     setBusy(true);
     setRestarting(false);
     setProgress(null);
@@ -484,6 +489,7 @@ function UpdateButton() {
         detail?: string;
         deps_warning?: string | null;
         desktop_integration_warning?: string | null;
+        restart_required?: boolean;
       };
       if (!applyRes.ok) {
         // 403 unmanaged / 409 nothing newer / 502 git or GitHub failure — the
@@ -505,6 +511,13 @@ function UpdateButton() {
       }
       if (applyBody.desktop_integration_warning) {
         pushToast("warning", t("topbar.update_desktop_warning"));
+      }
+      if (applyBody.restart_required === false) {
+        // The native update supervisor owns shutdown, relaunch and rollback.
+        // A second restart races the installer and can start the old bundle.
+        setRestarting(true);
+        pushToast("info", t("topbar.update_restarting"));
+        return;
       }
     } catch {
       setBusy(false);
@@ -584,6 +597,15 @@ function UpdateButton() {
 
   function onClick() {
     if (busy) return;
+    if (!confirmArmed && !forceArmed) {
+      setConfirmArmed(true);
+      clearResetTimer();
+      resetTimer.current = window.setTimeout(() => {
+        setConfirmArmed(false);
+        resetTimer.current = null;
+      }, CONFIRM_TIMEOUT_MS);
+      return;
+    }
     void run(forceArmed);
   }
 
@@ -597,6 +619,8 @@ function UpdateButton() {
       ? fill(t("topbar.updating_percent"), { percent })
       : forceArmed
         ? t("topbar.restart_force")
+        : confirmArmed
+          ? t("topbar.update_confirm")
         : hasOffer
           ? t("topbar.update_available")
           : t("topbar.update_finish_restart");
@@ -611,7 +635,7 @@ function UpdateButton() {
         type="button"
         onClick={onClick}
         disabled={busy}
-        title={busy ? (progress?.detail ?? label) : t("topbar.update_hint")}
+        title={busy ? (progress?.detail ?? label) : t(confirmArmed ? "topbar.update_confirm_hint" : "topbar.update_hint")}
         // The button doubles as the progress bar while it runs, so it carries
         // the ARIA role of one — a screen reader announces the same percentage
         // the fill shows. Outside an update those attributes must be absent,
@@ -628,7 +652,7 @@ function UpdateButton() {
           // step up. It used to be accent-tinted TEXT on an accent-tinted
           // wash, which put the loudest ink in the window on a button most
           // users never need.
-          forceArmed ? CHROME_ARMED : "bg-card text-foreground hover:bg-secondary",
+          forceArmed || confirmArmed ? CHROME_ARMED : "bg-card text-foreground hover:bg-secondary",
         )}
       >
         {busy && (
@@ -653,6 +677,12 @@ function UpdateButton() {
           </span>
         )}
       </button>
+      {confirmArmed && (
+        <button type="button" className={cn(CHROME_BUTTON, "ml-1 px-2")} onClick={() => {
+          clearResetTimer();
+          setConfirmArmed(false);
+        }}>{t("topbar.update_cancel")}</button>
+      )}
       {showNotes && status.notes && (
         // A floating layer: the float surface, the float shadow, and no border
         // of its own — the shadow already carries the rim.

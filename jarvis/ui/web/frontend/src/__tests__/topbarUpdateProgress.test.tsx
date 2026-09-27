@@ -10,13 +10,15 @@
  * or sticks at a number after the update failed is worse than no bar at all:
  * it is what the user decides "is this stuck?" from.
  */
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TopBar } from "@/components/layout/TopBar";
 import { useEventStore } from "@/store/events";
 
 vi.mock("@/lib/bootStagger", () => ({ bootSettled: () => Promise.resolve() }));
+
+const pendingApplies: Array<() => void> = [];
 
 const OFFER = {
   managed: true,
@@ -50,6 +52,7 @@ function mockBackend(opts: {
   progress: () => Record<string, unknown>;
   applyOk?: boolean;
   restartOk?: boolean;
+  holdApply?: boolean;
 }) {
   const calls: string[] = [];
   vi.stubGlobal(
@@ -63,6 +66,15 @@ function mockBackend(opts: {
         return { ok: true, status: 200, json: async () => opts.progress() };
       }
       if (url.startsWith("/api/update/apply")) {
+        if (opts.holdApply) {
+          return new Promise((resolve) => {
+            pendingApplies.push(() => resolve({
+              ok: false,
+              status: 499,
+              json: async () => ({ detail: "Test download cancelled" }),
+            }));
+          });
+        }
         const ok = opts.applyOk !== false;
         return {
           ok,
@@ -83,6 +95,7 @@ function mockBackend(opts: {
 async function clickUpdate(): Promise<void> {
   const button = await screen.findByText("Update available");
   button.click();
+  (await screen.findByRole("button", { name: /install update/i })).click();
 }
 
 function fillWidth(): string | undefined {
@@ -101,13 +114,18 @@ describe("TopBar update progress", () => {
     });
     window.localStorage.clear();
   });
-  afterEach(() => {
+  afterEach(async () => {
+    // Finish each request while its own fetch stub is still installed. A
+    // pending retry must never consume the next test's mock or emit its toast.
+    await act(async () => {
+      pendingApplies.splice(0).forEach((finish) => finish());
+    });
     cleanup();
     vi.unstubAllGlobals();
   });
 
   it("shows the percentage the backend reports", async () => {
-    mockBackend({ progress: () => progressBody(70), restartOk: false });
+    mockBackend({ progress: () => progressBody(70), holdApply: true });
     render(<TopBar />);
     await clickUpdate();
 
@@ -115,7 +133,7 @@ describe("TopBar update progress", () => {
   });
 
   it("fills the button proportionally to that percentage", async () => {
-    mockBackend({ progress: () => progressBody(70), restartOk: false });
+    mockBackend({ progress: () => progressBody(70), holdApply: true });
     render(<TopBar />);
     await clickUpdate();
 
@@ -124,7 +142,7 @@ describe("TopBar update progress", () => {
 
   it("follows the percentage upward as the download runs", async () => {
     let percent = 12;
-    mockBackend({ progress: () => progressBody(percent), restartOk: false });
+    mockBackend({ progress: () => progressBody(percent), holdApply: true });
     render(<TopBar />);
     await clickUpdate();
 
@@ -134,7 +152,7 @@ describe("TopBar update progress", () => {
   });
 
   it("exposes the same percentage to assistive technology", async () => {
-    mockBackend({ progress: () => progressBody(70), restartOk: false });
+    mockBackend({ progress: () => progressBody(70), holdApply: true });
     render(<TopBar />);
     await clickUpdate();
 
