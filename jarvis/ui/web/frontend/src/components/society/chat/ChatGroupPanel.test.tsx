@@ -32,8 +32,8 @@ it("opens two existing agent chats in separate stores and keeps each pane indepe
 
   const left = screen.getByTestId("society-group-pane-left");
   const right = screen.getByTestId("society-group-pane-right");
-  expect((within(left).getByRole("combobox") as HTMLSelectElement).value).toBe("other");
-  expect((within(right).getByRole("combobox") as HTMLSelectElement).value).toBe("test");
+  expect(within(left).getByTestId("society-group-select-left").getAttribute("data-value")).toBe("other");
+  expect(within(right).getByTestId("society-group-select-right").getAttribute("data-value")).toBe("test");
   expect(within(left).getByTestId("chat-other")).toBeTruthy();
   expect(within(right).getByTestId("chat-test")).toBeTruthy();
   fireEvent.click(within(left).getByRole("button", { name: "Open hdckjashx" }));

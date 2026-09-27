@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Pencil, Trash2, UsersRound } from "lucide-react";
 import { useT } from "@/i18n";
+import { BrandedSelect } from "@/components/ui/select";
 import { deleteSocietyChatGroup, type SocietyChatGroup } from "@/lib/societyChatGroups";
 import { createAgentChatStore } from "@/store/agentChat";
 import type { SocietyAgent } from "../data";
@@ -62,16 +63,18 @@ export function ChatGroupPanel({
     <section key={side} data-testid={`society-group-pane-${side}`} className="flex min-h-0 min-w-0 flex-col bg-background">
       {agent ? <>
         <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-          <label className="min-w-0 flex-1 text-xs font-medium text-muted-foreground">
-            {t(side === "left" ? "society.groups.left_chat" : "society.groups.right_chat")}
-            <select aria-label={t(side === "left" ? "society.groups.left_chat" : "society.groups.right_chat")}
+          <div className="min-w-0 flex-1 text-xs font-medium text-muted-foreground">
+            <span>{t(side === "left" ? "society.groups.left_chat" : "society.groups.right_chat")}</span>
+            <BrandedSelect
+              ariaLabel={t(side === "left" ? "society.groups.left_chat" : "society.groups.right_chat")}
+              testId={`society-group-select-${side}`}
               value={agent.agentId}
-              onChange={(event) => side === "left" ? setLeftId(event.target.value) : setRightId(event.target.value)}
-              className="mt-1 block w-full truncate rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground">
-              {members.filter((member) => member.agentId !== (side === "left" ? right?.agentId : left?.agentId))
-                .map((member) => <option key={member.agentId} value={member.agentId}>{member.name}</option>)}
-            </select>
-          </label>
+              onValueChange={(value) => side === "left" ? setLeftId(value) : setRightId(value)}
+              className="mt-1 w-full"
+              options={members.filter((member) => member.agentId !== (side === "left" ? right?.agentId : left?.agentId))
+                .map((member) => ({ value: member.agentId, label: member.name }))}
+            />
+          </div>
           <button type="button" onClick={() => onOpenAgent(agent.agentId)}
             className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
             aria-label={t("society.groups.open_individual").replace("{0}", agent.name)}>
