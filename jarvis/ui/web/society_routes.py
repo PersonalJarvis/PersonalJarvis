@@ -23,8 +23,8 @@ from jarvis.society.events import MsgType
 from jarvis.society.failure_reasons import FailureReason, retry_action
 from jarvis.society.memory import MEMORY_SHARE_CAPABILITY, MemoryRefused
 from jarvis.society.rooms import RoomError
-from jarvis.society.roster import RosterError
-from jarvis.society.runtime import SocietyRuntime
+from jarvis.society.roster import AgentRecord, RosterError
+from jarvis.society.runtime import SocietyRuntime, SocietyRuntimeClosed
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +36,8 @@ router = APIRouter(prefix="/api/society", tags=["society"])
 
 async def _runtime(request: HTTPConnection) -> SocietyRuntime:
     state = request.app.state
+    if getattr(state, "society_stopping", False):
+        raise HTTPException(503, "society runtime stopped")
     runtime = getattr(state, "society", None)
     if runtime is None:
         factory = getattr(state, "society_factory", None)
@@ -43,11 +45,16 @@ async def _runtime(request: HTTPConnection) -> SocietyRuntime:
             raise HTTPException(503, "society runtime not configured")
         try:
             runtime = factory()
+        except SocietyRuntimeClosed as exc:
+            raise HTTPException(503, "society runtime stopped") from exc
         except Exception as exc:  # noqa: BLE001 — surfaces as 503 with the reason in the log
             log.warning("society: runtime could not be built: %s", exc)
             raise HTTPException(503, "society runtime unavailable") from exc
         state.society = runtime
-    await runtime.ensure_started()
+    try:
+        await runtime.ensure_started()
+    except SocietyRuntimeClosed as exc:
+        raise HTTPException(503, "society runtime stopped") from exc
     return runtime
 
 
@@ -88,6 +95,7 @@ class CreateAgentBody(BaseModel):
 
 
 class PatchAgentBody(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=40)
     title: str | None = None
     description: str | None = None
     tier: str | None = None
@@ -166,15 +174,36 @@ async def list_agents(request: Request, include_archived: bool = False) -> dict[
     return {"agents": rows, "total": len(rows)}
 
 
+async def _creator_from_request(request: Request, rt: SocietyRuntime) -> AgentRecord | None:
+    """The live society agent making this request, or ``None`` for the UI/CLI."""
+    from jarvis.society.inherit import caller_session_id, session_agent_id
+
+    session_id = (request.headers.get("x-jarvis-chat-session") or "").strip() or caller_session_id()
+    agent_id = session_agent_id(session_id)
+    if not agent_id:
+        return None
+    agent = await rt.roster.get(agent_id)
+    if agent is None or str(agent.state) != "active":
+        return None
+    return agent
+
+
 @router.post("/agents")
 async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any]:
     rt = await _runtime(request)
-    fields = body.model_dump(
-        exclude_none=True, exclude={"name", "title", "description", "tier", "effort"}
-    )
+    fields = body.model_dump(exclude_none=True, exclude={"name", "title", "description", "tier"})
+    creator = await _creator_from_request(request, rt)
+    if creator is not None:
+        from jarvis.society.inherit import inherit_creator_fields
+
+        fields = inherit_creator_fields(fields, creator)
     derived_focus, derived_rules = rt.derive(body.title, body.description)
     if body.focus is None and derived_focus:
         fields["focus"] = derived_focus
+    if str(fields.get("grant_mode") or "") == "allowlist":
+        allowed = set(fields.get("grants") or [])
+        if allowed and "focus" in fields:
+            fields["focus"] = [cap for cap in fields["focus"] if cap in allowed]
     if body.approval_rules is None and derived_rules["require_approval"]:
         fields["approval_rules"] = derived_rules
     try:
@@ -210,7 +239,7 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
     agent = await rt.roster.resolve(agent_id)
     if agent is None:
         raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
-    fields = body.model_dump(exclude_none=True, exclude={"effort"})
+    fields = body.model_dump(exclude_none=True)
     if ("title" in fields or "description" in fields) and "focus" not in fields:
         # A prose edit must not wipe what the agent earned in its chat: the
         # derived focus is APPENDED to the existing order (existing first,
@@ -545,7 +574,7 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
     fields = {
         "provider": body.provider.strip().lower(),
         "model": body.model.strip(),
-        "effort": "",
+        "effort": body.effort.strip(),
         "account_id": body.account_id.strip(),
     }
     chat = rt._get_chat()
@@ -574,6 +603,47 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
 
 
 # ------------------------------------------------------------------ skills
+
+
+@router.get("/agents/{agent_id}/knowledge")
+async def agent_knowledge(agent_id: str, request: Request) -> dict[str, Any]:
+    """List this agent's current memory, learned skills, working rules and review status."""
+    import asyncio
+    import json
+
+    from jarvis.society.knowledge import list_files
+    from jarvis.society.working_rules import PREFIX, rules
+
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    files = await asyncio.to_thread(list_files, rt, agent)
+    entries = await asyncio.to_thread(rt.memory.entries, agent)
+    last = await rt.store.get_meta(f"review:last:{agent.agent_id}", "")
+    return {
+        "files": files,
+        "learned_instructions": [e.text[len(PREFIX):] for e in rules(entries)],
+        "reviews": rt.conversations.review_counts(agent.agent_id),
+        "last_review": json.loads(last) if last else None,
+    }
+
+
+@router.get("/agents/{agent_id}/knowledge/file")
+async def agent_knowledge_file(agent_id: str, request: Request, path: str) -> dict[str, Any]:
+    """Read one current Markdown file from this agent's memory or private skill namespace."""
+    import asyncio
+
+    from jarvis.society.knowledge import read_file
+
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    try:
+        return await asyncio.to_thread(read_file, rt, agent, path)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)}) from exc
 
 
 @router.get("/agents/{agent_id}/skills")
@@ -727,6 +797,12 @@ class RoutineBody(BaseModel):
     plugin_grants: list[dict[str, str]] = Field(default_factory=list)
     announce_on_success: str | None = None
     parent_task_id: str | None = None
+    # Optional model seat for this routine. Omitted = pin the owner's current
+    # seat at creation; explicit values win. "" on update = follow the owner.
+    provider: str | None = None
+    model: str | None = None
+    effort: str | None = None
+    account_id: str | None = None
 
 
 def _task_store(request: Request) -> Any:
@@ -785,6 +861,10 @@ async def create_agent_routine(
             schedule=body.schedule,
             plugin_grants=body.plugin_grants,
             announce_on_success=body.announce_on_success,
+            provider=body.provider,
+            model=body.model,
+            effort=body.effort,
+            account_id=body.account_id,
         )
         if parent_spec is not None:
             if spec.trigger.type not in ("calendar", "cron", "every"):
@@ -818,7 +898,17 @@ async def create_agent_routine(
             )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    return {"id": task_id, "title": spec.title, "tags": list(spec.tags)}
+    seat = (
+        {
+            "provider": spec.action.provider,
+            "model": spec.action.model,
+            "effort": spec.action.effort,
+            "account_id": spec.action.account_id,
+        }
+        if spec.action.kind == "agent"
+        else None
+    )
+    return {"id": task_id, "title": spec.title, "tags": list(spec.tags), "seat": seat}
 
 
 class RoutineUpdateBody(BaseModel):
@@ -826,6 +916,10 @@ class RoutineUpdateBody(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     prompt: str = Field(min_length=1, max_length=16_000)
     schedule: dict[str, Any]
+    provider: str | None = None
+    model: str | None = None
+    effort: str | None = None
+    account_id: str | None = None
 
 
 @router.patch("/agents/{agent_id}/routines/{task_id}")
@@ -910,6 +1004,7 @@ async def list_approvals(request: Request, agent_id: str | None = None) -> dict[
 async def resolve_approval(
     approval_id: str, body: ResolveApprovalBody, request: Request
 ) -> dict[str, Any]:
+    """Resolve an approval; denying a live browser action also stops its owning chat."""
     from jarvis.society.proposals import kind_of
 
     rt = await _runtime(request)
@@ -924,6 +1019,29 @@ async def resolve_approval(
                 "detail": f"use POST /api/society/proposals/{approval_id}/resolve",
             },
         )
+    if (
+        current is not None
+        and not body.approve
+        and str(current.state) == "pending"
+        and current.capability == "core:browser"
+        and current.action.get("resume_in_place")
+    ):
+        # A denied browser action must not release the parent planner to try
+        # the same operation through a desktop or shell tool. Signal before
+        # resolving the approval, while the live ownership still identifies
+        # this exact turn. An old approval cannot stop a newer/unrelated chat.
+        live = getattr(getattr(rt, "browser", None), "live", None)
+        session = getattr(live, "sessions", {}).get(current.agent_id)
+        chat = getattr(request.app.state, "agent_chat", None)
+        if (
+            session is not None
+            and current.trace_id
+            and session.active_trace == current.trace_id
+            and session.active_chat
+            and session.run_lock.locked()
+            and chat is not None
+        ):
+            chat.signal_cancel(session.active_chat)
     try:
         item = await rt.approvals.resolve(approval_id, approve=body.approve, note=body.note)
     except KeyError as exc:
@@ -1096,6 +1214,65 @@ async def memory_dismiss(knowledge_id: int, request: Request) -> dict[str, Any]:
             404, {"reason": str(FailureReason.TARGET_UNKNOWN), "detail": str(exc)}
         ) from exc
     return {"id": knowledge_id, "reviewed": True}
+
+
+@router.get("/memory/file")
+async def memory_file(request: Request, path: str = "") -> dict[str, Any]:
+    """Read one society memory file for the Updating Memory editor.
+
+    Sandboxed to ``society/`` inside the vault: ``memory.md`` per agent and
+    the agent's dated notes. Shared pages are readable, everything outside
+    ``society/`` is refused. The editor shows the file and scrolls to the
+    change the chat's red/green diff describes.
+    """
+    from pathlib import Path
+
+    rt = await _runtime(request)
+    rel = str(path or "").strip().replace("\\", "/").lstrip("/")
+    if not rel.startswith("society/") or ".." in rel.split("/"):
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    if not rel.endswith(".md"):
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    vault = rt.memory.root()
+    target = vault / rel
+    parts = rel.split("/")
+    if len(parts) == 3 and parts[-1].lower() in {"memory.md", "user.md"}:
+        import asyncio
+
+        agent = await rt.roster.get(parts[1])
+        if agent is not None:
+            books = await asyncio.to_thread(rt.memory.books, agent)
+            target = books["user" if parts[-1].lower() == "user.md" else "memory"]
+            rel = target.relative_to(vault.resolve()).as_posix()
+    try:
+        base = (vault / "society").resolve()
+        resolved = target.resolve()
+        if base != resolved and base not in resolved.parents:
+            raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — unreadable path reads as missing
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)}) from exc
+    if not target.is_file():
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    try:
+        content = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)}) from exc
+    if len(content) > 200_000:
+        content = content[-200_000:]
+    try:
+        updated_ms = int(target.stat().st_mtime * 1000)
+    except OSError:
+        updated_ms = 0
+    parts = Path(rel).parts
+    agent_id = parts[1] if len(parts) >= 3 else ""
+    return {
+        "path": rel,
+        "agent_id": agent_id,
+        "content": content,
+        "updated_ms": updated_ms,
+    }
 
 
 # ----------------------------------------------------------------- controls

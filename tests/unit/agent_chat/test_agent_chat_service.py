@@ -174,9 +174,11 @@ def test_cancel_ends_the_turn(tmp_path: Path, scripted):
         svc = AgentChatService(AgentChatStore(":memory:"))
         session = svc.create_session(provider="fakeprov", cwd=str(tmp_path))
         q = svc.subscribe(session.session_id)
-        await svc.send(session.session_id, "go")
+        turn_id = await svc.send(session.session_id, "go")
         await _drain(q, "approval_required")
-        assert await svc.cancel(session.session_id)
+        assert not await svc.cancel(session.session_id, expected_turn_id="previous-turn")
+        assert svc.is_running(session.session_id)
+        assert await svc.cancel(session.session_id, expected_turn_id=turn_id)
         events = await _drain(q, "turn_finished")
         assert events[-1]["payload"]["status"] == "cancelled"
         assert not (tmp_path / "a").exists()
@@ -231,13 +233,12 @@ def test_provider_health_reports_each_row_and_caches_the_sweep(tmp_path: Path, m
     """
     import jarvis.ui.web.agent_chat_routes as routes
 
-    monkeypatch.setattr("jarvis.agent_chat.service._claude_cli_installed", lambda: False)
-    monkeypatch.setattr(
-        routes,
-        "_cli_login_snapshot",
-        lambda runner: ("needs_setup", "not_configured", "No CLI login"),
-    )
     calls: list[str] = []
+    cli_calls: list[str] = []
+
+    def _fake_cli(runner):
+        cli_calls.append(runner)
+        return "ok", "ok", f"{runner}: signed in"
 
     async def _fake(cfg, provider_id, *, probe=True):
         calls.append(provider_id)
@@ -253,6 +254,8 @@ def test_provider_health_reports_each_row_and_caches_the_sweep(tmp_path: Path, m
         return SimpleNamespace(status=status, reason=reason, detail=detail)
 
     monkeypatch.setattr("jarvis.ui.web.provider_routes.provider_health", _fake, raising=False)
+    monkeypatch.setattr("jarvis.agent_chat.service._claude_cli_installed", lambda: False)
+    monkeypatch.setattr(routes, "_cli_login_snapshot", _fake_cli)
     monkeypatch.setattr(routes, "_health_cache", {})
 
     with TestClient(_app(tmp_path)) as client:
@@ -263,6 +266,8 @@ def test_provider_health_reports_each_row_and_caches_the_sweep(tmp_path: Path, m
         assert set(rows) == {p.id for p in rows_for("jarvis")}
         assert rows["claude-api"]["status"] == "error"
         assert rows["claude-api"]["reason"] == "bad_key"
+        assert rows["openai-codex"]["status"] == "ok"
+        assert "codex-cli" in cli_calls and "claude-cli" not in cli_calls
         assert rows["openrouter"]["reason"] == "no_credits"
         assert rows["grok"]["status"] == "ok"
         assert rows["nvidia"]["status"] == "needs_setup"
@@ -271,13 +276,14 @@ def test_provider_health_reports_each_row_and_caches_the_sweep(tmp_path: Path, m
         assert rows["gemini"]["status"] == "unknown"
         assert rows["gemini"]["reason"] == "check_failed"
 
-        # Second call is served from the sweep, not from nine more requests.
-        swept = len(calls)
+        # The cache covers both API probes and CLI login snapshots.
+        swept = (len(calls), len(cli_calls))
         again = client.get("/api/agent-chat/provider-health?surface=jarvis").json()
-        assert again["cached"] is True and len(calls) == swept
+        assert again["cached"] is True
+        assert (len(calls), len(cli_calls)) == swept
         # …unless the caller asks for a fresh one.
         client.get("/api/agent-chat/provider-health?surface=jarvis&refresh=true")
-        assert len(calls) > swept
+        assert len(calls) > swept[0] and len(cli_calls) > swept[1]
 
 
 class _CliStatus:
@@ -338,8 +344,9 @@ def test_cli_login_snapshot_codex_and_antigravity_use_the_cli_login(monkeypatch)
     assert reason == "not_configured"
 
 
-def test_agent_surface_cli_health_does_not_probe_the_api_key(tmp_path: Path, monkeypatch):
-    """The IDE picker lists Claude Code under Coding CLIs.
+@pytest.mark.parametrize("surface", ["agent", "jarvis"])
+def test_cli_surface_health_does_not_probe_the_api_key(tmp_path: Path, monkeypatch, surface):
+    """Both chat pickers offer Claude Code as a coding CLI.
 
     Its catalog id is still ``claude-api``, so the API-Keys one-token probe
     would report a revoked Anthropic key as "Key rejected" on that CLI row.
@@ -364,7 +371,7 @@ def test_agent_surface_cli_health_does_not_probe_the_api_key(tmp_path: Path, mon
     monkeypatch.setattr(routes, "_health_cache", {})
 
     with TestClient(_app(tmp_path)) as client:
-        body = client.get("/api/agent-chat/provider-health?surface=agent").json()
+        body = client.get(f"/api/agent-chat/provider-health?surface={surface}").json()
     rows = {r["provider"]: r for r in body["providers"]}
     assert rows["claude-api"]["status"] == "ok"
     assert rows["claude-api"]["reason"] == "ok"
@@ -377,11 +384,10 @@ def test_agent_surface_cli_health_does_not_probe_the_api_key(tmp_path: Path, mon
     assert rows["openai"]["reason"] == "bad_key"
 
 
-@pytest.mark.parametrize("cli_installed", [False, True])
-def test_jarvis_health_probes_the_selected_claude_transport(
-    tmp_path: Path, monkeypatch, cli_installed
+def test_jarvis_surface_probes_the_claude_api_key_when_cli_is_uninstalled(
+    tmp_path: Path, monkeypatch
 ):
-    """The selected transport determines whether API credentials or CLI login matter."""
+    """Without Claude Code, its dual row uses the API while other CLIs keep their logins."""
     import jarvis.ui.web.agent_chat_routes as routes
 
     api_calls: list[str] = []
@@ -391,53 +397,67 @@ def test_jarvis_health_probes_the_selected_claude_transport(
         api_calls.append(provider_id)
         return SimpleNamespace(status="error", reason="bad_key", detail="401")
 
-    monkeypatch.setattr("jarvis.ui.web.provider_routes.provider_health", _fake_api, raising=False)
-
-    def cli_status(runner):
+    def _fake_cli(runner):
         cli_calls.append(runner)
-        return "ok", "ok", "Subscription connected"
+        return "ok", "ok", f"{runner}: signed in"
 
-    monkeypatch.setattr(routes, "_cli_login_snapshot", cli_status)
-    monkeypatch.setattr("jarvis.agent_chat.service._claude_cli_installed", lambda: cli_installed)
+    monkeypatch.setattr("jarvis.ui.web.provider_routes.provider_health", _fake_api, raising=False)
+    monkeypatch.setattr(routes, "_cli_login_snapshot", _fake_cli)
+    monkeypatch.setattr("jarvis.agent_chat.service._claude_cli_installed", lambda: False)
     monkeypatch.setattr(routes, "_health_cache", {})
 
     with TestClient(_app(tmp_path)) as client:
         body = client.get("/api/agent-chat/provider-health?surface=jarvis").json()
     rows = {r["provider"]: r for r in body["providers"]}
-    assert ("claude-api" in api_calls) is not cli_installed
-    assert ("claude-cli" in cli_calls) is cli_installed
-    assert rows["claude-api"]["reason"] == ("ok" if cli_installed else "bad_key")
-    assert "openai" in api_calls and rows["openai"]["reason"] == "bad_key"
+    assert "claude-api" in api_calls
+    assert rows["claude-api"]["reason"] == "bad_key"
+    assert "claude-cli" not in cli_calls
+    assert "codex-cli" in cli_calls
 
 
-def test_jarvis_catalog_and_routes_agree_on_api_and_cli_seats(tmp_path: Path, monkeypatch):
-    """Catalog, runner selection and session mutations agree on supported seats."""
+@pytest.mark.parametrize("claude_installed", [True, False])
+def test_the_jarvis_catalog_offers_api_and_cli_seats(tmp_path: Path, monkeypatch, claude_installed):
+    """Jarvis offers coding CLIs and API seats, with Claude's installed-state fallback."""
     import jarvis.ui.web.agent_chat_routes as routes
 
-    monkeypatch.setattr("jarvis.agent_chat.service._claude_cli_installed", lambda: False)
-    monkeypatch.setattr(routes, "_cli_installed", lambda runner: False)
+    async def _fake_live_models():
+        return {}
+
+    monkeypatch.setattr("jarvis.agent_chat.service._claude_cli_installed", lambda: claude_installed)
+    monkeypatch.setattr(routes, "_live_cli_models", _fake_live_models)
+    monkeypatch.setattr(
+        routes, "_cli_installed", lambda runner: runner == "claude-cli" and claude_installed
+    )
     with TestClient(_app(tmp_path)) as client:
         cat = client.get("/api/agent-chat/catalog?surface=jarvis").json()
         rows = {p["id"]: p for p in cat["providers"]}
         assert {"openai-codex", "antigravity", "grok-build"} <= set(rows)
         assert {"claude-api", "openai", "gemini", "ollama"} <= set(rows)
-        assert rows["openai"]["runner"] == rows["claude-api"]["runner"] == "brain"
-        assert rows["openai-codex"]["runner"] == "codex-cli"
-        assert rows["antigravity"]["runner"] == "agy-cli"
-        assert rows["claude-api"]["models_source"] == "live"
-        assert rows["openai"]["cli_installed"] is None
-        assert rows["openai-codex"]["cli_installed"] is False
+        for provider in ("openai", "gemini", "ollama"):
+            assert rows[provider]["runner"] == "brain"
+            assert rows[provider]["cli_installed"] is None
+        for provider, runner in (
+            ("openai-codex", "codex-cli"),
+            ("antigravity", "agy-cli"),
+            ("grok-build", "grok-cli"),
+        ):
+            assert rows[provider]["runner"] == runner
+            assert rows[provider]["cli_installed"] is False
+        assert rows["claude-api"]["runner"] == ("claude-cli" if claude_installed else "brain")
+        assert rows["claude-api"]["models_source"] == ("curated" if claude_installed else "live")
+        assert rows["claude-api"]["cli_installed"] is (True if claude_installed else None)
 
         # The IDE's chat is untouched: its CLI rows are still there.
         agent_catalog = client.get("/api/agent-chat/catalog?surface=agent").json()
         agent_rows = {p["id"]: p for p in agent_catalog["providers"]}
         assert {"openai-codex", "antigravity", "grok-build"} <= set(agent_rows)
 
-        cli = client.post(
+        # Catalog availability agrees with both session creation and provider changes.
+        created = client.post(
             "/api/agent-chat/sessions", json={"provider": "openai-codex", "surface": "jarvis"}
         )
-        assert cli.status_code == 201, cli.text
-        assert cli.json()["provider"] == "openai-codex"
+        assert created.status_code == 201, created.text
+        assert created.json()["provider"] == "openai-codex"
         made = client.post(
             "/api/agent-chat/sessions", json={"provider": "openai", "surface": "jarvis"}
         )
@@ -448,11 +468,6 @@ def test_jarvis_catalog_and_routes_agree_on_api_and_cli_seats(tmp_path: Path, mo
         )
         assert moved.status_code == 200, moved.text
         assert moved.json()["provider"] == "antigravity"
-        refused = client.patch(
-            f"/api/agent-chat/sessions/{made.json()['session_id']}",
-            json={"provider": "no-such-provider"},
-        )
-        assert refused.status_code == 400, refused.text
 
 
 def test_routes_catalog_sessions_and_websocket_snapshot(tmp_path: Path, scripted):

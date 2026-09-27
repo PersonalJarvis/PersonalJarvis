@@ -582,6 +582,25 @@ class TaskRunner:
             except Exception as exc:
                 if _owner_blocks_fallback(exc):
                     raise
+                if _is_society_routine(tags):
+                    # A society routine stays on its owner's model seat and is
+                    # never rerouted onto the generic API-key chain: a failed
+                    # seat fails the run honestly instead of billing a key.
+                    message = (
+                        f"{readable_error(exc)} The routine stays on its owner's "
+                        "model and was not rerouted."
+                    )
+                    seq = await self._store.append_step(
+                        task_id,
+                        "log",
+                        {"event": "owner_seat_failed", "message": message, "fallback": "none"},
+                    )
+                    await self._bus.publish(
+                        TaskStepRecorded(
+                            task_id=task_id, seq=seq, kind="log", source_layer="tasks.runner"
+                        )
+                    )
+                    raise RuntimeError(message) from exc
                 owned_failed = exc
                 log.warning(
                     "task %s: owner seat failed (%s); continuing via task tools",
@@ -758,6 +777,11 @@ def _targets_computer_use(harness_name: str) -> bool:
     return harness_name == HARNESS_NAME
 
 
+def _is_society_routine(tags: tuple[str, ...]) -> bool:
+    """Whether these tags belong to a society agent routine (never rerouted)."""
+    return "society" in tags or any(str(tag).startswith("agent:") for tag in tags)
+
+
 def _owner_blocks_fallback(exc: BaseException) -> bool:
     """True when the owner's state, not the seat, is why the routine cannot run.
 
@@ -774,6 +798,7 @@ def _owner_blocks_fallback(exc: BaseException) -> bool:
             "the routine owner is unavailable",
             "the routine owner is paused",
             "canonical chat service is unavailable",
+            "the routine chat failed",
         )
     )
 

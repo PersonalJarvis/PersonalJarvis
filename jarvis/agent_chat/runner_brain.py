@@ -472,8 +472,7 @@ async def run_brain_turn(
         kit_tools=kit_tools,
         system_extra=system_extra,
     )
-    if session.surface != "society":
-        _note_skill_trigger(brain, text)
+    _note_skill_trigger(brain, text)
 
     if bridge is not None:
         bridge.arm(
@@ -532,6 +531,11 @@ async def run_brain_turn(
             await emit(
                 "assistant_text", {"turn_id": turn_id, "message_id": message_id, "text": answer}
             )
+        # Keep the safe explanation visible, but distinguish provider success
+        # from an answer rejected by the execution/evidence backstop.
+        if override.receipt.guard_failure:
+            status = "error"
+            error = override.receipt.failure_reason or "guarded_response"
     await finish(status, override.receipt.usage(), error)
 
 
@@ -553,6 +557,13 @@ async def _generate(
 
     session = handle.session
     history = brain_history_from_events(handle.history)
+    output_language = getattr(handle, "output_language", "")
+    if session.surface == "society":
+        from jarvis.society.reply_preference import resolve_agent_reply_language
+
+        output_language = await resolve_agent_reply_language(
+            session.session_id, text, output_language
+        )
     kwargs: dict[str, Any] = {
         "use_history": False,
         "history_override": history,
@@ -565,8 +576,8 @@ async def _generate(
         "text_consumer": feed,
         "turn_override": override,
     }
-    if getattr(handle, "output_language", ""):
-        kwargs["force_output_language"] = handle.output_language
+    if output_language:
+        kwargs["force_output_language"] = output_language
     secret = _agent_secret(get_jarvis_agent_secret, session.provider)
     overrides = {session.provider: secret} if secret else {}
     # The task inherits the credential override through its context copy, so

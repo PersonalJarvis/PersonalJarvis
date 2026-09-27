@@ -191,7 +191,13 @@ def main() -> None:
     print(encoded)
     if args.report:
         args.report.write_text(encoded + "\n", encoding="utf-8")
-    if result["failed"] or result["tool_calls"] != 1 or not result["verified_result_spoken"]:
+    if (
+        result["failed"]
+        or result["timed_out"]
+        or result["tool_calls"] != 1
+        or not result["verified_result_spoken"]
+        or (args.reconnect and not result["reconnected"])
+    ):
         raise SystemExit(1)
 
 

@@ -2,6 +2,7 @@
 // JSON-only WSClient: this socket carries raw mono PCM16 in both directions.
 
 import { LevelMeter } from "./levelMeter";
+import { MediaActivity, type MediaLevels } from "./mediaLevels";
 import { requestConnect } from "./connectBudget";
 import { mintWsTicket } from "./ws";
 import pcmWorkletUrl from "./pcm-worklet.ts?worker&url";
@@ -19,6 +20,7 @@ export type RealtimeCallbacks = {
   onTranscript?: (text: string, isFinal: boolean, role: string) => void;
   onStatus?: (status: string, payload: RealtimeStatusPayload) => void;
   onAudio?: () => void;
+  onPlaybackState?: (active: boolean) => void;
   /** Normalized 0..1 microphone input level, ~30 Hz while capturing. */
   onInputLevel?: (level: number) => void;
   /**
@@ -54,6 +56,13 @@ const OUTPUT_TAP_TTL_MS = 600;
 
 /** Historical fixed budget for one realtime start attempt. */
 const DEFAULT_START_BUDGET_MS = 20_000;
+
+/**
+ * Consecutive quiet analyser frames before the WebRTC voice tap reports
+ * listening (~700 ms at 30 Hz). Word gaps must not flip the Jarvis bar
+ * back to listening mid-sentence.
+ */
+const REMOTE_SILENCE_HANGOVER_FRAMES = 21;
 
 /** Bounded startup pre-roll, mirroring the desktop's 30 s replay window.
  *
@@ -135,7 +144,8 @@ export class RealtimeWebRtcTransport {
     await waitForIceGathering(peer);
     if (this.peer !== peer) return null;
     const sdp = peer.localDescription?.sdp ?? offer.sdp ?? "";
-    return sdp.trim() || null;
+    // SDP is a wire format: the terminal CRLF is required by Live's parser.
+    return sdp.trim() ? sdp : null;
   }
 
   async applyAnswer(sdp: string): Promise<void> {
@@ -362,6 +372,11 @@ export class RealtimeAudioClient {
   private captureSink: GainNode | null = null;
   private playbackNode: AudioWorkletNode | null = null;
   private stream: MediaStream | null = null;
+  private startupNode: AudioWorkletNode | null = null;
+  private rtcInput: MediaStreamAudioDestinationNode | null = null;
+  private captureStartedAtMs = 0;
+  private controlReady = false;
+  private receivedPrefix = false;
   private playbackResampler: StreamingPcm16Resampler | null = null;
   private connecting: Promise<void> | null = null;
   private ready = false;
@@ -394,33 +409,72 @@ export class RealtimeAudioClient {
     this.webRtcTransport = new RealtimeWebRtcTransport(stream => this.observeRemoteAudio(stream));
   }
 
-  private mediaFrame = 0;
+  private remoteMeter: AudioWorkletNode | null = null;
   private remoteSource: MediaStreamAudioSourceNode | null = null;
-  private lastPlaybackActive = false;
+  private outputActivity = new MediaActivity(0.004, REMOTE_SILENCE_HANGOVER_FRAMES);
+  private inputActivity = new MediaActivity(0.008, 8);
+  private inputLevel = 0;
+  private outputLevel = 0;
+  private lastMediaSendAt = Number.NEGATIVE_INFINITY;
+
+  private sendMediaLevels(force = false): void {
+    if (!this.options.browserAudio || !this.controlReady || this.intentionalClose || this.ws?.readyState !== WebSocket.OPEN) return;
+    // Drop obsolete meter snapshots when the control transport stalls. The
+    // next audio-clock tick sends current measurements after it drains.
+    if (this.ws.bufferedAmount > 1024) return;
+    const now = performance.now();
+    if (!force && now - this.lastMediaSendAt < 100) return;
+    const snapshot: MediaLevels = {
+      type: "media_levels",
+      input_level: this.inputLevel,
+      output_level: this.outputLevel,
+      input_active: this.inputActivity.active,
+      playback_active: this.outputActivity.active,
+    };
+    this.ws.send(JSON.stringify(snapshot));
+    this.lastMediaSendAt = now;
+  }
+
+  private observeOutputLevel(rms: number): void {
+    this.outputLevel = this.outputMeter.push(rms);
+    this.cb.onOutputLevel?.(this.outputLevel);
+    const changed = this.outputActivity.update(rms);
+    if (changed) {
+      const active = this.outputActivity.active;
+      this.cb.onPlaybackState?.(active);
+      if (active) {
+        this.cb.onAudio?.();
+        this.cb.onStatus?.("speaking", {});
+      }
+      // Older Live servers still consume the edge. The level snapshot adds
+      // microphone/output meters; only the server resolves the quiet phase.
+      if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "playback_state", active }));
+    }
+    this.sendMediaLevels(changed);
+  }
 
   private observeRemoteAudio(stream: MediaStream): void {
     if (!this.ctx) return;
-    cancelAnimationFrame(this.mediaFrame);
+    // A suspended context measures only zeros: the assistant would talk
+    // while the bar keeps showing listening. The call started from a user
+    // gesture, so resuming here is allowed and makes the tap truthful.
+    void this.ctx.resume().catch(error => console.warn("Voice meter could not resume", error));
+    this.remoteMeter?.disconnect();
+    if (this.remoteMeter) this.remoteMeter.port.onmessage = null;
     this.remoteSource?.disconnect();
-    const analyser = this.ctx.createAnalyser();
-    analyser.fftSize = 256;
+    this.outputActivity.reset();
+    this.cb.onPlaybackState?.(false);
+    const meter = new AudioWorkletNode(this.ctx, "pcm-level");
+    this.remoteMeter = meter;
     this.remoteSource = this.ctx.createMediaStreamSource(stream);
-    this.remoteSource.connect(analyser);
-    const samples = new Float32Array(analyser.fftSize);
-    const measure = () => {
-      analyser.getFloatTimeDomainData(samples);
-      const rms = Math.sqrt(samples.reduce((sum, x) => sum + x * x, 0) / samples.length);
-      this.cb.onOutputLevel?.(this.outputMeter.push(rms));
-      const active = rms > 0.004;
-      if (active !== this.lastPlaybackActive) {
-        this.lastPlaybackActive = active;
-        if (active) this.cb.onAudio?.();
-        this.cb.onStatus?.(active ? "speaking" : "listening", {});
-        if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "playback_state", active }));
-      }
-      this.mediaFrame = requestAnimationFrame(measure);
+    this.remoteSource.connect(meter);
+    meter.connect(this.ctx.destination);
+    meter.port.onmessage = (event: MessageEvent) => {
+      if (this.remoteMeter !== meter || this.intentionalClose) return;
+      const rms = event.data?.rms;
+      if (event.data?.type !== "level" || typeof rms !== "number" || !Number.isFinite(rms)) return;
+      this.observeOutputLevel(rms);
     };
-    measure();
   }
 
   connect(): Promise<void> {
@@ -456,10 +510,16 @@ export class RealtimeAudioClient {
       if (!this.ctx.audioWorklet) {
         throw new RealtimeAudioSupportError("audio_worklet_unavailable");
       }
-      await this.ctx.audioWorklet.addModule(pcmWorkletUrl);
-      await this.ctx.resume();
-
-      this.stream = await navigator.mediaDevices.getUserMedia({
+      // The worklet load, the microphone open, the one-time WS ticket and
+      // the shared connect-budget turn are independent: acquiring them
+      // concurrently keeps three disk/network waits off the wake path
+      // instead of stacked end to end. The WebRTC offer still needs the
+      // microphone stream, so it is built once the mic resolves below.
+      const setupStartedAt = performance.now();
+      const workletReady = this.ctx.audioWorklet
+        .addModule(pcmWorkletUrl)
+        .then(() => this.ctx?.resume());
+      const micReady = navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: { ideal: 1 },
           echoCancellation: true,
@@ -467,14 +527,28 @@ export class RealtimeAudioClient {
           autoGainControl: true,
         },
       });
+      const ticketReady = mintWsTicket();
+      const turnReady = new Promise<void>((resolve) => requestConnect(resolve));
+      this.stream = await micReady;
+      if (this.intentionalClose) throw new Error("Voice start cancelled");
+      await workletReady;
+      if (this.intentionalClose) throw new Error("Voice start cancelled");
+      const setupMs = Math.round(performance.now() - setupStartedAt);
       const source = this.ctx.createMediaStreamSource(this.stream);
       this.captureNode = new AudioWorkletNode(this.ctx, "pcm-capture");
+      // Install capture before any offer/ticket/network await. No opening
+      // frame may depend on the handshake finishing first.
+      this.captureNode.port.onmessage = (event) => this.handleCapture(event);
       this.playbackNode = new AudioWorkletNode(this.ctx, "pcm-playback");
       this.playbackNode.port.onmessage = (event: MessageEvent) => {
+        // RTP is measured by pcm-level. The unused PCM queue produces zeros
+        // and must not erase the real output meter thirty times per second.
+        if (this.options.browserAudio && this.options.requiresWebRtcOffer) return;
         const data = event.data as { type?: string; rms?: number } | null;
         if (data && data.type === "level" && typeof data.rms === "number") {
           const live = performance.now() - this.lastPcmAt <= OUTPUT_TAP_TTL_MS;
-          this.cb.onOutputLevel?.(live ? this.outputMeter.push(data.rms) : null);
+          if (this.options.browserAudio) this.observeOutputLevel(live ? data.rms : 0);
+          else this.cb.onOutputLevel?.(live ? this.outputMeter.push(data.rms) : null);
         }
       };
       // Keep the capture worklet in the active audio graph without feeding the
@@ -482,10 +556,23 @@ export class RealtimeAudioClient {
       // node connected below and can remove it from captured audio.
       this.captureSink = this.ctx.createGain();
       this.captureSink.gain.value = 0;
+      this.captureStartedAtMs = Date.now();
       source.connect(this.captureNode);
       this.captureNode.connect(this.captureSink);
       this.captureSink.connect(this.ctx.destination);
       this.playbackNode.connect(this.ctx.destination);
+      if (this.options.browserAudio && this.options.requiresWebRtcOffer) {
+        this.startupNode = new AudioWorkletNode(this.ctx, "pcm-startup");
+        this.rtcInput = this.ctx.createMediaStreamDestination();
+        this.rtcInput.channelCount = 1;
+        source.connect(this.startupNode);
+        this.startupNode.connect(this.rtcInput);
+        this.startupNode.port.onmessage = (event: MessageEvent) => {
+          if (event.data?.type !== "error" || this.intentionalClose) return;
+          this.cb.onStatus?.("provider_error", { error: "Voice startup audio could not be retained. Please start again." });
+          void this.disconnect();
+        };
+      }
 
       // Required transport bootstrap for subscription-backed Realtime. API
       // providers do not set this option and continue to use the PCM socket
@@ -493,7 +580,7 @@ export class RealtimeAudioClient {
       // without its WebRTC peer, so this path fails closed.
       if (this.options.requiresWebRtcOffer) {
         const result = this.options.browserAudio
-          ? { sdp: await this.webRtcTransport.createOffer(this.stream), error: null }
+          ? { sdp: await this.webRtcTransport.createOffer(this.rtcInput?.stream ?? this.stream), error: null }
           : await webRtcOffer;
         if (result?.error) {
           this.webRtcTransport.close();
@@ -513,31 +600,39 @@ export class RealtimeAudioClient {
       // session cookie to a WS handshake (BUG-065). Minting over plain HTTP
       // first works on every engine; on a mint failure (e.g. older backend)
       // fall back to the cookie-only handshake, which Chromium still accepts.
-      const ticket = await mintWsTicket();
-      await new Promise<void>((resolve) => requestConnect(resolve));
+      // The ticket was minted concurrently with the microphone setup above,
+      // and the budget turn was queued there too, so both are (nearly) free
+      // by now instead of two more serial waits on the wake path.
+      const ticket = await ticketReady;
+      await turnReady;
+      console.info(`Voice start setup took ${setupMs} ms (mic/worklet/ticket).`);
       if (this.intentionalClose) throw new Error("Voice start cancelled");
       this.ws = new WebSocket(buildAudioSocketUrl(ticket));
       this.ws.binaryType = "arraybuffer";
-      this.captureNode.port.onmessage = (event) => {
-        const data = event.data as ArrayBuffer | { type?: string; rms?: number };
-        if (data instanceof ArrayBuffer) {
-          if (this.options.browserAudio && this.options.requiresWebRtcOffer) return;
-          if (this.ready && this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(data);
-          } else if (!this.ready && !this.reconnecting) {
-            this.retainStartupFrame(data);
-          }
-          return;
-        }
-        if (data && data.type === "level" && typeof data.rms === "number") {
-          this.cb.onInputLevel?.(this.inputMeter.push(data.rms));
-        }
-      };
-
       await this.waitUntilReady(this.ws);
     } catch (error) {
       await this.teardown(false);
       throw error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  private handleCapture(event: MessageEvent): void {
+    if (this.intentionalClose) return;
+    const data = event.data as ArrayBuffer | { type?: string; rms?: number };
+    if (data instanceof ArrayBuffer) {
+      if (this.options.browserAudio && this.options.requiresWebRtcOffer) return;
+      if (this.ready && this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(data);
+      } else if (!this.ready && !this.reconnecting) {
+        this.retainStartupFrame(data);
+      }
+      return;
+    }
+    if (data && data.type === "level" && typeof data.rms === "number") {
+      this.inputLevel = this.inputMeter.push(data.rms);
+      this.cb.onInputLevel?.(this.inputLevel);
+      const changed = this.inputActivity.update(data.rms);
+      this.sendMediaLevels(changed);
     }
   }
 
@@ -572,6 +667,7 @@ export class RealtimeAudioClient {
           JSON.stringify({
             type: "audio_start",
             sample_rate: this.ctx?.sampleRate ?? 48_000,
+            capture_started_at_ms: this.captureStartedAtMs,
             ...(this.webRtcOfferSdp
               ? { webrtc_offer_sdp: this.webRtcOfferSdp }
               : {}),
@@ -607,11 +703,16 @@ export class RealtimeAudioClient {
         } else if (type === "reconnecting") {
           this.reconnecting = true;
           this.ready = false;
+          this.controlReady = false;
+          this.startupNode?.port.postMessage({ type: "suspend" });
+          this.outputActivity.reset();
+          this.inputActivity.reset();
+          this.cb.onPlaybackState?.(false);
           this.startupPreroll = [];
           this.startupPrerollBytes = 0;
           this.playbackNode?.port.postMessage({ type: "flush" });
         } else if (type === "reconnect_offer") {
-          void this.webRtcTransport.createOffer(this.stream ?? undefined).then(sdp => {
+          void this.webRtcTransport.createOffer(this.rtcInput?.stream ?? this.stream ?? undefined).then(sdp => {
             if (sdp && socket.readyState === WebSocket.OPEN && !this.intentionalClose) {
               socket.send(JSON.stringify({ type: "reconnect_offer", request_id: message.request_id, sdp }));
             }
@@ -620,6 +721,7 @@ export class RealtimeAudioClient {
             this.cb.onStatus?.("provider_error", { error: "Voice reconnection failed." });
           });
         } else if (type === "audio_stopping") {
+          this.startupNode?.port.postMessage({ type: "suspend" });
           this.webRtcTransport.muteOutput();
           this.stream?.getAudioTracks().forEach(track => { track.enabled = false; });
         } else if (type === "audio_closed") {
@@ -629,12 +731,31 @@ export class RealtimeAudioClient {
           this.browserSpeech.cancel();
           this.playbackResampler?.reset();
           this.playbackNode?.port.postMessage({ type: "flush" });
+          if (this.options.browserAudio && !this.options.requiresWebRtcOffer) {
+            this.outputActivity.reset();
+            this.outputLevel = 0;
+            this.cb.onPlaybackState?.(false);
+            this.sendMediaLevels(true);
+          }
+        } else if (type === "input_prefix") {
+          try { this.receiveInputPrefix(message); }
+          catch (error) {
+            fail(error instanceof Error ? error : new Error(String(error)));
+            socket.close();
+          }
+          return;
         } else if (type === "audio_ready") {
+          // The local control channel can already relay levels while RTP
+          // finishes its handshake. Native and browser bars share this input.
+          this.controlReady = true;
+          this.sendMediaLevels(true);
           this.setOutputRate(message.output_sample_rate);
           void this.finishAudioReady(message)
             .then(() => {
               this.ready = true;
+              this.startupNode?.port.postMessage({ type: "start" });
               this.reconnecting = false;
+              this.sendMediaLevels(true);
               this.flushStartupPreroll();
               if (!settled) {
                 settled = true;
@@ -684,6 +805,33 @@ export class RealtimeAudioClient {
     ) {
       const dropped = this.startupPreroll.shift();
       this.startupPrerollBytes -= dropped?.byteLength ?? 0;
+    }
+  }
+
+  private receiveInputPrefix(message: RealtimeStatusPayload): void {
+    if (this.ready || this.reconnecting || this.receivedPrefix || !this.ctx) {
+      throw new Error("Unexpected wake audio prefix");
+    }
+    const rate = message.sample_rate;
+    const encoded = message.audio;
+    if (typeof rate !== "number" || !Number.isInteger(rate) || rate < 8_000 || rate > 192_000 ||
+        typeof encoded !== "string" || encoded.length > rate * 2 * 30 * 4 / 3 + 4) {
+      throw new Error("Invalid wake audio prefix");
+    }
+    const raw = atob(encoded);
+    if (raw.length % 2) throw new Error("Invalid wake PCM16 prefix");
+    const bytes = Uint8Array.from(raw, char => char.charCodeAt(0));
+    const resampler = new StreamingPcm16Resampler(rate, this.ctx.sampleRate);
+    const pcm = resampler.process(bytes.buffer);
+    this.receivedPrefix = true;
+    if (this.startupNode) {
+      const samples = Float32Array.from(new Int16Array(pcm), value => value / 32768);
+      this.startupNode.port.postMessage({ type: "prefix", samples }, [samples.buffer]);
+    } else {
+      // Gemini/local use the existing PCM socket, with the same once-only
+      // prefix ahead of the browser's already retained opening.
+      this.startupPreroll.unshift(pcm);
+      this.startupPrerollBytes += pcm.byteLength;
     }
   }
 
@@ -745,7 +893,7 @@ export class RealtimeAudioClient {
     if (converted.byteLength === 0) return;
     this.playbackNode?.port.postMessage({ type: "pcm", data: converted }, [converted]);
     this.lastPcmAt = performance.now();
-    this.cb.onAudio?.();
+    if (!this.options.browserAudio) this.cb.onAudio?.();
   }
 
   private handleBrowserSpeech(message: RealtimeStatusPayload): void {
@@ -792,9 +940,17 @@ export class RealtimeAudioClient {
   }
 
   private async teardown(sendStop: boolean): Promise<void> {
-    cancelAnimationFrame(this.mediaFrame);
+    if (this.remoteMeter) this.remoteMeter.port.onmessage = null;
+    this.remoteMeter?.disconnect();
+    this.remoteMeter = null;
     this.remoteSource?.disconnect();
     this.remoteSource = null;
+    this.outputActivity.reset();
+    this.inputActivity.reset();
+    this.inputLevel = 0;
+    this.outputLevel = 0;
+    this.lastMediaSendAt = Number.NEGATIVE_INFINITY;
+    this.cb.onPlaybackState?.(false);
     const socket = this.ws;
     this.ws = null;
     this.ready = false;
@@ -802,6 +958,13 @@ export class RealtimeAudioClient {
     // opening into the next connection attempt.
     this.startupPreroll = [];
     this.startupPrerollBytes = 0;
+    this.controlReady = false;
+    this.receivedPrefix = false;
+    this.startupNode?.port.postMessage({ type: "suspend" });
+    this.startupNode?.disconnect();
+    this.rtcInput?.stream.getTracks().forEach(track => track.stop());
+    this.startupNode = null;
+    this.rtcInput = null;
     if (sendStop && socket?.readyState === WebSocket.OPEN) {
       try {
         socket.send(JSON.stringify({ type: "audio_stop" }));

@@ -21,7 +21,10 @@ class LeadMessageAgentTool:
         "Send an INTERNAL chat message to one of the user's Jarvis agents by name or id. "
         "Use for 'send the Gmail agent a test message': this does NOT send email. "
         "No extra confirmation is needed for internal messages. For assigning work use "
-        "delegate_to_agent. Report queued, delivered or failed exactly as returned."
+        "delegate_to_agent, including 'tell X to test Y'. For 'ask X about Y', use kind "
+        "'query' and reply_policy='always'. Include relevant context and the precise "
+        "question; use kind 'say' and reply_policy='none' for information. "
+        "Report queued, delivered or failed exactly as returned; delivery is not completion."
     )
 
     def __init__(self, *, runtime_resolver: RuntimeResolver) -> None:

@@ -218,6 +218,21 @@ export function reduceThinkingSteps(
   const p = (payload ?? {}) as Record<string, unknown>;
 
   switch (eventName) {
+    case "ReasoningSummaryUpdated": {
+      const id = `reasoning:${str(p.response_id)}`;
+      const text = str(p.text).trim();
+      if (!text) return null;
+      const index = steps.findIndex(step => step.id === id);
+      const step: ThinkingStep = {
+        id, kind: "thought", labelKey: "thinking.step_thought", detail: text,
+        status: p.done === true ? "done" : "active",
+        startedTs: index >= 0 ? steps[index].startedTs : tsMs,
+      };
+      if (index < 0) return push(steps, step);
+      const next = [...steps];
+      next[index] = step;
+      return next;
+    }
     case "BrainTurnStarted": {
       // The fallback chain may publish several BrainTurnStarted per turn —
       // close the previous attempt before opening the next one.

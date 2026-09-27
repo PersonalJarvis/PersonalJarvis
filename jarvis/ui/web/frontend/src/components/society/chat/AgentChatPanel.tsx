@@ -1,10 +1,11 @@
 import { PairConversationBoundary } from "@/components/agentchat/PairConversation";
 import { AgentMessageActivity, ChatActivity, RoutineActivity, routineTask } from "./ChatActivity";
+import { MemoryUpdateNotice } from "./MemoryUpdateNotice";
 import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentchat/useOutgoingMessages";
 /**
  * The model card's chat column, kept deliberately plain (maintainer,
  * 2026-09-02): bubbles, a time stamp, one pill-shaped composer with a "+"
- * for files and voice, and the model — and nothing else.
+ * for files and voice, the model and the thinking effort — and nothing else.
  *
  * For Jarvis the column speaks to the SAME store the front page and the
  * voice stage use (`useAgentChatStore`, the "jarvis" surface): one history,
@@ -22,6 +23,10 @@ import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentch
  * runner can drive. The header says so while voice is showing.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useRoutineNavigation } from "./routineNavigation";
+import { notifyRoutineChanged } from "../cardData";
+import { routineTaskId } from "./routineExecution";
+import { RoutineChatHost } from "./RoutineChatHost";
 import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 
@@ -136,7 +141,12 @@ export function itemsForOpenSession(
 }
 
 export function AgentChatPanel(props: AgentChatPanelProps) {
-  return <PairConversationBoundary key={props.agent.agentId} recipient={{ id: props.agent.agentId, name: props.agent.name }}><AgentChatPanelContent {...props} /></PairConversationBoundary>;
+  const disconnect = useCallback(() => {
+    (props.agent.tier === "lead" ? useAgentChatStore : useSocietyChatStore).getState().disconnect();
+  }, [props.agent.tier]);
+  return <PairConversationBoundary key={props.agent.agentId} recipient={{ id: props.agent.agentId, name: props.agent.name }}>
+    <RoutineChatHost agentId={props.agent.agentId} onOpen={disconnect}><AgentChatPanelContent {...props} /></RoutineChatHost>
+  </PairConversationBoundary>;
 }
 
 function AgentChatPanelContent({ agent, roster }: AgentChatPanelProps) {
@@ -186,6 +196,27 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
   const sessionId = agent.chatSessionId;
   const sessionReady = Boolean(sessionId) && activeSessionId === sessionId;
   const visibleItems = itemsForOpenSession(sessionId, activeSessionId, items);
+  const refreshedRoutineReceipts = useRef(new Set<string>());
+  useEffect(() => {
+    for (const item of visibleItems) {
+      if (item.type === "turn") {
+        for (const block of item.blocks) {
+          if (block.kind !== "tool" || block.name !== "society_propose_change" || block.output === null || block.isError) continue;
+          const input = block.input as { kind?: string; mode?: string } | null;
+          if (input?.kind !== "routine" || input.mode !== "apply") continue;
+          const key = `tool:${block.callId}`;
+          if (refreshedRoutineReceipts.current.has(key)) continue;
+          refreshedRoutineReceipts.current.add(key);
+          notifyRoutineChanged(agent.agentId);
+        }
+      } else if (item.type === "notice" && item.kind === "proposal" && item.resolved === "applied" && item.data.proposal_kind === "routine") {
+        const key = `proposal:${item.id}`;
+        if (refreshedRoutineReceipts.current.has(key)) continue;
+        refreshedRoutineReceipts.current.add(key);
+        notifyRoutineChanged(agent.agentId);
+      }
+    }
+  }, [visibleItems, agent.agentId]);
   const outgoing = useOutgoingMessages(sessionReady ? agent.agentId : null);
   const allItems = useMemo(() => mergeOutgoingMessages(
     visibleItems, outgoing, agent.agentId, agent.name,
@@ -346,6 +377,7 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
     <div className="grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2 border-b border-border px-3 py-2">
       <div className="flex min-w-0 items-center gap-2">
         <ModelPicker />
+        <EffortPicker />
       </div>
       <JarvisModeSwitch mode={mode} onPick={pickMode} />
       <div className="flex items-center justify-end">
@@ -558,6 +590,41 @@ function ModelPicker() {
   );
 }
 
+function EffortPicker() {
+  const t = useT();
+  const draft = useAgentChat((s) => s.draft);
+  const providerById = useAgentChat((s) => s.providerById);
+  const setDraft = useAgentChat((s) => s.setDraft);
+  const locks = useAgentChat((s) => s.locks);
+  const provider = providerById(draft.provider);
+  const levels = provider?.effort_levels ?? [];
+  if (levels.length === 0) return null;
+  return (
+    <div role="radiogroup" aria-label={t("society.chat.effort")} className="inline-flex rounded-full border border-border p-0.5">
+      {levels.map((level) => {
+        const value = level || "";
+        const on = (draft.effort || "") === value;
+        return (
+          <button
+            key={level || "default"}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            disabled={Boolean(locks?.effort)}
+            onClick={() => void setDraft({ effort: value })}
+            className={cn(
+              "rounded-full px-2 py-0.5 text-xs capitalize transition-colors disabled:opacity-60",
+              on ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {level || t("society.chat.effort_default")}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // transcript
 // ---------------------------------------------------------------------------
@@ -574,6 +641,7 @@ export function Transcript({
   onDecide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
 }) {
   const t = useT();
+  const sessionId = useAgentChat((state) => state.activeSessionId);
   // Follow the newest while the view sits at the end — the rule every
   // conversation surface shares (hooks/useStickToBottom). This used to scroll
   // a bottom sentinel into view on `[items.length, busy]` only, so a
@@ -613,7 +681,7 @@ export function Transcript({
               {item.type === "internal" ? (
                 <AgentMessageActivity item={item} roster={roster} />
               ) : item.type === "user" ? (
-                <UserBubble item={item} />
+                <UserBubble item={item} agentId={agent.agentId} sessionId={sessionId ?? agent.chatSessionId ?? undefined} />
               ) : item.type === "turn" ? (
                 <TurnBubble item={item} onDecide={onDecide} />
               ) : item.type === "notice" ? (
@@ -651,6 +719,7 @@ function TimeStamp({ ms }: { ms: number }) {
  */
 function NoticeLine({ item }: { item: NoticeItem }) {
   const t = useT();
+  if (item.kind === "memory_updated") return <MemoryUpdateNotice item={item} />;
   if (item.kind === "native_goal_verdict") return <p className="py-1 text-xs text-muted-foreground">{t("slash.verifying")}</p>;
   const headline =
     item.kind === "society_result"
@@ -841,13 +910,17 @@ function visibleUserText(text: string): string {
     .trimEnd();
 }
 
-export function UserBubble({ item }: { item: UserItem }) {
+export function UserBubble({ item, agentId, sessionId }: { item: UserItem; agentId?: string; sessionId?: string }) {
   const t = useT();
   const choices = messageChoices(item);
   const text = visibleUserText(item.text);
   if (item.origin === "control") return <div className="self-start px-1 py-2 text-xs text-muted-foreground">{t("slash.control_turn")}{item.attachments.map((file) => <span key={file.name} className="ml-2">{file.name}</span>)}</div>;
   const task = routineTask(item.text);
-  if (task !== null && item.attachments.length === 0) return <RoutineActivity task={task} original={item.text} />;
+  if (task !== null && item.attachments.length === 0) return <RoutineActivity task={task} original={item.text}
+    onOpen={agentId && sessionId ? () => useRoutineNavigation.getState().open({
+      agentId, sessionId, title: task.split(/\r?\n/)[0], timestamp: item.tsMs,
+      ...(!sessionId.includes(":routine:") ? { legacy: { taskId: routineTaskId(item.text)!, messageId: item.id } } : {}),
+    }) : undefined} />;
   return (
     <div className="flex min-w-0 max-w-[min(85%,42rem)] flex-col items-end gap-1 self-end">
       <div className="min-w-0 rounded-2xl rounded-br-md bg-secondary px-4 py-2.5 text-sm leading-relaxed text-foreground [overflow-wrap:anywhere]">

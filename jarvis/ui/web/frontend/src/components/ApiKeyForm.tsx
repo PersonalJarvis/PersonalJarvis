@@ -40,6 +40,8 @@ interface ApiKeyFormProps {
    * already answered.
    */
   coveredNote?: string | null;
+  /** A shared family slot may be the primary credential, not a dedicated override. */
+  coveredEditLabel?: string;
   /**
    * Labels of the OTHER provider surfaces that read this same slot at
    * runtime. Non-empty ⇒ deleting asks for confirmation, because the delete
@@ -86,7 +88,7 @@ function announceSecretChange(secretKey: string, action: "set" | "delete") {
  * existing value. Writes directly to POST /api/secrets/{key}; the value
  * never leaves the frontend again after submit (read-only flag in the backend).
  */
-export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp, effectiveConfigured, coveredNote, sharedWith, testAfterSave, onChanged, onSavedActivate }: ApiKeyFormProps) {
+export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp, effectiveConfigured, coveredNote, coveredEditLabel, sharedWith, testAfterSave, onChanged, onSavedActivate }: ApiKeyFormProps) {
   const t = useT();
   const [value, setValue] = useState("");
   const [pending, setPending] = useState(false);
@@ -344,7 +346,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
           {coveredNote || t("apikeys_view.shared_key_covered")}
         </p>
         <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
-          {t("apikeys_view.add_dedicated_key")}
+          {coveredEditLabel || t("apikeys_view.add_dedicated_key")}
         </Button>
         {dashboardLink}
       </div>

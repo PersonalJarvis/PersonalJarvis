@@ -92,7 +92,7 @@ router = APIRouter(prefix="/api/agent-chat", tags=["agent-chat"])
 @router.get("/commands", summary="List chat slash commands and their availability")
 async def list_chat_commands(request: Request, session_id: str | None = None) -> dict[str, Any]:
     try:
-        return await asyncio.to_thread(_service(request).controls.catalog, session_id)
+        return _service(request).controls.catalog(session_id)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
 
@@ -100,8 +100,7 @@ async def list_chat_commands(request: Request, session_id: str | None = None) ->
 @router.get("/sessions/{session_id}/control", summary="Read this chat's mode and goal state")
 async def get_chat_control(session_id: str, request: Request) -> dict[str, Any]:
     try:
-        state = await asyncio.to_thread(_service(request).controls.state, session_id)
-        return state.model_dump()
+        return _service(request).controls.state(session_id).model_dump()
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
 
@@ -237,7 +236,13 @@ def _validate_cwd(raw: str | None) -> str | None:
 
 
 @router.get("/catalog")
-async def get_catalog(request: Request, surface: SurfaceName = "agent") -> dict[str, Any]:
+async def get_catalog(
+    request: Request,
+    surface: SurfaceName = "agent",
+    account_id: str = "",
+    session_id: str = "",
+    cwd: str | None = None,
+) -> dict[str, Any]:
     """Provider rows for the composer's picker.
 
     Static shape from ``jarvis.agent_chat.catalog`` plus two live facts per
@@ -254,7 +259,26 @@ async def get_catalog(request: Request, surface: SurfaceName = "agent") -> dict[
     svc = _service(request)
     rows: list[dict[str, Any]] = []
     cli_seats = kit_for(surface).cli_seats
-    live_models = await _live_cli_models() if cli_seats else {}
+    from jarvis.agent_chat.runner_cli import cli_catalog_scope
+
+    if session_id:
+        session = svc.store.get_session(session_id)
+        if session is None or session.surface != surface:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+        account_id = session.account_id
+        cwd = session.cwd
+    if account_id:
+        from jarvis import agent_accounts
+
+        if agent_accounts.resolve(account_id) is None:
+            raise HTTPException(status_code=400, detail="Unknown subscription account")
+    folder = _validate_cwd(cwd)
+    with cli_catalog_scope(
+        account_id=account_id,
+        cwd=Path(folder) if folder else None,
+        ignore_user_config=kit_for(surface).brain_runner and cli_seats,
+    ):
+        live_models = await _live_cli_models() if cli_seats else {}
     for row in rows_for(surface):
         d = row.to_dict()
         runner = resolve_runner(row.id, surface=surface)
@@ -262,7 +286,7 @@ async def get_catalog(request: Request, surface: SurfaceName = "agent") -> dict[
         d["cli_installed"] = _cli_installed(runner) if runner not in ("api", "brain") else None
         # A CLI that publishes its own model list (agy, Codex) overrides the
         # curated fallback with what THIS account can actually pick.
-        if d["cli_installed"] and runner in live_models and live_models[runner]:
+        if d["cli_installed"] and runner in live_models:
             d["curated_models"] = live_models[runner]
         # The dual row: Claude Code takes its own ids and aliases; with only
         # an API key — and on a surface with no CLI seats, always — the
@@ -794,11 +818,16 @@ async def cancel_turn(session_id: str, request: Request) -> dict[str, Any]:
     svc = _service(request)
     if svc.store.get_session(session_id) is None:
         raise HTTPException(status_code=404, detail="session not found")
+    session = svc.store.get_session(session_id)
     cancelled = svc.is_running(session_id)
-    if svc.store.get_session(session_id).surface in ("jarvis", "society"):
+    if session.surface in ("jarvis", "society"):
         await svc.controls.pause(session_id, "Stopped by the user")
     else:
         cancelled = await svc.cancel(session_id)
+    # The runner can already be gone while the transcript still shows Working.
+    # Closing that turn is what makes the stop button leave the chat.
+    if not svc.is_running(session_id):
+        cancelled = await svc.seal_stopped_turn(session_id) or cancelled
     return {"cancelled": cancelled, "session_id": session_id}
 
 

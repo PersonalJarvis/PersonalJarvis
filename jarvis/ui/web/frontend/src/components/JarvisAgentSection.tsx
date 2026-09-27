@@ -175,10 +175,13 @@ async function pollStatusUntilConnected(
 
 export function JarvisAgentSection({
   hideHeader = false,
+  subscriptionsOnly = false,
 }: {
   /** Suppress the section header — used inside the API-Keys "Subagents" tab,
    * whose category hero already shows the title (avoids a double label). */
   hideHeader?: boolean;
+  /** First-run setup shows subscription sign-ins without the full provider console. */
+  subscriptionsOnly?: boolean;
 } = {}) {
   const t = useT();
   const [bridge, setBridge] = useState<SubagentStatus | null>(null);
@@ -276,8 +279,9 @@ export function JarvisAgentSection({
   // Same rule as the provider tiers: own-hardware cards stay, plus whichever
   // card is the ACTIVE worker, so the tab can always show what is running.
   const isActiveRow = (r: SubagentMappingRow) => r.is_active_brain;
-  const { visible: localVisibleRows, hiddenCount: hiddenByLocalMode } =
-    filterForLocalMode(bridge.mapping, localMode, isActiveRow);
+  const { visible: localVisibleRows, hiddenCount: hiddenByLocalMode } = subscriptionsOnly
+    ? { visible: bridge.mapping, hiddenCount: 0 }
+    : filterForLocalMode(bridge.mapping, localMode, isActiveRow);
   const shown = new Set(localVisibleRows.map((r) => r.jarvis));
   const inLocalMode = (r: SubagentMappingRow | undefined) =>
     r && shown.has(r.jarvis) ? r : undefined;
@@ -328,6 +332,39 @@ export function JarvisAgentSection({
     expanded: openRow === id,
     onToggle: () => toggleRow(id),
   });
+
+  if (subscriptionsOnly) {
+    return (
+      <section className="space-y-3" data-testid="onboarding-subscription-list">
+        {hasSubscriptionColumn ? (
+          <AgentGroup
+            icon={Terminal}
+            title={t("onboarding.api_keys.agents_subscriptions_label")}
+            hint={t("onboarding.api_keys.agents_subscriptions_hint")}
+            testId="agent-group-clis"
+          >
+            {codexRow && (
+              <CodexConnectionCard status={codexStatus} row={codexRow} onChanged={reload} {...disclosure("openai-codex")} />
+            )}
+            {antigravityRow && (
+              <AntigravityConnectionCard status={antigravityStatus} row={antigravityRow} onChanged={reload} {...disclosure("antigravity")} />
+            )}
+            {claudeRow && (
+              <ClaudeConnectionCard status={claudeStatus} row={claudeRow} onChanged={reload} {...disclosure("claude-api:sub")} />
+            )}
+            {grokBuildRow && (
+              <GrokBuildConnectionCard status={grokBuildStatus} row={grokBuildRow} onChanged={reload} {...disclosure("grok-build")} />
+            )}
+            {subProviderRows.map((row) => (
+              <SubagentProviderCard key={row.jarvis} row={row} onSwitched={reload} {...disclosure(row.jarvis)} />
+            ))}
+          </AgentGroup>
+        ) : (
+          <p className="text-sm text-muted-foreground">{t("onboarding.api_keys.agents_unavailable")}</p>
+        )}
+      </section>
+    );
+  }
 
   return (
     <section className="space-y-4">

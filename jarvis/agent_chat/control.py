@@ -366,7 +366,9 @@ class ChatControls:
         executor = getattr(brain, "_tool_executor", None)
         if runtime is None or executor is None:
             raise ValueError("Agent tools are still starting")
-        agent_id = sid.removeprefix("society:") if session.surface == "society" else "jarvis"
+        from jarvis.society.surface import agent_id_of
+
+        agent_id = (agent_id_of(sid) or "") if session.surface == "society" else "jarvis"
         tool: Any
         if command == "message":
             match = re.fullmatch(r'@(?P<target>"[^"]+"|\S+)\s+(?P<text>[\s\S]+)', arguments)
@@ -707,7 +709,6 @@ class ChatControls:
                     if relevant(event):
                         return json.dumps(event["payload"], ensure_ascii=False)
         except TimeoutError:
-            # The returned message explicitly reports that the polling window elapsed.
             return "No background update yet. Check the existing task; do not submit it again."
         finally:
             self.service.unsubscribe(sid, queue)

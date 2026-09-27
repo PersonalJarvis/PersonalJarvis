@@ -31,6 +31,8 @@ class LiveConfig(BaseModel):
                 "not completion. Use discover_tools and call_tool for additional capabilities. "
                 "A superseded result describes earlier work, not the latest request; reconcile "
                 "the actual outcome with the latest correction without blindly repeating actions. "
+                "Discover only the tools needed for the current task using a few English "
+                "keywords; reuse their schemas and still-current results from this conversation. "
                 "Read tool schemas before calling. Do not bypass denied actions. "
                 "Computer-use tasks use the selected thinking model and the same credential. "
                 + self.backend_instructions
@@ -39,7 +41,7 @@ class LiveConfig(BaseModel):
             "parallel_tool_calls": False,
         }
         if self.reasoning_effort:
-            backend["reasoning"] = {"effort": self.reasoning_effort}
+            backend["reasoning"] = {"effort": self.reasoning_effort, "summary": "auto"}
         language_rule = (
             "Use the user's language and follow explicit language changes. "
             if language == "auto"

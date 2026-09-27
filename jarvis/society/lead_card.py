@@ -31,6 +31,7 @@ from collections.abc import Callable, Sequence
 from typing import Final
 
 from .capabilities import CapabilityRow
+from .communication import COMMUNICATION_GUIDANCE
 from .roster import LEAD_AGENT_ID, AgentRecord
 from .runtime import current_runtime
 
@@ -77,6 +78,8 @@ def _rule_block(lead_name: str) -> str:
         "work the user explicitly asked to run in the background that no agent covers.\n"
         "- Create or reconfigure an agent only when requested: use society-create-agent, "
         "society-update-agent or society-switch-agent-model through the app commands. "
+        "A teammate that creates another agent copies its own model seat and permission "
+        "setup onto the new agent unless a different model is requested. "
         "Inspect society-capability-catalog for capabilities and society-agent-catalog "
         "for models. These commands share the "
         "Agents section's validation. Verify the returned state before claiming success.\n"
@@ -144,7 +147,7 @@ def render_lead_card(
         key=lambda a: a.name.casefold(),
     )
     by_id = {row.id: row for row in catalog if row.connected}
-    parts: list[str] = [CARD_TITLE, _rule_block(lead_name)]
+    parts: list[str] = [CARD_TITLE, _rule_block(lead_name), COMMUNICATION_GUIDANCE]
     if team:
         lines = ["Agents (name — title · tier · state · hands):"]
         for agent in team:
@@ -226,7 +229,7 @@ def society_owns_task(text: str) -> bool:
         return False
 
 
-def lead_card_section(*, lead_name: str = "Jarvis", include_learning: bool = True) -> str:
+def lead_card_section(*, lead_name: str = "Jarvis") -> str:
     """The card for THIS process's society, or ``""`` when there is none.
 
     Read by ``BrainManager._build_system_prompt`` on every prompt build; it
@@ -243,7 +246,7 @@ def lead_card_section(*, lead_name: str = "Jarvis", include_learning: bool = Tru
     except Exception:  # noqa: BLE001 — the card is a convenience; the turn must run without it
         log.warning("society: lead card unavailable", exc_info=True)
         return ""
-    card = render_lead_card(
+    return render_lead_card(
         agents,
         catalog,
         lead_name=lead_name,
@@ -251,12 +254,3 @@ def lead_card_section(*, lead_name: str = "Jarvis", include_learning: bool = Tru
         busy=busy,
         terminals=_terminal_names(),
     )
-    if include_learning:
-        card += "\n" + str(getattr(rt, "lead_learning_context", ""))
-    return card
-
-
-def lead_learning_section() -> str:
-    """IO-free snapshot for realtime voice; refreshed by background learning."""
-    runtime = current_runtime()
-    return str(getattr(runtime, "lead_learning_context", "")) if runtime is not None else ""

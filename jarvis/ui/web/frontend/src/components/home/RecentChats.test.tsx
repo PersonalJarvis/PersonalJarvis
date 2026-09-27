@@ -167,11 +167,9 @@ describe("RecentChats", () => {
 });
 
 describe("compact chat labels", () => {
-  it("leaves a short title readable and bounds long prompt-like titles", () => {
+  it("keeps the whole title so a wider sidebar can show more of it", () => {
     expect(compactChatTitle("Review agent routines")).toBe("Review agent routines");
-    const compact = compactChatTitle("Verify the GitHub marketplace plugin with one read-only request and report the results");
-    expect(Array.from(compact).length).toBeLessThanOrEqual(43);
-    expect(compact.endsWith("…")).toBe(true);
-    expect(compact.split(" ").length).toBeLessThanOrEqual(6);
+    const title = "Verify the GitHub marketplace plugin with one read-only request and report the results";
+    expect(compactChatTitle(`  ${title}  `)).toBe(title);
   });
 });

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Gigi companion mark proposal">
+  <g stroke="#ffc83d" stroke-width="2.5" stroke-linejoin="round">
+    <ellipse cx="22" cy="58" rx="8" ry="13" fill="#292c32"/>
+    <ellipse cx="106" cy="58" rx="8" ry="13" fill="#292c32"/>
+    <path d="M25 51C25 0 103 0 103 51V108L90 117L77 106L64 117L51 106L38 117L25 108Z" fill="#20242b"/>
+  </g>
+  <path d="M29 53C29 7 99 7 99 53V68H29Z" fill="#0d1118"/>
+  <path d="M27 72H101" stroke="#c49938" stroke-width="1.5"/>
+  <g fill="#ffcf45">
+    <ellipse cx="48" cy="53" rx="9" ry="13"/>
+    <ellipse cx="80" cy="53" rx="9" ry="13"/>
+    <rect x="17" y="51" width="3" height="14" rx="1.5"/>
+    <rect x="108" y="51" width="3" height="14" rx="1.5"/>
+    <path d="M24 79Q13 92 20 100Q25 100 27 86Z"/>
+    <path d="M104 79Q115 92 108 100Q103 100 101 86Z"/>
+  </g>
+  <g fill="#070a10">
+    <ellipse cx="49" cy="56" rx="4" ry="8"/>
+    <ellipse cx="81" cy="56" rx="4" ry="8"/>
+  </g>
+  <g fill="#fff7dd"><circle cx="51" cy="46" r="2.3"/><circle cx="83" cy="46" r="2.3"/></g>
+  <ellipse cx="64" cy="84" rx="4" ry="6" fill="none" stroke="#ffcf45" stroke-width="2"/>
+</svg>

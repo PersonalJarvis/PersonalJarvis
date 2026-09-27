@@ -117,6 +117,28 @@ class TranscriptionUpdate(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class VoiceTranscriptUpdated(Event):
+    """Idempotent caption snapshot for one continuous-voice speech segment."""
+
+    session_id: str = ""
+    segment_id: str = ""
+    role: Literal["user", "assistant"] = "user"
+    text: str = ""
+    start_ms: int = 0
+    end_ms: int = 0
+    revision: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class ReasoningSummaryUpdated(Event):
+    """Provider-exposed reasoning summary, never private reasoning or audio."""
+
+    response_id: str = ""
+    text: str = ""
+    done: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class TranscriptPolished(Event):
     """A finished voice turn, re-read and written out as prose.
 
@@ -1558,7 +1580,7 @@ class BrainTTFT(Event):
 
 @dataclass(frozen=True, slots=True)
 class AudioOutFirst(Event):
-    """The WASAPI player sent the first sample to the output device.
+    """The native player or browser playback began audible output.
 
     Last stage event of a voice turn; marks TTFW = audio audible to the user.
     """

@@ -22,7 +22,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shutil
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
@@ -102,6 +104,49 @@ def resolve_runner(provider: str, *, surface: str = "agent") -> str:
 #: brand. Bump — and add a branch in ``_retire_cli_seats``' caller — only for
 #: another migration that rewrites what a person picked.
 _CLI_SEATS_RETIRED: Final[int] = 1
+
+
+def stop_cli_at_cwd(cwd: str) -> int:
+    """Stop a leftover chat CLI whose working folder is exactly ``cwd``.
+
+    Used when the stop button finds no in-memory turn. The match is one
+    command-line argument, not a substring of the prompt, so a mention of
+    the folder inside the task text does not count.
+    """
+    root = Path(cwd).expanduser()
+    try:
+        root = root.resolve()
+    except OSError:
+        return 0
+    if not root.is_dir():
+        return 0
+    needles = {str(root).rstrip("\\/"), str(root).replace("\\", "/").rstrip("/")}
+    if all(len(item) < 16 for item in needles):
+        return 0
+    try:
+        import psutil
+    except ImportError:
+        log.warning("agent chat: cannot stop a leftover CLI without psutil")
+        return 0
+    import os
+
+    me = {os.getpid(), os.getppid()}
+    stopped = 0
+    for proc in psutil.process_iter(["pid", "cmdline"]):
+        pid = proc.info.get("pid")
+        if pid in me:
+            continue
+        parts = [str(part).rstrip("\\/") for part in (proc.info.get("cmdline") or [])]
+        if not any(needle in parts for needle in needles):
+            continue
+        try:
+            for child in proc.children(recursive=True):
+                child.terminate()
+            proc.terminate()
+            stopped += 1
+        except Exception:
+            log.warning("agent chat: could not stop leftover CLI %s", pid, exc_info=True)
+    return stopped
 
 
 class _Running:
@@ -267,6 +312,52 @@ class AgentChatService:
         run = self._running.get(session_id)
         return bool(run and run.task and not run.task.done())
 
+    async def seal_stopped_turn(self, session_id: str) -> bool:
+        """Close a turn the stop button can still see after its runner is gone.
+
+        A restart keeps the transcript and drops the in-memory task. The CLI
+        can still be working. Stop has to end that turn, or the button does
+        nothing and the chat stays on Working.
+        """
+        if self.is_running(session_id):
+            return False
+        events = self.store.list_events(session_id)
+        turn_id = ""
+        started_ms = 0
+        for event in reversed(events):
+            kind = event["kind"]
+            payload = event.get("payload") or {}
+            if kind == "turn_finished":
+                return False
+            if kind == "turn_started":
+                turn_id = str(payload.get("turn_id") or "")
+                started_ms = int(event.get("ts_ms") or 0)
+                break
+        if not turn_id:
+            return False
+        now_ms = int(time.time() * 1000)
+        await self._emit(
+            session_id,
+            make_event(
+                "turn_finished",
+                {
+                    "turn_id": turn_id,
+                    "status": "cancelled",
+                    "duration_ms": max(0, now_ms - started_ms) if started_ms else 0,
+                    "usage": {},
+                    "error": None,
+                },
+            ),
+        )
+        session = self.store.get_session(session_id)
+        if session is not None and session.cwd:
+            await asyncio.to_thread(stop_cli_at_cwd, session.cwd)
+        if session is not None and session.surface in ("jarvis", "society"):
+            from jarvis.society.browser.tool import stop_chat_browser
+
+            await stop_chat_browser(session_id)
+        return True
+
     def pending_approvals(self, session_id: str) -> list[str]:
         return [aid for aid, sid in self._approval_session.items() if sid == session_id]
 
@@ -406,11 +497,17 @@ class AgentChatService:
             selection = worker_selection(getattr(manager, "_config", None))
             if selection is not None:
                 provider, selected_runner = subscription_seat(selection.provider) or (
-                    selection.provider, "brain"
+                    selection.provider,
+                    "brain",
                 )
                 if (session.provider, session.model) != (provider, selection.model or ""):
-                    session = replace(session, provider=provider, model=selection.model or "",
-                                      vendor_session=None, effort=selection.reasoning_effort)
+                    session = replace(
+                        session,
+                        provider=provider,
+                        model=selection.model or "",
+                        vendor_session=None,
+                        effort=selection.reasoning_effort,
+                    )
                     self.store.reseat_session(session_id, provider=provider, model=session.model)
         if (
             session.surface in ("jarvis", "society")
@@ -418,8 +515,6 @@ class AgentChatService:
             and incoming is None
             and not control_owned
         ):
-            import re
-
             from .control_types import COMMANDS
 
             command = re.match(r"^/([a-z]+)(?:\s|$)", text.strip())
@@ -453,6 +548,13 @@ class AgentChatService:
         # What the turn receives; ``text`` stays what the person typed so the
         # timeline shows their sentence rather than a page of extracted PDF.
         prompt = chat_attachments.compose(text, attached)
+        # Agent cards serialize Add selections as capability pins. Translate the
+        # browser pin to the same validated receipt used by the root composer.
+        if session.surface == "jarvis" and any(
+            "core:browser" in {item.strip() for item in match.split(",")}
+            for match in re.findall(r"(?m)^\[tools:\s*([^\]\r\n]+)\]\s*$", text)
+        ):
+            tool_choices = list(dict.fromkeys([*(tool_choices or []), "tool:society_browser"]))
         selected = []
         if tool_choices:
             if session.surface != "jarvis":
@@ -499,7 +601,11 @@ class AgentChatService:
                         ),
                         # What the person typed, when it differs from the prompt.
                         # Absent on an ordinary message, so nothing changes there.
-                        **({"typed": display_text if display_text is not None else text} if attached or display_text is not None else {}),
+                        **(
+                            {"typed": display_text if display_text is not None else text}
+                            if attached or display_text is not None
+                            else {}
+                        ),
                         **(
                             {
                                 "attachments": [
@@ -560,8 +666,13 @@ class AgentChatService:
         )
 
         async def _body() -> None:
+            started = time.monotonic()
             origin = ChatTurn(
-                session_id, turn_id, display_text if display_text is not None else text, direct_user and incoming is None, str(handle.trace_id)
+                session_id,
+                turn_id,
+                display_text if display_text is not None else text,
+                direct_user and incoming is None,
+                str(handle.trace_id),
             )
             origin_token = current_chat_turn.set(origin)
             try:
@@ -579,6 +690,8 @@ class AgentChatService:
                             **({"tool_choices": selected} if selected else {}),
                         )
                 elif supports_cli_runner(runner):
+                    from jarvis.agent_chat.tool_catalog import selection_briefing
+
                     # A CLI runs AS Jarvis — its own tools over MCP, its calls
                     # answered by the chat's approval card — only where the
                     # surface both is Jarvis and seats a CLI at all. The front
@@ -589,7 +702,7 @@ class AgentChatService:
                     as_jarvis = kit.brain_runner and kit.cli_seats
                     vendor = await run_cli_turn(
                         handle,
-                        prompt,
+                        prompt + selection_briefing(selected),
                         runner,
                         identity=as_jarvis,
                         bridge=self._bridge_for(bus) if as_jarvis else None,
@@ -624,7 +737,7 @@ class AgentChatService:
                         {
                             "turn_id": turn_id,
                             "status": "cancelled",
-                            "duration_ms": 0,
+                            "duration_ms": int((time.monotonic() - started) * 1000),
                             "usage": {},
                             "error": None,
                         },
@@ -647,6 +760,10 @@ class AgentChatService:
                     ),
                 )
             finally:
+                if session.surface in ("jarvis", "society"):
+                    from jarvis.society.browser.tool import stop_chat_browser
+
+                    await stop_chat_browser(session_id)
                 self._running.pop(session_id, None)
                 stored_session = self.store.get_session(session_id)
                 set_chat_read_only(
@@ -766,22 +883,34 @@ class AgentChatService:
         )
         return turn_id
 
-    async def cancel(self, session_id: str) -> bool:
+    def signal_cancel(self, session_id: str, *, expected_turn_id: str | None = None) -> bool:
+        """Stop planning synchronously before releasing an in-flight tool reply."""
         run = self._running.get(session_id)
         if run is None or run.task is None or run.task.done():
+            return False
+        # A resumed station must never cancel a newer unrelated conversation turn.
+        if expected_turn_id is not None and run.turn_id != expected_turn_id:
             return False
         run.cancel.set()
         for aid in self.pending_approvals(session_id):
             fut = self._approvals.get(aid)
             if fut is not None and not fut.done():
                 fut.set_result("cancel")
+        return True
+
+    async def cancel(self, session_id: str, *, expected_turn_id: str | None = None) -> bool:
+        run = self._running.get(session_id)
+        if not self.signal_cancel(session_id, expected_turn_id=expected_turn_id):
+            return False
+        assert run is not None and run.task is not None
         try:
             await asyncio.wait_for(asyncio.shield(run.task), timeout=15.0)
         except TimeoutError:
             run.task.cancel()
             await asyncio.gather(run.task, return_exceptions=True)
         except asyncio.CancelledError:
-            if asyncio.current_task().cancelling():
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
                 raise
         except Exception as exc:  # noqa: BLE001 — the task reported its own end already
             log.debug("agent chat cancel: task ended with %s", exc)

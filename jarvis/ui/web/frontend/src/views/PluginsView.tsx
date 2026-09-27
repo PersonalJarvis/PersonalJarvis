@@ -519,6 +519,29 @@ export function matchesQuery(plugin: Plugin, query: string): boolean {
   return words.every((word) => haystack.includes(word));
 }
 
+/** Prefix match on the fields a user types first: plugin name, catalog id,
+ *  and vendor family label. A single letter such as "G" must list only the
+ *  plugins starting with G in A-Z order (AA on top, AZ at the bottom) instead
+ *  of every plugin whose description happens to contain that letter. */
+export function matchesNamePrefix(plugin: Plugin, query: string): boolean {
+  const normalized = query.trim().toLowerCase();
+  if (normalized.length === 0) return true;
+  const name = plugin.name.toLowerCase();
+  if (name.startsWith(normalized)) return true;
+  const id = plugin.id.toLowerCase();
+  if (id.startsWith(normalized)) return true;
+  const family = oauthClientFamily(plugin)?.label.toLowerCase() ?? "";
+  if (family && family.startsWith(normalized)) return true;
+  return false;
+}
+
+/** A-Z by display name, case-insensitive. Used whenever a search query is
+ *  active so "G" lists Gmail before Google Drive instead of grouping by
+ *  category. */
+export function sortPluginsByName(a: Plugin, b: Plugin): number {
+  return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+}
+
 /** "attention" groups needs_reauth and error: both mean the same thing to the
  *  user — this plugin is listed but cannot be called until they act. */
 export function matchesStatus(plugin: Plugin, status: StatusFilterId): boolean {
@@ -887,6 +910,14 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
         : listFilter === "attention"
           ? attentionPlugins
           : allPlugins;
+    const inCategory = (p: Plugin) => filter === "all" || p.category === filter;
+    const trimmed = query.trim();
+    if (trimmed !== "") {
+      const candidates = base.filter(inCategory);
+      const prefixed = candidates.filter((p) => matchesNamePrefix(p, trimmed));
+      if (prefixed.length > 0) return [...prefixed].sort(sortPluginsByName);
+      return candidates.filter((p) => matchesQuery(p, trimmed)).sort(sortPluginsByName);
+    }
     const order = inDialog ? [...WINDOW_CATEGORY_ORDER, ...categoryOrder] : categoryOrder;
     const ranked = [...base].sort((a, b) =>
       order.indexOf(a.category) - order.indexOf(b.category)
@@ -894,7 +925,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
     );
     return ranked.filter((p) => {
       if (filter !== "all" && p.category !== filter) return false;
-      return matchesQuery(p, query);
+      return true;
     });
   }, [listFilter, query, filter, allPlugins, installed, attentionPlugins, categoryOrder, inDialog]);
 

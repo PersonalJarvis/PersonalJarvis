@@ -61,7 +61,7 @@ def test_every_chat_cli_seat_names_a_registered_ide_entry_in_the_ide_order() -> 
     assert [row.agent for row in catalog.cli_rows()] == _ide_coding_clis()
 
 
-def test_agent_and_jarvis_surfaces_offer_every_registered_cli_seat() -> None:
+def test_the_agent_and_jarvis_surfaces_offer_every_cli_seat() -> None:
     agent_ids = {row.id for row in catalog.rows_for("agent")}
     jarvis_ids = {row.id for row in catalog.rows_for("jarvis")}
     for row in catalog.cli_rows():
@@ -76,22 +76,15 @@ def test_a_cli_the_ide_dropped_leaves_the_picker(monkeypatch: pytest.MonkeyPatch
     assert "opencode" in ids and "openai" in ids
 
 
-def test_resolve_runner_names_each_clis_own_runner() -> None:
+@pytest.mark.parametrize("surface", ["agent", "jarvis"])
+def test_resolve_runner_names_each_clis_own_runner(surface: str) -> None:
     from jarvis.agent_chat.service import resolve_runner
 
-    assert resolve_runner("opencode") == "opencode-cli"
-    assert resolve_runner("kimi") == "kimi-cli"
-    assert resolve_runner("glm") == "glm-cli"
-    assert resolve_runner("deepseek-harness") == "dsh-cli"
-    assert resolve_runner("cursor") == "cursor-cli"
-    for pid, runner in {
-        "opencode": "opencode-cli",
-        "kimi": "kimi-cli",
-        "glm": "glm-cli",
-        "deepseek-harness": "dsh-cli",
-        "cursor": "cursor-cli",
-    }.items():
-        assert resolve_runner(pid, surface="jarvis") == runner
+    assert resolve_runner("opencode", surface=surface) == "opencode-cli"
+    assert resolve_runner("kimi", surface=surface) == "kimi-cli"
+    assert resolve_runner("glm", surface=surface) == "glm-cli"
+    assert resolve_runner("deepseek-harness", surface=surface) == "dsh-cli"
+    assert resolve_runner("cursor", surface=surface) == "cursor-cli"
 
 
 def test_the_row_dict_carries_the_registry_key() -> None:

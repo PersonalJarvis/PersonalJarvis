@@ -38,7 +38,6 @@ def available(kind: str) -> bool:
     try:
         return find_spec(module) is not None
     except (ModuleNotFoundError, ValueError):
-        # Optional modules without an importable specification are unavailable capabilities.
         return False
 
 

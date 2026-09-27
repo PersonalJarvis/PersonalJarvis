@@ -1,4 +1,4 @@
-import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, memo, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Brain, Check, ChevronRight, CircleAlert, CircleDashed, FilePenLine, FileText, FolderSearch, ShieldQuestion, Terminal } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -9,7 +9,7 @@ import type { ReasoningBlock, TextBlock, ToolBlock, TurnBlock, TurnItem, TurnSta
 import { ChatMarkdown } from "./ChatMarkdown";
 import { toolDiff } from "./toolDiff";
 import { formatTokens, outputTokens } from "./toolView";
-import { activityParts, traceToolIdentity } from "./traceActivity";
+import { activityParts, traceToolIdentity, traceToolName } from "./traceActivity";
 import { ToolChoiceIcon } from "./ToolChoiceChips";
 import { toolIdentityStyle } from "./toolIdentity";
 import "./WorkTrace.css";
@@ -75,8 +75,9 @@ export function groupConversationTrace(blocks: TurnBlock[]): Group[] {
 
 /**
  * The last assistant reply stays in the conversation. Narration between
- * tools, and every tool or thought before that reply, is foldable work.
- * Failures after the reply stay after it.
+ * tools, every tool or thought before that reply, and every tool or thought
+ * after it is foldable work — including failures and interruptions. Only
+ * pending approvals stay out: they ask the person to act.
  */
 export function splitConversationTurn(blocks: TurnBlock[]): { work: TurnBlock[]; answer: TextBlock[]; after: TurnBlock[] } {
   let lastText = -1;
@@ -97,13 +98,16 @@ export function splitConversationTurn(blocks: TurnBlock[]): { work: TurnBlock[];
   };
 }
 
-function isAttentionBlock(block: TurnBlock): block is ToolBlock {
-  return block.kind === "tool" && attention(block);
+function isPendingApproval(block: TurnBlock): block is ToolBlock {
+  return block.kind === "tool" && Boolean(block.approval && block.approval.decision === null);
 }
 
 function hasFoldableWork(blocks: TurnBlock[]): boolean {
   return blocks.some((block) => {
-    if (isAttentionBlock(block)) return false;
+    // Only a pending approval keeps its row outside the fold — it asks the
+    // person to act. Failures and interruptions fold like any other work:
+    // the finished conversation shows the reply, the toggle reveals the rest.
+    if (isPendingApproval(block)) return false;
     return block.kind !== "text" || Boolean(block.text.trim());
   });
 }
@@ -138,15 +142,25 @@ function pretty(value: unknown): string {
 const rowButton = "group/trace flex w-full min-w-0 items-start gap-2.5 rounded-md py-2 text-left text-[13px] leading-6 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:text-foreground";
 const iconClass = "mt-0.5 h-4 w-4 shrink-0";
 
+/**
+ * While a conversation work fold is open, every disclosure inside it starts
+ * open — one tap on "Thought for …" reveals the whole chain, not one more
+ * level of chevrons. The sequence counts fold openings (0 = no open fold
+ * above): reopening the fold resets inner rows to open, while a row the
+ * person toggled by hand keeps its choice until then.
+ */
+const FoldExpandContext = createContext(0);
+
 function Disclosure({ label, children, forced = false, initiallyOpen = false, icon, trailing, tone, summary, resetKey = "" }: {
   label: ReactNode; children?: ReactNode; forced?: boolean; initiallyOpen?: boolean;
   icon: ReactNode; trailing?: ReactNode; tone?: string; summary?: ReactNode; resetKey?: string;
 }) {
   const id = useId();
+  const foldSeq = useContext(FoldExpandContext);
   // A manual choice during a live turn must not prevent completion folding.
-  const phase = `${initiallyOpen}:${resetKey}`;
+  const phase = `${initiallyOpen}:${resetKey}:${foldSeq}`;
   const [choice, setChoice] = useState<{ phase: string; open: boolean } | null>(null);
-  const open = forced || (choice?.phase === phase ? choice.open : initiallyOpen);
+  const open = forced || (choice?.phase === phase ? choice.open : foldSeq > 0 || initiallyOpen);
   return (
     <div className={cn("min-w-0 text-muted-foreground", tone)}>
       <button type="button" className={rowButton} aria-expanded={children ? open : undefined}
@@ -200,21 +214,75 @@ export function ReasoningTrace({ block, turnLive, compact = false }: { block: Re
 
 function ToolDetails({ block }: { block: ToolBlock }) {
   const t = useT();
-  const diff = useMemo(() => toolDiff(block.name, block.input), [block.name, block.input]);
+  const diff = useMemo(() => toolDiff(block.name, block.input, block.output), [block.name, block.input, block.output]);
+  const memoryFile = useMemo(() => memoryFileFromBlock(block), [block]);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   return <div className="space-y-3 py-1 text-xs">
     <Detail label={t("work_trace.tool")} text={block.name} />
     {block.input !== undefined && block.input !== null ? <Detail label={t("work_trace.input")} text={pretty(block.input)} /> : null}
     {diff ? <div aria-label={t("work_trace.diff")} className="max-h-72 overflow-auto font-mono text-xs">
       {diff.map((file, i) => <div key={i} className="mb-2">
-        <p className="mb-1 [overflow-wrap:anywhere]">{file.path}</p>
+        <div className="mb-1 flex items-center gap-2 [overflow-wrap:anywhere]">
+          <p className="min-w-0 flex-1">{file.path}</p>
+          {memoryFile && file.path === memoryFile.path ? <button
+            type="button"
+            onClick={() => setMemoryOpen(true)}
+            className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >{t("society.chat.memory_open_file")}</button> : null}
+        </div>
         {file.lines.map((line, n) => <div key={n} className={cn("whitespace-pre-wrap [overflow-wrap:anywhere]", line.kind === "add" && "diff-line-add", line.kind === "del" && "diff-line-del")}>
           {line.kind === "add" ? "+ " : line.kind === "del" ? "− " : "  "}{line.text}
         </div>)}
         {file.truncated > 0 ? <p>{t("work_trace.truncated").replace("{count}", String(file.truncated))}</p> : null}
       </div>)}
     </div> : null}
+    {memoryFile && !diff ? <button
+      type="button"
+      onClick={() => setMemoryOpen(true)}
+      className="rounded-md border border-border px-2 py-1 text-[11px] text-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >{t("society.chat.memory_open_file")}: {memoryFile.path}</button> : null}
     {block.output !== null ? <Detail label={t(block.isError ? "work_trace.error" : "work_trace.output")} text={block.output || t("work_trace.empty_output")} /> : null}
+    {memoryOpen && memoryFile ? <MemoryFileDialog path={memoryFile.path} before={memoryFile.before} after={memoryFile.after} onClose={() => setMemoryOpen(false)} /> : null}
   </div>;
+}
+
+function memoryFileFromBlock(block: ToolBlock): { path: string; before?: string; after?: string } | null {
+  const key = traceToolName(block.name).toLowerCase().replace(/[-_]/g, "");
+  if (!/^(societywikinote|societymemoryrecall|remember|societymemory)$/.test(key)) return null;
+  const out = parseToolOutput(block.output);
+  const inputPath = typeof block.input === "object" && block.input !== null
+    ? String((block.input as Record<string, unknown>).path ?? "") : "";
+  const path = out?.path || inputPath;
+  if (!path || !path.startsWith("society/")) return null;
+  return { path, before: out?.before, after: out?.after };
+}
+
+function parseToolOutput(output: string | null): { path?: string; before?: string; after?: string } | null {
+  if (!output || !output.trim().startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(output) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object") return null;
+    const path = typeof parsed.path === "string" ? parsed.path : undefined;
+    const before = typeof parsed.before === "string" ? parsed.before : undefined;
+    const after = typeof parsed.after === "string" ? parsed.after : undefined;
+    if (!path && before === undefined && after === undefined) return null;
+    return { path, before, after };
+  } catch {
+    return null;
+  }
+}
+
+function MemoryFileDialog({ path, before, after, onClose }: { path: string; before?: string; after?: string; onClose: () => void }) {
+  const [Viewer, setViewer] = useState<React.ComponentType<{ path: string; before?: string; after?: string; onClose: () => void }> | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void import("@/components/society/chat/MemoryFileViewer").then((mod) => {
+      if (alive) setViewer(() => mod.MemoryFileViewer);
+    });
+    return () => { alive = false; };
+  }, []);
+  if (!Viewer) return null;
+  return <Viewer path={path} before={before} after={after} onClose={onClose} />;
 }
 
 function Detail({ label, text }: { label: string; text: string }) {
@@ -239,7 +307,7 @@ export const TraceTool = memo(function TraceTool({ block, status, onDecide }: { 
   const detail = description.detail || (typeof block.input === "object" && block.input !== null
     ? String((block.input as Record<string, unknown>).file_path ?? (block.input as Record<string, unknown>).path ?? "") : "");
   const state = pending ? "approval" : denied ? "denied" : block.isError ? "failed" : running ? "running" : block.output === null ? "interrupted" : "completed";
-  const ActionIcon = action === "command" ? Terminal : action === "edit" || action === "write" ? FilePenLine
+  const ActionIcon = action === "command" ? Terminal : action === "edit" || action === "write" || action === "memory" ? FilePenLine
     : action === "read" ? FileText : action === "search" || action === "list" ? FolderSearch : view.identity.Glyph;
   const Icon = pending ? ShieldQuestion : block.isError ? CircleAlert : ActionIcon;
   const decide = async (decision: ApprovalDecision) => {
@@ -292,7 +360,7 @@ function ActivityIcon({ blocks, live }: { blocks: TurnBlock[]; live: boolean }) 
   const first = activityParts(blocks.filter((block): block is ToolBlock => block.kind === "tool"))[0];
   if (first?.row) return <span className={cn("tool-identity mt-1 shrink-0", live && "motion-safe:animate-pulse")} style={toolIdentityStyle(first.row)}><ToolChoiceIcon row={first.row} size={16} /></span>;
   const Icon = live ? CircleDashed : first?.key === "activity_command" ? Terminal
-    : first?.key === "activity_edit" || first?.key === "activity_write" ? FilePenLine : first ? FileText : Brain;
+    : first?.key === "activity_edit" || first?.key === "activity_write" || first?.key === "activity_memory" ? FilePenLine : first ? FileText : Brain;
   return <Icon aria-hidden className={cn(iconClass, "mt-1", live && "motion-safe:animate-spin")} />;
 }
 
@@ -303,6 +371,8 @@ function ConversationWorkFold({ durationMs, attention, children }: {
   const t = useT();
   const id = useId();
   const [open, setOpen] = useState(false);
+  // Counts openings so inner disclosures expand all at once, every time.
+  const [seq, setSeq] = useState(0);
   const label = durationMs !== null && durationMs > 0
     ? t("work_trace.thought_for").replace("{duration}", traceDuration(durationMs))
     : t("work_trace.thought");
@@ -310,11 +380,14 @@ function ConversationWorkFold({ durationMs, attention, children }: {
     <div className="min-w-0" data-testid="conversation-work-fold" data-open={open ? "true" : "false"}>
       <button type="button" aria-expanded={open} aria-controls={id}
         className="group/fold mb-1 inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-1 text-left text-xs leading-5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        onClick={() => setOpen(!open)}>
+        onClick={() => {
+          if (!open) setSeq((s) => s + 1);
+          setOpen(!open);
+        }}>
         <ChevronRight aria-hidden className={cn("h-3 w-3 shrink-0 opacity-70 transition-transform group-hover/fold:opacity-100", open && "rotate-90")} />
         <span className="truncate">{label}</span>
       </button>
-      {open ? <div id={id}>{children}</div> : attention}
+      {open ? <div id={id}><FoldExpandContext.Provider value={seq}>{children}</FoldExpandContext.Provider></div> : attention}
     </div>
   );
 }
@@ -355,22 +428,43 @@ export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDeci
   const live = status === "running";
   const elapsed = useClock(startedMs, live);
   const split = useMemo(() => conversation && !live ? splitConversationTurn(blocks) : null, [blocks, conversation, live]);
-  const fold = split && hasFoldableWork(split.work) ? split : null;
-  const groups = useMemo(() => conversation ? groupConversationTrace(fold ? fold.work : blocks) : groupActivityTrace(blocks), [blocks, conversation, fold]);
-  const restGroups = useMemo(() => fold ? groupConversationTrace([...fold.answer, ...fold.after]) : null, [fold]);
+  // A finished conversation turn shows the reply and nothing else. All work
+  // — tools, thoughts, intermediate replies, failures, interruptions, and
+  // post-reply work — folds behind the "Thought for …" toggle. Pending
+  // approvals stay visible both ways: beside the toggle while it is closed
+  // (they need a tap) and inside the open chain.
+  const fold = useMemo(() => {
+    if (!split) return null;
+    const workAll = [...split.work, ...split.after];
+    if (!hasFoldableWork(workAll.filter((block) => !isPendingApproval(block)))) return null;
+    return {
+      answer: split.answer,
+      workAll,
+      approvals: workAll.filter(isPendingApproval),
+    };
+  }, [split]);
+  const groups = useMemo(() => conversation ? groupConversationTrace(fold ? fold.workAll : blocks) : groupActivityTrace(blocks), [blocks, conversation, fold]);
+  const restGroups = useMemo(() => fold ? groupConversationTrace(fold.answer) : null, [fold]);
   const pending = blocks.some(block => block.kind === "tool" && block.approval?.decision === null);
   const outcome = pending ? "approval" : live ? "working" : status === "error" ? "failed" : status === "cancelled" ? "stopped" : "done";
   const Icon = pending ? ShieldQuestion : live ? CircleDashed : status === "error" ? CircleAlert : Check;
   const groupProps = { live, status, onDecide, renderText, conversation };
+  // A turn-level error next to a reply folds with the work — it stays one
+  // tap away behind the toggle. With no reply the error IS the outcome, so
+  // it stays out where it always was.
+  const answered = fold ? fold.answer.length > 0 : blocks.some((block) => block.kind === "text" && block.text.trim());
+  const foldedError = fold && answered && error ? error : null;
+  const visibleError = error && !foldedError ? error : null;
   return <div className={cn("min-w-0 space-y-0.5", conversation && "w-full max-w-xl self-start", className)} data-testid="work-trace" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
-    {fold ? <ConversationWorkFold durationMs={durationMs} attention={fold.work.filter(isAttentionBlock).map(block =>
+    {fold ? <ConversationWorkFold durationMs={durationMs} attention={fold.approvals.map(block =>
       <div key={block.callId} className="w-full py-1 text-xs [&_button]:text-xs">
         <TraceTool block={block} status={status} onDecide={onDecide} />
       </div>)}>
       <TraceGroups groups={groups} {...groupProps} />
+      {foldedError ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{foldedError}</p> : null}
     </ConversationWorkFold> : <TraceGroups groups={groups} {...groupProps} />}
     {restGroups ? <TraceGroups groups={restGroups} {...groupProps} /> : null}
-    {error ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{error}</p> : null}
+    {visibleError ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{visibleError}</p> : null}
     <div role="status" aria-live="polite" className={cn("flex flex-wrap items-center gap-2 text-xs text-muted-foreground", conversation ? "px-1 pb-2 pt-1" : "border-t border-border pt-3", status === "error" && "text-destructive")}>
       <Icon aria-hidden className={cn("h-3.5 w-3.5", live && !pending && "motion-safe:animate-spin")} />
       <span>{outcome === "done" && completionLabel ? completionLabel : t(`work_trace.${outcome}`)}</span>

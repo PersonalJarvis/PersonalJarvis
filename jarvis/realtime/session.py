@@ -3137,9 +3137,16 @@ class RealtimeVoiceSession:
             return ()
 
     def _society_directive(self) -> str:
-        """Expose the current team and Jarvis' own cached learning without IO."""
-        from jarvis.society.lead_card import lead_learning_section
+        """Tell the live model which of the user's agents exist, by name.
 
+        The society twin of ``_workspace_directive``. Asked "welche Agents hast
+        du?" with a freshly created Gmail agent on the island, the live model
+        answered from the retired sub-agent system, and "Gmail agent, check my
+        inbox" went native because the name was typed into the Agents section
+        by the user and no vocabulary could hold it (2026-09-03). Names and the
+        routing rule only: the team card with each agent's hands lives with
+        the orchestrator, which owns delegate_to_agent and society_status.
+        """
         names = self._society_agent_names()
         roster = ", ".join(names) if names else "not loaded; use society_status to verify"
         return (
@@ -3157,7 +3164,12 @@ class RealtimeVoiceSession:
             "ask jarvis_action to use message_agent if it is not directly available. "
             "This is an internal chat message, not an email: never use gmail or "
             "another external messaging connector for it. Internal messages need "
-            "no extra confirmation. Use delegate_to_agent only for assigning work. "
+            "no extra confirmation. Use delegate_to_agent for assigning work, including "
+            "'tell X to test Y'; compose an actionable brief with known context, scope "
+            "and completion evidence. For 'ask X about Y', send a query requiring an answer. "
+            "Choose reply_policy: always for requested findings, on_error for blockers only, "
+            "none for information or explicit silence. Do not merely paraphrase the user "
+            "or invent missing facts. Delivery does not mean completion. "
             "Those are the user's OWN AGENTS from the Agents section (each with "
             "its own chat, tools and instructions) — not people you know, not "
             "coding terminals, and not the retired sub-agent system. When the "
@@ -3166,8 +3178,7 @@ class RealtimeVoiceSession:
             "one is doing: call your action function — the orchestrator holds "
             "the team card and delegates. Never answer that you do not know who "
             "that is, never guess what an agent is doing, and never say an agent "
-            "has been told anything unless your action function reported it.\n"
-            + lead_learning_section()
+            "has been told anything unless your action function reported it."
         )
 
     def _workspace_directive(self) -> str:

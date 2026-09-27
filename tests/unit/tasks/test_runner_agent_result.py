@@ -211,8 +211,8 @@ async def test_rub95_explicit_announce_on_success_still_speaks_once(
     assert announcements[0].kind == "subagent"
 
 
-async def test_a_failed_owner_seat_finishes_through_task_tools(store: TaskStore) -> None:
-    """A cancelled / tool-less owner seat is not the end of the routine."""
+async def test_a_failed_owner_seat_is_never_rerouted_onto_api(store: TaskStore) -> None:
+    """A society routine stays on its owner's seat: no silent API fallback."""
 
     async def owned_runner(task_id: str, tags: tuple[str, ...], prompt: str, cancel: Any):
         raise RuntimeError("cancelled")
@@ -240,16 +240,43 @@ async def test_a_failed_owner_seat_finishes_through_task_tools(store: TaskStore)
     task_id = await store.insert(spec)
     await asyncio.wait_for(runner.run(task_id, CancelToken()), timeout=2.0)
     row = await store.get(task_id)
+    assert row is not None and row["state"] == "failed"
+    assert brain.prompts == []
+    assert row["last_error"] is not None and "not rerouted" in row["last_error"]
+    assert delivered and delivered[0][2] == "failed"
+    assert announcements and "not rerouted" in announcements[0].text
+    seat_step = next(
+        s
+        for s in row["steps"]
+        if s["kind"] == "log" and s["payload"].get("event") == "owner_seat_failed"
+    )
+    assert seat_step["payload"]["fallback"] == "none"
+
+
+async def test_a_failed_owner_seat_still_falls_back_for_plain_tasks(store: TaskStore) -> None:
+    """Generic (non-society) tasks keep the task-tools fallback path."""
+
+    async def owned_runner(task_id: str, tags: tuple[str, ...], prompt: str, cancel: Any):
+        raise RuntimeError("cancelled")
+
+    brain = FakeAgentBrain()
+    runner = TaskRunner(store, EventBus(), agent_brain=brain, owned_agent_runner=owned_runner)
+    spec = TaskSpec(
+        title="Plain sweep",
+        trigger=TriggerAfterDelay(delay_seconds=0.01),
+        action=AgentAction(
+            prompt="Sort the inbox.",
+            plugin_grants=(PluginGrant(plugin_id="gmail", scope="read"),),
+        ),
+        tags=("team",),
+    )
+    task_id = await store.insert(spec)
+    await asyncio.wait_for(runner.run(task_id, CancelToken()), timeout=2.0)
+    row = await store.get(task_id)
     assert row is not None and row["state"] == "completed"
     assert brain.prompts and "Sort the inbox." in brain.prompts[0]
     assert brain.kwargs[0].get("prefer_api") is True
     assert brain.kwargs[0]["allowed_tools"] == ("gmail",)
-    assert delivered == [(("society", "agent:mailbox"), "Inbox sorted: 3 replies drafted.", "done")]
-    assert announcements == []
-    assert any(
-        s["kind"] == "log" and s["payload"].get("event") == "owner_seat_failed"
-        for s in row["steps"]
-    )
 
 
 async def test_a_paused_owner_is_explained_not_impersonated(store: TaskStore) -> None:
@@ -303,4 +330,4 @@ async def test_no_brain_after_seat_failure_says_there_was_no_other_path(
     row = await store.get(task_id)
     assert row is not None and row["state"] == "failed"
     assert row["last_error"] is not None
-    assert "No other path was available" in row["last_error"]
+    assert "not rerouted" in row["last_error"]

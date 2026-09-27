@@ -137,6 +137,8 @@ export interface ProviderDescriptor {
   optional?: boolean;
   /** Unstable provider protocol. The card shows a clear fallback notice. */
   experimental?: boolean;
+  /** Continuous voice uses one profile form instead of legacy inline pickers. */
+  configuration_surface?: "provider" | "live";
   /**
    * Dictation-polish cards only: the value `[dictation].polish_provider`
    * actually stores ("groq"), which is NOT this card's `id` ("groq-polish") —

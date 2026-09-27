@@ -8,7 +8,7 @@
  * connected on this machine, subscriptions first (a CLI on a plan bills the
  * plan, not per token), then saved API keys, then local models, with the
  * login to use when a CLI has more than one, the model (a keyed row's live
- * list, Ollama's installed models); and a "More" disclosure
+ * list, Ollama's installed models) and the effort; and a "More" disclosure
  * for the permission ceiling and the daily budget (a switch: off stores 0,
  * which the scheduler reads as no cap). A provider that is not
  * connected is not listed — a local row counts as connected only when it
@@ -29,6 +29,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Shuffle, Upload, X } from "lucide-react";
 
+import { effortLabel } from "@/components/agentchat/AgentComposer";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { Button } from "@/components/ui/button";
@@ -52,12 +53,15 @@ import {
   accountChoice,
   accountHint,
   defaultSeat,
+  effortsFor,
   modelsFor,
   type BrainKind,
   type BrainSeat,
 } from "./brainPicker";
 import { modelSeats } from "../chat/modelChoices";
 import { useCreateAgent, type PermissionCeiling } from "../data";
+import { CompanionEditor } from "../companion/CompanionEditor";
+import { resolveCompanion } from "../companion/appearance";
 import { AgentFigureViewer } from "../figures/AgentFigureViewer";
 import {
   EDITABLE_CELLS,
@@ -118,9 +122,11 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [recipe, setRecipe] = useState<FigureRecipe>(() => defaultRecipe(DEFAULT_STYLE));
+  const [appearanceTab, setAppearanceTab] = useState<"character" | "companion">("character");
   const [style, setStyle] = useState<string>(DEFAULT_STYLE);
   const [providerId, setProviderId] = useState("");
   const [model, setModel] = useState("");
+  const [effort, setEffort] = useState("");
   const [accountId, setAccountId] = useState("");
   const [ceiling, setCeiling] = useState<PermissionCeiling>("monitor");
   const [budget, setBudget] = useState("2");
@@ -141,8 +147,8 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   // joined with the Agents tab's credential truth exactly as the chat's
   // composer joins it, plus the subscription logins stored per CLI.
   const catalog = useQuery({
-    queryKey: ["agent-chat", "catalog", "society"],
-    queryFn: () => fetchAgentChatCatalog("society"),
+    queryKey: ["agent-chat", "catalog", "society", accountId],
+    queryFn: () => fetchAgentChatCatalog("society", { accountId }),
     enabled: open,
     staleTime: 60_000,
   });
@@ -204,10 +210,12 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   }, [catalog.data, connections.data, societyProviders.data, keylessModels.data, liveModels, defaultModelLabel]);
   const seat = seats.find((s) => s.provider.id === providerId) ?? null;
   const accounts = accountChoice(seat);
+  const efforts = effortsFor(seat, model);
 
   const pickSeat = (next: BrainSeat | null) => {
     setProviderId(next?.provider.id ?? "");
     setModel(next ? next.provider.default_model || modelsFor(next)[0]?.id || "" : "");
+    setEffort(next?.provider.default_effort ?? "");
     setAccountId("");
   };
 
@@ -218,6 +226,13 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seats, providerId]);
 
+  // A model change can leave the picked effort off that model's ladder.
+  useEffect(() => {
+    if (efforts.length && !efforts.includes(effort)) setEffort(seat?.provider.default_effort ?? efforts[0]);
+    if (!efforts.length && effort) setEffort("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [efforts.join("|")]);
+
   useEffect(() => {
     if (!open) return;
     setName("");
@@ -226,6 +241,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     setRecipe(defaultRecipe(DEFAULT_STYLE));
     setProviderId("");
     setModel("");
+    setEffort("");
     setAccountId("");
     setImportProblems(null);
     setImportedName(null);
@@ -343,12 +359,12 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
         name,
         title: title.trim() || t("society.create.title_fallback"),
         description,
-        figure: recipe,
+        figure: { ...recipe, companion: resolveCompanion(name.trim(), recipe.companion) },
         palette: { primary: palette.primary, secondary: palette.secondary, accent: palette.accent },
         provider: seat?.provider.id ?? "",
         providerLabel: seat?.provider.label ?? t("society.create.provider_unknown"),
         model,
-        effort: "",
+        effort,
         accountId,
         // Every tool Jarvis has connected; what the agent reaches for first
         // is settled in its own chat afterwards (maintainer, 2026-09-02).
@@ -531,6 +547,22 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                             />
                           )}
                         </div>
+                        {efforts.length > 0 ? (
+                          <div>
+                            <span className={labelClass}>{t("society.create.effort")}</span>
+                            <Combobox
+                              value={effort}
+                              groups={[
+                                {
+                                  id: "efforts",
+                                  options: efforts.map((lvl) => ({ value: lvl, label: effortLabel(lvl, t) })),
+                                },
+                              ]}
+                              onChange={setEffort}
+                              ariaLabel={t("society.create.effort")}
+                            />
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   )}
@@ -613,7 +645,11 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
             </ScrollArea>
 
             {/* ---- right: the character, live ---- */}
-            <div className="flex min-h-0 flex-col">
+            <div className="flex min-h-0 flex-col overflow-y-auto">
+              <div className="flex shrink-0 gap-2 border-b border-border p-3" role="tablist" aria-label={t("society.companion.appearance")}>
+                {(["character", "companion"] as const).map(tab => <button key={tab} type="button" role="tab" aria-selected={appearanceTab === tab} onClick={() => setAppearanceTab(tab)} className={`rounded-md px-3 py-2 text-sm ${appearanceTab === tab ? "bg-secondary text-foreground" : "text-muted-foreground"}`}>{t(`society.companion.${tab}`)}</button>)}
+              </div>
+              {appearanceTab === "companion" ? <CompanionEditor value={resolveCompanion(name.trim(), recipe.companion)} onChange={companion => setRecipe(r => ({ ...r, companion }))} disabled={submitting} /> : <>
               <div className="society-figure-column relative min-h-[240px] flex-1">
                 <AgentFigureViewer recipe={recipe} quiet />
               </div>
@@ -794,6 +830,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                   </div>
                 </div>
               </div>
+              </> }
             </div>
           </div>
         </Dialog.Content>

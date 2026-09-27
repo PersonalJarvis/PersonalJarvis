@@ -950,6 +950,23 @@ body {
     background: hsl(var(--sidebar));
   }
 
+  /*
+   * The reading surface under the gray window bar.
+   *
+   * The fill, the stroke and the corner are one box, so the line bends with
+   * the corner instead of staying square while the fill curves under it.
+   * Children are clipped to that same corner.
+   */
+  .jarvis-sheet {
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    border-top: 1px solid hsl(var(--border));
+    border-left: 1px solid hsl(var(--border));
+    border-top-left-radius: 12px;
+    background: hsl(var(--background));
+  }
+
   .jarvis-shell-surface {
     background: hsl(var(--background));
   }

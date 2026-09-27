@@ -150,7 +150,7 @@ def test_management_is_supervisor_only_and_degrades_without_server():
 
 
 async def test_management_unavailable_server_returns_honest_error():
-    commands = {tool.name: tool for tool in AppCommandTool().expand()}
+    commands = {tool.name: tool for tool in AppCommandTool(app_resolver=lambda: None).expand()}
     result = await commands["society-create-agent"].execute({"name": "Scout"}, context())
     assert not result.success and "server is not available" in result.error
 

@@ -586,6 +586,7 @@ SECRETS: list[SecretSpec] = [
             ("figma", "Figma", "https://www.figma.com/developers/apps"),
             ("hubspot", "HubSpot", "https://app.hubspot.com/"),
             ("discord", "Discord", "https://discord.com/developers/applications"),
+            ("shopify", "Shopify", "https://partners.shopify.com/"),
         )
         for prefix, env_prefix, kind in (
             ("", "", "your own"),

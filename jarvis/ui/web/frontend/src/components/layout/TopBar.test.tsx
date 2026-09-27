@@ -1,7 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TopBar, TopBarActions } from "./TopBar";
+import { ThemeProvider } from "@/hooks/useTheme";
 import { useEventStore } from "@/store/events";
+import { resetSectionHistory } from "@/hooks/useSectionHistory";
 
 vi.mock("@/hooks/useUpdate", () => ({
   useUpdate: () => ({ status: { managed: false, update_available: false } }),
@@ -10,11 +12,8 @@ vi.mock("@/components/MascotGigi", () => ({
   MascotGigi: () => <div data-testid="mascot-gigi" />,
 }));
 
-// The bar is section-aware now, so every test below states which screen it is
-// on rather than inheriting whatever a previous one left behind. The front
-// page ("chats") renders no bar of its own — its header carries the actions
-// (see the front-page describe below); a detachable section that keeps the
-// bar stands in for the general case.
+// The caption is on every screen. Tests still name the section so a later
+// change cannot quietly hide Restart on one of them.
 beforeEach(() => {
   useEventStore.setState({
     activeSection: "dictation",
@@ -25,6 +24,18 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("TopBar detach button", () => {
+  it("offers the Settings navigation toggle with its current state", () => {
+    useEventStore.setState({ activeSection: "profile" });
+    const onToggle = vi.fn();
+    const { rerender } = render(<TopBar settingsNavigation={{ open: false, onToggle }} />);
+    const toggle = screen.getByTestId("settings-sidebar-toggle");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalledOnce();
+    rerender(<TopBar settingsNavigation={{ open: true, onToggle }} />);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  });
+
   it("offers 'own window' on the detachable sections only", () => {
     render(<TopBar />);
     expect(screen.getByTestId("detach-view-button")).toBeTruthy();
@@ -141,70 +152,78 @@ describe("TopBar restart button", () => {
   });
 });
 
-/*
- * The one screen that renders these actions itself.
- *
- * The Agentic IDE is a wall of terminal output with a single header row, and a
- * second full-width strip above it holding two buttons was the third horizontal
- * band in a row. So the bar steps aside there — but the ACTIONS must not, and
- * that is the half worth pinning: a frontend change only reaches the user
- * through that Restart button, so a refactor that quietly drops it from the IDE
- * would leave the section with no way to pick up its own rebuild.
- */
-describe("TopBar on the front page", () => {
-  it("renders no bar of its own there — the home header carries the actions", () => {
-    useEventStore.setState({ activeSection: "chats" });
-    const { container } = render(<TopBar />);
-    expect(container.firstChild).toBeNull();
+describe("TopBar section navigation", () => {
+  beforeEach(() => {
+    resetSectionHistory();
+    useEventStore.setState({ activeSection: "chats", solo: false });
   });
 
-  it("restores the global bar in the main window while chats is detached", () => {
-    useEventStore.setState({ activeSection: "chats", detachedViews: ["chats"] });
-    const { container } = render(<TopBar />);
-    expect(container.firstChild).not.toBeNull();
-    expect(screen.getByRole("button", { name: /^restart$/i })).toBeTruthy();
+  it.each(["chats", "agents", "dictation", "visualization", "profile"] as const)(
+    "shows back/forward in the caption on %s",
+    (section) => {
+      useEventStore.setState({ activeSection: section });
+      render(<TopBar />);
+      expect(screen.getByTestId("section-nav-buttons")).toBeTruthy();
+      expect(screen.getByTestId("section-nav-back")).toBeTruthy();
+      expect(screen.getByTestId("section-nav-forward")).toBeTruthy();
+      cleanup();
+    },
+  );
+
+  it("offers the sidebar toggle from the caption and hands the click to the shell", () => {
+    const onToggle = vi.fn();
+    render(<TopBar navToggle={{ collapsed: false, onToggle }} />);
+
+    const toggle = screen.getByTestId("section-nav-sidebar");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalledOnce();
   });
 
-  it("renders no bar on agents — the society header carries the actions", () => {
-    useEventStore.setState({ activeSection: "agents" });
-    const { container } = render(<TopBar />);
-    expect(container.firstChild).toBeNull();
+  it("stays out of a detached solo window", () => {
+    useEventStore.setState({ solo: true });
+    render(<TopBar />);
+    expect(screen.queryByTestId("section-nav-buttons")).toBeNull();
   });
 });
 
-describe("TopBar in the classic terminal grid", () => {
-  it("renders no bar of its own there", () => {
-    useEventStore.setState({ activeSection: "agentic-ide-classic" });
+describe("TopBar caption on every section", () => {
+  it.each(["chats", "agents", "agentic-ide-classic", "dictation"] as const)(
+    "keeps restart on %s",
+    (section) => {
+      useEventStore.setState({ activeSection: section });
+      render(<TopBar />);
+      const caption = screen.getByTestId("window-caption");
+      expect(caption.className).not.toContain("jarvis-shell-surface");
+      expect(caption).toBeTruthy();
+      expect(screen.getByRole("button", { name: /^restart$/i })).toBeTruthy();
+      expect(screen.queryByTestId("window-close")).toBeNull();
+    },
+  );
 
-    const { container } = render(<TopBar />);
+  it("places theme and restart immediately before the window buttons", async () => {
+    (window as unknown as { pywebview?: { api: object } }).pywebview = { api: {} };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, frameless: true, controls: "trailing", platform: "windows" }),
+      }),
+    );
 
-    expect(container.firstChild).toBeNull();
-  });
+    render(
+      <ThemeProvider>
+        <TopBar />
+      </ThemeProvider>,
+    );
 
-  it("still offers the restart through the actions the IDE carries", () => {
-    useEventStore.setState({ activeSection: "agentic-ide-classic" });
+    const minimize = await screen.findByTestId("window-minimize");
+    const restart = screen.getByRole("button", { name: /^restart$/i });
+    const theme = screen.getByTestId("theme-toggle");
+    expect(theme.compareDocumentPosition(restart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(restart.compareDocumentPosition(minimize) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(minimize.compareDocumentPosition(screen.getByTestId("window-close")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
-    render(<TopBarActions />);
-
-    expect(screen.getByRole("button", { name: /^restart$/i })).toBeTruthy();
-  });
-
-  it("restores the global bar in the main window while the IDE is detached", () => {
-    useEventStore.setState({
-      activeSection: "agentic-ide-classic",
-      detachedViews: ["agentic-ide"],
-    });
-
-    const { container } = render(<TopBar />);
-
-    expect(container.firstChild).not.toBeNull();
-    expect(screen.getByRole("button", { name: /^restart$/i })).toBeTruthy();
-  });
-
-  it("keeps its bar on every other screen", () => {
-    const { container } = render(<TopBar />);
-
-    expect(container.firstChild).not.toBeNull();
-    expect(screen.getByRole("button", { name: /^restart$/i })).toBeTruthy();
+    delete (window as unknown as { pywebview?: unknown }).pywebview;
   });
 });

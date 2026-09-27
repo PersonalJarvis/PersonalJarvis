@@ -32,6 +32,15 @@ export type VoiceOutputLevelSource = "native" | "browser";
 export const voiceOutputLevelRef: { current: number | null } = { current: null };
 
 let browserOwnsOutput = false;
+let browserPlaybackActive = false;
+
+export function setBrowserPlaybackActive(active: boolean): void {
+  browserPlaybackActive = active;
+}
+
+export function browserPlaybackIsActive(): boolean {
+  return browserOwnsOutput && browserPlaybackActive;
+}
 
 export function setVoiceOutputLevel(
   value: number,
@@ -49,5 +58,6 @@ export function clearVoiceOutputLevel(source: VoiceOutputLevelSource = "native")
 
 export function setBrowserVoiceOutputOwnership(active: boolean): void {
   browserOwnsOutput = active;
+  if (!active) browserPlaybackActive = false;
   voiceOutputLevelRef.current = null;
 }

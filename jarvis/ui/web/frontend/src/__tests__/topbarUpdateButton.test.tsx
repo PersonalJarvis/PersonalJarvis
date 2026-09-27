@@ -62,7 +62,7 @@ describe("TopBar update button", () => {
     });
     render(<TopBar />);
     // The restart button always renders; the update button must not.
-    await waitFor(() => expect(screen.getByText("Restart")).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Restart" })).toBeTruthy());
     expect(screen.queryByText("Update available")).toBeNull();
   });
 
@@ -76,7 +76,7 @@ describe("TopBar update button", () => {
       published_at: null,
     });
     render(<TopBar />);
-    await waitFor(() => expect(screen.getByText("Restart")).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Restart" })).toBeTruthy());
     expect(screen.queryByText("Update available")).toBeNull();
   });
 

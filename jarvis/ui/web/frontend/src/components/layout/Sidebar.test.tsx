@@ -538,21 +538,22 @@ describe("Sidebar icon rail", () => {
 });
 
 /**
- * The explicit collapse toggle.
+ * The collapse state (the toggle itself moved to the window caption).
  *
- * The rail used to be reachable only by dragging the seam far enough — a
- * gesture nobody discovers, on a seam one pixel wide. The button says the same
- * thing out loud, and it is what the app opens in (see `App.tsx`); the drag
- * stays as the second, finer way in.
+ * The sidebar header no longer carries its own button — it lives in the
+ * caption's leading navigation (SectionNavButtons, owned by TopBar), beside
+ * back/forward, so the controls sit in the empty caption corner on every
+ * section. The collapsed STATE still belongs to the sidebar: the rail wins
+ * while it holds, and the drag stays as the finer way in.
  */
-describe("Sidebar collapse toggle", () => {
+describe("Sidebar collapse state", () => {
   beforeEach(() => {
     useEventStore.setState({ activeSection: "chats", connected: true });
   });
 
   afterEach(() => cleanup());
 
-  function renderWithToggle(collapsed: boolean, onToggle = () => {}) {
+  function renderCollapsed(collapsed: boolean) {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
@@ -561,14 +562,13 @@ describe("Sidebar collapse toggle", () => {
         <Sidebar
           width={SIDEBAR_DEFAULT_WIDTH}
           collapsed={collapsed}
-          onToggleCollapsed={onToggle}
         />
       </QueryClientProvider>,
     );
   }
 
   test("collapses to the rail even at a wide dragged width", () => {
-    renderWithToggle(true);
+    renderCollapsed(true);
 
     const aside = screen.getByTestId("sidebar");
     // The collapse is a STATE, not a width: the dragged 280 px is remembered
@@ -577,13 +577,9 @@ describe("Sidebar collapse toggle", () => {
     expect(aside.style.width).toBe(`${SIDEBAR_RAIL_WIDTH}px`);
   });
 
-  test("reports its state and names itself in both directions", () => {
-    const { rerender } = renderWithToggle(true);
-
-    const collapsedButton = screen.getByTestId("sidebar-collapse-toggle");
-    expect(collapsedButton.getAttribute("aria-expanded")).toBe("false");
-    // WHAT it says is the locale's business; that it says something is not.
-    expect(collapsedButton.getAttribute("aria-label")).toBeTruthy();
+  test("expands to the dragged width once the state lifts", () => {
+    const { rerender } = renderCollapsed(true);
+    expect(screen.getByTestId("sidebar").dataset.railed).toBe("true");
 
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -593,35 +589,21 @@ describe("Sidebar collapse toggle", () => {
         <Sidebar
           width={SIDEBAR_DEFAULT_WIDTH}
           collapsed={false}
-          onToggleCollapsed={() => {}}
         />
       </QueryClientProvider>,
     );
 
-    expect(
-      screen.getByTestId("sidebar-collapse-toggle").getAttribute("aria-expanded"),
-    ).toBe("true");
+    expect(screen.getByTestId("sidebar").dataset.railed).toBe("false");
   });
 
-  test("asks the shell to toggle rather than deciding for itself", () => {
-    // The width and the collapsed flag live together in the shell — a sidebar
-    // that flipped its own state would drift from the seam beside it.
-    const onToggle = vi.fn();
-    renderWithToggle(true, onToggle);
-
-    act(() => {
-      screen.getByTestId("sidebar-collapse-toggle").click();
-    });
-
-    expect(onToggle).toHaveBeenCalledTimes(1);
-  });
-
-  test("is simply absent when the shell offers no toggle", () => {
-    // Standalone renders (tests, any future embedding) must not grow a button
-    // that cannot do anything.
-    renderSidebar(SIDEBAR_DEFAULT_WIDTH);
+  test("carries no toggle of its own — the caption owns it", () => {
+    // The header button moved to the caption's leading navigation
+    // (SectionNavButtons): a sidebar that flipped its own state would drift
+    // from the shell that owns the width beside it.
+    renderCollapsed(false);
 
     expect(screen.queryByTestId("sidebar-collapse-toggle")).toBeNull();
+    expect(screen.getByTestId("sidebar")).toBeTruthy();
   });
 });
 

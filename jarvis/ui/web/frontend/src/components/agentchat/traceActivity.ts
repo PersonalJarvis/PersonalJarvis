@@ -20,6 +20,7 @@ export function traceAction(name: string): string | null {
   if (/^(read|readfile|viewfile|cat|openfile|readmediafile)$/.test(key)) return "read";
   if (/^(ls|listdir|listdirectory|listfiles|glob)$/.test(key)) return "list";
   if (/^(grep|rg|search|searchfiles|grepsearch|codesearch|findbyname)$/.test(key)) return "search";
+  if (/^(societywikinote|societymemoryrecall|remember)$/.test(key)) return "memory";
   return null;
 }
 

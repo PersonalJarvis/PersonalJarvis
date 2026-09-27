@@ -24,6 +24,7 @@ from collections.abc import Callable
 from typing import Any, Final
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
+from jarvis.society.communication import REPLY_POLICY_SCHEMA, select_reply_policy
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +34,16 @@ _ACK: Final[dict[str, str]] = {
     "de": "{name} ist dran, ich sage Bescheid.",  # i18n-allow: spoken ack
     "en": "{name} is on it, I will let you know.",
     "es": "{name} se encarga, te aviso.",
+}
+_QUIET_ACK: Final[dict[str, str]] = {
+    "de": "{name} ist dran.",  # i18n-allow: spoken ack
+    "en": "{name} is on it.",
+    "es": "{name} se encarga.",
+}
+_ERROR_ACK: Final[dict[str, str]] = {
+    "de": "{name} ist dran; ich melde mich bei Hindernissen.",  # i18n-allow: spoken ack
+    "en": "{name} is on it; I will report any blockers.",
+    "es": "{name} se encarga; te avisare si hay impedimentos.",
 }
 _QUEUED: Final[dict[str, str]] = {
     "de": "Aufgabe für {name} erfasst; Start noch nicht bestätigt.",  # i18n-allow: spoken ack
@@ -121,10 +132,14 @@ class DelegateToAgentTool:
         "team card): 'let Scout research X', 'Mailbox, answer the invoice mail', 'give that "
         "to the team'. Use when a background task fits the persistent team; leave `agent` "
         "empty to let the lead pick the agent whose hands fit the task. The agent works in "
-        "the background; you acknowledge now and its result is announced when it lands. "
+        "the background; you acknowledge now and its result follows reply_policy. "
         "Never for inventory/status questions or tasks the user wants done right here. "
-        "Include relevant conversation context and completion criteria so the agent "
-        "can act independently. Report the acknowledgement and state exactly. Keep the "
+        "Turn the user's intent into an actionable brief: objective, known target, relevant "
+        "context, scope, constraints and completion evidence. Do not merely paraphrase or "
+        "invent facts. Include context and completion_criteria so the agent can act independently. "
+        "Select reply_policy=always for requested findings, on_error for work without a "
+        "requested success report, none only for explicit silence. Report the acknowledgement "
+        "and state exactly. Keep the "
         "returned assignment_id and trace_id for society_status; never speak those ids."
     )
     schema: dict[str, Any] = {
@@ -137,7 +152,14 @@ class DelegateToAgentTool:
                     "name one (the best-fitting agent is picked from the task)."
                 ),
             },
-            "task": {"type": "string", "description": "The task, in full, in the user's words."},
+            "task": {
+                "type": "string",
+                "description": (
+                    "An actionable objective and scope faithful to the user's intent, "
+                    "not just a paraphrase."
+                ),
+            },
+            "reply_policy": REPLY_POLICY_SCHEMA,
             "context": {
                 "type": "string",
                 "description": "Relevant prior decisions, constraints and facts; omit secrets.",
@@ -181,6 +203,10 @@ class DelegateToAgentTool:
             return ToolResult(success=False, output=_NO_FIT[lang], error="no_agent_fits")
         from jarvis.society.events import MsgType
 
+        try:
+            policy = select_reply_policy(args.get("reply_policy"), MsgType.ASSIGN)
+        except (TypeError, ValueError) as exc:
+            return ToolResult(success=False, output=None, error=str(exc))
         context = str(args.get("context") or "").strip()
         criteria = str(args.get("completion_criteria") or "").strip()
         brief = task
@@ -199,7 +225,7 @@ class DelegateToAgentTool:
             text=brief,
             trace_id=f"voice:{ctx.trace_id.hex[:12]}",
             msg_type=MsgType.ASSIGN,
-            payload={"text": brief, "lang": lang, "refs": refs},
+            payload={"text": brief, "lang": lang, "refs": refs, "reply_policy": policy},
         )
         # The scheduler answered synchronously on the same trace: a CLAIM
         # means the agent took it, a VETO says why not — say so, no waiting.
@@ -216,6 +242,7 @@ class DelegateToAgentTool:
             "agent_name": target.name,
             "assignment_id": env.event_id,
             "trace_id": env.trace_id,
+            "reply_policy": policy,
         }
         if outcome is not None and outcome.msg_type is MsgType.VETO:
             reason = str(outcome.payload.get("text") or outcome.payload.get("reason") or "")
@@ -228,12 +255,13 @@ class DelegateToAgentTool:
                 },
                 error=str(outcome.payload.get("reason") or "vetoed"),
             )
+        ack = _ACK if policy == "always" else _ERROR_ACK if policy == "on_error" else _QUIET_ACK
         return ToolResult(
             success=True,
             output={
                 **tracking,
                 "state": "running" if outcome is not None else "recorded",
-                "acknowledgement": (_ACK if outcome is not None else _QUEUED)[lang].format(
+                "acknowledgement": (ack if outcome is not None else _QUEUED)[lang].format(
                     name=target.name,
                 ),
             },

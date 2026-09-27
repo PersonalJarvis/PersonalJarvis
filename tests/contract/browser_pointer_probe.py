@@ -5,22 +5,49 @@ import json
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]
+
 
 async def main():
-    root = Path(__file__).resolve().parents[2]
-    sys.path.insert(0, str(root / "jarvis/society/browser"))
+    sys.path.insert(0, str(ROOT / "jarvis/society/browser"))
     output = sys.stdout
     import live_runner
 
     events = []
     live_runner.emit = lambda kind, **data: events.append({"kind": kind, **data})
     worker = live_runner.Worker()
+    read_text = Path.read_text
+    port_lock_retries = 0
+
+    def temporarily_locked(path, *args, **kwargs):
+        nonlocal port_lock_retries
+        if path.name == "DevToolsActivePort" and port_lock_retries < 2:
+            port_lock_retries += 1
+            raise PermissionError("Chromium is publishing its port file")
+        return read_text(path, *args, **kwargs)
+
     try:
         profile = Path(sys.argv[2])
-        await worker.start({"profile_dir": str(profile), "workspace": str(profile / "workspace"),
-                            "executable": sys.argv[1], "allowed_domains": []})
+        Path.read_text = temporarily_locked
+        try:
+            await worker.start(
+                {
+                    "profile_dir": str(profile),
+                    "workspace": str(profile / "workspace"),
+                    "executable": sys.argv[1],
+                    "allowed_domains": [],
+                }
+            )
+        finally:
+            Path.read_text = read_text
+        assert port_lock_retries == 2
+        assert worker.browser is None  # First pixels need no agent engine.
+        await worker.ensure_browser()
         await worker.page.goto("about:blank")
-        await worker.page.set_content('<button style="width:200px;height:100px" onclick="window.clicked=true">Click probe</button>')
+        await worker.page.set_content(
+            '<button style="width:200px;height:100px" '
+            'onclick="window.clicked=true">Click probe</button>'
+        )
         await worker.focused()
         target = next(t for t, p in worker.tabs.items() if p is worker.page)
         client = worker.browser.cdp_client

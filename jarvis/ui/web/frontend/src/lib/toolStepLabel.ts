@@ -31,6 +31,7 @@ export type ToolFamily =
   | "navigate"
   | "app"
   | "memory"
+  | "memory_update"
   | "profile"
   | "contact"
   | "call"
@@ -89,6 +90,9 @@ const FAMILY_BY_TOOL: Record<string, ToolFamily> = {
   open_app: "app",
   app_command: "app",
   remember: "memory",
+  society_memory_recall: "memory",
+  society_wiki_note: "memory_update",
+  societywikinote: "memory_update",
   update_profile: "profile",
   contact_lookup: "contact",
   contact_upsert: "contact",
@@ -124,6 +128,7 @@ const LABEL_KEY: Partial<Record<ToolFamily, string>> = {
   navigate: "tool_steps.navigate",
   app: "tool_steps.app",
   memory: "tool_steps.memory",
+  memory_update: "tool_steps.memory_update",
   profile: "tool_steps.profile",
   contact: "tool_steps.contact",
   call: "tool_steps.call",
@@ -149,6 +154,7 @@ const DETAIL_KEYS: Partial<Record<ToolFamily, string[]>> = {
   navigate: ["url", "target", "section", "path"],
   app: ["app", "name", "command", "app_name"],
   memory: ["key", "text", "fact", "content"],
+  memory_update: ["path", "title", "text", "fact", "content"],
   profile: ["field", "key"],
   contact: ["name", "query", "contact"],
   call: ["name", "contact", "number"],

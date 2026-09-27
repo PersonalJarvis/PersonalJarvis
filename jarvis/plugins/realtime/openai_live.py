@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 from urllib.parse import quote
+
+log = logging.getLogger(__name__)
 
 
 class OpenAILiveConnection:
@@ -52,8 +55,41 @@ class OpenAILiveProvider:
     async def can_open_duplex_session(self) -> bool:
         return bool(self._api_key)
 
+    @staticmethod
+    async def warm_transport(cfg: Any = None) -> None:
+        """Pre-import the handshake stack and resolve the Live endpoint.
+
+        The first wake of the day paid for all of this inside the call:
+        importing httpx + websockets from a cold disk, and the DNS lookup
+        for api.openai.com on the handshake's critical path. Warming moves
+        it to the boot worker (after the voice gate, re-armed after every
+        call), so a wake word pays only the session creation itself.
+        Best-effort by contract: no socket is held, no billed call is made,
+        and any failure here only costs the latency it was meant to save.
+        """
+        del cfg  # nothing session-specific about imports and DNS
+        import asyncio
+        import importlib
+
+        def _warm() -> None:
+            importlib.import_module("httpx")
+            importlib.import_module("websockets.asyncio.client")
+            try:
+                import socket
+
+                socket.getaddrinfo("api.openai.com", 443)
+            except OSError:
+                # Offline or DNS-blocked: the handshake reports it honestly.
+                pass
+
+        await asyncio.to_thread(_warm)
+
     async def open_session(self, cfg: Any) -> OpenAILiveConnection:
         # Imported only on an explicit call, never during boot or registration.
+        # (warm_transport pre-imports these; the import here stays as the
+        # fallback for a call that was never warmed.)
+        import time
+
         import httpx
         from websockets.asyncio.client import connect
 
@@ -67,6 +103,7 @@ class OpenAILiveProvider:
         url = "wss://api.openai.com/v1/live/sessions"
         if offer:
             # No automatic retries: session creation is a billed mutation.
+            started_at = time.monotonic()
             async with httpx.AsyncClient(timeout=25) as client:
                 response = await client.post(
                     "https://api.openai.com/v1/live/sessions",
@@ -80,6 +117,10 @@ class OpenAILiveProvider:
                 payload = response.json()
                 session_id = payload["session"]["id"]
                 answer = payload["transport"]["sdp"]
+            log.info(
+                "OpenAI Live session created in %.0f ms.",
+                (time.monotonic() - started_at) * 1000.0,
+            )
             url += f"/{quote(session_id, safe='')}/attach"
         else:
             session["audio"] = {
@@ -87,8 +128,13 @@ class OpenAILiveProvider:
                 "format": {"type": "audio/pcm", "rate": 24000},
             }
         try:
+            attach_started_at = time.monotonic()
             socket = await connect(
                 url, additional_headers=headers, open_timeout=25, max_size=8_000_000
+            )
+            log.info(
+                "OpenAI Live transport attached in %.0f ms.",
+                (time.monotonic() - attach_started_at) * 1000.0,
             )
         except Exception:
             if session_id:
@@ -102,5 +148,10 @@ class OpenAILiveProvider:
             raise
         connection = OpenAILiveConnection(socket, session_id=session_id, answer_sdp=answer)
         if not offer:
-            await connection.send({"type": "session.start", "session": session})
+            try:
+                await connection.send({"type": "session.start", "session": session})
+            except BaseException:
+                # A failed or cancelled start still owns the newly opened socket.
+                await connection.close()
+                raise
         return connection

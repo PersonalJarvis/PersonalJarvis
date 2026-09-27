@@ -14,6 +14,8 @@ from jarvis.society.routines import (
     create_routine,
     is_agent_routine,
     list_routines,
+    manage_routine,
+    routine_seat,
 )
 from jarvis.society.store import SocietyStore
 
@@ -144,3 +146,109 @@ def test_the_agent_id_is_read_off_the_tags():
     assert agent_id_from_tags(("society", "agent:")) is None
     assert agent_id_from_tags(()) is None
     assert agent_id_from_tags(("automation",)) is None
+
+
+async def test_spec_pins_the_owner_seat_by_default(agent):
+    spec = build_task_spec(agent, title="t", prompt="p", schedule={"kind": "every"})
+    assert routine_seat(spec) == {
+        "provider": agent.provider,
+        "model": agent.model,
+        "effort": agent.effort,
+        "account_id": agent.account_id,
+    }
+
+
+async def test_spec_accepts_an_explicit_seat(agent):
+    spec = build_task_spec(
+        agent,
+        title="t",
+        prompt="p",
+        schedule={"kind": "every"},
+        provider="openai-codex",
+        model="gpt-5.6-sol",
+        effort="high",
+        account_id="acc-1",
+    )
+    assert routine_seat(spec) == {
+        "provider": "openai-codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "account_id": "acc-1",
+    }
+
+
+async def test_list_exposes_the_pinned_seat(agent):
+    store = FakeTaskStore()
+    spec = build_task_spec(
+        agent, title="t", prompt="p", schedule={"kind": "every"}, provider="antigravity"
+    )
+    await create_routine(store, None, spec)
+    rows = await list_routines(store, "mailbox")
+    assert rows[0]["provider"] == "antigravity"
+    assert rows[0]["model"] == agent.model
+
+
+class _ManageStore(FakeTaskStore):
+    def __init__(self, spec, row) -> None:
+        super().__init__()
+        self._spec = spec
+        self._row = row
+        self.updated = None
+
+    async def get(self, task_id):
+        return self._row
+
+    async def get_spec(self, task_id):
+        return self._spec
+
+
+class _ManageScheduler:
+    def __init__(self) -> None:
+        self.saved = None
+
+    async def update_task(self, task_id, spec) -> None:
+        self.saved = spec
+
+
+async def test_update_keeps_the_pin_unless_the_seat_moves(agent):
+    spec = build_task_spec(
+        agent, title="t", prompt="p", schedule={"kind": "every"}, provider="claude-api"
+    )
+    row = {"id": "task-1", "state": "scheduled", "spec_json": spec.model_dump_json()}
+    store = _ManageStore(spec, row)
+    scheduler = _ManageScheduler()
+    await manage_routine(
+        agent,
+        {
+            "task_id": "task-1",
+            "operation": "update",
+            "title": "t2",
+            "prompt": "p2",
+            "schedule": {"kind": "every"},
+        },
+        store,
+        scheduler,
+    )
+    assert routine_seat(scheduler.saved)["provider"] == "claude-api"
+    await manage_routine(
+        agent,
+        {
+            "task_id": "task-1",
+            "operation": "update",
+            "title": "t2",
+            "prompt": "p2",
+            "schedule": {"kind": "every"},
+            "provider": "openai-codex",
+            "model": "gpt-5.6-sol",
+            "effort": "",
+            "account_id": "",
+        },
+        store,
+        scheduler,
+    )
+    assert routine_seat(scheduler.saved) == {
+        "provider": "openai-codex",
+        "model": "gpt-5.6-sol",
+        "effort": "",
+        "account_id": "",
+    }

@@ -63,7 +63,8 @@ def test_every_ready_section_is_a_known_section_health_key() -> None:
 
 def test_exactly_one_recommended_plan() -> None:
     assert sum(1 for p in STARTER_PLANS if p.recommended) == 1
-    assert get_plan("gemini-pipeline") is not None
+    assert get_plan("openai-live") is not None
+    assert get_plan("openai-live").assignments["realtime"] == "openai-live"
     assert plan_ready_sections("pipeline") == ("brain", "computer-use", "tts", "stt")
     assert plan_ready_sections("nope") == ()
 
@@ -72,9 +73,9 @@ def test_state_roundtrip_and_reset(tmp_path) -> None:
     p = tmp_path / "setup_state.json"
     assert st.get_starter_plan(p) is None
     assert st.is_ready_celebrated(p) is False
-    st.set_starter_plan("gemini-pipeline", p)
+    st.set_starter_plan("openai-live", p)
     st.mark_ready_celebrated(p)
-    assert st.get_starter_plan(p) == "gemini-pipeline"
+    assert st.get_starter_plan(p) == "openai-live"
     assert st.is_ready_celebrated(p) is True
     removed = st.reset_onboarding(p)
     assert "starter_plan" in removed and "ready_celebrated_at" in removed

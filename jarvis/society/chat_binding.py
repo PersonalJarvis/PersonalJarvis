@@ -22,6 +22,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
 
+from .communication import response_instruction
 from .delivery import DeliveryBusy, IncomingMessage, incoming_context
 from .events import MsgType, SocietyEnvelope
 from .roster import LEAD_AGENT_ID, AgentRecord, PermissionCeiling
@@ -51,15 +52,15 @@ _CEILING_TO_MODE: Final[dict[str, str]] = {
 
 
 def pair_for(cfg: Any, agent: AgentRecord) -> tuple[str, str, str]:
-    """Return the agent's provider and model with automatic effort."""
+    """``(provider, model, effort)`` the agent's chat runs on."""
     if agent.provider:
-        return agent.provider, agent.model, ""
+        return agent.provider, agent.model, agent.effort
     from jarvis.local_models.assistant_session import agents_tier
 
     tier = agents_tier(cfg)
     if not tier.ready:
         raise PermissionError(tier.reason or "no provider can run the agent chat")
-    return tier.provider, tier.model, ""
+    return tier.provider, tier.model, agent.effort
 
 
 def _workspace(cfg: Any, agent: AgentRecord) -> str:
@@ -78,10 +79,11 @@ def _workspace(cfg: Any, agent: AgentRecord) -> str:
 
 def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
     """The agent's canonical session, created or re-seated to the roster row."""
+    from jarvis.agent_chat.effort import default_effort
     from jarvis.agent_chat.permissions import ladder_key, normalize_permission
     from jarvis.agent_chat.service import resolve_runner
 
-    provider, model, _ = pair_for(cfg, agent)
+    provider, model, effort = pair_for(cfg, agent)
     session_id = agent.session_id
     existing = svc.store.get_session(session_id)
     if existing is None:
@@ -90,7 +92,7 @@ def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
         return svc.store.create_session(
             provider=provider,
             model=model,
-            effort="",
+            effort=effort or default_effort(provider),
             cwd=_workspace(cfg, agent),
             permission_mode=mode,
             title=agent.name,
@@ -104,8 +106,8 @@ def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
     updates: dict[str, str] = {}
     if getattr(existing, "account_id", "") != agent.account_id:
         updates["account_id"] = agent.account_id
-    if existing.effort:
-        updates["effort"] = ""
+    if effort and existing.effort != effort:
+        updates["effort"] = effort
     if updates:
         svc.store.update_session(session_id, **updates)
         existing = svc.store.get_session(session_id)
@@ -130,11 +132,8 @@ def frame_incoming(env: SocietyEnvelope, sender_name: str) -> str:
     refs = env.payload.get("refs")
     if isinstance(refs, list) and refs:
         lines.append("Refs: " + ", ".join(str(r) for r in refs))
-    if env.msg_type is MsgType.QUERY:
-        lines.append(
-            "Reply to the sender using society_message_agent with kind 'answer'. "
-            "This is internal communication; do not use an external messaging connector."
-        )
+    lines.append(f"Message id: {env.event_id}; sender id: {env.from_agent}")
+    lines.append(response_instruction(env))
     return "\n".join(lines)
 
 
@@ -150,6 +149,8 @@ def frame_assignment(env: SocietyEnvelope) -> str:
         "When you are done, end with a handoff: what is done, where the output is, "
         "what evidence you used, what remains open, who should own the next step."
     )
+    lines.append(f"Message id: {env.event_id}; sender id: {env.from_agent}")
+    lines.append(response_instruction(env))
     return "\n".join(lines)
 
 
