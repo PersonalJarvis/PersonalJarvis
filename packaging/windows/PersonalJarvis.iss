@@ -398,6 +398,20 @@ begin
   end;
 end;
 
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID <> wpFinished) or IsCandidateVerified then
+    Exit;
+  WizardForm.FinishedHeadingLabel.Caption := 'Personal Jarvis installation failed';
+  if RollbackReady then
+    WizardForm.FinishedLabel.Caption :=
+      'The new version could not be verified. Close Setup to restore the previous version. The installer will report a failure.'
+  else
+    WizardForm.FinishedLabel.Caption :=
+      'The installed version could not be verified. No previous version is available to restore. Remove this installation from Windows Installed apps before retrying. The installer will report a failure.';
+  WizardForm.RunList.Visible := False;
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usPostUninstall then
