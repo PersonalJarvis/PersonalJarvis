@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { SessionState } from "@/lib/agenticIdeApi";
-const api = vi.hoisted(() => ({ reorder: vi.fn(), rename: vi.fn(), toast: vi.fn() }));
-vi.mock("@/lib/agenticIdeApi", () => ({ reorderIdeTerminals: api.reorder, renameTerminal: api.rename }));
+const api = vi.hoisted(() => ({ move: vi.fn(), rename: vi.fn(), toast: vi.fn() }));
+vi.mock("@/lib/agenticIdeApi", () => ({ moveTerminal: api.move, renameTerminal: api.rename }));
 vi.mock("@/store/events", () => ({ useEventStore: (select: (state: unknown) => unknown) => select({ pushToast: api.toast }) }));
 vi.mock("./AgenticTerminal", () => ({ AgenticTerminal: (props: {
   name: string; onToggleMaximize: () => void; onRestart: () => void; restartToken: number;
@@ -17,7 +17,8 @@ vi.mock("./AgenticTerminal", () => ({ AgenticTerminal: (props: {
   <textarea aria-label={`Terminal input ${props.name}`} />
 </div> }));
 vi.mock("@/hooks/useTheme", () => ({ useThemeValue: () => "dark" }));
-import { columnsForSessions, swapSessions, WorkspaceTerminalGrid } from "./WorkspaceTerminalGrid";
+import { WorkspaceTerminalGrid } from "./WorkspaceTerminalGrid";
+import { balancedLayout, previewDock } from "./workspaceDocking";
 
 class ResizeObserverStub { observe() {} disconnect() {} }
 class PointerEventStub extends MouseEvent {
@@ -27,7 +28,7 @@ class PointerEventStub extends MouseEvent {
 vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 vi.stubGlobal("PointerEvent", PointerEventStub);
 const makeSession = (names = ["T1", "T2", "T3", "T4"]) => ({
-  id: "w1", terminals: names.map((name) => ({ name, key: name, history_id: name, display_name: "Codex", agent: "codex" })),
+  id: "w1", layout: balancedLayout(names), terminals: names.map((name) => ({ name, key: name, history_id: name, display_name: "Codex", agent: "codex" })),
 }) as SessionState;
 const props = { onChanged: vi.fn(), onAdd: vi.fn(), onClose: vi.fn(), onSelect: vi.fn(), selected: "", fontSize: 13, appearance: null };
 const order = () => [...document.querySelectorAll<HTMLElement>("[data-session-id]")].map((node) => node.dataset.sessionId);
@@ -38,8 +39,8 @@ const geometry = () => document.querySelectorAll<HTMLElement>("[data-session-id]
 const dragToThird = () => {
   geometry();
   fireEvent.pointerDown(screen.getByRole("button", { name: "Move T1" }), { button: 0, pointerId: 1, clientX: 15, clientY: 15 });
-  fireEvent.pointerMove(window, { pointerId: 1, clientX: 20, clientY: 450 });
-  fireEvent.pointerUp(window, { pointerId: 1, clientX: 20, clientY: 450 });
+  fireEvent.pointerMove(window, { pointerId: 1, clientX: 195, clientY: 595 });
+  fireEvent.pointerUp(window, { pointerId: 1, clientX: 195, clientY: 595 });
 };
 function Controlled() {
   const [session, setSession] = useState(makeSession());
@@ -48,36 +49,18 @@ function Controlled() {
 beforeEach(() => { vi.clearAllMocks(); });
 afterEach(cleanup);
 
-describe("workspace columns", () => {
-  it("uses all useful space on wide displays and keeps six in the reference layout", () => {
-    expect([1, 2, 3, 4, 5, 6, 7, 8].map((count) => columnsForSessions(count, 1800)))
-      .toEqual([1, 2, 3, 4, 3, 3, 4, 4]);
-    expect(columnsForSessions(4, 1100)).toBe(2);
-  });
-  it("never creates a third row, including manual column preferences", () => {
-    expect(columnsForSessions(8, 680)).toBe(4);
-    expect(columnsForSessions(3, 310)).toBe(2);
-    expect(columnsForSessions(2, 310)).toBe(1);
-    expect(columnsForSessions(8, 1800, 2)).toBe(4);
-    expect(columnsForSessions(4, 1800, 2)).toBe(2);
-  });
-  it("swaps two slots without shifting the terminals between them", () => {
-    expect(swapSessions(["a", "b", "c", "d"], "a", "c")).toEqual(["c", "b", "a", "d"]);
-  });
-});
-
 it("swaps immediately, persists once and preserves mounted terminal nodes", async () => {
-  let finish!: (state: { session: SessionState }) => void;
-  api.reorder.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+  let finish!: (state: SessionState) => void;
+  api.move.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
   render(<Controlled />);
   const original = screen.getByLabelText("Terminal input T1");
   dragToThird();
-  expect(order()).toEqual(["T3", "T2", "T1", "T4"]);
+  expect(document.querySelector<HTMLElement>('[data-session-id="T1"]')!.style.top).toContain("50%");
   expect(screen.getByLabelText("Terminal input T1")).toBe(original);
-  expect(api.reorder).toHaveBeenCalledWith("w1", ["T3", "T2", "T1", "T4"]);
+  expect(api.move).toHaveBeenCalledWith("pane:T1", "pane:T3", "swap");
   fireEvent.keyDown(document.querySelector('[data-session-id="T2"]')!, { altKey: true, key: "ArrowRight" });
-  expect(api.reorder).toHaveBeenCalledTimes(1);
-  await act(async () => finish({ session: makeSession(["T3", "T2", "T1", "T4"]) }));
+  expect(api.move).toHaveBeenCalledTimes(1);
+  await act(async () => finish(makeSession(["T3", "T2", "T1", "T4"])));
   expect(order()).toEqual(["T3", "T2", "T1", "T4"]);
 });
 
@@ -92,11 +75,11 @@ it("allows title pointer presses to select the pane without starting a reorder",
   fireEvent.pointerUp(window, { pointerId: 1 });
   fireEvent.click(handle, { detail: 1 });
   expect(props.onSelect).toHaveBeenCalledExactlyOnceWith("T1");
-  expect(api.reorder).not.toHaveBeenCalled();
+  expect(api.move).not.toHaveBeenCalled();
 });
 
 it("rolls back a rejected swap and releases the mutation barrier", async () => {
-  api.reorder.mockRejectedValue(new Error("Connection lost"));
+  api.move.mockRejectedValue(new Error("Connection lost"));
   const onMutationStart = vi.fn(), onMutationEnd = vi.fn();
   render(<WorkspaceTerminalGrid {...props} session={makeSession()} onMutationStart={onMutationStart} onMutationEnd={onMutationEnd} />);
   dragToThird();
@@ -107,13 +90,13 @@ it("rolls back a rejected swap and releases the mutation barrier", async () => {
 });
 
 it("cannot resurrect a removed terminal from a late response", async () => {
-  let finish!: (state: { session: SessionState }) => void;
-  api.reorder.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+  let finish!: (state: SessionState) => void;
+  api.move.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
   const changed = vi.fn();
   const { rerender } = render(<WorkspaceTerminalGrid {...props} session={makeSession()} onChanged={changed} />);
   dragToThird();
   rerender(<WorkspaceTerminalGrid {...props} session={makeSession(["T2", "T3", "T4"])} onChanged={changed} />);
-  await act(async () => finish({ session: makeSession(["T3", "T2", "T1", "T4"]) }));
+  await act(async () => finish(makeSession(["T3", "T2", "T1", "T4"])));
   expect(changed).not.toHaveBeenCalled();
   expect(order()).toEqual(["T2", "T3", "T4"]);
 });
@@ -127,20 +110,64 @@ it("cancels a drag with Escape and does not steal terminal keyboard shortcuts", 
   fireEvent.keyDown(window, { key: "Escape" });
   fireEvent.pointerUp(window, { clientX: 20, clientY: 450 });
   fireEvent.keyDown(screen.getByLabelText("Terminal input T1"), { altKey: true, key: "ArrowRight" });
-  expect(api.reorder).not.toHaveBeenCalled();
+  expect(api.move).not.toHaveBeenCalled();
 });
 
 it("receives drag movement over a terminal even when it stops event bubbling", async () => {
-  api.reorder.mockResolvedValue({ session: makeSession(["T3", "T2", "T1", "T4"]) });
+  api.move.mockResolvedValue(makeSession(["T3", "T2", "T1", "T4"]));
   render(<WorkspaceTerminalGrid {...props} session={makeSession()} />);
   geometry();
   const input = screen.getByLabelText("Terminal input T3");
   input.addEventListener("pointermove", (event) => event.stopPropagation());
   input.addEventListener("pointerup", (event) => event.stopPropagation());
   fireEvent.pointerDown(screen.getByRole("button", { name: "Move T1" }), { button: 0, clientX: 15, clientY: 15 });
-  fireEvent.pointerMove(input, { clientX: 20, clientY: 450 });
-  fireEvent.pointerUp(input, { clientX: 20, clientY: 450 });
-  await waitFor(() => expect(api.reorder).toHaveBeenCalledWith("w1", ["T3", "T2", "T1", "T4"]));
+  fireEvent.pointerMove(input, { clientX: 195, clientY: 595 });
+  fireEvent.pointerUp(input, { clientX: 195, clientY: 595 });
+  await waitFor(() => expect(api.move).toHaveBeenCalledWith("pane:T1", "pane:T3", "swap"));
+});
+
+it("docks beside or below another pane and restores the returned layout after remount", async () => {
+  const session = makeSession(["T1", "T2"]);
+  const stacked = { ...session, layout: previewDock(session.layout!, "T1", "T2", "below") };
+  api.move.mockResolvedValue(stacked);
+  const { unmount } = render(<WorkspaceTerminalGrid {...props} session={session} />);
+  geometry();
+  fireEvent.pointerDown(screen.getByRole("button", { name: "Move T1" }), { button: 0, clientX: 15, clientY: 15 });
+  fireEvent.pointerMove(window, { clientX: 595, clientY: 380 });
+  expect(screen.getByTestId("dock-preview").dataset.position).toBe("below");
+  fireEvent.pointerUp(window, { clientX: 595, clientY: 380 });
+  await waitFor(() => expect(api.move).toHaveBeenCalledWith("pane:T1", "pane:T2", "below"));
+  await waitFor(() => expect(props.onChanged).toHaveBeenCalledWith(stacked));
+  unmount();
+  render(<WorkspaceTerminalGrid {...props} session={stacked} />);
+  expect(document.querySelector<HTMLElement>('[data-session-id="T1"]')!.style.width).toContain("100%");
+  expect(document.querySelector<HTMLElement>('[data-session-id="T1"]')!.style.top).toContain("50%");
+});
+
+it("cancels a pending drag when a workspace switch starts", () => {
+  const session = makeSession();
+  const { rerender } = render(<WorkspaceTerminalGrid {...props} session={session} />);
+  geometry();
+  fireEvent.pointerDown(screen.getByRole("button", { name: "Move T1" }), { button: 0, clientX: 15, clientY: 15 });
+  fireEvent.pointerMove(window, { clientX: 195, clientY: 595 });
+  rerender(<WorkspaceTerminalGrid {...props} session={session} disabled />);
+  fireEvent.pointerUp(window, { clientX: 195, clientY: 595 });
+  expect(api.move).not.toHaveBeenCalled();
+  expect(screen.queryByTestId("dock-preview")).toBeNull();
+});
+
+it("keeps keyboard swaps in the same row when two neighbors share an x coordinate", async () => {
+  api.move.mockResolvedValue(makeSession(["T1", "T2", "T4", "T3"]));
+  render(<WorkspaceTerminalGrid {...props} session={makeSession()} />);
+  fireEvent.keyDown(document.querySelector('[data-session-id="T3"]')!, { altKey: true, key: "ArrowRight" });
+  await waitFor(() => expect(api.move).toHaveBeenCalledWith("pane:T3", "pane:T4", "swap"));
+});
+
+it("does not select a diagonal pane when the bottom pane spans the whole row", async () => {
+  api.move.mockResolvedValue(makeSession(["T2", "T1", "T3"]));
+  render(<WorkspaceTerminalGrid {...props} session={makeSession(["T1", "T2", "T3"])} />);
+  fireEvent.keyDown(document.querySelector('[data-session-id="T1"]')!, { altKey: true, key: "ArrowRight" });
+  await waitFor(() => expect(api.move).toHaveBeenCalledWith("pane:T1", "pane:T2", "swap"));
 });
 
 it("only restarts the addressed session and shows survivors after maximized close", async () => {

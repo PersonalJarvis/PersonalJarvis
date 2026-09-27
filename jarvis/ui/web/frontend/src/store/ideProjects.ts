@@ -4,7 +4,9 @@ import type { IdeProject } from "@/lib/agenticIdeApi";
 type IdeAction =
   | { kind: "connect-project"; nonce: number }
   | { kind: "new-workspace"; projectId: string; nonce: number }
-  | { kind: "activate-workspace"; workspaceId: string; nonce: number };
+  | { kind: "activate-workspace"; workspaceId: string; nonce: number }
+  | { kind: "workspace-options"; workspaceId: string; nonce: number }
+  | { kind: "toggle-voice"; nonce: number };
 
 interface IdeProjectsStore {
   projects: IdeProject[];
@@ -18,6 +20,8 @@ interface IdeProjectsStore {
   connectProject: () => void;
   newWorkspace: (projectId: string) => void;
   activateWorkspace: (workspaceId: string) => void;
+  openWorkspaceOptions: (workspaceId: string) => void;
+  toggleVoice: () => void;
 }
 
 export const useIdeProjectsStore = create<IdeProjectsStore>((set) => ({
@@ -32,4 +36,6 @@ export const useIdeProjectsStore = create<IdeProjectsStore>((set) => ({
   connectProject: () => set((state) => ({ action: { kind: "connect-project", nonce: (state.action?.nonce ?? 0) + 1 } })),
   newWorkspace: (projectId) => set((state) => ({ action: { kind: "new-workspace", projectId, nonce: (state.action?.nonce ?? 0) + 1 } })),
   activateWorkspace: (workspaceId) => set((state) => ({ action: { kind: "activate-workspace", workspaceId, nonce: (state.action?.nonce ?? 0) + 1 } })),
+  openWorkspaceOptions: (workspaceId) => set((state) => ({ action: { kind: "workspace-options", workspaceId, nonce: (state.action?.nonce ?? 0) + 1 } })),
+  toggleVoice: () => set((state) => ({ action: { kind: "toggle-voice", nonce: (state.action?.nonce ?? 0) + 1 } })),
 }));

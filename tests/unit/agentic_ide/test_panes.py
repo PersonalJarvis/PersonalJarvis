@@ -71,9 +71,9 @@ async def _noop_exit(_code: int) -> None:
 async def test_a_fresh_workspace_uses_row_major_terminal_order(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """Three sessions share one row in the project workspace grid."""
+    """Three sessions balance across two columns and two rows."""
     await _open(registry, tmp_path, 3)
-    assert _layout(registry) == [("T1", 0, 0), ("T2", 1, 0), ("T3", 2, 0)]
+    assert _layout(registry) == [("T1", 0, 0), ("T2", 1, 0), ("T3", 0, 1)]
 
 
 async def test_a_single_terminal_still_opens_alone(registry: Registry, tmp_path: Path) -> None:
