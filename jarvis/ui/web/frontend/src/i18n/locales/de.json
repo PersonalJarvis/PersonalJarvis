@@ -5176,6 +5176,11 @@
     "mode_pipeline": "Stimme rein und raus"
   },
   "society": {
+    "groups": {
+      "create": "Neues Agent-Team", "edit": "Agent-Team bearbeiten", "description": "Agents in einem Eintrag bündeln. Jeder Agent behält seinen eigenen Chat.",
+      "name": "Teamname", "members": "Mitglieder", "cancel": "Abbrechen", "save": "Team speichern", "delete": "Gruppe auflösen", "delete_confirm": "Diese Gruppe auflösen? Die einzelnen Agent-Chats bleiben erhalten.",
+      "left_chat": "Linker Chat", "right_chat": "Rechter Chat", "open": "Öffnen", "open_individual": "Einzelchat von {0} öffnen", "missing_member": "Wähle einen verfügbaren Agent für diesen Chat.", "hold_to_group": "Halten zum Gruppieren", "release_to_group": "Loslassen zum Gruppieren"
+    },
     "chat": {
       "placeholder": "Nachricht an {0}",
       "more": "Mehr",

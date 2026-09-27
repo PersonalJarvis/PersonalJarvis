@@ -5209,6 +5209,11 @@
     "mode_pipeline": "voice in and out"
   },
   "society": {
+    "groups": {
+      "create": "New agent team", "edit": "Edit agent team", "description": "Bundle agents in one sidebar entry. Each agent keeps its own conversation.",
+      "name": "Team name", "members": "Members", "cancel": "Cancel", "save": "Save team", "delete": "Ungroup", "delete_confirm": "Ungroup these agents? Their individual chats will remain.",
+      "left_chat": "Left chat", "right_chat": "Right chat", "open": "Open", "open_individual": "Open {0}'s individual chat", "missing_member": "Select an available agent to view this chat.", "hold_to_group": "Hold to group", "release_to_group": "Release to group"
+    },
     "chat": {
       "placeholder": "Message {0}",
       "more": "More",

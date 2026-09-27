@@ -20,8 +20,8 @@
  * profile) working; the drop position shows as a line above or below the
  * target row. HTML5 drag events and Alt + Arrow keys stay as fallbacks.
  */
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { Eye, Loader2, Plus, Search } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Eye, Loader2, Plus, Search, UsersRound } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,16 +30,21 @@ import { useT } from "@/i18n";
 import { societyDisplayName } from "@/lib/societyDisplayName";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
+import type { SocietyChatGroup } from "@/lib/societyChatGroups";
 
 import { AgentSwatch } from "../AgentSwatch";
 import type { AgentRunState, SocietyAgent } from "../data";
 import { AgentRosterActions } from "./AgentRosterActions";
 import { useRosterUnread } from "./useRosterUnread";
+import { ChatGroupDialog } from "../chat/ChatGroupDialog";
 
 const HIDDEN_AGENTS_KEY = "society.roster.hidden-agent-ids";
 const ORDER_KEY = "society.roster.order";
 /** How far the pointer must travel before a press becomes a drag. */
 const PRESS_DRAG_THRESHOLD_PX = 6;
+/** A deliberate pause over another row creates a team; a quick drop reorders. */
+const GROUP_HOLD_MS = 750;
+type GroupDropTarget = { kind: "agent" | "group"; id: string };
 
 function readHiddenAgents(): string[] {
   try {
@@ -75,6 +80,11 @@ const STATE_DOT: Record<AgentRunState, string> = {
 
 export interface RosterRailProps {
   agents: SocietyAgent[];
+  groups?: SocietyChatGroup[];
+  activeGroupId?: string | null;
+  onOpenGroup?: (groupId: string) => void;
+  onGroupAgents?: (sourceId: string, targetId: string) => void;
+  onAddAgentToGroup?: (agentId: string, groupId: string) => void;
   loading: boolean;
   /** True while rows come from the sample roster rather than society.db. */
   sample: boolean;
@@ -91,6 +101,11 @@ export interface RosterRailProps {
 
 export function RosterRail({
   agents,
+  groups = [],
+  activeGroupId = null,
+  onOpenGroup,
+  onGroupAgents,
+  onAddAgentToGroup,
   loading,
   sample,
   activeAgentId,
@@ -102,20 +117,21 @@ export function RosterRail({
 }: RosterRailProps) {
   const t = useT();
   const [query, setQuery] = useState("");
+  const [creatingGroup, setCreatingGroup] = useState(false);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [hiddenIds, setHiddenIds] = useState(readHiddenAgents);
   const [orderIds, setOrderIds] = useState(readRosterOrder);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropId, setDropId] = useState<string | null>(null);
   const [dropAfter, setDropAfter] = useState(false);
+  const [groupHover, setGroupHover] = useState<GroupDropTarget | null>(null);
+  const [groupReady, setGroupReady] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
   const [menu, setMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
   const profile = agents.find((agent) => agent.agentId === profileId);
   const menuAgent = agents.find((agent) => agent.agentId === menu?.agentId);
   const unread = useRosterUnread(agents, activeAgentId);
-  // The lead's visible name follows the wake word (e.g. "Hanna" for
-  // "Hey Hanna"); every other agent keeps its roster name.
-  const assistantName = useEventStore((s) => s.assistantName);
+  const assistantName = useEventStore((state) => state.assistantName);
 
   const setHidden = useCallback((agentId: string, hidden: boolean) => {
     setHiddenIds((current) => {
@@ -132,23 +148,22 @@ export function RosterRail({
   };
 
   const lead = useMemo(() => agents.find((a) => a.tier === "lead") ?? null, [agents]);
+  const groupedIds = useMemo(() => new Set(groups.flatMap((group) => group.members)), [groups]);
+  const visibleGroups = groups.filter((group) => `${group.name} ${group.members.map((id) => agents.find((agent) => agent.agentId === id)?.name ?? "").join(" ")}`.toLowerCase().includes(query.trim().toLowerCase()));
 
   const { leadVisible, rows } = useMemo(() => {
     const q = query.trim().toLowerCase();
     const filtered = agents.filter((a) => {
       if (!showHidden && hiddenIds.includes(a.agentId)) return false;
       if (!q) return true;
-      // The lead is shown under the wake-word name, so the search matches
-      // both the display name and the stored roster name.
-      const display = societyDisplayName(a, assistantName);
-      return `${a.name} ${display} ${a.title}`.toLowerCase().includes(q);
+      return `${a.name} ${societyDisplayName(a, assistantName)} ${a.title}`.toLowerCase().includes(q);
     },);
     const masterVisible = lead ? filtered.some((a) => a.agentId === lead.agentId) : false;
     // Orchestrators, then specialists; stable within a tier. The lead lives
     // in its own centered hero above and never repeats in the list.
     const rank = { lead: 0, orchestrator: 1, specialist: 2 } as const;
     const rest = filtered
-      .filter((a) => a.agentId !== lead?.agentId);
+      .filter((a) => a.agentId !== lead?.agentId && !groupedIds.has(a.agentId));
     // A drag persists the full visible order, so from then on the person's
     // own arrangement wins over the tier grouping. Agents the list never saw
     // (freshly created, or a retired id still stored) settle at the end in
@@ -166,32 +181,11 @@ export function RosterRail({
       return rank[a.tier] - rank[b.tier];
     });
     return { leadVisible: masterVisible, rows: rest };
-  }, [agents, assistantName, hiddenIds, lead, orderIds, query, showHidden]);
+  }, [agents, assistantName, groupedIds, hiddenIds, lead, orderIds, query, showHidden]);
 
   // While searching, the list is a filtered excerpt — dragging there would
   // file agents by where they happen to sit in the excerpt, so rows stay put.
   const reorderable = query.trim() === "";
-
-  /** File `fromId` in directly before `toId`, keeping every other row where it is. */
-  const moveBefore = useCallback((fromId: string, toId: string) => {
-    if (fromId === toId) return;
-    setOrderIds((current) => {
-      const base = rows.map((a) => a.agentId);
-      const known = new Set(base);
-      // Carry over stored ids for rows currently filtered out (hidden while
-      // "show hidden" is off) so a drag never silently drops them.
-      for (const id of current) if (!known.has(id)) base.push(id);
-      const without = base.filter((id) => id !== fromId);
-      const at = without.indexOf(toId);
-      const next = at === -1 ? [...without, fromId] : [...without.slice(0, at), fromId, ...without.slice(at)];
-      try {
-        localStorage.setItem(ORDER_KEY, JSON.stringify(next));
-      } catch {
-        // Private mode: the order holds for this window.
-      }
-      return next;
-    });
-  }, [rows]);
 
   /**
    * File `fromId` directly before `toId`, or directly after it when `after`
@@ -255,32 +249,75 @@ export function RosterRail({
   };
 
   // --- Press-and-drag: the whole row is the handle. -----------------------
-  // Native HTML5 dragging starts only from non-interactive gaps, so a press
-  // on the agent's name or avatar never became a drag. These pointer
-  // listeners turn any left-button press on the row into a drag once the
-  // pointer travels past a small threshold, track the row under the pointer
-  // on the window (so fast moves stay tracked), and swallow the click that
-  // follows a completed drag so the chat does not open by accident.
+  // One pointer gesture owns both actions. Native HTML drag competes with
+  // pointermove in WebView and can cancel the gesture before release.
+  // A quick drop reorders; holding over a row or group makes a team.
   const listRef = useRef<HTMLUListElement | null>(null);
+  const railRef = useRef<HTMLElement | null>(null);
   const pendingRef = useRef<{ id: string; startX: number; startY: number; pointerId: number } | null>(null);
   const pointerDragRef = useRef(false);
   const suppressClickRef = useRef(false);
   const dragIdRef = useRef<string | null>(null);
   const dropIdRef = useRef<string | null>(null);
   const dropAfterRef = useRef(false);
+  const groupHoverRef = useRef<GroupDropTarget | null>(null);
+  const groupReadyRef = useRef(false);
+  const holdTimerRef = useRef<number | null>(null);
   const reorderableRef = useRef(reorderable);
   const moveToRef = useRef(moveToPosition);
+  const groupAgentsRef = useRef(onGroupAgents);
+  const addToGroupRef = useRef(onAddAgentToGroup);
   dragIdRef.current = dragId;
   dropIdRef.current = dropId;
   dropAfterRef.current = dropAfter;
   reorderableRef.current = reorderable;
   moveToRef.current = moveToPosition;
+  groupAgentsRef.current = onGroupAgents;
+  addToGroupRef.current = onAddAgentToGroup;
 
   useEffect(() => {
     const rowElements = () => {
       const list = listRef.current;
       if (!list) return [] as HTMLElement[];
       return [...list.querySelectorAll("[data-agent-id]")] as HTMLElement[];
+    };
+    const hit = (element: HTMLElement, x: number, y: number) => {
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && x >= rect.left && x <= rect.right
+        && y >= rect.top && y <= rect.bottom;
+    };
+    const groupTargetAt = (x: number, y: number, sourceId: string): GroupDropTarget | null => {
+      if (groupAgentsRef.current) {
+        const agent = rowElements().find((element) =>
+          element.dataset.agentId !== sourceId && hit(element, x, y));
+        if (agent?.dataset.agentId) return { kind: "agent", id: agent.dataset.agentId };
+      }
+      if (addToGroupRef.current) {
+        const group = [...(railRef.current?.querySelectorAll("[data-group-id]") ?? [])]
+          .find((element) => hit(element as HTMLElement, x, y)) as HTMLElement | undefined;
+        if (group?.dataset.groupId) return { kind: "group", id: group.dataset.groupId };
+      }
+      return null;
+    };
+    const clearHold = () => {
+      if (holdTimerRef.current !== null) window.clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+      groupHoverRef.current = null;
+      groupReadyRef.current = false;
+      setGroupHover(null);
+      setGroupReady(false);
+    };
+    const updateHold = (target: GroupDropTarget | null) => {
+      const previous = groupHoverRef.current;
+      if (previous?.kind === target?.kind && previous?.id === target?.id) return;
+      clearHold();
+      if (!target) return;
+      groupHoverRef.current = target;
+      setGroupHover(target);
+      holdTimerRef.current = window.setTimeout(() => {
+        groupReadyRef.current = true;
+        setGroupReady(true);
+      }, GROUP_HOLD_MS);
     };
     const onMove = (event: PointerEvent) => {
       if (!reorderableRef.current) return;
@@ -304,12 +341,20 @@ export function RosterRail({
         if (sourceEl) {
           const rect = sourceEl.getBoundingClientRect();
           if (rect.height > 0 && event.clientY >= rect.top && event.clientY <= rect.bottom) {
+            updateHold(null);
             if (dropIdRef.current !== null) {
               setDropId(null);
               setDropAfter(false);
             }
             return;
           }
+        }
+        const groupTarget = groupTargetAt(event.clientX, event.clientY, sourceId);
+        updateHold(groupTarget);
+        if (groupTarget?.kind === "group") {
+          if (dropIdRef.current !== null) setDropId(null);
+          if (event.cancelable) event.preventDefault();
+          return;
         }
         let target: { id: string; after: boolean } | null = null;
         for (const el of elements) {
@@ -341,26 +386,35 @@ export function RosterRail({
         return;
       }
     };
-    const finish = (commit: boolean) => {
+    const finish = (commit: boolean, event?: PointerEvent) => {
       if (pointerDragRef.current && dragIdRef.current) {
         const from = dragIdRef.current;
         const toId = dropIdRef.current;
         const after = dropAfterRef.current;
+        const held = groupReadyRef.current ? groupHoverRef.current : null;
+        const releasedOn = event ? groupTargetAt(event.clientX, event.clientY, from) : null;
         pendingRef.current = null;
         pointerDragRef.current = false;
         setDragId(null);
         setDropId(null);
         setDropAfter(false);
-        if (commit && toId && toId !== from) moveToRef.current(from, toId, after);
+        clearHold();
+        if (commit && held && releasedOn?.kind === held.kind && releasedOn.id === held.id) {
+          if (held.kind === "agent") groupAgentsRef.current?.(from, held.id);
+          else addToGroupRef.current?.(from, held.id);
+        } else if (commit && releasedOn?.kind !== "group" && toId && toId !== from) {
+          moveToRef.current(from, toId, after);
+        }
         suppressClickRef.current = true;
         window.setTimeout(() => {
           suppressClickRef.current = false;
         }, 0);
       } else {
         pendingRef.current = null;
+        clearHold();
       }
     };
-    const onUp = () => finish(true);
+    const onUp = (event: PointerEvent) => finish(true, event);
     const onCancel = () => finish(false);
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") finish(false);
@@ -374,6 +428,7 @@ export function RosterRail({
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onCancel);
       window.removeEventListener("keydown", onKey);
+      if (holdTimerRef.current !== null) window.clearTimeout(holdTimerRef.current);
     };
   }, []);
 
@@ -401,64 +456,11 @@ export function RosterRail({
     setProfileId(agentId);
   };
 
-  const onDragStart = (event: DragEvent, agentId: string) => {
-    // A press-drag already owns the gesture; never let the native backend
-    // start a second drag on top of it.
-    if (pointerDragRef.current) {
-      event.preventDefault();
-      return;
-    }
-    setDragId(agentId);
-    try {
-      event.dataTransfer.effectAllowed = "move";
-      event.dataTransfer.setData("text/plain", agentId);
-    } catch {
-      // jsdom / touch: the state above still drives the drop.
-    }
-  };
-
-  const onDragOverRow = (event: DragEvent, agentId: string) => {
-    if (pointerDragRef.current) return;
-    if (!dragId || dragId === agentId) return;
-    event.preventDefault();
-    try {
-      event.dataTransfer.dropEffect = "move";
-    } catch {
-      // Non-HTML backends ignore the hint; the drop still lands.
-    }
-    if (dropId !== agentId) {
-      setDropId(agentId);
-      setDropAfter(false);
-    }
-  };
-
-  const onDropRow = (event: DragEvent, agentId: string) => {
-    if (pointerDragRef.current) return;
-    event.preventDefault();
-    const from = dragId ?? (() => {
-      try {
-        return event.dataTransfer.getData("text/plain") || null;
-      } catch {
-        return null;
-      }
-    })();
-    if (from && from !== agentId) moveBefore(from, agentId);
-    setDragId(null);
-    setDropId(null);
-    setDropAfter(false);
-  };
-
-  const endDrag = useCallback(() => {
-    if (pointerDragRef.current) return;
-    setDragId(null);
-    setDropId(null);
-    setDropAfter(false);
-  }, []);
-
   const hiddenCount = agents.filter((agent) => hiddenIds.includes(agent.agentId)).length;
 
   return (
     <aside
+      ref={railRef}
       data-testid="society-roster-rail"
       className={cn(
         "flex h-full min-h-0 flex-col border-border bg-sidebar",
@@ -478,6 +480,10 @@ export function RosterRail({
             </Badge>
           ) : null}
         </div>
+        <div className="flex items-center gap-1">
+        {!sample && onOpenGroup && <Button size="sm" variant="secondary" className="h-8 px-2" onClick={() => setCreatingGroup(true)} data-testid="society-create-group-button" aria-label={t("society.groups.create")} title={t("society.groups.create")}>
+          <UsersRound className="h-4 w-4" aria-hidden />
+        </Button>}
         <Button
           size="sm"
           variant="secondary"
@@ -488,6 +494,7 @@ export function RosterRail({
           <Plus className="h-3.5 w-3.5" aria-hidden />
           {t("society.roster.create")}
         </Button>
+        </div>
       </div>
       <label className="relative mx-3 mt-3 block">
         <Search
@@ -550,11 +557,30 @@ export function RosterRail({
         {leadVisible ? (
           <div className="mx-3 mb-1 border-t border-border/60" aria-hidden />
         ) : null}
+        {visibleGroups.length > 0 && <ul className="flex flex-col gap-0.5 px-2 pb-2">
+          {visibleGroups.map((group) => <li key={group.group_id}>
+            <button type="button" data-group-id={group.group_id} onClick={() => onOpenGroup?.(group.group_id)} aria-current={activeGroupId === group.group_id ? "true" : undefined}
+              className={cn("flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", activeGroupId === group.group_id && "bg-secondary", groupHover?.kind === "group" && groupHover.id === group.group_id && (groupReady ? "ring-2 ring-primary" : "ring-1 ring-border-strong"))}
+              data-testid={`society-group-${group.group_id}`}>
+              <span className="flex w-12 shrink-0 items-center justify-center">
+                {group.members.slice(0, 3).map((id, index) => {
+                  const member = agents.find((agent) => agent.agentId === id);
+                  return member ? <span key={id} className={cn("rounded-full ring-2 ring-sidebar", index > 0 && "-ml-3")}><AgentSwatch agent={member} size={26} /></span> : null;
+                })}
+              </span>
+              <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-foreground">{group.name}</span>
+                <span className="block truncate text-xs text-muted-foreground">{groupHover?.kind === "group" && groupHover.id === group.group_id
+                  ? t(groupReady ? "society.groups.release_to_group" : "society.groups.hold_to_group")
+                  : group.members.map((id) => agents.find((agent) => agent.agentId === id)?.name ?? id).join(", ")}</span>
+              </span>
+            </button>
+          </li>)}
+        </ul>}
         <ul ref={listRef} className="flex flex-col gap-0.5 px-2 pb-3">
           {loading && !leadVisible && rows.length === 0 ? (
             <li className="px-2 py-3 text-xs text-muted-foreground">{t("society.roster.loading")}</li>
           ) : null}
-          {!loading && !leadVisible && rows.length === 0 ? (
+          {!loading && !leadVisible && rows.length === 0 && visibleGroups.length === 0 ? (
             <li className="px-2 py-3 text-xs text-muted-foreground">{t("society.roster.empty")}</li>
           ) : null}
           {rows.map((agent) => {
@@ -562,17 +588,11 @@ export function RosterRail({
             const isDropTarget = dropId === agent.agentId && dragId !== agent.agentId;
             return (
             <li key={agent.agentId} className="relative">
-              {isDropTarget && !dropAfter ? (
+              {isDropTarget && !dropAfter && !groupReady ? (
                 <div aria-hidden className="pointer-events-none absolute inset-x-2 top-0 z-10 h-0.5 -translate-y-1/2 rounded-full bg-sky-400" />
               ) : null}
               <div
                 data-agent-id={agent.agentId}
-                draggable={reorderable}
-                onDragStart={(event) => onDragStart(event, agent.agentId)}
-                onDragOver={(event) => onDragOverRow(event, agent.agentId)}
-                onDragLeave={() => setDropId((current) => (current === agent.agentId ? null : current))}
-                onDrop={(event) => onDropRow(event, agent.agentId)}
-                onDragEnd={endDrag}
                 onPointerDown={(event) => onRowPointerDown(event, agent.agentId)}
                 onClickCapture={onRowClickCapture}
                 onKeyDown={(event) => onRowKeyDown(event, agent.agentId)}
@@ -586,6 +606,7 @@ export function RosterRail({
                   agent.agentId === activeAgentId && "bg-secondary",
                   hiddenIds.includes(agent.agentId) && "opacity-60",
                   isDropTarget && "bg-secondary ring-1 ring-inset ring-border-strong",
+                  groupHover?.kind === "agent" && groupHover.id === agent.agentId && groupReady && "ring-2 ring-primary",
                 )}
               >
                 <button type="button" onClick={() => openProfile(agent.agentId)} aria-label={t("society.profile_card.open").replace("{0}", agent.name)} className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -606,7 +627,12 @@ export function RosterRail({
                 <RowStatus agent={agent} hasUnread={unread.has(agent.agentId)} />
                 </button>
               </div>
-              {isDropTarget && dropAfter ? (
+              {groupHover?.kind === "agent" && groupHover.id === agent.agentId && (
+                <span data-testid="society-group-drop-hint" className="pointer-events-none absolute right-2 top-1 rounded bg-primary px-1.5 py-0.5 text-[10px] text-primary-foreground">
+                  {t(groupReady ? "society.groups.release_to_group" : "society.groups.hold_to_group")}
+                </span>
+              )}
+              {isDropTarget && dropAfter && !groupReady ? (
                 <div aria-hidden className="pointer-events-none absolute inset-x-2 bottom-0 z-10 h-0.5 translate-y-1/2 rounded-full bg-sky-400" />
               ) : null}
             </li>
@@ -617,6 +643,7 @@ export function RosterRail({
       {menu && menuAgent && <AgentRosterActions key={menu.agentId} agent={menuAgent} roster={agents} sample={sample}
         hidden={hiddenIds.includes(menu.agentId)} x={menu.x} y={menu.y} onVisibilityChange={setHidden} onDismiss={closeMenu} />}
       {profile && <Suspense fallback={null}><AgentProfileDialog key={profile.agentId} agent={profile} sample={sample} onClose={() => setProfileId(null)} /></Suspense>}
+      {creatingGroup && <ChatGroupDialog agents={agents} onClose={() => setCreatingGroup(false)} onSaved={(id) => onOpenGroup?.(id)} />}
     </aside>
   );
 }

@@ -5176,6 +5176,11 @@
     "mode_pipeline": "voz de entrada y salida"
   },
   "society": {
+    "groups": {
+      "create": "Nuevo equipo de agentes", "edit": "Editar equipo de agentes", "description": "Agrupa agentes en una entrada lateral. Cada agente conserva su propio chat.",
+      "name": "Nombre del equipo", "members": "Miembros", "cancel": "Cancelar", "save": "Guardar equipo", "delete": "Desagrupar", "delete_confirm": "¿Desagrupar estos agentes? Sus chats individuales permanecerán.",
+      "left_chat": "Chat izquierdo", "right_chat": "Chat derecho", "open": "Abrir", "open_individual": "Abrir el chat individual de {0}", "missing_member": "Selecciona un agente disponible para este chat.", "hold_to_group": "Mantén para agrupar", "release_to_group": "Suelta para agrupar"
+    },
     "chat": {
       "placeholder": "Mensaje a {0}",
       "more": "Más",

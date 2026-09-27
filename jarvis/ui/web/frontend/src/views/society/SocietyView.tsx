@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useMemo, useState, useEffect } from "react";
 import { createPortal } from "react-dom";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { useSocietyShell } from "@/store/societyShell";
 import { setMapFullscreen } from "@/lib/mapFullscreen";
@@ -13,6 +14,9 @@ import type { PlaceId } from "@/components/society/world/islandLayout";
 import { useSocietyRoster } from "@/components/society/data";
 import { RosterRail } from "@/components/society/roster/RosterRail";
 import { useModelMenuData } from "@/components/society/chat/useModelMenuData";
+import { ChatGroupPanel } from "@/components/society/chat/ChatGroupPanel";
+import { useSocietyChatStore } from "@/components/society/chat/AgentChatPanel";
+import { createSocietyChatGroup, updateSocietyChatGroup, useSocietyChatGroups } from "@/lib/societyChatGroups";
 import { CanvasActivity } from "@/hooks/useCanvasAwake";
 import { forgetLastAgentId, rememberLastAgentId, storedLastAgentId } from "./lastAgent";
 
@@ -27,6 +31,7 @@ function isProtectedMarsInteraction(target: EventTarget | null): boolean {
 }
 
 export function SocietyView() {
+  const queryClient = useQueryClient();
   useModelMenuData();
   const t = useT();
   useLocaleChunk("society");
@@ -35,8 +40,13 @@ export function SocietyView() {
   const roster = useSocietyRoster();
   const agents = useMemo(() => roster.data?.agents ?? [], [roster.data]);
   const sample = roster.data?.sample ?? true;
+  const groupsQuery = useSocietyChatGroups(!sample);
+  const groups = useMemo(() => groupsQuery.data ?? [], [groupsQuery.data]);
+  const [openGroupId, setOpenGroupId] = useState<string | null>(null);
+  const openGroup = groups.find((group) => group.group_id === openGroupId) ?? null;
   const [openAgentId, setOpenAgentId] = useState<string | null>(storedLastAgentId);
   const [creating, setCreating] = useState(false);
+  const [groupError, setGroupError] = useState("");
   const [openPlace, setOpenPlace] = useState<BuildingPlace | null>(null);
 
   const openAgent = useMemo(
@@ -45,9 +55,45 @@ export function SocietyView() {
   );
 
   const selectAgent = useCallback((agentId: string | null) => {
+    setOpenGroupId(null);
     setOpenAgentId(agentId);
     if (agentId) rememberLastAgentId(agentId);
   }, []);
+
+  const selectGroup = useCallback((groupId: string) => {
+    useSocietyChatStore.getState().disconnect();
+    setOpenGroupId(groupId);
+    setOpenAgentId(null);
+  }, []);
+
+  const groupAgents = useCallback((sourceId: string, targetId: string) => {
+    const source = agents.find((agent) => agent.agentId === sourceId);
+    const target = agents.find((agent) => agent.agentId === targetId);
+    if (sample || !source || !target || sourceId === targetId) return;
+    setGroupError("");
+    void createSocietyChatGroup(`${source.name} + ${target.name}`, [sourceId, targetId])
+      .then(async (group) => {
+        await queryClient.invalidateQueries({ queryKey: ["society", "chat-groups"] });
+        selectGroup(group.group_id);
+      })
+      .catch((error) => setGroupError(error instanceof Error ? error.message : String(error)));
+  }, [agents, queryClient, sample, selectGroup]);
+
+  const addAgentToGroup = useCallback((agentId: string, groupId: string) => {
+    const group = groups.find((entry) => entry.group_id === groupId);
+    if (sample || !group || group.members.includes(agentId)) return;
+    setGroupError("");
+    void updateSocietyChatGroup(groupId, group.name, [...group.members, agentId])
+      .then(async () => {
+        await queryClient.invalidateQueries({ queryKey: ["society", "chat-groups"] });
+        selectGroup(groupId);
+      })
+      .catch((error) => setGroupError(error instanceof Error ? error.message : String(error)));
+  }, [groups, queryClient, sample, selectGroup]);
+
+  useEffect(() => {
+    if (openGroupId && groupsQuery.data && !groups.some((group) => group.group_id === openGroupId)) setOpenGroupId(null);
+  }, [groups, groupsQuery.data, openGroupId]);
 
   useEffect(() => {
     if (openAgentId && agents.length > 0 && !agents.some((agent) => agent.agentId === openAgentId)) {
@@ -132,6 +178,7 @@ export function SocietyView() {
           document.body,
         )}
         {fullscreenError && <p role="alert" className="bg-card px-4 py-2 text-sm text-destructive">{t("society.world.fullscreen_failed")}</p>}
+        {groupError && <p role="alert" className="bg-card px-4 py-2 text-sm text-destructive">{groupError}</p>}
         {mode === "world" ? (
         <div className="relative flex min-h-0 flex-1">
           <div className="min-w-0 flex-1">
@@ -145,12 +192,20 @@ export function SocietyView() {
         </div>
         ) : null}
         <div className={mode === "agents" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
-        {openAgent ? (
+        {openGroup ? (
+          <ChatGroupPanel group={openGroup} groups={groups} roster={agents} onOpenAgent={selectAgent} onOpenGroup={selectGroup}
+            onCreateAgent={() => setCreating(true)} onDeleted={() => setOpenGroupId(null)}
+            onGroupAgents={groupAgents} onAddAgentToGroup={addAgentToGroup} />
+        ) : openAgent ? (
           <AgentCardOverlay embedded agent={openAgent} roster={agents} rosterLoading={roster.isLoading}
+            groups={groups} onSelectGroup={selectGroup}
+            onGroupAgents={sample ? undefined : groupAgents} onAddAgentToGroup={sample ? undefined : addAgentToGroup}
             sample={sample} onSelectAgent={selectAgent} onCreate={() => setCreating(true)}
             onClose={() => setOpenAgentId(null)} />
         ) : (
           <RosterRail agents={agents} loading={roster.isLoading} sample={sample}
+            groups={groups} onOpenGroup={selectGroup}
+            onGroupAgents={sample ? undefined : groupAgents} onAddAgentToGroup={sample ? undefined : addAgentToGroup}
             activeAgentId={null} onOpen={selectAgent} onCreate={() => setCreating(true)} side="left"
             className="w-full border-0 jarvis-nav-surface" />
         )}

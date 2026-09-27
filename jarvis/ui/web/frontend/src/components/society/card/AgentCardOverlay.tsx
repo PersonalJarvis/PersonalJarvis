@@ -16,12 +16,17 @@ import { AgentSwatch } from "../AgentSwatch";
 import type { SocietyAgent } from "../data";
 import { AgentChatPanel } from "../chat/AgentChatPanel";
 import { RosterRail } from "../roster/RosterRail";
+import type { SocietyChatGroup } from "@/lib/societyChatGroups";
 import { OptionsRail } from "./OptionsRail";
 
 export interface AgentCardOverlayProps {
   agent: SocietyAgent | null;
   /** Every agent — the rail lists them, the chat @mentions them. */
   roster: SocietyAgent[];
+  groups?: SocietyChatGroup[];
+  onSelectGroup?: (groupId: string) => void;
+  onGroupAgents?: (sourceId: string, targetId: string) => void;
+  onAddAgentToGroup?: (agentId: string, groupId: string) => void;
   /** True while the roster is still loading; the rail says so. */
   rosterLoading?: boolean;
   /** True while rows come from the sample roster rather than society.db. */
@@ -40,6 +45,10 @@ export interface AgentCardOverlayProps {
 export function AgentCardOverlay({
   agent,
   roster,
+  groups = [],
+  onSelectGroup,
+  onGroupAgents,
+  onAddAgentToGroup,
   rosterLoading = false,
   sample = false,
   onSelectAgent,
@@ -84,6 +93,10 @@ export function AgentCardOverlay({
           <div className="grid min-h-0 flex-1 grid-cols-[minmax(240px,300px)_minmax(0,1fr)]">
             <RosterRail
               agents={roster}
+              groups={groups}
+              onOpenGroup={onSelectGroup}
+              onGroupAgents={onGroupAgents}
+              onAddAgentToGroup={onAddAgentToGroup}
               loading={rosterLoading}
               sample={sample}
               activeAgentId={agent.agentId}

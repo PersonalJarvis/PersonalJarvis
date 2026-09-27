@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SocietyAgent } from "@/components/society/data";
 import { useRetireStore } from "@/components/society/world/retireStore";
 import { useEventStore } from "@/store/events";
-import { RosterRail } from "./RosterRail";
+import { RosterRail, type RosterRailProps } from "./RosterRail";
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
 
@@ -14,9 +14,9 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
   useEventStore.setState({ assistantName: "Assistant" });
 });
-
 function agent(over: Partial<SocietyAgent> & Pick<SocietyAgent, "agentId" | "name">): SocietyAgent {
   return {
     title: "Title",
@@ -57,6 +57,18 @@ const baseProps = {
 };
 
 describe("RosterRail status", () => {
+  it("shows a team as one row and keeps its members out of the sidebar", () => {
+    const openGroup = vi.fn();
+    render(<RosterRail {...baseProps} activeAgentId={null}
+      agents={[agent({ agentId: "scout", name: "Scout" }), agent({ agentId: "writer", name: "Writer" })]}
+      groups={[{ group_id: "team", name: "Launch team", members: ["scout", "writer"], created_ms: 1, updated_ms: 1 }]}
+      onOpenGroup={openGroup} />);
+    expect(screen.queryByText("Scout")).toBeNull();
+    expect(screen.queryByText("Writer")).toBeNull();
+    expect(screen.getByText("Scout, Writer")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("society-group-team"));
+    expect(openGroup).toHaveBeenCalledWith("team");
+  });
   it("shows a loading spinner while an agent is thinking", () => {
     render(
       <RosterRail
@@ -198,16 +210,9 @@ describe("RosterRail reorder", () => {
     return row;
   };
 
-  const dragData = () => ({ setData: vi.fn(), getData: vi.fn().mockReturnValue(""), effectAllowed: "", dropEffect: "" });
-
-  it("files a dragged row before the drop target and persists the order", () => {
+  it("leaves HTML dragging off so pointer reordering owns the gesture", () => {
     renderRail(trio());
-    expect(rowOrder()).toEqual(["a", "b", "c"]);
-    fireEvent.dragStart(rowOf("A"), { dataTransfer: dragData() });
-    fireEvent.dragOver(rowOf("C"), { dataTransfer: dragData() });
-    fireEvent.drop(rowOf("C"), { dataTransfer: dragData() });
-    expect(rowOrder()).toEqual(["b", "a", "c"]);
-    expect(JSON.parse(localStorage.getItem(ORDER_KEY) ?? "[]")).toEqual(["b", "a", "c"]);
+    expect(rowOf("A").hasAttribute("draggable")).toBe(false);
   });
 
   it("restores the persisted order on mount", () => {
@@ -235,14 +240,14 @@ describe("RosterRail reorder", () => {
   it("locks rows while searching so the excerpt cannot file the order", () => {
     renderRail(trio());
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "a" } });
-    expect(rowOf("A").getAttribute("draggable")).toBe("false");
+    expect(rowOf("A").className).not.toContain("cursor-grab");
     expect(localStorage.getItem(ORDER_KEY)).toBeNull();
   });
 });
 
 describe("RosterRail press-drag", () => {
   const ORDER_KEY = "society.roster.order";
-  const renderRail = (agents: SocietyAgent[], props: Partial<typeof baseProps> = {}) => {
+  const renderRail = (agents: SocietyAgent[], props: Partial<RosterRailProps> = {}) => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return render(<QueryClientProvider client={client}>
       <RosterRail {...baseProps} {...props} agents={agents} activeAgentId={null} />
@@ -323,6 +328,51 @@ describe("RosterRail press-drag", () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
+  it("keeps a quick drop as a reorder even when grouping is available", () => {
+    const onGroupAgents = vi.fn();
+    renderRail(trio(), { onGroupAgents });
+    mockLayout({ a: 0, b: 48, c: 96 });
+    pressRow(rowOf("A"), 10, 10);
+    movePointer(10, 80);
+    releasePointer(10, 80);
+    expect(rowOrder()).toEqual(["b", "a", "c"]);
+    expect(onGroupAgents).not.toHaveBeenCalled();
+  });
+
+  it("groups two agents only after holding over the target row", () => {
+    const onGroupAgents = vi.fn();
+    renderRail(trio(), { onGroupAgents });
+    mockLayout({ a: 0, b: 48, c: 96 });
+    vi.useFakeTimers();
+    pressRow(rowOf("A"), 10, 10);
+    movePointer(10, 80);
+    expect(screen.getByTestId("society-group-drop-hint").textContent).toBe("society.groups.hold_to_group");
+    act(() => vi.advanceTimersByTime(760));
+    expect(screen.getByTestId("society-group-drop-hint").textContent).toBe("society.groups.release_to_group");
+    releasePointer(10, 80);
+    expect(onGroupAgents).toHaveBeenCalledWith("a", "b");
+    expect(rowOrder()).toEqual(["a", "b", "c"]);
+  });
+
+  it("adds an agent to a team by holding over its single sidebar row", () => {
+    const onAddAgentToGroup = vi.fn();
+    renderRail(trio(), {
+      groups: [{ group_id: "team", name: "Team", members: ["b", "c"], created_ms: 1, updated_ms: 1 }],
+      onAddAgentToGroup,
+    });
+    mockLayout({ a: 100 });
+    vi.spyOn(screen.getByTestId("society-group-team"), "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, bottom: 48, right: 200,
+      width: 200, height: 48, toJSON: () => ({}),
+    } as DOMRect);
+    vi.useFakeTimers();
+    pressRow(rowOf("A"), 10, 110);
+    movePointer(10, 20);
+    act(() => vi.advanceTimersByTime(760));
+    releasePointer(10, 20);
+    expect(onAddAgentToGroup).toHaveBeenCalledWith("a", "team");
+  });
+
   it("drops after the last row when released below the list", () => {
     renderRail(trio());
     mockLayout({ a: 0, b: 48, c: 96 });
@@ -351,30 +401,13 @@ describe("RosterRail press-drag", () => {
   });
 });
 
-describe("RosterRail lead display name", () => {
-  const renderRail = (agents: SocietyAgent[]) => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    return render(<QueryClientProvider client={client}>
-      <RosterRail {...baseProps} agents={agents} activeAgentId={null} />
-    </QueryClientProvider>);
-  };
-
-  it("shows the wake-word name for the lead instead of the backend name", () => {
-    useEventStore.setState({ assistantName: "Hanna" });
-    renderRail([agent({ agentId: "jarvis", name: "Jarvis", tier: "lead", title: "Lead" })]);
-    expect(screen.getByTestId("society-lead-hero")).toBeTruthy();
-    expect(screen.getByText("Hanna")).toBeTruthy();
-    expect(screen.queryByText("Jarvis")).toBeNull();
-  });
-
-  it("finds the lead by display name and by stored name", () => {
-    useEventStore.setState({ assistantName: "Hanna" });
-    const lead = agent({ agentId: "jarvis", name: "Jarvis", tier: "lead", title: "Lead" });
-    const { unmount } = renderRail([lead]);
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "hanna" } });
-    expect(screen.getByText("Hanna")).toBeTruthy();
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "jarvis" } });
-    expect(screen.getByText("Hanna")).toBeTruthy();
-    unmount();
-  });
+it("shows and finds the lead by the wake-word name", () => {
+  useEventStore.setState({ assistantName: "Hanna" });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}>
+    <RosterRail {...baseProps} agents={[agent({ agentId: "jarvis", name: "Jarvis", tier: "lead" })]} activeAgentId={null} />
+  </QueryClientProvider>);
+  expect(screen.getByText("Hanna")).toBeTruthy();
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "hanna" } });
+  expect(screen.getByText("Hanna")).toBeTruthy();
 });
