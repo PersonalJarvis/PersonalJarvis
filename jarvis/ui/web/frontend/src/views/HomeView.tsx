@@ -1,7 +1,12 @@
+import { lazy, Suspense } from "react";
 import { useHomeStore } from "@/store/home";
 import { HomeHeader } from "@/components/home/HomeHeader";
 import { VoiceStage } from "@/components/home/VoiceStage";
-import { ChatStage } from "@/components/home/ChatStage";
+import { useT } from "@/i18n";
+
+const ChatStage = lazy(() =>
+  import("@/components/home/ChatStage").then((module) => ({ default: module.ChatStage })),
+);
 
 /**
  * The front page — the "chats" section.
@@ -18,11 +23,16 @@ import { ChatStage } from "@/components/home/ChatStage";
  * no instruments, nothing that has to be read before you can speak.
  */
 export function HomeView() {
+  const t = useT();
   const surface = useHomeStore((s) => s.surface);
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="home-view" data-surface={surface}>
       <HomeHeader />
-      {surface === "chat" ? <ChatStage /> : <VoiceStage />}
+      {surface === "chat" ? (
+        <Suspense fallback={<div role="status" className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">{t("common.loading")}</div>}>
+          <ChatStage />
+        </Suspense>
+      ) : <VoiceStage />}
     </div>
   );
 }

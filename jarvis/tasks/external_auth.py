@@ -44,7 +44,7 @@ def verify_google_token(token: str, audience: str, service_account: str) -> bool
     try:
         claims = verify_oauth2_token(token, _google_request, audience=audience)
         return claims.get("email") == service_account and claims.get("email_verified") is True
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # Malformed claims fail authentication closed.
         return False
 
 
@@ -89,7 +89,7 @@ def verify_provider(
             signatures = [value for name, _, value in parts if name == "v1"]
         else:
             return False
-    except (ValueError, TypeError, AttributeError):
+    except (ValueError, TypeError, AttributeError):  # Invalid signatures fail closed.
         return False
     expected = hmac.new(key.encode("utf-8"), signed, hashlib.sha256).hexdigest()
     return any(

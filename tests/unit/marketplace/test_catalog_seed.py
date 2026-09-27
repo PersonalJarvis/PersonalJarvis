@@ -10,6 +10,7 @@ the package.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -354,15 +355,17 @@ def test_cloudflare_is_dcr_one_click_with_http_mcp() -> None:
     assert spec.mcp_server["url"] == "https://observability.mcp.cloudflare.com/mcp"
 
 
-def test_discord_is_bot_pat_channel_no_mcp() -> None:
+def test_discord_uses_browser_identity_with_bot_token_fallback() -> None:
     # AD-3 (2026-06-09): connecting Discord enables the in-repo bidirectional
     # channel (like Telegram), not a competing mcp-discord server that would
     # open a second Discord gateway over the same bot token.
     spec = _seed().by_id("discord")
     assert spec is not None
     assert spec.display_name == "Discord"
-    assert spec.auth.mode == "pat_paste"
-    assert spec.auth.auth_scheme == "bot"
+    assert spec.auth.mode == "oauth_pkce_loopback"
+    assert spec.fallback_auth is not None
+    assert spec.fallback_auth.mode == "pat_paste"
+    assert spec.fallback_auth.auth_scheme == "bot"
     assert spec.mcp_server is None
 
 
@@ -433,20 +436,31 @@ def test_higgsfield_is_dcr_one_click_with_http_mcp() -> None:
     assert spec.native_tool is None
 
 
-def test_shopify_is_pkce_loopback_with_resource_and_http_mcp() -> None:
+def test_unlisted_shopify_manifest_keeps_its_pkce_configuration() -> None:
     # 2026-09-21: Shopify publishes no DCR registration_endpoint, so the
     # first (DCR) attempt failed at connect with "provider request failed".
     # The plugin uses Authorization Code + PKCE loopback against the
     # publisher-shared app, with the RFC 8707 resource indicator the MCP
     # server requires.
-    spec = _seed().by_id("shopify")
-    assert spec is not None
+    from jarvis.marketplace.catalog import PluginSpec
+
+    assert _seed().by_id("shopify") is None
+    manifest_path = (
+        Path(__file__).resolve().parents[3]
+        / "jarvis/marketplace/drafts/shopify/plugin.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    spec = PluginSpec.model_validate({
+        "id": manifest["name"],
+        "description": manifest["description"],
+        **manifest["extensions"]["io.github.personaljarvis"],
+    })
     assert spec.display_name == "Shopify"
     assert spec.category == "Knowledge & Reading"
     assert spec.oauth_client_family == "shopify"
     assert spec.auth.mode == "oauth_pkce_loopback"
     assert spec.auth.authorization_url == "https://setup.shopify.com/oauth/authorize"
-    assert spec.auth.token_url == "https://setup.shopify.com/oauth/token"
+    assert spec.auth.token_url == "https://setup.shopify.com/oauth/token"  # noqa: S105 - URL, not a credential
     assert spec.auth.callback_port == 3130
     assert spec.auth.scopes == [
         "read_products",
