@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { LockKeyhole } from "lucide-react";
 import { useT } from "@/i18n";
 import { readCachedAssistantName } from "@/lib/assistantNameCache";
@@ -6,6 +6,7 @@ import { readCachedAssistantName } from "@/lib/assistantNameCache";
 declare global {
   interface Window {
     __JARVIS_TOKEN?: string;
+    __JARVIS_BOOT_STARTED_AT?: number;
   }
 }
 
@@ -49,6 +50,11 @@ function waitForInjectedToken(): Promise<string> {
 export function AuthGate({ children }: AuthGateProps) {
   const t = useT();
   const started = useRef(false);
+  // The HTML splash starts the reveal before React loads. Continue that same
+  // animation phase when the checking gate replaces its DOM.
+  const bootShift = useRef(
+    `-${Math.max(0, (performance.now() - (window.__JARVIS_BOOT_STARTED_AT ?? performance.now())) / 1000)}s`,
+  );
   const [state, setState] = useState<GateState>("checking");
   const [backendWarming, setBackendWarming] = useState(false);
   const [controlKey, setControlKey] = useState("");
@@ -170,18 +176,23 @@ export function AuthGate({ children }: AuthGateProps) {
 
   if (state === "checking") {
     return (
-      <main id="jarvis-auth-splash">
+      <main id="jarvis-auth-splash" style={{ "--jbs-shift": bootShift.current } as CSSProperties}>
         <div id="jarvis-boot-splash">
           <div className="boot-emblem" aria-hidden="true">
-            <span className="boot-orbit outer" />
-            <span className="boot-orbit inner" />
-            <img className="boot-mark" src="/jarvis-gigi-256.png" alt="" width="104" height="104" />
+            <span className="boot-halo" />
+            <svg className="boot-wave" viewBox="0 0 1200 400" preserveAspectRatio="none">
+              <path className="wave-glow" d="M0 200 C160 200 260 192 360 200 S500 250 600 200 S760 150 840 200 S1040 200 1200 200" />
+              <path d="M0 200 C160 200 260 192 360 200 S500 250 600 200 S760 150 840 200 S1040 200 1200 200" />
+              <path className="wave-echo" d="M0 98 C180 98 280 112 380 98 S510 72 600 98 S730 124 820 98 S1020 98 1200 98" />
+              <path className="wave-echo" d="M0 302 C180 302 280 288 380 302 S510 328 600 302 S730 276 820 302 S1020 302 1200 302" />
+            </svg>
+            <span className="boot-light left" /><span className="boot-light right" />
+            <img className="boot-mark" src="/jarvis-gigi-256.png" alt="" width="220" height="220" />
           </div>
           <div className="name">{readCachedAssistantName("")}</div>
           <div className="sub" role="status" aria-live="polite">
             {t(backendWarming ? "auth_gate.starting" : "auth_gate.checking")}
           </div>
-          <div className="boot-track" aria-hidden="true" />
         </div>
       </main>
     );

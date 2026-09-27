@@ -40,6 +40,8 @@ describe("AuthGate", () => {
     render(<AuthGate><div>Application</div></AuthGate>);
     expect(screen.getByText("Checking access…")).toBeTruthy();
     expect(document.querySelector("#jarvis-boot-splash .boot-mark")).toBeTruthy();
+    const initialShift = document.querySelector<HTMLElement>("#jarvis-auth-splash")!
+      .style.getPropertyValue("--jbs-shift");
 
     await act(async () => {
       vi.advanceTimersByTime(1100);
@@ -50,6 +52,8 @@ describe("AuthGate", () => {
 
     expect(screen.getByText("Starting up…")).toBeTruthy();
     expect(document.querySelector("#jarvis-boot-splash .boot-mark")).toBeTruthy();
+    expect(document.querySelector<HTMLElement>("#jarvis-auth-splash")!
+      .style.getPropertyValue("--jbs-shift")).toBe(initialShift);
     expect(screen.queryByText("Application")).toBeNull();
   });
 

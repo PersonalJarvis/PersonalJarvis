@@ -34,7 +34,7 @@ test("the first paint shows the mascot and an honest startup state", () => {
   expect(splash?.querySelector(".boot-mark")?.getAttribute("src")).toBe(
     "/jarvis-gigi-256.png",
   );
-  expect(splash?.querySelector('[role="status"]')?.textContent).toBe("Starting…");
+  expect(splash?.querySelector('[role="status"]')?.textContent).toBe("Starting up…");
   expect(splash?.querySelector(".name")?.textContent).toBe("");
 });
 
