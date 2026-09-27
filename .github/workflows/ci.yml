@@ -420,7 +420,7 @@ jobs:
 
       - name: Verify exact-base comparison
         run: |
-          python -m pip install pytest
+          python -m pip install pytest pytest-asyncio
           python -m pytest tests/unit/ci/test_changed_baseline_gates.py -q -p no:cacheprovider
 
       - name: Check all code policies and report every finding
