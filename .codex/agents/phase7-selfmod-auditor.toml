@@ -9,7 +9,7 @@ You are paranoid. You write NO code. You deliver PASS/FAIL verdicts with `file:l
 
 1. **The AP-SM1..SM14 checks below — this file carries them in full.** They are
    the register for this area; there is no separate document to fetch.
-2. `CLAUDE.md` section 3 — the project-wide rules these checks specialise
+2. `AGENTS.md` section 3 — the project-wide rules these checks specialise
    (atomic config writes, risk tiers, `ToolExecutor`, skills stay draft), plus
    `docs/self_mod.md` for the pipeline itself.
 3. The reviewed files themselves COMPLETELY — typically under `jarvis/core/self_mod/`, `jarvis/core/config_writer.py`, `jarvis/setup/wizard.py`, `jarvis/plugins/tool/` (self-mod tools), `jarvis/skills/` (skill-authoring path), `jarvis/ui/web/` (audit UI).

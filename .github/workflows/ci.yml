@@ -557,12 +557,8 @@ jobs:
       - name: Brand-logo gate (BLOCKING)
         run: python scripts/ci/check_brand_logos.py
 
-      # CLAUDE.md §0 promises the agent-knowledge mirrors are held by "hook +
-      # pre-commit + CI". The CI leg did not exist until 2026-08-20, so a commit
-      # made with hooks uninstalled (`install_git_hooks.py` is a manual step)
-      # could drift the trees with nothing to catch it. Three trees, two
-      # engines: .claude <-> .agents is byte-identical, .codex is a generated
-      # projection. Both are cheap — stdlib and git only.
+      # AGENTS.md and .agents/ are authoritative. Claude and Codex compatibility
+      # copies must match them, even when local hooks were not installed.
       - name: Agent-knowledge mirrors (BLOCKING)
         run: |
           python scripts/ci/sync_agents_md.py --check
