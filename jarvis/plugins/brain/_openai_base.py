@@ -44,7 +44,11 @@ def _stream_options_supported(client: Any) -> bool:
     try:
         create = client.chat.completions.create
         parameters = inspect.signature(create).parameters
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        log.debug(
+            "OpenAI-compatible client signature unavailable; using optional-kwarg retry: %s",
+            exc,
+        )
         return True
     supported = "stream_options" in parameters or any(
         parameter.kind is inspect.Parameter.VAR_KEYWORD
