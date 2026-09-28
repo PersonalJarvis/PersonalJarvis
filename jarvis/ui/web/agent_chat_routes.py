@@ -898,9 +898,9 @@ async def attach_files(
     if not folder:
         folder = svc.default_cwd(surface if surface in SURFACE_NAMES else "agent")
 
-    uploads: list[tuple[str, bytes]] = []
-    for upload in files or []:
-        uploads.append((upload.filename or "file", await upload.read()))
+    # The spooled upload file itself, not its bytes: a screen recording streams
+    # to disk instead of being read into memory whole.
+    uploads = [(upload.filename or "file", upload.file) for upload in files or []]
 
     try:
         found = await chat_attachments.ingest(

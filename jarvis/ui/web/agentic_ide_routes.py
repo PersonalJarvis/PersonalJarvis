@@ -3438,8 +3438,10 @@ async def terminal_attach(
     readable: list[tuple[str, bytes, str]] = []
 
     # 1. Paths that came with the drag. A path already inside the workspace is
-    #    used as it lies; anything else is copied in.
-    to_copy: list[tuple[str, bytes]] = []
+    #    used as it lies; anything else is copied in. Sources stay paths or
+    #    open files rather than bytes, so a screen recording streams to disk
+    #    instead of being held in memory whole.
+    to_copy: list[tuple[str, drops.DropSource]] = []
     for raw in (paths or "").splitlines():
         candidate = raw.strip()
         if not candidate:
@@ -3454,45 +3456,36 @@ async def terminal_attach(
                 # here to be described. A failure is not fatal: the reference
                 # still ships, the file simply goes undescribed.
                 try:
-                    body = await asyncio.to_thread((Path(session.folder) / inside).read_bytes)
+                    body = await asyncio.to_thread(
+                        drops.read_for_analysis, Path(session.folder) / inside
+                    )
                 except OSError as exc:
                     log.info("Agentic IDE attach: %r not readable for analysis (%s)", inside, exc)
                 else:
-                    readable.append((Path(inside).name, body, reference))
+                    if body is not None:
+                        readable.append((Path(inside).name, body, reference))
             continue
-        # expanduser() is string/env work, not a filesystem call; the read
+        # expanduser() is string/env work, not a filesystem call; the stat
         # itself goes to a worker thread (a dropped file may live on a slow
         # network share).
         resolved = Path(candidate).expanduser()  # noqa: ASYNC240
-        try:
-            data = await asyncio.to_thread(resolved.read_bytes)
-        except OSError as exc:
-            log.info("Agentic IDE attach: unreadable dropped path %r (%s)", candidate, exc)
+        if not await asyncio.to_thread(resolved.is_file):
+            log.info("Agentic IDE attach: unreadable dropped path %r", candidate)
             continue
-        to_copy.append((resolved.name, data))
+        to_copy.append((resolved.name, resolved))
 
-    # 2. Bytes the browser handed over directly.
-    total = 0
+    # 2. Bytes the browser handed over directly. The web server has already
+    #    spooled each upload to a temporary file; it is copied from there.
     for upload in files or []:
-        data = await upload.read()
-        total += len(data)
-        if total > drops.MAX_TOTAL_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=(
-                    f"That drop is too large (max "
-                    f"{drops.MAX_TOTAL_BYTES // (1024 * 1024)} MB in total)."
-                ),
-            )
-        if data:
-            to_copy.append((upload.filename or "file", data))
+        to_copy.append((upload.filename or "file", upload.file))
 
     # ``store`` silently skips empty entries, so they are dropped HERE instead —
     # that keeps ``stored[i]`` paired with ``to_copy[i]`` positionally. Pairing
     # by name would be wrong: two files that sanitize to the same name are
     # stored as two distinct files but would collapse into one key, and one drop
     # would be referenced twice while the other went missing.
-    to_copy = [(name, data) for name, data in to_copy if data]
+    sizes = await asyncio.to_thread(lambda: [drops.size_of(src) for _n, src in to_copy])
+    to_copy = [pair for pair, size in zip(to_copy, sizes, strict=True) if size != 0]
 
     if to_copy:
         try:
@@ -3500,12 +3493,15 @@ async def terminal_attach(
         except drops.DropError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         copied = len(stored)
-        for item, (_original, data) in zip(stored, to_copy, strict=True):
+        for item, (_original, source) in zip(stored, to_copy, strict=True):
             reference = drops.reference(item.relative_path, agent=term.agent)
             references.append(reference)
             stored_names.append(item.name)
             if analyze:
-                readable.append((item.name, data, reference))
+                # A file too large to analyse still ships; it goes undescribed.
+                body = await asyncio.to_thread(drops.read_for_analysis, source)
+                if body is not None:
+                    readable.append((item.name, body, reference))
 
     if not references:
         raise HTTPException(
