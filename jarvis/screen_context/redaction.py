@@ -44,11 +44,24 @@ from jarvis.screen_context.ports import Rect
 
 log = logging.getLogger(__name__)
 
+# Detector for custom patterns that could backtrack catastrophically: a
+# backreference, a quantified group that already holds a quantifier, or a
+# quantified alternation. It must not be catastrophic itself (CodeQL py/redos):
+# a group body reads a backslash ONLY as the start of an escape pair, so every
+# body has exactly one parse, the scan up to the first inner quantifier (or
+# "|") excludes that token, and every run is possessive. An escaped paren is
+# therefore always group content — the old form could also read "\)" as a
+# backslash followed by the group's end and flag safe patterns such as
+# ``(x+\)+y)``; otherwise the verdicts are unchanged.
+_RX_ESCAPE = r"\\[\s\S]"
+_RX_QUANT = r"(?:[+*]|\{\d*+,?+\d*+\})"
+_RX_BODY = rf"(?:{_RX_ESCAPE}|[^()\\])"
+_RX_BODY_BEFORE_QUANT = rf"(?:{_RX_ESCAPE}|[^()\\+*{{]|\{{(?!\d*+,?+\d*+\}}))"
+_RX_BODY_BEFORE_BAR = rf"(?:{_RX_ESCAPE}|[^()\\|])"
 _UNSAFE_CUSTOM_REGEX_RE = re.compile(
     r"\\[1-9]|\(\?P=|"
-    r"\((?:\\.|[^()])*(?:[+*]|\{\d*,?\d*\})(?:\\.|[^()])*\)"
-    r"(?:[+*]|\{\d*,?\d*\})|"
-    r"\((?:\\.|[^()])*\|(?:\\.|[^()])*\)(?:[+*]|\{\d*,?\d*\})"
+    rf"\({_RX_BODY_BEFORE_QUANT}*+{_RX_QUANT}{_RX_BODY}*+\){_RX_QUANT}|"
+    rf"\({_RX_BODY_BEFORE_BAR}*+\|{_RX_BODY}*+\){_RX_QUANT}"
 )
 
 

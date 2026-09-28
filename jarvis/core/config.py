@@ -2314,8 +2314,9 @@ class SecurityConfig(BaseModel):
     """Gate for sensitive UI actions (e.g. built-in skill editing).
 
     Empty hash = no admin mode set — built-in edits are locked.
-    To set: write the SHA-256 hex of the password into ``admin_password_hash``,
-    e.g. via ``python -c "import hashlib; print(hashlib.sha256(b'<pass>').hexdigest())"``.
+    To set: run ``python -m jarvis.core.admin_password`` and paste the printed
+    salted scrypt hash into ``admin_password_hash``. A bare SHA-256 hex digest
+    (the old format) is still accepted but deprecated.
     """
 
     admin_password_hash: str = ""

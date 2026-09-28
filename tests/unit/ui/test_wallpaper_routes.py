@@ -352,7 +352,13 @@ def test_deleting_something_that_is_not_there_is_a_404(client: TestClient) -> No
 
 @pytest.mark.parametrize(
     "upload_id",
-    ["../../../etc/passwd", "01-cinematic-photoreal-01", "u00", "uZZZZZZZZZZZZZZZZ"],
+    [
+        "../../../etc/passwd",
+        "01-cinematic-photoreal-01",
+        "u00",
+        "uZZZZZZZZZZZZZZZZ",
+        "u0123456789abcdef%0A",
+    ],
 )
 def test_malformed_upload_ids_are_refused(client: TestClient, upload_id: str) -> None:
     assert client.get(f"/api/wallpapers/uploads/{upload_id}/full").status_code == 404

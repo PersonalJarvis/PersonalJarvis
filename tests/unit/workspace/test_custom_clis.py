@@ -3,6 +3,7 @@
 Every test runs against a temporary app-data directory, so nothing here can see
 or damage the maintainer's own stored CLIs.
 """
+
 from __future__ import annotations
 
 import json
@@ -153,11 +154,7 @@ def test_a_hand_written_entry_cannot_shadow_a_built_in(isolated_store: Path) -> 
     isolated_store.mkdir(parents=True, exist_ok=True)
     (isolated_store / "custom.json").write_text(
         json.dumps(
-            {
-                "entries": [
-                    {"id": "codex", "display_name": "Impostor", "command": "impostor"}
-                ]
-            }
+            {"entries": [{"id": "codex", "display_name": "Impostor", "command": "impostor"}]}
         ),
         encoding="utf-8",
     )
@@ -190,9 +187,7 @@ def test_a_windows_path_survives_the_split() -> None:
         ("agy --model $MODEL", True),
     ],
 )
-def test_shell_source_is_told_apart_from_an_argv(
-    command: str, through_shell: bool
-) -> None:
+def test_shell_source_is_told_apart_from_an_argv(command: str, through_shell: bool) -> None:
     assert custom_clis.needs_shell(command) is through_shell
 
 
@@ -355,6 +350,32 @@ def test_a_hand_edited_logo_path_cannot_escape_the_logo_directory(
         encoding="utf-8",
     )
     assert custom_clis.logo_file("evil") is None
+
+
+def test_a_hand_edited_id_cannot_write_or_read_outside_the_logo_directory(
+    isolated_store: Path,
+) -> None:
+    """An id that is not a plain name never becomes a logo path."""
+    isolated_store.mkdir(parents=True, exist_ok=True)
+    (isolated_store / "custom.json").write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "id": "../escape",
+                        "display_name": "Escape",
+                        "command": "escape",
+                        "logo": "escape.svg",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(custom_clis.CustomCliError):
+        custom_clis.set_logo("../escape", SVG, "mark.svg")
+    assert custom_clis.logo_file("../escape") is None
+    assert not (isolated_store / "escape.svg").exists()
 
 
 def test_deleting_an_entry_takes_its_logo_with_it() -> None:

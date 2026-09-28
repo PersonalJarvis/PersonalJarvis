@@ -188,3 +188,18 @@ def test_import_drops_invalid_values_but_keeps_the_record(store: ContactStore) -
     assert c is not None
     assert c.emails == ["ok@example.com"]
     assert c.phones == ["+491511"]
+
+
+def test_skipped_record_keeps_personal_data_out_of_the_log(
+    store: ContactStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    records = [{"name": "Private Person", "birthday": "1990-99-99"}]
+    with caplog.at_level("WARNING", logger="jarvis.contacts.vcard"):
+        stats = import_records(store, records)
+    assert stats["skipped"] == 1
+    # The caller still learns which card failed and why ...
+    assert stats["errors"] and "Private Person" in stats["errors"][0]
+    # ... but the app log carries no name and no field value.
+    assert "skipped a record" in caplog.text
+    assert "Private Person" not in caplog.text
+    assert "1990-99-99" not in caplog.text

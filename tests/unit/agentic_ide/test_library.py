@@ -218,3 +218,10 @@ def test_title_from_prompt_takes_the_first_line_and_stays_short() -> None:
 def test_title_from_prompt_survives_an_empty_prompt() -> None:
     """Whitespace in, empty out — never an exception on the prompt path."""
     assert library.title_from_prompt("   \n\n  ") == ""
+
+
+def test_a_hostile_project_id_never_names_a_file_outside() -> None:
+    """A project id from a request cannot read or write beside the threads folder."""
+    for hostile in ("../projects", "..", "a/b", "C:evil"):
+        assert library._threads_path(hostile) is None
+        assert library.list_threads(hostile) == []

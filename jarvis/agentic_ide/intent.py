@@ -74,7 +74,7 @@ _DIRECTIVE_TEMPLATES: tuple[str, ...] = (
     # nothing was typed into Alex, and the live model filled the silence by
     # claiming the agent had been briefed. Every neighbouring module already
     # knew this vocabulary (``clarify._WORKSPACE_NOUN_RE``,
-    # ``_FLEET_BRIEF_RE``, ``_CLOSE_BRIEFING_RE``); only the list that decides
+    # ``_fleet_brief_search``, ``_CLOSE_BRIEFING_RE``); only the list that decides
     # who gets the work did not.
     #
     # Stems, so "prompting" / "prompte" / "anprompten" / "promptea" all land.
@@ -392,9 +392,12 @@ def _strip_addressing(text: str, *names: str) -> str:
 # fan-out, whereas two names each carrying their own directive are two separate
 # assignments and are found on their own. Anything else is not an enumeration.
 # The alternative conjunction ("oder" / "or") is left out on purpose — offering
-# a choice between two panes is not an address list.
+# a choice between two panes is not an address list. The runs are possessive
+# and the second one only follows a conjunction: two adjacent optional runs
+# let the engine try every split of a long blank gap (CodeQL
+# py/polynomial-redos). The accepted language is unchanged.
 _COORDINATION_RE = re.compile(
-    r"^[\s,]*(?:und|and|sowie|plus|y|&|\+)?[\s,]*$",
+    r"^[\s,]*+(?:(?:und|and|sowie|plus|y|&|\+)[\s,]*+)?$",
     re.IGNORECASE,
 )
 
@@ -480,8 +483,10 @@ _NO_WORK_AFTER_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Possessive runs: ``\s*[.!?]?\s*`` let the engine try every split of a long
+# blank run (CodeQL py/polynomial-redos). The accepted language is unchanged.
 _TRAILING_NEGATION_RE = re.compile(
-    r"^[\s,:\-]*(?:aber\s+)?(?:nicht|not|no)\s*[.!?]?\s*$",
+    r"^[\s,:\-]*+(?:aber\s++)?(?:nicht|not|no)\s*+[.!?]?+\s*+$",
     re.IGNORECASE,
 )
 
@@ -1162,8 +1167,12 @@ _QUESTION_OPENER_RE = re.compile(
 # clause ("Und was passiert, wenn ...?"). Ignore only these bounded discourse
 # words when deciding whether that clause is an information question; second-
 # person requests such as "Und kannst du ...?" remain commands.
+#
+# The blank runs are possessive and the second one only follows the "¿": two
+# adjacent ``\s*`` let the engine try every split of a long blank run
+# (CodeQL py/polynomial-redos). The matched prefix is unchanged.
 _QUESTION_DISCOURSE_PREFIX_RE = re.compile(
-    r"^\s*¿?\s*(?:(?:und|and|y)\b[\s,;:–—-]*)+",  # i18n-allow: input vocab
+    r"^\s*+(?:¿\s*+)?(?:(?:und|and|y)\b[\s,;:–—-]*+)+",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -1897,7 +1906,12 @@ def _span_gap(left: re.Match[str], right: re.Match[str]) -> int:
     return 0
 
 
-_FLEET_BRIEF_RE = re.compile(
+# The briefing vocabulary that hands a fleet its work. Always searched through
+# ``_fleet_brief_search``, which adds the one multi-word form ("gib ihnen die
+# Aufgabe"): as a regex alternative, ``gib\w*\s+.*\baufgabe`` rescanned the
+# rest of the line from every "gib" and went quadratic on long input (CodeQL
+# py/polynomial-redos).
+_FLEET_BRIEF_VERB_RE = re.compile(
     r"\b(?:jede\w*\s+(?:davon|dieser)|each\s+(?:one|of\s+them)|"
     r"prompt\w*|brief\w*|instruct\w*|assign\w*|tell\w*|"
     # "sag ihnen, …" / "diles que …" — the plain-speech handover verbs. They
@@ -1905,9 +1919,51 @@ _FLEET_BRIEF_RE = re.compile(
     # was parsed as MORE FLEET: the counts inside it opened extra panes
     # (live 2026-08-12 17:40, four billed panes for a spoken "two").
     r"sag\w*|diles?|d[ií]gale|"  # i18n-allow: input vocab
-    r"anweis\w*|beauftrag\w*|gib\w*\s+.*\baufgabe\w*)\b",  # i18n-allow: input vocab
+    r"anweis\w*|beauftrag\w*)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
+# "gib <…> Aufgabe" on one line. Only ever ``match``-ed at a start that
+# ``_fleet_brief_search`` has already proven to succeed, so it never fails
+# and never backtracks across the line more than once.
+_FLEET_BRIEF_GIVE_TASK_RE = re.compile(
+    r"\bgib\w*\s++.*\baufgabe\w*\b",  # i18n-allow: input vocab
+    re.IGNORECASE,
+)
+_GIVE_LEAD_RE = re.compile(r"\bgib\w*\s++", re.IGNORECASE)  # i18n-allow: input vocab
+_TASK_NOUN_RE = re.compile(r"\baufgabe", re.IGNORECASE)  # i18n-allow: input vocab
+
+
+def _fleet_brief_search(text: str, pos: int = 0, endpos: int | None = None) -> re.Match[str] | None:
+    """Leftmost briefing phrase in ``text[pos:endpos]``, or ``None``.
+
+    Same result as searching the single pattern
+    ``\\b(?:<verbs>|gib\\w*\\s+.*\\baufgabe\\w*)\\b``, in linear time. A "gib"
+    counts when an "aufgabe" word follows on the line its blank run ends on
+    (``.`` stops at a line break); both are located with one forward pass
+    each, then the winning "gib" is re-matched once for a real ``Match``.
+    """
+    if endpos is None:
+        endpos = len(text)
+    verb = _FLEET_BRIEF_VERB_RE.search(text, pos, endpos)
+    limit = verb.start() if verb is not None else endpos
+    nouns = _TASK_NOUN_RE.finditer(text, pos, endpos)
+    noun = next(nouns, None)
+    line_break = -1
+    for lead in _GIVE_LEAD_RE.finditer(text, pos, endpos):
+        if lead.start() >= limit:
+            break
+        landing = lead.end()
+        while noun is not None and noun.start() < landing:
+            noun = next(nouns, None)
+        if noun is None:
+            break
+        if line_break < landing:
+            line_break = text.find("\n", landing, endpos)
+            if line_break == -1:
+                line_break = endpos
+        if noun.start() < line_break:
+            return _FLEET_BRIEF_GIVE_TASK_RE.match(text, lead.start(), endpos)
+    return verb
 
 
 #: Coding CLIs that exist in the world but not as a terminal kind here.
@@ -2194,7 +2250,7 @@ def _spawn_span(text: str) -> _SpawnSpan | None:
             for pane in panes
             for actor in actors
             if _span_gap(pane, actor) <= _SPAWN_PAIR_MAX_GAP
-            and _FLEET_BRIEF_RE.search(
+            and _fleet_brief_search(
                 clause,
                 min(pane.end(), actor.end()),
                 max(pane.start(), actor.start()),
@@ -2214,7 +2270,7 @@ def _spawn_span(text: str) -> _SpawnSpan | None:
         # as the SUBJECT of their own work ("and the two terminals should …",
         # "one terminal takes macOS …") — see ``_task_subject_cut``.
         parse_end = len(clause)
-        briefing = _FLEET_BRIEF_RE.search(clause, anchor_end)
+        briefing = _fleet_brief_search(clause, anchor_end)
         if briefing is not None:
             parse_end = briefing.start()
         subject = _task_subject_cut(clause, anchor_end)
@@ -2235,7 +2291,7 @@ def _task_subject_cut(clause: str, from_pos: int) -> int | None:
     The verbless handover: after the fleet is asked for, the panes come back
     as the SUBJECT of a job — "… and the two terminals should do a deep
     dive", "… one terminal takes macOS and one terminal takes Linux". No
-    briefing verb marks the turn, so ``_FLEET_BRIEF_RE`` sails past it and
+    briefing verb marks the turn, so ``_fleet_brief_search`` sails past it and
     every count in that job was read as MORE fleet: a spoken "two" opened
     four billed panes (live 2026-08-12 17:40).
 
@@ -2305,7 +2361,7 @@ def _spawn_regions(text: str) -> list[_SpawnSpan]:
         )
         if regions:
             previous_end = regions[-1].start + len(regions[-1].parse_text)
-            if _FLEET_BRIEF_RE.search(text, previous_end, absolute.end) is not None:
+            if _fleet_brief_search(text, previous_end, absolute.end) is not None:
                 break
         regions.append(absolute)
         if absolute.truncated:
@@ -2432,7 +2488,7 @@ def spawn_includes_task(user_text: str) -> bool:
     # briefed to open terminals (live 2026-08-12, see ``_spawn_regions``).
     last = regions[-1]
     remainder = text[last.start + len(last.parse_text) :]
-    if _FLEET_BRIEF_RE.search(remainder) or _INSTRUCTION_VERB_RE.search(remainder):
+    if _fleet_brief_search(remainder) or _INSTRUCTION_VERB_RE.search(remainder):
         return True
     return bool(_leading_task(text, regions[0]))
 
@@ -2558,10 +2614,16 @@ _GROUP_BRIEF_CONNECTIVE_RE = re.compile(
 
 #: Trailing debris once the next group's clause is cut away: the conjunction
 #: and the article that belonged to the NEXT addressee ("… fixen und der ").
+#:
+#: Linear by construction (CodeQL py/polynomial-redos): the match may only
+#: start where no separator precedes it — the leftmost match never does, since
+#: a separator in front would simply join the first run — and every run and
+#: word is possessive, so a long blank tail is scanned once instead of being
+#: split three ways at every start position. The trimmed result is unchanged.
 _GROUP_TASK_TRIM_RE = re.compile(
-    r"[\s,;.]*(?:\b(?:und|and|y|sowie|plus)\b)?"  # i18n-allow: input vocab
-    r"[\s,;.]*(?:\b(?:the|die|der|das|den|dem|el|la|los|las)\b)?"  # i18n-allow: input vocab
-    r"[\s,;.]*$",
+    r"(?<![\s,;.])[\s,;.]*+(?:\b(?:und|and|y|sowie|plus)\b)?+"  # i18n-allow: input vocab
+    r"[\s,;.]*+(?:\b(?:the|die|der|das|den|dem|el|la|los|las)\b)?+"  # i18n-allow: input vocab
+    r"[\s,;.]*+$",
     re.IGNORECASE,
 )
 
@@ -2936,7 +2998,7 @@ def _briefed_position_only(parse_text: str) -> bool:
     doubles as a number ("dass es EIN deep dive machen soll") shows none of
     those shapes and vetoes nothing.
     """  # i18n-allow: quoted spoken input
-    if _FLEET_BRIEF_RE.search(parse_text) is None:
+    if _fleet_brief_search(parse_text) is None:
         return False
     positions = spoken_positions(parse_text)
     if not positions:
