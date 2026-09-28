@@ -1,0 +1,44 @@
+# Release admission — the first job of every tag-triggered publishing workflow
+# (release.yml -> PyPI, desktop-installers.yml, sign-installer.yml).
+#
+# A tag publishes only when scripts/ci/release_admit.py confirms: tag ==
+# pyproject == jarvis.__version__, a CHANGELOG section exists, the commit is on
+# main, and `CI gate` passed on that exact commit (it waits while CI runs).
+# Adapted from Hermes Agent's "admit the claim" stage: a release never builds
+# anything main has not already proven.
+
+name: Release gate
+
+on:
+  workflow_call:
+    inputs:
+      wait_minutes:
+        type: number
+        default: 150
+
+permissions:
+  contents: read
+  checks: read
+
+jobs:
+  admit:
+    name: admit release
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Admit the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/ci/release_admit.py
+          --tag "${GITHUB_REF_NAME}"
+          --sha "${GITHUB_SHA}"
+          --repo "${GITHUB_REPOSITORY}"
+          --wait-minutes ${{ inputs.wait_minutes }}
