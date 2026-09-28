@@ -447,7 +447,10 @@ describe("Sidebar voice-boot indicator", () => {
 
     const { container } = renderSidebar();
 
-    expect(screen.getByText("Ready")).toBeTruthy();
+    // At rest the dot alone says "fine"; the word lives in its accessible
+    // name and hover, not as a second line of visible text.
+    expect(screen.getByRole("img", { name: "Ready" })).toBeTruthy();
+    expect(screen.queryByText("Ready")).toBeNull();
     expect(screen.queryByText("Voice starting…")).toBeNull();
     expect(container.querySelector('[data-testid="voice-starting-spinner"]')).toBeNull();
   });

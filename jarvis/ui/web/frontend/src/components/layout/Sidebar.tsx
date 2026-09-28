@@ -321,6 +321,9 @@ export function Sidebar({
       : voiceMode.connecting
         ? t("voice_state.connecting")
         : t(`voice_state.${voiceState}`);
+  // The header spells the state out only when it is news — anything but a
+  // connected, warmed-up pipeline at rest. See the header row below.
+  const voiceHasNews = !connected || showSpinner || voiceState !== "idle";
 
   // Dragged past the snap point the sidebar becomes a rail of icons. Everything
   // that only makes sense with a label beside it steps aside; the
@@ -381,18 +384,18 @@ export function Sidebar({
       {/* One 8px gutter down the whole column — header, navigation and footer
           share it, so the rows, the "+ New" button and the brain card all line
           up on the same left edge. */}
-      <div className={cn("px-3", railed ? "py-2.5" : "pb-2 pt-3")}>
+      <div className={cn(railed ? "px-3 py-2.5" : "flex h-10 items-center px-4")}>
         <div
           className={cn(
-            "flex items-center gap-2.5",
-            railed && "flex-col justify-center gap-1.5",
+            "flex items-center",
+            railed ? "flex-col justify-center gap-1.5" : "w-full gap-2",
           )}
         >
           <span
             data-testid="sidebar-style-avatar"
             data-variant="logo"
             title={railed ? `${assistantName} — ${voiceLabel}` : undefined}
-            className={cn("relative shrink-0", railed ? "h-9 w-9" : "h-7 w-7")}
+            className={cn("relative shrink-0", railed ? "h-9 w-9" : "h-5 w-5")}
           >
             {railed && devTag && (
               <span
@@ -403,45 +406,54 @@ export function Sidebar({
                 {devTag}
               </span>
             )}
-            <GigiMark size={railed ? 36 : 28} />
+            <GigiMark size={railed ? 36 : 20} />
           </span>
+          {/* One quiet row, like the workspace switcher in Linear or Cursor:
+              mark, name, status dot. It used to be a two-line identity card
+              whose second line said "Ready" for as long as nothing was wrong,
+              which is almost always — the one word that carries no news took
+              the loudest spot in the column. The dot says "fine" on its own
+              (its hover and accessible name still carry the word); the word
+              only appears when there IS news: starting, offline, error. */}
           {!railed && (
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="flex min-w-0 items-center gap-2 text-base font-medium text-foreground-strong">
-                <span className="truncate">{assistantName}</span>
-                {devTag && (
-                  // A mark, not a status: the fill is the neutral accent, so it
-                  // never competes with the green/amber/red the voice dot
-                  // beside it uses to mean something.
-                  <span
-                    data-testid="sidebar-instance-tag"
-                    title={t("sidebar.instance_dev_hint")}
-                    className="shrink-0 rounded-sm bg-primary px-1.5 text-xs font-medium leading-none text-primary-foreground"
-                  >
-                    {devTag}
-                  </span>
-                )}
-              </span>
-              {/* The state: a 6 px dot in the status colour, then the word. */}
-              <span className="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground">
-                {showSpinner ? (
-                  <Loader2
-                    className="h-3 w-3 shrink-0 animate-spin"
-                    data-testid="voice-starting-spinner"
-                    aria-hidden
-                  />
-                ) : (
-                  <span
-                    className={cn(
-                      "h-1.5 w-1.5 shrink-0 rounded-full",
-                      vs.dot,
-                      vs.pulse && "animate-jarvis-pulse",
-                    )}
-                    aria-hidden
-                  />
-                )}
-                <span className="truncate">{voiceLabel}</span>
-              </span>
+            <div
+              className="flex min-w-0 flex-1 items-center gap-2 text-sm"
+              title={voiceLabel}
+            >
+              <span className="truncate font-medium text-foreground-strong">{assistantName}</span>
+              {devTag && (
+                // A mark, not a status: the fill is the neutral accent, so it
+                // never competes with the green/amber/red the voice dot
+                // beside it uses to mean something.
+                <span
+                  data-testid="sidebar-instance-tag"
+                  title={t("sidebar.instance_dev_hint")}
+                  className="shrink-0 rounded-sm bg-primary px-1.5 text-xs font-medium leading-none text-primary-foreground"
+                >
+                  {devTag}
+                </span>
+              )}
+              {showSpinner ? (
+                <Loader2
+                  className="h-3 w-3 shrink-0 animate-spin text-muted-foreground"
+                  data-testid="voice-starting-spinner"
+                  aria-hidden
+                />
+              ) : (
+                <span
+                  data-testid="sidebar-voice-dot"
+                  role="img"
+                  aria-label={voiceLabel}
+                  className={cn(
+                    "h-1.5 w-1.5 shrink-0 rounded-full",
+                    vs.dot,
+                    vs.pulse && "animate-jarvis-pulse",
+                  )}
+                />
+              )}
+              {voiceHasNews && (
+                <span className="truncate text-xs text-muted-foreground">{voiceLabel}</span>
+              )}
             </div>
           )}
           {railed &&
