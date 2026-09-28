@@ -289,6 +289,24 @@ def test_train_eligibility():
     assert not agent_integrate.eligible({**base, "headRefName": "dependabot/pip/x"})
 
 
+def test_train_reads_a_running_ci_as_pending_not_missing():
+    running = {"status": "in_progress", "conclusion": None, "created_at": "2"}
+    ignored = {"status": "completed", "conclusion": "action_required", "created_at": "3"}
+    assert agent_integrate.run_state([running, ignored]) == "pending"
+    assert agent_integrate.run_state([ignored]) == "missing"
+    assert agent_integrate.run_state([]) == "missing"
+
+
+def test_train_uses_the_newest_verdict_and_redispatches_a_cancelled_run():
+    old = {"status": "completed", "conclusion": "failure", "created_at": "1"}
+    new = {"status": "completed", "conclusion": "success", "created_at": "2"}
+    cancelled = {"status": "completed", "conclusion": "cancelled", "created_at": "3"}
+    assert agent_integrate.run_state([old, new]) == "success"
+    assert agent_integrate.run_state([new, old]) == "success"
+    assert agent_integrate.run_state([old]) == "failure"
+    assert agent_integrate.run_state([old, new, cancelled]) == "missing"
+
+
 # --------------------------------------------------------------------------- release
 
 

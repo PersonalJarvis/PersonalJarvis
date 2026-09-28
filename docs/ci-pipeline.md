@@ -18,7 +18,7 @@ agent branch ──► pull request ──► CI (lanes) ──► CI gate ─�
 
 | Stage | What it does | Script |
 | --- | --- | --- |
-| `detect` | Classifies the diff into lanes. Fails open: an empty diff, a pipeline change, a push to main, the nightly run and a manual run turn every lane on. | `scripts/ci/classify_changes.py` |
+| `detect` | Classifies the diff into lanes. Fails open: an empty diff, a pipeline change, the nightly run and a manual run turn every lane on. A push to main classifies its lanes too (the concurrent-job limit is shared), but always runs the whole test suite on Linux and Windows. | `scripts/ci/classify_changes.py` |
 | `static gates` | ~20 repository gates (keys, bundle, mirrors, privacy, docs, CLI coverage, ratchets, bash 3.2, no new German) in one job. Every gate reports. | `scripts/ci/run_gates.py` |
 | `python contracts (fast)` | Import cleanliness on the bare install, the named contract guards, skill-routing precision and recall, plugin auth. Blocking, no baseline. | — |
 | `tests linux 1..6` | The whole suite in six shards. Batches of files run in fresh processes with a wall-clock budget; a failed batch is re-run file by file, a failed file once more (a pass there is reported as flaky). | `scripts/ci/run_tests_parallel.py` |
