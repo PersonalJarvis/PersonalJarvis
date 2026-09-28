@@ -2,13 +2,27 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as Rea
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, ChevronRight, Folder, FolderPlus, Loader2, Mic, MoreHorizontal, Pencil, Pin, Plus, Trash2, X } from "lucide-react";
 import { ChatLibraryError, deleteProject, openProject, patchProject, reorderProjects } from "@/lib/chatLibraryApi";
-import { closeWorkspace, renameWorkspace, reorderWorkspaces, type IdeProject, type ProjectWorkspace } from "@/lib/agenticIdeApi";
+import { closeWorkspace, renameWorkspace, IdeApiError, reorderWorkspaces, type IdeProject, type ProjectWorkspace } from "@/lib/agenticIdeApi";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 
 const EXPANSION_KEY = "jarvis.ide.projectExpansion.v1";
 const WORKSPACE_DRAG_MIME = "application/x-jarvis-workspace-id";
 const PROJECT_DRAG_MIME = "application/x-jarvis-project-id";
+/**
+ * What a 405 on a reorder means: this view already knows drag and drop, but
+ * the backend serving it predates the endpoint — a restart brings the two
+ * back in step. Shown instead of the server's bare "Method Not Allowed",
+ * which names the HTTP verdict rather than the fix.
+ */
+const REORDER_NEEDS_RESTART = "This view is newer than the backend — restart the app and try again.";
+
+/** A reorder failure in the user's terms: a stale backend gets the fix, anything else the server's own words. */
+function reorderErrorMessage(error: unknown): string {
+  if (error instanceof IdeApiError && error.status === 405) return REORDER_NEEDS_RESTART;
+  if (error instanceof ChatLibraryError && error.status === 405) return REORDER_NEEDS_RESTART;
+  return error instanceof Error ? error.message : String(error);
+}
 
 function readExpansion(): Record<string, boolean> {
   try {
@@ -150,7 +164,7 @@ export function IdeProjectTree() {
     try {
       await reorderWorkspaces(next);
       requestRefresh();
-    } catch (error) { pushToast("error", (error as Error).message); }
+    } catch (error) { pushToast("error", reorderErrorMessage(error)); }
     finally { setReordering(false); setDraggedId(null); setDropTarget(null); }
   };
 
@@ -224,6 +238,13 @@ export function IdeProjectTree() {
     }
     setConfirmBusy(true);
     try {
+      // A project with open workspaces would otherwise come straight back:
+      // the sidebar derives a project row from every running workspace, so
+      // deleting the library entry alone changes nothing on screen. The
+      // confirm dialog says so, and confirming stops the agents first.
+      for (const workspace of target.workspaces.filter((entry) => entry.status === "open")) {
+        await closeWorkspace(workspace.id);
+      }
       await deleteProject(target.id);
       setConfirmProject(null);
       setContextMenu(null);
@@ -262,7 +283,7 @@ export function IdeProjectTree() {
     try {
       await reorderProjects(next);
       requestRefresh();
-    } catch (error) { pushToast("error", (error as Error).message); }
+    } catch (error) { pushToast("error", reorderErrorMessage(error)); }
     finally { setReordering(false); clearProjectDragState(); }
   };
 
@@ -587,14 +608,16 @@ export function IdeProjectTree() {
     {confirmProjectTarget && (
       <ConfirmTreeAction
         title={`Delete ${confirmProjectTarget.name}?`}
-        body={
-          confirmProjectTarget.workspaces.some((workspace) => workspace.status === "open")
-            ? `Close its ${confirmProjectTarget.workspaces.filter((workspace) => workspace.status === "open").length} open ${confirmProjectTarget.workspaces.filter((workspace) => workspace.status === "open").length === 1 ? "workspace" : "workspaces"} first — a project with running agents cannot be deleted.`
-            : `This forgets the project and its chats. The folders on disk stay untouched.`
-        }
+        body={(() => {
+          const openSpaces = confirmProjectTarget.workspaces.filter((workspace) => workspace.status === "open");
+          if (openSpaces.length === 0) {
+            return `This forgets the project and its chats. The folders on disk stay untouched.`;
+          }
+          const agents = openSpaces.reduce((total, workspace) => total + workspace.terminals, 0);
+          return `This stops ${agents} running ${agents === 1 ? "agent" : "agents"} in ${openSpaces.length} open ${openSpaces.length === 1 ? "workspace" : "workspaces"} and forgets the project and its chats. The folders on disk stay untouched.`;
+        })()}
         confirmLabel={confirmBusy ? "Deleting…" : `Delete ${confirmProjectTarget.name}`}
         busy={confirmBusy}
-        disableConfirm={confirmBusy || confirmProjectTarget.workspaces.some((workspace) => workspace.status === "open")}
         testId="ide-project-confirm-delete"
         onCancel={() => {
           if (!confirmBusy) setConfirmProject(null);
@@ -815,7 +838,6 @@ function ConfirmTreeAction({
   body,
   confirmLabel,
   busy,
-  disableConfirm,
   testId,
   onCancel,
   onConfirm,
@@ -824,7 +846,6 @@ function ConfirmTreeAction({
   body: string;
   confirmLabel: string;
   busy: boolean;
-  disableConfirm?: boolean;
   testId: string;
   onCancel: () => void;
   onConfirm: () => void;
@@ -835,7 +856,7 @@ function ConfirmTreeAction({
       aria-modal="true"
       aria-label={title}
       data-testid={testId}
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-background p-6 backdrop-blur-sm"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-background/80 p-6 backdrop-blur-sm"
       onClick={(event) => {
         if (event.target === event.currentTarget && !busy) onCancel();
       }}
@@ -843,13 +864,13 @@ function ConfirmTreeAction({
         if (event.key === "Escape" && !busy) onCancel();
       }}
     >
-      <div className="w-full max-w-sm rounded-lg bg-popover shadow-float p-5">
-        <h3 className="font-display text-base font-semibold">{title}</h3>
+      <div className="w-full max-w-sm rounded-lg border border-border bg-popover shadow-float p-5">
+        <h3 className="font-display text-base font-semibold text-popover-foreground">{title}</h3>
         <p className="mt-2 text-sm text-muted-foreground">{body}</p>
         <div className="mt-5 flex items-center justify-end gap-2">
           <button
             type="button"
-            className="rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="rounded-lg bg-secondary px-3 py-2 text-sm font-medium text-secondary-foreground transition-colors hover:bg-secondary/80 disabled:opacity-50"
             autoFocus
             disabled={busy}
             onClick={onCancel}
@@ -859,8 +880,8 @@ function ConfirmTreeAction({
           <button
             type="button"
             data-testid={`${testId}-confirm`}
-            className="rounded-lg bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-            disabled={busy || disableConfirm}
+            className="rounded-lg bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground shadow transition-opacity hover:opacity-90 disabled:opacity-50"
+            disabled={busy}
             onClick={onConfirm}
           >
             {confirmLabel}

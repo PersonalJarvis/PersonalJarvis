@@ -208,11 +208,15 @@ it("asks for confirmation before deleting a project with no open workspaces", as
   await waitFor(() => expect(deleteProject).toHaveBeenCalledWith("p1"));
 });
 
-it("blocks project deletion while a workspace is still open", () => {
+it("closes open workspaces when a project is deleted", async () => {
   render(<IdeProjectTree />);
   fireEvent.contextMenu(screen.getByTestId("ide-project-header-p1"));
   fireEvent.click(screen.getByTestId("ide-project-menu-delete"));
   const confirm = screen.getByTestId("ide-project-confirm-delete-confirm");
-  expect((confirm as HTMLButtonElement).disabled).toBe(true);
+  expect((confirm as HTMLButtonElement).disabled).toBe(false);
   expect(deleteProject).not.toHaveBeenCalled();
+  fireEvent.click(confirm);
+  await waitFor(() => expect(closeWorkspace).toHaveBeenCalledWith("p1-w1"));
+  await waitFor(() => expect(deleteProject).toHaveBeenCalledWith("p1"));
+  await waitFor(() => expect(useIdeProjectsStore.getState().refreshRequest?.nonce).toBe(1));
 });
