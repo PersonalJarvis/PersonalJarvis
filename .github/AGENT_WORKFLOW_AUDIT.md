@@ -1,5 +1,10 @@
 # Coding-agent workflow audit
 
+> **Superseded 2026-09-28.** The pipeline was rebuilt around a single required
+> check, `CI gate`, with change-classified lanes, sharded tests, a known-failure
+> ratchet and a merge train. The current contract is `docs/ci-pipeline.md`; this
+> file stays as the record of the state before.
+
 Snapshot: 2026-09-27, `PersonalJarvis/PersonalJarvis`, `main`. This records the
 live GitHub API state, not a remembered setting. Re-read protection before any
 change. GitHub documents the [status-check protection API](https://docs.github.com/en/rest/branches/branch-protection#update-status-check-protection)
