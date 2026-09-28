@@ -72,7 +72,6 @@ UNION: tuple[str, ...] = (
 AGENT_BRANCH_PREFIXES = ("codex/", "claude/", "agent/", "agents/", "gemini/", "cursor/", "bot/")
 OPT_OUT_LABELS = {"no-auto-merge", "do-not-merge", "wip", "needs-human"}
 OPT_IN_LABEL = "auto-merge"
-GATE_CHECK = "CI gate"
 
 
 def git(*args: str, check: bool = True, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess[str]:
@@ -411,19 +410,35 @@ def eligible(pr: dict) -> bool:
     return OPT_IN_LABEL in labels or pr.get("headRefName", "").startswith(AGENT_BRANCH_PREFIXES)
 
 
-def gate_state(repo: str, sha: str) -> str:
-    """success | failure | pending | missing for the CI gate on ``sha``."""
-    data = gh_json(
-        "api",
-        f"repos/{repo}/commits/{sha}/check-runs?check_name={GATE_CHECK.replace(' ', '%20')}",
-    )
-    runs = (data or {}).get("check_runs", []) if isinstance(data, dict) else []
-    if not runs:
-        return "missing"
-    latest = max(runs, key=lambda r: r.get("started_at") or "")
-    if latest.get("status") != "completed":
+_ACTIVE = {"queued", "in_progress", "waiting", "pending", "requested"}
+# A pull_request run a bot push triggers waits for approval and never runs;
+# it says nothing about the commit.
+_NO_VERDICT = {"action_required", "skipped", "stale", "neutral"}
+
+
+def run_state(runs: list[dict]) -> str:
+    """success | failure | pending | missing from the CI workflow runs of one commit.
+
+    Read from the workflow RUNS, not the `CI gate` check: the gate is the last
+    job, so while CI is still running it has no check yet — reading that as
+    "missing" re-dispatched CI and cancelled the run in flight, forever.
+    """
+    if any(r.get("status") in _ACTIVE for r in runs):
         return "pending"
-    return "success" if latest.get("conclusion") == "success" else "failure"
+    done = [r for r in runs if r.get("conclusion") not in _NO_VERDICT]
+    if not done:
+        return "missing"
+    latest = max(done, key=lambda r: r.get("created_at") or "")
+    conclusion = latest.get("conclusion")
+    if conclusion == "success":
+        return "success"
+    return "missing" if conclusion == "cancelled" else "failure"
+
+
+def gate_state(repo: str, sha: str) -> str:
+    data = gh_json("api", f"repos/{repo}/actions/workflows/ci.yml/runs?head_sha={sha}&per_page=50")
+    runs = (data or {}).get("workflow_runs", []) if isinstance(data, dict) else []
+    return run_state(runs)
 
 
 def dispatch_ci(ref: str) -> None:
