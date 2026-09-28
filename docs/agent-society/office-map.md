@@ -92,6 +92,31 @@ target runs WebGL.
   free agents for a coffee break (visual only).
 - **Agent panel:** open chat, walk there, call over, show on map, add to a new team.
 
+## 5a. Figures, pets and live monitors (2026-09-28, round 2)
+
+- **Toy figures** (`ToyFigure.tsx`, `toyFigureModel.ts`): every agent and the
+  person are procedural toy characters in the reference style — big round
+  head, dot eyes, smile, T-shirt, trousers, chunky sneakers, eight hair/hat
+  styles. Colours come from the stored figure recipe; hair from a stable hash
+  (the person picks it in the wardrobe). Poses are pure and tested: the hips
+  land exactly on each seat height (chair 0.52, couch 0.56, meeting 0.50,
+  beanbag 0.42) and nothing reaches more than 0.16 m behind the seat centre,
+  so figures no longer clip through backrests. Chairs sit 0.62 m from the desk
+  centre and keyboards at the desk edge so the short arms reach them.
+  The agent creator still shows the older rigged figures; switching it to the
+  toy style is the rollout step after the maintainer approves this look.
+- **Pets**: each agent's symbol (the profile companion) follows it at about a
+  fifth of its height, reusing `AgentFollower`; the lead gets Gigi.
+- **Live monitors** (`LiveMonitors.tsx`, `useDeskChats.ts`, `deskChat.ts`): an
+  agent seated at its own desk shows the tail of its chat (user lines, replies,
+  running tools) on its monitor, refreshed by jittered polling of the existing
+  session endpoint for seated agents only (at most six per tick). Clicking the
+  screen dives the camera into it and then opens that agent's chat.
+  Follow-up: a `limit` query on the session endpoint, so long chats are not
+  fetched whole.
+- **Pace**: the person walks at 2.0 m/s and sprints at 4.4 m/s (Shift).
+  Working agents stay at their screen even when called.
+
 ## 6. Plan
 
 1. First map (done 2026-09-28).
