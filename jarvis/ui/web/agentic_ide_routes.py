@@ -284,8 +284,9 @@ class AddTerminalRequest(BaseModel):
     direction: str = Field(
         default="right",
         description=(
-            "'right' opens a new column beside the anchor, 'down' splits the "
-            "anchor's own column and stacks the new pane under it."
+            "'right' opens a new pane beside the anchor, 'down' splits the "
+            "anchor's own column under it, 'left' places it to the left, and "
+            "'up' / 'above' places it above the anchor."
         ),
     )
     account: str | None = Field(

@@ -1,9 +1,12 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties, type MouseEvent, type PointerEvent, type SVGProps } from "react";
 import { createPortal } from "react-dom";
 import { Check, Maximize2, Minimize2, MoreHorizontal, Plus, X } from "lucide-react";
 import { AgentMark } from "./AgentMark";
 import { PromptHistoryButton } from "./PromptHistoryButton";
+import { SplitAboveIcon, SplitBelowIcon, SplitLeftIcon, SplitRightIcon } from "./splitIcons";
 import { PANE_BRAND, PANE_CHROME, themeFor, type PaneEdgeState, type TerminalAppearance } from "./terminalThemes";
+
+export type PaneSplitDirection = "right" | "down" | "left" | "above";
 
 interface Props {
   name: string;
@@ -20,13 +23,23 @@ interface Props {
   onArrangeStart?: (event: PointerEvent) => void;
   onActivate?: () => void;
   onToggleMaximize?: () => void;
-  onAdd?: () => void;
+  onAdd?: (direction: PaneSplitDirection) => void;
   onClose?: () => void;
   onRename?: (name: string) => Promise<boolean>;
   onOpenConversation?: () => void;
   onOpenChat?: () => void;
   onRestart?: () => void;
 }
+
+type MenuIcon = ComponentType<SVGProps<SVGSVGElement>>;
+interface MenuItem { label: string; run: () => void; Icon?: MenuIcon; separated?: boolean }
+
+const SPLIT_ITEMS: { direction: PaneSplitDirection; label: string; Icon: MenuIcon }[] = [
+  { direction: "right", label: "Split right", Icon: SplitRightIcon },
+  { direction: "down", label: "Split down", Icon: SplitBelowIcon },
+  { direction: "left", label: "Split left", Icon: SplitLeftIcon },
+  { direction: "above", label: "Split up", Icon: SplitAboveIcon },
+];
 
 const ACTION_CLASS = "flex h-7 w-7 shrink-0 items-center justify-center rounded text-[color:var(--pane-ink-muted)] hover:bg-[color:var(--pane-chip)] hover:text-[color:var(--pane-ink)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--pane-ink)] disabled:opacity-35";
 
@@ -73,13 +86,28 @@ export function WorkspaceTerminalHeader({
     };
   }, [menuOpen]);
 
+  // Keep the opened menu inside the window once its real height is known.
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!menuPosition || !menu) return;
+    const top = Math.max(8, Math.min(menuPosition.top, window.innerHeight - menu.offsetHeight - 8));
+    const left = Math.max(8, Math.min(menuPosition.left, window.innerWidth - menu.offsetWidth - 8));
+    if (top !== menuPosition.top || left !== menuPosition.left) setMenuPosition({ left, top });
+  }, [menuPosition]);
+
   const toggleMenu = () => {
     const rect = moreRef.current?.getBoundingClientRect();
     if (!rect) return;
-    setMenuPosition((current) => current ? null : {
-      left: Math.max(8, Math.min(rect.right - 200, window.innerWidth - 208)),
-      top: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 184)),
-    });
+    setMenuPosition((current) => current ? null : { left: rect.right - 200, top: rect.bottom + 4 });
+  };
+  // Right-clicking the title bar opens the same menu at the cursor. Stopped
+  // here so the app-wide Cut/Copy/Paste menu does not open on top of it.
+  const openMenuAt = (event: MouseEvent) => {
+    if (event.shiftKey || draft !== null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onActivate?.();
+    setMenuPosition({ left: event.clientX, top: event.clientY });
   };
   const choose = (action: () => void) => { setMenuPosition(null); action(); };
   const commitRename = async () => {
@@ -96,6 +124,7 @@ export function WorkspaceTerminalHeader({
     <header data-testid={`workspace-terminal-header-${name}`}
       className="relative flex h-9 min-h-9 shrink-0 select-none items-center gap-1 border-b pl-2.5 pr-1"
       style={{ ...variables, borderColor: chrome.border, background: chrome.shell, touchAction: onArrangeStart ? "none" : undefined }}
+      onContextMenu={openMenuAt}
       onPointerDown={(event) => {
         if (event.button !== 0 || (event.target as HTMLElement).closest("[data-header-control]")) return;
         setMenuPosition(null);
@@ -134,7 +163,7 @@ export function WorkspaceTerminalHeader({
         <button type="button" aria-label={`${maximized ? "Restore" : "Maximize"} ${name}`} disabled={!onToggleMaximize}
           onClick={onToggleMaximize} className={ACTION_CLASS}>{maximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}</button>
         <button type="button" aria-label={`Add agent beside ${name}`} disabled={addDisabled || !onAdd}
-          onClick={onAdd} className={ACTION_CLASS}><Plus className="h-4 w-4" /></button>
+          onClick={() => onAdd?.("right")} className={ACTION_CLASS}><Plus className="h-4 w-4" /></button>
         <button type="button" aria-label={`Close ${name}`} disabled={!onClose} onClick={onClose} className={ACTION_CLASS}><X className="h-4 w-4" /></button>
       </div>
     </header>
@@ -156,17 +185,27 @@ export function WorkspaceTerminalHeader({
         const index = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (at + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
         items[index]?.focus();
       }}>
-      {[
+      {([
         onRename && { label: "Rename", run: () => { setDraft(name); setRenameError(""); } },
+        ...(onAdd && !addDisabled ? SPLIT_ITEMS.map((item, index) => ({
+          label: `${item.label}…`, Icon: item.Icon, separated: index === 0, run: () => onAdd(item.direction),
+        })) : []),
+        onToggleMaximize && { label: maximized ? "Restore size" : "Maximize", separated: true,
+          Icon: maximized ? Minimize2 : Maximize2, run: onToggleMaximize },
         onOpenConversation && { label: "Conversation history", run: onOpenConversation },
         onOpenChat && { label: "Open as chat", run: onOpenChat },
         stopped && onRestart && { label: "Restart agent", run: onRestart },
-      ].filter((item): item is { label: string; run: () => void } => Boolean(item)).map((item) =>
+      ] as (MenuItem | false | undefined | null)[]).filter((item): item is MenuItem => Boolean(item)).map((item) =>
         <button type="button" role="menuitem" key={item.label} onClick={() => choose(item.run)}
-          className="block w-full rounded px-2.5 py-2 text-left text-xs hover:bg-[color:var(--pane-chip)] focus:bg-[color:var(--pane-chip)] focus:outline-none">{item.label}</button>,
+          className={`flex w-full items-center gap-2 rounded px-2.5 py-2 text-left text-xs hover:bg-[color:var(--pane-chip)] focus:bg-[color:var(--pane-chip)] focus:outline-none ${item.separated ? "mt-1 border-t border-[color:var(--pane-chip)] pt-2" : ""}`}>
+          {item.Icon && <item.Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}{item.label}
+        </button>,
       )}
       <PromptHistoryButton terminal={name} workspaceId={workspaceId} count={promptCount} triggerMode="menu-item"
         onOpen={() => setMenuPosition(null)} restoreFocus={() => moreRef.current?.focus()} />
+      {onClose && <button type="button" role="menuitem" onClick={() => choose(onClose)}
+        className="mt-1 flex w-full items-center gap-2 rounded border-t border-[color:var(--pane-chip)] px-2.5 py-2 pt-2 text-left text-xs hover:bg-[color:var(--pane-chip)] focus:bg-[color:var(--pane-chip)] focus:outline-none">
+        <X className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />Close pane</button>}
     </div>, document.body)}
   </>;
 }

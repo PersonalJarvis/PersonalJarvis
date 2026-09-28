@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AgenticTerminal } from "./AgenticTerminal";
 import { AgentMark } from "./AgentMark";
+import type { PaneSplitDirection } from "./WorkspaceTerminalHeader";
 import type { SessionState, TerminalState } from "@/lib/agenticIdeApi";
 import { moveTerminal, renameTerminal, type PaneMovePosition } from "@/lib/agenticIdeApi";
 import { useThemeValue } from "@/hooks/useTheme";
@@ -16,7 +17,8 @@ const idOf = (terminal: TerminalState) => terminal.history_id ?? terminal.key;
 interface Props {
   session: SessionState;
   onChanged: (session: SessionState) => void;
-  onAdd: () => void;
+  /** Open the agent picker; with an anchor, the new pane splits off that pane. */
+  onAdd: (anchor?: string, direction?: PaneSplitDirection) => void;
   onClose: (terminal: TerminalState) => void;
   onSelect: (name: string) => void;
   selected: string;
@@ -224,7 +226,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             onClose={() => onClose(terminal)} onAttachError={(message) => pushToast("error", message)}
             onRename={(name) => rename(terminal, name)}
             restartToken={restarts[id] ?? 0} onRestart={() => setRestarts((current) => ({ ...current, [id]: (current[id] ?? 0) + 1 }))}
-            splitDisabled={tiles.length >= 8} onSplit={() => onAdd()} />
+            splitDisabled={tiles.length >= 8} onSplit={(direction) => onAdd(terminal.name, direction)} />
           {drag?.target?.id === id && <div aria-hidden="true" data-testid="dock-preview" data-position={drag.target.position}
             className={cn("pointer-events-none absolute z-20 flex items-center justify-center rounded-xl border-2 p-2", drag.target.allowed ? "border-ring/70 bg-accent/[0.15]" : "border-destructive bg-background/80",
               drag.target.position === "left" ? "inset-y-1 left-1 w-1/2" : drag.target.position === "right" ? "inset-y-1 right-1 w-1/2" : drag.target.position === "above" ? "inset-x-1 top-1 h-1/2" : drag.target.position === "below" ? "inset-x-1 bottom-1 h-1/2" : "inset-1")}>

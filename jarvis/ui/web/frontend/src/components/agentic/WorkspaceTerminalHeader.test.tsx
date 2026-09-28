@@ -62,6 +62,32 @@ describe("compact workspace terminal header", () => {
     expect(document.activeElement).toBe(title);
   });
 
+  it("opens the pane menu on right-click with split, maximize and close actions", () => {
+    const add = vi.fn(), maximize = vi.fn(), close = vi.fn(), activate = vi.fn();
+    render(<WorkspaceTerminalHeader {...BASE} onAdd={add} onToggleMaximize={maximize} onClose={close} onActivate={activate} />);
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 30 });
+    fireEvent(screen.getByText("Dana"), event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(activate).toHaveBeenCalled();
+    const menu = screen.getByRole("menu", { name: "Actions for Dana" });
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(expect.arrayContaining(
+      ["Split right…", "Split down…", "Split left…", "Split up…", "Maximize", "Close pane"]));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Split left…" }));
+    expect(add).toHaveBeenCalledWith("left");
+    fireEvent(screen.getByText("Dana"), new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Split up…" }));
+    expect(add).toHaveBeenLastCalledWith("above");
+    fireEvent(screen.getByText("Dana"), new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Close pane" }));
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides split actions once the workspace is full", () => {
+    render(<WorkspaceTerminalHeader {...BASE} addDisabled onAdd={vi.fn()} />);
+    fireEvent(screen.getByText("Dana"), new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    expect(screen.queryByRole("menuitem", { name: "Split right…" })).toBeNull();
+  });
+
   it("keeps menu focus navigable and restores focus on Escape", () => {
     render(<WorkspaceTerminalHeader {...BASE} onRename={async () => true} onOpenConversation={() => {}} />);
     const more = screen.getByRole("button", { name: "More actions for Dana" });

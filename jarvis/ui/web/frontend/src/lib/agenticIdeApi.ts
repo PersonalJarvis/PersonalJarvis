@@ -1380,7 +1380,7 @@ export async function forgetResumeOffer(): Promise<void> {
 export async function addTerminal(payload: {
   workspace_id?: string;
   anchor?: string;
-  direction?: "right" | "down";
+  direction?: "right" | "down" | "left" | "above" | "up" | "below";
   agent?: string;
   name?: string;
   /** Subscription for the new pane; omitted inherits the anchor's. */

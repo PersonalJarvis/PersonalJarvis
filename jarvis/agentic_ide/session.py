@@ -4270,8 +4270,8 @@ class Registry:
                 raise SessionError(
                     f"This workspace already has the maximum of {MAX_TERMINALS} terminals."
                 )
-            if direction not in ("right", "down"):
-                raise SessionError("Direction must be 'right' or 'down'.")
+            if direction not in ("right", "down", "left", "up", "above", "below"):
+                raise SessionError("Direction must be 'right', 'down', 'left', or 'up'.")
 
             base = session.find(anchor) if anchor else None
             if anchor and base is None:
@@ -4365,7 +4365,7 @@ class Registry:
                     session.layout,
                     base.key,
                     term.key,
-                    "right" if direction == "right" else "down",
+                    direction,
                 )
             else:
                 session.layout = layout_tree.append_pane(session.layout, term.key)

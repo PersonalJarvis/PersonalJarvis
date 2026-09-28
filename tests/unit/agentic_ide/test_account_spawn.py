@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from jarvis import agent_accounts
+from jarvis.agentic_ide import layout_tree
 from jarvis.agentic_ide import session as session_mod
 from jarvis.agentic_ide.session import Registry, SessionError
 from tests.fakes.fake_pty_manager import FakePtyManager
@@ -152,6 +153,18 @@ async def test_a_split_stays_on_the_account_its_anchor_runs_on(
     anchor = registry.session.terminals[0]
     split = await registry.add_terminal(anchor=anchor.name, direction="down")
     assert split.account == second.id
+
+
+async def test_a_split_can_open_left_of_or_above_its_anchor(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The pane menu offers all four sides; the new pane lands on the one picked."""
+    await registry.start(str(tmp_path), [{"agent": "claude"}])
+    anchor = registry.session.terminals[0]
+    left = await registry.add_terminal(anchor=anchor.name, direction="left")
+    assert layout_tree.leaves(registry.session.layout) == [left.key, anchor.key]
+    above = await registry.add_terminal(anchor=anchor.name, direction="above")
+    assert layout_tree.leaves(registry.session.layout) == [left.key, above.key, anchor.key]
 
 
 async def test_a_split_onto_a_different_cli_does_not_inherit_the_account(

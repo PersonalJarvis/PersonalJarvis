@@ -5,8 +5,11 @@ import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/comp
 import { WorkspaceTerminalGrid } from "@/components/agentic/WorkspaceTerminalGrid";
 import { WorkspaceAgentSetup } from "@/components/agentic/WorkspaceAgentSetup";
 import { WorkspaceOptionsDialog } from "@/components/agentic/WorkspaceOptionsDialog";
-import { fitsWorkspace, isBalancedWorkspace } from "@/components/agentic/workspaceDocking";
+import { fitsWorkspace, isBalancedWorkspace, canSplitFit } from "@/components/agentic/workspaceDocking";
 import { AgentMark } from "@/components/agentic/AgentMark";
+import { SplitRightIcon, SplitBelowIcon, SplitLeftIcon, SplitAboveIcon } from "@/components/agentic/splitIcons";
+import type { PaneSplitDirection } from "@/components/agentic/WorkspaceTerminalHeader";
+import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
@@ -19,6 +22,28 @@ import {
 
 const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
 const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
+const SPLIT_DIRECTION_KEY = "jarvis.agenticIde.splitDirection";
+
+const SPLIT_DIRECTIONS: { id: PaneSplitDirection; label: string; hint: string; Icon: typeof SplitRightIcon }[] = [
+  { id: "right", label: "Right", hint: "Open the new agent to the right of the pane", Icon: SplitRightIcon },
+  { id: "down", label: "Down", hint: "Open the new agent below the pane", Icon: SplitBelowIcon },
+  { id: "left", label: "Left", hint: "Open the new agent to the left of the pane", Icon: SplitLeftIcon },
+  { id: "above", label: "Up", hint: "Open the new agent above the pane", Icon: SplitAboveIcon },
+];
+
+const isSplitDirection = (value: unknown): value is PaneSplitDirection =>
+  SPLIT_DIRECTIONS.some((item) => item.id === value);
+
+/** The direction last picked in the dialog; storage may be blocked, so never throw. */
+function storedSplitDirection(): PaneSplitDirection {
+  try {
+    const stored = localStorage.getItem(SPLIT_DIRECTION_KEY);
+    return isSplitDirection(stored) ? stored : "right";
+  } catch { return "right"; }
+}
+function storeSplitDirection(direction: PaneSplitDirection): void {
+  try { localStorage.setItem(SPLIT_DIRECTION_KEY, direction); } catch { /* a convenience only */ }
+}
 
 export interface AgenticIdeViewProps { onScreen?: boolean }
 
@@ -43,6 +68,10 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [workspaceAgents, setWorkspaceAgents] = useState<string[]>([]);
   const [selected, setSelected] = useState("");
   const [agentPicker, setAgentPicker] = useState<{ id: string; name: string } | null>(null);
+  // Where the next agent opens: split off `splitAnchor` (a pane call-sign) in
+  // `splitDirection`, or — with no anchor — the automatic even grid.
+  const [splitDirection, setSplitDirection] = useState<PaneSplitDirection>(storedSplitDirection);
+  const [splitAnchor, setSplitAnchor] = useState("");
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -237,12 +266,23 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     setWorkspaceProject(null);
   });
 
-  const addAgent = (agentName: string, workspaceId: string) => void run(async () => {
+  const addAgent = (
+    agentName: string,
+    workspaceId: string,
+    anchorName?: string,
+    direction: PaneSplitDirection = "down",
+  ) => void run(async () => {
     const wasBalanced = session?.id === workspaceId && isBalancedWorkspace(session.layout, session.terminals);
-    let next = await addTerminal({ workspace_id: workspaceId, agent: agentName, direction: "down" });
-    // Grow an automatic grid evenly; keep a custom arrangement until another
-    // pane would exceed the workspace bounds.
-    if (next.id === workspaceId && next.terminals.length > 1 && (wasBalanced || (next.layout && !fitsWorkspace(next.layout)))) {
+    const hasExplicitAnchor = Boolean(anchorName);
+    let next = await addTerminal({
+      workspace_id: workspaceId,
+      agent: agentName,
+      anchor: anchorName || undefined,
+      direction,
+    });
+    // Grow an automatic grid evenly when adding without an explicit anchor;
+    // keep a custom arrangement until another pane would exceed the workspace bounds.
+    if (next.id === workspaceId && next.terminals.length > 1 && ((wasBalanced && !hasExplicitAnchor) || (next.layout && !fitsWorkspace(next.layout)))) {
       const balanced = await reorderIdeTerminals(next.id, next.terminals.map((terminal) => terminal.history_id ?? terminal.key));
       next = balanced.session ?? next;
     }
@@ -261,7 +301,26 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     const next = await reorderIdeTerminals(session.id, session.terminals.map((terminal) => terminal.history_id ?? terminal.key));
     setState((current) => current?.session?.id === next.session?.id ? next : current);
   });
-  const openAgentPicker = () => { if (session) setAgentPicker({ id: session.id, name: session.name ?? session.project.name }); };
+  // A pane's own menu names the pane and direction. The workspace "+" names
+  // neither (and may pass a click event): an automatic even grid then stays
+  // automatic, a hand-arranged one splits the selected pane in the last
+  // direction the user picked. The dialog shows both and lets the user change it.
+  const openAgentPicker = useCallback((anchor?: unknown, direction?: PaneSplitDirection) => {
+    if (!session) return;
+    const named = typeof anchor === "string" ? anchor.trim() : "";
+    const pane = named || (isBalancedWorkspace(session.layout, session.terminals) ? "" : selected);
+    setSplitAnchor(session.terminals.some((terminal) => terminal.name === pane) ? pane : "");
+    setSplitDirection(isSplitDirection(direction) ? direction : storedSplitDirection());
+    setAgentPicker({ id: session.id, name: session.name ?? session.project.name });
+  }, [session, selected]);
+  // The chosen direction when it fits; otherwise the first that does; null
+  // when the anchor has no room at all (the agent then joins the even grid).
+  const pickerAnchorKey = session?.terminals.find((terminal) => terminal.name === splitAnchor)?.key;
+  const directionFits = (direction: PaneSplitDirection) =>
+    Boolean(session && pickerAnchorKey && canSplitFit(session.layout, session.terminals, pickerAnchorKey, direction));
+  const effectiveDirection = !pickerAnchorKey ? null
+    : directionFits(splitDirection) ? splitDirection
+    : SPLIT_DIRECTIONS.find((item) => directionFits(item.id))?.id ?? null;
   const closeVoice = () => { setVoiceOpen(false); storeVoiceBubbleOpen(false); };
   const jumpToPane = (workspaceId: string, pane: string) => void run(async () => {
     if (workspaceId !== session?.id) setState(await activateWorkspace(workspaceId));
@@ -316,9 +375,41 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
           <div><h2 className="text-base font-semibold">Add coding agent</h2><p className="mt-1 text-xs text-muted-foreground">{agentPicker.name}</p></div>
           <button type="button" aria-label="Close" onClick={() => setAgentPicker(null)} className="rounded-md p-1.5 hover:bg-muted"><X className="h-4 w-4" /></button>
         </div>
+
+        {session && session.terminals.length > 0 && (() => {
+          const anchorTerminal = session.terminals.find((terminal) => terminal.name === splitAnchor);
+          return <div className="mb-4 space-y-2.5 rounded-xl border border-border bg-muted/40 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-medium text-foreground">Where should it open?</span>
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                Next to
+                <select aria-label="Split next to" value={splitAnchor} disabled={busy} onChange={(event) => setSplitAnchor(event.target.value)}
+                  className="h-7 rounded-md border border-input bg-background px-2 text-xs font-medium text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+                  {session.terminals.map((terminal) => <option key={terminal.name} value={terminal.name}>{terminal.name} · {terminal.display_name}</option>)}
+                  <option value="">Automatic even grid</option>
+                </select>
+              </label>
+            </div>
+            {anchorTerminal ? <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label="Split direction">
+              {SPLIT_DIRECTIONS.map((item) => {
+                const fits = directionFits(item.id);
+                const checked = effectiveDirection === item.id;
+                return <button key={item.id} type="button" role="radio" aria-checked={checked} aria-label={`Split ${item.label.toLowerCase()}`}
+                  disabled={busy || !fits} title={fits ? item.hint : "No room: a workspace holds at most four columns and two rows."}
+                  onClick={() => { setSplitDirection(item.id); storeSplitDirection(item.id); }}
+                  className={cn("flex flex-col items-center justify-center gap-1.5 rounded-lg border py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40",
+                    checked ? "border-primary bg-primary/10 text-foreground ring-1 ring-primary/40" : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground")}>
+                  <item.Icon className="h-4 w-4" /><span>{item.label}</span>
+                </button>;
+              })}
+            </div> : <p className="text-xs text-muted-foreground">The new agent joins the grid and every pane gets an equal share.</p>}
+            {anchorTerminal && !effectiveDirection && <p className="text-xs text-muted-foreground">No room beside {anchorTerminal.name}; the new agent joins the automatic grid instead.</p>}
+          </div>;
+        })()}
+
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {installed.map((agent) => <button key={agent.name} type="button" disabled={busy}
-            onClick={() => { const owner = agentPicker.id; setAgentPicker(null); addAgent(agent.name, owner); }}
+            onClick={() => { const owner = agentPicker.id; setAgentPicker(null); addAgent(agent.name, owner, effectiveDirection ? splitAnchor : undefined, effectiveDirection ?? "down"); }}
             className="flex min-h-12 items-center gap-3 rounded-lg border border-border px-3 py-2 text-left text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <AgentMark agent={agent.name} label={agent.display_name} logoUrl={agent.logo_url} variant="plain" />{agent.display_name}
           </button>)}

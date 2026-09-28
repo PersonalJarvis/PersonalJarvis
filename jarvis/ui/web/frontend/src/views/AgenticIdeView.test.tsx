@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgenticIdeView } from "./AgenticIdeView";
 import { useIdeProjectsStore } from "@/store/ideProjects";
@@ -118,6 +118,26 @@ describe("Agentic IDE project flow", () => {
     expect(screen.getByRole("dialog", { name: "Add coding agent" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Codex" }));
     await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith({ workspace_id: "w1", agent: "codex", direction: "down" }));
+  });
+
+  it("lets the user choose which pane to split and in which direction", async () => {
+    const terminals = [{ key: "t1", history_id: "id1", name: "T1", display_name: "Codex" }, { key: "t2", history_id: "id2", name: "T2", display_name: "Codex" }];
+    const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "App work", created_at: 0,
+      focus_mode: false, project: { name: "App" }, terminals, layout: balancedLayout(["t1", "t2"]) };
+    api.fetchIdeState.mockResolvedValue({ ...emptyState, active: true, active_id: "w1", session });
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
+    api.addTerminal.mockResolvedValue(session);
+    render(<AgenticIdeView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pane add" }));
+    const dialog = screen.getByRole("dialog", { name: "Add coding agent" });
+    // Still the automatic grid, so that is what the dialog offers first.
+    expect((within(dialog).getByRole("combobox", { name: "Split next to" }) as HTMLSelectElement).value).toBe("");
+    expect(within(dialog).queryByRole("radio", { name: "Split left" })).toBeNull();
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "Split next to" }), { target: { value: "T2" } });
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Split left" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Codex" }));
+    await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith({ workspace_id: "w1", agent: "codex", anchor: "T2", direction: "left" }));
+    expect(api.reorderIdeTerminals).not.toHaveBeenCalled();
   });
 
   it("exposes compact workspace rename and close actions", async () => {

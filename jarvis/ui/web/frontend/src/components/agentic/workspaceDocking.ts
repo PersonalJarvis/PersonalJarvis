@@ -68,6 +68,43 @@ export function previewDock(tree: LayoutNode, source: string, target: string, po
   return insert(remove(tree)!);
 }
 
+/** Preview splitting a pane in a specific direction with a new terminal. */
+export function previewSplit(
+  tree: LayoutNode | null,
+  targetKey: string,
+  addedKey: string,
+  direction: "right" | "down" | "left" | "above"
+): LayoutNode {
+  if (!tree) return { pane: addedKey };
+  const insert = (node: LayoutNode): LayoutNode => {
+    if (isSplit(node)) return { ...node, children: node.children.map(insert) };
+    if (node.pane !== targetKey) return node;
+    const pair = [{ pane: addedKey }, node];
+    if (direction === "right" || direction === "down") pair.reverse();
+    return {
+      direction: direction === "left" || direction === "right" ? "row" : "column",
+      children: pair,
+      weights: [1, 1],
+    };
+  };
+  return insert(tree);
+}
+
+/** Check if splitting anchor in direction keeps the layout within 4 columns x 2 rows. */
+export function canSplitFit(
+  tree: LayoutNode | null | undefined,
+  terminals: readonly Pick<TerminalState, "key">[],
+  anchorKey: string | undefined,
+  direction: "right" | "down" | "left" | "above"
+): boolean {
+  if (terminals.length >= 8) return false;
+  if (terminals.length === 0 || !anchorKey) return true;
+  const current = workspaceLayout(tree, terminals);
+  if (!current) return true;
+  const preview = previewSplit(current, anchorKey, "__preview__", direction);
+  return fitsWorkspace(preview);
+}
+
 /** The nearest outer quarter is a docking edge; the middle swaps whole panes. */
 export function dockPosition(x: number, y: number, rect: Pick<DOMRect, "left" | "top" | "width" | "height">): PaneMovePosition {
   const horizontal = (x - rect.left) / rect.width, vertical = (y - rect.top) / rect.height;

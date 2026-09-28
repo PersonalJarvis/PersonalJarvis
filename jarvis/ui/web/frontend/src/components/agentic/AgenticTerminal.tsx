@@ -374,7 +374,7 @@ function documentHidden(): boolean {
  */
 export type { SplitAgentChoice };
 
-export type SplitDirection = "right" | "down";
+export type SplitDirection = "right" | "down" | "left" | "above";
 
 /**
  * Where a pane's recap came from, kept together rather than as five more props.
@@ -2313,7 +2313,7 @@ export function AgenticTerminal({
         onArrangeStart={onArrangeStart}
         onActivate={() => { onFocus?.(); takeOwnershipRef.current?.(); }}
         onToggleMaximize={onToggleMaximize}
-        onAdd={onSplit ? () => onSplit("right") : undefined}
+        onAdd={onSplit ? (direction) => onSplit(direction) : undefined}
         onClose={onClose}
         onRename={onRename}
         onOpenConversation={() => setHistoryOpen(true)}
