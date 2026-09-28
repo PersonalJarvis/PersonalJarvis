@@ -5815,6 +5815,7 @@
       "views": "Explorer views",
       "view_changes": "Changes",
       "view_files": "Files",
+      "changed_by": "Changed by {who}",
       "filter": "Filter files",
       "clear_filter": "Clear filter",
       "loading": "Loading…",
@@ -5832,7 +5833,8 @@
     },
     "tabs": {
       "agents": "Agents",
-      "files": "Explorer"
+      "files": "Folder",
+      "changes": "Changes"
     },
     "agents": {
       "aria": "Agents in this workspace",

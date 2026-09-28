@@ -5782,6 +5782,7 @@
       "views": "Vistas del explorador",
       "view_changes": "Cambios",
       "view_files": "Archivos",
+      "changed_by": "Cambiado por {who}",
       "filter": "Filtrar archivos",
       "clear_filter": "Borrar filtro",
       "loading": "Cargando…",
@@ -5799,7 +5800,8 @@
     },
     "tabs": {
       "agents": "Agentes",
-      "files": "Explorador"
+      "files": "Carpeta",
+      "changes": "Cambios"
     },
     "agents": {
       "aria": "Agentes de este espacio de trabajo",
