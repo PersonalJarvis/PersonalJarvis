@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import re
 import sys
 from pathlib import Path
@@ -347,3 +348,39 @@ class TestMain:
         )
         rc = gate.main(["prog", "origin", "url"], stdin)
         assert rc == 1
+
+
+# --------------------------------------------------------------------------- #
+# strip_and_scan scan report never carries the secret itself
+# --------------------------------------------------------------------------- #
+class TestScanReportHidesSecrets:
+    def test_report_and_stderr_carry_location_not_value(self, tmp_path, capsys):
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "config.py").write_text(
+            f"# header\nOPENAI_API_KEY = '{_REAL_OPENAI}'\n", encoding="utf-8"
+        )
+        skill_dir = tmp_path / "skill"
+        skill_dir.mkdir()
+        report = tmp_path / "report.json"
+
+        rc = _SAS.main(
+            [
+                "scan",
+                "--tree",
+                str(tree),
+                "--skill-dir",
+                str(skill_dir),
+                "--report",
+                str(report),
+            ]
+        )
+
+        assert rc == 2
+        body = report.read_text(encoding="utf-8")
+        assert _REAL_OPENAI not in body
+        assert _REAL_OPENAI not in capsys.readouterr().err
+        finding = next(b for b in json.loads(body)["blocking"] if b["kind"] == "secret")
+        assert finding["path"] == "config.py"
+        assert finding["line"] == 2
+        assert finding["pattern"] == "openai_legacy"
