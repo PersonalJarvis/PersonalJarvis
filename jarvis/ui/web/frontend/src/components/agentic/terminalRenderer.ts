@@ -27,6 +27,15 @@
  *   Lost is terminal for that pane's WebGL: it does not try again, because a
  *   GPU that just dropped a context is exactly the one that would drop it
  *   again (AP-32: survive the loss, release what was held).
+ *
+ * One more trap, and it is the reason every glyph-cache clear in a pane goes
+ * through {@link clearTerminalTextureAtlas}: the WebGL addon SHARES its glyph
+ * atlas between every terminal with the same font and theme. A clear on one
+ * pane empties that shared atlas but only forgets the glyph positions of the
+ * pane that asked; every other WebGL pane keeps drawing its unchanged rows
+ * from coordinates that now point at other glyphs. Seen 2026-09-28: splitting
+ * a new pane (whose mount restates theme and size, each with a clear) turned
+ * the idle rows of three neighbouring panes into glyph soup.
  */
 
 import { CanvasAddon } from "@xterm/addon-canvas";
@@ -62,9 +71,27 @@ const realDeps: RendererDeps = {
 
 let webglPanes = 0;
 
+/** Terminals currently drawing with WebGL — the ones sharing a glyph atlas. */
+const webglTerminals = new Set<Terminal>();
+
 /** Test hook: forget every pane counted so far. */
 export function resetWebglPaneCount(): void {
   webglPanes = 0;
+  webglTerminals.clear();
+}
+
+/**
+ * Drop `term`'s cached glyphs — and, when it draws with WebGL, make every other
+ * WebGL pane forget its glyph positions too, since the atlas they point into
+ * was just emptied under them (see the module comment). Each pane re-rasterizes
+ * on its next frame; this only runs on a theme, font or size change.
+ */
+export function clearTerminalTextureAtlas(term: Terminal): void {
+  term.clearTextureAtlas?.();
+  if (!webglTerminals.has(term)) return;
+  for (const other of webglTerminals) {
+    if (other !== term) other.clearTextureAtlas?.();
+  }
 }
 
 export interface AttachedRenderer {
@@ -94,6 +121,7 @@ export function attachTerminalRenderer(
     if (!counted) return;
     counted = false;
     webglPanes = Math.max(0, webglPanes - 1);
+    webglTerminals.delete(term);
   };
 
   const loadCanvas = (): TerminalRendererKind => {
@@ -113,6 +141,7 @@ export function attachTerminalRenderer(
       webgl = deps.createWebgl();
       term.loadAddon(webgl);
       webglPanes += 1;
+      webglTerminals.add(term);
       counted = true;
       kind = "webgl";
     } catch {

@@ -97,7 +97,7 @@ import { describeExit, explainExit } from "./paneExit";
 import { PaneActivityPill } from "./PaneActivityPill";
 import { PaneRecap } from "./PaneRecap";
 import { attachToTerminal } from "@/lib/agenticIdeApi";
-import { attachTerminalRenderer } from "./terminalRenderer";
+import { attachTerminalRenderer, clearTerminalTextureAtlas } from "./terminalRenderer";
 import type { RecapReason, RecapSource } from "@/lib/agenticIdeApi";
 import { attachTerminalBridge } from "@/lib/editActions";
 import { robustCopy, robustPaste } from "@/lib/clipboard";
@@ -1505,7 +1505,7 @@ export function AgenticTerminal({
         // A new size is a new glyph advance, and so a new floored fraction for
         // the canvas renderer to give back — same order as the fontSize effect.
         alignTerminalCells(term);
-        term.clearTextureAtlas?.();
+        clearTerminalTextureAtlas(term);
       }
       // Measured WITHOUT being applied yet: what the tile can show is a
       // PROPOSAL, and the floors above have the last word on it.
@@ -1862,7 +1862,7 @@ export function AgenticTerminal({
     // `document.fonts.ready` and re-fitting cannot fix either.
     const disposeFontSync = syncTerminalFont(term, () => {
       if (disposed) return;
-      term.clearTextureAtlas?.();
+      clearTerminalTextureAtlas(term);
       sendResize();
     });
 
@@ -2138,7 +2138,7 @@ export function AgenticTerminal({
     const term = termRef.current;
     if (!term) return;
     term.options.theme = themeFor(appearance);
-    term.clearTextureAtlas?.();
+    clearTerminalTextureAtlas(term);
   }, [appearance, terminalEpoch]);
 
   useEffect(() => {
@@ -2152,7 +2152,7 @@ export function AgenticTerminal({
     // the canvas renderer to floor away. Re-align before the fit below, or the
     // pane spends this size with its glyphs overhanging their cells.
     alignTerminalCells(term);
-    term.clearTextureAtlas?.();
+    clearTerminalTextureAtlas(term);
     // Changing the font size changes the COLUMN COUNT. Fitting locally without
     // telling the terminal process leaves the agent formatting for the old
     // width — it keeps wrapping at 100 columns in a pane that now holds 80, and

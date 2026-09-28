@@ -4,6 +4,7 @@ import type { ITerminalAddon, Terminal } from "@xterm/xterm";
 import {
   MAX_WEBGL_PANES,
   attachTerminalRenderer,
+  clearTerminalTextureAtlas,
   resetWebglPaneCount,
   type RendererDeps,
   type WebglLike,
@@ -112,5 +113,45 @@ describe("attachTerminalRenderer", () => {
       attachTerminalRenderer(fakeTerminal().term, undefined, d).kind,
     ];
     expect(next).toEqual(["webgl", "webgl", "canvas"]);
+  });
+});
+
+describe("clearTerminalTextureAtlas", () => {
+  function clearingTerminal() {
+    const t = fakeTerminal();
+    let clears = 0;
+    Object.assign(t.term, {
+      clearTextureAtlas: () => {
+        clears += 1;
+      },
+    });
+    return { ...t, clears: () => clears };
+  }
+
+  it("makes every other WebGL pane forget the shared atlas it points into", () => {
+    const a = clearingTerminal();
+    const b = clearingTerminal();
+    attachTerminalRenderer(a.term, undefined, deps());
+    attachTerminalRenderer(b.term, undefined, deps());
+    clearTerminalTextureAtlas(a.term);
+    expect(a.clears()).toBe(1);
+    expect(b.clears()).toBe(1);
+  });
+
+  it("leaves canvas and released panes alone", () => {
+    const a = clearingTerminal();
+    const b = clearingTerminal();
+    const c = clearingTerminal();
+    const d = deps();
+    attachTerminalRenderer(a.term, undefined, d);
+    const rb = attachTerminalRenderer(b.term, undefined, d);
+    const refusing = { ...d, createWebgl: () => { throw new Error("no context"); } };
+    attachTerminalRenderer(c.term, undefined, refusing);
+    rb.dispose();
+    clearTerminalTextureAtlas(a.term);
+    expect(b.clears()).toBe(0);
+    expect(c.clears()).toBe(0);
+    clearTerminalTextureAtlas(c.term);
+    expect(a.clears()).toBe(1);
   });
 });
