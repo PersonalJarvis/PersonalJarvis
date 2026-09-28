@@ -9,7 +9,10 @@ const patchProject = vi.hoisted(() => vi.fn());
 const openProject = vi.hoisted(() => vi.fn());
 const deleteProject = vi.hoisted(() => vi.fn());
 const reorderProjects = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/chatLibraryApi", () => ({ patchProject, openProject, deleteProject, reorderProjects,
+const revealProject = vi.hoisted(() => vi.fn());
+const robustCopy = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/clipboard", () => ({ robustCopy }));
+vi.mock("@/lib/chatLibraryApi", () => ({ patchProject, openProject, deleteProject, reorderProjects, revealProject,
   ChatLibraryError: class extends Error { constructor(message: string, readonly status: number) { super(message); } },
 }));
 
@@ -32,6 +35,8 @@ beforeEach(() => {
   openProject.mockReset().mockResolvedValue({ id: "p1" });
   deleteProject.mockReset().mockResolvedValue(true);
   reorderProjects.mockReset().mockResolvedValue([]);
+  revealProject.mockReset().mockResolvedValue(true);
+  robustCopy.mockReset().mockResolvedValue(true);
   renameWorkspace.mockReset().mockResolvedValue({});
   closeWorkspace.mockReset().mockResolvedValue({});
   removeWorkspace.mockReset().mockResolvedValue({});
@@ -102,13 +107,19 @@ it("marks a queued workspace before the active workspace changes", () => {
   expect(row.textContent).toContain("Switching workspace");
 });
 
-it("offers workspace options only on the active row and dispatches Jarvis Live", () => {
-  const second = { ...project("p2"), workspaces: [{ ...project("p2").workspaces[0], name: "Other" }] };
-  useIdeProjectsStore.setState({ projects: [project(), second] });
+it("gives every workspace row a ⋯ menu and dispatches Jarvis Live", () => {
+  const base = project();
+  useIdeProjectsStore.setState({ projects: [{ ...base, workspaces: [...base.workspaces, { ...base.workspaces[0], id: "p1-w2", name: "Other" }] }] });
   render(<IdeProjectTree />);
-  fireEvent.click(screen.getByRole("button", { name: "Workspace options for Work" }));
+  // Not only the active row: a background workspace has actions too.
+  fireEvent.click(screen.getByRole("button", { name: "Workspace actions for Other" }));
+  expect(screen.getByRole("menu", { name: "Workspace actions for Other" })).toBeDefined();
+  fireEvent.click(screen.getByRole("button", { name: "Workspace actions for Other" }));
+  expect(screen.queryByRole("menu")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Workspace actions for Work" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Workspace options…" }));
   expect(useIdeProjectsStore.getState().action).toMatchObject({ kind: "workspace-options", workspaceId: "p1-w1" });
-  expect(screen.queryByRole("button", { name: "Workspace options for Other" })).toBeNull();
+  expect(screen.queryByRole("menu")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Jarvis Live" }));
   expect(useIdeProjectsStore.getState().action?.kind).toBe("toggle-voice");
 });
@@ -116,11 +127,11 @@ it("offers workspace options only on the active row and dispatches Jarvis Live",
 it("pins and renames via the project API, then requests a guarded refresh", async () => {
   render(<IdeProjectTree />);
   fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
-  fireEvent.click(screen.getByRole("button", { name: "Pin project" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Pin project" }));
   await waitFor(() => expect(patchProject).toHaveBeenCalledWith("p1", { pinned: true }));
   await waitFor(() => expect(useIdeProjectsStore.getState().refreshRequest?.nonce).toBe(1));
   fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
-  fireEvent.click(screen.getByRole("button", { name: "Rename project" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Rename project" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Rename App" }), { target: { value: "Better App" } });
   fireEvent.click(screen.getByRole("button", { name: "Save App" }));
   await waitFor(() => expect(patchProject).toHaveBeenCalledWith("p1", { name: "Better App" }));
@@ -131,7 +142,7 @@ it("registers a legacy derived project only after PATCH 404, then retries once",
   patchProject.mockRejectedValueOnce(new ChatLibraryError("missing", 404)).mockResolvedValueOnce({});
   render(<IdeProjectTree />);
   fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
-  fireEvent.click(screen.getByRole("button", { name: "Pin project" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Pin project" }));
   await waitFor(() => expect(patchProject).toHaveBeenCalledTimes(2));
   expect(openProject).toHaveBeenCalledTimes(1);
   expect(openProject).toHaveBeenCalledWith("/p1");
@@ -143,7 +154,7 @@ it("does not register or retry on non-404 metadata errors", async () => {
   patchProject.mockRejectedValueOnce(new ChatLibraryError("denied", 403));
   render(<IdeProjectTree />);
   fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
-  fireEvent.click(screen.getByRole("button", { name: "Pin project" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Pin project" }));
   await waitFor(() => expect(patchProject).toHaveBeenCalledTimes(1));
   expect(openProject).not.toHaveBeenCalled();
   expect(useIdeProjectsStore.getState().refreshRequest).toBeNull();
@@ -154,8 +165,11 @@ it("submits only one metadata mutation when a project action is pressed twice", 
   patchProject.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
   render(<IdeProjectTree />);
   fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
-  const pin = screen.getByRole("button", { name: "Pin project" });
-  act(() => { fireEvent.click(pin); fireEvent.click(pin); });
+  fireEvent.click(screen.getByRole("menuitem", { name: "Pin project" }));
+  // The menu closes on the first press; reopening and pressing again while the
+  // first request is still in flight must not send a second one.
+  fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
+  act(() => { fireEvent.click(screen.getByRole("menuitem", { name: "Pin project" })); });
   expect(patchProject).toHaveBeenCalledTimes(1);
   act(() => finish({}));
   await waitFor(() => expect(useIdeProjectsStore.getState().refreshRequest?.nonce).toBe(1));
@@ -253,4 +267,44 @@ it("removes open workspaces when a project is deleted", async () => {
   await waitFor(() => expect(removeWorkspace).toHaveBeenCalledWith("p1-w1"));
   await waitFor(() => expect(deleteProject).toHaveBeenCalledWith("p1"));
   await waitFor(() => expect(useIdeProjectsStore.getState().refreshRequest?.nonce).toBe(1));
+});
+
+it("groups project actions and runs folder actions", async () => {
+  render(<IdeProjectTree />);
+  fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
+  const menu = screen.getByRole("menu", { name: "Project actions for App" });
+  expect(menu.querySelectorAll('[role="group"]').length).toBe(3);
+  expect(Array.from(menu.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent)).toEqual([
+    "New workspace", "Open folder", "Copy folder path", "Rename project", "Pin project", "Delete project",
+  ]);
+  fireEvent.click(screen.getByRole("menuitem", { name: "Open folder" }));
+  await waitFor(() => expect(revealProject).toHaveBeenCalledWith("p1"));
+  fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Copy folder path" }));
+  await waitFor(() => expect(robustCopy).toHaveBeenCalledWith("/p1"));
+});
+
+it("closes an open workspace but keeps it, separately from removing it", async () => {
+  render(<IdeProjectTree />);
+  fireEvent.click(screen.getByRole("button", { name: "Workspace actions for Work" }));
+  fireEvent.click(screen.getByTestId("ide-workspace-menu-stop"));
+  expect(screen.getByRole("dialog", { name: "Close Work?" })).toBeDefined();
+  fireEvent.click(screen.getByTestId("ide-workspace-confirm-close-confirm"));
+  await waitFor(() => expect(closeWorkspace).toHaveBeenCalledWith("p1-w1"));
+  expect(removeWorkspace).not.toHaveBeenCalled();
+});
+
+it("offers no close or rename on a closed workspace", () => {
+  useIdeProjectsStore.setState({
+    projects: [{
+      ...project(),
+      workspaces: [{ ...project().workspaces[0], status: "closed", live_terminals: 0 } as IdeProject["workspaces"][number]],
+    }],
+    activeWorkspaceId: null,
+  });
+  render(<IdeProjectTree />);
+  fireEvent.contextMenu(screen.getByTestId("ide-workspace-row-p1-w1"));
+  expect(screen.queryByTestId("ide-workspace-menu-stop")).toBeNull();
+  expect((screen.getByRole("menuitem", { name: /Rename workspace/ }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByRole("menuitem", { name: "Reopen workspace" })).toBeDefined();
 });

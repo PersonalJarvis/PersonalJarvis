@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, ChevronRight, Folder, FolderPlus, Loader2, Mic, MoreHorizontal, Pencil, Pin, Plus, Trash2, X } from "lucide-react";
-import { ChatLibraryError, deleteProject, openProject, patchProject, reorderProjects } from "@/lib/chatLibraryApi";
-import { removeWorkspace, renameWorkspace, IdeApiError, reorderWorkspaces, type IdeProject, type ProjectWorkspace } from "@/lib/agenticIdeApi";
+import { ArrowUpRight, Check, ChevronDown, ChevronRight, Copy, Folder, FolderOpen, FolderPlus, Loader2, Mic, MoreHorizontal, Pencil, Pin, PinOff, Plus, Power, SlidersHorizontal, Trash2, X, type LucideIcon } from "lucide-react";
+import { ChatLibraryError, deleteProject, openProject, patchProject, reorderProjects, revealProject } from "@/lib/chatLibraryApi";
+import { robustCopy } from "@/lib/clipboard";
+import { closeWorkspace, removeWorkspace, renameWorkspace, IdeApiError, reorderWorkspaces, type IdeProject, type ProjectWorkspace } from "@/lib/agenticIdeApi";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 
@@ -21,6 +22,17 @@ const REORDER_NEEDS_RESTART = "This view is newer than the backend — restart t
 function reorderErrorMessage(error: unknown): string {
   if (error instanceof IdeApiError && error.status === 405) return REORDER_NEEDS_RESTART;
   if (error instanceof ChatLibraryError && error.status === 405) return REORDER_NEEDS_RESTART;
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Why opening a folder failed, in the user's terms. */
+function revealErrorMessage(error: unknown): string {
+  if (error instanceof ChatLibraryError && error.message === "native-file-actions-disabled") {
+    return "Opening folders works in the desktop app only.";
+  }
+  if (error instanceof ChatLibraryError && (error.status === 405 || (error.status === 404 && error.message === "Not Found"))) {
+    return REORDER_NEEDS_RESTART;
+  }
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -62,7 +74,6 @@ export function IdeProjectTree() {
   const requestRefresh = useIdeProjectsStore((state) => state.requestRefresh);
   const pushToast = useEventStore((state) => state.pushToast);
   const [expansion, setExpansion] = useState(readExpansion);
-  const [menuId, setMenuId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [mutatingId, setMutatingId] = useState<string | null>(null);
@@ -78,7 +89,8 @@ export function IdeProjectTree() {
   >(null);
   const [renamingWorkspaceId, setRenamingWorkspaceId] = useState<string | null>(null);
   const [draftWorkspaceName, setDraftWorkspaceName] = useState("");
-  const [confirmWorkspace, setConfirmWorkspace] = useState<{ projectId: string; workspaceId: string } | null>(null);
+  // "close" keeps a restorable row; "remove" makes the row go away for good.
+  const [confirmWorkspace, setConfirmWorkspace] = useState<{ projectId: string; workspaceId: string; mode: "close" | "remove" } | null>(null);
   const [confirmProject, setConfirmProject] = useState<string | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const sawProjectSnapshot = useRef(false);
@@ -124,17 +136,6 @@ export function IdeProjectTree() {
     if (ids.size > 0) knownProjectIds.current = ids;
   }, [projects]);
 
-  useEffect(() => {
-    if (!menuId) return;
-    const dismiss = (event: PointerEvent) => {
-      if (!(event.target instanceof Element) || event.target.closest("[data-project-menu]")?.getAttribute("data-project-menu") !== menuId) setMenuId(null);
-    };
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setMenuId(null); };
-    document.addEventListener("pointerdown", dismiss);
-    document.addEventListener("keydown", onKey);
-    return () => { document.removeEventListener("pointerdown", dismiss); document.removeEventListener("keydown", onKey); };
-  }, [menuId]);
-
   const mutate = async (project: IdeProject, changes: { pinned?: boolean; name?: string }) => {
     if (mutatingProjects.current.has(project.id)) return;
     mutatingProjects.current.add(project.id);
@@ -150,7 +151,6 @@ export function IdeProjectTree() {
         await openProject(project.path);
         await patchProject(project.id, changes);
       }
-      setMenuId(null);
       setRenamingId(null);
       requestRefresh();
     } catch (error) { pushToast("error", (error as Error).message); }
@@ -188,15 +188,36 @@ export function IdeProjectTree() {
     // here so a project row offers project actions instead of text editing.
     event.preventDefault();
     event.stopPropagation();
-    setMenuId(null);
     setContextMenu({ kind: "project", projectId, x: event.clientX, y: event.clientY });
   };
 
   const openWorkspaceMenu = (event: React.MouseEvent, projectId: string, workspaceId: string) => {
     event.preventDefault();
     event.stopPropagation();
-    setMenuId(null);
     setContextMenu({ kind: "workspace", projectId, workspaceId, x: event.clientX, y: event.clientY });
+  };
+
+  /** Open (or close again) the same menu as right-click, hanging under a ⋯ button. */
+  const toggleAnchoredMenu = (
+    event: React.MouseEvent<HTMLElement>,
+    target: { kind: "project"; projectId: string } | { kind: "workspace"; projectId: string; workspaceId: string },
+  ) => {
+    event.stopPropagation();
+    const same = contextMenu !== null && contextMenu.kind === target.kind && contextMenu.projectId === target.projectId
+      && (target.kind === "project" || (contextMenu.kind === "workspace" && contextMenu.workspaceId === target.workspaceId));
+    if (same) { setContextMenu(null); return; }
+    const rect = event.currentTarget.getBoundingClientRect();
+    setContextMenu({ ...target, x: rect.right - TREE_MENU_WIDTH, y: rect.bottom + 4 });
+  };
+
+  const copyPath = async (path: string) => {
+    const copied = await robustCopy(path);
+    pushToast(copied ? "success" : "error", copied ? "Folder path copied" : "Could not copy the folder path");
+  };
+
+  const revealFolder = async (projectId: string) => {
+    try { await revealProject(projectId); }
+    catch (error) { pushToast("error", revealErrorMessage(error)); }
   };
 
   const submitWorkspaceRename = async (workspace: ProjectWorkspace) => {
@@ -230,7 +251,8 @@ export function IdeProjectTree() {
     }
     setConfirmBusy(true);
     try {
-      await removeWorkspace(target.workspace.id);
+      if (confirmWorkspace.mode === "close") await closeWorkspace(target.workspace.id);
+      else await removeWorkspace(target.workspace.id);
       setConfirmWorkspace(null);
       setContextMenu(null);
       requestRefresh();
@@ -260,7 +282,6 @@ export function IdeProjectTree() {
       await deleteProject(target.id);
       setConfirmProject(null);
       setContextMenu(null);
-      setMenuId(null);
       requestRefresh();
     } catch (error) {
       pushToast("error", removalErrorMessage(error));
@@ -308,6 +329,7 @@ export function IdeProjectTree() {
     const isProjectDragged = draggedProjectId === project.id;
     const isProjectDropBefore = projectDropTarget?.id === project.id && projectDropTarget.before;
     const isProjectDropAfter = projectDropTarget?.id === project.id && !projectDropTarget.before;
+    const projectMenuOpen = contextMenu?.kind === "project" && contextMenu.projectId === project.id;
     return <div key={project.id} className="mb-0.5" data-testid={`ide-project-${project.id}`}>
       <div draggable={projectDraggable}
         data-testid={`ide-project-header-${project.id}`}
@@ -371,22 +393,17 @@ export function IdeProjectTree() {
             <span className="min-w-0 flex-1 truncate">{project.name}</span>
             {count > 0 && <span className="rounded-md bg-background/50 px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground" aria-label={`${count} agent ${count === 1 ? "session" : "sessions"}`}>{count}</span>}
           </button>
-          <div className={`absolute right-1 top-1/2 flex -translate-y-1/2 items-center transition-opacity ${menuId === project.id ? "opacity-100" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"}`} data-project-menu={project.id}>
-            <button type="button" aria-label={`Project actions for ${project.name}`} title="Project actions" aria-expanded={menuId === project.id}
-              onClick={() => setMenuId((current) => current === project.id ? null : project.id)}
-              className="rounded p-1.5 text-muted-foreground/70 hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <div className={`absolute right-1 top-1/2 flex -translate-y-1/2 items-center transition-opacity ${projectMenuOpen ? "opacity-100" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"}`} data-project-menu={project.id}>
+            <button type="button" aria-label={`Project actions for ${project.name}`} title="Project actions" aria-haspopup="menu" aria-expanded={projectMenuOpen}
+              data-tree-menu-anchor
+              onClick={(event) => toggleAnchoredMenu(event, { kind: "project", projectId: project.id })}
+              className={`rounded p-1.5 hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${projectMenuOpen ? "bg-background/70 text-foreground" : "text-muted-foreground/70"}`}>
               {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MoreHorizontal className="h-3.5 w-3.5" />}
             </button>
             <button type="button" aria-label={`New workspace in ${project.name}`} title="New workspace" onClick={() => newWorkspace(project.id)}
               className="rounded p-1.5 text-muted-foreground/70 hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Plus className="h-3.5 w-3.5" />
             </button>
-            {menuId === project.id && <div className="absolute right-0 top-full z-30 mt-1 min-w-40 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg">
-              <button type="button" disabled={working} onClick={() => void mutate(project, { pinned: !project.pinned })}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-50"><Pin className="h-3.5 w-3.5" />{project.pinned ? "Unpin project" : "Pin project"}</button>
-              <button type="button" disabled={working} onClick={() => { setMenuId(null); setDraftName(project.name); setRenamingId(project.id); }}
-                className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-50">Rename project</button>
-            </div>}
           </div>
         </>}
       </div>
@@ -498,11 +515,15 @@ export function IdeProjectTree() {
             <span className="text-xs tabular-nums opacity-70">{workspace.terminals}</span>
             {pending && <span className="sr-only">Switching workspace</span>}
             </button>
-            {selected && <button type="button" aria-label={`Workspace options for ${workspace.name}`} title="Workspace options"
-              onClick={() => openWorkspaceOptions(workspace.id)}
-              className="mr-1 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-background/70 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/space:opacity-100 group-focus-within/space:opacity-100 [@media(hover:none)]:opacity-100">
-              <MoreHorizontal className="h-4 w-4" />
-            </button>}
+            {(() => {
+              const spaceMenuOpen = contextMenu?.kind === "workspace" && contextMenu.workspaceId === workspace.id;
+              return <button type="button" aria-label={`Workspace actions for ${workspace.name}`} title="Workspace actions"
+                aria-haspopup="menu" aria-expanded={spaceMenuOpen} data-tree-menu-anchor
+                onClick={(event) => toggleAnchoredMenu(event, { kind: "workspace", projectId: project.id, workspaceId: workspace.id })}
+                className={`mr-1 rounded-md p-1.5 text-muted-foreground transition-opacity hover:bg-background/70 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/space:opacity-100 group-focus-within/space:opacity-100 [@media(hover:none)]:opacity-100 ${spaceMenuOpen ? "bg-background/70 text-foreground opacity-100" : "opacity-0"}`}>
+                <MoreHorizontal className="h-4 w-4" />
+              </button>;
+            })()}
               </>
             )}
           </div>;
@@ -510,6 +531,49 @@ export function IdeProjectTree() {
         {project.workspaces.length === 0 && <button type="button" onClick={() => newWorkspace(project.id)} className="px-2 py-2 text-left text-sm text-muted-foreground hover:text-foreground">Create workspace</button>}
       </div>}
     </div>;
+  };
+
+  const run = (action: () => void) => () => { setContextMenu(null); action(); };
+
+  const projectMenuSections = (project: IdeProject): TreeMenuItem[][] => [
+    [
+      { id: "new", label: "New workspace", icon: FolderPlus, testId: "ide-project-menu-new", onSelect: run(() => newWorkspace(project.id)) },
+      { id: "reveal", label: "Open folder", icon: FolderOpen, testId: "ide-project-menu-reveal", disabled: project.exists === false, onSelect: run(() => void revealFolder(project.id)) },
+      { id: "copy", label: "Copy folder path", icon: Copy, testId: "ide-project-menu-copy", onSelect: run(() => void copyPath(project.path)) },
+    ],
+    [
+      { id: "rename", label: "Rename project", icon: Pencil, testId: "ide-project-menu-rename", onSelect: run(() => { setDraftName(project.name); setRenamingId(project.id); }) },
+      { id: "pin", label: project.pinned ? "Unpin project" : "Pin project", icon: project.pinned ? PinOff : Pin, testId: "ide-project-menu-pin", onSelect: run(() => void mutate(project, { pinned: !project.pinned })) },
+    ],
+    [
+      { id: "delete", label: "Delete project", icon: Trash2, testId: "ide-project-menu-delete", destructive: true, onSelect: run(() => setConfirmProject(project.id)) },
+    ],
+  ];
+
+  const workspaceMenuSections = (project: IdeProject, workspace: ProjectWorkspace): TreeMenuItem[][] => {
+    const isOpen = workspace.status === "open";
+    const isActive = workspace.id === activeWorkspaceId;
+    const unavailable = !isOpen && !workspace.restorable;
+    return [
+      [
+        { id: "open", label: isActive ? "Current workspace" : isOpen ? "Switch to workspace" : "Reopen workspace", icon: ArrowUpRight, testId: "ide-workspace-menu-open",
+          disabled: isActive || unavailable, onSelect: run(() => { activateWorkspace(workspace.id); setProjectOpen(project.id, true); }) },
+        { id: "rename", label: "Rename workspace", icon: Pencil, testId: "ide-workspace-menu-rename", disabled: !isOpen,
+          hint: isOpen ? undefined : "Reopen it to rename",
+          onSelect: run(() => { setDraftWorkspaceName(workspace.name); setRenamingWorkspaceId(workspace.id); setProjectOpen(project.id, true); }) },
+        ...(isOpen ? [{ id: "options", label: "Workspace options…", icon: SlidersHorizontal, testId: "ide-workspace-menu-options", onSelect: run(() => openWorkspaceOptions(workspace.id)) }] : []),
+      ],
+      [
+        { id: "reveal", label: "Open folder", icon: FolderOpen, testId: "ide-workspace-menu-reveal", onSelect: run(() => void revealFolder(project.id)) },
+        { id: "copy", label: "Copy folder path", icon: Copy, testId: "ide-workspace-menu-copy", onSelect: run(() => void copyPath(workspace.folder || project.path)) },
+      ],
+      [
+        ...(isOpen ? [{ id: "close", label: "Close workspace", icon: Power, testId: "ide-workspace-menu-stop", hint: "Stops its agents, keeps the row",
+          onSelect: run(() => setConfirmWorkspace({ projectId: project.id, workspaceId: workspace.id, mode: "close" })) }] : []),
+        { id: "remove", label: "Remove workspace", icon: Trash2, testId: "ide-workspace-menu-close", destructive: true,
+          onSelect: run(() => setConfirmWorkspace({ projectId: project.id, workspaceId: workspace.id, mode: "remove" })) },
+      ],
+    ];
   };
 
   const menuProject = contextMenu ? visible.find((project) => project.id === contextMenu.projectId) ?? null : null;
@@ -548,67 +612,26 @@ export function IdeProjectTree() {
         onDismiss={() => setContextMenu(null)}
         label={contextMenu.kind === "workspace" && menuWorkspace ? menuWorkspace.name : menuProject.name}
         kind={contextMenu.kind}
-        isOpen={contextMenu.kind === "workspace" ? menuWorkspace?.status === "open" : undefined}
-        isActive={contextMenu.kind === "workspace" ? menuWorkspace?.id === activeWorkspaceId : menuProject.id === activeProject?.id}
-        isExpanded={contextMenu.kind === "project" ? (expansion[menuProject.id] ?? menuProject.id === activeProject?.id) : undefined}
-        isPinned={menuProject.pinned}
         busy={mutatingId !== null || reordering || confirmBusy}
-        onOpen={contextMenu.kind === "workspace" && menuWorkspace ? () => {
-          const id = menuWorkspace.id;
-          setContextMenu(null);
-          activateWorkspace(id);
-          setProjectOpen(menuProject.id, true);
-        } : undefined}
-        onToggleExpand={contextMenu.kind === "project" ? () => {
-          setProjectOpen(menuProject.id, !(expansion[menuProject.id] ?? menuProject.id === activeProject?.id));
-          setContextMenu(null);
-        } : undefined}
-        onNewWorkspace={() => {
-          setContextMenu(null);
-          newWorkspace(menuProject.id);
-        }}
-        onPin={() => {
-          const target = menuProject;
-          setContextMenu(null);
-          void mutate(target, { pinned: !target.pinned });
-        }}
-        onRenameProject={contextMenu.kind === "project" ? () => {
-          setContextMenu(null);
-          setMenuId(null);
-          setDraftName(menuProject.name);
-          setRenamingId(menuProject.id);
-          setProjectOpen(menuProject.id, true);
-        } : undefined}
-        onRenameWorkspace={contextMenu.kind === "workspace" && menuWorkspace ? () => {
-          setContextMenu(null);
-          setDraftWorkspaceName(menuWorkspace.name);
-          setRenamingWorkspaceId(menuWorkspace.id);
-          setProjectOpen(menuProject.id, true);
-        } : undefined}
-        onWorkspaceOptions={contextMenu.kind === "workspace" && menuWorkspace ? () => {
-          const id = menuWorkspace.id;
-          setContextMenu(null);
-          openWorkspaceOptions(id);
-        } : undefined}
-        onCloseWorkspace={contextMenu.kind === "workspace" && menuWorkspace ? () => {
-          setContextMenu(null);
-          setConfirmWorkspace({ projectId: menuProject.id, workspaceId: menuWorkspace.id });
-        } : undefined}
-        onDeleteProject={contextMenu.kind === "project" ? () => {
-          setContextMenu(null);
-          setConfirmProject(menuProject.id);
-        } : undefined}
+        sections={contextMenu.kind === "workspace" && menuWorkspace
+          ? workspaceMenuSections(menuProject, menuWorkspace)
+          : projectMenuSections(menuProject)}
       />
     )}
     {confirmWorkspaceTarget && (
       <ConfirmTreeAction
-        title={`Remove ${confirmWorkspaceTarget.workspace.name}?`}
-        body={
-          confirmWorkspaceTarget.workspace.status === "open"
-            ? `Its ${confirmWorkspaceTarget.workspace.terminals} coding ${confirmWorkspaceTarget.workspace.terminals === 1 ? "agent" : "agents"} will stop and the workspace leaves the sidebar. The folder on disk and its chats stay untouched.`
-            : "The workspace leaves the sidebar. The folder on disk and its chats stay untouched."
-        }
-        confirmLabel={confirmBusy ? "Removing…" : `Remove ${confirmWorkspaceTarget.workspace.name}`}
+        title={`${confirmWorkspace?.mode === "close" ? "Close" : "Remove"} ${confirmWorkspaceTarget.workspace.name}?`}
+        body={(() => {
+          const { workspace } = confirmWorkspaceTarget;
+          const agents = `${workspace.terminals} coding ${workspace.terminals === 1 ? "agent" : "agents"}`;
+          if (confirmWorkspace?.mode === "close") return `Its ${agents} will stop. The workspace stays in the sidebar, so you can reopen it later.`;
+          return workspace.status === "open"
+            ? `Its ${agents} will stop and the workspace leaves the sidebar. The folder on disk and its chats stay untouched.`
+            : "The workspace leaves the sidebar. The folder on disk and its chats stay untouched.";
+        })()}
+        confirmLabel={confirmWorkspace?.mode === "close"
+          ? (confirmBusy ? "Closing…" : `Close ${confirmWorkspaceTarget.workspace.name}`)
+          : (confirmBusy ? "Removing…" : `Remove ${confirmWorkspaceTarget.workspace.name}`)}
         busy={confirmBusy}
         testId="ide-workspace-confirm-close"
         onCancel={() => {
@@ -643,46 +666,40 @@ export function IdeProjectTree() {
 const TREE_MENU_WIDTH = 230;
 const TREE_MENU_MARGIN = 8;
 
+/** One row of the sidebar's action menu. */
+interface TreeMenuItem {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  testId: string;
+  onSelect: () => void;
+  disabled?: boolean;
+  destructive?: boolean;
+  /** A short second line: why an item is disabled, or what it keeps. */
+  hint?: string;
+}
+
+/**
+ * The one action menu for projects and workspaces, opened by right-click or
+ * by a row's ⋯ button. Portalled to the body so no row's stacking context or
+ * the sidebar's scroll clipping can cover it.
+ */
 function TreeContextMenu({
   x,
   y,
   onDismiss,
   label,
   kind,
-  isOpen,
-  isActive,
-  isExpanded,
-  isPinned,
   busy,
-  onOpen,
-  onToggleExpand,
-  onNewWorkspace,
-  onPin,
-  onRenameProject,
-  onRenameWorkspace,
-  onWorkspaceOptions,
-  onCloseWorkspace,
-  onDeleteProject,
+  sections,
 }: {
   x: number;
   y: number;
   onDismiss: () => void;
   label: string;
   kind: "project" | "workspace";
-  isOpen?: boolean;
-  isActive?: boolean;
-  isExpanded?: boolean;
-  isPinned?: boolean;
   busy: boolean;
-  onOpen?: () => void;
-  onToggleExpand?: () => void;
-  onNewWorkspace: () => void;
-  onPin: () => void;
-  onRenameProject?: () => void;
-  onRenameWorkspace?: () => void;
-  onWorkspaceOptions?: () => void;
-  onCloseWorkspace?: () => void;
-  onDeleteProject?: () => void;
+  sections: TreeMenuItem[][];
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -694,7 +711,12 @@ function TreeContextMenu({
       }
     };
     const onPointerDown = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) onDismiss();
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target)) return;
+      // A ⋯ button toggles the menu itself; dismissing here first would make
+      // its click reopen the menu instead of closing it.
+      if (target instanceof Element && target.closest("[data-tree-menu-anchor]")) return;
+      onDismiss();
     };
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("pointerdown", onPointerDown, true);
@@ -735,6 +757,8 @@ function TreeContextMenu({
     items[next]?.focus();
   };
 
+  const visibleSections = sections.filter((section) => section.length > 0);
+
   return createPortal(
     <div
       ref={menuRef}
@@ -743,103 +767,40 @@ function TreeContextMenu({
       data-testid={kind === "workspace" ? "ide-workspace-menu" : "ide-project-menu"}
       onKeyDown={onMenuKeyDown}
       style={{ width: TREE_MENU_WIDTH, visibility: "hidden" }}
-      className="fixed z-[100] overflow-hidden rounded-md border border-border bg-background py-1 shadow-lg"
+      className="fixed z-[100] overflow-hidden rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-float"
     >
-      {kind === "workspace" && onOpen && (
-        <button
-          type="button"
-          role="menuitem"
-          disabled={busy || isActive}
-          onClick={onOpen}
-          data-testid="ide-workspace-menu-open"
-          className="block w-full px-3 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-        >
-          {isActive ? "Current workspace" : "Open workspace"}
-        </button>
-      )}
-      {kind === "project" && onToggleExpand && (
-        <button
-          type="button"
-          role="menuitem"
-          disabled={busy}
-          onClick={onToggleExpand}
-          className="block w-full px-3 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-        >
-          {isExpanded ? "Collapse project" : "Expand project"}
-        </button>
-      )}
-      <button
-        type="button"
-        role="menuitem"
-        disabled={busy}
-        onClick={onNewWorkspace}
-        data-testid={kind === "workspace" ? "ide-workspace-menu-new" : "ide-project-menu-new"}
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-      >
-        <FolderPlus aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        New workspace
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        disabled={busy}
-        onClick={onPin}
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-      >
-        <Pin aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        {isPinned ? "Unpin project" : "Pin project"}
-      </button>
-      {(onRenameWorkspace ?? onRenameProject) && (
-        <button
-          type="button"
-          role="menuitem"
-          disabled={busy}
-          onClick={onRenameWorkspace ?? onRenameProject}
-          data-testid={kind === "workspace" ? "ide-workspace-menu-rename" : "ide-project-menu-rename"}
-          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-        >
-          <Pencil aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          {kind === "workspace" ? "Rename workspace" : "Rename project"}
-        </button>
-      )}
-      {kind === "workspace" && onWorkspaceOptions && isOpen && (
-        <button
-          type="button"
-          role="menuitem"
-          disabled={busy}
-          onClick={onWorkspaceOptions}
-          data-testid="ide-workspace-menu-options"
-          className="block w-full px-3 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
-        >
-          Workspace options…
-        </button>
-      )}
-      {kind === "workspace" && onCloseWorkspace && (
-        <button
-          type="button"
-          role="menuitem"
-          disabled={busy}
-          onClick={onCloseWorkspace}
-          data-testid="ide-workspace-menu-close"
-          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
-        >
-          <Trash2 aria-hidden className="h-3.5 w-3.5 shrink-0" />
-          Remove workspace
-        </button>
-      )}
-      {kind === "project" && onDeleteProject && (
-        <button
-          type="button"
-          role="menuitem"
-          disabled={busy}
-          onClick={onDeleteProject}
-          data-testid="ide-project-menu-delete"
-          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
-        >
-          <Trash2 aria-hidden className="h-3.5 w-3.5 shrink-0" />
-          Delete project
-        </button>
-      )}
+      <div className="flex items-center gap-2 px-2.5 pb-1.5 pt-1 text-[11px] font-medium text-muted-foreground">
+        {kind === "workspace" ? <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/60" /> : <Folder aria-hidden className="h-3 w-3 shrink-0" />}
+        <span className="min-w-0 truncate">{label}</span>
+      </div>
+      {visibleSections.map((section, index) => (
+        <div key={section[0]?.id ?? index} role="group" className={index > 0 ? "mt-1 border-t border-border/70 pt-1" : ""}>
+          {section.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                role="menuitem"
+                disabled={busy || item.disabled}
+                onClick={item.onSelect}
+                data-testid={item.testId}
+                className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-45 ${
+                  item.destructive
+                    ? "text-destructive hover:bg-destructive/10 focus-visible:bg-destructive/10"
+                    : "text-foreground hover:bg-muted focus-visible:bg-muted"
+                }`}
+              >
+                <Icon aria-hidden className={`h-4 w-4 shrink-0 ${item.destructive ? "" : "text-muted-foreground"}`} />
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate">{item.label}</span>
+                  {item.hint && <span className="truncate text-[11px] text-muted-foreground">{item.hint}</span>}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ))}
     </div>,
     document.body,
   );

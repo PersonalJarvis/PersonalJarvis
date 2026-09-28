@@ -37,7 +37,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from jarvis.agentic_ide import library, resume_store
@@ -270,6 +270,52 @@ def delete_project(project_id: str) -> RemovedOut:
     removed = library.delete_project(project_id)
     forgotten = resume_store.forget(project_id=project_id)
     return RemovedOut(removed=removed or forgotten > 0)
+
+
+class RevealedOut(BaseModel):
+    opened: bool
+
+
+def _project_folder(project_id: str) -> str | None:
+    """The folder of a project, including one known only from its workspaces.
+
+    Older installs derive a project row from a remembered workspace without a
+    library entry, and the sidebar offers the same actions on both kinds.
+    """
+    project = library.get_project(project_id)
+    if project is not None:
+        return project.path
+    from jarvis.agentic_ide import workspace_catalog
+    from jarvis.agentic_ide.session import get_registry
+
+    for entry in workspace_catalog.project_graph(get_registry())["projects"]:
+        if entry["id"] == project_id:
+            return str(entry["path"])
+    return None
+
+
+@router.post(
+    "/projects/{project_id}/reveal",
+    response_model=RevealedOut,
+    summary="Open a project's folder in the file manager",
+)
+def reveal_project(request: Request, project_id: str) -> RevealedOut:
+    """Open the project's folder in Explorer, Finder or the Linux file manager.
+
+    Desktop-only: on a headless host the folder is on the server, not in front
+    of the user, so the route 404s there like the other native file actions.
+    The path comes from the stored project, never from the client.
+    """
+    if not bool(getattr(request.app.state, "native_file_actions", False)):
+        raise HTTPException(status_code=404, detail="native-file-actions-disabled")
+    folder = _project_folder(project_id)
+    if folder is None:
+        raise HTTPException(status_code=404, detail="No such project")
+    if not _folder_exists(folder):
+        raise HTTPException(status_code=404, detail="The project folder is not reachable.")
+    from jarvis.platform.open_path import open_file
+
+    return RevealedOut(opened=open_file(Path(folder)))
 
 
 # --------------------------------------------------------------------------- #

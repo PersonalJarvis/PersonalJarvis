@@ -260,3 +260,29 @@ def test_invalid_project_order_is_rejected_without_mutation(
         == 422
     )
     assert client.get("/api/chat-library/projects").json() == before
+
+
+# --------------------------------------------------------------- reveal folder
+def test_reveal_opens_the_stored_project_folder(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.platform import open_path
+
+    opened: list[Path] = []
+    monkeypatch.setattr(open_path, "open_file", lambda path: opened.append(path) or True)
+    client.app.state.native_file_actions = True
+    project = library.ensure_project(tmp_path, name="Reveal me")
+    response = client.post(f"/api/chat-library/projects/{project.id}/reveal")
+    assert response.status_code == 200
+    assert response.json() == {"opened": True}
+    assert opened == [Path(project.path)]
+
+
+def test_reveal_is_desktop_only(client: TestClient, tmp_path: Path) -> None:
+    project = library.ensure_project(tmp_path)
+    assert client.post(f"/api/chat-library/projects/{project.id}/reveal").status_code == 404
+
+
+def test_reveal_refuses_an_unknown_project(client: TestClient) -> None:
+    client.app.state.native_file_actions = True
+    assert client.post("/api/chat-library/projects/nope/reveal").status_code == 404
