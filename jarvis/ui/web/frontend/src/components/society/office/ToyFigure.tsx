@@ -46,6 +46,8 @@ const GEO = {
   smile: new TorusGeometry(0.042, 0.009, 6, 14, Math.PI),
   spike: new ConeGeometry(0.065, 0.16, 6),
   brim: new RoundedBoxGeometry(0.3, 0.022, 0.17, 2, 0.01),
+  /** A band of hair around the back and sides, from just above the equator down: the hair a hat leaves visible. */
+  hairBand: new SphereGeometry(1, 40, 14, Math.PI * 0.92, Math.PI * 1.16, Math.PI * 0.46, Math.PI * 0.3),
 };
 
 const materials = new Map<string, MeshStandardMaterial>();
@@ -139,11 +141,15 @@ function HairCap({ color, grow = 0, fringe = true }: { color: string; grow?: num
       {/* Tilted back just enough to free the forehead; further and the crown shows skin. */}
       <mesh geometry={GEO.dome} material={material} position={[0, HD.y + 0.01, -0.005]} rotation={[-0.5, 0, 0]}
         scale={[HD.rx + 0.018 + grow, HD.ry + 0.03 + grow, HD.rz + 0.03 + grow]} castShadow />
+      {/* Hair reaches down the back of the head to the nape, not just over the crown. */}
+      <mesh geometry={GEO.hairBand} material={material} position={[0, HD.y - 0.005, -0.004]}
+        scale={[HD.rx + 0.009 + grow, HD.ry + 0.008 + grow, HD.rz + 0.012 + grow]} castShadow />
       {fringe && FRINGE.map(([x, dy, rz], i) => {
         const y = HD.y + dy;
         return (
-          <mesh key={i} geometry={GEO.sphere} material={material} position={[x, y, faceZ(x, y, -0.012)]}
-            rotation={[0.35, 0, rz]} scale={[0.085, 0.05, 0.045]} castShadow />
+          // Sunk into the head and flat, so from the side the fringe hugs the forehead instead of jutting out.
+          <mesh key={i} geometry={GEO.sphere} material={material} position={[x, y, faceZ(x, y, 0.012)]}
+            rotation={[0.35, 0, rz]} scale={[0.085, 0.05, 0.036]} castShadow />
         );
       })}
     </group>
@@ -171,6 +177,17 @@ const CURLS: Array<[number, number, number]> = (() => {
   }
   return out;
 })();
+
+/**
+ * Hair under a hat: only the band below the hat's rim, and slightly smaller
+ * than the hat shell, so no strand can ever poke through the crown.
+ */
+function HairUnderHat({ color }: { color: string }) {
+  return (
+    <mesh geometry={GEO.hairBand} material={matte(color)} position={[0, HD.y - 0.005, -0.004]}
+      scale={[HD.rx + 0.016, HD.ry + 0.014, HD.rz + 0.016]} castShadow />
+  );
+}
 
 function Hair({ style, look }: { style: HairStyle; look: ToyLook }) {
   const hair = matte(look.hair);
@@ -219,6 +236,7 @@ function Hair({ style, look }: { style: HairStyle; look: ToyLook }) {
       const knit = matte(look.shirtAccent, 0.95);
       return (
         <group>
+          <HairUnderHat color={look.hair} />
           <mesh geometry={GEO.dome} material={knit} position={[0, HD.y + 0.01, 0]} rotation={[-0.15, 0, 0]}
             scale={[HD.rx + 0.025, HD.ry + 0.045, HD.rz + 0.028]} castShadow />
           <mesh geometry={GEO.lowSphere} material={knit} position={[0, HD.y + HD.ry + 0.07, -0.03]} scale={0.06} castShadow />
@@ -232,8 +250,8 @@ function Hair({ style, look }: { style: HairStyle; look: ToyLook }) {
       const cap = matte(look.shirtAccent, 0.7);
       return (
         <group>
-          <HairCap color={look.hair} />
-          {/* Clearly larger than the hair cap underneath: equal shells z-fight and the hair flickers through. */}
+          <HairUnderHat color={look.hair} />
+          {/* Clearly larger than the hair band underneath: equal shells z-fight and the hair flickers through. */}
           <mesh geometry={GEO.dome} material={cap} position={[0, HD.y + 0.03, 0]} rotation={[-0.12, 0, 0]}
             scale={[HD.rx + 0.045, HD.ry + 0.0, HD.rz + 0.05]} castShadow />
           <mesh geometry={GEO.brim} material={cap} position={[0, HD.y + 0.07, HD.rz + 0.06]} rotation={[0.14, 0, 0]} castShadow />

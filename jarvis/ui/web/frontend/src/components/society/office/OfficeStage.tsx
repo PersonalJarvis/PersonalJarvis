@@ -21,7 +21,7 @@ import { CAMERA_FOV } from "./officeCamera";
 import { ZOOM_SECONDS } from "./OfficeCameraRig";
 import { useDeskChats } from "./useDeskChats";
 import type { Point } from "./officeLayout";
-import { cameraView, player, useOfficeStore } from "./officeStore";
+import { player, useOfficeStore } from "./officeStore";
 import { agentPositions, knownAgents, seatedAtDesk } from "./walkerRegistry";
 import { loadProfile, playerLook, saveProfile, type PlayerProfile } from "./playerProfile";
 import { AgentPanel, CheckpointPanel, type OfficeActions } from "./OfficePanels";
@@ -31,6 +31,8 @@ import "./office.css";
 import "./officeHud.css";
 import "./officeMinimap.css";
 import { OfficeMinimap } from "./OfficeMinimap";
+import { OfficeCompass } from "./OfficeCompass";
+import { OfficeFullMap } from "./OfficeFullMap";
 
 // Dev-only handles for runtime checks of walking and panels.
 if (import.meta.env.DEV && typeof window !== "undefined") Object.assign(window, { __officeStore: useOfficeStore, __officePlayer: player, __officeAgents: agentPositions, __officeSeated: seatedAtDesk,
@@ -100,6 +102,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   const roster = useSocietyRoster();
   useRosterRefresh(awake);
   const [overview, setOverview] = useState(0);
+  const [mapOpen, setMapOpen] = useState(false);
   const [profile, setProfile] = useState<PlayerProfile>(loadProfile);
   const selection = useOfficeStore((s) => s.selection);
   const nearby = useOfficeStore((s) => s.nearby);
@@ -244,8 +247,11 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
           <kbd>E</kbd>{nearbyLabel}
         </button>
       )}
+      <OfficeCompass layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null} />
       <OfficeMinimap layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null}
-        camera={() => (cameraView.ready ? cameraView : null)} />
+        onOpenMap={() => setMapOpen(true)} />
+      <OfficeFullMap open={mapOpen} onOpen={() => setMapOpen(true)} onClose={() => setMapOpen(false)}
+        layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null} />
       <p className="office-hud office-help" data-office-ui>{t("society.office.help")}</p>
     </section>
   );

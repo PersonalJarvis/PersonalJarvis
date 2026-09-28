@@ -12,3 +12,12 @@ export const knownAgents = new Set<string>();
 
 /** Agents sitting at their own desk right now — their monitor shows their chat. */
 export const seatedAtDesk = new Set<string>();
+
+/** Agents that fly (Gigi) instead of walking: nobody has to step around them. */
+export const floatingAgents = new Set<string>();
+
+/** Every walking body except `selfId`: the agents on foot plus, optionally, the person's character. */
+export function* bodiesExcept(selfId: string | null, player: Point | null): Generator<Point> {
+  for (const [id, p] of agentPositions) if (id !== selfId && !floatingAgents.has(id)) yield p;
+  if (player) yield player;
+}

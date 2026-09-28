@@ -5,8 +5,12 @@
 .office-fallback { display:flex; align-items:center; justify-content:center; height:100%; padding:24px; font-size:13px; color:hsl(var(--muted-foreground)); background:hsl(var(--background)); }
 .office-hud { position:absolute; z-index:30; }
 .office-hud-left { left:14px; top:14px; display:flex; flex-direction:column; align-items:flex-start; gap:8px; max-width:min(320px, calc(100% - 28px)); }
-/* Wraps (right-aligned) before it can run under the left cards or off the edge. */
-.office-hud-right { right:14px; top:14px; display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; max-width:max(180px, calc(100% - 370px)); }
+/* A column to the left of the minimap (top-right, 204 px wide + 8 px gap). */
+.office-hud-right { right:226px; top:14px; display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+/* Narrow: under the minimap, wrapping within its width. */
+@media (max-width:760px) { .office-hud-right { right:14px; top:256px; flex-direction:row; flex-wrap:wrap; justify-content:flex-end; max-width:204px; } }
+/* No minimap (short or very narrow window): back to a wrapping row in the corner. */
+@media (max-height:520px), (max-width:600px) { .office-hud-right { right:14px; top:14px; flex-direction:row; flex-wrap:wrap; justify-content:flex-end; max-width:max(180px, calc(100% - 370px)); } }
 .office-card { border:1px solid hsl(var(--border)); border-radius:12px; background:hsl(var(--popover) / .92); color:hsl(var(--popover-foreground)); box-shadow:0 4px 18px rgb(0 0 0 / .25); backdrop-filter:blur(6px); }
 .office-title { display:flex; flex-direction:column; gap:2px; padding:8px 12px; font-size:14px; }
 .office-title span { font-size:11px; color:hsl(var(--muted-foreground)); }

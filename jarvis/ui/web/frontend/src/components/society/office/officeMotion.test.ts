@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stepMover, turnToward, WALK_SPEED, wrapAngle, type Mover } from "./officeMotion";
+import { BODY_SPACING, WALK_SPEED, applySeparation, clearOfBodies, separation, stepMover, stepMoverAvoiding, turnToward, type Mover, wrapAngle } from "./officeMotion";
 
 describe("office motion", () => {
   it("turns the short way and clamps the step", () => {
@@ -47,5 +47,41 @@ describe("office motion", () => {
     expect(res.arrived).toBe(false);
     expect(m.path).toHaveLength(1);
     expect(m.z).toBeCloseTo(2.5);
+  });
+});
+
+describe("separation", () => {
+  it("is zero when nobody is near and pushes away from a close body", () => {
+    expect(separation({ x: 0, z: 0 }, 0, [{ x: 5, z: 5 }])).toEqual({ x: 0, z: 0 });
+    const push = separation({ x: 0, z: 0 }, Math.PI / 2, [{ x: 0.3, z: 0 }]);
+    expect(push.x).toBeLessThan(0);
+  });
+  it("adds a sidestep when someone stands straight ahead", () => {
+    // Walking towards +z, someone 0.5 m ahead: the push has a sideways component.
+    const push = separation({ x: 0, z: 0 }, 0, [{ x: 0, z: 0.5 }]);
+    expect(Math.abs(push.x)).toBeGreaterThan(0.1);
+  });
+  it("only nudges onto walkable ground and reports spacing", () => {
+    const m = { x: 0, z: 0, heading: 0, path: [] };
+    applySeparation(m, { x: 1, z: 0 }, 0.1, () => false);
+    expect(m.x).toBe(0);
+    applySeparation(m, { x: 1, z: 0 }, 0.1, () => true);
+    expect(m.x).toBeGreaterThan(0);
+    expect(clearOfBodies({ x: 0, z: 0 }, [{ x: BODY_SPACING / 2, z: 0 }])).toBe(false);
+    expect(clearOfBodies({ x: 0, z: 0 }, [{ x: BODY_SPACING * 2, z: 0 }])).toBe(true);
+  });
+  it("keeps two walkers crossing head-on apart", () => {
+    const a = { x: 0, z: -3, heading: 0, path: [{ x: 0, z: 3 }] };
+    const b = { x: 0.02, z: 3, heading: Math.PI, path: [{ x: 0.02, z: -3 }] };
+    let closest = Infinity;
+    for (let i = 0; i < 600; i += 1) {
+      stepMoverAvoiding(a, 1.35, 1 / 60, [b], () => true);
+      stepMoverAvoiding(b, 1.35, 1 / 60, [a], () => true);
+      closest = Math.min(closest, Math.hypot(a.x - b.x, a.z - b.z));
+    }
+    expect(closest).toBeGreaterThan(0.45);
+    // Both still reach their goals.
+    expect(a.path).toHaveLength(0);
+    expect(b.path).toHaveLength(0);
   });
 });

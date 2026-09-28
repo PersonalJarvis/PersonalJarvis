@@ -1,5 +1,6 @@
 /* Office HUD panels and prompts: theme tokens only, so light and dark mode both work. */
-.office-panel-slot { position:absolute; z-index:35; right:14px; top:60px; width:min(340px, calc(100% - 28px)); max-height:calc(100% - 120px); display:flex; }
+/* Opens below the minimap card (14 + 236 px) in the top-right corner. */
+.office-panel-slot { position:absolute; z-index:35; right:14px; top:258px; width:min(340px, calc(100% - 28px)); max-height:calc(100% - 310px); display:flex; }
 .office-panel { display:flex; flex-direction:column; width:100%; min-height:0; overflow:hidden; }
 .office-panel-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; padding:10px 12px 6px; }
 .office-panel:focus { outline:none; }
@@ -53,6 +54,9 @@
 .office-hud-right .office-button[aria-pressed="true"] { border-color:#f5b83d; background:hsl(var(--secondary)); }
 .office-plate[data-selected] { box-shadow:0 0 0 2px #93c5fd, 0 2px 8px rgb(0 0 0 / .35); }
 .office-plate-player { cursor:default; background:rgb(58 44 12 / .9); box-shadow:0 0 0 1.5px #f5b83d, 0 2px 8px rgb(0 0 0 / .35); }
-/* The right-hand buttons wrap onto a second row here; keep the panel below them. */
-@media (max-width:900px) { .office-panel-slot { top:96px; max-height:calc(100% - 150px); } .office-prompt { bottom:64px; } }
+@media (max-width:900px) { .office-prompt { bottom:64px; } }
+/* Narrow: the buttons sit under the minimap; the panel covers the map card while open. */
+@media (max-width:760px) { .office-panel-slot { top:14px; max-height:calc(100% - 80px); } }
+/* No minimap on short windows: the panel goes back under the corner buttons. */
+@media (max-height:520px) { .office-panel-slot { top:60px; max-height:calc(100% - 100px); } }
 @media (max-width:600px) { .office-panel-slot { top:auto; bottom:12px; max-height:55%; } .office-hud-right { max-width:60%; } .office-prompt { bottom:48px; max-width:calc(100% - 28px); } }

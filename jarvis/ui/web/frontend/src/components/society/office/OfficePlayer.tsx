@@ -11,9 +11,9 @@ import type { FigureDrive } from "../figures/FigureRig";
 import { ToyFigure } from "./ToyFigure";
 import type { ToyLook } from "./toyFigureModel";
 import { findPath, isWalkable, nearestWalkable, type NavGrid } from "./officeNav";
-import { stepMover, turnToward } from "./officeMotion";
+import { applySeparation, clearOfBodies, separation, stepMover, turnToward } from "./officeMotion";
 import { player, sameSelection, useOfficeStore, type Selection } from "./officeStore";
-import { agentPositions } from "./walkerRegistry";
+import { agentPositions, bodiesExcept } from "./walkerRegistry";
 import { OFFICE_FIGURE_HEIGHT_M } from "./OfficeAgents";
 import type { OfficeLayout } from "./officeLayout";
 
@@ -39,6 +39,14 @@ export function ownsKeyboard(target: EventTarget | null): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || !!target.closest("[role='dialog']");
 }
 
+/** Would stepping to `next` bring the character closer to any agent than it is now at `from`? */
+function closerToAnyone(next: { x: number; z: number }, from: { x: number; z: number }): boolean {
+  for (const p of bodiesExcept(null, null)) {
+    if (Math.hypot(next.x - p.x, next.z - p.z) < Math.hypot(from.x - p.x, from.z - p.z)) return true;
+  }
+  return false;
+}
+
 /** Pressed movement keys, tracked on the window while the office is awake. */
 function useMoveKeys(enabled: boolean, onInteract: () => void) {
   const pressed = useRef(new Set<string>());
@@ -52,19 +60,18 @@ function useMoveKeys(enabled: boolean, onInteract: () => void) {
       else if (event.code === "KeyE" && !event.repeat) { onInteract(); event.preventDefault(); }
     };
     const up = (event: KeyboardEvent) => { pressed.current.delete(event.code); run.current = event.shiftKey; };
-    // A key held while the window loses focus or gets hidden never sees its
-    // keyup; forget everything then, or the character walks on by itself.
+    // A key held while the window loses focus never sees its keyup; forget
+    // everything then, or the character walks on by itself. (Not on
+    // visibilitychange: the desktop WebView reports visible windows as hidden.)
     const release = () => pressed.current.clear();
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     window.addEventListener("blur", release);
-    document.addEventListener("visibilitychange", release);
     return () => {
       release();
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
       window.removeEventListener("blur", release);
-      document.removeEventListener("visibilitychange", release);
     };
   }, [enabled, onInteract]);
   return { pressed, run };
@@ -132,15 +139,19 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
       dx /= len; dz /= len;
       const step = speed * dt;
       const nx = player.x + dx * step, nz = player.z + dz * step;
-      // Slide along walls: full move, else each axis alone.
-      if (isWalkable(grid, { x: nx, z: nz })) { player.x = nx; player.z = nz; moved = step; }
-      else if (isWalkable(grid, { x: nx, z: player.z })) { player.x = nx; moved = Math.abs(dx * step); }
-      else if (isWalkable(grid, { x: player.x, z: nz })) { player.z = nz; moved = Math.abs(dz * step); }
+      // Slide along walls and around people: full move, else each axis alone.
+      // Moving away from someone you already touch is always allowed, so nobody gets stuck.
+      const free = (p: { x: number; z: number }) => isWalkable(grid, p)
+        && (clearOfBodies(p, bodiesExcept(null, null)) || !closerToAnyone(p, player));
+      if (free({ x: nx, z: nz })) { player.x = nx; player.z = nz; moved = step; }
+      else if (free({ x: nx, z: player.z })) { player.x = nx; moved = Math.abs(dx * step); }
+      else if (free({ x: player.x, z: nz })) { player.z = nz; moved = Math.abs(dz * step); }
       player.heading = turnToward(player.heading, Math.atan2(dx, dz), 12 * dt);
       if (!store.follow) store.setFollow(true);
     } else if (player.path.length > 0) {
       const result = stepMover(player, speed, dt);
       moved = result.moved;
+      applySeparation(player, separation(player, player.heading, bodiesExcept(null, null)), dt, (q) => isWalkable(grid, q));
     }
     player.moving = moved > 0;
     drive.current.mode = moved > 0 ? "walk" : "idle";

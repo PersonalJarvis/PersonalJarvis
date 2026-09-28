@@ -735,7 +735,7 @@
       "open_agent": "Open {0}",
       "overview": "Overview",
       "ledger": "Agents list",
-      "help": "WASD / arrows walk · Shift runs · Click the floor to walk there · E interacts · Drag rotates · Scroll zooms",
+      "help": "WASD / arrows walk · Shift runs · Click the floor to walk there · E interacts · Drag rotates · Scroll zooms · M opens the map",
       "sample": "Sample agents — the backend is not reachable yet.",
       "overflow": "Only the first {0} agents have a desk; the list shows everyone.",
       "open_space": "Open space",
@@ -825,10 +825,26 @@
       "hair_bald": "Bald",
       "hair_label": "Hair or hat",
       "minimap_title": "Floor map",
-      "minimap_expand": "Show floor map",
-      "minimap_collapse": "Hide floor map",
       "minimap_aria": "Floor map: {0} agents, {1} working",
-      "minimap_you": "You"
+      "minimap_you": "You",
+      "minimap_zoom": "{0} m",
+      "minimap_zoom_in": "Zoom in",
+      "minimap_zoom_out": "Zoom out",
+      "minimap_open_map": "Map (M)",
+      "minimap_open_map_label": "Open the full map (M)",
+      "compass_label": "Compass: the direction the camera faces",
+      "compass_n": "N",
+      "compass_ne": "NE",
+      "compass_e": "E",
+      "compass_se": "SE",
+      "compass_s": "S",
+      "compass_sw": "SW",
+      "compass_w": "W",
+      "compass_nw": "NW",
+      "map_title": "Office map",
+      "map_hint": "Click anywhere to walk there. Esc or M closes the map.",
+      "map_close": "Close map",
+      "map_aria": "Full office map. Click a spot to walk there."
     }
   }
 }

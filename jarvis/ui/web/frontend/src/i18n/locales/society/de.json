@@ -735,7 +735,7 @@
       "open_agent": "{0} öffnen",
       "overview": "Übersicht",
       "ledger": "Agentenliste",
-      "help": "WASD / Pfeile laufen · Shift rennt · Boden anklicken zum Hingehen · E interagiert · Ziehen dreht · Scrollen zoomt",
+      "help": "WASD / Pfeile laufen · Shift rennt · Boden anklicken zum Hingehen · E interagiert · Ziehen dreht · Scrollen zoomt · M öffnet die Karte",
       "sample": "Beispiel-Agenten – das Backend ist noch nicht erreichbar.",
       "overflow": "Nur die ersten {0} Agenten haben einen Schreibtisch; die Liste zeigt alle.",
       "open_space": "Open Space",
@@ -825,10 +825,26 @@
       "hair_bald": "Glatze",
       "hair_label": "Frisur oder Kopfbedeckung",
       "minimap_title": "Grundriss",
-      "minimap_expand": "Grundriss einblenden",
-      "minimap_collapse": "Grundriss ausblenden",
       "minimap_aria": "Grundriss: {0} Agenten, {1} arbeiten",
-      "minimap_you": "Du"
+      "minimap_you": "Du",
+      "minimap_zoom": "{0} m",
+      "minimap_zoom_in": "Hineinzoomen",
+      "minimap_zoom_out": "Herauszoomen",
+      "minimap_open_map": "Karte (M)",
+      "minimap_open_map_label": "Große Karte öffnen (M)",
+      "compass_label": "Kompass: die Richtung, in die die Kamera schaut",
+      "compass_n": "N",
+      "compass_ne": "NO",
+      "compass_e": "O",
+      "compass_se": "SO",
+      "compass_s": "S",
+      "compass_sw": "SW",
+      "compass_w": "W",
+      "compass_nw": "NW",
+      "map_title": "Büroplan",
+      "map_hint": "Klicke irgendwohin, um dorthin zu laufen. Esc oder M schließt die Karte.",
+      "map_close": "Karte schließen",
+      "map_aria": "Großer Büroplan. Klicke auf eine Stelle, um dorthin zu laufen."
     }
   }
 }

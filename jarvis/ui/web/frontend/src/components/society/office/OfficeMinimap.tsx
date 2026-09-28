@@ -1,225 +1,213 @@
 /**
- * The office minimap: a north-up floor plan in the bottom-right corner.
+ * The office minimap, game style: a square card in the top-right corner that
+ * follows the person's character (player-centred, north-up, zoomable), with
+ * the camera's view as a soft cone, agents as portrait tokens with a status
+ * ring, off-screen agents as arrows on the card edge, and gold checkpoint icons.
  *
- * The static floor is drawn once into an offscreen canvas and only redrawn
- * when the layout, the size, the pixel ratio or the theme changes. The moving
- * layer (agents, the person's character, the camera's view) is painted over
- * it at ~10 Hz from the per-frame module state (`agentPositions`, `player`),
- * never from React state, and pauses while collapsed or the document is hidden.
+ * The painted floor (with a margin of sky around it) is drawn once into an
+ * offscreen canvas and only redrawn when the layout, the zoom, the pixel ratio
+ * or the theme changes. Every frame (≤ 20 Hz, paused while the document is
+ * hidden) just blits that layer at the player's offset and paints the moving
+ * markers from the per-frame module state (`player`, `agentPositions`,
+ * `cameraView`), never from React state.
  *
  * Click focuses the camera on a spot (or selects the agent under the pointer),
- * double-click walks the character there.
+ * double-click walks the character there, the wheel zooms.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { Map as MapIcon, Minus, Plus } from "lucide-react";
+import { useReducedMotion } from "framer-motion";
 import { useT } from "@/i18n";
-import type { CheckpointKind, OfficeLayout, RoomKind } from "./officeLayout";
-import { player, useOfficeStore } from "./officeStore";
+import type { CheckpointKind, OfficeLayout, Point, Rect, RoomKind } from "./officeLayout";
+import { cameraView, player, useOfficeStore } from "./officeStore";
 import { agentPositions } from "./walkerRegistry";
 import {
-  agentAt, clampToRect, drawMinimapBase, drawMinimapDynamic, mapToWorld, minimapHeightFor, minimapTransform, placeAt,
-  resolveMinimapColours, worldToMap, type MapPoint, type MinimapAgentDot, type MinimapAgentState, type MinimapCamera,
-  type MinimapColours,
+  MAP_PAINT, ZOOM_DEFAULT_M, ZOOM_MAX_M, ZOOM_MIN_M, centredTransform, clampToEdge, clampToRect, clampZoom, drawAgentToken, drawCheckpoints,
+  drawEdgeArrow, drawFloorArt, drawPlayerArrow, drawViewCone, mapToWorld, pickNearest, placeAt, worldToMap, zoomStep,
+  type AgentToken, type MapPoint, type MapTransform,
 } from "./minimap";
+import {
+  agentColour, context2d, offscreenLayer, usePixelRatio, useThemeVersion, useThrottledFrames, type OfficeMapAgent,
+} from "./mapHooks";
 
-export interface OfficeMinimapAgent { agentId: string; name: string; state: MinimapAgentState }
+export type OfficeMinimapAgent = OfficeMapAgent;
 
 export interface OfficeMinimapProps {
   layout: OfficeLayout;
-  agents: ReadonlyMap<string, OfficeMinimapAgent>;
+  agents: ReadonlyMap<string, OfficeMapAgent>;
   selectedId: string | null;
-  /** Optional live camera view (read at ~10 Hz); omit to hide the view wedge. */
-  camera?: () => MinimapCamera | null;
+  /** Opens the full map (the "Map (M)" button). */
+  onOpenMap: () => void;
 }
 
-const MAP_WIDTH = 220;
-const PADDING = 6;
-const FRAME_MS = 100;
-const HIT_PX = 8;
-const STORAGE_KEY = "jarvis.office.minimap.collapsed";
+/** Card edge in CSS px (square). */
+export const MINIMAP_SIZE = 200;
+const FRAME_MS = 50;
+const HIT_PX = 10;
+const EDGE_INSET = 12;
+const TOKEN_R = 6.5;
+const CHECKPOINT_PX = 14;
+const STORAGE_KEY = "jarvis.office.minimap.zoom";
 
-function readCollapsed(): boolean {
+function readZoom(): number {
   try {
-    return window.localStorage.getItem(STORAGE_KEY) === "1";
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    return raw ? clampZoom(Number(raw)) : ZOOM_DEFAULT_M;
   } catch {
-    // Storage blocked (private mode, sandboxed WebView): the map just starts expanded.
-    return false;
+    // Storage blocked (private mode, sandboxed WebView): start at the default zoom.
+    return ZOOM_DEFAULT_M;
   }
 }
 
-function writeCollapsed(collapsed: boolean): void {
+function writeZoom(metres: number): void {
   try {
-    window.localStorage.setItem(STORAGE_KEY, collapsed ? "1" : "0");
+    window.localStorage.setItem(STORAGE_KEY, String(metres));
   } catch {
-    // Storage blocked: the choice lasts for this session only, which is harmless.
+    // Storage blocked: the zoom lasts for this visit only, which is harmless.
   }
 }
 
-function pixelRatio(): number {
-  return typeof window !== "undefined" && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
-}
+interface Layer { canvas: HTMLCanvasElement; area: Rect; scale: number; cssW: number; cssH: number }
 
-/** Bumps whenever light/dark mode may have changed: OS preference, or the app's class/data-theme on <html>. */
-function useThemeVersion(): number {
-  const [version, setVersion] = useState(0);
-  useEffect(() => {
-    const bump = () => setVersion((v) => v + 1);
-    const media = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
-    media?.addEventListener?.("change", bump);
-    const observer = typeof MutationObserver === "function" ? new MutationObserver(bump) : null;
-    observer?.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
-    return () => {
-      media?.removeEventListener?.("change", bump);
-      observer?.disconnect();
-    };
-  }, []);
-  return version;
-}
-
-/** The device pixel ratio, refreshed when the window moves to another screen or zooms. */
-function usePixelRatio(): number {
-  const [dpr, setDpr] = useState(pixelRatio);
-  useEffect(() => {
-    const check = () => setDpr((prev) => (prev === pixelRatio() ? prev : pixelRatio()));
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
-  }, []);
-  return dpr;
-}
+interface Hit extends MapPoint { id: string; world: Point }
 
 interface Tooltip { x: number; y: number; text: string }
 
-export function OfficeMinimap({ layout, agents, selectedId, camera }: OfficeMinimapProps) {
+export function OfficeMinimap({ layout, agents, selectedId, onOpenMap }: OfficeMinimapProps) {
   const t = useT();
-  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const reduced = useReducedMotion() ?? false;
+  const [zoom, setZoom] = useState(readZoom);
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
-  const cardRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const baseRef = useRef<HTMLCanvasElement | null>(null);
-  const coloursRef = useRef<MinimapColours | null>(null);
+  const layerRef = useRef<Layer | null>(null);
+  const hitsRef = useRef<Hit[]>([]);
+  const transformRef = useRef<MapTransform>(centredTransform(player, zoom, MINIMAP_SIZE, MINIMAP_SIZE));
   const themeVersion = useThemeVersion();
   const dpr = usePixelRatio();
 
-  const height = useMemo(() => minimapHeightFor(layout.bounds, MAP_WIDTH, PADDING), [layout]);
-  const transform = useMemo(() => minimapTransform(layout.bounds, MAP_WIDTH, height, PADDING), [layout, height]);
+  // The render loop reads these through a ref, so a roster refetch never restarts it.
+  const live = useRef({ agents, selectedId, zoom, reduced });
+  live.current = { agents, selectedId, zoom, reduced };
 
-  // The render loop reads these through refs, so a roster refetch never restarts it.
-  const live = useRef({ agents, selectedId, camera, transform });
-  live.current = { agents, selectedId, camera, transform };
+  const draw = useCallback((now: number) => {
+    const canvas = canvasRef.current;
+    const ctx = context2d(canvas);
+    if (!canvas || !ctx) return;
+    const { agents: roster, selectedId: sel, zoom: metres, reduced: still } = live.current;
+    const size = MINIMAP_SIZE;
+    const tr = centredTransform(player, metres, size, size);
+    transformRef.current = tr;
+    const ratio = canvas.width / size;
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = MAP_PAINT.space;
+    ctx.fillRect(0, 0, size, size);
+    const layer = layerRef.current;
+    if (layer) {
+      const origin = worldToMap(tr, { x: layer.area.minX, z: layer.area.minZ });
+      ctx.drawImage(layer.canvas, origin.x, origin.y, layer.cssW, layer.cssH);
+    }
+    const centre = worldToMap(tr, player);
+    if (cameraView.ready) drawViewCone(ctx, centre, cameraView.yaw, cameraView.halfWidth, size * 0.5);
 
-  const dots = useCallback((): MinimapAgentDot[] => {
-    const out: MinimapAgentDot[] = [];
-    const { agents: roster, selectedId: sel } = live.current;
+    const hits: Hit[] = [];
+    const pulse = still ? null : (now % 1400) / 1400;
+    let selected: { token: AgentToken; edge: ReturnType<typeof clampToEdge> } | null = null;
     for (const agent of roster.values()) {
       const pos = agentPositions.get(agent.agentId);
       if (!pos) continue;
-      out.push({ id: agent.agentId, x: pos.x, z: pos.z, state: agent.state, selected: agent.agentId === sel });
+      const token: AgentToken = {
+        id: agent.agentId, name: agent.name, state: agent.state, colour: agentColour(agent), selected: agent.agentId === sel,
+        ...worldToMap(tr, pos),
+      };
+      const edge = clampToEdge(token, size, size, EDGE_INSET);
+      hits.push({ id: token.id, x: edge.x, y: edge.y, world: { x: pos.x, z: pos.z } });
+      if (token.selected) { selected = { token, edge }; continue; }
+      if (edge.clamped) drawEdgeArrow(ctx, edge.x, edge.y, edge.angle, token);
+      else drawAgentToken(ctx, token, TOKEN_R, null);
     }
-    return out;
+    // The selected agent last, so it sits on top of its neighbours.
+    if (selected) {
+      if (selected.edge.clamped) drawEdgeArrow(ctx, selected.edge.x, selected.edge.y, selected.edge.angle, selected.token);
+      else drawAgentToken(ctx, selected.token, TOKEN_R, pulse);
+    }
+    hitsRef.current = hits;
+    drawPlayerArrow(ctx, centre.x, centre.y, player.heading, 9);
   }, []);
 
-  const draw = useCallback(() => {
-    const canvas = canvasRef.current;
-    const base = baseRef.current;
-    const colours = coloursRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx || !colours) return;
-    const { transform: tr, camera: cam } = live.current;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (base) ctx.drawImage(base, 0, 0);
-    const ratio = canvas.width / tr.width;
-    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-    drawMinimapDynamic(ctx, tr, {
-      agents: dots(),
-      player: { x: player.x, z: player.z, heading: player.heading },
-      camera: cam ? cam() : null,
-      colours,
-      clear: false,
-    });
-  }, [dots]);
-
-  // Static layer: layout, size, pixel ratio or theme changed (or the map was just expanded).
+  // Static layer: layout, zoom, pixel ratio or theme changed.
   useEffect(() => {
-    if (collapsed) return;
     const canvas = canvasRef.current;
-    const card = cardRef.current;
-    if (!canvas || !card) return;
-    canvas.width = Math.round(MAP_WIDTH * dpr);
-    canvas.height = Math.round(height * dpr);
-    const style = getComputedStyle(card);
-    const colours = resolveMinimapColours((name) => style.getPropertyValue(name));
-    coloursRef.current = colours;
-    const base = document.createElement("canvas");
-    base.width = canvas.width;
-    base.height = canvas.height;
-    const ctx = base.getContext("2d");
-    if (!ctx) {
-      // No 2D canvas (headless test DOM): the card still renders, just without a picture.
-      baseRef.current = null;
+    if (!canvas) return;
+    canvas.width = Math.round(MINIMAP_SIZE * dpr);
+    canvas.height = Math.round(MINIMAP_SIZE * dpr);
+    const scale = MINIMAP_SIZE / zoom;
+    // Enough sky around the floor that the card is never empty at the railing.
+    const margin = zoom / 2 + 2;
+    const b = layout.bounds;
+    const area: Rect = { minX: b.minX - margin, maxX: b.maxX + margin, minZ: b.minZ - margin, maxZ: b.maxZ + margin };
+    const cssW = (area.maxX - area.minX) * scale;
+    const cssH = (area.maxZ - area.minZ) * scale;
+    const off = offscreenLayer(cssW, cssH, dpr);
+    if (!off) {
+      layerRef.current = null;
       return;
     }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawMinimapBase(ctx, layout, transform, colours);
-    baseRef.current = base;
-    draw();
-  }, [collapsed, layout, transform, height, dpr, themeVersion, draw]);
+    const lt: MapTransform = { scale, offsetX: -area.minX * scale, offsetY: -area.minZ * scale, width: cssW, height: cssH };
+    drawFloorArt(off.ctx, layout, lt, area);
+    drawCheckpoints(off.ctx, layout, lt, CHECKPOINT_PX);
+    layerRef.current = { canvas: off.canvas, area, scale, cssW, cssH };
+    draw(performance.now());
+  }, [layout, zoom, dpr, themeVersion, draw]);
 
-  // Moving layer at ~10 Hz; stops while collapsed or while the document is hidden.
-  useEffect(() => {
-    if (collapsed) return;
-    let raf = 0;
-    let last = 0;
-    const tick = (now: number) => {
-      raf = requestAnimationFrame(tick);
-      if (now - last < FRAME_MS) return;
-      last = now;
-      draw();
-    };
-    const start = () => { if (!raf && !document.hidden) raf = requestAnimationFrame(tick); };
-    const stop = () => { cancelAnimationFrame(raf); raf = 0; };
-    const onVisibility = () => (document.hidden ? stop() : start());
-    document.addEventListener("visibilitychange", onVisibility);
-    start();
-    return () => {
-      stop();
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [collapsed, draw]);
+  useThrottledFrames(draw, FRAME_MS, true);
 
-  const toggle = () => {
-    setCollapsed((prev) => {
-      writeCollapsed(!prev);
-      return !prev;
+  const changeZoom = useCallback((direction: number) => {
+    setZoom((prev) => {
+      const next = zoomStep(prev, direction);
+      if (next !== prev) writeZoom(next);
+      return next;
     });
-    setTooltip(null);
-  };
+  }, []);
+
+  // The wheel zooms the map instead of scrolling or zooming anything behind it.
+  useEffect(() => {
+    const el = mapRef.current;
+    if (!el) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      if (event.deltaY !== 0) changeZoom(event.deltaY < 0 ? 1 : -1);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [changeZoom]);
 
   const mapPoint = (event: { clientX: number; clientY: number }): MapPoint | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
-    return { x: ((event.clientX - rect.left) / rect.width) * MAP_WIDTH, y: ((event.clientY - rect.top) / rect.height) * height };
+    return { x: ((event.clientX - rect.left) / rect.width) * MINIMAP_SIZE, y: ((event.clientY - rect.top) / rect.height) * MINIMAP_SIZE };
   };
 
   const onClick = (event: ReactMouseEvent<HTMLCanvasElement>) => {
     const at = mapPoint(event);
     if (!at) return;
     const store = useOfficeStore.getState();
-    const hit = agentAt(transform, dots(), at, HIT_PX);
+    const hit = pickNearest(hitsRef.current, at, HIT_PX);
     if (hit) {
       store.select({ kind: "agent", id: hit.id });
-      store.focusOn({ x: hit.x, z: hit.z });
+      store.focusOn(hit.world);
       return;
     }
-    store.focusOn(clampToRect(mapToWorld(transform, at), layout.floor));
+    store.focusOn(clampToRect(mapToWorld(transformRef.current, at), layout.floor));
   };
 
   const onDoubleClick = (event: ReactMouseEvent<HTMLCanvasElement>) => {
     const at = mapPoint(event);
     if (!at) return;
-    useOfficeStore.getState().requestWalk(clampToRect(mapToWorld(transform, at), layout.floor));
+    useOfficeStore.getState().requestWalk(clampToRect(mapToWorld(transformRef.current, at), layout.floor));
   };
 
   const checkpointLabels: Record<CheckpointKind, string> = {
@@ -244,19 +232,16 @@ export function OfficeMinimap({ layout, agents, selectedId, camera }: OfficeMini
     const at = mapPoint(event);
     if (!at) return;
     let text: string | null = null;
-    const hit = agentAt(transform, dots(), at, HIT_PX);
+    const hit = pickNearest(hitsRef.current, at, HIT_PX);
     if (hit) {
       text = agents.get(hit.id)?.name ?? null;
+    } else if ((at.x - MINIMAP_SIZE / 2) ** 2 + (at.y - MINIMAP_SIZE / 2) ** 2 <= HIT_PX * HIT_PX) {
+      text = youLabel;
     } else {
-      const me = worldToMap(transform, player);
-      if ((me.x - at.x) ** 2 + (me.y - at.y) ** 2 <= HIT_PX * HIT_PX) {
-        text = youLabel;
-      } else {
-        const place = placeAt(layout, mapToWorld(transform, at));
-        if (place?.kind === "checkpoint") text = checkpointLabels[place.id];
-        else if (place?.kind === "room") text = roomLabels[place.id];
-        else if (place?.kind === "department") text = place.label || openSpace;
-      }
+      const place = placeAt(layout, mapToWorld(transformRef.current, at));
+      if (place?.kind === "checkpoint") text = checkpointLabels[place.id];
+      else if (place?.kind === "room") text = roomLabels[place.id];
+      else if (place?.kind === "department") text = place.label || openSpace;
     }
     setTooltip((prev) => {
       if (!text) return null;
@@ -265,35 +250,45 @@ export function OfficeMinimap({ layout, agents, selectedId, camera }: OfficeMini
     });
   };
 
-  let working = 0;
-  for (const agent of agents.values()) if (agent.state === "working") working += 1;
+  const working = useMemo(() => {
+    let n = 0;
+    for (const agent of agents.values()) if (agent.state === "working") n += 1;
+    return n;
+  }, [agents]);
   const summary = t("society.office.minimap_aria").replace("{0}", String(agents.size)).replace("{1}", String(working));
-  const title = t("society.office.minimap_title");
+  const zoomLabel = t("society.office.minimap_zoom").replace("{0}", String(Math.round(zoom)));
 
   return (
-    <div ref={cardRef} className="office-hud office-card office-minimap" data-office-ui data-collapsed={collapsed ? "true" : "false"}>
-      <div className="office-minimap-head">
-        <span className="office-minimap-title">{title}</span>
-        <button type="button" className="office-icon-button office-minimap-toggle" onClick={toggle} aria-expanded={!collapsed}
-          aria-label={collapsed ? t("society.office.minimap_expand") : t("society.office.minimap_collapse")}
-          title={collapsed ? t("society.office.minimap_expand") : t("society.office.minimap_collapse")}>
-          {collapsed ? <ChevronUp aria-hidden size={14} /> : <ChevronDown aria-hidden size={14} />}
+    <div className="office-hud office-minimap" data-office-ui role="group" aria-label={t("society.office.minimap_title")}>
+      <div ref={mapRef} className="office-minimap-map" style={{ width: MINIMAP_SIZE, height: MINIMAP_SIZE }}>
+        <canvas ref={canvasRef} className="office-minimap-canvas" role="img" aria-label={summary}
+          style={{ width: MINIMAP_SIZE, height: MINIMAP_SIZE }}
+          onClick={onClick} onDoubleClick={onDoubleClick} onPointerMove={onPointerMove} onPointerLeave={() => setTooltip(null)} />
+        <span className="office-minimap-north" aria-hidden>{t("society.office.compass_n")}</span>
+        {tooltip && (
+          // Flip to the pointer's left on the right half so the label never runs off the card.
+          <span className="office-minimap-tooltip" role="presentation" data-side={tooltip.x > MINIMAP_SIZE / 2 ? "left" : "right"}
+            style={{ left: tooltip.x > MINIMAP_SIZE / 2 ? tooltip.x - 10 : tooltip.x + 10, top: Math.max(tooltip.y - 8, 22) }}>
+            {tooltip.text}
+          </span>
+        )}
+      </div>
+      <div className="office-minimap-bar">
+        <button type="button" className="office-minimap-btn" onClick={() => changeZoom(-1)} disabled={zoom >= ZOOM_MAX_M}
+          aria-label={t("society.office.minimap_zoom_out")} title={t("society.office.minimap_zoom_out")}>
+          <Minus aria-hidden size={13} />
+        </button>
+        <span className="office-minimap-zoom" aria-live="polite">{zoomLabel}</span>
+        <button type="button" className="office-minimap-btn" onClick={() => changeZoom(1)} disabled={zoom <= ZOOM_MIN_M}
+          aria-label={t("society.office.minimap_zoom_in")} title={t("society.office.minimap_zoom_in")}>
+          <Plus aria-hidden size={13} />
+        </button>
+        <button type="button" className="office-minimap-btn office-minimap-open" onClick={onOpenMap}
+          aria-keyshortcuts="M" title={t("society.office.minimap_open_map_label")}>
+          <MapIcon aria-hidden size={13} />
+          <span>{t("society.office.minimap_open_map")}</span>
         </button>
       </div>
-      {!collapsed && (
-        <div className="office-minimap-map" style={{ width: MAP_WIDTH, height }}>
-          <canvas ref={canvasRef} className="office-minimap-canvas" role="img" aria-label={summary}
-            style={{ width: MAP_WIDTH, height }}
-            onClick={onClick} onDoubleClick={onDoubleClick} onPointerMove={onPointerMove} onPointerLeave={() => setTooltip(null)} />
-          {tooltip && (
-            // Flip to the pointer's left on the right half so the label never runs off the card.
-            <span className="office-minimap-tooltip" role="presentation" data-side={tooltip.x > MAP_WIDTH / 2 ? "left" : "right"}
-              style={{ left: tooltip.x > MAP_WIDTH / 2 ? tooltip.x - 10 : tooltip.x + 10, top: Math.max(tooltip.y - 8, 4) }}>
-              {tooltip.text}
-            </span>
-          )}
-        </div>
-      )}
     </div>
   );
 }

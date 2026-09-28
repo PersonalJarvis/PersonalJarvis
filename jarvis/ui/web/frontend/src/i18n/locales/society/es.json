@@ -735,7 +735,7 @@
       "open_agent": "Abrir {0}",
       "overview": "Vista general",
       "ledger": "Lista de agentes",
-      "help": "WASD / flechas para andar · Shift corre · Clic en el suelo para ir · E interactúa · Arrastrar gira · Rueda para zoom",
+      "help": "WASD / flechas para andar · Shift corre · Clic en el suelo para ir · E interactúa · Arrastrar gira · Rueda para zoom · M abre el mapa",
       "sample": "Agentes de ejemplo: el backend aún no está disponible.",
       "overflow": "Solo los primeros {0} agentes tienen escritorio; la lista muestra a todos.",
       "open_space": "Espacio abierto",
@@ -825,10 +825,26 @@
       "hair_bald": "Calvo",
       "hair_label": "Peinado o sombrero",
       "minimap_title": "Plano de la planta",
-      "minimap_expand": "Mostrar plano",
-      "minimap_collapse": "Ocultar plano",
       "minimap_aria": "Plano de la planta: {0} agentes, {1} trabajando",
-      "minimap_you": "Tú"
+      "minimap_you": "Tú",
+      "minimap_zoom": "{0} m",
+      "minimap_zoom_in": "Acercar",
+      "minimap_zoom_out": "Alejar",
+      "minimap_open_map": "Mapa (M)",
+      "minimap_open_map_label": "Abrir el mapa completo (M)",
+      "compass_label": "Brújula: la dirección a la que mira la cámara",
+      "compass_n": "N",
+      "compass_ne": "NE",
+      "compass_e": "E",
+      "compass_se": "SE",
+      "compass_s": "S",
+      "compass_sw": "SO",
+      "compass_w": "O",
+      "compass_nw": "NO",
+      "map_title": "Plano de la oficina",
+      "map_hint": "Haz clic en cualquier sitio para ir allí. Esc o M cierra el mapa.",
+      "map_close": "Cerrar mapa",
+      "map_aria": "Plano completo de la oficina. Haz clic en un sitio para ir allí."
     }
   }
 }
