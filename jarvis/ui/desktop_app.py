@@ -6239,6 +6239,22 @@ class DesktopApp:
                     # must not hold the whole quit open.
                     pass
 
+            # Keep working when this PC closes (opt-in, Computers section):
+            # running IDE panes move to the chosen computer before we exit.
+            async def _offload_panes() -> None:
+                from jarvis.agentic_ide import offload_on_quit
+                from jarvis.agentic_ide.session import get_registry
+
+                if offload_on_quit.target():
+                    await offload_on_quit.offload_before_quit(get_registry())
+
+            try:
+                asyncio.run_coroutine_threadsafe(_offload_panes(), loop).result(timeout=180.0)
+            except Exception as exc:  # noqa: BLE001 - quitting must go on
+                from loguru import logger as _logger
+
+                _logger.warning("Offload before quit did not finish: {}", exc)
+
             # Cleanly close PTY sessions — otherwise zombies remain
             async def _pty_cleanup() -> None:
                 try:

@@ -4,7 +4,8 @@ import { AgentMark } from "./AgentMark";
 import { ForkPaneDialog, type ForkMode, type ForkSource } from "./ForkPaneDialog";
 import type { PaneSplitDirection } from "./WorkspaceTerminalHeader";
 import type { SessionState, TerminalState } from "@/lib/agenticIdeApi";
-import { forkTerminal, moveTerminal, renameTerminal, type PaneMovePosition } from "@/lib/agenticIdeApi";
+import { forkTerminal, moveTerminal, placeTerminal, renameTerminal, type PaneMovePosition } from "@/lib/agenticIdeApi";
+import { useComputerChoices } from "@/hooks/useComputers";
 import { useThemeValue } from "@/hooks/useTheme";
 import { useEventStore } from "@/store/events";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
@@ -213,6 +214,50 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
       if (mounted.current) setForkBusy(false);
     }
   };
+  // "Run on <computer>" / "Bring back": the pane's agent moves with its folder
+  // and conversation; the pane reconnects to wherever it runs now.
+  const computers = useComputerChoices();
+  const [placing, setPlacing] = useState<string | null>(null);
+  // A whole-workspace move (sidebar menu) restarted every pane in its new
+  // place; reconnect each one so it shows the agent where it runs now.
+  useEffect(() => {
+    const onReconnect = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string }>).detail;
+      if (detail?.workspaceId && detail.workspaceId !== latest.current.session.id) return;
+      setRestarts((current) => Object.fromEntries(
+        latest.current.session.terminals.map((terminal) => [idOf(terminal), (current[idOf(terminal)] ?? 0) + 1])));
+    };
+    window.addEventListener("jarvis:ide-panes-reconnect", onReconnect);
+    return () => window.removeEventListener("jarvis:ide-panes-reconnect", onReconnect);
+  }, []);
+  const place = async (terminal: TerminalState, computerId: string | null) => {
+    const id = idOf(terminal);
+    if (placing) return;
+    const target = computerId ? (computers.find((c) => c.id === computerId)?.name ?? "the computer") : "this computer";
+    setPlacing(id);
+    pushToast("info", `Moving ${terminal.name} to ${target}. The folder and the conversation go with it.`);
+    latest.current.onMutationStart?.();
+    try {
+      const { session: next, message } = await placeTerminal(terminal.name, latest.current.session.id, computerId);
+      if (!mounted.current) return;
+      if (next && next.id === latest.current.session.id) latest.current.onChanged(next);
+      setRestarts((current) => ({ ...current, [id]: (current[id] ?? 0) + 1 }));
+      pushToast("success", `${terminal.name} now runs on ${target}. ${message}`.trim());
+      setAnnouncement(`${terminal.name} now runs on ${target}.`);
+    } catch (error) { pushToast("error", (error as Error).message); }
+    finally {
+      latest.current.onMutationEnd?.();
+      if (mounted.current) setPlacing(null);
+    }
+  };
+  const placementItems = (terminal: TerminalState) => {
+    if (placing) return [];
+    if (terminal.computer_id) return [{ label: "Bring back to this computer", run: () => void place(terminal, null) }];
+    return computers.filter((computer) => computer.health.status !== "provisioning")
+      .map((computer) => ({ label: `Run on ${computer.name}`, run: () => void place(terminal, computer.id) }));
+  };
+  const computerName = (terminal: TerminalState) => terminal.computer_id
+    ? (computers.find((computer) => computer.id === terminal.computer_id)?.name ?? "another computer") : undefined;
   const dragged = drag ? session.terminals.find((terminal) => idOf(terminal) === drag.id) : null;
 
   // A pane picked from the side panel may sit off-screen on a narrow grid.
@@ -271,6 +316,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             restartToken={restarts[id] ?? 0} onRestart={() => setRestarts((current) => ({ ...current, [id]: (current[id] ?? 0) + 1 }))}
             splitDisabled={tiles.length >= maxPanes} onSplit={(direction) => onAdd(terminal.name, direction)}
             branch={terminal.branch || undefined}
+            computerName={computerName(terminal)} placementItems={placementItems(terminal)}
             onFork={terminal.accepts_prompts === false ? undefined : () => setForking({ name: terminal.name, agent: terminal.agent, displayName: terminal.display_name, workspaceId: session.id })} />
           {drag?.target?.id === id && <div aria-hidden="true" data-testid="dock-preview" data-position={drag.target.position}
             className={cn("pointer-events-none absolute z-20 flex items-center justify-center rounded-xl border-2 p-2", drag.target.allowed ? "border-ring/70 bg-accent/[0.15]" : "border-destructive bg-background/80",

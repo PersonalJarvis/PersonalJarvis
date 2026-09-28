@@ -166,6 +166,26 @@
     "unit_cpu": "Kerne",
     "unit_days": "T",
     "unit_hours": "Std",
-    "unit_minutes": "Min"
+    "unit_minutes": "Min",
+    "ready_title": "Bereit für Coding-Agenten",
+    "ready_yes": "Bereit",
+    "ready_no": "Noch nicht bereit",
+    "ready_body": "IDE-Sitzungen und Agenten, die hier laufen, brauchen tmux, git und eine angemeldete Coding-CLI. Dann arbeiten sie weiter, auch wenn dieser PC aus ist.",
+    "ready_offline": "Prüfe zuerst den Computer; diese Liste wird per SSH gelesen.",
+    "ready_missing": "Nicht installiert",
+    "ready_not_logged_in": "Installiert, nicht angemeldet",
+    "ready_installed": "Installiert",
+    "ready_copy_login": "Meine Anmeldung nutzen",
+    "ready_copy_login_hint": "Kopiert die Anmeldedatei dieser CLI von diesem Computer auf den Server. Nur auf einem eigenen Server tun.",
+    "ready_login_copied": "{agent} ist jetzt auf dem Server angemeldet.",
+    "ready_install": "{items} installieren",
+    "ready_needs_root": "Braucht root oder sudo für diesen Login.",
+    "ready_installing": "Wird auf dem Server installiert…",
+    "ready_install_done": "Installiert.",
+    "ready_install_failed": "Die Installation ist fehlgeschlagen.",
+    "keep_title": "Weiterarbeiten, wenn dieser PC zugeht",
+    "keep_body": "Beim Beenden der App ziehen laufende Agentic-IDE-Sitzungen samt Ordner und Gespräch auf diesen Computer um und arbeiten dort weiter.",
+    "keep_off": "Aus",
+    "keep_failed": "Die Einstellung konnte nicht gespeichert werden."
   }
 }

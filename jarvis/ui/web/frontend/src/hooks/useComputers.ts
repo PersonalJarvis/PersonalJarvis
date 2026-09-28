@@ -6,6 +6,7 @@
  * page opens no sockets (AP-33). Every mutation writes its answer straight
  * into the cached list, so a check or a rename paints without a refetch.
  */
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   computersApi,
@@ -106,4 +107,30 @@ export function useRemoveComputer() {
       void qc.invalidateQueries({ queryKey: computerKeys.cloud() });
     },
   });
+}
+
+/**
+ * The computer list for surfaces that live outside the query provider (the
+ * IDE's panes and menus). One quiet fetch per mount; any failure — no backend,
+ * an older backend, a test without the route — is simply "no computers".
+ */
+export function useComputerChoices(): Computer[] {
+  const [rows, setRows] = useState<Computer[]>([]);
+  useEffect(() => {
+    let alive = true;
+    try {
+      void computersApi
+        .list()
+        .then((list) => {
+          if (alive && Array.isArray(list)) setRows(list);
+        })
+        .catch(() => undefined);
+    } catch {
+      /* fetch unavailable: no computers */
+    }
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return rows;
 }

@@ -439,6 +439,10 @@ interface AgenticTerminalProps {
   onFork?: () => void;
   /** Compact header only: the worktree branch this pane runs on, if any. */
   branch?: string;
+  /** Compact header only: the connected computer this pane runs on, if any. */
+  computerName?: string;
+  /** Compact header only: "Run on …" / "Bring back" menu entries. */
+  placementItems?: { label: string; run: () => void }[];
   /** Registry identity and optional custom logo for the compact header. */
   agent?: string;
   agentLogoUrl?: string;
@@ -569,6 +573,8 @@ export function AgenticTerminal({
   headerMode = "legacy",
   onFork,
   branch,
+  computerName,
+  placementItems,
   agent,
   agentLogoUrl,
   recap,
@@ -2379,6 +2385,8 @@ export function AgenticTerminal({
         onRestart={onRestart}
         onFork={onFork}
         branch={branch}
+        computerName={computerName}
+        placementItems={placementItems}
       /> : <PaneHeader
         workspaceId={workspaceId}
         status={visibleStatus}

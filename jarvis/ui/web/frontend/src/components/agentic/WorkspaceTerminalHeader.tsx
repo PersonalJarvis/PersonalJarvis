@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties, type MouseEvent, type PointerEvent, type SVGProps } from "react";
 import { createPortal } from "react-dom";
-import { Check, GitBranch, Maximize2, Minimize2, MoreHorizontal, Plus, X } from "lucide-react";
+import { Check, GitBranch, Maximize2, Minimize2, MoreHorizontal, Plus, Server, X } from "lucide-react";
 import { AgentMark } from "./AgentMark";
 import { BranchIcon } from "./branchIcon";
 import { usePaneTitle } from "@/store/paneRecaps";
@@ -35,6 +35,10 @@ interface Props {
   onFork?: () => void;
   /** The git worktree branch this pane runs on, when it is a worktree fork. */
   branch?: string;
+  /** The connected computer this pane's agent runs on (a VPS, a local VM). */
+  computerName?: string;
+  /** "Run on …" / "Bring back" entries for the pane's menu. */
+  placementItems?: { label: string; run: () => void }[];
 }
 
 type MenuIcon = ComponentType<SVGProps<SVGSVGElement>>;
@@ -54,6 +58,7 @@ export function WorkspaceTerminalHeader({
   name, workspaceId, promptCount = 0, agent, agentLogoUrl, displayName, status, appearance, arranging = false,
   maximized = false, addDisabled = false, onArrangeStart, onActivate, onToggleMaximize,
   onAdd, onClose, onRename, onOpenConversation, onOpenChat, onRestart, onFork, branch,
+  computerName, placementItems,
 }: Props) {
   const brand = PANE_BRAND[appearance];
   // The pane's goal in a few words, in place of its call-sign; the call-sign
@@ -152,6 +157,9 @@ export function WorkspaceTerminalHeader({
         <AgentMark agent={agent} label={displayName} logoUrl={agentLogoUrl} variant="plain" size="sm"
           className="!text-[color:var(--pane-ink)] [&>.bg-foreground]:!bg-[color:var(--pane-ink)]" />
         <span data-testid={`pane-title-${name}`} title={title ? `${title} (${name})` : name} className="truncate">{title || name}</span>
+        {computerName && <span data-testid={`pane-computer-${name}`} title={`Runs on ${computerName}. It keeps working while this app is closed.`}
+          className="flex min-w-0 max-w-[35%] shrink items-center gap-1 rounded bg-[color:var(--pane-chip)] px-1.5 py-0.5 text-[11px] font-normal text-[color:var(--pane-ink-muted)]">
+          <Server className="h-3 w-3 shrink-0" aria-hidden="true" /><span className="truncate">{computerName}</span></span>}
         {branch && <span data-testid={`pane-branch-${name}`} title={`Runs in its own git worktree on branch ${branch}`}
           className="flex min-w-0 max-w-[45%] shrink items-center gap-1 rounded bg-[color:var(--pane-chip)] px-1.5 py-0.5 font-mono text-[11px] font-normal text-[color:var(--pane-ink-muted)]">
           <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" /><span className="truncate">{branch}</span>
@@ -212,6 +220,7 @@ export function WorkspaceTerminalHeader({
         onOpenConversation && { label: "Conversation history", run: onOpenConversation },
         onOpenChat && { label: "Open as chat", run: onOpenChat },
         stopped && onRestart && { label: "Restart agent", run: onRestart },
+        ...(placementItems ?? []).map((item, index) => ({ ...item, Icon: Server, separated: index === 0 })),
       ] as (MenuItem | false | undefined | null)[]).filter((item): item is MenuItem => Boolean(item)).map((item) =>
         <button type="button" role="menuitem" key={item.label} onClick={() => choose(item.run)}
           className={`flex w-full items-center gap-2 rounded px-2.5 py-2 text-left text-xs hover:bg-[color:var(--pane-chip)] focus:bg-[color:var(--pane-chip)] focus:outline-none ${item.separated ? "mt-1 border-t border-[color:var(--pane-chip)] pt-2" : ""}`}>

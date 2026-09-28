@@ -231,6 +231,12 @@ export interface TerminalState {
   folder?: string;
   /** That worktree's branch, shown in the pane header. */
   branch?: string;
+  /**
+   * Set only for a pane whose agent runs on a connected computer (a VPS or a
+   * local VM, see Computers): that computer's id and the folder there.
+   */
+  computer_id?: string;
+  remote_folder?: string;
   /** Can a fork of this pane copy its chat? False: the fork starts a fresh chat. */
   can_fork?: boolean;
   /**
@@ -1247,12 +1253,19 @@ export async function resolveDroppedFolder(payload: {
 export async function startIdeSession(
   folder: string,
   terminals: TerminalPlan[],
-  options: { projectId?: string; name?: string } = {},
+  options: { projectId?: string; name?: string; computerId?: string } = {},
 ): Promise<IdeState> {
   const res = await fetch("/api/agentic-ide/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ folder, terminals, project_id: options.projectId, name: options.name }),
+    body: JSON.stringify({
+      folder,
+      terminals,
+      project_id: options.projectId,
+      name: options.name,
+      // Run every pane on this connected computer; the folder is copied there first.
+      computer_id: options.computerId,
+    }),
   });
   if (!res.ok) throw new Error(await detail(res));
   const body = (await res.json()) as { session: SessionState; state: IdeState };
@@ -1580,6 +1593,46 @@ export async function forkTerminal(
   if (!body.state.session)
     throw new Error("The workspace closed while forking a terminal.");
   return { session: body.state.session, terminal: body.terminal };
+}
+
+/** What a placement answered: the new workspace state and a sentence for the user. */
+export interface PlacementResult {
+  session: SessionState | null;
+  message: string;
+}
+
+/**
+ * Run one pane's agent on a connected computer, or bring it back here
+ * (`computerId: null`). The folder and the conversation travel with it.
+ */
+export async function placeTerminal(
+  name: string,
+  workspaceId: string,
+  computerId: string | null,
+): Promise<PlacementResult> {
+  const res = await fetch(`/api/agentic-ide/terminals/${encodeURIComponent(name)}/place`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workspace_id: workspaceId, computer_id: computerId }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { state: IdeState; message?: string };
+  return { session: body.state.session, message: body.message ?? "" };
+}
+
+/** Every pane of a workspace to a connected computer, or all of them back. */
+export async function placeWorkspace(
+  workspaceId: string,
+  computerId: string | null,
+): Promise<PlacementResult> {
+  const res = await fetch(`/api/agentic-ide/workspaces/${encodeURIComponent(workspaceId)}/place`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ computer_id: computerId }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { state: IdeState; messages?: string[] };
+  return { session: body.state.session, message: (body.messages ?? []).join(" ") };
 }
 
 /** Stop one terminal's agent and remove its pane. Returns the updated workspace. */

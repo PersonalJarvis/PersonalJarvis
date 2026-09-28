@@ -34,6 +34,7 @@ import { AddComputerDialog, PathChoices, type AddPath } from "@/views/computers/
 import { ComputerDetail } from "@/views/computers/ComputerDetail";
 import { ComputerRow } from "@/views/computers/ComputerRow";
 import { CopyField, needsAttention } from "@/views/computers/parts";
+import { KeepWorking } from "@/views/computers/KeepWorking";
 
 /** Keyframes the provisioning bar uses; scoped by name, shipped with the view. */
 const KEYFRAMES = `@keyframes computers-indeterminate {
@@ -219,6 +220,8 @@ export function ComputersView() {
                   ))}
                 </ul>
               </Panel>
+
+              <KeepWorking computers={rows} />
 
               <IdentityStrip />
             </>

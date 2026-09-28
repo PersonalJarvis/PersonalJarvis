@@ -4,6 +4,7 @@ import { FolderPicker } from "@/components/agentic/FolderPicker";
 import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/components/agentic/VoiceBubble";
 import { WorkspaceTerminalGrid } from "@/components/agentic/WorkspaceTerminalGrid";
 import { WorkspaceAgentSetup } from "@/components/agentic/WorkspaceAgentSetup";
+import { RunOnPicker } from "@/components/agentic/RunOnPicker";
 import { WorkspaceOptionsDialog } from "@/components/agentic/WorkspaceOptionsDialog";
 import { FONT_DEFAULT } from "@/components/agentic/paneFont";
 import { IdeSidePanelFrame } from "@/components/agentic/sidePanel/IdeSidePanel";
@@ -74,6 +75,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // The git half of "New workspace" and "Add coding agent": keep the checkout,
   // branch, or give the agents a worktree of their own.
   const [workspaceGit, setWorkspaceGit] = useState<GitPlan>(KEEP_CHECKOUT);
+  // Where the new workspace's agents run: null = this computer (see RunOnPicker).
+  const [workspaceComputer, setWorkspaceComputer] = useState<string | null>(null);
   const [agentGit, setAgentGit] = useState<GitPlan>(KEEP_CHECKOUT);
   const [gitOpen, setGitOpen] = useState(false);
   const [selected, setSelected] = useState("");
@@ -302,6 +305,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     const ownCheckout = workspaceGit.mode === "new_worktree" || workspaceGit.mode === "open_worktree";
     const next = await startIdeSession(prepared?.folder ?? workspaceProject.path, workspaceAgents.map((agent) => ({ agent })), {
       projectId: workspaceProject.id, name: workspaceName.trim() || (ownCheckout && prepared?.branch ? prepared.branch : undefined),
+      computerId: workspaceComputer ?? undefined,
     });
     setState(next);
     setWorkspaceProject(null);
@@ -543,6 +547,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
           </label>
           <WorkspaceAgentSetup agents={installed} sessions={workspaceAgents} onChange={setWorkspaceAgents} disabled={busy} maxSessions={maxPanes} />
           <GitCheckoutPicker folder={workspaceProject.path} value={workspaceGit} onChange={setWorkspaceGit} disabled={busy} context="workspace" />
+          <RunOnPicker value={workspaceComputer} onChange={setWorkspaceComputer} disabled={busy} />
         </div>
         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-6 py-4 sm:px-8">
           <span className="text-xs text-muted-foreground" aria-live="polite">{workspaceAgents.length} {workspaceAgents.length === 1 ? "session" : "sessions"} · {new Set(workspaceAgents.filter(Boolean)).size} {new Set(workspaceAgents.filter(Boolean)).size === 1 ? "agent" : "agents"}</span>

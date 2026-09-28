@@ -166,6 +166,26 @@
     "unit_cpu": "cores",
     "unit_days": "d",
     "unit_hours": "h",
-    "unit_minutes": "min"
+    "unit_minutes": "min",
+    "ready_title": "Ready for coding agents",
+    "ready_yes": "Ready",
+    "ready_no": "Not ready yet",
+    "ready_body": "IDE sessions and agents that run here need tmux, git and a logged-in coding CLI. They then keep working while this PC is off.",
+    "ready_offline": "Check the computer first; this list is read over SSH.",
+    "ready_missing": "Not installed",
+    "ready_not_logged_in": "Installed, not logged in",
+    "ready_installed": "Installed",
+    "ready_copy_login": "Use my login",
+    "ready_copy_login_hint": "Copies this computer's login file for this CLI to the server. Only do this on a server you own.",
+    "ready_login_copied": "{agent} is now logged in on the server.",
+    "ready_install": "Install {items}",
+    "ready_needs_root": "Needs root or sudo on this login.",
+    "ready_installing": "Installing on the server…",
+    "ready_install_done": "Installed.",
+    "ready_install_failed": "The installation failed.",
+    "keep_title": "Keep working when this PC closes",
+    "keep_body": "When you quit the app, running Agentic IDE sessions move to this computer with their folder and conversation, and carry on there.",
+    "keep_off": "Off",
+    "keep_failed": "The setting could not be saved."
   }
 }

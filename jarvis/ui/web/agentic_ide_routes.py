@@ -2872,6 +2872,34 @@ async def place_terminal(request: Request, name: str, req: PlaceRequest) -> dict
     return {"ok": True, **result, "state": registry.state()}
 
 
+class OffloadOnQuitRequest(BaseModel):
+    computer_id: str | None = Field(
+        default=None, description="Computer to move running panes to on quit; null turns it off."
+    )
+
+
+@router.get("/offload-on-quit", summary="Where running panes move when the app quits")
+def get_offload_on_quit() -> dict:
+    from jarvis.agentic_ide import offload_on_quit
+
+    return {"computer_id": offload_on_quit.target()}
+
+
+@router.put("/offload-on-quit", summary="Move running panes to a computer when the app quits")
+def put_offload_on_quit(req: OffloadOnQuitRequest) -> dict:
+    """Opt in (a computer id) or out (null) of keeping agents working after quit."""
+    from jarvis.agentic_ide import offload_on_quit
+    from jarvis.computers.service import ComputerError, get_service
+
+    if req.computer_id:
+        try:
+            get_service().get(req.computer_id)
+        except ComputerError as exc:
+            raise HTTPException(status_code=404, detail=exc.message) from exc
+    offload_on_quit.set_target(req.computer_id)
+    return {"computer_id": offload_on_quit.target()}
+
+
 @router.post(
     "/workspaces/{workspace_id}/place",
     summary="Run a whole workspace on a connected computer, or bring it back",

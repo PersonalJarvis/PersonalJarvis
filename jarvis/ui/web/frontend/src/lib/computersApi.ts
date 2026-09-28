@@ -225,3 +225,47 @@ export const computersApi = {
   localStatus: () => request<LocalStatus>("/local"),
   createLocalVm: (input: LocalVmInput) => request<Computer>("/local", post(input)),
 };
+
+// ---------------------------------------------------------------------------
+// Readiness for coding agents (tmux, git, the CLIs and their logins)
+// ---------------------------------------------------------------------------
+
+export type ToolId = "tmux" | "git" | "node" | "claude" | "codex";
+
+export interface ToolState {
+  id: ToolId;
+  installed: boolean;
+  version: string | null;
+}
+
+export interface InstallJob {
+  computer_id: string;
+  items: ToolId[];
+  state: "running" | "done" | "failed";
+  log: string[];
+  started_at: number;
+  finished_at: number | null;
+  message: string | null;
+}
+
+export interface Readiness {
+  tools: ToolState[];
+  logins: Record<"claude" | "codex", boolean>;
+  package_manager: string | null;
+  root: boolean;
+  sudo: boolean;
+  os: string | null;
+  ready: boolean;
+  checked_at: number;
+  install: InstallJob | null;
+}
+
+export const readinessApi = {
+  get: (id: string) => request<Readiness>(`/${encodeURIComponent(id)}/readiness`),
+  install: (id: string, items: ToolId[]) =>
+    request<InstallJob>(`/${encodeURIComponent(id)}/install`, post({ items })),
+  job: (id: string) =>
+    request<{ install: InstallJob | null }>(`/${encodeURIComponent(id)}/install`).then((r) => r.install),
+  copyLogin: (id: string, agent: "claude" | "codex") =>
+    request<{ copied: string }>(`/${encodeURIComponent(id)}/copy-login`, post({ agent })),
+};

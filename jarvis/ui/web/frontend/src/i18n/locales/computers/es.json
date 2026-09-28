@@ -166,6 +166,26 @@
     "unit_cpu": "núcleos",
     "unit_days": "d",
     "unit_hours": "h",
-    "unit_minutes": "min"
+    "unit_minutes": "min",
+    "ready_title": "Listo para agentes de código",
+    "ready_yes": "Listo",
+    "ready_no": "Aún no está listo",
+    "ready_body": "Las sesiones del IDE y los agentes que se ejecutan aquí necesitan tmux, git y una CLI de código con sesión iniciada. Así siguen trabajando aunque este PC esté apagado.",
+    "ready_offline": "Comprueba primero el ordenador; esta lista se lee por SSH.",
+    "ready_missing": "No instalado",
+    "ready_not_logged_in": "Instalado, sin sesión",
+    "ready_installed": "Instalado",
+    "ready_copy_login": "Usar mi sesión",
+    "ready_copy_login_hint": "Copia el archivo de sesión de esta CLI de este ordenador al servidor. Hazlo solo en un servidor propio.",
+    "ready_login_copied": "{agent} ya tiene sesión iniciada en el servidor.",
+    "ready_install": "Instalar {items}",
+    "ready_needs_root": "Necesita root o sudo en este usuario.",
+    "ready_installing": "Instalando en el servidor…",
+    "ready_install_done": "Instalado.",
+    "ready_install_failed": "La instalación ha fallado.",
+    "keep_title": "Seguir trabajando cuando este PC se cierra",
+    "keep_body": "Al cerrar la app, las sesiones del Agentic IDE en marcha se mueven a este ordenador con su carpeta y su conversación, y continúan allí.",
+    "keep_off": "Desactivado",
+    "keep_failed": "No se pudo guardar el ajuste."
   }
 }

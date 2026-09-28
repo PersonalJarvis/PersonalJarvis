@@ -30,6 +30,7 @@ import {
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { computersApi, type CommandResult, type Computer } from "@/lib/computersApi";
+import { AgentReadiness } from "./AgentReadiness";
 import { statusLabel } from "./ComputerRow";
 import {
   CopyField,
@@ -679,7 +680,8 @@ export function ComputerDetail({ computer, onBack }: { computer: Computer; onBac
           </Card>
         </div>
 
-        <div className="min-w-0">
+        <div className="flex min-w-0 flex-col gap-5">
+          <AgentReadiness computer={computer} />
           <Console computer={computer} />
         </div>
       </div>

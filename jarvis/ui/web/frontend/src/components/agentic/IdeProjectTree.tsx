@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUpRight, Check, ChevronDown, ChevronRight, Copy, CopyPlus, Folder, FolderGit2, GitBranch, FolderOpen, FolderPlus, Globe, Loader2, Mic, MoreHorizontal, OctagonPause, Pencil, Pin, PinOff, Plus, SquareCode, Trash2, X, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, ChevronRight, Copy, CopyPlus, Folder, FolderGit2, GitBranch, FolderOpen, FolderPlus, Globe, Loader2, Mic, MoreHorizontal, OctagonPause, Pencil, Pin, PinOff, Plus, Server, SquareCode, Trash2, X, type LucideIcon } from "lucide-react";
 import { ChatLibraryError, deleteProject, openProject, patchProject, reorderProjects, revealProject, fetchProjectLaunchers, openProjectIn, type ProjectLaunchers } from "@/lib/chatLibraryApi";
 import { robustCopy } from "@/lib/clipboard";
-import { addTerminal, fetchWorkspacePanes, interruptTerminal, removeWorkspace, renameWorkspace, startIdeSession, IdeApiError, reorderWorkspaces, type IdeProject, type ProjectWorkspace, type WorkspacePaneRow } from "@/lib/agenticIdeApi";
+import { useComputerChoices } from "@/hooks/useComputers";
+import { addTerminal, fetchWorkspacePanes, interruptTerminal, placeWorkspace, removeWorkspace, renameWorkspace, startIdeSession, IdeApiError, reorderWorkspaces, type IdeProject, type ProjectWorkspace, type WorkspacePaneRow } from "@/lib/agenticIdeApi";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 
@@ -278,6 +279,19 @@ export function IdeProjectTree() {
     const failed = results.filter((result) => result.status === "rejected").length;
     if (failed) pushToast("error", `${failed} of ${panes.length} agents could not be interrupted.`);
     else pushToast("success", `Interrupted ${panes.length} ${panes.length === 1 ? "agent" : "agents"}.`);
+  };
+
+  // A whole workspace to a connected computer (or back): one folder transfer,
+  // every pane's conversation carried, the agents then run there in tmux.
+  const computers = useComputerChoices();
+  const placeWorkspaceOn = async (workspace: ProjectWorkspace, computerId: string | null) => {
+    const target = computerId ? (computers.find((c) => c.id === computerId)?.name ?? "the computer") : "this computer";
+    pushToast("info", `Moving ${workspace.name} to ${target}. This can take a minute.`);
+    try {
+      const { message } = await placeWorkspace(workspace.id, computerId);
+      window.dispatchEvent(new CustomEvent("jarvis:ide-panes-reconnect", { detail: { workspaceId: workspace.id } }));
+      pushToast("success", `${workspace.name} now runs on ${target}. ${message}`.trim());
+    } catch (error) { pushToast("error", (error as Error).message); }
   };
 
   const submitWorkspaceRename = async (workspace: ProjectWorkspace) => {
@@ -649,6 +663,14 @@ export function IdeProjectTree() {
         ...launcherItems(project, "workspace"),
         { id: "copy", label: "Copy folder path", icon: Copy, testId: "ide-workspace-menu-copy", onSelect: run(() => void copyPath(workspace.folder || project.path)) },
       ],
+      isOpen ? [
+        ...computers.filter((computer) => computer.health.status !== "provisioning").map((computer) => ({
+          id: `place-${computer.id}`, label: `Move workspace to ${computer.name}`, icon: Server,
+          testId: `ide-workspace-menu-place-${computer.id}`, hint: "Keeps running while this PC is off",
+          onSelect: run(() => void placeWorkspaceOn(workspace, computer.id)) })),
+        ...(computers.length ? [{ id: "place-home", label: "Bring workspace back here", icon: ArrowUpRight,
+          testId: "ide-workspace-menu-place-home", onSelect: run(() => void placeWorkspaceOn(workspace, null)) }] : []),
+      ] : [],
       isOpen ? [
         { id: "git", label: "Git", icon: GitBranch, testId: "ide-workspace-menu-git", hint: "Commit, push, pull request, worktrees",
           onSelect: run(() => openGitPanel(workspace.id)) },
