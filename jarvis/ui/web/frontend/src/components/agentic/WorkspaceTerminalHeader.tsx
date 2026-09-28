@@ -1,7 +1,8 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties, type MouseEvent, type PointerEvent, type SVGProps } from "react";
 import { createPortal } from "react-dom";
-import { Check, GitBranch, GitFork, Maximize2, Minimize2, MoreHorizontal, Plus, X } from "lucide-react";
+import { Check, GitBranch, Maximize2, Minimize2, MoreHorizontal, Plus, X } from "lucide-react";
 import { AgentMark } from "./AgentMark";
+import { BranchIcon } from "./branchIcon";
 import { usePaneTitle } from "@/store/paneRecaps";
 import { PromptHistoryButton } from "./PromptHistoryButton";
 import { SplitAboveIcon, SplitBelowIcon, SplitLeftIcon, SplitRightIcon } from "./splitIcons";
@@ -175,7 +176,8 @@ export function WorkspaceTerminalHeader({
         <button type="button" aria-label={`${maximized ? "Restore" : "Maximize"} ${name}`} disabled={!onToggleMaximize}
           onClick={onToggleMaximize} className={ACTION_CLASS}>{maximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}</button>
         {onFork && <button type="button" data-testid={`pane-fork-${name}`} aria-label={`Fork ${name}`} title={`Fork ${name}`}
-          disabled={addDisabled} onClick={onFork} className={ACTION_CLASS}><GitFork className="h-3.5 w-3.5" /></button>}
+          disabled={addDisabled} onClick={onFork} className={`group ${ACTION_CLASS}`}>
+          <BranchIcon className="h-[15px] w-[15px] opacity-75 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" /></button>}
         <button type="button" aria-label={`Add agent beside ${name}`} disabled={addDisabled || !onAdd}
           onClick={() => onAdd?.("right")} className={ACTION_CLASS}><Plus className="h-4 w-4" /></button>
         <button type="button" aria-label={`Close ${name}`} disabled={!onClose} onClick={onClose} className={ACTION_CLASS}><X className="h-4 w-4" /></button>
@@ -201,7 +203,7 @@ export function WorkspaceTerminalHeader({
       }}>
       {([
         onRename && { label: "Rename", run: () => { setDraft(name); setRenameError(""); } },
-        onFork && !addDisabled && { label: "Fork…", Icon: GitFork, run: onFork },
+        onFork && !addDisabled && { label: "Fork…", Icon: BranchIcon, run: onFork },
         ...(onAdd && !addDisabled ? SPLIT_ITEMS.map((item, index) => ({
           label: `${item.label}…`, Icon: item.Icon, separated: index === 0, run: () => onAdd(item.direction),
         })) : []),

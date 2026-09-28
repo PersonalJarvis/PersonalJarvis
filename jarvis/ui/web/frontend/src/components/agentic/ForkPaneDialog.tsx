@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ComponentType } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { FolderGit2, GitFork, Loader2, MessagesSquare } from "lucide-react";
+import { FolderGit2, Loader2, MessagesSquare } from "lucide-react";
 import { AgentMark } from "./AgentMark";
+import { BranchIcon } from "./branchIcon";
 import { fetchForkSuggestion, type ForkSuggestion } from "@/lib/agenticIdeApi";
 import { cn } from "@/lib/utils";
 
@@ -65,7 +66,7 @@ export function ForkPaneDialog({ source, busy, onCancel, onConfirm }: Props) {
   const canSubmit = !busy && (mode === "chat" || (trimmed !== "" && !worktreeOff && info !== null));
   const submit = () => { if (canSubmit) onConfirm({ mode, branch: trimmed }); };
 
-  const options: { mode: ForkMode; title: string; body: string; Icon: typeof GitFork; disabled: boolean }[] = [
+  const options: { mode: ForkMode; title: string; body: string; Icon: ComponentType<{ className?: string }>; disabled: boolean }[] = [
     {
       mode: "chat",
       title: "Fork chat",
@@ -92,7 +93,7 @@ export function ForkPaneDialog({ source, busy, onCancel, onConfirm }: Props) {
         <form onSubmit={(event) => { event.preventDefault(); submit(); }}>
           <div className="flex items-start gap-4">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-              <GitFork className="h-[18px] w-[18px]" aria-hidden />
+              <BranchIcon className="h-[18px] w-[18px]" />
             </div>
             <div className="min-w-0 flex-1">
               <Dialog.Title className="truncate text-base font-semibold">Fork {source?.name}</Dialog.Title>
