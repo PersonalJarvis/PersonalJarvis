@@ -1,7 +1,8 @@
-import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { LockKeyhole } from "lucide-react";
 import { useT } from "@/i18n";
 import { readCachedAssistantName } from "@/lib/assistantNameCache";
+import { BootSplash } from "./BootSplash";
 
 declare global {
   interface Window {
@@ -11,7 +12,14 @@ declare global {
 }
 
 type GateState = "checking" | "locked" | "authorized";
+type SplashPhase = "shown" | "exiting" | "gone";
 const DESKTOP_TOKEN_WAIT_MS = 300;
+/** Shortest time the boot splash stays up, measured from the window opening,
+ *  so a warm start still reads as one deliberate reveal rather than a flash. */
+const SPLASH_MIN_MS = 1200;
+/** Removes the splash even when `animationend` never fires (a hidden window
+ *  throttles animations, and a test environment has none at all). */
+const SPLASH_EXIT_FALLBACK_MS = 1000;
 
 interface AuthGateProps {
   children: ReactNode;
@@ -60,6 +68,33 @@ export function AuthGate({ children }: AuthGateProps) {
   const [controlKey, setControlKey] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [errorKey, setErrorKey] = useState<string | null>(null);
+  const [splash, setSplash] = useState<SplashPhase>("shown");
+
+  // Once the gate has an answer, the splash stays on top while the app mounts
+  // underneath, then leaves with its exit animation — the app is revealed,
+  // never swapped in. Two frames after the minimum time, so the first paint of
+  // the app has happened before the splash starts to go.
+  useEffect(() => {
+    if (state === "checking" || splash !== "shown") return;
+    const openedAt = window.__JARVIS_BOOT_STARTED_AT ?? 0;
+    const wait = Math.max(0, SPLASH_MIN_MS - (performance.now() - openedAt));
+    let frame = 0;
+    const timer = window.setTimeout(() => {
+      frame = requestAnimationFrame(() => {
+        frame = requestAnimationFrame(() => setSplash("exiting"));
+      });
+    }, wait);
+    return () => {
+      window.clearTimeout(timer);
+      cancelAnimationFrame(frame);
+    };
+  }, [state, splash]);
+
+  useEffect(() => {
+    if (splash !== "exiting") return;
+    const timer = window.setTimeout(() => setSplash("gone"), SPLASH_EXIT_FALLBACK_MS);
+    return () => window.clearTimeout(timer);
+  }, [splash]);
 
   // While the access probe is pending, poll the (always instantly answered)
   // health endpoint. During a cold boot the serve-first bootstrap HOLDS every
@@ -172,95 +207,93 @@ export function AuthGate({ children }: AuthGateProps) {
     }
   };
 
-  if (state === "authorized") return <>{children}</>;
-
-  if (state === "checking") {
-    const statusLabel = t(backendWarming ? "auth_gate.starting" : "auth_gate.checking");
-    return (
-      <main id="jarvis-auth-splash" style={{ "--jbs-shift": bootShift.current } as CSSProperties}>
-        <div id="jarvis-boot-splash">
-          <div className="boot-emblem" aria-hidden="true">
-            <span className="boot-halo" />
-            <svg className="boot-wave" viewBox="0 0 1200 400" preserveAspectRatio="none">
-              <path className="wave-glow" d="M0 200 C160 200 260 192 360 200 S500 250 600 200 S760 150 840 200 S1040 200 1200 200" />
-              <path d="M0 200 C160 200 260 192 360 200 S500 250 600 200 S760 150 840 200 S1040 200 1200 200" />
-              <path className="wave-echo" d="M0 98 C180 98 280 112 380 98 S510 72 600 98 S730 124 820 98 S1020 98 1200 98" />
-              <path className="wave-echo" d="M0 302 C180 302 280 288 380 302 S510 328 600 302 S730 276 820 302 S1020 302 1200 302" />
-            </svg>
-            <span className="boot-light left" /><span className="boot-light right" />
-            <img className="boot-mark" src="/jarvis-gigi-256.png" alt="" width="220" height="220" />
-          </div>
-          <div className="name">{readCachedAssistantName("")}</div>
-          <div className="sub" role="status" aria-live="polite" aria-label={statusLabel}>
-            {backendWarming ? (
-              <>
-                {statusLabel.replace(/\s*(?:…|\.{3})\s*$/, "")}
-                <span className="boot-ellipsis" aria-hidden="true">
-                  <span>.</span><span>.</span><span>.</span>
-                </span>
-              </>
-            ) : statusLabel}
-          </div>
-        </div>
+  const statusLabel = t(backendWarming ? "auth_gate.starting" : "auth_gate.checking");
+  // The wrapper is not decoration: the blank-window watchdog in index.html
+  // treats a bare splash in #root as "bundle still loading" and reloads it
+  // after its grace period. A held cold boot can legitimately outlast that,
+  // so the gate's splash must count as the app being up.
+  const splashLayer =
+    splash === "gone" ? null : (
+      <main id="jarvis-auth-splash">
+        <BootSplash
+          name={readCachedAssistantName("")}
+          status={statusLabel}
+          shift={bootShift.current}
+          exiting={splash === "exiting"}
+          onExited={() => setSplash("gone")}
+        />
       </main>
+    );
+
+  if (state === "checking") return splashLayer;
+
+  if (state === "authorized") {
+    return (
+      <>
+        {children}
+        {splashLayer}
+      </>
     );
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
-      <form
-        className="w-full max-w-sm rounded-xl border border-border bg-card p-6"
-        onSubmit={submit}
-      >
-        <div className="mb-5 flex items-start gap-3">
-          <div className="rounded-lg bg-primary/10 p-2 text-primary">
-            <LockKeyhole className="h-5 w-5" aria-hidden="true" />
+    <>
+      <main className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
+        <form
+          className="w-full max-w-sm rounded-xl border border-border bg-card p-6"
+          onSubmit={submit}
+        >
+          <div className="mb-5 flex items-start gap-3">
+            <div className="rounded-lg bg-primary/10 p-2 text-primary">
+              <LockKeyhole className="h-5 w-5" aria-hidden="true" />
+            </div>
+            <div>
+              <h1 className="text-base font-semibold">{t("auth_gate.title")}</h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {t("auth_gate.subtitle")}
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-base font-semibold">{t("auth_gate.title")}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t("auth_gate.subtitle")}
+
+          <label className="mb-1.5 block text-sm font-medium" htmlFor="control-key">
+            {t("auth_gate.control_key")}
+          </label>
+          <input
+            id="control-key"
+            autoComplete="current-password"
+            autoFocus
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+            disabled={submitting}
+            onChange={(event) => setControlKey(event.target.value)}
+            placeholder={t("auth_gate.placeholder")}
+            type="password"
+            value={controlKey}
+          />
+          {errorKey && (
+            <p className="mt-2 text-sm text-destructive" role="alert">
+              {t(errorKey)}
+            </p>
+          )}
+          <button
+            className="mt-4 w-full rounded-md bg-foreground/70 px-3 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={!controlKey.trim() || submitting}
+            type="submit"
+          >
+            {t(submitting ? "auth_gate.submitting" : "auth_gate.submit")}
+          </button>
+
+          <div className="mt-5 border-t border-border pt-4">
+            <h2 className="text-xs font-medium">{t("auth_gate.where_title")}</h2>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              {t("auth_gate.where_hint")}
+            </p>
+            <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+              {t("auth_gate.where_hint_server")}
             </p>
           </div>
-        </div>
-
-        <label className="mb-1.5 block text-sm font-medium" htmlFor="control-key">
-          {t("auth_gate.control_key")}
-        </label>
-        <input
-          id="control-key"
-          autoComplete="current-password"
-          autoFocus
-          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
-          disabled={submitting}
-          onChange={(event) => setControlKey(event.target.value)}
-          placeholder={t("auth_gate.placeholder")}
-          type="password"
-          value={controlKey}
-        />
-        {errorKey && (
-          <p className="mt-2 text-sm text-destructive" role="alert">
-            {t(errorKey)}
-          </p>
-        )}
-        <button
-          className="mt-4 w-full rounded-md bg-foreground/70 px-3 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={!controlKey.trim() || submitting}
-          type="submit"
-        >
-          {t(submitting ? "auth_gate.submitting" : "auth_gate.submit")}
-        </button>
-
-        <div className="mt-5 border-t border-border pt-4">
-          <h2 className="text-xs font-medium">{t("auth_gate.where_title")}</h2>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            {t("auth_gate.where_hint")}
-          </p>
-          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-            {t("auth_gate.where_hint_server")}
-          </p>
-        </div>
-      </form>
-    </main>
+        </form>
+      </main>
+      {splashLayer}
+    </>
   );
 }

@@ -62,8 +62,19 @@
     <style>
       /* Boot splash — painted from index.html the instant the window opens, so
          there is NO blank screen while the (large) JS bundle loads + React
-         mounts. React's createRoot clears #root on its first render, so this is
-         replaced by the real UI automatically.
+         mounts. React's createRoot clears #root on its first render; AuthGate
+         then renders the SAME markup (src/components/BootSplash.tsx), carries
+         on in the same animation phase through --jbs-shift, and plays the exit
+         once the app is mounted underneath. Keep the two markups in lockstep.
+
+         Choreography, measured from the moment the window opens:
+           0.00s  the ambient light blooms in behind where the mark will sit
+           0.12s  the mark resolves (scale + blur + lift)
+           0.50s  the name tracks in from wide letter-spacing
+           0.95s  a glint passes over the mark (repeats every 5.2 s)
+           1.00s  the hairline progress and the status line fade in
+           exit   the stage lifts toward the viewer while the ground dissolves
+                  into the app underneath (.jbs-exit, 0.62 s)
 
          The two grounds match the pywebview window colour for their theme
          (jarvis/ui/theme.py WINDOW_BACKGROUND) and --background in index.css,
@@ -73,176 +84,196 @@
         --jbs-bg: #ffffff;
         --jbs-accent: #096cdc;
         --jbs-ring: rgba(9, 108, 220, 0.22);
-        --jbs-wave: rgba(9, 108, 220, 0.5);
-        --jbs-glow: rgba(9, 108, 220, 0.2);
+        --jbs-glow: rgba(9, 108, 220, 0.09);
+        --jbs-floor: rgba(9, 108, 220, 0.04);
+        --jbs-vignette: rgba(0, 0, 0, 0.035);
+        --jbs-track: rgba(0, 0, 0, 0.08);
+        --jbs-rim: rgba(0, 0, 0, 0.1);
+        --jbs-shadow: rgba(0, 0, 0, 0.2);
         --jbs-name: #171717;
         --jbs-sub: #666666;
+        --jbs-ease: cubic-bezier(.16, 1, .3, 1);
       }
       :root.dark {
         --jbs-bg: #0a0a0a;
         --jbs-accent: #3d8bff;
         --jbs-ring: rgba(61, 139, 255, 0.2);
-        --jbs-wave: rgba(61, 139, 255, 0.64);
-        --jbs-glow: rgba(61, 139, 255, 0.34);
+        --jbs-glow: rgba(61, 139, 255, 0.17);
+        --jbs-floor: rgba(61, 139, 255, 0.06);
+        --jbs-vignette: rgba(0, 0, 0, 0.6);
+        --jbs-track: rgba(255, 255, 255, 0.08);
+        --jbs-rim: rgba(255, 255, 255, 0.16);
+        --jbs-shadow: rgba(0, 0, 0, 0.65);
         --jbs-name: #fafafa;
         --jbs-sub: #a1a1a1;
       }
       html, body { margin: 0; height: 100%; background: var(--jbs-bg); }
       #jarvis-boot-splash {
-        position: fixed; inset: 0; display: flex; flex-direction: column;
-        align-items: center; justify-content: center; gap: 12px;
-        background: radial-gradient(ellipse at 50% 45%, var(--jbs-glow), transparent 44%), var(--jbs-bg);
-        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+        --jbs-mark: clamp(92px, 12vmin, 136px);
+        position: fixed; inset: 0; z-index: 2147483000;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        overflow: hidden; isolation: isolate;
+        background: var(--jbs-bg);
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable Display", "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
         color: var(--jbs-accent);
       }
-      #jarvis-boot-splash .boot-emblem {
-        position: relative; width: 100%; height: min(54vh, 560px);
-        display: grid; place-items: center; isolation: isolate;
+      /* Ambient light: one soft pool behind the mark and a faint floor glow,
+         drifting so slowly that it reads as depth rather than motion. */
+      #jarvis-boot-splash::before {
+        content: ""; position: absolute; inset: -20%; z-index: -2;
+        background:
+          radial-gradient(34% 30% at 50% 44%, var(--jbs-glow), transparent 72%),
+          radial-gradient(60% 46% at 50% 118%, var(--jbs-floor), transparent 72%);
+        animation: jbs-field-in 1.6s var(--jbs-ease) both,
+                   jbs-field-drift 9s ease-in-out infinite alternate;
+        animation-delay: var(--jbs-shift, 0s), calc(1.6s + var(--jbs-shift, 0s));
       }
-      #jarvis-boot-splash .boot-emblem::before {
-        content: ""; position: absolute; inset: 0;
-        background: radial-gradient(ellipse at center, var(--jbs-glow), transparent 64%);
-        animation: jbs-impulse 2.5s cubic-bezier(.22, 1, .36, 1) both;
-        animation-delay: calc(.35s + var(--jbs-shift, 0s));
+      /* Vignette plus a faint grain. The grain is not texture for its own
+         sake: it dithers the 8-bit steps a wide, soft gradient otherwise shows
+         as visible rings on a dark ground. */
+      #jarvis-boot-splash::after {
+        content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+        background:
+          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.05'/%3E%3C/svg%3E"),
+          radial-gradient(ellipse at 50% 45%, transparent 50%, var(--jbs-vignette));
       }
-      #jarvis-boot-splash .boot-halo {
-        position: absolute; width: 48%; height: 94%; border-radius: 50%;
-        background: radial-gradient(ellipse, var(--jbs-glow), transparent 68%);
-        opacity: .18;
-        animation: jbs-breathe 4s ease-in-out infinite;
-        animation-delay: calc(1.7s + var(--jbs-shift, 0s));
+      #jarvis-boot-splash .jbs-stage {
+        position: relative; display: grid; place-items: center;
+        width: var(--jbs-mark); height: var(--jbs-mark);
       }
-      #jarvis-boot-splash .boot-wave {
-        position: absolute; inset: 0; width: 100%; height: 100%;
-        overflow: visible; pointer-events: none;
+      #jarvis-boot-splash .jbs-aura {
+        position: absolute; inset: -85%; border-radius: 50%; pointer-events: none;
+        background: radial-gradient(closest-side, var(--jbs-glow), transparent);
+        animation: jbs-aura-in 1.4s var(--jbs-ease) both,
+                   jbs-aura-breathe 4.8s ease-in-out infinite;
+        animation-delay: calc(.05s + var(--jbs-shift, 0s)), calc(1.45s + var(--jbs-shift, 0s));
       }
-      #jarvis-boot-splash .boot-wave path {
-        --jbs-peak-opacity: .7;
-        --jbs-breath-opacity: .26;
-        fill: none; stroke: var(--jbs-wave); stroke-linecap: round;
-        stroke-width: 1.4; vector-effect: non-scaling-stroke;
-        stroke-dasharray: 1400; stroke-dashoffset: 1400;
-        animation: jbs-draw 2.2s cubic-bezier(.22, 1, .36, 1) both,
-                   jbs-wave-breathe 4s ease-in-out infinite;
-        animation-delay: calc(.15s + var(--jbs-shift, 0s)),
-                         calc(2.4s + var(--jbs-shift, 0s));
+      #jarvis-boot-splash .jbs-mark {
+        position: relative; width: 100%; height: 100%;
+        animation: jbs-mark-in 1.1s var(--jbs-ease) both;
+        animation-delay: calc(.12s + var(--jbs-shift, 0s));
       }
-      #jarvis-boot-splash .boot-wave .wave-glow {
-        --jbs-peak-opacity: .42;
-        --jbs-breath-opacity: .1;
-        stroke: var(--jbs-accent); stroke-width: 36;
-        filter: blur(19px);
+      #jarvis-boot-splash .jbs-mark img {
+        display: block; width: 100%; height: 100%;
+        filter: drop-shadow(0 0 .5px var(--jbs-rim)) drop-shadow(0 22px 44px var(--jbs-shadow));
+        -webkit-user-drag: none; user-select: none;
       }
-      #jarvis-boot-splash .boot-wave .wave-echo {
-        --jbs-peak-opacity: .36;
-        --jbs-breath-opacity: .12;
-        stroke-width: .8;
-        animation-delay: calc(.3s + var(--jbs-shift, 0s)),
-          calc(2.4s + var(--jbs-shift, 0s));
+      /* The glint: a skewed band of light clipped to the mark's own silhouette
+         (the logo is its own mask), so it never spills past the icon edge. */
+      #jarvis-boot-splash .jbs-sheen {
+        position: absolute; inset: 0; overflow: hidden; pointer-events: none;
+        -webkit-mask: url(/jarvis-gigi-256.png) center / 100% 100% no-repeat;
+        mask: url(/jarvis-gigi-256.png) center / 100% 100% no-repeat;
       }
-      #jarvis-boot-splash .boot-wave .wave-echo:last-child {
-        animation-delay: calc(.4s + var(--jbs-shift, 0s)),
-          calc(2.4s + var(--jbs-shift, 0s));
-      }
-      #jarvis-boot-splash .boot-light {
-        position: absolute; top: 13%; left: 42%; width: 16%; height: 74%;
-        border-radius: 50%; pointer-events: none;
-        background: radial-gradient(ellipse, var(--jbs-glow), transparent 66%);
-        opacity: 0;
-      }
-      #jarvis-boot-splash .boot-light.left {
-        animation: jbs-pass-left 1.8s cubic-bezier(.22, 1, .36, 1) both;
-        animation-delay: calc(.45s + var(--jbs-shift, 0s));
-      }
-      #jarvis-boot-splash .boot-light.right {
-        animation: jbs-pass-right 1.8s cubic-bezier(.22, 1, .36, 1) both;
-        animation-delay: calc(.45s + var(--jbs-shift, 0s));
-      }
-      #jarvis-boot-splash .boot-mark {
-        position: relative; width: min(20vw, 220px); height: auto;
-        aspect-ratio: 1; border-radius: 22%;
-        box-shadow: 0 18px 64px rgba(0, 0, 0, 0.24), 0 0 0 1px var(--jbs-ring);
-        animation: jbs-mark-in 1.35s cubic-bezier(.22, 1, .36, 1) both;
-        animation-delay: calc(.15s + var(--jbs-shift, 0s));
+      #jarvis-boot-splash .jbs-sheen::before {
+        content: ""; position: absolute; top: -10%; bottom: -10%; left: 0; width: 45%;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .22) 50%, transparent);
+        transform: translateX(-160%) skewX(-18deg);
+        animation: jbs-sheen 5.2s cubic-bezier(.45, 0, .2, 1) infinite;
+        animation-delay: calc(.95s + var(--jbs-shift, 0s));
       }
       #jarvis-boot-splash .name {
-        font-size: 22px; font-weight: 650; letter-spacing: 0.015em;
+        margin-top: 30px;
+        font-size: 21px; font-weight: 600; letter-spacing: .02em; line-height: 1.2;
         color: var(--jbs-name);
+        animation: jbs-name-in 1.1s var(--jbs-ease) both;
+        animation-delay: calc(.5s + var(--jbs-shift, 0s));
       }
       #jarvis-boot-splash .name:empty { display: none; }
+      #jarvis-boot-splash .jbs-progress {
+        position: relative; overflow: hidden;
+        width: 116px; height: 2px; margin-top: 22px; border-radius: 2px;
+        background: var(--jbs-track);
+        animation: jbs-fade-in .8s ease both;
+        animation-delay: calc(1s + var(--jbs-shift, 0s));
+      }
+      #jarvis-boot-splash .jbs-progress span {
+        position: absolute; top: 0; bottom: 0; left: 0; width: 42%; border-radius: inherit;
+        background: linear-gradient(90deg, transparent, var(--jbs-accent) 55%, transparent);
+        animation: jbs-scan 1.6s cubic-bezier(.65, 0, .35, 1) infinite;
+        animation-delay: calc(1s + var(--jbs-shift, 0s));
+      }
       #jarvis-boot-splash .sub {
-        font-size: 16px; color: var(--jbs-sub); letter-spacing: 0.08em;
-        text-align: center;
+        margin-top: 14px;
+        font-size: 12.5px; letter-spacing: .05em; line-height: 1.5;
+        color: var(--jbs-sub); text-align: center;
+        animation: jbs-fade-in .8s ease both;
+        animation-delay: calc(1.05s + var(--jbs-shift, 0s));
       }
-      #jarvis-boot-splash .boot-ellipsis {
-        display: inline-flex; white-space: nowrap;
+      /* Exit — added by AuthGate once the app is mounted underneath. */
+      #jarvis-boot-splash.jbs-exit {
+        pointer-events: none;
+        animation: jbs-exit .62s cubic-bezier(.4, 0, .2, 1) forwards;
       }
-      #jarvis-boot-splash .boot-ellipsis span {
-        display: inline-block; opacity: .38;
-        animation: jbs-dot 1.35s ease-in-out infinite;
-        animation-delay: calc(var(--jbs-shift, 0s) + var(--jbs-dot-delay, 0s));
+      #jarvis-boot-splash.jbs-exit .jbs-stage {
+        animation: jbs-stage-out .62s cubic-bezier(.4, 0, .2, 1) forwards;
       }
-      #jarvis-boot-splash .boot-ellipsis span:nth-child(2) { --jbs-dot-delay: .18s; }
-      #jarvis-boot-splash .boot-ellipsis span:nth-child(3) { --jbs-dot-delay: .36s; }
-      @keyframes jbs-dot {
-        0%, 60%, 100% { opacity: .38; transform: translateY(0); }
-        25% { opacity: 1; transform: translateY(-3px); }
+      #jarvis-boot-splash.jbs-exit .name,
+      #jarvis-boot-splash.jbs-exit .jbs-progress,
+      #jarvis-boot-splash.jbs-exit .sub {
+        animation: jbs-fade-out .28s ease forwards;
       }
+      @keyframes jbs-field-in { from { opacity: 0; transform: scale(.85); } }
+      @keyframes jbs-field-drift { to { transform: translate3d(0, -1.5%, 0) scale(1.05); } }
+      @keyframes jbs-aura-in { from { opacity: 0; transform: scale(.5); } }
+      @keyframes jbs-aura-breathe { 50% { opacity: .62; transform: scale(1.07); } }
       @keyframes jbs-mark-in {
-        from { opacity: 0; transform: scale(.94); }
-        to { opacity: 1; transform: scale(1); }
+        from { opacity: 0; transform: translateY(8px) scale(.86); filter: blur(12px); }
+        to { opacity: 1; transform: none; filter: blur(0); }
       }
-      @keyframes jbs-draw {
-        from { opacity: 0; stroke-dashoffset: 1400; }
-        to { opacity: var(--jbs-peak-opacity); stroke-dashoffset: 0; }
+      @keyframes jbs-sheen {
+        0% { transform: translateX(-160%) skewX(-18deg); }
+        24%, 100% { transform: translateX(300%) skewX(-18deg); }
       }
-      @keyframes jbs-wave-breathe { 50% { opacity: var(--jbs-breath-opacity); } }
-      @keyframes jbs-breathe { 50% { opacity: .48; transform: scale(1.08); } }
-      @keyframes jbs-impulse {
-        0% { opacity: 0; transform: scaleX(.08); }
-        24% { opacity: .82; }
-        100% { opacity: 0; transform: scaleX(1.24); }
+      @keyframes jbs-name-in {
+        from { opacity: 0; letter-spacing: .34em; filter: blur(6px); }
+        to { opacity: 1; letter-spacing: .02em; filter: blur(0); }
       }
-      @keyframes jbs-pass-left {
-        0% { opacity: 0; transform: translateX(0) scale(.3); }
-        25% { opacity: .9; }
-        100% { opacity: 0; transform: translateX(-260%) scale(1.8); }
+      @keyframes jbs-fade-in { from { opacity: 0; } }
+      @keyframes jbs-fade-out { to { opacity: 0; } }
+      @keyframes jbs-pulse { 50% { opacity: .35; } }
+      @keyframes jbs-scan {
+        from { transform: translateX(-100%); }
+        to { transform: translateX(240%); }
       }
-      @keyframes jbs-pass-right {
-        0% { opacity: 0; transform: translateX(0) scale(.3); }
-        25% { opacity: .9; }
-        100% { opacity: 0; transform: translateX(260%) scale(1.8); }
+      @keyframes jbs-exit { 0%, 30% { opacity: 1; } 100% { opacity: 0; } }
+      @keyframes jbs-stage-out {
+        to { opacity: 0; transform: scale(1.1); filter: blur(6px); }
       }
       @media (prefers-reduced-motion: reduce) {
-        #jarvis-boot-splash .boot-emblem::before,
-        #jarvis-boot-splash .boot-halo,
-        #jarvis-boot-splash .boot-wave path,
-        #jarvis-boot-splash .boot-mark,
-        #jarvis-boot-splash .boot-ellipsis span { animation: none; }
-        #jarvis-boot-splash .boot-emblem::before { opacity: .1; transform: none; }
-        #jarvis-boot-splash .boot-wave path { stroke-dashoffset: 0; opacity: .38; }
-        #jarvis-boot-splash .boot-light { display: none; }
-        #jarvis-boot-splash .boot-ellipsis span { opacity: 1; transform: none; }
+        #jarvis-boot-splash::before,
+        #jarvis-boot-splash .jbs-aura,
+        #jarvis-boot-splash .jbs-mark,
+        #jarvis-boot-splash .name,
+        #jarvis-boot-splash .jbs-progress,
+        #jarvis-boot-splash .sub,
+        #jarvis-boot-splash.jbs-exit .jbs-stage,
+        #jarvis-boot-splash.jbs-exit .name,
+        #jarvis-boot-splash.jbs-exit .jbs-progress,
+        #jarvis-boot-splash.jbs-exit .sub { animation: none; }
+        #jarvis-boot-splash .jbs-sheen { display: none; }
+        #jarvis-boot-splash .jbs-progress span {
+          width: 100%; animation: jbs-pulse 2s ease-in-out infinite;
+        }
+        #jarvis-boot-splash.jbs-exit { animation: jbs-fade-out .2s ease forwards; }
       }
       @media (max-height: 420px) {
-        #jarvis-boot-splash .boot-emblem { height: 180px; }
-        #jarvis-boot-splash .boot-mark { width: 90px; }
+        #jarvis-boot-splash { --jbs-mark: 72px; }
+        #jarvis-boot-splash .name { margin-top: 18px; }
       }
     </style>
   </head>
   <body>
     <div id="root">
       <div id="jarvis-boot-splash">
-        <div class="boot-emblem" aria-hidden="true">
-          <span class="boot-halo"></span>
-          <svg class="boot-wave" viewBox="0 0 1200 400" preserveAspectRatio="none">
-            <path class="wave-glow" d="M0 200 C160 200 260 192 360 200 S500 250 600 200 S760 150 840 200 S1040 200 1200 200" />
-            <path d="M0 200 C160 200 260 192 360 200 S500 250 600 200 S760 150 840 200 S1040 200 1200 200" />
-            <path class="wave-echo" d="M0 98 C180 98 280 112 380 98 S510 72 600 98 S730 124 820 98 S1020 98 1200 98" />
-            <path class="wave-echo" d="M0 302 C180 302 280 288 380 302 S510 328 600 302 S730 276 820 302 S1020 302 1200 302" />
-          </svg>
-          <span class="boot-light left"></span><span class="boot-light right"></span>
-          <img class="boot-mark" src="/jarvis-gigi-256.png" alt="" width="220" height="220" />
+        <div class="jbs-stage" aria-hidden="true">
+          <span class="jbs-aura"></span>
+          <div class="jbs-mark">
+            <img src="/jarvis-gigi-256.png" alt="" width="256" height="256" />
+            <span class="jbs-sheen"></span>
+          </div>
         </div>
         <!-- Painted synchronously by the inline script below from the cached
              assistant name (the user's chosen wake word, e.g. "Nico"). Left
@@ -250,9 +281,8 @@
              cached — shows only the emblem, never a hardcoded / trademarked
              name. -->
         <div class="name"></div>
-        <div class="sub" role="status" aria-live="polite" aria-label="Starting up…">
-          Starting up<span class="boot-ellipsis" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
-        </div>
+        <div class="jbs-progress" aria-hidden="true"><span></span></div>
+        <div class="sub" role="status" aria-live="polite">Starting up…</div>
       </div>
     </div>
     <script>
@@ -419,16 +449,15 @@
           var box = document.createElement("div");
           box.id = "jarvis-boot-splash";
           var visual = document.createElement("div");
-          visual.className = "boot-emblem";
+          visual.className = "jbs-stage";
           visual.setAttribute("aria-hidden", "true");
-          visual.innerHTML = '<span class="boot-halo"></span>' +
-            '<svg class="boot-wave" viewBox="0 0 1200 400" preserveAspectRatio="none">' +
-            '<path class="wave-glow" d="M0 200 C160 200 260 192 360 200 S500 250 600 200 S760 150 840 200 S1040 200 1200 200"/>' +
-            '<path d="M0 200 C160 200 260 192 360 200 S500 250 600 200 S760 150 840 200 S1040 200 1200 200"/>' +
-            '<path class="wave-echo" d="M0 98 C180 98 280 112 380 98 S510 72 600 98 S730 124 820 98 S1020 98 1200 98"/>' +
-            '<path class="wave-echo" d="M0 302 C180 302 280 288 380 302 S510 328 600 302 S730 276 820 302 S1020 302 1200 302"/>' +
-            '</svg><span class="boot-light left"></span><span class="boot-light right"></span>' +
-            '<img class="boot-mark" src="/jarvis-gigi-256.png" alt="" width="220" height="220">';
+          visual.innerHTML = '<span class="jbs-aura"></span><div class="jbs-mark">' +
+            '<img src="/jarvis-gigi-256.png" alt="" width="256" height="256">' +
+            '<span class="jbs-sheen"></span></div>';
+          var progress = document.createElement("div");
+          progress.className = "jbs-progress";
+          progress.setAttribute("aria-hidden", "true");
+          progress.appendChild(document.createElement("span"));
           var name = document.createElement("div");
           name.className = "name";
           try {
@@ -442,6 +471,7 @@
           sub.textContent = "Updating interface…";
           box.appendChild(visual);
           box.appendChild(name);
+          box.appendChild(progress);
           box.appendChild(sub);
           root.appendChild(box);
         }
