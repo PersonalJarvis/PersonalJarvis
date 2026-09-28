@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUpRight, Check, ChevronDown, ChevronRight, Copy, Folder, FolderOpen, FolderPlus, Loader2, Mic, MoreHorizontal, Pencil, Pin, PinOff, Plus, Power, SlidersHorizontal, Trash2, X, type LucideIcon } from "lucide-react";
-import { ChatLibraryError, deleteProject, openProject, patchProject, reorderProjects, revealProject } from "@/lib/chatLibraryApi";
+import { ArrowUpRight, Check, ChevronDown, ChevronRight, Copy, CopyPlus, Folder, FolderOpen, FolderPlus, Globe, Loader2, Mic, MoreHorizontal, OctagonPause, Pencil, Pin, PinOff, Plus, SquareCode, Trash2, X, type LucideIcon } from "lucide-react";
+import { ChatLibraryError, deleteProject, openProject, patchProject, reorderProjects, revealProject, fetchProjectLaunchers, openProjectIn, type ProjectLaunchers } from "@/lib/chatLibraryApi";
 import { robustCopy } from "@/lib/clipboard";
-import { closeWorkspace, removeWorkspace, renameWorkspace, IdeApiError, reorderWorkspaces, type IdeProject, type ProjectWorkspace } from "@/lib/agenticIdeApi";
+import { addTerminal, fetchWorkspacePanes, interruptTerminal, removeWorkspace, renameWorkspace, startIdeSession, IdeApiError, reorderWorkspaces, type IdeProject, type ProjectWorkspace, type WorkspacePaneRow } from "@/lib/agenticIdeApi";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 
@@ -69,7 +69,6 @@ export function IdeProjectTree() {
   const connectProject = useIdeProjectsStore((state) => state.connectProject);
   const newWorkspace = useIdeProjectsStore((state) => state.newWorkspace);
   const activateWorkspace = useIdeProjectsStore((state) => state.activateWorkspace);
-  const openWorkspaceOptions = useIdeProjectsStore((state) => state.openWorkspaceOptions);
   const toggleVoice = useIdeProjectsStore((state) => state.toggleVoice);
   const requestRefresh = useIdeProjectsStore((state) => state.requestRefresh);
   const pushToast = useEventStore((state) => state.pushToast);
@@ -89,8 +88,12 @@ export function IdeProjectTree() {
   >(null);
   const [renamingWorkspaceId, setRenamingWorkspaceId] = useState<string | null>(null);
   const [draftWorkspaceName, setDraftWorkspaceName] = useState("");
-  // "close" keeps a restorable row; "remove" makes the row go away for good.
-  const [confirmWorkspace, setConfirmWorkspace] = useState<{ projectId: string; workspaceId: string; mode: "close" | "remove" } | null>(null);
+  const [confirmWorkspace, setConfirmWorkspace] = useState<{ projectId: string; workspaceId: string } | null>(null);
+  // What the open menu can offer beyond the row itself: the project's editors
+  // and remote, and the panes of the workspace. Fetched when a menu opens, so
+  // an item is only shown when it can actually run.
+  const [launchers, setLaunchers] = useState<Record<string, ProjectLaunchers>>({});
+  const [menuPanes, setMenuPanes] = useState<WorkspacePaneRow[] | null>(null);
   const [confirmProject, setConfirmProject] = useState<string | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const sawProjectSnapshot = useRef(false);
@@ -220,6 +223,62 @@ export function IdeProjectTree() {
     catch (error) { pushToast("error", revealErrorMessage(error)); }
   };
 
+  const menuProjectId = contextMenu?.projectId ?? null;
+  const menuWorkspaceId = contextMenu?.kind === "workspace" ? contextMenu.workspaceId : null;
+  useEffect(() => {
+    if (!menuProjectId) return;
+    let live = true;
+    fetchProjectLaunchers(menuProjectId)
+      .then((found) => { if (live) setLaunchers((previous) => ({ ...previous, [menuProjectId]: found })); })
+      // A headless or older backend has no launchers; the menu simply omits them.
+      .catch(() => { if (live) setLaunchers((previous) => ({ ...previous, [menuProjectId]: { file_manager: false, editors: [], remote_url: null, remote_label: null } })); });
+    return () => { live = false; };
+  }, [menuProjectId]);
+
+  useEffect(() => {
+    setMenuPanes(null);
+    if (!menuWorkspaceId) return;
+    let live = true;
+    fetchWorkspacePanes()
+      .then((found) => { if (live) setMenuPanes(found.panes.filter((pane) => pane.workspace_id === menuWorkspaceId)); })
+      .catch(() => { if (live) setMenuPanes([]); });
+    return () => { live = false; };
+  }, [menuWorkspaceId]);
+
+  const openIn = async (projectId: string, target: string) => {
+    try { await openProjectIn(projectId, target); }
+    catch (error) { pushToast("error", revealErrorMessage(error)); }
+  };
+
+  /** One more pane of the workspace's own agent, then bring the workspace to the front. */
+  const addAgent = async (workspace: ProjectWorkspace) => {
+    try {
+      await addTerminal({ workspace_id: workspace.id });
+      if (workspace.id !== activeWorkspaceId) activateWorkspace(workspace.id);
+      requestRefresh();
+    } catch (error) { pushToast("error", (error as Error).message); }
+  };
+
+  /** A second workspace in the same folder with the same line-up of agents, freshly started. */
+  const duplicateWorkspace = async (project: IdeProject, workspace: ProjectWorkspace, panes: WorkspacePaneRow[]) => {
+    try {
+      await startIdeSession(
+        workspace.folder || project.path,
+        panes.map((pane) => ({ agent: pane.agent, ...(pane.account ? { account: pane.account } : {}) })),
+        { projectId: project.id, name: `${workspace.name} copy` },
+      );
+      requestRefresh();
+    } catch (error) { pushToast("error", (error as Error).message); }
+  };
+
+  /** Escape to every agent that is busy — they stop the current task and keep running. */
+  const interruptAgents = async (workspace: ProjectWorkspace, panes: WorkspacePaneRow[]) => {
+    const results = await Promise.allSettled(panes.map((pane) => interruptTerminal(pane.key, workspace.id)));
+    const failed = results.filter((result) => result.status === "rejected").length;
+    if (failed) pushToast("error", `${failed} of ${panes.length} agents could not be interrupted.`);
+    else pushToast("success", `Interrupted ${panes.length} ${panes.length === 1 ? "agent" : "agents"}.`);
+  };
+
   const submitWorkspaceRename = async (workspace: ProjectWorkspace) => {
     const name = draftWorkspaceName.trim();
     if (!name || name === workspace.name) {
@@ -251,8 +310,7 @@ export function IdeProjectTree() {
     }
     setConfirmBusy(true);
     try {
-      if (confirmWorkspace.mode === "close") await closeWorkspace(target.workspace.id);
-      else await removeWorkspace(target.workspace.id);
+      await removeWorkspace(target.workspace.id);
       setConfirmWorkspace(null);
       setContextMenu(null);
       requestRefresh();
@@ -535,11 +593,27 @@ export function IdeProjectTree() {
 
   const run = (action: () => void) => () => { setContextMenu(null); action(); };
 
+  /** Up to two installed editors and the hosted remote, as menu items. */
+  const launcherItems = (project: IdeProject, scope: "project" | "workspace"): TreeMenuItem[] => {
+    const found = launchers[project.id];
+    if (!found) return [];
+    const items: TreeMenuItem[] = found.editors.slice(0, 2).map((editor) => ({
+      id: `editor-${editor.id}`, label: `Open in ${editor.label}`, icon: SquareCode, testId: `ide-${scope}-menu-editor-${editor.id}`,
+      onSelect: run(() => void openIn(project.id, editor.id)),
+    }));
+    if (scope === "project" && found.file_manager) {
+      items.push({ id: "reveal", label: FILE_MANAGER_LABEL, icon: FolderOpen, testId: "ide-project-menu-reveal", onSelect: run(() => void revealFolder(project.id)) });
+    }
+    if (scope === "project" && found.remote_url) {
+      items.push({ id: "remote", label: `Open on ${found.remote_label ?? "the web"}`, icon: Globe, testId: "ide-project-menu-remote", onSelect: run(() => void openIn(project.id, "remote")) });
+    }
+    return items;
+  };
+
   const projectMenuSections = (project: IdeProject): TreeMenuItem[][] => [
     [
       { id: "new", label: "New workspace", icon: FolderPlus, testId: "ide-project-menu-new", onSelect: run(() => newWorkspace(project.id)) },
-      { id: "reveal", label: "Open folder", icon: FolderOpen, testId: "ide-project-menu-reveal", disabled: project.exists === false, onSelect: run(() => void revealFolder(project.id)) },
-      { id: "copy", label: "Copy folder path", icon: Copy, testId: "ide-project-menu-copy", onSelect: run(() => void copyPath(project.path)) },
+      ...launcherItems(project, "project"),
     ],
     [
       { id: "rename", label: "Rename project", icon: Pencil, testId: "ide-project-menu-rename", onSelect: run(() => { setDraftName(project.name); setRenamingId(project.id); }) },
@@ -552,26 +626,33 @@ export function IdeProjectTree() {
 
   const workspaceMenuSections = (project: IdeProject, workspace: ProjectWorkspace): TreeMenuItem[][] => {
     const isOpen = workspace.status === "open";
-    const isActive = workspace.id === activeWorkspaceId;
-    const unavailable = !isOpen && !workspace.restorable;
+    const panes = menuPanes ?? [];
+    const busy = panes.filter((pane) => pane.activity === "working" || pane.activity === "asking");
+    const agentActions: TreeMenuItem[] = isOpen ? [
+      { id: "add", label: "Add another agent", icon: Plus, testId: "ide-workspace-menu-add", onSelect: run(() => void addAgent(workspace)) },
+      { id: "duplicate", label: "Duplicate workspace", icon: CopyPlus, testId: "ide-workspace-menu-duplicate", disabled: panes.length === 0,
+        hint: panes.length ? `Starts ${panes.length} fresh ${panes.length === 1 ? "agent" : "agents"}` : undefined,
+        onSelect: run(() => void duplicateWorkspace(project, workspace, panes)) },
+      ...(busy.length ? [{ id: "interrupt", label: `Interrupt ${busy.length} working ${busy.length === 1 ? "agent" : "agents"}`, icon: OctagonPause,
+        testId: "ide-workspace-menu-interrupt", hint: "Stops the current task, keeps the chat", onSelect: run(() => void interruptAgents(workspace, busy)) }] : []),
+    ] : [
+      { id: "reopen", label: "Reopen workspace", icon: ArrowUpRight, testId: "ide-workspace-menu-open", disabled: !workspace.restorable,
+        hint: workspace.restorable ? undefined : "Its folder is not reachable",
+        onSelect: run(() => { activateWorkspace(workspace.id); setProjectOpen(project.id, true); }) },
+    ];
     return [
+      agentActions,
       [
-        { id: "open", label: isActive ? "Current workspace" : isOpen ? "Switch to workspace" : "Reopen workspace", icon: ArrowUpRight, testId: "ide-workspace-menu-open",
-          disabled: isActive || unavailable, onSelect: run(() => { activateWorkspace(workspace.id); setProjectOpen(project.id, true); }) },
-        { id: "rename", label: "Rename workspace", icon: Pencil, testId: "ide-workspace-menu-rename", disabled: !isOpen,
-          hint: isOpen ? undefined : "Reopen it to rename",
-          onSelect: run(() => { setDraftWorkspaceName(workspace.name); setRenamingWorkspaceId(workspace.id); setProjectOpen(project.id, true); }) },
-        ...(isOpen ? [{ id: "options", label: "Workspace options…", icon: SlidersHorizontal, testId: "ide-workspace-menu-options", onSelect: run(() => openWorkspaceOptions(workspace.id)) }] : []),
-      ],
-      [
-        { id: "reveal", label: "Open folder", icon: FolderOpen, testId: "ide-workspace-menu-reveal", onSelect: run(() => void revealFolder(project.id)) },
+        ...launcherItems(project, "workspace"),
         { id: "copy", label: "Copy folder path", icon: Copy, testId: "ide-workspace-menu-copy", onSelect: run(() => void copyPath(workspace.folder || project.path)) },
       ],
+      isOpen ? [
+        { id: "rename", label: "Rename workspace", icon: Pencil, testId: "ide-workspace-menu-rename",
+          onSelect: run(() => { setDraftWorkspaceName(workspace.name); setRenamingWorkspaceId(workspace.id); setProjectOpen(project.id, true); }) },
+      ] : [],
       [
-        ...(isOpen ? [{ id: "close", label: "Close workspace", icon: Power, testId: "ide-workspace-menu-stop", hint: "Stops its agents, keeps the row",
-          onSelect: run(() => setConfirmWorkspace({ projectId: project.id, workspaceId: workspace.id, mode: "close" })) }] : []),
         { id: "remove", label: "Remove workspace", icon: Trash2, testId: "ide-workspace-menu-close", destructive: true,
-          onSelect: run(() => setConfirmWorkspace({ projectId: project.id, workspaceId: workspace.id, mode: "remove" })) },
+          onSelect: run(() => setConfirmWorkspace({ projectId: project.id, workspaceId: workspace.id })) },
       ],
     ];
   };
@@ -620,18 +701,11 @@ export function IdeProjectTree() {
     )}
     {confirmWorkspaceTarget && (
       <ConfirmTreeAction
-        title={`${confirmWorkspace?.mode === "close" ? "Close" : "Remove"} ${confirmWorkspaceTarget.workspace.name}?`}
-        body={(() => {
-          const { workspace } = confirmWorkspaceTarget;
-          const agents = `${workspace.terminals} coding ${workspace.terminals === 1 ? "agent" : "agents"}`;
-          if (confirmWorkspace?.mode === "close") return `Its ${agents} will stop. The workspace stays in the sidebar, so you can reopen it later.`;
-          return workspace.status === "open"
-            ? `Its ${agents} will stop and the workspace leaves the sidebar. The folder on disk and its chats stay untouched.`
-            : "The workspace leaves the sidebar. The folder on disk and its chats stay untouched.";
-        })()}
-        confirmLabel={confirmWorkspace?.mode === "close"
-          ? (confirmBusy ? "Closing…" : `Close ${confirmWorkspaceTarget.workspace.name}`)
-          : (confirmBusy ? "Removing…" : `Remove ${confirmWorkspaceTarget.workspace.name}`)}
+        title={`Remove ${confirmWorkspaceTarget.workspace.name}?`}
+        body={confirmWorkspaceTarget.workspace.status === "open"
+          ? `Its ${confirmWorkspaceTarget.workspace.terminals} coding ${confirmWorkspaceTarget.workspace.terminals === 1 ? "agent" : "agents"} will stop and the workspace leaves the sidebar. The folder on disk and its chats stay untouched.`
+          : "The workspace leaves the sidebar. The folder on disk and its chats stay untouched."}
+        confirmLabel={confirmBusy ? "Removing…" : `Remove ${confirmWorkspaceTarget.workspace.name}`}
         busy={confirmBusy}
         testId="ide-workspace-confirm-close"
         onCancel={() => {
@@ -663,7 +737,15 @@ export function IdeProjectTree() {
   </div>;
 }
 
-const TREE_MENU_WIDTH = 230;
+const TREE_MENU_WIDTH = 240;
+
+/** What the OS calls its file manager, for the "show the folder" item. */
+const FILE_MANAGER_LABEL = (() => {
+  const platform = typeof navigator === "undefined" ? "" : navigator.userAgent;
+  if (/Windows/i.test(platform)) return "Show in Explorer";
+  if (/Mac OS X|Macintosh/i.test(platform)) return "Show in Finder";
+  return "Show in file manager";
+})();
 const TREE_MENU_MARGIN = 8;
 
 /** One row of the sidebar's action menu. */

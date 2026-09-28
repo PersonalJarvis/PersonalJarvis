@@ -10,9 +10,11 @@ const openProject = vi.hoisted(() => vi.fn());
 const deleteProject = vi.hoisted(() => vi.fn());
 const reorderProjects = vi.hoisted(() => vi.fn());
 const revealProject = vi.hoisted(() => vi.fn());
+const fetchProjectLaunchers = vi.hoisted(() => vi.fn());
+const openProjectIn = vi.hoisted(() => vi.fn());
 const robustCopy = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/clipboard", () => ({ robustCopy }));
-vi.mock("@/lib/chatLibraryApi", () => ({ patchProject, openProject, deleteProject, reorderProjects, revealProject,
+vi.mock("@/lib/chatLibraryApi", () => ({ patchProject, openProject, deleteProject, reorderProjects, revealProject, fetchProjectLaunchers, openProjectIn,
   ChatLibraryError: class extends Error { constructor(message: string, readonly status: number) { super(message); } },
 }));
 
@@ -20,9 +22,13 @@ const renameWorkspace = vi.hoisted(() => vi.fn());
 const closeWorkspace = vi.hoisted(() => vi.fn());
 const removeWorkspace = vi.hoisted(() => vi.fn());
 const reorderWorkspaces = vi.hoisted(() => vi.fn());
+const addTerminal = vi.hoisted(() => vi.fn());
+const fetchWorkspacePanes = vi.hoisted(() => vi.fn());
+const interruptTerminal = vi.hoisted(() => vi.fn());
+const startIdeSession = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/agenticIdeApi", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/agenticIdeApi")>();
-  return { ...actual, renameWorkspace, closeWorkspace, removeWorkspace, reorderWorkspaces };
+  return { ...actual, renameWorkspace, closeWorkspace, removeWorkspace, reorderWorkspaces, addTerminal, fetchWorkspacePanes, interruptTerminal, startIdeSession };
 });
 
 const project = (id = "p1", pinned = false) => ({ id, path: `/${id}`, name: id === "p1" ? "App" : "New App",
@@ -36,6 +42,18 @@ beforeEach(() => {
   deleteProject.mockReset().mockResolvedValue(true);
   reorderProjects.mockReset().mockResolvedValue([]);
   revealProject.mockReset().mockResolvedValue(true);
+  fetchProjectLaunchers.mockReset().mockResolvedValue({
+    file_manager: true, editors: [{ id: "code", label: "VS Code" }], remote_url: "https://github.com/me/app", remote_label: "GitHub",
+  });
+  openProjectIn.mockReset().mockResolvedValue(true);
+  addTerminal.mockReset().mockResolvedValue({});
+  fetchWorkspacePanes.mockReset().mockResolvedValue({ active_id: "p1-w1", panes: [
+    { workspace_id: "p1-w1", key: "T1", agent: "claude", account: null, activity: "working" },
+    { workspace_id: "p1-w1", key: "T2", agent: "codex", account: "work", activity: "waiting" },
+    { workspace_id: "other", key: "T1", agent: "claude", account: null, activity: "working" },
+  ] });
+  interruptTerminal.mockReset().mockResolvedValue(undefined);
+  startIdeSession.mockReset().mockResolvedValue({});
   robustCopy.mockReset().mockResolvedValue(true);
   renameWorkspace.mockReset().mockResolvedValue({});
   closeWorkspace.mockReset().mockResolvedValue({});
@@ -116,10 +134,6 @@ it("gives every workspace row a ⋯ menu and dispatches Jarvis Live", () => {
   expect(screen.getByRole("menu", { name: "Workspace actions for Other" })).toBeDefined();
   fireEvent.click(screen.getByRole("button", { name: "Workspace actions for Other" }));
   expect(screen.queryByRole("menu")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Workspace actions for Work" }));
-  fireEvent.click(screen.getByRole("menuitem", { name: "Workspace options…" }));
-  expect(useIdeProjectsStore.getState().action).toMatchObject({ kind: "workspace-options", workspaceId: "p1-w1" });
-  expect(screen.queryByRole("menu")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Jarvis Live" }));
   expect(useIdeProjectsStore.getState().action?.kind).toBe("toggle-voice");
 });
@@ -182,7 +196,7 @@ it("opens a workspace menu on right-click with rename and remove", () => {
   expect(screen.getByTestId("ide-workspace-menu")).toBeDefined();
   expect(screen.getByTestId("ide-workspace-menu-rename").textContent).toContain("Rename workspace");
   expect(screen.getByTestId("ide-workspace-menu-close").textContent).toContain("Remove workspace");
-  expect(screen.getByTestId("ide-workspace-menu-open")).toBeDefined();
+  expect(screen.getByTestId("ide-workspace-menu-add").textContent).toContain("Add another agent");
 });
 
 it("renames a workspace from its right-click menu", async () => {
@@ -269,32 +283,50 @@ it("removes open workspaces when a project is deleted", async () => {
   await waitFor(() => expect(useIdeProjectsStore.getState().refreshRequest?.nonce).toBe(1));
 });
 
-it("groups project actions and runs folder actions", async () => {
+it("offers the project's real launchers and runs them", async () => {
   render(<IdeProjectTree />);
   fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
+  await screen.findByRole("menuitem", { name: "Open on GitHub" });
   const menu = screen.getByRole("menu", { name: "Project actions for App" });
-  expect(menu.querySelectorAll('[role="group"]').length).toBe(3);
   expect(Array.from(menu.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent)).toEqual([
-    "New workspace", "Open folder", "Copy folder path", "Rename project", "Pin project", "Delete project",
+    "New workspace", "Open in VS Code", expect.stringMatching(/^Show in /), "Open on GitHub",
+    "Rename project", "Pin project", "Delete project",
   ]);
-  fireEvent.click(screen.getByRole("menuitem", { name: "Open folder" }));
-  await waitFor(() => expect(revealProject).toHaveBeenCalledWith("p1"));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Open in VS Code" }));
+  await waitFor(() => expect(openProjectIn).toHaveBeenCalledWith("p1", "code"));
   fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
-  fireEvent.click(screen.getByRole("menuitem", { name: "Copy folder path" }));
-  await waitFor(() => expect(robustCopy).toHaveBeenCalledWith("/p1"));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Open on GitHub" }));
+  await waitFor(() => expect(openProjectIn).toHaveBeenCalledWith("p1", "remote"));
 });
 
-it("closes an open workspace but keeps it, separately from removing it", async () => {
+it("hides launchers the backend cannot offer", async () => {
+  fetchProjectLaunchers.mockRejectedValue(new Error("Not Found"));
+  render(<IdeProjectTree />);
+  fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
+  await waitFor(() => expect(fetchProjectLaunchers).toHaveBeenCalled());
+  expect(screen.queryByRole("menuitem", { name: /Open in|Open on|Show in/ })).toBeNull();
+  expect(screen.getByRole("menuitem", { name: "New workspace" })).toBeDefined();
+});
+
+it("adds an agent, duplicates the line-up and interrupts only working agents", async () => {
   render(<IdeProjectTree />);
   fireEvent.click(screen.getByRole("button", { name: "Workspace actions for Work" }));
-  fireEvent.click(screen.getByTestId("ide-workspace-menu-stop"));
-  expect(screen.getByRole("dialog", { name: "Close Work?" })).toBeDefined();
-  fireEvent.click(screen.getByTestId("ide-workspace-confirm-close-confirm"));
-  await waitFor(() => expect(closeWorkspace).toHaveBeenCalledWith("p1-w1"));
-  expect(removeWorkspace).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole("menuitem", { name: /Interrupt 1 working agent/ }));
+  await waitFor(() => expect(interruptTerminal).toHaveBeenCalledWith("T1", "p1-w1"));
+  expect(interruptTerminal).toHaveBeenCalledTimes(1);
+
+  fireEvent.click(screen.getByRole("button", { name: "Workspace actions for Work" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: /Duplicate workspace/ }));
+  await waitFor(() => expect(startIdeSession).toHaveBeenCalledWith(
+    "/p1", [{ agent: "claude" }, { agent: "codex", account: "work" }], { projectId: "p1", name: "Work copy" },
+  ));
+
+  fireEvent.click(screen.getByRole("button", { name: "Workspace actions for Work" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Add another agent" }));
+  await waitFor(() => expect(addTerminal).toHaveBeenCalledWith({ workspace_id: "p1-w1" }));
 });
 
-it("offers no close or rename on a closed workspace", () => {
+it("offers a closed workspace only what works on it", async () => {
   useIdeProjectsStore.setState({
     projects: [{
       ...project(),
@@ -304,7 +336,9 @@ it("offers no close or rename on a closed workspace", () => {
   });
   render(<IdeProjectTree />);
   fireEvent.contextMenu(screen.getByTestId("ide-workspace-row-p1-w1"));
-  expect(screen.queryByTestId("ide-workspace-menu-stop")).toBeNull();
-  expect((screen.getByRole("menuitem", { name: /Rename workspace/ }) as HTMLButtonElement).disabled).toBe(true);
+  await screen.findByRole("menuitem", { name: "Open in VS Code" });
   expect(screen.getByRole("menuitem", { name: "Reopen workspace" })).toBeDefined();
+  for (const missing of [/Rename workspace/, /Add another agent/, /Duplicate/, /Interrupt/]) {
+    expect(screen.queryByRole("menuitem", { name: missing })).toBeNull();
+  }
 });

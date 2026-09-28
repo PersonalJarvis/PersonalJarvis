@@ -306,6 +306,35 @@ def reveal_project(request: Request, project_id: str) -> RevealedOut:
     of the user, so the route 404s there like the other native file actions.
     The path comes from the stored project, never from the client.
     """
+    folder = _require_folder(request, project_id)
+    from jarvis.platform.open_path import open_file
+
+    return RevealedOut(opened=open_file(Path(folder)))
+
+
+class LauncherOut(BaseModel):
+    id: str
+    label: str
+
+
+class LaunchersOut(BaseModel):
+    """Where this project can be opened right now, so the menu offers only those."""
+
+    file_manager: bool
+    editors: list[LauncherOut]
+    remote_url: str | None = None
+    remote_label: str | None = None
+
+
+class OpenInIn(BaseModel):
+    target: str = Field(
+        min_length=1,
+        max_length=40,
+        description='An editor id from ``/launchers`` or ``"remote"``.',
+    )
+
+
+def _require_folder(request: Request, project_id: str) -> str:
     if not bool(getattr(request.app.state, "native_file_actions", False)):
         raise HTTPException(status_code=404, detail="native-file-actions-disabled")
     folder = _project_folder(project_id)
@@ -313,9 +342,77 @@ def reveal_project(request: Request, project_id: str) -> RevealedOut:
         raise HTTPException(status_code=404, detail="No such project")
     if not _folder_exists(folder):
         raise HTTPException(status_code=404, detail="The project folder is not reachable.")
-    from jarvis.platform.open_path import open_file
+    return folder
 
-    return RevealedOut(opened=open_file(Path(folder)))
+
+@router.get(
+    "/projects/{project_id}/launchers",
+    response_model=LaunchersOut,
+    summary="Editors and web pages a project's folder can be opened in",
+)
+def project_launchers(request: Request, project_id: str) -> LaunchersOut:
+    """Installed code editors, and the folder's hosted git remote if it has one.
+
+    Asked when the sidebar's menu opens, so the menu shows "Open in Cursor" only
+    where Cursor is installed and "Open on GitHub" only where there is a GitHub
+    remote. A headless host has no local apps: every list comes back empty.
+    """
+    if not bool(getattr(request.app.state, "native_file_actions", False)):
+        return LaunchersOut(file_manager=False, editors=[])
+    folder = _project_folder(project_id)
+    if folder is None:
+        raise HTTPException(status_code=404, detail="No such project")
+    if not _folder_exists(folder):
+        return LaunchersOut(file_manager=False, editors=[])
+    from jarvis.agentic_ide import project_links
+    from jarvis.ui.web import outputs_routes
+
+    editor_ids = {oid for oid, _ in outputs_routes._OPENER_EDITORS}
+    editors = [
+        LauncherOut(id=entry["id"], label=entry["label"])
+        for entry in outputs_routes._available_openers()
+        if entry["id"] in editor_ids
+    ]
+    remote = project_links.remote_web_url(folder)
+    return LaunchersOut(
+        file_manager=True,
+        editors=editors,
+        remote_url=remote,
+        remote_label=project_links.host_label(remote) if remote else None,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/open-in",
+    response_model=RevealedOut,
+    summary="Open a project's folder in an editor or its web page",
+)
+def open_project_in(request: Request, project_id: str, body: OpenInIn) -> RevealedOut:
+    """Open the folder in an installed editor, or the remote's page in the browser.
+
+    ``target`` is a closed id — never a path or a URL from the client — so this
+    cannot launch an arbitrary program or page.
+    """
+    folder = _require_folder(request, project_id)
+    from jarvis.agentic_ide import project_links
+
+    if body.target == "remote":
+        url = project_links.remote_web_url(folder)
+        if url is None:
+            raise HTTPException(status_code=404, detail="This folder has no hosted git remote.")
+        import webbrowser
+
+        return RevealedOut(opened=webbrowser.open(url))
+    from jarvis.platform.open_path import open_file_with
+    from jarvis.ui.web import outputs_routes
+
+    if body.target not in {oid for oid, _ in outputs_routes._OPENER_EDITORS}:
+        raise HTTPException(status_code=400, detail="Unknown editor.")
+    resolved = outputs_routes._resolve_opener(body.target)
+    if resolved is None:
+        raise HTTPException(status_code=409, detail="That editor is not installed.")
+    kind, value = resolved
+    return RevealedOut(opened=open_file_with(Path(folder), kind, value))
 
 
 # --------------------------------------------------------------------------- #

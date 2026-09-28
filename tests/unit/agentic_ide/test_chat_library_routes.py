@@ -286,3 +286,53 @@ def test_reveal_is_desktop_only(client: TestClient, tmp_path: Path) -> None:
 def test_reveal_refuses_an_unknown_project(client: TestClient) -> None:
     client.app.state.native_file_actions = True
     assert client.post("/api/chat-library/projects/nope/reveal").status_code == 404
+
+
+def test_launchers_list_only_what_is_available(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.agentic_ide import project_links
+    from jarvis.ui.web import outputs_routes
+
+    monkeypatch.setattr(
+        outputs_routes,
+        "_available_openers",
+        lambda: [
+            {"id": "default", "label": "System default app"},
+            {"id": "cursor", "label": "Cursor"},
+        ],
+    )
+    monkeypatch.setattr(project_links, "remote_web_url", lambda folder: "https://github.com/me/app")
+    client.app.state.native_file_actions = True
+    project = library.ensure_project(tmp_path)
+    body = client.get(f"/api/chat-library/projects/{project.id}/launchers").json()
+    assert body == {
+        "file_manager": True,
+        "editors": [{"id": "cursor", "label": "Cursor"}],
+        "remote_url": "https://github.com/me/app",
+        "remote_label": "GitHub",
+    }
+
+
+def test_launchers_are_empty_on_a_headless_host(client: TestClient, tmp_path: Path) -> None:
+    project = library.ensure_project(tmp_path)
+    body = client.get(f"/api/chat-library/projects/{project.id}/launchers").json()
+    assert body["editors"] == [] and body["file_manager"] is False
+
+
+def test_open_in_accepts_only_known_editors(client: TestClient, tmp_path: Path) -> None:
+    client.app.state.native_file_actions = True
+    project = library.ensure_project(tmp_path)
+    response = client.post(
+        f"/api/chat-library/projects/{project.id}/open-in", json={"target": "calc.exe"}
+    )
+    assert response.status_code == 400
+
+
+def test_open_in_remote_needs_a_remote(client: TestClient, tmp_path: Path) -> None:
+    client.app.state.native_file_actions = True
+    project = library.ensure_project(tmp_path)
+    response = client.post(
+        f"/api/chat-library/projects/{project.id}/open-in", json={"target": "remote"}
+    )
+    assert response.status_code == 404

@@ -150,6 +150,27 @@ export async function revealProject(projectId: string): Promise<boolean> {
   return body.opened;
 }
 
+/** Where a project's folder can be opened on this machine right now. */
+export interface ProjectLaunchers {
+  file_manager: boolean;
+  editors: { id: string; label: string }[];
+  remote_url: string | null;
+  remote_label: string | null;
+}
+
+export function fetchProjectLaunchers(projectId: string): Promise<ProjectLaunchers> {
+  return request<ProjectLaunchers>(`/projects/${encodeURIComponent(projectId)}/launchers`);
+}
+
+/** Open the folder in an editor from `fetchProjectLaunchers`, or `"remote"` for its web page. */
+export async function openProjectIn(projectId: string, target: string): Promise<boolean> {
+  const body = await request<{ opened: boolean }>(
+    `/projects/${encodeURIComponent(projectId)}/open-in`,
+    { method: "POST", body: JSON.stringify({ target }) },
+  );
+  return body.opened;
+}
+
 /**
  * Persist a drag-and-drop folder order in the sidebar.
  *
