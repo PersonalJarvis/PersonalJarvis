@@ -263,6 +263,7 @@ export function createNewPaneChatStore(options: NewPaneChatOptions) {
       cancel: async () => undefined,
       decide: async () => undefined,
       answerQuestion: async () => undefined,
+      skipQuestion: async () => undefined,
       ingest: () => undefined,
       disconnect: () => undefined,
     };

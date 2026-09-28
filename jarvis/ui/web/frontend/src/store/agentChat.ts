@@ -14,6 +14,7 @@ import {
   patchAgentChatSession,
   resolveAgentChatApproval,
   answerAgentChatQuestion,
+  skipAgentChatQuestion,
   type QuestionAnswerInput,
   sendAgentChatMessage,
   type AgentChatCatalog,
@@ -158,8 +159,10 @@ export interface AgentChatStore {
   send: (text: string, attachments?: ChatAttachment[], toolChoices?: string[]) => Promise<void>;
   cancel: () => Promise<void>;
   decide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
-  /** Answer an agent's question card in the active session; throws so the card can say why. */
-  answerQuestion: (questionId: string, answer: QuestionAnswerInput) => Promise<void>;
+  /** Answer question `index` of an agent's card in the active session; throws so the card can say why. */
+  answerQuestion: (questionId: string, index: number, answer: QuestionAnswerInput) => Promise<void>;
+  /** Close an agent's card so its recommendations apply; throws so the card can say why. */
+  skipQuestion: (questionId: string) => Promise<void>;
   /** Tests and the socket: fold one event into the active timeline. */
   ingest: (event: AgentChatEvent) => void;
   disconnect: () => void;
@@ -698,10 +701,16 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
         }
       },
 
-      answerQuestion: async (questionId, answer) => {
+      answerQuestion: async (questionId, index, answer) => {
         const sid = get().activeSessionId;
         if (!sid) throw new Error("no open chat");
-        await answerAgentChatQuestion(sid, questionId, answer);
+        await answerAgentChatQuestion(sid, questionId, index, answer);
+      },
+
+      skipQuestion: async (questionId) => {
+        const sid = get().activeSessionId;
+        if (!sid) throw new Error("no open chat");
+        await skipAgentChatQuestion(sid, questionId);
       },
 
       ingest: (event) => {

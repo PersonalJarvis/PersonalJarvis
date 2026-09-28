@@ -49,20 +49,39 @@ export interface QuestionOption {
   description: string;
 }
 
+/** One question of a card. Option 0 is always the agent's recommendation. */
+export interface QuestionItem {
+  question: string;
+  options: QuestionOption[];
+  recommendationReason: string;
+}
+
 /**
- * An agent's multiple-choice question (jarvis/agent_chat/questions.py). Option
- * 0 is always the agent's recommendation; it is picked automatically when
- * nobody answers before `expiresMs`.
+ * What one question resolved to. `source`: `person`, `timeout` (nobody
+ * answered for five minutes), `skipped` (the card was closed), `cancelled`,
+ * or `closed` (the turn ended without an answer).
+ */
+export interface QuestionAnswerState {
+  text: string;
+  optionIndex: number | null;
+  source: string;
+}
+
+/**
+ * An agent's question card (jarvis/agent_chat/questions.py): a short series
+ * the person answers one by one. Open questions take their recommendation
+ * when nobody answers before `expiresMs`, which every answer pushes back.
  */
 export interface QuestionState {
   questionId: string;
-  question: string;
-  header: string;
-  options: QuestionOption[];
-  recommendationReason: string;
+  /** The agent asking, for the card's title; empty on older events. */
+  asker: string;
+  questions: QuestionItem[];
+  /** One slot per question; `null` while unanswered. */
+  answers: (QuestionAnswerState | null)[];
   expiresMs: number | null;
-  /** Set once answered: `person`, `timeout` (auto-picked), `cancelled`, or `closed` (turn ended). */
-  answer: { text: string; optionIndex: number | null; source: string } | null;
+  /** The card no longer takes answers (resolved, or the turn ended). */
+  closed: boolean;
 }
 
 /** The tool an agent asks its question with — bare or behind an MCP prefix. */
@@ -285,6 +304,32 @@ function questionOptions(raw: unknown): QuestionOption[] {
     const row = entry as Record<string, unknown>;
     const label = str(row.label);
     return label ? [{ label, description: str(row.description) }] : [];
+  });
+}
+
+function questionAnswer(raw: unknown): QuestionAnswerState | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  return { text: str(row.answer), optionIndex: num(row.option_index), source: str(row.source, "person") };
+}
+
+/** The answer slots off a progress/resolved payload; older events carried one flat answer. */
+function questionAnswers(p: Record<string, unknown>, count: number): (QuestionAnswerState | null)[] {
+  const raw = Array.isArray(p.answers) ? p.answers : "answer" in p ? [p] : [];
+  return Array.from({ length: count }, (_, i) => questionAnswer(raw[i]));
+}
+
+function updateQuestion(
+  tl: Timeline,
+  turnId: string,
+  questionId: string,
+  fn: (q: QuestionState) => QuestionState,
+): Timeline {
+  return updateTurn(tl, turnId, (turn) => {
+    const i = turn.blocks.findIndex((b) => b.kind === "tool" && b.question?.questionId === questionId);
+    if (i < 0) return turn;
+    const block = turn.blocks[i] as ToolBlock;
+    return { ...turn, blocks: replaceAt(turn.blocks, i, { ...block, question: fn(block.question!) }) };
   });
 }
 
@@ -655,37 +700,41 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
     case "question_required": {
       const questionId = str(p.question_id);
       if (!questionId) return base;
+      // Older events carried a single question's fields at the top level.
+      const raw = Array.isArray(p.questions) ? p.questions : [p];
+      const questions: QuestionItem[] = raw.flatMap((entry) => {
+        if (!entry || typeof entry !== "object") return [];
+        const row = entry as Record<string, unknown>;
+        const options = questionOptions(row.options);
+        const text = str(row.question);
+        return text && options.length ? [{ question: text, options, recommendationReason: str(row.recommendation_reason) }] : [];
+      });
+      if (!questions.length) return base;
       const question: QuestionState = {
         questionId,
-        question: str(p.question),
-        header: str(p.header),
-        options: questionOptions(p.options),
-        recommendationReason: str(p.recommendation_reason),
+        asker: str(p.asker),
+        questions,
+        answers: questions.map(() => null),
         expiresMs: num(p.expires_ms),
-        answer: null,
+        closed: false,
       };
       return updateTurn(base, turnId, (turn) => withQuestion(turn, question, ev.ts_ms));
     }
 
+    case "question_progress": {
+      return updateQuestion(base, turnId, str(p.question_id), (q) => ({
+        ...q,
+        answers: questionAnswers(p, q.questions.length).map((a, i) => a ?? q.answers[i]),
+        expiresMs: num(p.expires_ms) ?? q.expiresMs,
+      }));
+    }
+
     case "question_resolved": {
-      const questionId = str(p.question_id);
-      return updateTurn(base, turnId, (turn) => {
-        const i = turn.blocks.findIndex(
-          (b) => b.kind === "tool" && b.question?.questionId === questionId,
-        );
-        if (i < 0) return turn;
-        const block = turn.blocks[i] as ToolBlock;
-        return {
-          ...turn,
-          blocks: replaceAt(turn.blocks, i, {
-            ...block,
-            question: {
-              ...block.question!,
-              answer: { text: str(p.answer), optionIndex: num(p.option_index), source: str(p.source, "person") },
-            },
-          }),
-        };
-      });
+      return updateQuestion(base, turnId, str(p.question_id), (q) => ({
+        ...q,
+        answers: questionAnswers(p, q.questions.length).map((a, i) => a ?? q.answers[i]),
+        closed: true,
+      }));
     }
 
     case "turn_finished": {
@@ -702,8 +751,15 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
                 live: false,
                 durationMs: b.durationMs ?? Math.max(0, ev.ts_ms - b.startedMs),
               }
-            : b.kind === "tool" && b.question && !b.question.answer
-              ? { ...b, question: { ...b.question, answer: { text: "", optionIndex: null, source: "closed" } } }
+            : b.kind === "tool" && b.question && !b.question.closed
+              ? {
+                  ...b,
+                  question: {
+                    ...b.question,
+                    closed: true,
+                    answers: b.question.answers.map((a) => a ?? { text: "", optionIndex: null, source: "closed" }),
+                  },
+                }
               : b,
         ),
         durationMs: num(p.duration_ms) ?? Math.max(0, ev.ts_ms - turn.startedMs),

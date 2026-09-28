@@ -478,21 +478,35 @@ export async function resolveAgentChatApproval(
 /** The person's answer to an agent's question: one option, or their own words. */
 export type QuestionAnswerInput = { optionIndex: number } | { text: string };
 
+function questionUrl(sessionId: string, questionId: string): string {
+  return `/api/agent-chat/sessions/${encodeURIComponent(sessionId)}/questions/${encodeURIComponent(questionId)}`;
+}
+
+/** Answer question `index` of an agent's card. */
 export async function answerAgentChatQuestion(
   sessionId: string,
   questionId: string,
+  index: number,
   answer: QuestionAnswerInput,
 ): Promise<void> {
-  const body = "optionIndex" in answer ? { option_index: answer.optionIndex } : { text: answer.text };
+  const body = {
+    index,
+    ...("optionIndex" in answer ? { option_index: answer.optionIndex } : { text: answer.text }),
+  };
   await json(
-    await fetch(
-      `/api/agent-chat/sessions/${encodeURIComponent(sessionId)}/questions/${encodeURIComponent(questionId)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      },
-    ),
+    await fetch(questionUrl(sessionId, questionId), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    "question-failed",
+  );
+}
+
+/** Close an agent's card: its open questions take the agent's recommendations. */
+export async function skipAgentChatQuestion(sessionId: string, questionId: string): Promise<void> {
+  await json(
+    await fetch(`${questionUrl(sessionId, questionId)}/skip`, { method: "POST" }),
     "question-failed",
   );
 }

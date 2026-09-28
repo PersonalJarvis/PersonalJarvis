@@ -13,7 +13,9 @@ Prefix ``/api/agent-chat``:
     POST   /sessions/{id}/messages           {text, attachments} -> starts a turn
     POST   /sessions/{id}/cancel
     POST   /sessions/{id}/approvals/{aid}    {decision: allow | allow_always | deny}
-    POST   /sessions/{id}/questions/{qid}    {option_index} or {text} -> answer an agent's question
+    POST   /sessions/{id}/questions/{qid}    {index, option_index} or {index, text} -> answer
+                                             one question of an agent's card
+    POST   /sessions/{id}/questions/{qid}/skip  close the card: recommendations apply
     WS     /sessions/{id}/ws?after=<seq>     snapshot, then live events
     POST   /attachments                      drop/paste/pick files for the next message
     POST   /pick-folder                      the system folder dialog (desktop only)
@@ -167,6 +169,8 @@ class ApprovalBody(BaseModel):
 
 
 class QuestionAnswerBody(BaseModel):
+    #: Which question of the card's series this answers.
+    index: int = 0
     #: The picked option (0 is the agent's recommendation) ...
     option_index: int | None = None
     #: ... or the person's own typed answer. Exactly one of the two.
@@ -868,11 +872,26 @@ async def answer_question(
     svc = _service(request)
     try:
         ok = svc.resolve_question(
-            session_id, question_id, option_index=body.option_index, text=body.text
+            session_id,
+            question_id,
+            index=body.index,
+            option_index=body.option_index,
+            text=body.text,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not ok:
+        raise HTTPException(status_code=404, detail="no such open question")
+    return {"ok": True, "question_id": question_id}
+
+
+@router.post(
+    "/sessions/{session_id}/questions/{question_id}/skip",
+    summary="Close an agent's question card and let its recommendations apply",
+)
+async def skip_question(session_id: str, question_id: str, request: Request) -> dict[str, Any]:
+    svc = _service(request)
+    if not svc.skip_question(session_id, question_id):
         raise HTTPException(status_code=404, detail="no such open question")
     return {"ok": True, "question_id": question_id}
 

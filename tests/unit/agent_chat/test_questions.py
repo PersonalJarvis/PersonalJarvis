@@ -1,4 +1,4 @@
-"""An agent's multiple-choice question: the card, the pick, the 5-minute fallback."""
+"""An agent's question card: a short series, the picks, skip, and the 5-minute fallback."""
 
 from __future__ import annotations
 
@@ -9,38 +9,53 @@ from typing import Any
 
 import pytest
 
-from jarvis.agent_chat.questions import answer_from, parse_question
+from jarvis.agent_chat.questions import (
+    MAX_ASKS_PER_TURN,
+    MAX_QUESTIONS,
+    TooManyQuestions,
+    answer_from,
+    parse_questions,
+)
 from jarvis.agent_chat.service import AgentChatService, _Running
 from jarvis.agent_chat.store import AgentChatStore
 from jarvis.society.ask_tool import ASK_USER_TOOL_NAME, AskUserTool
 
-_ARGS: dict[str, Any] = {
+_DB: dict[str, Any] = {
     "question": "Which database should the project use?",
-    "header": "Database",
     "options": [
         {"label": "SQLite", "description": "Zero setup"},
         {"label": "Postgres", "description": "Scales further"},
     ],
     "recommendation_reason": "No server to run.",
 }
+_HOST: dict[str, Any] = {
+    "question": "Where should it run?",
+    "options": [{"label": "Laptop"}, {"label": "VPS"}, {"label": "Both"}],
+    "recommendation_reason": "Nothing to pay for.",
+}
+_ARGS: dict[str, Any] = {"questions": [_DB, _HOST]}
 
 
 def test_parse_moves_the_recommendation_first_and_rejects_bad_shapes() -> None:
-    spec = parse_question({**_ARGS, "recommended": 1})
+    (spec,) = parse_questions({**_DB, "recommended": 1})
     assert [o.label for o in spec.options] == ["Postgres", "SQLite"]
-    assert spec.recommended.label == "Postgres"
-    with pytest.raises(ValueError):
-        parse_question({**_ARGS, "options": [{"label": "only one"}]})
-    with pytest.raises(ValueError):
-        parse_question({**_ARGS, "options": [{"label": str(i)} for i in range(5)]})
-    with pytest.raises(ValueError):
-        parse_question({**_ARGS, "question": " "})
-    with pytest.raises(ValueError):
-        parse_question({**_ARGS, "recommended": 7})
+    assert len(parse_questions(_ARGS)) == 2
+    bad = [
+        {"questions": []},
+        {"questions": [_DB] * 2},
+        {"questions": [{**_DB, "question": f"q{i}?"} for i in range(MAX_QUESTIONS + 1)]},
+        {**_DB, "options": [{"label": "only one"}]},
+        {**_DB, "options": [{"label": str(i)} for i in range(5)]},
+        {**_DB, "question": " "},
+        {**_DB, "recommended": 7},
+    ]
+    for args in bad:
+        with pytest.raises(ValueError):
+            parse_questions(args)
 
 
 def test_answer_needs_exactly_one_of_option_or_text() -> None:
-    spec = parse_question(_ARGS)
+    (spec,) = parse_questions(_DB)
     assert answer_from(spec, option_index=1, text=None).answer == "Postgres"
     assert answer_from(spec, option_index=None, text=" MySQL ").answer == "MySQL"
     for kwargs in (
@@ -70,50 +85,89 @@ async def _next(q: asyncio.Queue, kind: str) -> dict[str, Any]:
             return ev["payload"]
 
 
-def test_the_person_picks_an_option(tmp_path: Path) -> None:
+def test_the_person_answers_the_series_one_by_one(tmp_path: Path) -> None:
     async def scenario() -> None:
         svc, sid, task = await _service_with_turn(tmp_path)
         q = svc.subscribe(sid)
-        asking = asyncio.create_task(svc.ask_question(sid, parse_question(_ARGS)))
+        asking = asyncio.create_task(svc.ask_questions(sid, parse_questions(_ARGS), asker="Ada"))
         card = await _next(q, "question_required")
-        assert card["turn_id"] == "turn-1" and card["recommended"] == 0
-        assert [o["label"] for o in card["options"]] == ["SQLite", "Postgres"]
-        assert svc.pending_questions(sid) == [card["question_id"]]
-        assert not svc.resolve_question("other-session", card["question_id"], option_index=1)
-        assert svc.resolve_question(sid, card["question_id"], option_index=1)
-        answer = await asking
-        assert (answer.answer, answer.source, answer.auto) == ("Postgres", "person", False)
+        qid = card["question_id"]
+        assert card["asker"] == "Ada" and len(card["questions"]) == 2
+        assert svc.pending_questions(sid) == [qid]
+        assert not svc.resolve_question("other", qid, index=0, option_index=1)
+        assert svc.resolve_question(sid, qid, index=0, option_index=1)
+        assert not svc.resolve_question(sid, qid, index=0, option_index=0)  # already answered
+        progress = await _next(q, "question_progress")
+        assert progress["answers"][0]["answer"] == "Postgres" and progress["answers"][1] is None
+        assert svc.resolve_question(sid, qid, index=1, text="A Raspberry Pi")
+        answers = await asking
+        assert [(a.answer, a.source) for a in answers] == [
+            ("Postgres", "person"),
+            ("A Raspberry Pi", "person"),
+        ]
         resolved = await _next(q, "question_resolved")
-        assert resolved["answer"] == "Postgres" and resolved["auto"] is False
+        assert [a["answer"] for a in resolved["answers"]] == ["Postgres", "A Raspberry Pi"]
         assert svc.pending_questions(sid) == []
-        assert not svc.resolve_question(sid, card["question_id"], option_index=0)
         task.cancel()
 
     asyncio.run(scenario())
 
 
-def test_no_answer_in_time_picks_the_recommendation(tmp_path: Path) -> None:
+def test_silence_applies_the_recommendations_to_open_questions(tmp_path: Path) -> None:
     async def scenario() -> None:
         svc, sid, task = await _service_with_turn(tmp_path)
         q = svc.subscribe(sid)
-        answer = await svc.ask_question(sid, parse_question(_ARGS), timeout_s=0.05)
-        assert (answer.answer, answer.option_index, answer.auto) == ("SQLite", 0, True)
-        resolved = await _next(q, "question_resolved")
-        assert resolved["source"] == "timeout" and resolved["auto"] is True
+        asking = asyncio.create_task(svc.ask_questions(sid, parse_questions(_ARGS), timeout_s=0.2))
+        card = await _next(q, "question_required")
+        svc.resolve_question(sid, card["question_id"], index=0, option_index=1)
+        answers = await asking
+        assert [(a.answer, a.source) for a in answers] == [
+            ("Postgres", "person"),
+            ("Laptop", "timeout"),
+        ]
         task.cancel()
 
     asyncio.run(scenario())
 
 
-def test_cancelling_the_turn_closes_the_question(tmp_path: Path) -> None:
+def test_closing_the_card_lets_the_agent_decide(tmp_path: Path) -> None:
     async def scenario() -> None:
         svc, sid, task = await _service_with_turn(tmp_path)
         q = svc.subscribe(sid)
-        asking = asyncio.create_task(svc.ask_question(sid, parse_question(_ARGS)))
+        asking = asyncio.create_task(svc.ask_questions(sid, parse_questions(_ARGS)))
+        card = await _next(q, "question_required")
+        assert svc.skip_question(sid, card["question_id"])
+        answers = await asking
+        assert [(a.answer, a.source) for a in answers] == [
+            ("SQLite", "skipped"),
+            ("Laptop", "skipped"),
+        ]
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_cancelling_the_turn_closes_the_card(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        svc, sid, task = await _service_with_turn(tmp_path)
+        q = svc.subscribe(sid)
+        asking = asyncio.create_task(svc.ask_questions(sid, parse_questions(_DB)))
         await _next(q, "question_required")
         assert svc.signal_cancel(sid)
-        answer = await asking
+        (answer,) = await asking
         assert answer.source == "cancelled"
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_a_turn_runs_out_of_cards(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        svc, sid, task = await _service_with_turn(tmp_path)
+        for _ in range(MAX_ASKS_PER_TURN):
+            await svc.ask_questions(sid, parse_questions(_DB), timeout_s=0.01)
+        with pytest.raises(TooManyQuestions):
+            await svc.ask_questions(sid, parse_questions(_DB))
         task.cancel()
 
     asyncio.run(scenario())
@@ -126,47 +180,61 @@ def test_asking_without_a_running_turn_raises(tmp_path: Path) -> None:
             provider="fakeprov", model="m", effort="high", cwd=str(tmp_path)
         )
         with pytest.raises(RuntimeError):
-            await svc.ask_question(session.session_id, parse_question(_ARGS))
+            await svc.ask_questions(session.session_id, parse_questions(_DB))
 
     asyncio.run(scenario())
 
 
 class _FakeService:
-    def __init__(self) -> None:
-        self.asked: list[str] = []
+    def __init__(self, *, limit: bool = False) -> None:
+        self.asked: list[tuple[str, str]] = []
+        self.limit = limit
 
-    async def ask_question(self, session_id: str, spec: Any) -> Any:
-        self.asked.append(session_id)
-        return answer_from(spec, option_index=1, text=None)
+    async def ask_questions(self, session_id: str, specs: Any, *, asker: str = "") -> Any:
+        if self.limit:
+            raise TooManyQuestions("used up")
+        self.asked.append((session_id, asker))
+        return [answer_from(spec, option_index=1, text=None) for spec in specs]
 
 
 def _tool(session_id: str, service: _FakeService) -> AskUserTool:
-    runtime = SimpleNamespace(chat_service=lambda: service)
+    runtime = SimpleNamespace(
+        chat_service=lambda: service, cached_agent=lambda _id: SimpleNamespace(name="Ada")
+    )
     return AskUserTool(runtime, "ada", session_id=session_id)
 
 
-def test_tool_returns_the_persons_answer() -> None:
+def test_tool_returns_the_persons_answers() -> None:
     service = _FakeService()
     result = asyncio.run(_tool("society:ada", service).execute(dict(_ARGS), None))
-    assert result.success and result.output["answer"] == "Postgres"
-    assert result.output["recommended"] is False
-    assert service.asked == ["society:ada"]
+    assert result.success
+    assert [r["answer"] for r in result.output["answers"]] == ["Postgres", "VPS"]
+    assert result.output["answers"][0]["recommended"] is False
+    assert service.asked == [("society:ada", "Ada")]
 
 
 def test_a_routine_never_waits_for_the_user() -> None:
     service = _FakeService()
     tool = _tool("society:ada:routine:t1:run1", service)
     result = asyncio.run(tool.execute(dict(_ARGS), None))
-    assert result.success and result.output["answer"] == "SQLite"
-    assert result.output["source"] == "unattended" and "Routines" in result.output["note"]
+    assert result.success
+    assert [r["answer"] for r in result.output["answers"]] == ["SQLite", "Laptop"]
+    assert {r["source"] for r in result.output["answers"]} == {"unattended"}
+    assert "Routines" in result.output["note"]
     assert service.asked == []
+
+
+def test_the_per_turn_limit_hands_back_the_recommendations() -> None:
+    result = asyncio.run(_tool("society:ada", _FakeService(limit=True)).execute(dict(_DB), None))
+    assert result.success and result.output["answers"][0]["answer"] == "SQLite"
+    assert "already asked" in result.output["note"]
 
 
 def test_tool_rejects_an_invalid_question() -> None:
     result = asyncio.run(
         _tool("society:ada", _FakeService()).execute({"question": "?", "options": []}, None)
     )
-    assert not result.success and "invalid question" in (result.error or "")
+    assert not result.success and "invalid questions" in (result.error or "")
 
 
 def test_routine_chats_are_not_offered_the_tool(monkeypatch: pytest.MonkeyPatch) -> None:

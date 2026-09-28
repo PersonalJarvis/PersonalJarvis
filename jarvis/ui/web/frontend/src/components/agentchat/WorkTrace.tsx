@@ -52,7 +52,7 @@ function attention(block: ToolBlock) {
 
 /** An agent's question still waiting for the person — it never folds away. */
 function isOpenQuestion(block: TurnBlock): block is ToolBlock {
-  return block.kind === "tool" && Boolean(block.question && block.question.answer === null);
+  return block.kind === "tool" && Boolean(block.question && !block.question.closed);
 }
 
 /** Only adjacent, successful, read-only operations may lose individual rows. */
