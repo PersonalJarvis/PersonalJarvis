@@ -348,6 +348,7 @@ class WebServer:
         from .clipboard_routes import router as clipboard_router
         from .commands_routes import router as commands_router
         from .computer_use_routes import router as computer_use_router
+        from .computers_routes import router as computers_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
         from .costs_routes import router as costs_router
@@ -539,6 +540,8 @@ class WebServer:
         app.include_router(chat_library_router)
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
+        # Settings -> Computers: the user's own servers and local VMs over SSH.
+        app.include_router(computers_router)
         app.include_router(dictionary_router)
         # Dictation mode — hold to speak, text lands in the focused field.
         # Mounted so every action is also `jarvis api dictation <op>`, which is

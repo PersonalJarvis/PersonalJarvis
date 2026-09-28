@@ -86,6 +86,10 @@ dependencies = [
     "structlog>=24.4",
     "loguru>=0.7",
     "keyring>=25.5",
+    # SSH to the user's own servers and virtual machines (Settings -> Computers).
+    # Pure Python on top of cryptography, so it installs on every OS cell and a
+    # headless python:3.11-slim without a system ssh client.
+    "asyncssh>=2.21",
     "sounddevice>=0.5",  # PortAudio binding; needs system libportaudio2 on Linux
     # ChatGPT-Live (Codex subscription voice) carries audio ONLY on a WebRTC
     # media track — its protocol has no audio event at all. Jarvis owns that
