@@ -244,7 +244,9 @@ async def test_a_failed_owner_seat_is_never_rerouted_onto_api(store: TaskStore) 
     assert brain.prompts == []
     assert row["last_error"] is not None and "not rerouted" in row["last_error"]
     assert delivered and delivered[0][2] == "failed"
-    assert announcements and "not rerouted" in announcements[0].text
+    # The reason reaches the owner's chat; the voice stays quiet (RUB-95).
+    assert "not rerouted" in delivered[0][1]
+    assert announcements == []
     seat_step = next(
         s
         for s in row["steps"]
@@ -309,7 +311,9 @@ async def test_a_paused_owner_is_explained_not_impersonated(store: TaskStore) ->
     assert brain.prompts == []
     assert row["last_error"] is not None and "paused" in row["last_error"]
     assert delivered and delivered[0][2] == "failed"
-    assert announcements and "paused" in announcements[0].text
+    # The reason reaches the owner's chat; the voice stays quiet (RUB-95).
+    assert "paused" in delivered[0][1]
+    assert announcements == []
 
 
 async def test_no_brain_after_seat_failure_says_there_was_no_other_path(
@@ -338,13 +342,21 @@ class FailingAgentBrain(FakeAgentBrain):
         raise RuntimeError("The routine chat failed: Individual quota reached {see plan}")
 
 
-async def test_a_failed_agent_routine_is_announced_as_a_sentence(store: TaskStore) -> None:
-    """Read aloud, the raw ``last_error`` was "RuntimeError: The routine chat
-    failed: …" — and it became a conversation title. The announcement names
-    the routine and the reason; the stored error keeps the precise line."""
+async def test_a_failed_agent_routine_reports_to_its_chat_and_never_speaks(
+    store: TaskStore,
+) -> None:
+    """A failed routine was read aloud as "RuntimeError: The routine chat
+    failed: …" with no call open, and that line became a conversation title.
+    It now reaches only the agent's chat, as a sentence; ``last_error`` keeps
+    the precise line."""
     bus = EventBus()
     spoken = _collect(bus, AnnouncementRequested)
-    runner = TaskRunner(store, bus, agent_brain=FailingAgentBrain())
+    delivered: list[tuple[tuple[str, ...], str, str]] = []
+
+    async def sink(tags: tuple[str, ...], text: str, status: str) -> None:
+        delivered.append((tags, text, status))
+
+    runner = TaskRunner(store, bus, agent_brain=FailingAgentBrain(), result_sink=sink)
     spec = TaskSpec(
         title="[agent:Mailbox] Inbox sweep",
         trigger=TriggerAfterDelay(delay_seconds=0.01),
@@ -353,8 +365,13 @@ async def test_a_failed_agent_routine_is_announced_as_a_sentence(store: TaskStor
     )
     task_id = await store.insert(spec)
     await asyncio.wait_for(runner.run(task_id, CancelToken()), timeout=2.0)
-    assert [e.text for e in spoken] == [
-        'The routine "Inbox sweep" failed: Individual quota reached {see plan}.'
+    assert spoken == []
+    assert delivered == [
+        (
+            ("society", "agent:mailbox"),
+            'The routine "Inbox sweep" failed: Individual quota reached {see plan}.',
+            "failed",
+        )
     ]
     row = await store.get(task_id)
     assert row is not None and row["last_error"].startswith("RuntimeError: ")

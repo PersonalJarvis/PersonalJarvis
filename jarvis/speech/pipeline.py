@@ -389,6 +389,20 @@ _READBACK_KINDS: frozenset[str] = frozenset(
 )
 
 
+#: Readback sources that never speak outside a call (see ``_is_agent_reply``).
+#: A mission the user just asked for is not here: its answer may still punch
+#: through the hangup gate (AD-OE5/OE6).
+_HELD_FOR_CALL_SOURCES: frozenset[str] = frozenset(
+    {
+        "society.lead",
+        "tasks.runner",
+        "workflows.runner",
+        "workflows.scheduler",
+        "desktop_app.conductor",
+    }
+)
+
+
 def _announcement_spoken_kind(kind: str | None) -> str:
     """Map an ``AnnouncementRequested.kind`` to a ``SpeechSpoken.spoken_kind``.
 
@@ -4823,7 +4837,15 @@ class SpeechPipeline:
 
     @staticmethod
     def _is_agent_reply(event: AnnouncementRequested) -> bool:
-        return event.source_layer == "society.lead" and event.kind in _READBACK_KINDS
+        """A readback that is owed to the user but must wait for an open call.
+
+        An agent's reply, and every piece of background news nobody asked for
+        in this conversation (a routine or automation result, a scheduled job
+        failing or recovering). Spoken into an idle machine it is Jarvis
+        talking without having been called; held here, it is delivered at the
+        next call, once, and only after the audio actually finished.
+        """
+        return event.source_layer in _HELD_FOR_CALL_SOURCES and event.kind in _READBACK_KINDS
 
     def _agent_reply_needs_session(self) -> bool:
         hangup = getattr(self, "_hangup_event", None)

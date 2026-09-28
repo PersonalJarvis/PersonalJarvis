@@ -234,21 +234,23 @@ class TaskRunner:
             log.exception("Task %s failed after %dms", task_id, duration_ms)
             tags = tuple(str(tag) for tag in spec.tags)
             if self._result_sink is not None and tags:
+                # The owner's chat gets a sentence; ``last_error`` keeps the
+                # precise ``Type: message`` line for the Runs tab.
+                notice = routine_failure_sentence(str(getattr(spec, "title", "") or ""), error_msg)
                 try:
-                    await self._result_sink(tags, error_msg, "failed")
+                    await self._result_sink(tags, notice, "failed")
                 except Exception:  # noqa: BLE001 — the run already failed; delivery is best effort
                     log.warning(
                         "task %s: failure sink failed for tags %s", task_id, tags, exc_info=True
                     )
             fail_ctx = {**ctx, "error": error_msg}
+            # Only an explicitly configured failure announcement speaks (and
+            # the voice holds it until the user's next call). An agent
+            # routine's failure goes to its own chat above, never to the voice
+            # unasked (RUB-95; it used to be read aloud as "RuntimeError: …").
             template = getattr(spec, "announce_on_failure", None)
             if template:
                 await self._announce(template, fail_ctx)
-            elif "society" in tags:
-                # The template path formats ``{…}``; an error text is not a
-                # template, so its braces are escaped before it goes through.
-                spoken = spoken_routine_failure(str(getattr(spec, "title", "") or ""), error_msg)
-                await self._announce(spoken.replace("{", "{{").replace("}", "}}"), fail_ctx)
             return
 
         duration_ms = int((time.perf_counter() - start) * 1000)
@@ -881,13 +883,12 @@ _AGENT_TITLE_TAG_RE = re.compile(r"^\s*\[agent:[^\]]*\]\s*")
 _ROUTINE_WRAPPER_RE = re.compile(r"^The routine chat failed:\s*", re.IGNORECASE)
 
 
-def spoken_routine_failure(title: str, error: str) -> str:
-    """The sentence an agent routine's failure is announced with.
+def routine_failure_sentence(title: str, error: str) -> str:
+    """How a failed routine is reported to a person: which one, and why.
 
     ``last_error`` keeps the precise ``Type: message`` line for the Runs tab;
-    read aloud (and turned into a conversation title) that line was
-    "RuntimeError: The routine chat failed: …". A person hears which routine
-    failed and why, without the exception class or the wrapper phrase.
+    a reader of the agent's chat gets neither the exception class nor the
+    "The routine chat failed:" wrapper.
     """
     reason = _EXCEPTION_PREFIX_RE.sub("", error.strip())
     reason = _ROUTINE_WRAPPER_RE.sub("", reason).strip().rstrip(".")
