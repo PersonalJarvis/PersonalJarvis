@@ -39,8 +39,24 @@ def test_mutating_cmd_normal(command: str, expected: bool) -> None:
 
 @pytest.mark.parametrize(
     "tail",
-    [" -c -!" * 40, " -! -" * 40, " --x" * 40, " --git-dir=x" * 40, " -c x" * 5000],
-    ids=["value-is-flag", "flag-pairs", "double-dash", "git-dir-eq", "many-pairs"],
+    [
+        " -c -!" * 40,
+        " -c -! " * 40,
+        " -! -" * 40,
+        " --x" * 40,
+        " --git-dir=x" * 40,
+        " --git-dir -" * 40,
+        " -c x" * 5000,
+    ],
+    ids=[
+        "value-is-flag",
+        "value-is-flag-spaced",
+        "flag-pairs",
+        "double-dash",
+        "git-dir-eq",
+        "git-dir-lone-dash",
+        "many-pairs",
+    ],
 )
 def test_mutating_cmd_pathological(tail: str) -> None:
     start = time.perf_counter()
