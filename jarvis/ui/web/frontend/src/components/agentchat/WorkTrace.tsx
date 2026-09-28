@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
-import type { ReasoningBlock, TextBlock, ToolBlock, TurnBlock, TurnItem, TurnStatus } from "./reduce";
+import { isQuestionTool, type ReasoningBlock, type TextBlock, type ToolBlock, type TurnBlock, type TurnItem, type TurnStatus } from "./reduce";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { QuestionCard } from "./QuestionCard";
 import { toolDiff } from "./toolDiff";
@@ -430,12 +430,23 @@ function TraceGroups({ groups, live, status, onDecide, renderText, conversation 
   });
 }
 
-export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false }: {
+/**
+ * An agent's question shows as its card; the tool calls that only wait on
+ * that card (``wait_for`` polls, jarvis/society/ask_tool.py) are plumbing
+ * and draw nothing.
+ */
+function withoutQuestionPolls(blocks: TurnBlock[]): TurnBlock[] {
+  const kept = blocks.filter((block) => !(block.kind === "tool" && isQuestionTool(block.name) && !block.question));
+  return kept.length === blocks.length ? blocks : kept;
+}
+
+export function WorkTrace({ blocks: rawBlocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false }: {
   blocks: TurnBlock[]; status: TurnStatus; startedMs: number; durationMs: number | null; error?: string | null;
   onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; className?: string;
   receipt?: ReactNode; completionLabel?: string; conversation?: boolean;
 }) {
   const t = useT();
+  const blocks = useMemo(() => withoutQuestionPolls(rawBlocks), [rawBlocks]);
   const live = status === "running";
   const elapsed = useClock(startedMs, live);
   const split = useMemo(() => conversation && !live ? splitConversationTurn(blocks) : null, [blocks, conversation, live]);

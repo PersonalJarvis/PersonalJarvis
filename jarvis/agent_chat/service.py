@@ -162,11 +162,22 @@ def stop_cli_at_cwd(cwd: str) -> int:
 
 
 class _OpenQuestion:
-    """A card waiting on the person: one answer slot per question in the series."""
+    """A card waiting on the person: one answer slot per question in the series.
 
-    __slots__ = ("answers", "closing", "session_id", "specs", "turn_id", "wake")
+    It lives independently of the tool call that opened it: a CLI drops an
+    MCP call after a minute or so, while the card may stay open for five.
+    ``result`` resolves once the card closes; callers wait on it in slices.
+    """
 
-    def __init__(self, session_id: str, turn_id: str, specs: tuple[QuestionSpec, ...]) -> None:
+    __slots__ = ("answers", "closing", "result", "session_id", "specs", "turn_id", "wake")
+
+    def __init__(
+        self,
+        session_id: str,
+        turn_id: str,
+        specs: tuple[QuestionSpec, ...],
+        result: asyncio.Future[list[QuestionAnswer]],
+    ) -> None:
         self.session_id = session_id
         self.turn_id = turn_id
         self.specs = specs
@@ -174,10 +185,15 @@ class _OpenQuestion:
         #: Set by a skip or a cancel: the source every open slot resolves to.
         self.closing = ""
         self.wake = asyncio.Event()
+        self.result = result
 
     @property
     def done(self) -> bool:
         return bool(self.closing) or all(a is not None for a in self.answers)
+
+
+def _expires_ms(timeout_s: float) -> int:
+    return int(time.time() * 1000 + timeout_s * 1000)
 
 
 class _Running:
@@ -222,6 +238,7 @@ class AgentChatService:
         self._approval_session: dict[str, str] = {}
         # Questions an agent is waiting on (questions.py), by question id.
         self._questions: dict[str, _OpenQuestion] = {}
+        self._question_tasks: set[asyncio.Task[None]] = set()
         # "Always allow" on the Jarvis surface: the tools a person waved through
         # for the rest of the session, per session. Claude Code's "don't ask
         # again for this tool" rather than a mode flip — the unified ladder has
@@ -1053,22 +1070,22 @@ class AgentChatService:
 
     # ------------------------------------------------------------ questions
 
-    async def ask_questions(
+    async def open_questions(
         self,
         session_id: str,
         specs: tuple[QuestionSpec, ...],
         *,
         asker: str = "",
         timeout_s: float = QUESTION_TIMEOUT_S,
-    ) -> list[QuestionAnswer]:
-        """Show ``specs`` as one card in the running turn and wait for the answers.
+    ) -> str:
+        """Show ``specs`` as one card in the running turn; returns its question id.
 
-        The person answers the series one question at a time. Whenever
-        ``timeout_s`` passes without a new answer, every open question takes
-        its recommendation (index 0); each answer restarts that window, so a
-        workflow behind this turn keeps moving but a person mid-series is
-        never cut off. Closing the card applies the recommendations at once;
-        a cancelled or finished turn answers ``cancelled``.
+        The card watches itself: whenever ``timeout_s`` passes without a new
+        answer, every open question takes its recommendation (index 0). Each
+        answer restarts that window, so a workflow behind this turn keeps
+        moving but a person mid-series is never cut off. Closing the card
+        applies the recommendations at once; a finished turn cancels it. Wait
+        for the outcome with :meth:`wait_questions`.
 
         Raises ``RuntimeError`` when the session has no running turn, and
         ``TooManyQuestions`` once the turn has used its cards.
@@ -1080,13 +1097,9 @@ class AgentChatService:
             raise TooManyQuestions(f"this turn already asked {run.asks} times")
         run.asks += 1
         question_id = uuid.uuid4().hex
-        open_q = _OpenQuestion(session_id, run.turn_id, specs)
-        self._questions[question_id] = open_q
         loop = asyncio.get_running_loop()
-
-        def expires_ms() -> int:
-            return int(time.time() * 1000 + timeout_s * 1000)
-
+        open_q = _OpenQuestion(session_id, run.turn_id, specs, loop.create_future())
+        self._questions[question_id] = open_q
         await self._emit(
             session_id,
             make_event(
@@ -1097,10 +1110,58 @@ class AgentChatService:
                     "asker": asker,
                     "questions": [spec.to_payload() for spec in specs],
                     "timeout_s": timeout_s,
-                    "expires_ms": expires_ms(),
+                    "expires_ms": _expires_ms(timeout_s),
                 },
             ),
         )
+        task = asyncio.create_task(
+            self._watch_question(open_q, question_id, timeout_s),
+            name=f"agent-chat-question-{question_id[:8]}",
+        )
+        self._question_tasks.add(task)
+        task.add_done_callback(self._question_tasks.discard)
+        return question_id
+
+    async def wait_questions(
+        self, session_id: str, question_id: str, timeout_s: float | None = None
+    ) -> list[QuestionAnswer] | None:
+        """The card's answers once it closed; ``None`` while it is still open after ``timeout_s``.
+
+        Raises ``KeyError`` for an unknown or foreign question id.
+        """
+        open_q = self._questions.get(question_id)
+        if open_q is None or open_q.session_id != session_id:
+            raise KeyError(question_id)
+        try:
+            return await asyncio.wait_for(asyncio.shield(open_q.result), timeout_s)
+        except TimeoutError:  # still open: the caller polls again
+            return None
+
+    def question_specs(self, session_id: str, question_id: str) -> tuple[QuestionSpec, ...]:
+        """The questions on card ``question_id``; raises ``KeyError`` when unknown."""
+        open_q = self._questions.get(question_id)
+        if open_q is None or open_q.session_id != session_id:
+            raise KeyError(question_id)
+        return open_q.specs
+
+    async def ask_questions(
+        self,
+        session_id: str,
+        specs: tuple[QuestionSpec, ...],
+        *,
+        asker: str = "",
+        timeout_s: float = QUESTION_TIMEOUT_S,
+    ) -> list[QuestionAnswer]:
+        """Open a card and wait until it closes (a caller with no call timeout)."""
+        question_id = await self.open_questions(session_id, specs, asker=asker, timeout_s=timeout_s)
+        answers = await self.wait_questions(session_id, question_id)
+        assert answers is not None
+        return answers
+
+    async def _watch_question(
+        self, open_q: _OpenQuestion, question_id: str, timeout_s: float
+    ) -> None:
+        loop = asyncio.get_running_loop()
         reported = 0
         deadline = loop.time() + timeout_s
         try:
@@ -1110,7 +1171,7 @@ class AgentChatService:
                     log.info(
                         "agent chat: question %s in %s timed out; recommendations applied",
                         question_id,
-                        session_id,
+                        open_q.session_id,
                     )
                     open_q.closing = TIMEOUT
                     break
@@ -1124,29 +1185,42 @@ class AgentChatService:
                     reported = answered
                     deadline = loop.time() + timeout_s
                     await self._emit(
-                        session_id,
+                        open_q.session_id,
                         make_event(
                             "question_progress",
                             {
-                                "turn_id": run.turn_id,
+                                "turn_id": open_q.turn_id,
                                 "question_id": question_id,
                                 "answers": [a.to_payload() if a else None for a in open_q.answers],
-                                "expires_ms": expires_ms(),
+                                "expires_ms": _expires_ms(timeout_s),
                             },
                         ),
                     )
         except asyncio.CancelledError:
-            # The caller went away (a cancelled tool call, a CLI that gave up
-            # on the MCP request): close the card rather than leave it open.
+            # App shutdown: the card closes with the process.
             open_q.closing = CANCELLED
-            self._questions.pop(question_id, None)
-            await self._emit_resolved(open_q, question_id)
             raise
         finally:
-            self._questions.pop(question_id, None)
-        return await self._emit_resolved(open_q, question_id)
+            answers = self._final_answers(open_q)
+            if not open_q.result.done():
+                open_q.result.set_result(answers)
+            try:
+                await self._emit(
+                    open_q.session_id,
+                    make_event(
+                        "question_resolved",
+                        {
+                            "turn_id": open_q.turn_id,
+                            "question_id": question_id,
+                            "answers": [a.to_payload() for a in answers],
+                        },
+                    ),
+                )
+            except Exception:  # noqa: BLE001 — the outcome is already delivered to the waiter
+                log.warning("agent chat: could not record question %s", question_id, exc_info=True)
 
-    async def _emit_resolved(self, open_q: _OpenQuestion, question_id: str) -> list[QuestionAnswer]:
+    @staticmethod
+    def _final_answers(open_q: _OpenQuestion) -> list[QuestionAnswer]:
         answers: list[QuestionAnswer] = []
         for spec, answer in zip(open_q.specs, open_q.answers, strict=True):
             if answer is None:
@@ -1157,17 +1231,6 @@ class AgentChatService:
                     else recommended_answer(spec, source)
                 )
             answers.append(answer)
-        await self._emit(
-            open_q.session_id,
-            make_event(
-                "question_resolved",
-                {
-                    "turn_id": open_q.turn_id,
-                    "question_id": question_id,
-                    "answers": [a.to_payload() for a in answers],
-                },
-            ),
-        )
         return answers
 
     def resolve_question(
@@ -1205,15 +1268,20 @@ class AgentChatService:
         return True
 
     def pending_questions(self, session_id: str) -> list[str]:
-        return [qid for qid, q in self._questions.items() if q.session_id == session_id]
+        return [
+            qid for qid, q in self._questions.items() if q.session_id == session_id and not q.done
+        ]
 
     def _cancel_questions(self, session_id: str) -> None:
         # Tolerates a service built without __init__ (test doubles), like _controls.
         questions: dict[str, _OpenQuestion] = getattr(self, "_questions", {})
-        for open_q in list(questions.values()):
-            if open_q.session_id == session_id and not open_q.done:
+        for qid, open_q in list(questions.items()):
+            if open_q.session_id != session_id:
+                continue
+            if not open_q.done:
                 open_q.closing = CANCELLED
                 open_q.wake.set()
+            questions.pop(qid, None)
 
 
 __all__ = [

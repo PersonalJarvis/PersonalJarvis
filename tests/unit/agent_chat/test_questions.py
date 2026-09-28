@@ -186,15 +186,29 @@ def test_asking_without_a_running_turn_raises(tmp_path: Path) -> None:
 
 
 class _FakeService:
-    def __init__(self, *, limit: bool = False) -> None:
+    """Answers option B on every question, after ``polls`` still-open slices."""
+
+    def __init__(self, *, limit: bool = False, polls: int = 0) -> None:
         self.asked: list[tuple[str, str]] = []
         self.limit = limit
+        self.polls = polls
+        self.specs: dict[str, Any] = {}
 
-    async def ask_questions(self, session_id: str, specs: Any, *, asker: str = "") -> Any:
+    async def open_questions(self, session_id: str, specs: Any, *, asker: str = "") -> str:
         if self.limit:
             raise TooManyQuestions("used up")
         self.asked.append((session_id, asker))
-        return [answer_from(spec, option_index=1, text=None) for spec in specs]
+        self.specs["q1"] = specs
+        return "q1"
+
+    def question_specs(self, session_id: str, question_id: str) -> Any:
+        return self.specs[question_id]
+
+    async def wait_questions(self, session_id: str, question_id: str, timeout_s: Any) -> Any:
+        if self.polls:
+            self.polls -= 1
+            return None
+        return [answer_from(spec, option_index=1, text=None) for spec in self.specs[question_id]]
 
 
 def _tool(session_id: str, service: _FakeService) -> AskUserTool:
@@ -211,6 +225,33 @@ def test_tool_returns_the_persons_answers() -> None:
     assert [r["answer"] for r in result.output["answers"]] == ["Postgres", "VPS"]
     assert result.output["answers"][0]["recommended"] is False
     assert service.asked == [("society:ada", "Ada")]
+
+
+def test_a_slow_answer_is_polled_in_slices() -> None:
+    service = _FakeService(polls=1)
+    tool = _tool("society:ada", service)
+    first = asyncio.run(tool.execute(dict(_ARGS), None))
+    assert first.success and first.output["status"] == "waiting"
+    assert first.output["question_id"] == "q1" and "wait_for" in first.output["note"]
+    second = asyncio.run(tool.execute({"wait_for": "q1"}, None))
+    assert [r["answer"] for r in second.output["answers"]] == ["Postgres", "VPS"]
+    assert service.asked == [("society:ada", "Ada")]  # polling never opens a new card
+    gone = asyncio.run(tool.execute({"wait_for": "nope"}, None))
+    assert not gone.success
+
+
+def test_the_card_outlives_a_dropped_call(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        svc, sid, task = await _service_with_turn(tmp_path)
+        qid = await svc.open_questions(sid, parse_questions(_DB))
+        assert await svc.wait_questions(sid, qid, 0.01) is None  # the slice ends, card stays
+        assert svc.pending_questions(sid) == [qid]
+        assert svc.resolve_question(sid, qid, index=0, option_index=1)
+        answers = await svc.wait_questions(sid, qid, 5)
+        assert answers is not None and answers[0].answer == "Postgres"
+        task.cancel()
+
+    asyncio.run(scenario())
 
 
 def test_a_routine_never_waits_for_the_user() -> None:

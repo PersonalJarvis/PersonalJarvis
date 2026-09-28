@@ -136,6 +136,16 @@ describe("QuestionCard", () => {
     expect(answer).toHaveBeenCalledWith("q1", 1, { optionIndex: 1 });
   });
 
+  it("draws no row for the calls that only wait on the card", () => {
+    draw(asking([
+      ev("tool_result", { turn_id: "t1", call_id: "c1", output: "waiting" }),
+      ev("tool_call", { turn_id: "t1", call_id: "c2", name: "mcp__jarvis__society_ask_user", input: { wait_for: "q1" } }),
+      ev("tool_result", { turn_id: "t1", call_id: "c2", output: "waiting" }),
+    ]));
+    expect(screen.getAllByTestId("question-card")).toHaveLength(1);
+    expect(document.querySelector("[data-trace-tool]")).toBeNull();
+  });
+
   it("sends a typed answer", async () => {
     const { answer } = draw(asking([], [DB]));
     expect(screen.queryByTestId("question-step")).toBeNull();

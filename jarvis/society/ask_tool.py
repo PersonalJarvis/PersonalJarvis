@@ -46,6 +46,11 @@ __all__ = ["ASK_USER_TOOL_NAME", "AskUserTool"]
 ASK_USER_TOOL_NAME: Final[str] = "society_ask_user"
 _MINUTES: Final[int] = int(QUESTION_TIMEOUT_S // 60)
 
+#: How long one call waits for the card. CLI seats drop an MCP call after
+#: about a minute (Claude Code: 60 s), so the tool hands back a "still
+#: waiting" result in time and the agent polls with ``wait_for``.
+WAIT_SLICE_S: Final[float] = 45.0
+
 _QUESTION_SCHEMA: Final[dict[str, Any]] = {
     "type": "object",
     "properties": {
@@ -98,7 +103,9 @@ class AskUserTool:
         f"{_MINUTES} minutes, your recommendations are applied, so recommend the safest "
         "sensible choice. Never ask for permission to do what you were asked, never ask "
         "what you could look up, and never ask again what was already answered. "
-        f"A turn can show at most {MAX_ASKS_PER_TURN} question cards."
+        f"A turn can show at most {MAX_ASKS_PER_TURN} question cards. While the user has "
+        "not answered yet, the call returns status 'waiting' with a question_id: then call "
+        "this tool again with only wait_for set to that id, and do nothing else meanwhile."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -110,8 +117,14 @@ class AskUserTool:
                 "items": _QUESTION_SCHEMA,
                 "description": "The questions, most important first. Usually just one.",
             },
+            "wait_for": {
+                "type": "string",
+                "description": (
+                    "Only to keep waiting on a card you already opened: the question_id from "
+                    "a 'waiting' result. Send it alone, without questions."
+                ),
+            },
         },
-        "required": ["questions"],
     }
 
     def __init__(self, runtime: Any, agent_id: str, *, session_id: str) -> None:
@@ -120,6 +133,9 @@ class AskUserTool:
         self._session_id = session_id
 
     async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
+        wait_for = str(args.get("wait_for") or "").strip()
+        if wait_for:
+            return await self._keep_waiting(wait_for)
         try:
             specs = parse_questions(args)
         except ValueError as exc:
@@ -131,10 +147,10 @@ class AskUserTool:
                 "applied; continue with them and mention the assumptions in your result.",
             )
         service = self._runtime.chat_service()
-        if service is None or not callable(getattr(service, "ask_questions", None)):
+        if service is None or not callable(getattr(service, "open_questions", None)):
             return _unattended(specs, _NOBODY)
         try:
-            answers = await service.ask_questions(self._session_id, specs, asker=self._asker())
+            question_id = await service.open_questions(self._session_id, specs, asker=self._asker())
         except TooManyQuestions:
             return _unattended(
                 specs,
@@ -147,6 +163,42 @@ class AskUserTool:
             # can answer, so the recommendations stand rather than a stall.
             log.info("society ask: %s cannot ask here (%s)", self._agent_id, exc)
             return _unattended(specs, _NOBODY)
+        return await self._wait(service, question_id, specs)
+
+    async def _keep_waiting(self, question_id: str) -> ToolResult:
+        service = self._runtime.chat_service()
+        try:
+            specs = service.question_specs(self._session_id, question_id)
+        except (AttributeError, KeyError):
+            return ToolResult(
+                success=False,
+                output=None,
+                error=(
+                    "No open question card with that id in this chat (it closed with the "
+                    "turn). Continue with your recommendations; do not ask again."
+                ),
+            )
+        return await self._wait(service, question_id, specs)
+
+    async def _wait(
+        self, service: Any, question_id: str, specs: tuple[QuestionSpec, ...]
+    ) -> ToolResult:
+        answers = await service.wait_questions(self._session_id, question_id, WAIT_SLICE_S)
+        if answers is None:
+            return ToolResult(
+                success=True,
+                output={
+                    "status": "waiting",
+                    "question_id": question_id,
+                    "note": (
+                        "The user has not finished answering yet; the card stays open and "
+                        f"applies your recommendations on its own after {_MINUTES} quiet "
+                        "minutes. Call society_ask_user again now with only "
+                        f'{{"wait_for": "{question_id}"}} to keep waiting. Do nothing else '
+                        "meanwhile and do not ask anything new."
+                    ),
+                },
+            )
         return _result(specs, answers)
 
     def _asker(self) -> str:
