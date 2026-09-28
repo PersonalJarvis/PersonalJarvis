@@ -40,7 +40,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from jarvis.agentic_ide import library
+from jarvis.agentic_ide import library, resume_store
 
 router = APIRouter(prefix="/api/chat-library", tags=["chat-library"])
 
@@ -264,7 +264,12 @@ def patch_project(project_id: str, body: PatchProjectIn) -> ProjectOut:
     openapi_extra={"x-jarvis-dangerous": True},
 )
 def delete_project(project_id: str) -> RemovedOut:
-    return RemovedOut(removed=library.delete_project(project_id))
+    # The IDE sidebar re-derives a project row from every remembered workspace
+    # in its folder, so the remembered ones have to go too or the project comes
+    # straight back. Open workspaces are the caller's to close first.
+    removed = library.delete_project(project_id)
+    forgotten = resume_store.forget(project_id=project_id)
+    return RemovedOut(removed=removed or forgotten > 0)
 
 
 # --------------------------------------------------------------------------- #

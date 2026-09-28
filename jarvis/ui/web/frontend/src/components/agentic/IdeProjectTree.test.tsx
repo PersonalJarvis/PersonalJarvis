@@ -15,10 +15,11 @@ vi.mock("@/lib/chatLibraryApi", () => ({ patchProject, openProject, deleteProjec
 
 const renameWorkspace = vi.hoisted(() => vi.fn());
 const closeWorkspace = vi.hoisted(() => vi.fn());
+const removeWorkspace = vi.hoisted(() => vi.fn());
 const reorderWorkspaces = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/agenticIdeApi", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/agenticIdeApi")>();
-  return { ...actual, renameWorkspace, closeWorkspace, reorderWorkspaces };
+  return { ...actual, renameWorkspace, closeWorkspace, removeWorkspace, reorderWorkspaces };
 });
 
 const project = (id = "p1", pinned = false) => ({ id, path: `/${id}`, name: id === "p1" ? "App" : "New App",
@@ -33,6 +34,7 @@ beforeEach(() => {
   reorderProjects.mockReset().mockResolvedValue([]);
   renameWorkspace.mockReset().mockResolvedValue({});
   closeWorkspace.mockReset().mockResolvedValue({});
+  removeWorkspace.mockReset().mockResolvedValue({});
   reorderWorkspaces.mockReset().mockResolvedValue({});
   useIdeProjectsStore.setState({ projects: [project()], activeWorkspaceId: "p1-w1", pendingWorkspaceId: null, refreshRequest: null, action: null });
 });
@@ -159,13 +161,13 @@ it("submits only one metadata mutation when a project action is pressed twice", 
   await waitFor(() => expect(useIdeProjectsStore.getState().refreshRequest?.nonce).toBe(1));
 });
 
-it("opens a workspace menu on right-click with rename and close", () => {
+it("opens a workspace menu on right-click with rename and remove", () => {
   render(<IdeProjectTree />);
   const row = screen.getByTestId("ide-workspace-row-p1-w1");
   fireEvent.contextMenu(row);
   expect(screen.getByTestId("ide-workspace-menu")).toBeDefined();
   expect(screen.getByTestId("ide-workspace-menu-rename").textContent).toContain("Rename workspace");
-  expect(screen.getByTestId("ide-workspace-menu-close").textContent).toContain("Close workspace");
+  expect(screen.getByTestId("ide-workspace-menu-close").textContent).toContain("Remove workspace");
   expect(screen.getByTestId("ide-workspace-menu-open")).toBeDefined();
 });
 
@@ -179,15 +181,33 @@ it("renames a workspace from its right-click menu", async () => {
   await waitFor(() => expect(useIdeProjectsStore.getState().refreshRequest?.nonce).toBe(1));
 });
 
-it("asks for confirmation before closing a workspace", async () => {
+it("asks for confirmation before removing a workspace", async () => {
   render(<IdeProjectTree />);
   fireEvent.contextMenu(screen.getByTestId("ide-workspace-row-p1-w1"));
   fireEvent.click(screen.getByTestId("ide-workspace-menu-close"));
   expect(screen.getByTestId("ide-workspace-confirm-close")).toBeDefined();
-  expect(closeWorkspace).not.toHaveBeenCalled();
+  expect(removeWorkspace).not.toHaveBeenCalled();
   fireEvent.click(screen.getByTestId("ide-workspace-confirm-close-confirm"));
-  await waitFor(() => expect(closeWorkspace).toHaveBeenCalledWith("p1-w1"));
+  // Remove, not close: a close would leave a closed row behind in the sidebar.
+  await waitFor(() => expect(removeWorkspace).toHaveBeenCalledWith("p1-w1"));
+  expect(closeWorkspace).not.toHaveBeenCalled();
   await waitFor(() => expect(useIdeProjectsStore.getState().refreshRequest?.nonce).toBe(1));
+});
+
+it("removes a closed workspace too", async () => {
+  useIdeProjectsStore.setState({
+    projects: [{
+      ...project(),
+      workspaces: [{ ...project().workspaces[0], status: "closed", live_terminals: 0 } as IdeProject["workspaces"][number]],
+    }],
+    activeWorkspaceId: null,
+  });
+  render(<IdeProjectTree />);
+  fireEvent.contextMenu(screen.getByTestId("ide-workspace-row-p1-w1"));
+  expect(screen.getByTestId("ide-workspace-menu-close").textContent).toContain("Remove workspace");
+  fireEvent.click(screen.getByTestId("ide-workspace-menu-close"));
+  fireEvent.click(screen.getByTestId("ide-workspace-confirm-close-confirm"));
+  await waitFor(() => expect(removeWorkspace).toHaveBeenCalledWith("p1-w1"));
 });
 
 it("asks for confirmation before deleting a project with no open workspaces", async () => {

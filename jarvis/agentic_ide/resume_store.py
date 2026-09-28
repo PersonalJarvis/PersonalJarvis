@@ -432,21 +432,71 @@ def save(snapshot: Snapshot) -> None:
         # would render as a card with no panes in it.
         clear()
         return
+    with _WRITE_LOCK:
+        _write_locked(_merged_with_stored(snapshot))
+
+
+def _write_locked(snapshot: Snapshot) -> None:
+    """Replace the stored file with ``snapshot`` as-is. Caller holds ``_WRITE_LOCK``."""
     target = _store_path()
     tmp = target.with_name(f"{target.name}.tmp-{os.getpid()}-{uuid4().hex[:8]}")
-    with _WRITE_LOCK:
-        snapshot = _merged_with_stored(snapshot)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(snapshot.to_dict(), indent=2), encoding="utf-8")
+        os.replace(tmp, target)
+    except OSError as exc:
+        logger.warning("Agentic IDE: could not persist the resume snapshot: {}", exc)
+        # Never leave a half-written temp file behind to be found later.
         try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(json.dumps(snapshot.to_dict(), indent=2), encoding="utf-8")
-            os.replace(tmp, target)
-        except OSError as exc:
-            logger.warning("Agentic IDE: could not persist the resume snapshot: {}", exc)
-            # Never leave a half-written temp file behind to be found later.
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:  # noqa: S110 - cleanup is best-effort
-                pass
+            tmp.unlink(missing_ok=True)
+        except OSError:  # noqa: S110 - cleanup is best-effort
+            pass
+
+
+def forget(*, session_ids: set[str] | None = None, project_id: str | None = None) -> int:
+    """Drop remembered workspaces for good. Returns how many were removed.
+
+    The sidebar lists every remembered workspace as a closed row, and a project
+    whose library entry is gone is re-derived from those rows — so removing a
+    workspace or deleting a project has to reach this file, or the row comes
+    straight back on the next refresh. Matches by workspace id, or by owning
+    project (the stored id, else the id derived from the folder). Only the
+    record goes; the folder on disk is never touched.
+
+    A later ``save`` cannot bring a forgotten record back: the merge only keeps
+    what is still stored plus what is open at that moment.
+    """
+    ids = session_ids or set()
+
+    def doomed(space: SnapshotWorkspace) -> bool:
+        if space.session_id in ids:
+            return True
+        if project_id is None:
+            return False
+        return project_id in (space.project_id, project_id_for(space.folder))
+
+    with _WRITE_LOCK:
+        stored = load()
+        if stored is None:
+            return 0
+        kept = [space for space in stored.workspaces if not doomed(space)]
+        removed = len(stored.workspaces) - len(kept)
+        if removed == 0:
+            return 0
+        if not kept:
+            clear()
+            return removed
+        kept_ids = {space.session_id for space in kept}
+        _write_locked(
+            Snapshot(
+                saved_at=stored.saved_at,
+                workspaces=kept,
+                active_session_id=(
+                    stored.active_session_id if stored.active_session_id in kept_ids else ""
+                ),
+            )
+        )
+        return removed
 
 
 # How many CLOSED workspaces one restore point may remember in addition to all
@@ -691,6 +741,7 @@ __all__ = [
     "SnapshotWorkspace",
     "clear",
     "folder_key",
+    "forget",
     "load",
     "offer",
     "save",

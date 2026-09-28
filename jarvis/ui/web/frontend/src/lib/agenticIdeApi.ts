@@ -1329,6 +1329,21 @@ export async function closeWorkspace(id: string): Promise<IdeState> {
   return body.state;
 }
 
+/**
+ * Remove ONE workspace for good: stop its agents if it is open and forget its
+ * saved record, so the sidebar row disappears instead of turning into a closed
+ * one. The folder on disk is untouched. Returns the state that is left.
+ */
+export async function removeWorkspace(id: string): Promise<IdeState> {
+  const res = await fetch(
+    `/api/agentic-ide/workspaces/${encodeURIComponent(id)}/record`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { state: IdeState };
+  return body.state;
+}
+
 /** What reopening the last workspace would bring back, checked against this machine. */
 export function fetchResumeOffer(): Promise<ResumeOffer> {
   return getJson<ResumeOffer>("/api/agentic-ide/resume");

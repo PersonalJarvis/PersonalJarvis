@@ -2131,6 +2131,28 @@ async def close_workspace(request: Request, workspace_id: str) -> dict:
     return {"ok": True, "closed": workspace_id, "state": registry.state()}
 
 
+@router.delete(
+    "/workspaces/{workspace_id}/record",
+    summary="Remove one workspace from the sidebar",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def remove_workspace(request: Request, workspace_id: str) -> dict:
+    """Stop the workspace's agents if it is open and forget it for good.
+
+    Unlike ``DELETE /workspaces/{workspace_id}``, which keeps a closed,
+    restorable row, this makes the row disappear. Works on open and remembered
+    (closed) workspaces. The folder on disk is never touched.
+
+    ``404`` when the id is neither open nor remembered.
+    """
+    registry = get_registry()
+    if not await registry.remove_workspace(workspace_id):
+        raise HTTPException(status_code=404, detail="That workspace no longer exists.")
+    await _announce_coding_mode(request)
+    await _announce_workspace(request, registry.session, "closed")
+    return {"ok": True, "removed": workspace_id, "state": registry.state()}
+
+
 async def _installed_agents() -> set[str]:
     """Coding CLIs this machine can actually launch, right now.
 

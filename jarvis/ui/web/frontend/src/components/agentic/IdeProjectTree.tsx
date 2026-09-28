@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as Rea
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, ChevronRight, Folder, FolderPlus, Loader2, Mic, MoreHorizontal, Pencil, Pin, Plus, Trash2, X } from "lucide-react";
 import { ChatLibraryError, deleteProject, openProject, patchProject, reorderProjects } from "@/lib/chatLibraryApi";
-import { closeWorkspace, renameWorkspace, IdeApiError, reorderWorkspaces, type IdeProject, type ProjectWorkspace } from "@/lib/agenticIdeApi";
+import { closeWorkspace, removeWorkspace, renameWorkspace, IdeApiError, reorderWorkspaces, type IdeProject, type ProjectWorkspace } from "@/lib/agenticIdeApi";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 
@@ -218,7 +218,7 @@ export function IdeProjectTree() {
     }
     setConfirmBusy(true);
     try {
-      await closeWorkspace(target.workspace.id);
+      await removeWorkspace(target.workspace.id);
       setConfirmWorkspace(null);
       setContextMenu(null);
       requestRefresh();
@@ -590,13 +590,13 @@ export function IdeProjectTree() {
     )}
     {confirmWorkspaceTarget && (
       <ConfirmTreeAction
-        title={`Close ${confirmWorkspaceTarget.workspace.name}?`}
+        title={`Remove ${confirmWorkspaceTarget.workspace.name}?`}
         body={
           confirmWorkspaceTarget.workspace.status === "open"
-            ? `Its ${confirmWorkspaceTarget.workspace.terminals} coding ${confirmWorkspaceTarget.workspace.terminals === 1 ? "agent" : "agents"} will stop. You can reopen it later from this project.`
-            : "This removes the saved workspace from this project. Its chats stay in the library."
+            ? `Its ${confirmWorkspaceTarget.workspace.terminals} coding ${confirmWorkspaceTarget.workspace.terminals === 1 ? "agent" : "agents"} will stop and the workspace leaves the sidebar. The folder on disk and its chats stay untouched.`
+            : "The workspace leaves the sidebar. The folder on disk and its chats stay untouched."
         }
-        confirmLabel={confirmBusy ? "Closing…" : `Close ${confirmWorkspaceTarget.workspace.name}`}
+        confirmLabel={confirmBusy ? "Removing…" : `Remove ${confirmWorkspaceTarget.workspace.name}`}
         busy={confirmBusy}
         testId="ide-workspace-confirm-close"
         onCancel={() => {
@@ -812,7 +812,7 @@ function TreeContextMenu({
           className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
         >
           <Trash2 aria-hidden className="h-3.5 w-3.5 shrink-0" />
-          {isOpen === false ? "Remove workspace" : "Close workspace"}
+          Remove workspace
         </button>
       )}
       {kind === "project" && onDeleteProject && (

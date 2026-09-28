@@ -2617,6 +2617,25 @@ class Registry:
             await self._close_locked(target)
             return True
 
+    async def remove_workspace(self, workspace_id: str) -> bool:
+        """Remove a workspace for good: stop its agents and forget its record.
+
+        What the sidebar's "Remove workspace" means, as opposed to ``end``:
+        closing keeps the workspace as a closed, restorable row; removing makes
+        the row go away. Works on an open workspace and on a remembered closed
+        one alike. The folder on disk is never touched. False when the id is
+        neither open nor remembered.
+        """
+        async with self._lock:
+            closed = workspace_id in self._sessions
+            if closed:
+                await self._close_locked(workspace_id)
+        # Under the persist lock so a save that read the old state cannot land
+        # after the record is gone and write it straight back.
+        async with self._persist_lock:
+            forgotten = await asyncio.to_thread(resume_store.forget, session_ids={workspace_id})
+        return closed or forgotten > 0
+
     async def close_all(self) -> int:
         """Close every open workspace. Returns how many were closed.
 
