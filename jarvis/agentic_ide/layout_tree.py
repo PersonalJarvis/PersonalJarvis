@@ -170,6 +170,23 @@ def leaves(node: LayoutNode | None) -> list[str]:
     return found
 
 
+def grid_span(node: LayoutNode | None) -> tuple[int, int]:
+    """How many columns and rows ``node`` occupies at its widest and tallest.
+
+    Siblings in a row add their columns and share the tallest row count;
+    siblings in a column the other way round. Mirrored by `layoutSpan` in the
+    frontend's ``workspaceDocking.ts``, which enforces the same grid bounds.
+    """
+    if node is None:
+        return (0, 0)
+    if isinstance(node, Leaf):
+        return (1, 1)
+    spans = [grid_span(child) for child in node.children]
+    if node.direction == "row":
+        return (sum(cols for cols, _ in spans), max(rows for _, rows in spans))
+    return (max(cols for cols, _ in spans), sum(rows for _, rows in spans))
+
+
 def contains(node: LayoutNode | None, pane: str) -> bool:
     return pane in leaves(node)
 

@@ -4734,6 +4734,12 @@ class Registry:
                 )
             else:
                 session.layout = layout_tree.append_pane(session.layout, term.key)
+            # A split or an appended column may not leave the largest grid the
+            # workspace draws; past it the panes are dealt into the even grid
+            # instead (voice and the CLI have no preview to stop them first).
+            columns, rows = layout_tree.grid_span(session.layout)
+            if columns > MAX_GRID_COLUMNS or rows > MAX_GRID_ROWS:
+                self._row_major_grid(session)
             # Then every terminal back to an equal share — the same act as the
             # grid's "even out" button, run for the user on every open — EXCEPT
             # inside a container whose boundaries were dragged by hand

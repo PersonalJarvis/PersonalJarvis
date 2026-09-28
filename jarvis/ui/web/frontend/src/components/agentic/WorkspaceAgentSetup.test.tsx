@@ -44,14 +44,23 @@ describe("Workspace agent selection", () => {
     expect(screen.getByTestId("plan").textContent).toBe("codex,codex");
   });
 
-  it("clears a removed editing target and never offers more than eight sessions", () => {
+  it("offers up to sixteen sessions and names the grid they open as", () => {
+    render(<Setup />);
+    fireEvent.click(screen.getByRole("button", { name: "16 sessions" }));
+    expect(screen.getByText(/opens as 4 × 4/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "9 sessions" }));
+    expect(screen.getByText(/opens as 3 × 3/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "17 sessions" })).toBeNull();
+  });
+
+  it("clears a removed editing target when the count shrinks", () => {
     render(<Setup />);
     fireEvent.click(screen.getByRole("button", { name: "8 sessions" }));
     fireEvent.click(screen.getByRole("button", { name: "Edit session 8: Claude Code" }));
     fireEvent.click(screen.getByRole("button", { name: "1 session" }));
     fireEvent.click(screen.getByRole("button", { name: "Codex" }));
     expect(screen.getByTestId("plan").textContent).toBe("codex");
-    expect(screen.queryByRole("button", { name: "9 sessions" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "17 sessions" })).toBeNull();
   });
 
   it("fills an unassigned seat when discovery arrives without replacing existing picks", () => {

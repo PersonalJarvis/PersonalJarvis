@@ -487,7 +487,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
             <input value={workspaceName} disabled={busy} onChange={(event) => setWorkspaceName(event.target.value)}
               placeholder="Workspace" className="mt-2 h-11 w-full rounded-lg border border-input bg-background/60 px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring/30" />
           </label>
-          <WorkspaceAgentSetup agents={installed} sessions={workspaceAgents} onChange={setWorkspaceAgents} disabled={busy} />
+          <WorkspaceAgentSetup agents={installed} sessions={workspaceAgents} onChange={setWorkspaceAgents} disabled={busy} maxSessions={maxPanes} />
         </div>
         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-6 py-4 sm:px-8">
           <span className="text-xs text-muted-foreground" aria-live="polite">{workspaceAgents.length} {workspaceAgents.length === 1 ? "session" : "sessions"} · {new Set(workspaceAgents.filter(Boolean)).size} {new Set(workspaceAgents.filter(Boolean)).size === 1 ? "agent" : "agents"}</span>

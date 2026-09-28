@@ -237,3 +237,38 @@ async def test_a_full_workspace_rebalances_into_four_by_four(
     assert all(len(ide.layout_tree.leaves(row)) == ide.MAX_GRID_COLUMNS for row in layout.children)
     with pytest.raises(ide.SessionError):
         await registry.add_terminal(agent="claude")
+
+
+@pytest.mark.parametrize(
+    ("count", "direction"), [(8, None), (12, None), (15, "down"), (15, "right")]
+)
+async def test_no_way_of_adding_a_pane_leaves_the_four_by_four_grid(
+    registry: ide.Registry, tmp_path: Path, count: int, direction: str | None
+) -> None:
+    """Voice and the CLI have no preview, so the server keeps the bounds itself."""
+    await registry.start(str(tmp_path), [{"agent": "claude"} for _ in range(count)])
+    session = registry.session
+    assert session is not None
+    if direction is None:
+        await registry.add_terminal(agent="claude")
+    else:
+        await registry.add_terminal(
+            anchor=session.terminals[0].name, agent="claude", direction=direction
+        )
+    columns, rows = ide.layout_tree.grid_span(session.layout)
+    assert columns <= ide.MAX_GRID_COLUMNS and rows <= ide.MAX_GRID_ROWS
+    assert len(ide.layout_tree.leaves(session.layout)) == count + 1
+
+
+async def test_a_split_within_the_grid_keeps_the_users_shape(
+    registry: ide.Registry, tmp_path: Path
+) -> None:
+    """Rebalancing is only the fallback: a split that fits stays where it was put."""
+    await registry.start(str(tmp_path), [{"agent": "claude"} for _ in range(8)])
+    session = registry.session
+    assert session is not None
+    anchor = session.terminals[0]
+    added = await registry.add_terminal(anchor=anchor.name, agent="claude", direction="down")
+    assert ide.layout_tree.grid_span(session.layout) == (4, 3)
+    first_column = ide.layout_tree.leaves(session.layout)
+    assert first_column.index(added.key) > first_column.index(anchor.key)
