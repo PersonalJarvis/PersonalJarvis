@@ -217,6 +217,24 @@ export const REBUILD_QUIET_MS = 140;
 export const REBUILD_SETTLE_MAX_MS = 450;
 
 /**
+ * The longest an active pane's surface may stay behind a curtain, full stop.
+ *
+ * Every curtain in this file is lifted by a chain — a write callback, a
+ * generation check, a settle timer, then an animation frame — and every link
+ * can be dropped: a newer generation supersedes the reveal without taking the
+ * curtain down itself, and a WebView that believes its window is hidden stops
+ * delivering animation frames altogether (see `viewerMayOwn` for how long it
+ * can believe that). Either way the pane was left an empty black rectangle
+ * with a green "live" dot above it until something unrelated rebuilt it
+ * (reported 2026-09-28, one of seven panes after a bundle reload). This is
+ * the backstop that does not depend on any of those links: well past the
+ * slowest honest rebuild (a full replay parse plus {@link REBUILD_SETTLE_MAX_MS}),
+ * a pane still hidden is shown as it is. A visible scroll is a cosmetic
+ * flaw; a terminal that never comes back is not.
+ */
+export const CURTAIN_MAX_MS = 2_000;
+
+/**
  * The longest a geometry change waits for the pane's parser to reach a gap.
  *
  * Resizing xterm REFLOWS its buffer, and a reflow that lands between two slices
@@ -653,6 +671,35 @@ export function AgenticTerminal({
   // "B is still rebuilding", so an old callback could otherwise reveal B.
   const replayGenerationRef = useRef(0);
   const replayRevealFrameRef = useRef<number | undefined>(undefined);
+  const curtainWatchdogRef = useRef<number | undefined>(undefined);
+  /**
+   * Promise that the curtain just raised comes down — see {@link CURTAIN_MAX_MS}.
+   *
+   * Re-armed by every raise, so it measures the newest curtain, and touching
+   * refs and a state setter only, so the closure the connect effect keeps from
+   * its first render stays correct. An inactive pane is hidden on purpose and
+   * is left alone; taking the stage raises (and arms) a fresh curtain.
+   */
+  const armCurtainWatchdog = () => {
+    if (curtainWatchdogRef.current !== undefined) {
+      window.clearTimeout(curtainWatchdogRef.current);
+    }
+    curtainWatchdogRef.current = window.setTimeout(() => {
+      curtainWatchdogRef.current = undefined;
+      if (!activeRef.current) return;
+      replayCurtainRef.current = false;
+      containerRef.current?.style.removeProperty("visibility");
+      setTailReady(true);
+    }, CURTAIN_MAX_MS);
+  };
+  useEffect(
+    () => () => {
+      if (curtainWatchdogRef.current !== undefined) {
+        window.clearTimeout(curtainWatchdogRef.current);
+      }
+    },
+    [],
+  );
   /**
    * Hold a finished rebuild back until the pane has stopped being redrawn.
    *
@@ -1309,6 +1356,7 @@ export function AgenticTerminal({
         container.style.visibility = "hidden";
         replayCurtainRef.current = true;
         setTailReady(false);
+        armCurtainWatchdog();
       }
       term.reset();
       // A normal-buffer CLI's replay is its whole scrollback — up to the
@@ -2000,6 +2048,7 @@ export function AgenticTerminal({
     }
     containerRef.current?.style.setProperty("visibility", "hidden");
     setTailReady(false);
+    armCurtainWatchdog();
     let cancelled = false;
     let frame: number | undefined;
     const returningViewport = preservedViewportRef.current;

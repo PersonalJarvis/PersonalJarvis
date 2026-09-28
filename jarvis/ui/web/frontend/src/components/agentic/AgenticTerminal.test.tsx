@@ -189,6 +189,7 @@ vi.mock("@/lib/agenticIdeApi", () => ({ attachToTerminal: vi.fn() }));
 
 import {
   AgenticTerminal,
+  CURTAIN_MAX_MS,
   DRAG_REFIT_MS,
   REBUILD_QUIET_MS,
   RESIZE_PARSE_WAIT_MS,
@@ -563,6 +564,53 @@ describe("AgenticTerminal layout", () => {
     expect(terminalHarness.scrollToBottom).toHaveBeenCalled();
     expect(screen.getByTestId("agentic-terminal-host-Dana").style.visibility).toBe("");
     expect(region?.className).not.toContain("invisible");
+  });
+
+  it("lifts a replay curtain even when the reveal frame never arrives", () => {
+    // A WebView that believes its window is hidden stops delivering animation
+    // frames, and the reveal is chained behind one. Before the watchdog that
+    // left the pane an empty black rectangle under a green "live" dot until
+    // something unrelated rebuilt it (reported 2026-09-28).
+    vi.useFakeTimers();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+    const host = screen.getByTestId("agentic-terminal-host-Dana");
+    act(() => {
+      vi.advanceTimersByTime(PAST_REBUILD);
+    });
+    expect(host.style.visibility).toBe("");
+
+    const starved = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation(() => 1);
+    try {
+      terminalHarness.deferWrite = true;
+      act(() => {
+        terminalHarness.handlers.current?.onReplay?.("the screen" as never);
+      });
+      act(() => {
+        terminalHarness.writeCallbacks.shift()?.();
+        vi.advanceTimersByTime(PAST_REBUILD);
+      });
+      // The honest path is stuck on its frame…
+      expect(host.style.visibility).toBe("hidden");
+
+      act(() => {
+        vi.advanceTimersByTime(CURTAIN_MAX_MS);
+      });
+      // …and the backstop shows the pane anyway.
+      expect(host.style.visibility).toBe("");
+      expect(host.parentElement?.className).not.toContain("invisible");
+    } finally {
+      starved.mockRestore();
+    }
   });
 
   it("stays hidden while the post-replay repaint is still arriving", () => {
