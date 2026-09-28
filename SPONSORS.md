@@ -1,43 +1,18 @@
 # Sponsors
 
-Personal Jarvis is free and open source. Sponsors help pay for models, test
-machines and the time it takes to keep it that way.
+Personal Jarvis is free and open source. Sponsorships pay for model credits,
+test machines and the time it takes to keep it that way.
 
-Sponsoring is a gift. It buys no early access, no priority support and no say
-over the roadmap — every user gets the same Personal Jarvis.
+Sponsoring is a gift. It buys no early access, no priority support, no
+advertising and no say over the roadmap — every user gets the same Personal
+Jarvis. Names appear here only with the sponsor's consent, as plain text.
 
-**[Become a sponsor](https://github.com/sponsors/rubenluetke10-beep)**
+[Sponsor Personal Jarvis](https://github.com/sponsors/rubenluetke10-beep)
 
-## Hall of Fame
+## Keepers
 
-Gold and Platinum sponsors stay here for good, even after their sponsorship ends.
+Sponsors at $500 a month. They stay on this list after their sponsorship ends.
 
-_Be the first._
+## Sponsors
 
-## Platinum
-
-_Be the first._
-
-## Gold
-
-_Be the first._
-
-## Silver
-
-_Be the first._
-
-## Bronze
-
-_Be the first._
-
-## Backers
-
-_Be the first._
-
-## Supporters
-
-_Be the first._
-
-## One-time supporters
-
-_Be the first._
+Monthly sponsors at $50 or more, and one-time sponsors at $50 or more.
