@@ -8,9 +8,11 @@
  */
 
 export type ComputerKind = "server" | "local_vm";
-export type ProviderId = "generic" | "hostinger" | "hetzner" | "digitalocean" | "multipass";
-export type CloudProviderId = "hostinger" | "hetzner" | "digitalocean";
-export type AuthMethod = "key" | "password";
+/** A provider id from the backend catalog (``GET /providers``), or "multipass". */
+export type ProviderId = string;
+/** A provider whose API can list and import servers. */
+export type CloudProviderId = string;
+export type AuthMethod = "key" | "password" | "private_key";
 export type HealthStatus =
   | "unknown"
   | "online"
@@ -48,6 +50,8 @@ export interface Computer {
   name: string;
   kind: ComputerKind;
   provider: ProviderId;
+  /** The provider's display name, from the catalog. */
+  provider_name?: string;
   host: string;
   port: number;
   username: string;
@@ -129,6 +133,60 @@ export interface AddServerInput {
   auth: AuthMethod;
   password?: string;
   keep_password?: boolean;
+  /** The user's own private key (OpenSSH/PEM text), for ``auth: "private_key"``. */
+  private_key?: string;
+  passphrase?: string;
+  provider?: ProviderId;
+}
+
+export type ProviderCategory = "cloud" | "hosting" | "home" | "other";
+
+/** One entry of the provider catalog: how to reach its servers. */
+export interface ProviderInfo {
+  id: ProviderId;
+  name: string;
+  category: ProviderCategory;
+  /** Present only for providers whose API can list (and import) servers. */
+  api: null | {
+    connected: boolean;
+    console_url: string;
+    setup_hint: string;
+    attaches_keys: boolean;
+    token_label: string;
+  };
+  ssh: {
+    default_username: string;
+    ip_hint: string;
+    key_hint: string;
+    key_url: string | null;
+    password_hint: string;
+  };
+}
+
+export type TestKind =
+  | "auth"
+  | "unreachable"
+  | "timeout"
+  | "host_key_changed"
+  | "protocol"
+  | "bad_key";
+
+/** A connection test that saves nothing. */
+export interface ConnectionTest {
+  ok: boolean;
+  kind: TestKind | null;
+  message: string | null;
+  host_fingerprint: string | null;
+  facts: ComputerFacts | null;
+  latency_ms: number | null;
+}
+
+export interface CredentialsInput {
+  auth: AuthMethod;
+  password?: string;
+  keep_password?: boolean;
+  private_key?: string;
+  passphrase?: string;
 }
 
 export interface LocalVmInput {
@@ -185,6 +243,13 @@ const post = (body?: unknown): RequestInit => ({
 
 export const computersApi = {
   list: () => request<{ computers: Computer[] }>("").then((r) => r.computers),
+  providers: () => request<{ providers: ProviderInfo[] }>("/providers").then((r) => r.providers),
+  test: (input: AddServerInput) => request<ConnectionTest>("/test", post(input)),
+  setCredentials: (id: string, input: CredentialsInput) =>
+    request<Computer>(`/${encodeURIComponent(id)}/credentials`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }),
   identity: () => request<Identity>("/identity"),
   add: (input: AddServerInput) => request<Computer>("", post(input)),
   checkAll: () => request<{ computers: Computer[] }>("/check-all", post()).then((r) => r.computers),

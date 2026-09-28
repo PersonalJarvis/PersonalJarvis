@@ -45,6 +45,16 @@ export function useIdentity() {
   });
 }
 
+/** The provider catalog (logos, categories, SSH hints, API support). */
+export function useProviderCatalog() {
+  return useQuery({
+    queryKey: ["computers", "providers"] as const,
+    queryFn: computersApi.providers,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+}
+
 export function useCloudProviders() {
   return useQuery({ queryKey: computerKeys.cloud(), queryFn: computersApi.cloudProviders });
 }

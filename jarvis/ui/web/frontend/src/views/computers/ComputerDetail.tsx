@@ -18,7 +18,7 @@ import {
   SquareTerminal,
   Trash2,
 } from "lucide-react";
-import { BackLink, FactRows, Panel } from "@/components/extensions/primitives";
+import { BackLink, FactRows, Panel, SegmentedFilter } from "@/components/extensions/primitives";
 import { Button } from "@/components/ui/button";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import {
@@ -30,6 +30,7 @@ import {
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { computersApi, type CommandResult, type Computer } from "@/lib/computersApi";
+import { AccessPanel } from "./AccessPanel";
 import { AgentReadiness } from "./AgentReadiness";
 import { statusLabel } from "./ComputerRow";
 import {
@@ -444,11 +445,21 @@ function RemoveConfirm({
 // The page
 // ---------------------------------------------------------------------------
 
-export function ComputerDetail({ computer, onBack }: { computer: Computer; onBack: () => void }) {
+export type DetailTab = "overview" | "console" | "access" | "agents";
+
+export function ComputerDetail({
+  computer,
+  onBack,
+  initialTab = "overview",
+}: {
+  computer: Computer;
+  onBack: () => void;
+  initialTab?: DetailTab;
+}) {
   const t = useT();
   const check = useCheckComputer();
   const upsert = useUpsertComputer();
-  const identity = useIdentity();
+  const [tab, setTab] = useState<DetailTab>(initialTab);
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(computer.name);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -484,11 +495,16 @@ export function ComputerDetail({ computer, onBack }: { computer: Computer; onBac
     }
   }
 
-  const providerLine = [
-    computer.provider === "generic" ? null : t(`computers.provider_${computer.provider}`),
-    computer.region,
-    computer.plan,
-  ].filter(Boolean);
+  const providerName =
+    computer.provider_name ||
+    (computer.provider === "generic" ? t("computers.provider_generic") : t(`computers.provider_${computer.provider}`));
+  const providerLine = [providerName, computer.region, computer.plan].filter(Boolean);
+  const tabs: { id: DetailTab; label: string }[] = [
+    { id: "overview", label: t("computers.tab_overview") },
+    { id: "console", label: t("computers.tab_console") },
+    { id: "access", label: t("computers.tab_access") },
+    { id: "agents", label: t("computers.tab_agents") },
+  ];
 
   return (
     <div className="flex w-full flex-col gap-5" data-testid="computer-detail">
@@ -583,8 +599,10 @@ export function ComputerDetail({ computer, onBack }: { computer: Computer; onBac
 
       <AttentionBanner computer={computer} />
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
-        <div className="flex min-w-0 flex-col gap-5">
+      <SegmentedFilter<DetailTab> label={t("computers.tabs_label")} value={tab} onChange={setTab} options={tabs} />
+
+      {tab === "overview" && (
+        <div className="grid gap-5 xl:grid-cols-2">
           <Card
             title={t("computers.vitals_title")}
             icon={<Activity />}
@@ -600,10 +618,7 @@ export function ComputerDetail({ computer, onBack }: { computer: Computer; onBac
                 pct={online ? loadPct(computer) : null}
                 value={online && health.load_1m !== null ? `${health.load_1m.toFixed(2)}` : undefined}
               />
-              <Meter
-                label={t("computers.meter_memory")}
-                pct={online ? health.mem_used_pct : null}
-              />
+              <Meter label={t("computers.meter_memory")} pct={online ? health.mem_used_pct : null} />
               <Meter label={t("computers.meter_disk")} pct={online ? health.disk_used_pct : null} />
             </div>
             <div className="mt-5 grid grid-cols-2 gap-3 border-t border-border pt-4">
@@ -646,45 +661,12 @@ export function ComputerDetail({ computer, onBack }: { computer: Computer; onBac
               <p className="text-sm text-muted-foreground">{t("computers.facts_empty")}</p>
             )}
           </Card>
-
-          <Card title={t("computers.security_title")} icon={<ShieldCheck />}>
-            <div className="space-y-4">
-              <div className="flex items-start gap-3 text-sm">
-                <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                <div>
-                  <div className="font-medium text-foreground-strong">
-                    {computer.auth === "key" ? t("computers.auth_key") : t("computers.auth_password")}
-                  </div>
-                  <p className="text-muted-foreground">
-                    {computer.auth === "key" ? t("computers.auth_key_body") : t("computers.auth_password_body")}
-                  </p>
-                </div>
-              </div>
-              {computer.host_fingerprint && (
-                <CopyField
-                  label={t("computers.server_identity")}
-                  value={computer.host_fingerprint}
-                  copyLabel={t("computers.copy")}
-                  copiedLabel={t("computers.copied")}
-                />
-              )}
-              {identity.data && (
-                <CopyField
-                  label={t("computers.jarvis_key")}
-                  value={identity.data.public_key}
-                  copyLabel={t("computers.copy")}
-                  copiedLabel={t("computers.copied")}
-                />
-              )}
-            </div>
-          </Card>
         </div>
+      )}
 
-        <div className="flex min-w-0 flex-col gap-5">
-          <AgentReadiness computer={computer} />
-          <Console computer={computer} />
-        </div>
-      </div>
+      {tab === "console" && <Console computer={computer} />}
+      {tab === "access" && <AccessPanel computer={computer} />}
+      {tab === "agents" && <AgentReadiness computer={computer} />}
     </div>
   );
 }

@@ -50,8 +50,10 @@ Two render paths, chosen per file and recorded in the table:
 | family | Source | Legal basis | Render | Added |
 | --- | --- | --- | --- | --- |
 | antigravity | lobehub/lobe-icons `antigravity-color.svg` | MIT | colour | 2026-08-23 |
+| aws | simple-icons `amazonwebservices.svg` (Computers section, provider gallery) | CC0-1.0 | mono | 2026-09-28 |
 | cartesia | Cartesia's own site icon, `https://cartesia.ai/favicon.svg` | vendor asset | own ground | 2026-08-23 |
 | claude | lobehub/lobe-icons `claude-color.svg` | MIT | colour | 2026-08-23 |
+| contabo | simple-icons `contabo.svg` (Computers section, provider gallery) | CC0-1.0 | mono | 2026-09-28 |
 | digitalocean | simple-icons `digitalocean.svg` (Computers section, cloud import) | CC0-1.0 | mono | 2026-09-28 |
 | elevenlabs | lobehub/lobe-icons `elevenlabs.svg` | MIT | mono | 2026-08-23 |
 | gemini | lobehub/lobe-icons `gemini-color.svg` | MIT | colour | 2026-08-23 |
@@ -60,8 +62,14 @@ Two render paths, chosen per file and recorded in the table:
 | hetzner | simple-icons `hetzner.svg` (Computers section, cloud import) | CC0-1.0 | mono | 2026-09-28 |
 | hostinger | simple-icons `hostinger.svg` (Computers section, cloud import) | CC0-1.0 | mono | 2026-09-28 |
 | inworld | Inworld's own site icon, `https://inworld.ai/icon.png` (PNG, 180 px) | vendor asset | own ground | 2026-08-23 |
+| ionos | simple-icons `ionos.svg` (Computers section, provider gallery) | CC0-1.0 | mono | 2026-09-28 |
+| linode | simple-icons `linode.svg` (Computers section, provider gallery) | CC0-1.0 | mono | 2026-09-28 |
 | nvidia | lobehub/lobe-icons `nvidia-color.svg` | MIT | colour | 2026-08-23 |
 | ollama | lobehub/lobe-icons `ollama.svg` | MIT | mono | 2026-08-23 |
 | openai | lobehub/lobe-icons `openai.svg` (also Codex cards) | MIT | mono | 2026-08-23 |
 | openrouter | lobehub/lobe-icons `openrouter.svg` | MIT | mono | 2026-08-23 |
+| oracle | simple-icons `oracle.svg` (Computers section, provider gallery) | CC0-1.0 | mono | 2026-09-28 |
+| ovhcloud | simple-icons `ovh.svg` (Computers section, provider gallery) | CC0-1.0 | mono | 2026-09-28 |
+| raspberrypi | simple-icons `raspberrypi.svg` (Computers section, provider gallery) | CC0-1.0 | mono | 2026-09-28 |
+| vultr | simple-icons `vultr.svg` (Computers section, provider gallery) | CC0-1.0 | mono | 2026-09-28 |
 | xai | lobehub/lobe-icons `grok.svg` (xAI Grok cards) | MIT | mono | 2026-08-23 |
