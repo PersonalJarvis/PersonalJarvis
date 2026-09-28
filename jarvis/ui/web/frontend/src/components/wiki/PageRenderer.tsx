@@ -198,8 +198,9 @@ export function preprocessWikilinks(body: string): string {
   return body.replace(WIKILINK_RE, (_match, target: string, label?: string) => {
     const slug = lastSegment(target.trim());
     const text = label ? label.trim() : slug;
-    // Escape only `]` to avoid breaking the surrounding markdown.
-    const safeText = text.replace(/]/g, "\\]");
+    // Escape backslashes first, then `]`, so a label cannot break out of the
+    // surrounding markdown link (a trailing `\` would otherwise escape the `]`).
+    const safeText = text.replace(/\\/g, "\\\\").replace(/]/g, "\\]");
     return `[${safeText}](${WIKILINK_PREFIX}${slug})`;
   });
 }

@@ -26,6 +26,86 @@ kind of testing or review you can provide in a Discussion. A series of scoped
 contributions gives everyone a concrete basis for deciding how to collaborate;
 repository owners handle review, merge, and access decisions.
 
+## Your first contribution in 10 minutes
+
+Pick one path below based on what your issue needs. Both end with your fork
+ready and a passing check, so you know your setup works before you touch
+code.
+
+### Path A: a docs or frontend text change (Markdown, `.md`, `.json` locale files)
+
+1. Fork the repo and clone your fork.
+2. Find a task: browse [issues labeled `good first issue`](https://github.com/PersonalJarvis/PersonalJarvis/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+   Comment on it to claim it if you plan to start right away.
+3. Make your edit directly in the file the issue points to. No install needed
+   for a Markdown-only change.
+4. If the change touches `docs/`, sanity-check it:
+   ```bash
+   python scripts/ci/check_public_docs.py
+   ```
+5. If the change touches `jarvis/ui/web/frontend/`, install once and run the
+   frontend tests:
+   ```bash
+   cd jarvis/ui/web/frontend
+   npm install
+   npm run test
+   ```
+6. Commit, push to your fork, and open a pull request. Use the
+   [PR template](.github/PULL_REQUEST_TEMPLATE.md); for a docs or one-view
+   change it only asks you to show the rendered result (a screenshot or the
+   `check_public_docs.py` output is enough).
+
+You do not need the Python backend running for this path.
+
+### Path B: a Python change (a fix, a new test, a small feature)
+
+1. Fork the repo and clone your fork.
+2. Find a task: browse [issues labeled `good first issue`](https://github.com/PersonalJarvis/PersonalJarvis/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+   Comment on it to claim it if you plan to start right away.
+3. Set up once (Python 3.11+ and Git required):
+   ```bash
+   python -m venv .venv
+   # macOS/Linux:
+   source .venv/bin/activate
+   # Windows PowerShell:
+   .\.venv\Scripts\Activate.ps1
+
+   python -m pip install -e . --no-deps
+   python -m pip install -r requirements.txt
+   python -m pip install -e ".[dev]"
+   ```
+4. Confirm setup worked before writing any code:
+   ```bash
+   python -c "import jarvis; print(jarvis.__file__)"
+   ```
+   The printed path must point inside your cloned checkout. If it points
+   somewhere else (e.g. a different Python install), your `pip install -e`
+   went to the wrong environment: re-check `python -m venv` picked up the
+   interpreter you expect.
+5. Make your change, then run the focused test the issue names, e.g.:
+   ```bash
+   pytest tests/path/to/relevant_test.py
+   ```
+6. Before opening the PR:
+   ```bash
+   ruff check jarvis/
+   ruff format --check jarvis/
+   mypy jarvis/
+   ```
+7. Commit, push to your fork, and open a pull request using the
+   [PR template](.github/PULL_REQUEST_TEMPLATE.md). State which command you
+   ran and that it passed.
+
+You only need `run-dev.bat` (Windows) or `./run-dev.sh` (macOS/Linux) if your
+change needs to be seen running in the actual desktop app; most focused fixes
+and new tests do not.
+
+### If you get stuck
+
+Ask in [Discord](https://discord.gg/x7USduHxbc) or on the issue itself;
+partial progress and questions are welcome, you do not need a finished PR to
+say hello.
+
 ## Find your way around
 
 | Area | Start here |

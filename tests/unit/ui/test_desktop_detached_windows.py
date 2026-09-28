@@ -527,7 +527,8 @@ def test_detach_route_surfaces_handler_failure_with_fallback() -> None:
 
     body = response.json()
     assert body["ok"] is False
-    assert "RuntimeError" in body["reason"]
+    assert body["reason"] == "detach_failed"
+    assert "boom" not in str(body)
     assert body["fallback_url"] == "/?view=chats&solo=1"
 
 

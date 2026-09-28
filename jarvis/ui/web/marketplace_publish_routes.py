@@ -24,6 +24,7 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
 from jarvis.marketplace.token_store import TokenStore
+from jarvis.ui.web.error_text import internal_error
 
 log = logging.getLogger(__name__)
 
@@ -88,7 +89,8 @@ async def publish_identity(response: Response) -> dict[str, Any]:
             "enabled": enabled,
             "wallpapers_enabled": wallpapers_enabled,
             "signed_in": False,
-            "unreachable": str(exc),
+            # A flag with a fixed sentence; the network error itself is logged.
+            "unreachable": "GitHub is unreachable.",
         }
     return {"enabled": enabled, "wallpapers_enabled": wallpapers_enabled, **state}
 
@@ -132,7 +134,7 @@ async def signin_poll(flow_id: str, response: Response) -> dict[str, Any]:
     try:
         return task.result()
     except Exception as exc:  # noqa: BLE001 - surface, never crash the poll
-        return {"status": "error", "error": str(exc)}
+        return {"status": "error", "error": internal_error("sign-in", exc, logger=log)}
 
 
 @router.delete("/signin/{flow_id}")

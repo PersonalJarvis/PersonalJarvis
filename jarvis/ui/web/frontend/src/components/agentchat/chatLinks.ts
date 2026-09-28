@@ -63,6 +63,7 @@ export function nativePathFromMarkdownUrl(raw: string): string | null {
     lower.startsWith("http://") ||
     lower.startsWith("https://") ||
     lower.startsWith("javascript:") ||
+    lower.startsWith("vbscript:") ||
     lower.startsWith("data:") ||
     lower.startsWith("mailto:")
   ) {

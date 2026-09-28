@@ -17,11 +17,48 @@ with a clean English message on failure; the caller turns that into JSON.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+
+_log = logging.getLogger(__name__)
+
+# Client-facing wording per provider-test status. The Twilio SDK's own message
+# can carry the raw REST response body, so it is classified, never surfaced.
+_STATUS_HINTS: dict[str, str] = {
+    "bad_key": "Twilio rejected the account SID or auth token",
+    "no_credits": "the Twilio account is out of funds or suspended",
+    "rate_limited": "Twilio is rate-limiting requests, try again shortly",
+    "model_unavailable": "Twilio could not find or allow the requested resource",
+    "unreachable": "Twilio could not be reached",
+}
 
 
 class TelephonyProvisionError(RuntimeError):
-    """Raised when a Twilio REST operation cannot complete."""
+    """Raised when a Twilio REST operation cannot complete.
+
+    ``str(exc)`` is always a clean English sentence safe to show in the UI;
+    ``status`` is a ``PROVIDER_TEST_STATUSES`` value (``"error"`` when the
+    failure was not a classified Twilio REST error).
+    """
+
+    def __init__(self, message: str, *, status: str = "error") -> None:
+        super().__init__(message)
+        self.status = status
+
+
+def sdk_failure(action: str, exc: BaseException) -> TelephonyProvisionError:
+    """Turn a Twilio SDK exception into a client-safe ``TelephonyProvisionError``.
+
+    Only the exception type and the classified status are logged: the SDK
+    message embeds Twilio's response body, which never reaches logs or the UI
+    (AP-34).
+    """
+    from jarvis.brain.provider_test import classify_provider_error
+
+    status = classify_provider_error(str(exc))
+    _log.warning("%s: Twilio SDK error %s (%s)", action, type(exc).__name__, status)
+    hint = _STATUS_HINTS.get(status, "see the Jarvis log for details")
+    return TelephonyProvisionError(f"{action}: {hint}.", status=status)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +101,7 @@ def verify_credentials(account_sid: str, auth_token: str) -> dict[str, str]:
     try:
         account = client.api.accounts(account_sid).fetch()
     except Exception as exc:  # noqa: BLE001 - twilio raises a wide tree
-        raise TelephonyProvisionError(f"Twilio credential check failed: {exc}") from exc
+        raise sdk_failure("Twilio credential check failed", exc) from exc
     return {
         "account_status": getattr(account, "status", "") or "",
         "friendly_name": getattr(account, "friendly_name", "") or "",
@@ -87,7 +124,7 @@ def list_available_numbers(
             kwargs["area_code"] = area_code
         results = client.available_phone_numbers(country).local.list(**kwargs)
     except Exception as exc:  # noqa: BLE001
-        raise TelephonyProvisionError(f"Number search failed: {exc}") from exc
+        raise sdk_failure("Number search failed", exc) from exc
     return [
         AvailableNumber(
             phone_number=getattr(n, "phone_number", "") or "",
@@ -116,7 +153,7 @@ def buy_number(
             voice_method="POST",
         )
     except Exception as exc:  # noqa: BLE001
-        raise TelephonyProvisionError(f"Number purchase failed: {exc}") from exc
+        raise sdk_failure("Number purchase failed", exc) from exc
     return OwnedNumber(
         sid=getattr(bought, "sid", "") or "",
         phone_number=getattr(bought, "phone_number", "") or phone_number,
@@ -142,7 +179,7 @@ def set_voice_webhook(
     except TelephonyProvisionError:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise TelephonyProvisionError(f"Webhook update failed: {exc}") from exc
+        raise sdk_failure("Webhook update failed", exc) from exc
     return OwnedNumber(
         sid=getattr(updated, "sid", "") or "",
         phone_number=getattr(updated, "phone_number", "") or phone_number,
@@ -157,7 +194,7 @@ def inspect_number(account_sid: str, auth_token: str, *, phone_number: str) -> O
     try:
         owned = client.incoming_phone_numbers.list(phone_number=phone_number, limit=1)
     except Exception as exc:  # noqa: BLE001
-        raise TelephonyProvisionError(f"Number inspect failed: {exc}") from exc
+        raise sdk_failure("Number inspect failed", exc) from exc
     if not owned:
         return None
     n = owned[0]
@@ -173,6 +210,7 @@ __all__ = [
     "AvailableNumber",
     "OwnedNumber",
     "TelephonyProvisionError",
+    "sdk_failure",
     "buy_number",
     "inspect_number",
     "list_available_numbers",
