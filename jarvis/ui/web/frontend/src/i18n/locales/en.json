@@ -5815,6 +5815,11 @@
       "no_workspace": "Select a workspace to see its agents.",
       "empty": "No agents running in this workspace.",
       "last_output": "Last output {time} ago",
+      "runtime_note": "Agents keep running when you close the app.",
+      "stop_all": "Stop all agents",
+      "stop_confirm": "Stop every agent in every workspace? Their conversations stay saved.",
+      "stop_confirm_yes": "Stop all",
+      "stop_cancel": "Cancel",
       "summary": {
         "waiting": "{n} need input",
         "working": "{n} working",

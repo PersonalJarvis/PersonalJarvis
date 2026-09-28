@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
+import { stopIdeRuntime, type WorkspacePaneRow } from "@/lib/agenticIdeApi";
+import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
@@ -59,6 +60,10 @@ export function AgentsOverview() {
   usePaneRecapPoll();
   const recaps = usePaneRecapsStore((state) => state);
   const mine = workspaceAgents(panes, activeWorkspaceId);
+  const pushToast = useEventStore((state) => state.pushToast);
+  const requestRefresh = useIdeProjectsStore((state) => state.requestRefresh);
+  const [confirmStop, setConfirmStop] = useState(false);
+  const [stopping, setStopping] = useState(false);
 
   const counts = new Map<AgentDotKind, number>();
   for (const pane of mine) {
@@ -69,6 +74,21 @@ export function AgentsOverview() {
   const pick = (pane: WorkspacePaneRow) => {
     setSpotlight({ workspaceId: pane.workspace_id, pane: pane.name });
     requestPane(pane.workspace_id, pane.name);
+  };
+
+  // Closing the app only detaches from the agents (they live in a background
+  // host), so ending them is a separate, deliberate action with its own confirm.
+  const stopAll = async () => {
+    setStopping(true);
+    try {
+      await stopIdeRuntime();
+      requestRefresh();
+    } catch (error) {
+      pushToast("error", (error as Error).message);
+    } finally {
+      setStopping(false);
+      setConfirmStop(false);
+    }
   };
 
   return (
@@ -184,6 +204,45 @@ export function AgentsOverview() {
             );
           })}
         </ul>
+      )}
+
+      {panes.length > 0 && (
+        <div data-testid="ide-agents-runtime" className="shrink-0 space-y-2 border-t border-border/60 px-4 py-3">
+          <p className="text-[11px] text-muted-foreground">{t("ide_side_panel.agents.runtime_note")}</p>
+          {confirmStop ? (
+            <div role="alertdialog" aria-label={t("ide_side_panel.agents.stop_all")} className="space-y-2">
+              <p className="text-xs text-foreground">{t("ide_side_panel.agents.stop_confirm")}</p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={stopping}
+                  onClick={() => void stopAll()}
+                  data-testid="ide-agents-stop-confirm"
+                  className="rounded-md bg-destructive px-2.5 py-1 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-60"
+                >
+                  {t("ide_side_panel.agents.stop_confirm_yes")}
+                </button>
+                <button
+                  type="button"
+                  disabled={stopping}
+                  onClick={() => setConfirmStop(false)}
+                  className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground hover:bg-muted"
+                >
+                  {t("ide_side_panel.agents.stop_cancel")}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmStop(true)}
+              data-testid="ide-agents-stop-all"
+              className="rounded-md border border-border px-2.5 py-1 text-xs text-destructive hover:bg-destructive/10"
+            >
+              {t("ide_side_panel.agents.stop_all")}
+            </button>
+          )}
+        </div>
       )}
     </section>
   );

@@ -1809,6 +1809,20 @@ export async function setFocusMode(enabled: boolean): Promise<boolean> {
 }
 
 /**
+ * The explicit "stop everything": ends every agent in every workspace.
+ *
+ * Closing the app never does this — the agents live in a background host and
+ * keep working — so this is the one control that does. The workspaces stay on
+ * offer for a deliberate reopen and are not reopened by themselves.
+ */
+export async function stopIdeRuntime(): Promise<number> {
+  const res = await fetch("/api/agentic-ide/runtime/stop", { method: "POST", cache: "no-store" });
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { closed_workspaces: number };
+  return body.closed_workspaces;
+}
+
+/**
  * Tell the backend which view is on screen, which pane it stages, and which
  * one owns the next prompt.
  *

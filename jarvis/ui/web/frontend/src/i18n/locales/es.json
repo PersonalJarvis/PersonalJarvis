@@ -5782,6 +5782,11 @@
       "no_workspace": "Selecciona un espacio de trabajo para ver sus agentes.",
       "empty": "No hay agentes en este espacio de trabajo.",
       "last_output": "Última salida hace {time}",
+      "runtime_note": "Los agentes siguen funcionando cuando cierras la app.",
+      "stop_all": "Detener todos los agentes",
+      "stop_confirm": "¿Detener todos los agentes de todos los espacios de trabajo? Sus conversaciones se conservan.",
+      "stop_confirm_yes": "Detener todos",
+      "stop_cancel": "Cancelar",
       "summary": {
         "waiting": "{n} esperan tu respuesta",
         "working": "{n} trabajando",

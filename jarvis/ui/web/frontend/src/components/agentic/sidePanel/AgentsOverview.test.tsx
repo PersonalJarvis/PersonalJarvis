@@ -175,3 +175,29 @@ describe("AgentsOverview", () => {
     expect(row.textContent).toMatch(/Last output \d+s ago/);
   });
 });
+
+describe("stopping every agent", () => {
+  it("asks first, then stops the runtime and refreshes the workspace list", async () => {
+    const calls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${String(input)}`);
+      return new Response(JSON.stringify({ ok: true, closed_workspaces: 2 }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      render(<AgentsOverview />);
+      fireEvent.click(screen.getByTestId("ide-agents-stop-all"));
+      // Nothing is stopped by the first click — it only asks.
+      expect(calls).toEqual([]);
+      expect(screen.getByRole("alertdialog")).toBeTruthy();
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("ide-agents-stop-confirm"));
+      });
+      expect(calls).toEqual(["POST /api/agentic-ide/runtime/stop"]);
+      expect(useIdeProjectsStore.getState().refreshRequest).not.toBeNull();
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
