@@ -912,8 +912,6 @@ _AGENTIC_IDE_WORKSPACE_TOOL_NAMES: frozenset[str] = frozenset({
     "agentic-ide-move-terminal",
     "agentic-ide-close-agent-terminals",
     "agentic-ide-focus",
-    "agentic-ide-interrupted",
-    "agentic-ide-continue-interrupted",
 })
 
 # Consequential action tools a signalless turn must never INHERIT from the

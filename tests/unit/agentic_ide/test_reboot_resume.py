@@ -103,29 +103,28 @@ async def test_every_running_agent_is_resumed_in_every_workspace(
     assert nudged == []
 
 
-async def test_working_agents_are_also_told_to_continue(
+async def test_agents_carry_on_by_themselves_never_by_a_typed_continue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Jarvis types nothing; Claude Code finishes an interrupted turn itself.
+
+    Every resumed Claude pane is started with the CLI's own interrupted-turn
+    resume in its environment (measured: a pane killed at step 26 of 30 went on
+    to 30 with nothing typed; without it, it waited at its prompt).
+    """
     ws, _ = _save(tmp_path, [_pane(1, working=True), _pane(2)])
     _store(ws)
-    monkeypatch.setattr(
-        ide,
-        "_mark_restored_continuations",
-        lambda terms: [
-            setattr(t, "continuation_pending", t.resume_continuation_needed) for t in terms
-        ],
-    )
     pool = FakeHostedPool()
 
-    registry, nudged = await _boot(monkeypatch, pool)
+    _registry, nudged = await _boot(monkeypatch, pool)
     await _settle(pool, 2)
-    for _ in range(100):
-        if nudged:
-            break
-        await asyncio.sleep(0.02)
 
-    assert len(pool.metas) == 2
-    assert nudged == ["T1"]
+    assert len(pool.spawns) == 2
+    for spawn in pool.spawns:
+        env = spawn["env"] or {}
+        assert env.get("CLAUDE_CODE_RESUME_INTERRUPTED_TURN") == "1"
+        assert env.get("CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS") == "0"
+    assert nudged == []
 
 
 async def test_agents_that_ended_by_themselves_stay_ended(
@@ -218,3 +217,62 @@ async def test_a_survivor_that_was_working_is_marked_for_the_bell(
     assert session.find("T2").worked_while_detached is False
     # Re-joined agents are never nudged: they never stopped.
     assert nudged == []
+
+
+async def test_a_live_host_that_does_not_answer_is_never_taken_for_a_reboot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 2026-09-28 failure: agents started a second time beside living ones.
+
+    A host that is running but silent holds agents. Boot must wait for it, not
+    resume every pane in-process as if the machine had restarted.
+    """
+    ws, _ = _save(tmp_path, [_pane(1), _pane(2)])
+    _store(ws)
+    starts: list[bool] = []
+
+    async def silent_host(*, start: bool) -> object:
+        starts.append(start)
+        raise ide.SessionNotReady("The terminal host is busy.")
+
+    monkeypatch.setattr(ide, "_connect_pty_host", silent_host)
+    registry = ide.Registry()
+    await registry.boot_restore()
+    await asyncio.sleep(0.05)
+
+    assert all(t.status == "pending" for t in registry.sessions[0].terminals)
+    assert starts and not any(starts), "a host is never STARTED beside a living one"
+    assert registry._rejoin_task is not None
+    registry._rejoin_task.cancel()
+
+
+async def test_agents_lost_with_a_crashed_host_come_back_on_their_conversations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws, _ = _save(tmp_path, [_pane(1)])
+    _store(ws)
+    first = FakeHostedPool()
+    first.add_hosted("h-1", history_id="hist-1")
+    second = FakeHostedPool()
+
+    async def connect(*, start: bool) -> object:
+        return second if start else first
+
+    monkeypatch.setattr(ide, "_connect_pty_host", connect)
+    registry = ide.Registry()
+    await registry.boot_restore()
+    term = registry.sessions[0].find("T1")
+    assert term.pty_id == "h-1"
+
+    # The host dies under the running app: every agent reports the unknown code.
+    first.connected = False
+    _on_output, on_closed = first._callbacks["h-1"]
+    await on_closed("h-1", -1)
+    for _ in range(200):
+        if second.spawns:
+            break
+        await asyncio.sleep(0.02)
+
+    argv = " ".join(second.spawns[0]["argv"]) if second.spawns else ""
+    assert "--resume conv-1" in argv, argv
+    assert (second.spawns[0]["env"] or {}).get("CLAUDE_CODE_RESUME_INTERRUPTED_TURN") == "1"

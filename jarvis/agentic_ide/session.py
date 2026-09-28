@@ -102,6 +102,7 @@ from .agent_sessions import (
     has_conversation,
     launch_extra,
     resume_argv,
+    resume_env,
 )
 from .folders import ProjectProfile, probe_project
 from .names import free_positions, normalize, position_of, resolve
@@ -1166,37 +1167,16 @@ class Terminal:
     # picked up an old transcript, "still running" means the same process has
     # been working the whole time you were looking somewhere else.
     reattached: bool = False
-    # Was this pane last observed actively working before its process went
-    # away? Persisted in the resume snapshot and kept separate from `resumed`:
-    # an existing conversation may already be finished or waiting for input,
-    # neither of which should receive a blind "continue".
+    # Was this pane last observed actively working? Checkpointed into the
+    # resume snapshot by the pane watcher. Evidence only — nothing is ever
+    # typed on its strength: a re-joined agent that was working and has since
+    # stopped is reported by the bell (``worked_while_detached``), and a
+    # resumed Claude pane finishes an interrupted turn by itself
+    # (``agent_sessions.resume_env``).
     resume_continuation_needed: bool = False
-    # This pane picked its old conversation back up, and NOBODY has told it what
-    # to do since. That is the state a restart leaves behind: the agent is alive
-    # and holds the whole transcript, but it was killed mid-task and a resumed
-    # CLI sits at its prompt waiting rather than carrying on by itself — so the
-    # work simply stops, silently, and looks exactly like a pane that finished.
-    #
-    # Raised where a restore establishes that this pane's conversation really
-    # exists, and again where a process is SPAWNED onto one (see `attach`, which
-    # also clears it when a resume failed and the pane came back empty). Cleared
-    # by anything that counts as "somebody is driving this pane again": a prompt
-    # from Jarvis, or a line the user typed into the pane themselves. Never
-    # persisted — it describes the pane on screen, not the workspace on disk.
-    continuation_pending: bool = False
-    # "Continue this one as soon as it can be typed into."
-    #
-    # Cold starts are staggered (COLD_START_LIMIT), so in a workspace of a dozen
-    # panes most are still waiting for a slot when the user presses Continue.
-    # Sending only to the ones that happen to be up already is what made the
-    # button look like it skipped terminals; refusing them would be the same
-    # answer worn differently. So the wish is REMEMBERED here and spent by
-    # `attach` once that pane's agent exposes a writable input line.
-    continue_when_ready: bool = False
-    # The exact nudge paired with ``continue_when_ready``. Usually the one-word
-    # default, but the REST contract accepts custom wording and a queued pane
-    # must not silently replace it while waiting for its cold-start slot.
-    continue_prompt: str = ""
+    # This pane's agent died because the PTY host went away under a running
+    # app (not because it exited): it is resumed once a host is back.
+    lost_with_host: bool = False
     # Has this pane's screen been observed STANDING STILL since its current
     # process started?
     #
@@ -1395,12 +1375,6 @@ class Terminal:
             # anything" — the same picture, and not the same news.
             "worked": has_work_behind_it(self),
             "resumed": self.resumed,
-            # Continued its old conversation and has had no instruction since —
-            # the pane a restart left standing still. Carried in the ordinary
-            # state so a client can mark it without a second request; the list
-            # of them, with the reason each one can or cannot be nudged, is
-            # `GET /interrupted`.
-            "continuation_pending": self.continuation_pending,
             # Whether a handle EXISTS, never the handle itself: it is an
             # internal pointer into the CLI's history and no client needs it.
             "has_resume": self.resume is not None,
@@ -1845,9 +1819,23 @@ async def _connect_pty_host(*, start: bool) -> Any:
     so the terminal stack stays off the import path until a pane needs it
     (AP-26).
     """
-    from jarvis.terminal.pty_host_client import connect
+    from jarvis.terminal.pty_host_client import HostUnreachable, connect
 
-    return await connect(start=start)
+    try:
+        return await connect(start=start)
+    except HostUnreachable as exc:
+        # A host that is running holds agents; "not yet" is the only safe
+        # answer — never a reason to start them a second time.
+        logger.warning("Agentic IDE: {} — waiting for it", exc)
+        raise SessionNotReady(
+            "The terminal host is busy; the panes reconnect when it answers."
+        ) from exc
+
+
+#: The exit code ``RemotePtyManager`` reports for every agent when its host goes
+#: away (``pty_manager.UNKNOWN_EXIT_CODE``); spelled out here so this module
+#: does not import the terminal stack at load time (AP-26).
+_HOST_LOST_CODE = -1
 
 
 def _viewers(term: Terminal) -> list[Any]:
@@ -1990,6 +1978,10 @@ class Registry:
         self._focus_dirty = False
         self._host_lock = asyncio.Lock()
         self._boot_restored = False
+        # The re-join retried in the background when the host did not answer
+        # at startup, and the one recovery pass after a host died under us.
+        self._rejoin_task: asyncio.Task[None] | None = None
+        self._host_recovery: asyncio.Task[None] | None = None
 
     # ---------------------------------------------------------------- state
     @property
@@ -2285,7 +2277,11 @@ class Registry:
             return
         self._boot_restored = True
         self._host_enabled = True
-        await self._attached_host()
+        try:
+            await self._attached_host()
+            host_reachable = True
+        except SessionNotReady:  # a live host that is silent: waited for below, not an error
+            host_reachable = False
         try:
             snapshot = await asyncio.to_thread(resume_store.load)
             closed_at = await asyncio.to_thread(resume_store.all_closed_at)
@@ -2322,33 +2318,56 @@ class Registry:
                 info.meta.get("name", "unnamed"),
             )
             manager.kill_hosted(info.terminal_id)
-        await self._resume_after_reboot()
+        if host_reachable:
+            await self._resume_lost_agents("the machine restarted or the terminal host ended")
+        else:
+            # A host is running but did not answer: its agents are alive.
+            # Resuming now would start a second copy of each one, so the panes
+            # wait and re-join once it answers (``_rejoin_when_reachable``).
+            self._rejoin_task = asyncio.create_task(
+                self._rejoin_when_reachable(), name="ide-host-rejoin"
+            )
 
-    async def _resume_after_reboot(self) -> None:
-        """Bring back every agent a power-off or reboot ended, in every workspace.
+    async def _rejoin_when_reachable(self) -> None:
+        """Keep trying a live host that did not answer at startup, then re-join."""
+        delay = 2.0
+        for _attempt in range(30):
+            await asyncio.sleep(delay)
+            delay = min(delay * 1.5, 20.0)
+            try:
+                manager = await self._attached_host()
+            except SessionNotReady:  # still silent; the next attempt follows after the delay
+                continue
+            for session in list(self._sessions.values()):
+                await self._adopt_hosted(session)
+            if manager is None:
+                # It ended while we waited: its agents ended with it.
+                await self._resume_lost_agents("the terminal host ended")
+            return
+        logger.warning("Agentic IDE: the terminal host never answered; panes stay waiting")
 
-        What Herdr calls native agent-session resume: the agents' processes died
-        with the machine, so each one is started again on ITS OWN conversation
-        (the CLI's ``--resume <id>`` and equivalents, see ``agent_sessions``) —
-        not a fresh CLI, and not only in the workspace somebody happens to open.
+    async def _resume_lost_agents(self, why: str) -> None:
+        """Bring back every agent whose process is gone, in every workspace.
 
-        Which panes: every one still ``pending`` after the PTY host had its say
-        (a pane whose agent survived was re-joined and is ``live``), whose agent
-        was running at the last save (``Terminal.was_running`` — an agent that
-        ended by itself stays ended), and whose CLI really holds the
-        conversation its handle points at. A pane that was never given an
-        instruction has nothing to resume and keeps starting when it is opened.
+        Herdr's native agent-session resume: the process died (with the machine,
+        or with a host that crashed), so each agent is started again on ITS OWN
+        conversation (the CLI's ``--resume <id>`` and equivalents, see
+        ``agent_sessions``) — not a fresh CLI, and not only in the workspace
+        somebody happens to open.
 
-        On top of that, panes whose last checkpoint saw them WORKING are told to
-        carry on (``interrupted.continue_panes``). That gate stays strict: a
-        pane that was idle, finished or waiting for an answer or an approval is
-        resumed but never typed into.
+        Nothing is typed into any of them. A Claude Code pane is started with
+        its CLI's own interrupted-turn resume (``agent_sessions.resume_env``), so
+        a task the power cut interrupted runs on by itself; a finished one
+        stays finished; other CLIs come back holding their conversation at
+        their prompt.
 
-        The starts run without a viewer and go through the ordinary cold-start
-        gate, so a dozen agents come back a few at a time.
+        Which panes: every one still ``pending`` (a pane whose agent survived
+        in the host was re-joined and is ``live``) whose agent was running at
+        the last save (an agent that ended by itself stays ended) and whose
+        CLI really holds the conversation its handle points at. The starts run
+        without a viewer through the ordinary cold-start gate, so a dozen
+        agents come back a few at a time.
         """
-        from . import interrupted
-
         pending = [
             (session, term)
             for session in self._sessions.values()
@@ -2357,6 +2376,7 @@ class Registry:
             and term.was_running
             and term.resume is not None
             and accepts_prompts(term.agent)
+            and not term.computer_id
         ]
 
         def _with_conversation() -> list[tuple[Session, Terminal]]:
@@ -2373,33 +2393,64 @@ class Registry:
                     )
             return found
 
-        resumable = await asyncio.to_thread(_with_conversation)
-        try:
-            report = await interrupted.continue_panes(self)
-        except Exception as exc:  # noqa: BLE001 - startup must not fail on this
-            logger.warning("Agentic IDE: interrupted work not continued at startup: {}", exc)
-            report = None
-        starts = list(resumable)
-        chosen = {id(term) for _session, term in starts}
-        for session in self._sessions.values():
-            for term in session.terminals:
-                if term.status == "pending" and term.continue_when_ready and id(term) not in chosen:
-                    starts.append((session, term))
+        starts = await asyncio.to_thread(_with_conversation)
         for session, term in starts:
-            task = asyncio.create_task(
-                self._start_unviewed(session, term), name=f"ide-resume-{term.key}"
-            )
-            self._cold_start_holds.add(task)
-            task.add_done_callback(self._cold_start_holds.discard)
+            self._start_in_background(session, term)
         if starts:
             logger.info(
-                "Agentic IDE: resuming {} agent(s) that a reboot ended ({} of them "
-                "told to continue their work)",
+                "Agentic IDE: resuming {} agent(s) on their own conversations — {}",
                 len(starts),
-                sum(1 for _session, term in starts if term.continue_when_ready),
+                why,
             )
-        elif report is not None and report.continued:
-            logger.info("Agentic IDE: continued {} interrupted pane(s)", len(report.continued))
+
+    def _start_in_background(self, session: Session, term: Terminal) -> None:
+        task = asyncio.create_task(
+            self._start_unviewed(session, term), name=f"ide-resume-{term.key}"
+        )
+        self._cold_start_holds.add(task)
+        task.add_done_callback(self._cold_start_holds.discard)
+
+    def _host_went_away(self) -> bool:
+        """Did the PTY host this process was attached to just drop away?"""
+        current = self._pty
+        return bool(
+            current is not None
+            and getattr(current, "persistent", False)
+            and not getattr(current, "connected", True)
+        )
+
+    def _note_host_lost(self, term: Terminal) -> None:
+        """A pane lost its agent with the host: resume it once a host is back."""
+        term.lost_with_host = True
+        term.was_running = True
+        if self._host_recovery is None or self._host_recovery.done():
+            self._host_recovery = asyncio.create_task(
+                self._recover_from_host_loss(), name="ide-host-recovery"
+            )
+
+    async def _recover_from_host_loss(self) -> None:
+        """Replace a host that died under a running app and resume its agents.
+
+        Only what a crash of the host itself leaves behind: every agent in it
+        died together, the conversations are on disk, and the app is still up.
+        A fresh host is started (``_live_manager``) and each lost pane resumes
+        its own conversation, exactly as after a reboot — never a fresh CLI and
+        never a typed prompt.
+        """
+        await asyncio.sleep(1.0)  # let every exit of the lost host arrive first
+        lost = [
+            (session, term)
+            for session in self._sessions.values()
+            for term in session.terminals
+            if term.lost_with_host and term.status == "exited"
+        ]
+        if not lost:
+            return
+        logger.warning("Agentic IDE: the terminal host went away — resuming {} agent(s)", len(lost))
+        for session, term in lost:
+            term.lost_with_host = False
+            term.status = "pending"
+            self._start_in_background(session, term)
 
     async def _start_unviewed(self, session: Session, term: Terminal) -> None:
         """Start a pane's agent with nobody watching (the registry records output)."""
@@ -2469,10 +2520,8 @@ class Registry:
         term.exit_code = None
         term.resumed = False
         term.worked_while_detached = term.resume_continuation_needed
-        # Never interrupted, so never offered a "continue" — the flag
-        # ``_mark_restored_continuations`` may have raised assumed a restart.
-        term.continuation_pending = False
         term.resume_continuation_needed = False
+        term.lost_with_host = False
         term.started_at = info.started_at or time.time()
         term.last_output_at = time.time() if result.replay else None
         if await self._adopted_with_work(term):
@@ -2518,6 +2567,8 @@ class Registry:
             term.pty_id = None
             term.status = "exited"
             term.exit_code = code
+            if code == _HOST_LOST_CODE and self._host_went_away():
+                self._note_host_lost(term)
             for viewer in _exit_viewers(term):
                 await viewer(code)
 
@@ -3038,24 +3089,6 @@ class Registry:
             )
 
         terminals = [_restored(index, entry) for index, entry in enumerate(space.terminals)]
-        # Which of them will come back mid-task, decided HERE rather than when
-        # each pane's agent happens to start.
-        #
-        # **The bug this fixes.** `continuation_pending` used to be raised in
-        # `attach`, which is the moment a pane's process is spawned — and cold
-        # starts are deliberately staggered (see COLD_START_LIMIT), so in a
-        # workspace of a dozen panes most of them are still `pending` seconds
-        # after the grid appears. Anybody pressing "Continue" in that window got
-        # the handful that had started and silently no others, which is exactly
-        # the "it skips terminals that should have carried on" report.
-        #
-        # A restored pane's answer does not depend on its process at all: it
-        # depends on whether the coding CLI's history really holds the
-        # conversation the handle points at. That is knowable now, so it is
-        # answered now — one thread hop for the whole workspace, since each
-        # check is a filename lookup. `attach` still corrects it either way when
-        # the process really starts (a resume that fails clears it).
-        await asyncio.to_thread(_mark_restored_continuations, terminals)
         # A snapshot remembers the call-signs each workspace had. Another one may
         # hold them now, and two panes answering to one name would make every
         # spoken instruction ambiguous — so a collision is renamed here. Only the
@@ -3322,7 +3355,7 @@ class Registry:
                 logger.warning("Agentic IDE: resume snapshot not written: {}", exc)
 
     async def persist_resume_activity(self) -> None:
-        """Checkpoint activity evidence used by the interrupted-work offer.
+        """Checkpoint the "was working" evidence the bell and the resume use.
 
         The activity sweep calls this only when a pane crosses a meaningful
         boundary, never for each terminal repaint. Keeping it on the registry
@@ -3878,8 +3911,7 @@ class Registry:
         # busiest: a restore mounts every pane in one commit, so a dozen panes
         # meant a dozen stalls interleaved with their own spawns. It only ever
         # runs on a pane that HAS a handle, which is why the restore path was
-        # the only one that ever felt it. `_mark_restored_continuations` already
-        # takes the same call to a thread for the same reason.
+        # the only one that ever felt it.
         home = account_home(term.agent, term.account)
         continuing = resume_argv(term.agent, term.resume)
         # A remote pane's history lives on that computer; its handle was
@@ -3961,18 +3993,7 @@ class Registry:
             term.resumed = False
             if minted is not None:
                 term.resume = minted
-        # A process that inherits a conversation inherits whatever it was in the
-        # middle of, and then waits. That is the whole reason this flag exists —
-        # see the field. A fresh start clears it, so a pane that failed its
-        # resume and came back empty is not reported as waiting to be nudged.
-        # A valid conversation may already be finished or waiting for input.
-        # Offer a nudge only when the previous live pane was observed working.
-        # A Continue claimed while this pane was still pending stays claimed:
-        # raising the flag again during attach would let a second click enqueue
-        # the same nudge while the first is waiting for the input line.
-        term.continuation_pending = (
-            term.resumed and term.resume_continuation_needed and not term.continue_when_ready
-        )
+        # A fresh start has no interrupted work behind it.
         if not term.resumed:
             term.resume_continuation_needed = False
 
@@ -4018,6 +4039,15 @@ class Registry:
         async def _closed(_tid: str, code: int) -> None:
             nonlocal recovered
             term.pty_id = None
+            if code == _HOST_LOST_CODE and self._host_went_away():
+                # Not this agent failing: the host holding it went away. It is
+                # resumed on its own conversation once a host is back.
+                term.status = "exited"
+                term.exit_code = code
+                self._note_host_lost(term)
+                for viewer in _exit_viewers(term):
+                    await viewer(code)
+                return
             died_young = time.monotonic() - spawned_at < RESUME_FAILED_WINDOW_S
             # Only a FAILED early exit is blamed on the resume. Quitting an
             # agent normally exits 0, and a pane we killed ourselves reports a
@@ -4098,6 +4128,15 @@ class Registry:
             term.status = "error"
             term.error = str(exc)
             raise
+
+        if term.resumed and not term.computer_id:
+            # The CLI's own "finish the turn that was cut off" (see
+            # ``agent_sessions.resume_env``) — how a resumed agent carries on
+            # without Jarvis ever typing into it.
+            native = resume_env(term.agent)
+            if native:
+                base = env if env is not None else _without_parent_agent_session(dict(os.environ))
+                env = {**(base if base is not None else os.environ), **native}
 
         # The provider/account gate is acquired BEFORE the machine-wide gate.
         # A Codex pane waiting on shared state must never occupy a CPU slot that
@@ -4238,65 +4277,8 @@ class Registry:
             # one it just created, shortly from now. (Not on a remote pane:
             # its history is on that computer, not in this machine's folders.)
             self._schedule_lookup(session, term, term.cwd(session.folder), term.started_at)
-        if term.continue_when_ready:
-            # Somebody pressed "Continue" while this pane was still waiting for
-            # a cold-start slot. The wish outlives the wait — see
-            # `continue_when_ready` — and is spent HERE. As a task, because the
-            # submit itself verifies the pane's screen for a few seconds and the
-            # viewer should not wait for that receipt before attaching.
-            self.defer_continue(session, term, term.continue_prompt)
         await self._persist()
         return term
-
-    def defer_continue(self, session: Session, term: Terminal, prompt: str = "") -> None:
-        """Remember a Continue nudge and schedule it once this pane is live.
-
-        A pending pane carries the request into :meth:`attach`. A live pane may
-        still be booting, so it enters the same background path immediately and
-        :meth:`send_prompt` waits for the actual input line. There is one route
-        for both states and therefore no fixed-delay race.
-        """
-        from .interrupted import CONTINUE_PROMPT
-
-        term.continue_when_ready = True
-        term.continue_prompt = (prompt or CONTINUE_PROMPT).strip() or CONTINUE_PROMPT
-        if term.status != "live" or not term.pty_id:
-            return
-        queued_prompt = term.continue_prompt
-        term.continue_when_ready = False
-        term.continue_prompt = ""
-        self._schedule_continue(session, term, queued_prompt)
-
-    def _schedule_continue(self, session: Session, term: Terminal, prompt: str) -> None:
-        """Send the deferred "carry on" to a pane that has just come up.
-
-        Kept on the session's own task set, like the conversation-id lookups, so
-        closing that workspace cancels it rather than leaving a nudge in flight
-        for a pane that no longer exists.
-        """
-
-        async def _nudge() -> None:
-            try:
-                await self.send_prompt(
-                    term.name,
-                    prompt,
-                    workspace_id=session.id,
-                )
-            except SessionError as exc:
-                # No bytes were written when readiness timed out or the pane
-                # stopped. Put the offer back instead of losing the user's click.
-                term.continuation_pending = True
-                logger.warning(
-                    "Agentic IDE: {} came up but could not be continued: {}", term.name, exc
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - a nudge must not kill the pane
-                logger.warning("Agentic IDE: deferred continue for {} failed: {}", term.name, exc)
-
-        task = asyncio.create_task(_nudge())
-        session.lookups.add(task)
-        task.add_done_callback(session.lookups.discard)
 
     def _prepare_spawn(self, term: Terminal, folder: str) -> dict[str, str] | None:
         """Everything this pane's agent needs on disk, then its environment.
@@ -4512,11 +4494,8 @@ class Registry:
         # Gated on a SUBMIT rather than on any keystroke: scrolling, arrow keys
         # and a half-typed line are not an instruction.
         if is_submit:
-            # The user submitted something in the pane themselves, so this one
-            # is being driven again and is no longer waiting to be nudged.
-            # Dropping the pane off that list for a mere keypress would hide a
-            # stalled agent behind an accidental one.
-            term.continuation_pending = False
+            # The user submitted something in the pane themselves: whatever
+            # was interrupted before is superseded by this instruction.
             term.resume_continuation_needed = False
             # And this pane now has an instruction of its own, which is what
             # makes its next stop worth reporting — a pane driven only by hand
@@ -6081,11 +6060,8 @@ class Registry:
                 term.name,
                 exc,
             )
-        # Somebody is driving this pane again, whatever the prompt said. Cleared
-        # even when the pane did not submit the text: the instruction is sitting
-        # in its input box in full, so offering to type "continue" behind it
-        # would append a second line to a prompt the user still has to send.
-        term.continuation_pending = False
+        # Somebody is driving this pane again: an earlier interrupted turn is
+        # superseded by this instruction.
         term.resume_continuation_needed = False
         if submitted is not False:
             # The conversation has (or may have) just begun, so for a CLI that
@@ -6448,32 +6424,6 @@ def _unique_name(wanted: str, used: set[str]) -> str:
     while normalize(f"{wanted} {suffix}") in used:
         suffix += 1
     return f"{wanted} {suffix}"
-
-
-def _mark_restored_continuations(terminals: list[Terminal]) -> None:
-    """Flag the restored panes that will come back in the middle of a job.
-
-    Runs off the event loop (each check stats the coding CLI's history) and
-    never raises: a pane whose history cannot be read is left unflagged, which
-    costs an offer to continue it and nothing else.
-
-    Holding a handle is not the same as having a conversation — a pane that was
-    opened and never used holds an id that points at nothing — so this asks the
-    CLI's own history, exactly as the resume offer does.
-    """
-    for term in terminals:
-        if term.resume is None or not accepts_prompts(term.agent):
-            continue
-        try:
-            term.continuation_pending = term.resume_continuation_needed and has_conversation(
-                term.agent, term.resume, account_home(term.agent, term.account)
-            )
-        except Exception as exc:  # noqa: BLE001 - a restore must never fail on this
-            logger.debug(
-                "Agentic IDE: could not tell whether {} has work to continue: {}",
-                term.name,
-                exc,
-            )
 
 
 def terminals_added_event(session: Session, created: list[Terminal], *, source_layer: str) -> Any:

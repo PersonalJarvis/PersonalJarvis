@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 from pathlib import Path
 
@@ -16,7 +15,7 @@ import pytest
 
 from jarvis.agentic_ide import resume_store
 from jarvis.agentic_ide import session as ide
-from tests.unit.agentic_ide.test_pty_host_adoption import ConnectRecorder, FakeHostedPool
+from tests.unit.agentic_ide.test_pty_host_adoption import FakeHostedPool
 
 
 @pytest.fixture(autouse=True)
@@ -50,10 +49,6 @@ def _snapshot(folder: Path, *, working: bool, focused: str = "") -> None:
     )
 
 
-def _checkpoint_says_working(terminals: list[ide.Terminal]) -> None:
-    # The real check asks the CLI's own history; here the checkpoint is enough.
-    for term in terminals:
-        term.continuation_pending = term.resume_continuation_needed
 
 
 # ------------------------------------------------------------------ focus
@@ -90,72 +85,6 @@ async def test_a_focus_on_a_pane_that_is_gone_is_dropped(tmp_path: Path) -> None
     registry = ide.Registry(pty_manager=FakeHostedPool())
     await registry.restore(snapshot)
     assert registry.sessions[0].focused == ""
-
-
-# ----------------------------------------------------------- after reboot
-async def test_reboot_starts_and_continues_panes_that_were_working(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _snapshot(tmp_path, working=True)
-    monkeypatch.setattr(ide, "_mark_restored_continuations", _checkpoint_says_working)
-    pool = FakeHostedPool()  # a fresh host: nothing survived the reboot
-    monkeypatch.setattr(ide, "_connect_pty_host", ConnectRecorder(pool))
-
-    registry = ide.Registry()
-    nudged: list[tuple[str, str]] = []
-
-    async def record_prompt(name: str, text: str, **_kwargs: object) -> None:
-        nudged.append((name, text))
-
-    monkeypatch.setattr(registry, "send_prompt", record_prompt)
-    await registry.boot_restore()
-    for _ in range(100):
-        if len(nudged) == 2:
-            break
-        await asyncio.sleep(0.02)
-
-    # Both agents were started although no viewer ever connected ...
-    assert sorted(meta["history_id"] for meta in pool.metas) == ["hist-1", "hist-2"]
-    # ... and each was told to carry on exactly once, once it was live.
-    assert sorted(nudged) == [("T1", "continue"), ("T2", "continue")]
-    assert all(term.status == "live" for term in registry.sessions[0].terminals)
-
-
-async def test_agents_that_survived_are_rejoined_not_continued(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _snapshot(tmp_path, working=True)
-    monkeypatch.setattr(ide, "_mark_restored_continuations", _checkpoint_says_working)
-    pool = FakeHostedPool()
-    pool.add_hosted("h-1", history_id="hist-1")
-    pool.add_hosted("h-2", history_id="hist-2")
-    monkeypatch.setattr(ide, "_connect_pty_host", ConnectRecorder(pool))
-
-    registry = ide.Registry()
-    await registry.boot_restore()
-    await asyncio.sleep(0.05)
-
-    session = registry.sessions[0]
-    assert pool.adopted == ["h-1", "h-2"]
-    assert pool.metas == []  # nothing new was spawned
-    assert not any(term.continuation_pending for term in session.terminals)
-    assert not any(term.continue_when_ready for term in session.terminals)
-
-
-async def test_panes_that_were_idle_are_not_continued_after_reboot(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _snapshot(tmp_path, working=False)
-    monkeypatch.setattr(ide, "_mark_restored_continuations", _checkpoint_says_working)
-    pool = FakeHostedPool()
-    monkeypatch.setattr(ide, "_connect_pty_host", ConnectRecorder(pool))
-
-    registry = ide.Registry()
-    await registry.boot_restore()
-    await asyncio.sleep(0.05)
-
-    assert pool.metas == []
-    assert all(term.status == "pending" for term in registry.sessions[0].terminals)
 
 
 # ------------------------------------------------------------------- stop

@@ -288,6 +288,31 @@ def resume_argv(agent: str, handle: ResumeHandle | None) -> tuple[str, ...] | No
     return adapter.resume(handle.id)
 
 
+#: Environment a CLI is resumed with so it finishes an interrupted turn BY
+#: ITSELF, keyed by resume kind. Claude Code's own mechanism (measured against
+#: 2.1.283, 2026-09-28): with ``CLAUDE_CODE_RESUME_INTERRUPTED_TURN`` set, a
+#: resumed conversation whose last turn was cut off mid-way re-runs that turn —
+#: a pane killed at step 26 of 30 went on to 30 with nothing typed, and without
+#: it stayed at its prompt. A turn that had finished is left alone. The age
+#: limit is switched off (``0``): after a night with the machine off the turn
+#: is still the one the user asked for. CLIs without such a mechanism resume
+#: their conversation and wait at their prompt — Jarvis never types for them.
+_NATIVE_RESUME_ENV: dict[str, dict[str, str]] = {
+    "claude_session": {
+        "CLAUDE_CODE_RESUME_INTERRUPTED_TURN": "1",
+        "CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS": "0",
+    },
+}
+
+
+def resume_env(agent: str) -> dict[str, str]:
+    """Extra environment that lets ``agent`` finish an interrupted turn itself."""
+    adapter = _adapter_for(agent)
+    if adapter is None:
+        return {}
+    return dict(_NATIVE_RESUME_ENV.get(adapter.kind, {}))
+
+
 def can_fork(agent: str) -> bool:
     """True when this coding CLI can copy one of its conversations into a new one."""
     adapter = _adapter_for(agent)

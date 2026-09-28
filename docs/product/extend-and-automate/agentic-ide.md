@@ -162,16 +162,21 @@ to them depends on what ended:
 | What happened | What the agents do | What you see next time |
 |---|---|---|
 | You closed the app, or it crashed or restarted | They keep working | The last open workspaces come back by themselves in the same layout, with the same focused pane, and each pane shows what its agent printed meanwhile |
-| The computer was turned off or restarted | They stopped with the machine | After you sign in, Jarvis starts again (login autostart is on by default) and brings every agent that was running back on its own conversation. Agents that were in the middle of a task are told to continue; agents that were idle or waiting for your answer or an approval are resumed but not typed into |
+| The computer was turned off or restarted | They stopped with the machine | After you sign in, Jarvis starts again (login autostart is on by default) and brings every agent that was running back on its own conversation. A Claude Code agent that was cut off in the middle of a task finishes it by itself (the CLI's own interrupted-turn resume); a finished one stays finished. Other CLIs come back holding their conversation at their prompt. Jarvis never types anything into a pane |
 | An agent ended by itself (for example `/exit`) | It stays ended | The pane comes back and starts when you open it |
 | You closed every workspace before quitting | Nothing runs | Nothing reopens by itself; the workspaces stay in the sidebar |
 | You pressed **Stop all agents** in the Agents panel | Every agent in every workspace ends | Same as closing every workspace |
+| The terminal host itself crashed while the app was open | They stopped with it | The app starts a new host and brings each of them back the same way as after a restart |
 
 The terminal host exits on its own about a minute after its last agent ends.
 If it cannot run on an install, agents run inside the app as before and end
-with it.
+with it. A host that is running but slow to answer is waited for; the app
+never starts a second copy of an agent beside one that is still alive. On
+Windows the host is started outside every job object of the app (through WMI
+when the app's job refuses to let it go), so it survives the app even when the
+app was launched from a terminal or an IDE.
 
-## Resume, Continue, or Forget
+## Resume or Forget
 
 The local restore point records folders, tab names, pane positions, the focused
 pane, call-signs, account choices, conversation handles, and whether each agent
@@ -181,9 +186,7 @@ folders are not silently reopened. A damaged restore point is kept aside as
 
 A pane is **available** when its folder and CLI can open. It is **resumable**
 only when that account's CLI history proves the conversation exists. Otherwise
-it opens fresh in the same layout. Inside a running app, resumed conversations
-wait at their prompts; review them before **Continue interrupted work**.
-**Queued** or **unconfirmed** does not mean running.
+it opens fresh in the same layout.
 
 **Forget** removes only the restore point. It does not stop running agents,
 delete project changes, clear prompt-history files, remove dropped files, or

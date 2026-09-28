@@ -177,6 +177,10 @@ class PtyHost:
                 "token": self._token,
                 "proto": PROTOCOL_VERSION,
                 "started_at": time.time(),
+                # When the MACHINE booted. A client compares it with the current
+                # boot to know for certain that a missing host died with a
+                # reboot, rather than guessing from a failed connection.
+                "boot_time": _boot_time(),
             },
         )
         logger.info("PTY host listening on 127.0.0.1:{} (pid {})", port, os.getpid())
@@ -458,11 +462,22 @@ def _write_state(path: Path, data: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def _boot_time() -> float:
+    """When this machine last booted (0.0 when it cannot be told)."""
+    try:
+        import psutil
+
+        return float(psutil.boot_time())
+    except Exception as exc:  # noqa: BLE001 - optional evidence, never fatal
+        logger.debug("PTY host: boot time unavailable: {}", exc)
+        return 0.0
+
+
 def _remove_state(path: Path, pid: int) -> None:
     """Remove the state file — only if it still describes THIS host."""
     try:
         current = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # gone or rewritten by a newer host: not ours to remove
         return
     if isinstance(current, dict) and current.get("pid") == pid:
         try:
@@ -491,9 +506,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state", required=True, help="Where to publish the port and token.")
     parser.add_argument("--log", default=None, help="Log file (none when omitted).")
     parser.add_argument("--idle-exit", type=float, default=IDLE_EXIT_S)
+    parser.add_argument(
+        "--token-file",
+        default=None,
+        help="Read the token from this file and delete it (a start that cannot pass env).",
+    )
     args = parser.parse_args(argv)
 
     token = os.environ.pop(TOKEN_ENV, "")
+    if not token and args.token_file:
+        token_path = Path(args.token_file)
+        try:
+            token = token_path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            print(f"PTY host: token file unreadable: {exc}", file=sys.stderr)
+        finally:
+            try:
+                token_path.unlink()
+            except OSError as exc:  # already gone is fine; anything else is logged
+                print(f"PTY host: token file not removed: {exc}", file=sys.stderr)
     if not token:
         print("PTY host: no token in the environment — refusing to start.", file=sys.stderr)
         return 2

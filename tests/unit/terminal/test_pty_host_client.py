@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -451,3 +452,56 @@ async def test_a_refused_spawn_raises(host: FakeHost) -> None:
         assert manager.connected is True
     finally:
         await _cleanup(manager)
+
+
+# ------------------------------------------------ alive vs gone, never guessed
+def test_a_state_file_only_counts_for_a_live_pty_host() -> None:
+    from jarvis.terminal import pty_host_client as client
+
+    assert client.host_is_alive(None) is False
+    # This test process is alive but is not a PTY host (a reused pid).
+    assert client.host_is_alive({"pid": os.getpid(), "boot_time": 0}) is False
+    assert client.host_is_alive({"pid": 2**22 + 12345}) is False
+
+
+async def test_a_live_host_that_does_not_answer_raises_and_starts_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis.terminal import pty_host_client as client
+
+    started: list[str] = []
+    monkeypatch.setattr(client, "host_available", lambda: True)
+    monkeypatch.setattr(
+        client,
+        "_read_state",
+        lambda path: {"pid": 4242, "port": 1, "token": "t", "proto": client.PROTOCOL_VERSION},
+    )
+    monkeypatch.setattr(client, "host_is_alive", lambda state: True)
+
+    async def no_answer(port: int, token: str, wait_s: float) -> None:
+        return None
+
+    monkeypatch.setattr(client, "_handshake", no_answer)
+    monkeypatch.setattr(client, "LIVE_HOST_PATIENCE_S", 0.3)
+    monkeypatch.setattr(client, "_start_host", lambda path, token: started.append(token) or True)
+
+    with pytest.raises(client.HostUnreachable):
+        await client.connect(start=True)
+    assert started == [], "a second host must never be started beside a live one"
+
+
+async def test_a_dead_host_is_replaced(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jarvis.terminal import pty_host_client as client
+
+    started: list[str] = []
+    monkeypatch.setattr(client, "host_available", lambda: True)
+    monkeypatch.setattr(
+        client,
+        "_read_state",
+        lambda path: {"pid": 4242, "port": 1, "token": "old", "proto": client.PROTOCOL_VERSION},
+    )
+    monkeypatch.setattr(client, "host_is_alive", lambda state: False)
+    monkeypatch.setattr(client, "_start_host", lambda path, token: started.append(token) or False)
+
+    assert await client.connect(start=True) is None
+    assert len(started) == 1

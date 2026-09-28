@@ -671,7 +671,7 @@ def all_closed_at() -> float | None:
     """When every workspace was last closed by hand, or None."""
     try:
         return float(_all_closed_path().read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # no marker (or a torn one) means "never closed by hand"
         return None
 
 

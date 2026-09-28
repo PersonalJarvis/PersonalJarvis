@@ -158,6 +158,18 @@ class HostConnectionError(RuntimeError):
     """The host could not be reached, or dropped the connection."""
 
 
+class HostUnreachable(RuntimeError):
+    """A PTY host IS running for this user and boot, but did not answer.
+
+    Raised instead of returning ``None`` because the two mean opposite things
+    to the caller. ``None`` says "no host holds any agent": starting agents is
+    safe. This says "a host holds agents right now": starting one would run a
+    second copy of a live agent on the same conversation — the 2026-09-28
+    failure where panes came back doubled and a stray "continue" was typed
+    into agents that had never stopped. The caller waits and tries again.
+    """
+
+
 class RemotePtyManager:
     """A ``PtyManager`` whose terminals live in the PTY host process."""
 
@@ -450,10 +462,54 @@ def _log_path() -> Path:
     return user_data_dir() / "logs" / f"pty_host{suffix}.log"
 
 
+#: How long ``connect`` keeps trying a host that is alive but not answering
+#: (a busy machine right after login, a host mid-way through a large replay).
+LIVE_HOST_PATIENCE_S = 20.0
+
+
+def _current_boot_time() -> float:
+    try:
+        import psutil
+
+        return float(psutil.boot_time())
+    except Exception as exc:  # noqa: BLE001 - optional evidence
+        logger.debug("PTY host: boot time unavailable: {}", exc)
+        return 0.0
+
+
+def host_is_alive(state: dict[str, Any] | None) -> bool:
+    """Is the host this state file describes still running, in THIS boot?
+
+    Three facts, all checked: the process exists, it is a PTY host (a pid is
+    reused after it dies), and it started after the machine last booted. A
+    state file from before a reboot therefore reads as dead however its pid
+    happens to be reused now — which is what makes "the machine restarted"
+    a measurement instead of a guess.
+    """
+    if not state or not state.get("pid"):
+        return False
+    try:
+        import psutil
+
+        proc = psutil.Process(int(state["pid"]))
+        cmdline = " ".join(proc.cmdline())
+        created = float(proc.create_time())
+    except Exception as exc:  # noqa: BLE001 - gone, not ours, or unreadable: not alive
+        logger.debug("PTY host pid {} is not a live host: {}", state.get("pid"), exc)
+        return False
+    if "jarvis.terminal.pty_host" not in cmdline:
+        return False
+    boot = _current_boot_time()
+    recorded = float(state.get("boot_time") or 0.0)
+    if boot and recorded and abs(recorded - boot) > 5.0:
+        return False
+    return not boot or created >= boot - 5.0
+
+
 def _read_state(path: Path) -> dict[str, Any] | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # no readable state file means no host to attach to
         return None
     return data if isinstance(data, dict) else None
 
@@ -538,6 +594,8 @@ def _start_host(state_path: Path, token: str) -> bool:
         "--log",
         str(_log_path()),
     ]
+    if sys.platform == "win32":
+        return _start_host_windows(argv, package_root, env, token, state_path)
     try:
         spawn_detached(argv, cwd=package_root, env=env)
     except OSError as exc:
@@ -546,35 +604,140 @@ def _start_host(state_path: Path, token: str) -> bool:
     return True
 
 
-async def connect(*, start: bool = True) -> RemotePtyManager | None:
-    """Attach to the running PTY host, starting one if none answers.
+def _start_host_windows(
+    argv: list[str], cwd: str, env: dict[str, str], token: str, state_path: Path
+) -> bool:
+    """Start the host so that NO job object of the app can take it down.
 
-    Never raises; ``None`` means "keep terminals in this process" (module
-    docstring).
+    Windows kills every member of a job created with KILL_ON_JOB_CLOSE when
+    the job's last handle closes — and the app itself may sit in one (started
+    from a terminal, an IDE or an agent shell that uses jobs). A child only
+    leaves such a job with ``CREATE_BREAKAWAY_FROM_JOB``, and only when the job
+    allows it. ``relauncher.spawn_detached`` falls back to starting INSIDE the
+    job when breakaway is refused, which for the host means dying with the app
+    it exists to outlive. So a refused breakaway goes through WMI instead:
+    ``Win32_Process.Create`` starts the process under the WMI service, outside
+    every job of ours (the approach cmux and others document). WMI cannot pass
+    an environment, so the token travels in a user-only file the host deletes.
+    """
+    import subprocess
+
+    flags = (
+        getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+        | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
+    )
+    try:
+        subprocess.Popen(  # noqa: S603 - our own interpreter, fixed arguments
+            argv,
+            cwd=cwd,
+            env=env,
+            creationflags=flags,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+        return True
+    except PermissionError:
+        logger.info("PTY host: the app's job refuses breakaway — starting it through WMI")
+    except OSError as exc:
+        logger.warning("PTY host could not be started: {}", exc)
+        return False
+    return _start_host_via_wmi(argv, cwd, token, state_path)
+
+
+def _start_host_via_wmi(argv: list[str], cwd: str, token: str, state_path: Path) -> bool:
+    import subprocess
+
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+
+    token_file = state_path.with_name(state_path.stem + f".{os.getpid()}.token")
+    try:
+        token_file.parent.mkdir(parents=True, exist_ok=True)
+        token_file.write_text(token, encoding="utf-8")
+    except OSError as exc:
+        logger.warning("PTY host token file could not be written: {}", exc)
+        return False
+    # python.exe, not pythonw: ConPTY needs a console of its own to attach the
+    # pseudo-console to (a pythonw host died on its first spawn, measured
+    # 2026-09-28), even though the app itself may run under pythonw. Its window
+    # is hidden through ``ShowWindow=0`` below.
+    exe = Path(argv[0])
+    console = exe.with_name("python.exe")
+    command = [str(console if console.exists() else exe), *argv[1:]]
+    command += ["--token-file", str(token_file)]
+    line = subprocess.list2cmdline(command).replace("'", "''")
+    folder = cwd.replace("'", "''")
+    script = (
+        "$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly "
+        "-Property @{ShowWindow=[uint16]0}; "
+        "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments "
+        f"@{{CommandLine='{line}'; CurrentDirectory='{folder}'; ProcessStartupInformation=$si}}; "
+        "exit [int]$r.ReturnValue"
+    )
+    try:
+        done = subprocess.run(  # noqa: S603 - fixed PowerShell script, our own arguments
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("PTY host could not be started through WMI: {}", exc)
+        return False
+    if done.returncode != 0:
+        logger.warning("PTY host WMI start returned {}", done.returncode)
+        return False
+    return True
+
+
+async def connect(*, start: bool = True) -> RemotePtyManager | None:
+    """Attach to the running PTY host, starting one only when none is running.
+
+    ``None`` means "no host holds any agent — keep terminals in this process"
+    (module docstring). A host that is running but does not answer raises
+    :class:`HostUnreachable` after :data:`LIVE_HOST_PATIENCE_S`: it is never
+    mistaken for a missing one, and a second host is never started beside it.
     """
     if not host_available():
         return None
     state_path = _state_path()
     state = await asyncio.to_thread(_read_state, state_path)
-    if state is not None and state.get("port") and state.get("token"):
-        if state.get("proto") != PROTOCOL_VERSION:
-            # A host from another build may be holding agents; never replace it
-            # blindly. It exits on its own once they are gone.
-            logger.warning(
-                "PTY host speaks protocol {} (this build: {}) — terminals stay in-process",
-                state.get("proto"),
-                PROTOCOL_VERSION,
+    alive = await asyncio.to_thread(host_is_alive, state)
+    if alive and state is not None and state.get("proto") == PROTOCOL_VERSION:
+        deadline = time.monotonic() + LIVE_HOST_PATIENCE_S
+        delay = 0.25
+        while True:
+            found = await _handshake(int(state["port"]), str(state["token"]), wait_s=3.0)
+            if found is not None:
+                manager = _manager_from(*found)
+                logger.info(
+                    "PTY host attached (pid {}) — {} terminal(s) still running",
+                    manager.host_pid,
+                    len(manager.hosted()),
+                )
+                return manager
+            if time.monotonic() >= deadline or not await asyncio.to_thread(host_is_alive, state):
+                break
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 2.0)
+        if await asyncio.to_thread(host_is_alive, state):
+            raise HostUnreachable(
+                f"The terminal host (pid {state.get('pid')}) is running but not answering."
             )
-            return None
-        found = await _handshake(int(state["port"]), str(state["token"]), wait_s=3.0)
-        if found is not None:
-            manager = _manager_from(*found)
-            logger.info(
-                "PTY host attached (pid {}) — {} terminal(s) still running",
-                manager.host_pid,
-                len(manager.hosted()),
-            )
-            return manager
+        state = None  # it died while we waited: treat it as gone
+    if alive and state is not None:
+        # Alive, but speaking another protocol: a host from another build that
+        # still holds its agents. Starting ours beside it would run a second
+        # copy of each of them, so it is reported as unreachable instead; it
+        # exits on its own once its agents are gone.
+        raise HostUnreachable(
+            f"The terminal host (pid {state.get('pid')}) speaks protocol "
+            f"{state.get('proto')}, this build speaks {PROTOCOL_VERSION}."
+        )
     if not start:
         return None
 
@@ -601,6 +764,8 @@ async def connect(*, start: bool = True) -> RemotePtyManager | None:
 __all__ = [
     "AdoptResult",
     "HostConnectionError",
+    "HostUnreachable",
+    "host_is_alive",
     "HostedInfo",
     "RemotePtyManager",
     "RemoteSession",

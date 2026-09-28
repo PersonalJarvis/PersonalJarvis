@@ -578,76 +578,6 @@ export interface ResumeResult {
   skipped: { folder: string; detail: string }[];
 }
 
-/**
- * One pane that came back holding its conversation and was never restarted.
- *
- * The state a restart leaves behind: resuming reconnects a pane to the
- * conversation it was having, but a coding CLI launched on an old transcript
- * reads it and then waits at its prompt. So the agent knows everything about the
- * job it was halfway through and does nothing with it — which on screen is
- * indistinguishable from a pane that finished.
- */
-export interface InterruptedPane {
-  workspace_id: string;
-  /** The workspace tab it belongs to — a list can span several. */
-  workspace: string;
-  folder: string;
-  key: string;
-  name: string;
-  agent: string;
-  display_name: string;
-  status: string;
-  /**
-   * Will a "continue" reach it? False only when its agent is DEAD — a pane that
-   * is merely still starting IS continuable, the instruction just waits for it.
-   */
-  continuable: boolean;
-  /**
-   * Its agent is still coming up.
-   *
-   * Cold starts are staggered on purpose, so most of a big workspace is in this
-   * state for the first seconds after it appears — which is exactly when this
-   * button gets pressed. Those panes are queued, never skipped.
-   */
-  starting?: boolean;
-  /** A "continue" is already on its way to this pane. */
-  queued?: boolean;
-  /** Why not, in one sentence. Empty when it can be continued. */
-  blocked_reason: string;
-  /** What it was last asked to do. Empty when that instruction was typed in by hand. */
-  last_task: string;
-  prompts_sent: number;
-  started_at: number | null;
-}
-
-export interface InterruptedOffer {
-  count: number;
-  continuable_count: number;
-  /** The instruction the continue action sends — "continue" unless configured. */
-  prompt: string;
-  panes: InterruptedPane[];
-}
-
-export interface ContinueResult {
-  ok: boolean;
-  /** Panes that accepted the instruction and started. */
-  continued: string[];
-  /**
-   * Panes whose agent had not started yet. The instruction is held and delivered
-   * when each comes up — "shortly", never "done".
-   */
-  queued: string[];
-  /**
-   * Panes the text was typed into without a confirmed submit — the prompt may be
-   * sitting in the input box. Reporting these as running is the one wrong thing
-   * to do with this answer.
-   */
-  unconfirmed: string[];
-  failed: { name: string; detail: string }[];
-  /** Interrupted panes still waiting afterwards. */
-  remaining: number;
-}
-
 export interface TerminalPlan {
   agent: string;
   name?: string;
@@ -1701,44 +1631,6 @@ export async function closeTerminals(names: string[]): Promise<CloseTerminalsRes
     closed: body.closed ?? [],
     failed: body.failed ?? [],
     session: body.state.session,
-  };
-}
-
-/**
- * Which panes are waiting to be told to carry on, across every open workspace.
- *
- * Its own read rather than part of `fetchIdeState`: the answer changes only when
- * a pane is resumed or driven again, and folding it into the state poll would
- * re-send every workspace to update a number.
- */
-export function fetchInterrupted(): Promise<InterruptedOffer> {
-  return getJson<InterruptedOffer>("/api/agentic-ide/interrupted");
-}
-
-/**
- * Tell interrupted panes to carry on. No names means every one of them.
- *
- * `prompt` overrides the default "continue" — the agent still holds its whole
- * conversation, so short beats elaborate.
- */
-export async function continueInterrupted(
-  names?: string[],
-  prompt?: string,
-): Promise<ContinueResult> {
-  const res = await fetch("/api/agentic-ide/interrupted/continue", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ names: names ?? [], prompt: prompt ?? "" }),
-  });
-  if (!res.ok) throw new Error(await detail(res));
-  const body = (await res.json()) as Partial<ContinueResult>;
-  return {
-    ok: body.ok ?? false,
-    continued: body.continued ?? [],
-    queued: body.queued ?? [],
-    unconfirmed: body.unconfirmed ?? [],
-    failed: body.failed ?? [],
-    remaining: body.remaining ?? 0,
   };
 }
 

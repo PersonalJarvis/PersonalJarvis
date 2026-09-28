@@ -731,30 +731,21 @@ class ActivityWatcher:
         Entering ``working`` arms the checkpoint immediately. A plain prompt
         must remain stable for the same settle window as completion notices,
         because coding TUIs briefly remove their busy row between tool steps.
-        Questions clear immediately: they need the user's answer, never a blind
-        continuation prompt. A resumed pane that is still offering Continue is
-        preserved while it waits at its prompt.
+        Questions clear immediately: a pane waiting for the user's answer was
+        not interrupted mid-work. The evidence is only ever read — by the bell
+        after an app restart — never acted on by typing into a pane.
         """
         if activity == "working":
-            # `read_activity` reaches this state only after a submission stamped
-            # for the live process. The offer to continue is therefore spent.
-            term.continuation_pending = False
             self._set_resume_needed(term, watch, True)
             return
         if activity in {"asking", "failed"}:
-            term.continuation_pending = False
             self._set_resume_needed(term, watch, False)
             return
         if activity == "exited":
             if getattr(term, "exit_code", None) in (0, None):
-                term.continuation_pending = False
                 self._set_resume_needed(term, watch, False)
             return
-        if (
-            activity == "waiting"
-            and not getattr(term, "continuation_pending", False)
-            and now - watch.since >= SETTLE_S
-        ):
+        if activity == "waiting" and now - watch.since >= SETTLE_S:
             self._set_resume_needed(term, watch, False)
 
     def _set_resume_needed(self, term: Any, watch: _PaneWatch, needed: bool) -> None:

@@ -26,9 +26,22 @@ error it always did.
 
 After a power-off the host is gone, so the next start resumes every agent that
 was running on its own conversation (each CLI's resume argument), in every
-workspace, and tells the ones that were working to continue. That path is
-identical on every OS; it depends only on login autostart, which is on by
-default on Windows, macOS and Linux (and a no-op on a headless host).
+workspace. Jarvis types nothing into any pane: Claude Code panes are resumed
+with the CLI's own `CLAUDE_CODE_RESUME_INTERRUPTED_TURN`, which finishes a
+turn the power cut interrupted (measured: killed at step 26 of 30, resumed to
+30 with nothing typed; without it the pane waited). That path is identical on
+every OS; it depends only on login autostart, which is on by default on
+Windows, macOS and Linux (and a no-op on a headless host).
+
+"Rebooted" is measured, not guessed: the host records the machine's boot time
+(`psutil.boot_time()`, all three OSes), and a host whose process is alive in
+this boot but slow to answer raises `HostUnreachable` — the app waits instead
+of resuming a second copy of each agent. Windows only: the host is started
+with `CREATE_BREAKAWAY_FROM_JOB`, and when the app's job refuses breakaway,
+through WMI `Win32_Process.Create` (verified: parent `WmiPrvSE.exe`, ConPTY
+output works); POSIX uses `start_new_session`, which no job semantics can
+override. A host that dies under a running app is replaced and its agents
+resumed the same way.
 
 Evidence: Windows verified live — the host survives its client's hard exit
 with the same PIDs and a replayed screen, and a real Claude Code pane killed
