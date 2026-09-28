@@ -129,6 +129,29 @@ def test_open_file_with_xdg_open_linux_opens_file():
         assert argv[0] == "xdg-open" and argv[1] == "/out/report.md"
 
 
+def test_open_file_with_startfile_quotes_cmd_metacharacters(monkeypatch):
+    """A '&' in a file name must stay inside quotes, never start a second command."""
+    launched: list[object] = []
+    monkeypatch.setattr(op, "detect_capabilities", lambda: _caps())
+    monkeypatch.setattr(op.subprocess, "Popen", lambda cmd, **kw: launched.append(cmd))
+
+    ok = op.open_file_with(
+        Path(r"C:\out\a&calc.md"), "startfile", r"C:\links\Editor.lnk"
+    )
+
+    assert ok is True
+    assert launched == [r'cmd /c start "" "C:\links\Editor.lnk" "C:\out\a&calc.md"']
+
+
+def test_open_file_with_startfile_refuses_a_quote(monkeypatch):
+    launched: list[object] = []
+    monkeypatch.setattr(op, "detect_capabilities", lambda: _caps())
+    monkeypatch.setattr(op.subprocess, "Popen", lambda cmd, **kw: launched.append(cmd))
+
+    assert op.open_file_with(Path('/x/a" & calc "b.md'), "startfile", "app") is False
+    assert launched == []
+
+
 def test_open_file_with_headless_is_noop():
     with patch.object(op, "detect_capabilities", return_value=_caps(display=False)), \
          patch.object(op.subprocess, "Popen") as popen:

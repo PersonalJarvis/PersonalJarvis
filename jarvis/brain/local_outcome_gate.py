@@ -48,6 +48,7 @@ Stand-downs (each defers to the flow that owns the turn):
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from jarvis.brain.local_action_gate import requires_external_integration
 from jarvis.core.capabilities import _normalize
@@ -202,9 +203,71 @@ _TASK_CLAUSE_RE = re.compile(
     r",\s+(?:and|und)\s+(?=(?:please\s+|bitte\s+)?"  # i18n-allow
     + _FS_VERB_RE.pattern + r")"
 )
-_QUOTED_LITERAL_RE = re.compile(
-    r'''(?<!\w)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`[^`]*`)'''
-)
+_QUOTE_CHAR_RE = re.compile(r"[\"'`]")
+
+
+def _scan_quoted_literal(text: str, start: int) -> tuple[bool, int]:
+    """Scan the literal opened by the quote at ``start``.
+
+    Returns ``(True, end)`` with ``end`` just past the closing quote, or
+    ``(False, stop)`` with the index where the scan gave up. Inside ``"…"``
+    and ``'…'`` a backslash escapes any next character except a line break
+    (a backslash before a line break, or at the end, ends the scan); a
+    backtick literal runs to the next backtick.
+    """
+    kind = text[start]
+    size = len(text)
+    if kind == "`":
+        close = text.find("`", start + 1)
+        return (False, size) if close < 0 else (True, close + 1)
+    pos = start + 1
+    while pos < size:
+        char = text[pos]
+        if char == "\\":
+            if pos + 1 < size and text[pos + 1] != "\n":
+                pos += 2
+                continue
+            return False, pos
+        if char == kind:
+            return True, pos + 1
+        pos += 1
+    return False, size
+
+
+def _sub_quoted_literals(repl: Callable[[int, str], str], text: str) -> str:
+    """Replace every quoted literal with ``repl(start, literal)``, in linear time.
+
+    Same matches as ``re.sub`` with the pattern
+    ``(?<!\\w)(?:"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|`[^`]*`)``. That
+    regex retried at every quote character, and an unclosed literal — or a run
+    of escaped quotes (``"\\"\\"\\"…``) — rescanned the rest of the text from
+    each of them: quadratic on long input (CodeQL py/polynomial-redos). Here a
+    quote of the same kind inside a failed scan is skipped: that scan consumed
+    it as an escaped pair, so a scan opened there would resume in step and fail
+    at the same place.
+    """
+    pieces: list[str] = []
+    consumed = 0
+    dead_until = {'"': -1, "'": -1, "`": -1}
+    for quote in _QUOTE_CHAR_RE.finditer(text):
+        start = quote.start()
+        kind = quote.group()
+        if start < consumed or start < dead_until[kind]:
+            continue
+        closed, stop = _scan_quoted_literal(text, start)
+        if not closed:
+            dead_until[kind] = stop
+            continue
+        before = text[start - 1] if start else ""
+        if before.isalnum() or before == "_":
+            continue  # the ``(?<!\w)`` guard: a quote inside a word ("don't")
+        pieces.append(text[consumed:start])
+        pieces.append(repl(start, text[start:stop]))
+        consumed = stop
+    pieces.append(text[consumed:])
+    return "".join(pieces)
+
+
 _COMMAND_LITERAL_PREFIX_RE = re.compile(
     r"\b(?:run|execute|launch|fuehre|starte)\s+(?:(?:the|this|following)\s+)?$",  # i18n-allow
     re.IGNORECASE,
@@ -252,13 +315,13 @@ def resolve_local_outcome_mandate(utterance: str) -> tuple[str, str] | None:
         return None
     # A quoted filename or example is a literal, not an instruction/context
     # marker. Preserve apostrophes inside words such as "don't".
-    def mask_literal(match: re.Match[str]) -> str:
+    def mask_literal(start: int, _literal: str) -> str:
         # An explicit "run <quoted command>" still names an executable object.
         # Its contents remain shielded from negation and vehicle detection.
-        prefix = _normalize(raw[:match.start()])
+        prefix = _normalize(raw[:start])
         return " command " if _COMMAND_LITERAL_PREFIX_RE.search(prefix) else " quoted_literal "
 
-    normalized = _normalize(_QUOTED_LITERAL_RE.sub(mask_literal, raw))
+    normalized = _normalize(_sub_quoted_literals(mask_literal, raw))
     tasks = [_positive_task_prefix(clause).strip() for clause in _TASK_CLAUSE_RE.split(normalized)]
     # An explicitly selected vehicle governs the subsequent action, even
     # across a sentence boundary ("Use the mouse. Create a folder.").

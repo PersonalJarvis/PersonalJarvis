@@ -1,5 +1,5 @@
 import { renderHook, act } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import { useGraphAwake, type GraphEngineApi } from "./useGraphAwake";
 
@@ -18,10 +18,13 @@ function pretend(state: { hidden?: boolean; focused?: boolean }): void {
 }
 
 function engine(): GraphEngineApi & {
-  pauseAnimation: ReturnType<typeof vi.fn>;
-  resumeAnimation: ReturnType<typeof vi.fn>;
+  pauseAnimation: Mock<() => unknown>;
+  resumeAnimation: Mock<() => unknown>;
 } {
-  return { pauseAnimation: vi.fn(), resumeAnimation: vi.fn() };
+  return {
+    pauseAnimation: vi.fn<() => unknown>(),
+    resumeAnimation: vi.fn<() => unknown>(),
+  };
 }
 
 afterEach(() => {

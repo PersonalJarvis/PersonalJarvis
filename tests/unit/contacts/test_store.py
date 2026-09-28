@@ -313,3 +313,15 @@ def test_primary_helpers_none_when_empty(store: ContactStore) -> None:
     c = store.upsert(name="NoContactInfo")
     assert c.primary_email is None
     assert c.primary_phone is None
+
+
+@pytest.mark.parametrize("slug", ["../escape", "a/b", "C:escape", "sub\\..\\..\\escape", ""])
+def test_hostile_slug_never_leaves_contacts_dir(tmp_path: Path, slug: str) -> None:
+    base = tmp_path / "contacts"
+    base.mkdir()
+    outside = tmp_path / "escape.md"
+    outside.write_text("---\nidentity:\n  name: Outside\n---\n", encoding="utf-8")
+    store = ContactStore(base_dir=base)
+    assert store.get(slug) is None
+    assert store.delete(slug) is False
+    assert outside.exists()

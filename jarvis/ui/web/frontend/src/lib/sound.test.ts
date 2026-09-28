@@ -33,7 +33,10 @@ function installFakeAudio() {
     createGain = vi.fn(() => new FakeGain());
     createOscillator = vi.fn(() => new FakeOsc());
   }
-  const ctorSpy = vi.fn(() => new FakeCtx());
+  // A `function` (not an arrow) so Vitest 4 lets the page `new` the mock.
+  const ctorSpy = vi.fn(function () {
+    return new FakeCtx();
+  });
   (window as unknown as { AudioContext: unknown }).AudioContext = ctorSpy;
   return { ctorSpy, oscillators, started, stopped };
 }

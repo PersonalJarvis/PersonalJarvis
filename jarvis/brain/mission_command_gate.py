@@ -56,14 +56,17 @@ _STATUS_PATTERN_DE = re.compile(
         # bare 'wie weit' at sentence start or before '?'/end — asks about progress.
         # NOT 'wie weit ist Berlin' etc. (qualifier-free only matches when
         # the question character is recognisable via '?'/end).
-        ^\s*(?:jarvis[,\s]+)?wie\s+weit\s*\??\s*$
+        # Blank runs are possessive throughout this module: adjacent optional
+        # runs let the engine try every split of a long blank run before
+        # failing (CodeQL py/polynomial-redos). Same language.
+        ^\s*+(?:jarvis[,\s]+)?wie\s++weit\s*+\??+\s*+$
         |
         # 'wie weit' + person/mission qualifier
         \bwie\s+weit\s+(?:bist\s+du|sind\s+wir|sind\s+sie|sind\s+die\s+mission|ist\s+(?:die\s+mission|der\s+sub|claw|openclaw))\b  # i18n-allow
         |
         # 'status' alone (at start or after 'jarvis,'); MUST have question/end
         # character, otherwise it matches 'Status der Wirtschaft' incorrectly.
-        ^(?:jarvis[,\s]+)?status\s*[?.!]*\s*$
+        ^(?:jarvis[,\s]+)?status\s*+[?.!]*+\s*+$
         |
         # 'status der mission' / 'status vom sub' / 'status von openclaw'  # i18n-allow
         \bstatus\s+(?:der\s+mission|vom\s+sub|von\s+(?:openclaw|claw)|bei\s+(?:openclaw|claw))\b  # i18n-allow
@@ -91,7 +94,10 @@ _STATUS_PATTERN_EN = re.compile(
         what(?:'s|\s+is)\s+the\s+status
         |
         # 'status?' as standalone or after 'jarvis,' — same restriction as DE
-        ^(?:jarvis[,\s]+)?status\s*[?.!]*\s*$
+        # (Two branches rather than possessive runs: the closing \b may only
+        # hold at the '$' in front of a final line break, so the blank-only
+        # branch has to be able to give that break back.)
+        ^(?:jarvis[,\s]+)?status(?:\s*+[?.!]++\s*+$|\s*$)
         |
         # 'how far (are we|along|is it)'
         how\s+far\s+(?:are|is|along)
@@ -120,7 +126,7 @@ _CANCEL_PATTERN_DE = re.compile(
     r"""
     (
         # 'brich (das|die|den|alles) ab'  # i18n-allow
-        \bbrich\s+(?:das|die\s+mission|den\s+auftrag|alles|openclaw|claw|sub|den)\s*\w*\s*ab\b  # i18n-allow
+        \bbrich\s+(?:das|die\s+mission|den\s+auftrag|alles|openclaw|claw|sub|den)\s*+(?:\w+\s*+)?ab\b  # i18n-allow
         |
         # 'brich ab' — short form
         ^(?:jarvis[,\s]+)?brich\s+ab\b

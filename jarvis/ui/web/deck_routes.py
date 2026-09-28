@@ -100,7 +100,7 @@ def cu_frame(sha: str) -> Response:
     404 covers both "never recorded" and "already pruned by the retention
     sweep" — the deck treats them the same (show nothing, keep going).
     """
-    if not _SHA256_RE.match(sha):
+    if not _SHA256_RE.fullmatch(sha):
         # A hash is the ONLY accepted key. Anything else — a filename, a
         # path, a shorter digest — is refused before it touches the filesystem.
         raise HTTPException(status_code=400, detail="invalid_hash")
