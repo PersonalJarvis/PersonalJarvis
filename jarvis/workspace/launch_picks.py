@@ -246,6 +246,15 @@ async def live_models() -> dict[str, list[dict[str, Any]]]:
     )
 
     out: dict[str, list[dict[str, Any]]] = {}
+    if _installed("claude-cli"):
+        # A plan login publishes no model list; the public discovery feed is
+        # what brings a new Claude release into the picker (claude_code_models).
+        from jarvis.brain.model_catalog import shared_catalog
+
+        try:
+            await asyncio.wait_for(shared_catalog().refresh_discovery(), 3.0)
+        except Exception as exc:  # noqa: BLE001 — the cached/curated list stands in
+            _log.debug("launch picks: model discovery unavailable: %s", exc)
     if _installed("agy-cli"):
         try:
             out["agy-cli"] = await asyncio.wait_for(asyncio.to_thread(read_agy_models), 10.0)
@@ -308,7 +317,7 @@ def offered_models(
     picks = picks_for(agent)
     if picks is None or not picks.model_args or not picks.provider:
         return []
-    from jarvis.agent_chat.catalog import CLAUDE_CODE_MODELS, provider_row
+    from jarvis.agent_chat.catalog import claude_code_models, provider_row
 
     row = provider_row(picks.provider)
     if row is None:
@@ -319,7 +328,7 @@ def offered_models(
     # Claude Code takes its own ids and aliases rather than the Anthropic
     # API's catalog — the same exception the chat catalog route makes.
     if picks.provider == "claude-api":
-        return [m.to_dict() for m in CLAUDE_CODE_MODELS]
+        return [m.to_dict() for m in claude_code_models()]
     return [m.to_dict() for m in row.curated_models]
 
 

@@ -68,6 +68,9 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     # Claude 5 family (feed-verified 2026-08-25; the CLIs' "opus" / "sonnet"
     # aliases resolve here via MODEL_ALIASES).
     "claude-opus-5": (5.0, 25.0),
+    # Opus 5.5 / Fable 5.1 (OpenRouter feed, 2026-09-28).
+    "claude-opus-5-5": (4.0, 20.0),
+    "claude-fable-5-1": (10.0, 50.0),
     "claude-sonnet-5": (2.0, 10.0),
     "claude-opus-4-8": (15.0, 75.0),
     "claude-opus-4-7-20251022": (15.0, 75.0),
@@ -100,6 +103,7 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     # here on 2026-08-18 and the live install showed a whole session as $0.
     "gemini-3.6-flash": (0.75, 3.75),
     "gemini-3.7-flash": (0.75, 3.75),
+    "gemini-3.8-flash": (0.75, 3.75),  # OpenRouter feed, 2026-09-28
     # Live API models — TEXT rates; audio rates live in
     # REALTIME_AUDIO_PRICING_USD_PER_MTOK below.
     "gemini-3.1-flash-live-preview": (0.75, 4.50),
@@ -116,6 +120,13 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "gpt-5.6-terra": (2.0, 12.0),
     "gpt-5.6-sol": (4.0, 20.0),
     "gpt-5.6-luna": (0.20, 1.20),
+    # GPT-6 generation (OpenRouter feed, 2026-09-28).
+    "gpt-6-sol": (2.0, 10.0),
+    "gpt-6-sol-pro": (2.0, 10.0),
+    "gpt-6-astra": (10.0, 50.0),
+    "gpt-6-astra-pro": (10.0, 50.0),
+    "gpt-6-luna": (0.10, 0.50),
+    "gpt-6-luna-pro": (0.10, 0.50),
     # Not a vendor model: Codex's review pass, which runs on the session's own
     # model. Tracks gpt-5.6-sol, the default that pass runs on.
     "codex-auto-review": (2.0, 10.0),
@@ -358,7 +369,7 @@ def feed_rates(model: str) -> tuple[float, float] | None:
 #: "sonnet" is priced as the Sonnet the CLI actually ran.
 MODEL_ALIASES: dict[str, str] = {
     "sonnet": "claude-sonnet-5",
-    "opus": "claude-opus-5",
+    "opus": "claude-opus-5-5",
     "haiku": "claude-haiku-4-5",
 }
 

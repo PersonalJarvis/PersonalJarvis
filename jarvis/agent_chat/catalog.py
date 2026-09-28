@@ -54,11 +54,14 @@ exist so the picker can show a provider before a key is typed.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal
 
 from jarvis.agent_chat.effort import default_effort, effort_levels
 from jarvis.brain.model_catalog import CURATED_MODELS, GROK_BUILD_MODELS
+
+log = logging.getLogger(__name__)
 
 Runner = Literal[
     "api",
@@ -154,6 +157,8 @@ def _agy_fallback_models() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
 #: aliases people type. Per-model effort caps follow the docs (no xhigh on
 #: 4.6; no effort at all on Haiku 4.5 and the 4.5 generation).
 CLAUDE_CODE_MODELS: Final[tuple[CuratedModel, ...]] = (
+    CuratedModel("claude-opus-5-5", "Claude Opus 5.5"),
+    CuratedModel("claude-fable-5-1", "Claude Fable 5.1"),
     CuratedModel("claude-fable-5", "Claude Fable 5"),
     CuratedModel("claude-opus-5", "Claude Opus 5"),
     CuratedModel("claude-opus-5[1m]", "Claude Opus 5", note="1M context"),
@@ -170,6 +175,29 @@ CLAUDE_CODE_MODELS: Final[tuple[CuratedModel, ...]] = (
     CuratedModel("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5", efforts=()),
     CuratedModel("claude-opus-4-5-20251101", "Claude Opus 4.5", efforts=()),
 )
+
+
+def claude_code_models() -> tuple[CuratedModel, ...]:
+    """What the Claude Code picker offers: :data:`CLAUDE_CODE_MODELS` with any
+    newer Anthropic release placed first.
+
+    A subscription login publishes no model list, so the curated tuple above
+    would otherwise stay the whole answer until someone edits it. New releases
+    come from the public discovery feed
+    (:meth:`jarvis.brain.model_catalog.ModelCatalog.discovered`), read from its
+    cache with no network; :func:`jarvis.workspace.launch_picks.live_models`
+    refreshes that cache before a picker is drawn.
+    """
+    from jarvis.brain.model_catalog import not_yet_listed, shared_catalog
+
+    try:
+        discovered = shared_catalog().discovered("claude-api")
+    except Exception as exc:  # noqa: BLE001 — discovery only adds; the curated list stands
+        log.debug("claude code picker: discovery cache unreadable: %s", exc)
+        return CLAUDE_CODE_MODELS
+    fresh = not_yet_listed(discovered, [(m.id, m.label) for m in CLAUDE_CODE_MODELS])
+    return (*(CuratedModel(m.id, m.label) for m in fresh), *CLAUDE_CODE_MODELS)
+
 
 #: Codex's catalog as of codex 0.149 (the bundled list, ``visibility: list``),
 #: for a box where ``models_cache.json`` cannot be read. The route prefers the

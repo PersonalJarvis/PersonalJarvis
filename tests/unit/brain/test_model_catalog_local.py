@@ -141,14 +141,17 @@ async def test_cloud_fetch_url_and_auth_are_byte_identical(
 async def test_keyed_cloud_provider_without_key_never_fetches(
     provider: str, tmp_path, monkeypatch
 ) -> None:
-    """No key → no network call; the picker gets the honest static fallback."""
+    """No key → no call to the vendor; the picker gets the honest static
+    fallback. The only request is the keyless public discovery feed, which
+    carries no credential."""
     client = _FakeClient(_OPENAI_SHAPE)
     _plain_env(monkeypatch, {})
 
     result = await _catalog(tmp_path, client).list_models(provider)
 
     assert result.source == "static"
-    assert client.calls == []
+    assert [c["url"] for c in client.calls] == ["https://openrouter.ai/api/v1/models"]
+    assert client.calls[0]["headers"] == {}
     assert result.models, "static fallback must still offer a useful list"
 
 

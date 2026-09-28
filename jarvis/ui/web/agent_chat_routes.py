@@ -49,7 +49,7 @@ from pydantic import BaseModel, Field
 
 from jarvis.agent_chat import attachments as chat_attachments
 from jarvis.agent_chat import runner_cli, typeahead
-from jarvis.agent_chat.catalog import CLAUDE_CODE_MODELS, offers, rows_for
+from jarvis.agent_chat.catalog import claude_code_models, offers, rows_for
 from jarvis.agent_chat.control_types import CommandRequest, CommandResult
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
@@ -293,7 +293,7 @@ async def get_catalog(
         # Anthropic catalog route lists the models live.
         if row.id == "claude-api":
             if runner == "claude-cli":
-                d["curated_models"] = [m.to_dict() for m in CLAUDE_CODE_MODELS]
+                d["curated_models"] = [m.to_dict() for m in claude_code_models()]
                 d["models_source"] = "curated"
             else:
                 d["models_source"] = "live"
