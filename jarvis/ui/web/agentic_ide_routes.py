@@ -14,6 +14,7 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``POST   /folders/create``             → make one new folder inside an existing one
 * ``POST   /terminal-target/open``       → open a path printed by one terminal
 * ``GET    /workspaces``                 → every open workspace, in tab order
+* ``PUT    /workspaces/order``           → reorder workspace tabs via drag and drop
 * ``GET    /workspaces/{id}/files``      → browse that workspace's file tree
 * ``GET    /workspaces/{id}/file``       → stream one workspace file in-app
 * ``GET    /workspaces/{id}/file-preview`` → readable text or a binary preview
@@ -535,6 +536,12 @@ class WorkspacesResponse(BaseModel):
 class TerminalOrderRequest(BaseModel):
     terminal_ids: list[str] = Field(
         description="Every terminal history_id exactly once, in row-major grid order.",
+    )
+
+
+class WorkspaceOrderRequest(BaseModel):
+    workspace_ids: list[str] = Field(
+        description="Every open workspace id exactly once, in left-to-right tab order.",
     )
 
 
@@ -1927,6 +1934,18 @@ def _unwrap_file_uri(value: str) -> str:
 def get_project_workspaces() -> dict:
     """Return the sidebar hierarchy without starting any coding session."""
     return workspace_catalog.project_graph(get_registry())
+
+
+@router.put("/workspaces/order", summary="Reorder workspace tabs")
+async def reorder_workspaces(request: Request, req: WorkspaceOrderRequest) -> dict:
+    """Persist a drag-and-drop tab order without touching panes or agents."""
+    registry = get_registry()
+    try:
+        await registry.reorder_workspaces(req.workspace_ids)
+    except SessionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await _announce_workspace(request, registry.session, "reordered")
+    return {"ok": True, "state": registry.state()}
 
 
 @router.put("/workspaces/{workspace_id}/terminal-order", summary="Reorder workspace terminals")

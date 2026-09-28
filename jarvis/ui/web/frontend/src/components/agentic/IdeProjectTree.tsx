@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronRight, Folder, Loader2, Mic, MoreHorizontal, Pin, Plus, X } from "lucide-react";
 import { ChatLibraryError, openProject, patchProject } from "@/lib/chatLibraryApi";
-import type { IdeProject, ProjectWorkspace } from "@/lib/agenticIdeApi";
+import { reorderWorkspaces, type IdeProject, type ProjectWorkspace } from "@/lib/agenticIdeApi";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 
 const EXPANSION_KEY = "jarvis.ide.projectExpansion.v1";
+const WORKSPACE_DRAG_MIME = "application/x-jarvis-workspace-id";
 
 function readExpansion(): Record<string, boolean> {
   try {
@@ -37,6 +38,9 @@ export function IdeProjectTree() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [mutatingId, setMutatingId] = useState<string | null>(null);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ id: string; before: boolean } | null>(null);
+  const [reordering, setReordering] = useState(false);
   const sawProjectSnapshot = useRef(false);
   const lastActiveId = useRef<string | null>(null);
   const lastPendingId = useRef<string | null>(null);
@@ -113,6 +117,31 @@ export function IdeProjectTree() {
     finally { mutatingProjects.current.delete(project.id); setMutatingId(null); }
   };
 
+  const moveWorkspace = async (sourceId: string, targetId: string, before: boolean) => {
+    if (reordering || sourceId === targetId) return;
+    const globalOrder = visible
+      .flatMap((project) => project.workspaces)
+      .filter((workspace) => workspace.status === "open")
+      .map((workspace) => workspace.id);
+    const sourceProject = visible.find((project) => project.workspaces.some((workspace) => workspace.id === sourceId));
+    const targetProject = visible.find((project) => project.workspaces.some((workspace) => workspace.id === targetId));
+    if (!sourceProject || !targetProject || sourceProject.id !== targetProject.id) return;
+    const without = globalOrder.filter((id) => id !== sourceId);
+    const targetIndex = without.indexOf(targetId);
+    if (targetIndex < 0) return;
+    const insertAt = before ? targetIndex : targetIndex + 1;
+    const next = [...without.slice(0, insertAt), sourceId, ...without.slice(insertAt)];
+    if (next.join("\u0000") === globalOrder.join("\u0000")) return;
+    setReordering(true);
+    try {
+      await reorderWorkspaces(next);
+      requestRefresh();
+    } catch (error) { pushToast("error", (error as Error).message); }
+    finally { setReordering(false); setDraggedId(null); setDropTarget(null); }
+  };
+
+  const clearDragState = () => { setDraggedId(null); setDropTarget(null); };
+
   const projectRow = (project: IdeProject) => {
     const open = expansion[project.id] ?? (project.id === activeProject?.id || (!activeWorkspaceId && visible[0]?.id === project.id));
     const active = project.id === activeProject?.id;
@@ -159,13 +188,61 @@ export function IdeProjectTree() {
         {project.workspaces.map((workspace: ProjectWorkspace) => {
           const pending = workspace.id === pendingWorkspaceId;
           const selected = workspace.id === activeWorkspaceId;
-          return <div key={workspace.id} className={`group/space flex min-h-10 items-center rounded-xl border border-transparent transition-colors hover:bg-muted/70 ${selected ? "border-border/50 bg-muted text-foreground" : ""} ${pending ? "bg-muted/80 text-foreground" : ""}`}>
+          const draggable = workspace.status === "open" && !pending && !reordering;
+          const isDragged = draggedId === workspace.id;
+          const isDropBefore = dropTarget?.id === workspace.id && dropTarget.before;
+          const isDropAfter = dropTarget?.id === workspace.id && !dropTarget.before;
+          return <div key={workspace.id}
+            data-testid={`ide-workspace-row-${workspace.id}`}
+            draggable={draggable}
+            onDragStart={(event) => {
+              if (!draggable) { event.preventDefault(); return; }
+              event.dataTransfer.setData(WORKSPACE_DRAG_MIME, workspace.id);
+              event.dataTransfer.setData("text/plain", workspace.id);
+              event.dataTransfer.effectAllowed = "move";
+              setDraggedId(workspace.id);
+            }}
+            onDragEnd={clearDragState}
+            onDragOver={(event) => {
+              if (!draggedId || draggedId === workspace.id || workspace.status !== "open") return;
+              if (!event.dataTransfer.types.includes(WORKSPACE_DRAG_MIME) && !event.dataTransfer.types.includes("text/plain")) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+              const rect = event.currentTarget.getBoundingClientRect();
+              const before = (event.clientY - rect.top) < rect.height / 2;
+              setDropTarget((current) => current?.id === workspace.id && current.before === before ? current : { id: workspace.id, before });
+            }}
+            onDragLeave={(event) => {
+              const next = event.relatedTarget as Node | null;
+              if (next && event.currentTarget.contains(next)) return;
+              setDropTarget((current) => current?.id === workspace.id ? null : current);
+            }}
+            onDrop={(event) => {
+              if (!draggedId) return;
+              event.preventDefault();
+              const sourceId = event.dataTransfer.getData(WORKSPACE_DRAG_MIME) || draggedId;
+              const rect = event.currentTarget.getBoundingClientRect();
+              const before = (event.clientY - rect.top) < rect.height / 2;
+              clearDragState();
+              void moveWorkspace(sourceId, workspace.id, before);
+            }}
+            className={`group/space relative flex min-h-10 items-center rounded-xl border border-transparent transition-colors hover:bg-muted/70 ${selected ? "border-border/50 bg-muted text-foreground" : ""} ${pending ? "bg-muted/80 text-foreground" : ""} ${isDragged ? "opacity-40" : ""} ${isDropBefore ? "before:absolute before:-top-0.5 before:left-2 before:right-2 before:h-0.5 before:rounded-full before:bg-primary" : ""} ${isDropAfter ? "after:absolute after:-bottom-0.5 after:left-2 after:right-2 after:h-0.5 after:rounded-full after:bg-primary" : ""}`}>
             <button type="button" data-testid={`ide-workspace-${workspace.id}`}
             aria-current={selected ? "page" : undefined} aria-busy={pending || undefined}
-            title={workspace.status === "closed" && !workspace.restorable ? "This workspace cannot be restored on this machine" : undefined}
+            title={workspace.status === "closed" && !workspace.restorable ? "This workspace cannot be restored on this machine" : workspace.status === "open" ? `${workspace.name} — drag to reorder, or press Alt plus arrow keys to move` : undefined}
             disabled={workspace.status === "closed" && !workspace.restorable}
             onClick={() => activateWorkspace(workspace.id)}
-            className={`flex min-h-10 min-w-0 flex-1 items-center gap-2.5 rounded-xl px-2.5 text-left text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${selected || pending ? "text-foreground" : "text-muted-foreground"}`}>
+            onKeyDown={(event) => {
+              if (!event.altKey || workspace.status !== "open") return;
+              if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+              event.preventDefault();
+              const openInProject = project.workspaces.filter((entry) => entry.status === "open");
+              const index = openInProject.findIndex((entry) => entry.id === workspace.id);
+              const neighbour = event.key === "ArrowUp" ? openInProject[index - 1] : openInProject[index + 1];
+              if (!neighbour) return;
+              void moveWorkspace(workspace.id, neighbour.id, event.key === "ArrowUp");
+            }}
+            className={`flex min-h-10 min-w-0 flex-1 items-center gap-2.5 rounded-xl px-2.5 text-left text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${selected || pending ? "text-foreground" : "text-muted-foreground"} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}>
             {pending ? <Loader2 aria-hidden className="h-3.5 w-3.5 shrink-0 animate-spin" />
               : <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${workspace.status === "open" && workspace.live_terminals > 0 ? "bg-emerald-500" : "bg-muted-foreground/40"}`} />}
             <span className="min-w-0 flex-1 truncate">{workspace.name}</span>

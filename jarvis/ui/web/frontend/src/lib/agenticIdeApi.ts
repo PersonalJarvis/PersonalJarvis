@@ -430,6 +430,23 @@ export async function reorderIdeTerminals(id: string, terminalIds: string[]): Pr
 }
 
 /**
+ * Persist a drag-and-drop workspace tab order.
+ *
+ * `workspaceIds` must contain every open workspace exactly once, in
+ * left-to-right order. Nothing starts, stops or restarts — only the tab
+ * positions move, and the order survives restarts via the resume snapshot.
+ */
+export async function reorderWorkspaces(workspaceIds: string[]): Promise<IdeState> {
+  const res = await fetch("/api/agentic-ide/workspaces/order", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workspace_ids: workspaceIds }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  return ((await res.json()) as { state: IdeState }).state;
+}
+
+/**
  * Which subscription new terminals of one coding CLI open on.
  *
  * `account_count` is what lets a surface stay quiet: with a single login there

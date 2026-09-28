@@ -2355,6 +2355,19 @@ class Registry:
             await self._persist()
             return session
 
+    async def reorder_workspaces(self, workspace_ids: list[str]) -> list[Session]:
+        """Persist tab order without starting, stopping or renaming anything."""
+        async with self._lock:
+            if len(workspace_ids) != len(self._sessions) or set(workspace_ids) != set(
+                self._sessions
+            ):
+                raise SessionError(
+                    "Workspace order must contain every open workspace exactly once."
+                )
+            self._sessions = {wid: self._sessions[wid] for wid in workspace_ids}
+            await self._persist()
+            return list(self._sessions.values())
+
     async def reorder_terminals(self, workspace_id: str, terminal_ids: list[str]) -> Session:
         """Persist row-major order without restarting or renaming an agent."""
         async with self._lock:

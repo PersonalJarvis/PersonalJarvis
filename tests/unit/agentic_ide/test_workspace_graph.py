@@ -285,3 +285,41 @@ async def test_initial_grid_order_survives_restore_at_every_supported_size(
     assert [term.history_id for term in restored.terminals] == ids
     assert max(term.column for term in restored.terminals) <= 3
     assert max(term.slot for term in restored.terminals) <= 1
+
+
+async def test_workspace_tab_order_moves_without_touching_panes(registry, tmp_path):
+    first = await registry.start(str(tmp_path), [{"agent": "claude"}], name="First")
+    second = await registry.start(str(tmp_path), [{"agent": "claude"}], name="Second")
+    third = await registry.start(str(tmp_path), [{"agent": "claude"}], name="Third")
+    assert [space.id for space in registry.sessions] == [first.id, second.id, third.id]
+    result = await routes.reorder_workspaces(
+        request(),
+        routes.WorkspaceOrderRequest(workspace_ids=[third.id, first.id, second.id]),
+    )
+    assert [space.id for space in registry.sessions] == [third.id, first.id, second.id]
+    assert [card["id"] for card in result["state"]["workspaces"]] == [
+        third.id,
+        first.id,
+        second.id,
+    ]
+    # Active workspace stays on screen; only the tab positions move.
+    assert result["state"]["active_id"] == third.id
+    assert first.terminals[0].history_id != second.terminals[0].history_id
+    graph = workspace_catalog.project_graph(registry)
+    names = [card["name"] for card in graph["projects"][0]["workspaces"]]
+    assert names == ["Third", "First", "Second"]
+
+
+@pytest.mark.parametrize("invalid", [[], ["unknown"], ["duplicate", "duplicate"]])
+async def test_invalid_workspace_order_is_rejected_without_mutation(registry, tmp_path, invalid):
+    first = await registry.start(str(tmp_path), [{"agent": "claude"}], name="First")
+    second = await registry.start(str(tmp_path), [{"agent": "claude"}], name="Second")
+    before = [space.id for space in registry.sessions]
+    with pytest.raises(HTTPException) as caught:
+        await routes.reorder_workspaces(
+            request(),
+            routes.WorkspaceOrderRequest(workspace_ids=invalid),
+        )
+    assert caught.value.status_code == 422
+    assert [space.id for space in registry.sessions] == before
+    assert {space.id for space in registry.sessions} == {first.id, second.id}
