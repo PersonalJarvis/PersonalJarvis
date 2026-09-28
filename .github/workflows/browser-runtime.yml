@@ -1,16 +1,7 @@
 name: Browser runtime
+# Called by ci.yml's `browser` lane (path-gated there) and runnable by hand.
 on:
-  pull_request:
-    paths:
-      - 'jarvis/society/browser/**'
-      - 'jarvis/ui/web/society_browser_routes.py'
-      - 'jarvis/ui/web/mcp_server_routes.py'
-      - 'jarvis/agent_chat/runner_cli.py'
-      - 'jarvis/brain/tool_gateway.py'
-      - 'tests/contract/test_browser*'
-      - 'tests/unit/society/test_browser*'
-      - 'jarvis/society/approvals.py'
-      - '.github/workflows/browser-runtime.yml'
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
