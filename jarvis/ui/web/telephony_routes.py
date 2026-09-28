@@ -55,6 +55,7 @@ from jarvis.telephony.security import (
 )
 from jarvis.telephony.status import CallRecord, TelephonyManager
 from jarvis.telephony.twiml import build_connect_stream_twiml, build_reject_twiml
+from jarvis.ui.web.error_text import internal_error
 
 log = logging.getLogger("jarvis.telephony.routes")
 
@@ -254,8 +255,9 @@ async def post_config(request: Request, body: ConfigUpdate) -> JSONResponse:
                 status_code=409,
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning("telephony config write failed: %s", exc)
-            return JSONResponse({"error": f"config write failed: {exc}"}, status_code=409)
+            return JSONResponse(
+                {"error": internal_error("config write", exc, logger=log)}, status_code=409
+            )
         # The disk write succeeded — mirror it onto the live shared config so
         # the webhook / media-socket handlers see it immediately (Bug: config
         # split-brain, see _apply_live_twilio_updates).
@@ -312,7 +314,7 @@ async def post_credentials(request: Request, body: CredentialsUpdate) -> JSONRes
         except Exception as exc:  # noqa: BLE001
             return JSONResponse(
                 {
-                    "error": f"config write failed: {exc}",
+                    "error": internal_error("config write", exc, logger=log),
                     "token_saved": token_saved,
                     "sid_saved": False,
                 },
@@ -360,36 +362,61 @@ async def post_test(request: Request) -> JSONResponse:
     except Exception:  # noqa: BLE001 — no/empty body → fall back to persisted
         body = {}
     twilio = _twilio_cfg(request)
-    account_sid = (str(body.get("account_sid") or "").strip()
-                   or (getattr(twilio, "account_sid", "") or ""))
+    account_sid = str(body.get("account_sid") or "").strip() or (
+        getattr(twilio, "account_sid", "") or ""
+    )
     token = str(body.get("auth_token") or "").strip() or _auth_token()
     mgr = _manager(request)
     # M4: honest five-layer status (PROVIDER_TEST_STATUSES) instead of a binary
     # ok/failed — bad SID, unfunded/suspended account, and an outage are different.
-    from jarvis.brain.provider_test import classify_provider_error
-
+    # The status is classified inside provisioning (TelephonyProvisionError.status)
+    # so Twilio's raw response text never reaches this payload.
     if not account_sid or not token:
         mgr.set_reachable(False, "account_sid or auth_token missing")
-        return JSONResponse({
-            "ok": False, "reachable": False, "status": "not_configured",
-            "error": "account_sid or auth_token missing",
-        })
+        return JSONResponse(
+            {
+                "ok": False,
+                "reachable": False,
+                "status": "not_configured",
+                "error": "account_sid or auth_token missing",
+            }
+        )
     try:
         from jarvis.telephony.provisioning import verify_credentials
 
         info = verify_credentials(account_sid, token)
         mgr.set_reachable(True, None)
-        return JSONResponse({
-            "ok": True, "reachable": True, "status": "ok",
-            "account_status": info.get("account_status", ""),
-        })
+        return JSONResponse(
+            {
+                "ok": True,
+                "reachable": True,
+                "status": "ok",
+                "account_status": info.get("account_status", ""),
+            }
+        )
+    except TelephonyProvisionError as exc:
+        # str(exc) is a clean sentence built by provisioning.sdk_failure / _client.
+        message = str(exc)
+        mgr.set_reachable(False, message)
+        return JSONResponse(
+            {
+                "ok": False,
+                "reachable": False,
+                "status": exc.status,
+                "error": message,
+            }
+        )
     except Exception as exc:  # noqa: BLE001
-        mgr.set_reachable(False, str(exc))
-        return JSONResponse({
-            "ok": False, "reachable": False,
-            "status": classify_provider_error(str(exc)),
-            "error": str(exc),
-        })
+        message = internal_error("Twilio credential check", exc, logger=log)
+        mgr.set_reachable(False, message)
+        return JSONResponse(
+            {
+                "ok": False,
+                "reachable": False,
+                "status": "error",
+                "error": message,
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -429,7 +456,7 @@ async def post_selftest(request: Request) -> JSONResponse:
                 chunks.append(chunk)
         response_text = "".join(chunks).strip()
     except Exception as exc:  # noqa: BLE001
-        error = f"brain: {exc}"
+        error = f"brain: {internal_error('selftest brain call', exc, logger=log)}"
 
     if not response_text:
         response_text = "Ja, das Telefon funktioniert. Ich höre dich klar und deutlich."  # i18n-allow: canned voice-output fallback, synthesized via TTS below
@@ -451,8 +478,9 @@ async def post_selftest(request: Request) -> JSONResponse:
                 if pcm:
                     audio_bytes += len(tts_pcm_to_twilio_ulaw(pcm, source_rate=rate))
     except Exception as exc:  # noqa: BLE001
+        message = internal_error("selftest speech synthesis", exc, logger=log)
         if error is None:
-            error = f"tts: {exc}"
+            error = f"tts: {message}"
 
     return JSONResponse(
         {
@@ -612,10 +640,14 @@ async def post_outbound(request: Request, body: OutboundCall) -> JSONResponse:
             public_base_url=public_base_url,
         )
     except TelephonyProvisionError as exc:
+        # A clean English sentence: our own validation text, or the classified
+        # summary from provisioning.sdk_failure — never Twilio's raw response.
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
     except Exception as exc:  # noqa: BLE001 - never 500 a UI button
-        log.warning("telephony outbound call failed: %s", exc)
-        return JSONResponse({"ok": False, "error": f"outbound call failed: {exc}"}, status_code=409)
+        return JSONResponse(
+            {"ok": False, "error": internal_error("outbound call", exc, logger=log)},
+            status_code=409,
+        )
 
     return JSONResponse({"ok": True, "call_sid": call_sid})
 

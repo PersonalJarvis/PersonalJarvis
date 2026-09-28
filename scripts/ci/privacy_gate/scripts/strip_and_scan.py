@@ -406,21 +406,22 @@ def cmd_scan(args: argparse.Namespace) -> int:
         text, _ = _decode(data)
         exempt = _matches_any(rel, scrub_exempt)
 
-        # high-confidence secret shapes
+        # high-confidence secret shapes -- the matched credential itself is
+        # never copied into the report or the terminal (see _secret_location).
         for name, rx in secret_rx.items():
             for m in rx.finditer(text):
                 value = m.group(0)
+                where = _secret_location(text, m)
                 if (value, rel) in allow:
-                    suppressed.append({"path": rel, "pattern": name, "value": value})
+                    suppressed.append({"path": rel, "pattern": name, **where})
                 elif exempt:
                     warnings.append(
                         {"kind": "secret_in_exempt", "path": rel,
-                         "pattern": name, "value": value}
+                         "pattern": name, **where}
                     )
                 else:
                     blocking.append(
-                        {"kind": "secret", "path": rel, "pattern": name,
-                         "value": value}
+                        {"kind": "secret", "path": rel, "pattern": name, **where}
                     )
 
         # residual PII (scrub + block-only rows must be 0 in non-exempt files)
@@ -485,7 +486,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
         f"{len(suppressed)} allowlisted-suppressed."
     )
     for b in blocking[:50]:
-        _eprint(f"  BLOCK [{b['kind']}] {b['path']}: {b.get('value', b.get('detail',''))}")
+        where = f"{b['path']}:{b['line']}" if b.get("line") else b["path"]
+        _eprint(f"  BLOCK [{b['kind']}] {where}: {b.get('value', b.get('detail', ''))}")
     # fail-closed: any blocking finding => non-zero exit
     return 2 if blocking else 0
 
@@ -715,6 +717,19 @@ def cmd_set_version(args: argparse.Namespace) -> int:
 
     print(f"set-version: {version} written to {', '.join(changed)}")
     return 0
+
+
+def _secret_location(text: str, match: re.Match[str]) -> dict:
+    """Where a secret-shape match sits, WITHOUT the matched value.
+
+    Scan reports and stderr end up in CI logs and review transcripts, so a
+    secret finding carries only its line and length; the maintainer opens the
+    file at that line to see (and allowlist) the exact value.
+    """
+    return {
+        "line": text.count("\n", 0, match.start()) + 1,
+        "value": f"<hidden, {len(match.group(0))} chars>",
+    }
 
 
 def _write_report(report_path: str | None, payload: dict) -> None:

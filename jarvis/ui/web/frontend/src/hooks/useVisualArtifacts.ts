@@ -141,14 +141,17 @@ export function pageTitleFromPreview(preview: string | null | undefined): string
   return title.length > 0 ? decodeEntities(title) : null;
 }
 
-/** The handful of entities a `<title>` realistically carries. */
+/**
+ * The handful of entities a `<title>` realistically carries. `&amp;` is
+ * decoded last so `&amp;lt;` stays the literal text `&lt;` (no double decode).
+ */
 function decodeEntities(text: string): string {
   return text
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'");
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, "&");
 }
 
 /** The visuals among a run's files, carrying the run they belong to. */

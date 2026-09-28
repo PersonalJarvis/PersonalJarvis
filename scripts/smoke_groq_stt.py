@@ -54,7 +54,7 @@ async def main() -> int:
     if not key:
         print("ERROR: set GROQ_API_KEY before invoking this script.", file=sys.stderr)
         return 2
-    print(f"[smoke] GROQ_API_KEY present (len={len(key)}, prefix={key[:4]}...)")
+    print("[smoke] GROQ_API_KEY is set.")  # never echo any part of the key
 
     pcm = _synthetic_speech_like_pcm()
     chunk = _Chunk(pcm=pcm)
