@@ -40,10 +40,31 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
+from urllib.parse import urlsplit
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
 
 from ._playlist_match import is_liked_name, match_playlist
+
+
+def _is_google_console_url(url: str) -> bool:
+    """True for an https link on a ``console.*.google.com`` host.
+
+    Parsed, not substring-matched: ``https://console.evil.example/google.com/``
+    or ``https://console.google.com.evil.example/`` must not pass as Google's
+    API-activation page, since the link is shown to the user to click.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:  # an unparsable URL is by definition not the trusted Google console link
+        return False
+    host = (parts.hostname or "").lower()
+    return (
+        parts.scheme == "https"
+        and parts.username is None
+        and host.startswith("console.")
+        and host.endswith(".google.com")
+    )
 
 log = logging.getLogger(__name__)
 
@@ -709,7 +730,7 @@ class YouTubeMusicRestTool:
                     if isinstance(link, dict):
                         candidates.append(str(link.get("url") or ""))
         for url in candidates:
-            if url.startswith("https://console.") and "google.com/" in url:
+            if _is_google_console_url(url):
                 return url
         return ""
 

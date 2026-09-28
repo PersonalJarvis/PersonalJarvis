@@ -63,6 +63,8 @@ from uuid import uuid4
 
 from loguru import logger
 
+from jarvis.core.path_safety import UnsafePathError, safe_child
+
 #: Saves arrive from several request handlers at once; the last writer has to be
 #: the one that lands rather than the one that finished its rename first.
 _WRITE_LOCK = threading.RLock()
@@ -159,8 +161,17 @@ def _projects_path() -> Path:
     return _root() / "projects.json"
 
 
-def _threads_path(project_id: str) -> Path:
-    return _root() / "threads" / f"{project_id}.json"
+def _threads_path(project_id: str) -> Path | None:
+    """The chat file of one project, or None when the id is not a plain name.
+
+    Project ids reach this from HTTP routes, so the file name is checked to stay
+    inside the threads folder before anything reads, writes or deletes it.
+    """
+    try:
+        return safe_child(_root() / "threads", f"{project_id}.json")
+    except UnsafePathError:
+        logger.warning("Chat library: refusing project id {!r}", project_id)
+        return None
 
 
 def _read_json(path: Path) -> Any:
@@ -437,8 +448,10 @@ def delete_project(project_id: str) -> bool:
         if len(kept) == len(projects):
             return False
         _save_projects(kept)
+        threads_file = _threads_path(project_id)
         try:
-            _threads_path(project_id).unlink(missing_ok=True)
+            if threads_file is not None:
+                threads_file.unlink(missing_ok=True)
         except OSError as exc:
             logger.warning("Chat library: could not drop chats of {}: {}", project_id, exc)
         return True
@@ -451,7 +464,10 @@ def delete_project(project_id: str) -> bool:
 
 def _load_threads(project_id: str) -> list[Thread]:
     out: list[Thread] = []
-    for item in _unwrap(_read_json(_threads_path(project_id)), "threads"):
+    path = _threads_path(project_id)
+    if path is None:
+        return out
+    for item in _unwrap(_read_json(path), "threads"):
         tid = str(item.get("id") or "").strip()
         if not tid:
             continue
@@ -477,9 +493,10 @@ def _load_threads(project_id: str) -> list[Thread]:
 
 
 def _save_threads(project_id: str, threads: list[Thread]) -> bool:
-    return _write_json(
-        _threads_path(project_id), _envelope("threads", [t.to_dict() for t in threads])
-    )
+    path = _threads_path(project_id)
+    if path is None:
+        return False
+    return _write_json(path, _envelope("threads", [t.to_dict() for t in threads]))
 
 
 def list_threads(project_id: str, *, include_archived: bool = False) -> list[Thread]:

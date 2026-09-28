@@ -25,6 +25,7 @@ from jarvis.core.config import get_secret, set_secret
 from jarvis.core.events import BrainToolsChanged
 from jarvis.mcp import state as mcp_state
 from jarvis.mcp.registry import BOOTSTRAP_SERVERS, MCPRegistry, MCPServerSpec
+from jarvis.ui.web.error_text import diagnostic_text
 
 log = logging.getLogger(__name__)
 
@@ -382,7 +383,8 @@ async def check_mcp(name: str, request: Request) -> dict[str, Any]:
                 "note": "already connected",
             }
         except Exception as exc:  # noqa: BLE001
-            msg = f"{type(exc).__name__}: {exc}"
+            log.warning("MCP probe of %s failed", name, exc_info=True)
+            msg = diagnostic_text(exc)
             registry._errors[name] = msg  # noqa: SLF001
             return {"ok": False, "tools_count": 0, "error": msg}
 
@@ -399,7 +401,8 @@ async def check_mcp(name: str, request: Request) -> dict[str, Any]:
         registry.clear_error(name)
         return {"ok": True, "tools_count": len(tools), "error": None}
     except Exception as exc:  # noqa: BLE001
-        msg = f"{type(exc).__name__}: {exc}"
+        log.warning("MCP probe of %s failed", name, exc_info=True)
+        msg = diagnostic_text(exc)
         registry._errors[name] = msg  # noqa: SLF001
         return {"ok": False, "tools_count": 0, "error": msg}
     finally:

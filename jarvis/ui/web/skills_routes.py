@@ -16,8 +16,6 @@ set by the ``WebServer`` at startup (after ``ensure_user_skills_dir()``).
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
 import importlib.util
 import re
 from dataclasses import replace
@@ -28,6 +26,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
+from jarvis.core.admin_password import check_admin_pass
 from jarvis.core.paths import user_skills_dir
 from jarvis.core.uploads import UploadRejected, stage_upload
 from jarvis.skills.builtin import BUILTIN_SKILL_NAMES
@@ -35,6 +34,7 @@ from jarvis.skills.finder import SearchFilters, SkillFinder
 from jarvis.skills.loader import parse_skill
 from jarvis.skills.origin import read_origin
 from jarvis.skills.schema import RESOURCE_KINDS, Skill, SkillLifecycleState
+from jarvis.ui.web.error_text import internal_error
 from jarvis.ui.web.upload_intake import (
     read_upload_entries,
     upload_http_error,
@@ -209,15 +209,10 @@ def _check_admin_pass(provided: str | None, security_cfg: Any) -> bool:
 
     - No hash set (empty string) -> always False (built-in edits locked).
     - No password provided -> False.
-    - Otherwise: compare SHA-256, constant-time via ``hmac.compare_digest``.
+    - Otherwise: salted scrypt check (legacy SHA-256 hex still accepted),
+      constant-time -- see ``jarvis.core.admin_password``.
     """
-    if security_cfg is None:
-        return False
-    expected = getattr(security_cfg, "admin_password_hash", "")
-    if not expected or not provided:
-        return False
-    computed = hashlib.sha256(provided.encode("utf-8")).hexdigest()
-    return hmac.compare_digest(computed, expected)
+    return check_admin_pass(provided, security_cfg)
 
 
 # ----------------------------------------------------------------------
@@ -690,12 +685,17 @@ async def import_skill(body: SkillImportBody, request: Request) -> dict[str, Any
 
     import httpx
 
+    from jarvis.core.http_guard import public_only_async
+
     reg = _require_registry(request)
     raw_url = _extract_import_url(body.input)
 
+    # The download runs server-side, so the pasted link (and every redirect it
+    # takes) must not reach the loopback API, the LAN or a metadata endpoint.
     async with httpx.AsyncClient(
         follow_redirects=True,
         timeout=httpx.Timeout(20.0),
+        **public_only_async(schemes=("http", "https")),
     ) as client:
         try:
             resp = await client.get(raw_url)
@@ -1871,7 +1871,7 @@ async def install_from_catalog(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
-            status_code=500, detail=f"Installation failed: {exc}"
+            status_code=500, detail=internal_error("Installation", exc)
         ) from exc
 
     # Registry refresh — the new skill should appear in the sidebar immediately
@@ -1883,7 +1883,7 @@ async def install_from_catalog(
             "ok": True,
             "name": body.name,
             "path": str(target_path),
-            "reload_warning": str(exc),
+            "reload_warning": internal_error("Skill registry reload", exc),
         }
 
     try:

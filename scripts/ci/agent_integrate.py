@@ -445,6 +445,30 @@ def dispatch_ci(ref: str) -> None:
     gh("workflow", "run", "ci.yml", "--ref", ref, "-f", "full=false")
 
 
+def decide(mergeable: str, state: str, behind: bool) -> str:
+    """The train's action for one pull request.
+
+    Mirrors GitHub's non-strict model (and Hermes Agent's): a branch is NOT
+    brought up to date just because main moved — with several agents pushing
+    to main, that re-ran every PR's CI on every push and nothing ever landed.
+    A branch is updated only when it CONFLICTS with main (or its last CI failed
+    while it was behind, since a newer main may be the fix). A green,
+    conflict-free PR merges; main's full post-merge run is the backstop for
+    changes that are fine alone and break together.
+    """
+    if mergeable == "CONFLICTING":
+        return "update"
+    if mergeable not in ("MERGEABLE", ""):
+        return "wait"  # GitHub is still computing mergeability
+    if state == "success":
+        return "merge"
+    if state == "missing":
+        return "dispatch"
+    if state == "failure" and behind:
+        return "update"
+    return "wait"
+
+
 def train(repo: str, max_updates: int, resolver_cmd: str, dry_run: bool, token_is_bot: bool) -> int:
     prs = gh_json(
         "pr",
@@ -458,7 +482,7 @@ def train(repo: str, max_updates: int, resolver_cmd: str, dry_run: bool, token_i
         "--limit",
         "100",
         "--json",
-        "number,title,headRefName,headRefOid,isDraft,labels,baseRefName,isCrossRepository",
+        "number,title,headRefName,headRefOid,isDraft,labels,baseRefName,isCrossRepository,mergeable",
     )
     queue = sorted(
         (p for p in prs or [] if eligible(p)),  # type: ignore[union-attr]
@@ -471,10 +495,14 @@ def train(repo: str, max_updates: int, resolver_cmd: str, dry_run: bool, token_i
     for pr in queue:
         number, branch, sha = pr["number"], pr["headRefName"], pr["headRefOid"]
         git("fetch", "--quiet", "origin", "main", branch)
-        behind = git("merge-base", "--is-ancestor", "origin/main", sha, check=False).returncode
-        if behind != 0:
+        behind = git("merge-base", "--is-ancestor", "origin/main", sha, check=False).returncode != 0
+        state = gate_state(repo, sha)
+        action = decide(pr.get("mergeable") or "", state, behind)
+        if action == "merge" and merged:
+            action = "wait"  # one landing per tick; the next tick sees the new main
+        if action == "update":
             if updates >= max_updates:
-                summary.append(f"#{number}: behind main, waits for a free update slot")
+                summary.append(f"#{number}: needs an update, waits for a free slot")
                 continue
             updates += 1
             try:
@@ -489,9 +517,7 @@ def train(repo: str, max_updates: int, resolver_cmd: str, dry_run: bool, token_i
                 git("reset", "-q", "--hard", check=False)
                 git("clean", "-fdq", "--", "jarvis/ui/web/dist", check=False)
             summary.append(f"#{number}: {outcome}")
-            continue
-        state = gate_state(repo, sha)
-        if state == "success" and not merged:
+        elif action == "merge":
             if dry_run:
                 summary.append(f"#{number}: would merge")
                 continue
@@ -502,12 +528,12 @@ def train(repo: str, max_updates: int, resolver_cmd: str, dry_run: bool, token_i
                     dispatch_ci("main")  # a GITHUB_TOKEN merge fires no push event
             else:
                 summary.append(f"#{number}: merge refused (protection or conflict)")
-        elif state == "missing":
+        elif action == "dispatch":
             summary.append(f"#{number}: no CI on {sha[:8]}, dispatching")
             if not dry_run:
                 dispatch_ci(branch)
         else:
-            summary.append(f"#{number}: CI gate {state}")
+            summary.append(f"#{number}: waiting (CI {state}, {pr.get('mergeable') or 'unknown'})")
     lines = ["## Merge train", "", *[f"- {line}" for line in summary]]
     print("\n".join(lines))
     target = os.environ.get("GITHUB_STEP_SUMMARY")

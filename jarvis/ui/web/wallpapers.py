@@ -441,7 +441,7 @@ class WallpaperUploads:
             return []
         items: list[UploadedWallpaper] = []
         for image in self._root.glob("u*.webp"):
-            if not _UPLOAD_ID_PATTERN.match(image.stem):
+            if not _UPLOAD_ID_PATTERN.fullmatch(image.stem):
                 continue
             item = self._read(image.stem)
             if item is not None:
@@ -449,7 +449,7 @@ class WallpaperUploads:
         return sorted(items, key=lambda item: (-item.created_at, item.id))
 
     def get(self, upload_id: str) -> UploadedWallpaper | None:
-        if not _UPLOAD_ID_PATTERN.match(upload_id):
+        if not _UPLOAD_ID_PATTERN.fullmatch(upload_id):
             return None
         return self._read(upload_id)
 
@@ -573,7 +573,7 @@ class WallpaperUploads:
 
     def remove(self, upload_id: str) -> bool:
         """Delete one upload, picture and sidecar and thumbnail."""
-        if not _UPLOAD_ID_PATTERN.match(upload_id):
+        if not _UPLOAD_ID_PATTERN.fullmatch(upload_id):
             return False
         with self._lock:
             image = self._image_path(upload_id)

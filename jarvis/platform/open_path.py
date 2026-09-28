@@ -131,8 +131,17 @@ def open_file_with(file: Path, launch_kind: str, launch_value: str) -> bool:
             return True
         if launch_kind == "startfile":
             # Windows .lnk/app launched with the file as an argument via `start`.
+            # cmd.exe re-parses its own command line, and list2cmdline only
+            # quotes arguments that contain spaces, so a file named
+            # "a&calc.md" would have run a second command. Both paths are
+            # double-quoted by hand (a Windows path cannot contain '"'; one
+            # that does is refused) and the string reaches CreateProcess as is.
+            file_str = str(file)
+            if '"' in launch_value or '"' in file_str:
+                log.warning("open_file_with: refusing a path containing a quote: %r", file_str)
+                return False
             subprocess.Popen(  # noqa: S603
-                ["cmd", "/c", "start", "", launch_value, str(file)],
+                f'cmd /c start "" "{launch_value}" "{file_str}"',
                 creationflags=NO_WINDOW_CREATIONFLAGS,
                 close_fds=True,
             )

@@ -102,12 +102,12 @@ async def window_detach(body: DetachBody, request: Request) -> dict[str, Any]:
     try:
         return await asyncio.to_thread(fn, body.view)
     except Exception as exc:  # noqa: BLE001
-        # Not swallowed: the reason travels back to the caller, mirroring the
-        # /api/window/focus contract.
-        log.warning("window detach failed: %s: %s", type(exc).__name__, exc)
+        # Not swallowed: the traceback goes to the log and a machine-readable
+        # reason travels back to the caller (exception text stays server-side).
+        log.warning("window detach failed: %s", exc, exc_info=True)
         return {
             "ok": False,
-            "reason": f"{type(exc).__name__}: {exc}",
+            "reason": "detach_failed",
             "fallback_url": _solo_url_path(body.view),
         }
 
@@ -143,8 +143,8 @@ async def window_reattach(body: DetachBody, request: Request) -> dict[str, Any]:
     try:
         return await asyncio.to_thread(fn, body.view)
     except Exception as exc:  # noqa: BLE001
-        log.warning("window reattach failed: %s: %s", type(exc).__name__, exc)
-        return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+        log.warning("window reattach failed: %s", exc, exc_info=True)
+        return {"ok": False, "reason": "reattach_failed"}
 
 
 class FullscreenBody(BaseModel):
@@ -189,8 +189,8 @@ async def window_command(body: WindowCommandBody, request: Request) -> dict[str,
     try:
         return await asyncio.to_thread(fn, body.action, body.view or None)
     except Exception as exc:  # noqa: BLE001
-        log.warning("window command failed: %s: %s", type(exc).__name__, exc)
-        return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+        log.warning("window command failed: %s", exc, exc_info=True)
+        return {"ok": False, "reason": "command_failed"}
 
 
 @router.post("/fullscreen", operation_id="fullscreen")

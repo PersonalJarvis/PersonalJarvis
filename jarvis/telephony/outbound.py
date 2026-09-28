@@ -31,7 +31,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlencode
 
-from .provisioning import TelephonyProvisionError
+from .provisioning import TelephonyProvisionError, sdk_failure
 from .security import public_url_for
 
 # Raw E.164: a leading '+' then 7..15 digits (first digit non-zero).
@@ -124,7 +124,7 @@ def place_call(
     except TelephonyProvisionError:
         raise
     except Exception as exc:  # noqa: BLE001 - twilio raises a wide error tree
-        raise TelephonyProvisionError(f"Outbound call failed: {exc}") from exc
+        raise sdk_failure("Outbound call failed", exc) from exc
 
     return getattr(call, "sid", "") or ""
 

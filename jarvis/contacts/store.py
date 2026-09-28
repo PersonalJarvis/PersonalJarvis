@@ -40,6 +40,7 @@ Frontmatter layout::
 
     <the ~300-word Markdown README is the body>
 """
+
 from __future__ import annotations
 
 import os
@@ -50,6 +51,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+from jarvis.core.path_safety import UnsafePathError, contained_path
 from jarvis.core.paths import user_data_dir
 from jarvis.memory.frontmatter import parse_frontmatter, write_frontmatter
 from jarvis.memory.workspace import person_slug
@@ -60,7 +62,12 @@ from .schema import normalize_relationship
 # A pragmatic, dependency-free e-mail check (cloud-first base install stays light —
 # no `email-validator`/`libphonenumber`). Good enough to reject obvious garbage
 # before it lands in a file; the UI is the authority for what the user wants.
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+#
+# Same language as ``^[^@\s]+@[^@\s]+\.[^@\s]+$`` (a dot somewhere inside the
+# domain, neither first nor last), written so the domain has exactly one way
+# to split at its first inner dot: the ambiguous split was quadratic on long
+# dotted input (CodeQL py/polynomial-redos), and vCard files are untrusted.
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s][^@\s.]*\.[^@\s]+$")
 _NON_DIGIT_RE = re.compile(r"\D")
 
 #: The only address sub-keys we persist (anything else is dropped).
@@ -87,9 +94,7 @@ def _validate_birthday(raw: str | None) -> str | None:
     try:
         return date.fromisoformat(s).isoformat()
     except ValueError as exc:
-        raise ValueError(
-            f"Invalid birthday {raw!r} — expected ISO format YYYY-MM-DD."
-        ) from exc
+        raise ValueError(f"Invalid birthday {raw!r} — expected ISO format YYYY-MM-DD.") from exc
 
 
 def _clean_str_list(values: list[str] | None) -> list[str]:
@@ -272,7 +277,18 @@ class ContactStore:
     # Paths / IO
     # ------------------------------------------------------------------
     def _path(self, slug: str) -> Path:
-        return self.base_dir / f"{slug}.md"
+        """The contact file for *slug*, contained in ``base_dir``.
+
+        The slug arrives from HTTP routes, so a value such as ``../x`` or a
+        drive-relative ``C:x`` must never address a file outside the contacts
+        folder. Raises :class:`UnsafePathError` (a ``ValueError``) for those.
+        """
+        if not slug or any(sep in slug for sep in ("/", "\\", ":", "\x00")):
+            raise UnsafePathError(f"not a contact slug: {slug!r}")
+        path = contained_path(self.base_dir, f"{slug}.md")
+        if path.parent != contained_path(self.base_dir, "."):
+            raise UnsafePathError(f"not a contact slug: {slug!r}")
+        return path
 
     def _iter_paths(self) -> list[Path]:
         if not self.base_dir.exists():
@@ -318,7 +334,10 @@ class ContactStore:
         return contacts
 
     def get(self, slug: str) -> Contact | None:
-        path = self._path(slug)
+        try:
+            path = self._path(slug)
+        except UnsafePathError:  # an escaping slug is no stored contact: None = not found
+            return None
         if not path.exists():
             return None
         return Contact.load(path)
@@ -513,14 +532,15 @@ class ContactStore:
     # ------------------------------------------------------------------
     def delete(self, slug: str) -> bool:
         existing = self.get(slug)
-        path = self._path(slug)
+        try:
+            path = self._path(slug)
+        except UnsafePathError:  # an escaping slug is no stored contact: nothing to delete
+            return False
         try:
             path.unlink()
         except FileNotFoundError:
             return False
-        notify_contact_changed(
-            "deleted", slug, existing.name if existing is not None else slug
-        )
+        notify_contact_changed("deleted", slug, existing.name if existing is not None else slug)
         return True
 
     def render_for_prompt(self, *, max_chars: int = 800) -> str:

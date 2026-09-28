@@ -614,10 +614,10 @@ def api_app(
     app.include_router(self_mod_router)
     app.state.self_mod_audit = audit
     app.state.self_mod_writer = writer
-    # Admin-PW: SHA-256 von "secret"
-    import hashlib
+    # Admin password "secret", stored as a salted scrypt hash.
+    from jarvis.core.admin_password import hash_admin_password
 
-    expected_hash = hashlib.sha256(b"secret").hexdigest()
+    expected_hash = hash_admin_password("secret")
     app.state.config = type(
         "C",
         (),

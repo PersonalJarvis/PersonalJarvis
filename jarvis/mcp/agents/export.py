@@ -241,8 +241,19 @@ def install(
     if path.exists():
         try:
             existing = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            return {"ok": False, "error": f"{path} is not readable JSON: {exc}"}
+        except json.JSONDecodeError as exc:
+            # Line and column let the user repair their own file; the parser's
+            # message itself is not echoed.
+            return {
+                "ok": False,
+                "error": (f"{path} is not readable JSON (line {exc.lineno}, column {exc.colno})."),
+            }
+        except OSError:
+            log.warning("MCP client config %s could not be read", path, exc_info=True)
+            return {
+                "ok": False,
+                "error": f"{path} is not readable JSON: the file could not be opened.",
+            }
         if not isinstance(existing, dict):
             return {"ok": False, "error": f"{path} does not hold a JSON object."}
     servers = existing.setdefault("mcpServers", {})
