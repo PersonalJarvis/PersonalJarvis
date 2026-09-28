@@ -1359,6 +1359,28 @@ def get_state() -> dict:
     return get_registry().state()
 
 
+@router.get("/runtime", summary="Where the Agentic-IDE agents run")
+def get_runtime() -> dict:
+    """``host`` when the agents live in the PTY host and survive closing the app.
+
+    ``in_process`` when they run inside the app and end with it (the host is
+    unavailable on this install), ``idle`` before any agent was started.
+    """
+    return get_registry().runtime_status()
+
+
+@router.post("/runtime/stop", summary="Stop every Agentic-IDE agent and its runtime")
+async def stop_runtime() -> dict:
+    """End every agent in every open workspace.
+
+    Closing the app never does this — it only detaches. The workspaces stay on
+    offer for a deliberate reopen, and none of them is reopened automatically
+    at the next start.
+    """
+    closed = await get_registry().stop_runtime()
+    return {"ok": True, "closed_workspaces": closed}
+
+
 @router.get("/panes", summary="Every coding session running in any open workspace")
 def get_panes() -> dict:
     """One row per pane, across ALL open workspaces — not just the front one.
@@ -2499,7 +2521,7 @@ async def set_mode(request: Request, req: ModeRequest) -> dict:
 
 
 @router.put("/surface-context", summary="Report the visible Agentic-IDE terminal")
-def set_surface_context(req: SurfaceContextRequest) -> dict:
+async def set_surface_context(req: SurfaceContextRequest) -> dict:
     """Keep deictic voice/chat references aligned with the visible pane.
 
     The state is ephemeral and active-workspace scoped. Grid view clears it,
@@ -2511,13 +2533,17 @@ def set_surface_context(req: SurfaceContextRequest) -> dict:
     view that promises the least — see `workspace_view.VIEW_DEFAULT`.
     """
     view = req.view if req.view is not None else view_from_legacy_chat_flag(req.chat_view)
-    accepted = get_registry().set_surface_context(
+    registry = get_registry()
+    accepted = registry.set_surface_context(
         workspace_id=req.workspace_id,
         view=view,
         on_screen=req.on_screen,
         terminal=req.terminal,
         prompt_target=req.prompt_target,
     )
+    if accepted and registry.take_focus_dirty():
+        # The selected pane is part of what a reopened app restores (RUB-102).
+        await registry.persist_resume_activity()
     return {"ok": True, "accepted": accepted}
 
 

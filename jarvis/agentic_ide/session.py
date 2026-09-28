@@ -73,7 +73,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from loguru import logger
@@ -1442,6 +1442,10 @@ class Session:
     # next dropped file or instruction belongs.
     surface_on_screen: bool = False
     surface_prompt_target: str = ""
+    # The pane last selected on screen, kept when the section goes off screen
+    # (unlike ``surface_prompt_target``) and saved with the workspace, so a
+    # reopened app puts the focus back where it was (RUB-102).
+    focused: str = ""
     # When this workspace was last brought to the front. Orders the "most
     # recently used" answer the resume snapshot and the UI both want, which is
     # NOT the order the workspaces were opened in.
@@ -1519,6 +1523,7 @@ class Session:
             "project": self.profile.to_dict(),
             "created_at": self.created_at,
             "focus_mode": self.focus_mode,
+            "focused": self.focused,
             # The split tree the grid draws from. The per-terminal column/slot
             # fields riding along below are coarse hints for consumers that
             # only talk ABOUT the layout; a client that renders it needs this.
@@ -1693,6 +1698,18 @@ def _announce_geometry(term: Terminal, cols: int, rows: int, *, except_viewer: A
         _tell_geometry(watched, cols, rows)
 
 
+async def _connect_pty_host(*, start: bool) -> Any:
+    """Attach to (or start) the PTY host; ``None`` keeps terminals in-process.
+
+    A module function rather than an inline import so tests can replace it, and
+    so the terminal stack stays off the import path until a pane needs it
+    (AP-26).
+    """
+    from jarvis.terminal.pty_host_client import connect
+
+    return await connect(start=start)
+
+
 def _viewers(term: Terminal) -> list[Any]:
     """Every output callback this pane should write to, newest last.
 
@@ -1812,6 +1829,16 @@ class Registry:
         # references to tasks; without this set a hold could be collected
         # mid-wait and its slot never given back.
         self._cold_start_holds: set[asyncio.Task[None]] = set()
+        # Whether panes may live in the PTY host (``jarvis.terminal.pty_host``)
+        # instead of this process. Off until the app turns it on through
+        # ``boot_restore``: a registry built by a test, a script or the CLI
+        # keeps its terminals in-process and never starts a background process.
+        self._host_enabled = False
+        # Set by ``set_surface_context`` when the focused pane changed, so the
+        # route can save it without saving on every repeated report.
+        self._focus_dirty = False
+        self._host_lock = asyncio.Lock()
+        self._boot_restored = False
 
     # ---------------------------------------------------------------- state
     @property
@@ -1968,6 +1995,247 @@ class Registry:
 
             self._pty = PtyManager()
         return self._pty
+
+    # ---------------------------------------------------------- PTY host
+    async def _live_manager(self) -> PtyManager:
+        """The pool a NEW agent should start in — the PTY host when possible.
+
+        Panes live in the host so that closing, quitting or restarting the app
+        detaches from them instead of killing them (see
+        ``jarvis.terminal.pty_host``). Everything degrades to the in-process
+        pool: host disabled (tests, CLI), host unavailable on this install, or
+        an in-process pool that already holds running agents — those would be
+        orphaned by a switch, so the switch waits for the next app start.
+        """
+        if not self._host_enabled:
+            return self._manager()
+        async with self._host_lock:
+            current = self._pty
+            if current is not None and (
+                # An in-process pool stays for the rest of this process once it
+                # exists: it may hold running agents, and a host that failed to
+                # start once is not worth a stall on every pane that connects.
+                not getattr(current, "persistent", False) or getattr(current, "connected", False)
+            ):
+                return current
+            # No pool yet, or the host went away (its agents went with it —
+            # ``RemotePtyManager._lost`` already told their panes).
+            remote = await _connect_pty_host(start=True)
+            if remote is None:
+                return self._fallback_manager()
+            self._pty = cast("PtyManager", remote)
+            return self._pty
+
+    def _fallback_manager(self) -> PtyManager:
+        """An in-process pool, replacing a host connection that is gone."""
+        if self._pty is not None and getattr(self._pty, "persistent", False):
+            self._pty = None
+        return self._manager()
+
+    async def boot_restore(self) -> None:
+        """Bring back what was open when the app last ran — once per process.
+
+        Called by the web server shortly after boot, off the critical path
+        (AP-26). Three steps:
+
+        1. Attach to the PTY host if one is still running from before. Its
+           terminals are agents that never stopped: the app was closed, the
+           machine was not.
+        2. Reopen the workspaces that were open at the last save, in their
+           layout. Each pane whose agent is still running in the host is
+           re-joined to it (``_adopt_hosted``); the rest come back pending and
+           continue their conversation through ``--resume`` when they connect,
+           which is what a reboot leaves behind.
+        3. End hosted terminals no reopened pane claimed. Nothing can reach
+           them any more, and left alone they would keep the host alive forever.
+
+        Deliberately closing every workspace before quitting is respected:
+        ``resume_store.all_closed_at`` records it, and a snapshot older than
+        that is not reopened unasked.
+        """
+        if self._boot_restored:
+            return
+        self._boot_restored = True
+        self._host_enabled = True
+        async with self._host_lock:
+            if self._pty is None:
+                remote = await _connect_pty_host(start=False)
+                if remote is not None:
+                    self._pty = cast("PtyManager", remote)
+        try:
+            snapshot = await asyncio.to_thread(resume_store.load)
+            closed_at = await asyncio.to_thread(resume_store.all_closed_at)
+        except Exception as exc:  # noqa: BLE001 - a broken file must not break boot
+            logger.warning("Agentic IDE: restore point unreadable at startup: {}", exc)
+            snapshot, closed_at = None, None
+        newest = max((w.saved_at for w in snapshot.workspaces), default=0.0) if snapshot else 0.0
+        if snapshot is not None and snapshot.workspaces and not self._sessions:
+            if closed_at is not None and closed_at >= newest:
+                logger.info(
+                    "Agentic IDE: every workspace was closed before the app quit — "
+                    "nothing reopened at startup"
+                )
+            else:
+                try:
+                    await self.restore(snapshot)
+                except SessionError as exc:
+                    logger.info("Agentic IDE: nothing reopened at startup: {}", exc)
+        manager = self._pty
+        hosted = manager.hosted() if manager is not None and hasattr(manager, "hosted") else []
+        for info in hosted:
+            logger.info(
+                "Agentic IDE: ending hosted terminal {} — no reopened pane claims it ({})",
+                info.terminal_id,
+                info.meta.get("name", "unnamed"),
+            )
+            manager.kill_hosted(info.terminal_id)  # type: ignore[union-attr]
+        await self._continue_interrupted_after_reboot()
+
+    async def _continue_interrupted_after_reboot(self) -> None:
+        """Carry on with the work a reboot interrupted, in every workspace.
+
+        Only panes whose agent did NOT survive (nothing in the PTY host claimed
+        them — the machine restarted, or the host died) and whose last
+        checkpoint saw them actively working. ``interrupted.continue_panes``
+        applies the rest of the gate: a pane showing a question or waiting for
+        an approval is never typed into, and a pane that finished or was
+        stopped carries no ``continuation_pending`` in the first place.
+
+        Their agents are started here without a viewer, so continuing does not
+        depend on somebody opening each workspace; the ``continue`` is held
+        until each CLI's input line is writable (``defer_continue``).
+        """
+        from . import interrupted
+
+        try:
+            report = await interrupted.continue_panes(self)
+        except Exception as exc:  # noqa: BLE001 - startup must not fail on this
+            logger.warning("Agentic IDE: interrupted work not continued at startup: {}", exc)
+            return
+        starts = [
+            (session, term)
+            for session in self._sessions.values()
+            for term in session.terminals
+            if term.status == "pending" and term.continue_when_ready
+        ]
+        for session, term in starts:
+            task = asyncio.create_task(
+                self._start_unviewed(session, term), name=f"ide-continue-{term.key}"
+            )
+            self._cold_start_holds.add(task)
+            task.add_done_callback(self._cold_start_holds.discard)
+        if starts or report.continued:
+            logger.info(
+                "Agentic IDE: continuing {} interrupted pane(s) after a restart ({} started "
+                "without a viewer)",
+                len(starts) + len(report.continued),
+                len(starts),
+            )
+
+    async def _start_unviewed(self, session: Session, term: Terminal) -> None:
+        """Start a pane's agent with nobody watching (the registry records output)."""
+
+        async def discard(_value: Any) -> None:
+            return None
+
+        identity = "pane:" + term.history_id
+        try:
+            await self.attach(
+                identity,
+                term.pty_cols or term.transcript.cols,
+                term.pty_rows or term.transcript.rows,
+                discard,
+                discard,
+                workspace_id=session.id,
+                claim_owner=False,
+            )
+        except SessionError as exc:
+            logger.warning("Agentic IDE: {} could not be started to continue: {}", term.name, exc)
+        finally:
+            self.detach(identity, workspace_id=session.id, viewer=discard)
+
+    async def _adopt_hosted(self, session: Session) -> None:
+        """Re-join each pane of ``session`` to its agent, if it is still running.
+
+        A pane is recognised by its ``history_id`` — the stable identity that
+        survives renames and the call-sign deduplication — which the spawn
+        stored in the hosted terminal's ``meta``. A pane that finds its agent
+        becomes ``live`` on the spot, with the host's copy of its screen in the
+        replay buffer, so the viewer that connects next takes the ordinary
+        "re-join a running agent" path in ``_attach_locked``.
+        """
+        # Only the host's pool can adopt; typed loosely because the registry
+        # otherwise sees every pool as the in-process ``PtyManager``.
+        manager: Any = self._pty
+        if manager is None or not hasattr(manager, "adopt"):
+            return
+        by_history: dict[str, Any] = {}
+        for info in manager.hosted():
+            history = str(info.meta.get("history_id") or "")
+            if not history:
+                continue
+            older = by_history.get(history)
+            if older is None or info.started_at > older.started_at:
+                by_history[history] = info
+        for term in session.terminals:
+            info = by_history.pop(term.history_id, None)
+            if info is None:
+                continue
+            on_output, on_closed = self._adopted_callbacks(term)
+            try:
+                result = await manager.adopt(info.terminal_id, on_output, on_closed)
+            except Exception as exc:  # noqa: BLE001 - the pane falls back to a resume
+                logger.warning("Agentic IDE: {} could not be re-joined: {}", term.name, exc)
+                continue
+            if not result.alive:
+                continue
+            cols = result.cols or term.transcript.cols
+            rows = result.rows or term.transcript.rows
+            term.transcript.resize(cols, rows)
+            term.transcript.feed(result.replay)
+            term.replay.clear()
+            term.replay.feed(result.replay)
+            if result.truncated:
+                term.replay.truncated = True
+            term.pty_id = info.terminal_id
+            term.pty_cols, term.pty_rows = cols, rows
+            term.status = "live"
+            term.error = ""
+            term.exit_code = None
+            term.resumed = False
+            # Never interrupted, so never offered a "continue" — the flag
+            # ``_mark_restored_continuations`` may have raised assumed a restart.
+            term.continuation_pending = False
+            term.resume_continuation_needed = False
+            term.started_at = info.started_at or time.time()
+            term.last_output_at = time.time() if result.replay else None
+            logger.info(
+                "Agentic IDE: {} re-joined its running agent after an app restart", term.name
+            )
+
+    def _adopted_callbacks(self, term: Terminal) -> tuple[Any, Any]:
+        """Output/exit callbacks for an agent this process did not start.
+
+        The same fan-out as the ones ``_attach_locked`` builds at spawn, minus
+        the failed-resume recovery: an adopted agent was not just resumed, it
+        has been running all along.
+        """
+
+        async def _output(_tid: str, text: str) -> None:
+            term.transcript.feed(text)
+            term.replay.feed(text)
+            term.last_output_at = time.time()
+            for viewer in _viewers(term):
+                await viewer(text)
+
+        async def _closed(_tid: str, code: int) -> None:
+            term.pty_id = None
+            term.status = "exited"
+            term.exit_code = code
+            for viewer in _exit_viewers(term):
+                await viewer(code)
+
+        return _output, _closed
 
     # -------------------------------------------------------------- session
     async def start(
@@ -2503,6 +2771,8 @@ class Registry:
         # Which record this came back from, so a second restore of the same file
         # recognises it rather than opening a duplicate.
         session.restored_from = _restore_key(space)
+        focused = session.find(space.focused) if space.focused else None
+        session.focused = focused.name if focused is not None else ""
         # The remembered split tree, when the snapshot carries one and it
         # parses. `_open_locked` already built the coarse columns-of-stacks
         # equivalent from the legacy (column, slot) pairs, so a snapshot from
@@ -2526,6 +2796,9 @@ class Registry:
         # close and its renumbering (or a remembered tree can disagree with the
         # panes that really came back), and `_renumber` settles both.
         self._renumber(session)
+        # Panes whose agents never stopped (the app was closed, the PTY host
+        # kept them) are re-joined now rather than resumed on connect.
+        await self._adopt_hosted(session)
         return session
 
     @staticmethod
@@ -2647,6 +2920,43 @@ class Registry:
                 await self._close_locked(workspace_id)
             return count
 
+    def runtime_status(self) -> dict[str, Any]:
+        """Where the agents run right now, for the UI and ``jarvis api``.
+
+        ``host`` — in the PTY host, surviving the app; ``in_process`` — in this
+        process, ending with it; ``idle`` — no agent has been started yet.
+        """
+        manager = self._pty
+        hosted = bool(getattr(manager, "persistent", False)) and bool(
+            getattr(manager, "connected", False)
+        )
+        mode = "host" if hosted else ("in_process" if manager is not None else "idle")
+        return {
+            "mode": mode,
+            "host_pid": int(getattr(manager, "host_pid", 0) or 0) if hosted else 0,
+            "persistent_enabled": self._host_enabled,
+            "workspaces": len(self._sessions),
+            "live_agents": sum(
+                1
+                for session in self._sessions.values()
+                for term in session.terminals
+                if term.status == "live" and term.pty_id
+            ),
+        }
+
+    async def stop_runtime(self) -> int:
+        """The explicit "stop everything": end every agent in every workspace.
+
+        Closing the app only detaches from the agents (``jarvis.terminal.pty_host``);
+        this is the separate, deliberate action that ends them. It closes each
+        workspace the ordinary way — so the restore point stays on offer and
+        the next start does not reopen anything unasked — and the PTY host,
+        left with no terminal, exits on its own shortly after.
+        """
+        count = await self.close_all()
+        logger.info("Agentic IDE: runtime stopped by request — {} workspace(s) closed", count)
+        return count
+
     # ------------------------------------------------------------- snapshot
     def snapshot(self) -> resume_store.Snapshot | None:
         """EVERY open workspace, in the form the resume store keeps it.
@@ -2678,6 +2988,7 @@ class Registry:
                     name=session.name,
                     terminals=[t.to_snapshot() for t in session.terminals],
                     layout=layout_tree.to_dict(session.layout) if session.layout else None,
+                    focused=session.focused,
                 )
                 for session in self._sessions.values()
             ],
@@ -2803,6 +3114,14 @@ class Registry:
         # third of it back tomorrow". The cost of the other direction is a
         # workspace that lingers in the offer until something else happens, and
         # reopening one workspace too many is trivially undone.
+        if not self._sessions:
+            # The restore point stays on offer, but the app must not reopen it
+            # by itself at the next start: the user shut everything down on
+            # purpose (see ``boot_restore``).
+            try:
+                await asyncio.to_thread(resume_store.note_all_closed)
+            except Exception as exc:  # noqa: BLE001 - closing must always succeed
+                logger.warning("Agentic IDE: could not record that everything closed: {}", exc)
         logger.info("Agentic IDE session ended: {}", session.id)
 
     def set_focus_mode(self, enabled: bool) -> bool:
@@ -2852,7 +3171,15 @@ class Registry:
         session.surface_prompt_target = (
             prompt.name if prompt is not None and accepts_prompts(prompt.agent) else ""
         )
+        if prompt is not None and prompt.name != session.focused:
+            session.focused = prompt.name
+            self._focus_dirty = True
         return True
+
+    def take_focus_dirty(self) -> bool:
+        """Did a focus change arrive since the last call? (Then it wants saving.)"""
+        dirty, self._focus_dirty = self._focus_dirty, False
+        return dirty
 
     # ------------------------------------------------------------------ pty
     def _locate(self, key: str, workspace_id: str | None) -> tuple[Session, Terminal] | None:
@@ -3141,10 +3468,14 @@ class Registry:
             # transcript's default is exactly the right answer.
             cols = max(term.pty_cols or term.transcript.cols, MIN_VIEWER_COLS)
             rows = max(term.pty_rows or term.transcript.rows, MIN_VIEWER_ROWS)
+        manager = await self._live_manager()
         if appearance in THEME_COLOURS:
             term.queries.appearance = appearance
+            if term.pty_id and hasattr(manager, "set_appearance"):
+                # A hosted agent's emulator queries are answered in the host,
+                # from its own copy of the appearance (``pty_host_client.spawn``).
+                manager.set_appearance(term.pty_id, appearance)
 
-        manager = self._manager()
         if term.pty_id and manager.has(term.pty_id):
             # The agent never stopped. A foreground viewer takes over the owner
             # slot; a background viewer only joins the output fanout. A viewer
@@ -3468,6 +3799,21 @@ class Registry:
                         # and landed in the CLI's prompt as junk the user never
                         # typed. Off the loop it is immediate.
                         on_probe=term.queries.feed,
+                        # Only the PTY host takes (and needs) this: it is how a
+                        # still-running agent is matched back to its pane after
+                        # an app restart (``_adopt_hosted``).
+                        **(
+                            {
+                                "meta": {
+                                    "history_id": term.history_id,
+                                    "name": term.name,
+                                    "workspace_id": session.id,
+                                    "agent": term.agent,
+                                }
+                            }
+                            if getattr(manager, "persistent", False)
+                            else {}
+                        ),
                     )
                     if term.stopping or self._locate(identity, session.id) != (session, term):
                         manager.close(pty_session.terminal_id)
@@ -5591,6 +5937,29 @@ def get_registry() -> Registry:
         if _REGISTRY is None:
             _REGISTRY = Registry()
         return _REGISTRY
+
+
+def schedule_boot_restore() -> asyncio.Task[None] | None:
+    """Run :meth:`Registry.boot_restore` in the background, once.
+
+    Called by the two real app entry points (the desktop shell and the web
+    launcher) right after the server is up — never by ``WebServer.start``,
+    which tests boot against the real user data directory and must not attach
+    to the user's PTY host or reopen their workspaces.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug("Agentic IDE: startup restore not scheduled — no running loop")
+        return None
+
+    async def _run() -> None:
+        try:
+            await get_registry().boot_restore()
+        except Exception as exc:  # noqa: BLE001 - startup must not fail on this
+            logger.opt(exception=exc).warning("Agentic IDE: startup restore failed")
+
+    return loop.create_task(_run(), name="agentic-ide-boot-restore")
 
 
 def reset_registry() -> None:

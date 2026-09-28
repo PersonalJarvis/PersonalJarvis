@@ -17,7 +17,7 @@ import { useIdeProjectsStore } from "@/store/ideProjects";
 import { openProject } from "@/lib/chatLibraryApi";
 import {
   activateWorkspace, addTerminal, closeTerminal, closeWorkspace, fetchIdeAgents, fetchIdeProjects, fetchIdeState, renameWorkspace,
-  reorderIdeTerminals, restoreIdeWorkspace, startIdeSession,
+  reorderIdeTerminals, restoreIdeWorkspace, startIdeSession, syncAgenticIdeSurface,
   type AgentStatus, type IdeProject, type IdeState, type TerminalState,
 } from "@/lib/agenticIdeApi";
 
@@ -180,8 +180,21 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   useEffect(() => {
     setWorkspace(session ? { id: session.id, name: session.name ?? session.project.name, path: session.folder } : null);
     setWorkspaces((state?.workspaces ?? []).map((workspace) => ({ id: workspace.id, name: workspace.name, folder: workspace.folder, active: workspace.active })));
-    if (session && !session.terminals.some((terminal) => terminal.name === selected)) setSelected(session.terminals[0]?.name ?? "");
+    if (session && !session.terminals.some((terminal) => terminal.name === selected)) {
+      // The pane the workspace was left on, when it still exists; else the first.
+      const focused = session.terminals.find((terminal) => terminal.name === session.focused);
+      setSelected(focused?.name ?? session.terminals[0]?.name ?? "");
+    }
   }, [session, state?.workspaces, selected, setWorkspace, setWorkspaces]);
+
+  // Report the selected pane: it is the voice/prompt target, and the backend
+  // saves it with the workspace so a reopened app restores the focus.
+  const sessionId = session?.id ?? "";
+  useEffect(() => {
+    if (!sessionId || !selected) return;
+    void syncAgenticIdeSurface({ workspaceId: sessionId, view: "grid", onScreen, terminal: null, promptTarget: selected })
+      .catch((error) => console.warn("Agentic IDE focus report failed:", error));
+  }, [sessionId, selected, onScreen]);
 
   const run = useCallback(async (work: () => Promise<void>) => {
     ++refreshEpoch.current; // invalidate reads started before this mutation

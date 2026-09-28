@@ -189,6 +189,9 @@ class SnapshotWorkspace:
     # and the merge in `save` has to know which record is the newer one.
     saved_at: float = 0.0
     project_id: str = ""
+    # The pane that had the focus, by name, so a reopened workspace lands on
+    # it instead of on its first pane. Empty on older snapshots.
+    focused: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -198,6 +201,7 @@ class SnapshotWorkspace:
             "name": self.name,
             "saved_at": self.saved_at,
             "layout": self.layout,
+            "focused": self.focused,
             "terminals": [t.to_dict() for t in self.terminals],
         }
 
@@ -233,6 +237,7 @@ class SnapshotWorkspace:
             terminals=terminals,
             layout=raw_layout if isinstance(raw_layout, dict) else None,
             saved_at=saved_at,
+            focused=str(data.get("focused") or "").strip(),
         )
 
 
@@ -556,6 +561,7 @@ def _restamp(workspace: SnapshotWorkspace, when: float) -> SnapshotWorkspace:
         terminals=workspace.terminals,
         layout=workspace.layout,
         saved_at=when,
+        focused=workspace.focused,
     )
 
 
@@ -583,6 +589,32 @@ def load() -> Snapshot | None:
         logger.warning("Agentic IDE: unreadable resume snapshot, ignoring it: {}", exc)
         return None
     return Snapshot.from_dict(data)
+
+
+def _all_closed_path() -> Path:
+    """Sibling of the store: when the last open workspace was closed by hand."""
+    return _store_path().with_name(_store_path().stem + ".all_closed")
+
+
+def note_all_closed(when: float | None = None) -> None:
+    """Record that the user closed every workspace (not that the app quit).
+
+    Kept beside the snapshot rather than in it, so the snapshot keeps offering
+    those workspaces for a deliberate reopen (``Registry._close_locked`` says
+    why it must) while the app's startup restore can tell "closed for the day"
+    from "the app was shut with work open".
+    """
+    path = _all_closed_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(repr(time.time() if when is None else when), encoding="utf-8")
+
+
+def all_closed_at() -> float | None:
+    """When every workspace was last closed by hand, or None."""
+    try:
+        return float(_all_closed_path().read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
 
 
 def clear() -> bool:

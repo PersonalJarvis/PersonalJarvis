@@ -49,11 +49,18 @@ honest three-state answer about whether it was accepted. This module adds no
 second write path into a PTY; it decides WHICH panes to send to and reports what
 happened. A caller can pass its own wording.
 
-Deliberately not automatic. Sending "continue" to every resumed pane the moment
-a workspace comes back would restart twelve agents on twelve unattended tasks
-because somebody reopened a folder to look at one file, and an agent that was
-interrupted for a reason ("stop, that is the wrong approach") would resume
-exactly what it was told to stop doing. The offer is a button.
+Never triggered by opening a workspace. Sending "continue" to every resumed pane
+the moment a workspace comes back would restart twelve agents on twelve
+unattended tasks because somebody reopened a folder to look at one file, and an
+agent that was interrupted for a reason ("stop, that is the wrong approach")
+would resume exactly what it was told to stop doing. Inside a running app the
+offer is a button.
+
+The one automatic caller is the app's startup after a REBOOT
+(``Registry._continue_interrupted_after_reboot``): the agents' own process
+died with the machine, the checkpoint saw them working, and the user asked for
+exactly that recovery (RUB-102). An app that was merely closed never gets
+there — its agents kept running in the PTY host and are re-joined, not nudged.
 """
 
 from __future__ import annotations

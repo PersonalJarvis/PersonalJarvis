@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   fetchIdeState: vi.fn(), fetchIdeProjects: vi.fn(), fetchIdeAgents: vi.fn(),
   startIdeSession: vi.fn(), activateWorkspace: vi.fn(), restoreIdeWorkspace: vi.fn(),
   addTerminal: vi.fn(), closeTerminal: vi.fn(), closeWorkspace: vi.fn(), renameWorkspace: vi.fn(), reorderIdeTerminals: vi.fn(), pushToast: vi.fn(),
+  syncAgenticIdeSurface: vi.fn(() => Promise.resolve()),
 }));
 const openProject = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/agenticIdeApi", () => api);

@@ -362,6 +362,11 @@ export interface SessionState {
   created_at: number;
   focus_mode: boolean;
   /**
+   * The pane last selected in this workspace, saved with it so a reopened app
+   * lands on the same pane. Absent from older backends.
+   */
+  focused?: string;
+  /**
    * WHERE every pane sits and how much room it has — the split tree the grid
    * draws from (see `components/agentic/treeLayout`). Null only while the
    * workspace has no panes; absent from states sent by older backends.

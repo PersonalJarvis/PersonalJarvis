@@ -2880,6 +2880,11 @@ class DesktopApp:
                 try:
                     await server.start(start_serving=False)
                     _db_mark("server_start")
+                    # Reattach to coding agents that kept running while the app
+                    # was closed, and reopen the workspaces in their layout.
+                    from jarvis.agentic_ide.session import schedule_boot_restore
+
+                    schedule_boot_restore()
                 except Exception as exc:  # noqa: BLE001 — never kill the backend loop
                     from loguru import logger as _slog
 

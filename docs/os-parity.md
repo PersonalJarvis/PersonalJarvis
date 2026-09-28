@@ -1,5 +1,32 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Persistent Agentic IDE terminals (2026-09-28, T3)
+
+Coding-agent panes now live in a separate PTY host process
+(`jarvis/terminal/pty_host.py`) instead of the app process, so closing, quitting
+or restarting the app detaches from the agents rather than killing them. The
+next start attaches to the host, reopens the last open workspaces in their
+saved layout, and re-joins every pane whose agent is still running (with its
+screen replayed). A reboot ends the host with everything in it; those panes
+then continue through the existing `--resume` path. Closing a pane or a
+workspace still ends its agent.
+
+One capability probe, `pty_host_client.host_available()` (a PTY backend exists
+and the build is not frozen), decides it on every OS. The host is spawned
+detached through `jarvis.ui.relauncher.spawn_detached`: on Windows with
+`DETACHED_PROCESS | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB` (retried
+without breakaway when a parent job forbids it), on macOS and Linux with
+`start_new_session`. It owns the ConPTY / POSIX PTYs and their kill-on-close
+containers (Job Object / process group), listens on 127.0.0.1 with a random
+token handed over in the environment, and exits after 60 s with no terminal
+and no client. Where the probe fails, or the host cannot start, the registry
+keeps the in-process pool: terminals work as before and die with the app. A
+headless `python:3.11-slim` without `ptyprocess` reports the same missing-PTY
+error it always did. Verified live on Windows (host survives its client's
+process exit, adopt replays the screen); macOS and Linux run the same code
+path through `ptyprocess` and are covered by the process-level test in
+`tests/integration/terminal/test_pty_host_process.py`, not yet by a live run.
+
 ## iGentic project workspaces (T3)
 
 Project ownership, workspace snapshots, eight-session ordering and addressed
