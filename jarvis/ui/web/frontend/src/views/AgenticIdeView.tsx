@@ -8,6 +8,7 @@ import { WorkspaceOptionsDialog } from "@/components/agentic/WorkspaceOptionsDia
 import { IdeSidePanelFrame } from "@/components/agentic/sidePanel/IdeSidePanel";
 import { GRID_LIMIT_HINT, MAX_WORKSPACE_PANES, canSplitFit, fitsWorkspace, isBalancedWorkspace } from "@/components/agentic/workspaceDocking";
 import { AgentMark } from "@/components/agentic/AgentMark";
+import { CloseAgentDialog, type CloseTarget } from "@/components/agentic/CloseAgentDialog";
 import { SplitRightIcon, SplitBelowIcon, SplitLeftIcon, SplitAboveIcon } from "@/components/agentic/splitIcons";
 import type { PaneSplitDirection } from "@/components/agentic/WorkspaceTerminalHeader";
 import { cn } from "@/lib/utils";
@@ -77,6 +78,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
+  const [closeRequest, setCloseRequest] = useState<
+    { kind: "terminal"; terminal: TerminalState; workspaceId: string } | { kind: "workspace"; workspaceId: string } | null
+  >(null);
   const [voiceOpen, setVoiceOpen] = useState(storedVoiceBubbleOpen);
   const [fontSize, setFontSize] = useState(() => Number(localStorage.getItem(FONT_KEY)) || 13);
   const [appearance, setAppearance] = useState<"light" | "dark" | null>(() => {
@@ -304,9 +308,21 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current);
   });
 
-  const closeAgent = (terminal: TerminalState) => void run(async () => {
-    if (!session || !window.confirm(`Close ${terminal.name}? Its coding agent will stop.`)) return;
-    await closeTerminal(terminal.history_id ? `pane:${terminal.history_id}` : terminal.name, session.id);
+  // Closing asks first in an in-app dialog, never window.confirm (the shell
+  // shows that as an unstyled host-named box in the OS language).
+  const closeAgent = (terminal: TerminalState) => {
+    if (session) setCloseRequest({ kind: "terminal", terminal, workspaceId: session.id });
+  };
+  const confirmClose = () => void run(async () => {
+    const request = closeRequest;
+    if (!request) return;
+    try {
+      if (request.kind === "terminal") {
+        await closeTerminal(request.terminal.history_id ? `pane:${request.terminal.history_id}` : request.terminal.name, request.workspaceId);
+      } else {
+        setState(await closeWorkspace(request.workspaceId));
+      }
+    } finally { setCloseRequest(null); }
   });
 
   const saveFont = (size: number) => { const next = Math.max(9, Math.min(22, size)); setFontSize(next); localStorage.setItem(FONT_KEY, String(next)); };
@@ -355,10 +371,14 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     setState(await renameWorkspace(session.id, renameValue.trim()));
     setRenameOpen(false);
   });
-  const stopWorkspace = () => void run(async () => {
-    if (!session || !window.confirm(`Close ${session.name ?? session.project.name}? Its coding agents will stop.`)) return;
-    setState(await closeWorkspace(session.id));
-  });
+  const stopWorkspace = () => {
+    if (session) setCloseRequest({ kind: "workspace", workspaceId: session.id });
+  };
+  const closeTarget: CloseTarget | null = !closeRequest ? null
+    : closeRequest.kind === "terminal"
+      ? { kind: "terminal", name: closeRequest.terminal.name, agent: closeRequest.terminal.agent, displayName: closeRequest.terminal.display_name }
+      : { kind: "workspace", name: session?.name ?? session?.project.name ?? "workspace",
+        agents: (session?.terminals ?? []).map((terminal) => ({ agent: terminal.agent, displayName: terminal.display_name })) };
 
   if (state === null) return <div data-testid="agentic-ide-loading" className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading projects…</div>;
 
@@ -368,6 +388,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       onAdd={openAgentPicker} onBalance={balanceLayout} onRename={() => { setRenameValue(session?.name ?? session?.project.name ?? ""); setRenameOpen(true); }}
       onClose={stopWorkspace} fontSize={fontSize} onFontSize={saveFont} appearance={appearance} onAppearance={saveAppearance}
       />
+    <CloseAgentDialog target={closeTarget} busy={busy} onCancel={() => setCloseRequest(null)} onConfirm={confirmClose} />
 
     <main className="min-h-0 flex-1">
       <IdeSidePanelFrame>
