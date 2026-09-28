@@ -271,8 +271,12 @@ def import_claude_desktop() -> tuple[int, list[str], str]:
 
     try:
         raw = json.loads(src.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        return (0, [], f"Config not readable: {exc}")
+    except json.JSONDecodeError as exc:
+        # Line and column let the user fix their own file.
+        return (0, [], f"Config is not valid JSON (line {exc.lineno}, column {exc.colno}).")
+    except OSError:
+        log.warning("Claude Desktop config not readable: %s", src, exc_info=True)
+        return (0, [], "Config not readable. Details are in the Jarvis log.")
 
     claude_servers = raw.get("mcpServers", {})
     if not isinstance(claude_servers, dict) or not claude_servers:

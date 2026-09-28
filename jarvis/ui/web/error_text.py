@@ -35,4 +35,21 @@ def internal_error(
     return f"{action} failed. {LOG_HINT}"
 
 
-__all__ = ["LOG_HINT", "internal_error"]
+def diagnostic_text(exc: BaseException, *, max_chars: int = 300) -> str:
+    """One-line ``Type: message`` for a failure the user must diagnose themselves.
+
+    For user-configured local processes (an MCP server command, say) the reason
+    is the whole point of the reply. It never includes a traceback: only the
+    first line of the message, credential shapes masked, length capped.
+    """
+    from jarvis.core.redact import redact_secrets
+
+    first_line = (str(exc).strip().splitlines() or [""])[0]
+    text = f"{type(exc).__name__}: {first_line}" if first_line else type(exc).__name__
+    text = redact_secrets(text)
+    if len(text) > max_chars:
+        text = text[:max_chars] + "…"
+    return text
+
+
+__all__ = ["LOG_HINT", "diagnostic_text", "internal_error"]
