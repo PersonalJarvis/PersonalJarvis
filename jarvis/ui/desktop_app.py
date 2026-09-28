@@ -685,7 +685,11 @@ def _bring_window_to_front_by_title(title: str) -> bool:
         import ctypes
         from ctypes import wintypes
 
-        user32 = ctypes.windll.user32
+        # A private WinDLL instance, not ctypes.windll.user32: setting
+        # pointer-sized argtypes on the shared object corrupts every other
+        # caller in the process — including pywebview's own SetWindowPos
+        # calls, which rely on it staying argtypes-free.
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
         user32.FindWindowW.restype = wintypes.HWND
         user32.GetForegroundWindow.restype = wintypes.HWND
         user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]

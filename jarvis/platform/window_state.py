@@ -71,6 +71,35 @@ class WindowInfo:
     pid: int | None = None
 
 
+# Cached, process-private DLL instances. Never ``ctypes.windll.user32`` /
+# ``ctypes.windll.kernel32``: this module binds pointer-sized argtypes on
+# whatever object it gets, and the shared ``windll`` singleton is used by
+# every other library in the process (e.g. pywebview's winforms backend,
+# which calls SetWindowPos relying on it staying argtypes-free).
+_private_user32_dll = None
+_private_kernel32_dll = None
+
+
+def _win32_user32():
+    """Return the cached private ``user32`` WinDLL, creating it on first use."""
+    global _private_user32_dll
+    import ctypes  # noqa: PLC0415
+
+    if _private_user32_dll is None:
+        _private_user32_dll = ctypes.WinDLL("user32", use_last_error=True)
+    return _private_user32_dll
+
+
+def _win32_kernel32():
+    """Return the cached private ``kernel32`` WinDLL, creating it on first use."""
+    global _private_kernel32_dll
+    import ctypes  # noqa: PLC0415
+
+    if _private_kernel32_dll is None:
+        _private_kernel32_dll = ctypes.WinDLL("kernel32", use_last_error=True)
+    return _private_kernel32_dll
+
+
 def _configure_window_query_api(user32, ctypes, wintypes) -> None:
     """Bind pointer-sized Win32 window-query signatures."""
     user32.GetForegroundWindow.argtypes = []
@@ -176,7 +205,7 @@ def _find_and_focus_windows(title_contains: str) -> tuple[bool, str]:
     import ctypes  # noqa: PLC0415
     from ctypes import wintypes  # noqa: PLC0415
 
-    user32 = ctypes.windll.user32
+    user32 = _win32_user32()
     _configure_window_query_api(user32, ctypes, wintypes)
 
     EnumWindows = user32.EnumWindows
@@ -252,8 +281,8 @@ def _force_foreground_windows(hwnd: int) -> bool:
     import ctypes  # noqa: PLC0415
     from ctypes import wintypes  # noqa: PLC0415
 
-    user32 = ctypes.windll.user32
-    kernel32 = ctypes.windll.kernel32
+    user32 = _win32_user32()
+    kernel32 = _win32_kernel32()
     _configure_window_query_api(user32, ctypes, wintypes)
     kernel32.GetCurrentThreadId.argtypes = []
     kernel32.GetCurrentThreadId.restype = wintypes.DWORD
@@ -315,7 +344,7 @@ def _list_windows_windows() -> list[WindowInfo]:
     import ctypes  # noqa: PLC0415
     from ctypes import wintypes  # noqa: PLC0415
 
-    user32 = ctypes.windll.user32
+    user32 = _win32_user32()
     _configure_window_query_api(user32, ctypes, wintypes)
     EnumWindows = user32.EnumWindows
     EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -364,7 +393,7 @@ def _foreground_title_windows() -> str:
     import ctypes  # noqa: PLC0415
     from ctypes import wintypes  # noqa: PLC0415
 
-    user32 = ctypes.windll.user32
+    user32 = _win32_user32()
     _configure_window_query_api(user32, ctypes, wintypes)
     with per_monitor_dpi_context():
         hwnd = user32.GetForegroundWindow()
@@ -1096,7 +1125,7 @@ def _foreground_window_windows() -> WindowInfo | None:
     import ctypes  # noqa: PLC0415
     from ctypes import wintypes  # noqa: PLC0415
 
-    user32 = ctypes.windll.user32
+    user32 = _win32_user32()
     _configure_window_query_api(user32, ctypes, wintypes)
     with per_monitor_dpi_context():
         hwnd = user32.GetForegroundWindow()
@@ -1285,7 +1314,7 @@ def _window_rect_windows(hwnd: int) -> tuple[int, int, int, int] | None:
     import ctypes  # noqa: PLC0415
     from ctypes import wintypes  # noqa: PLC0415
 
-    user32 = ctypes.windll.user32
+    user32 = _win32_user32()
     _configure_window_query_api(user32, ctypes, wintypes)
     with per_monitor_dpi_context():
         rect = wintypes.RECT()
@@ -1304,7 +1333,7 @@ def _window_client_rect_windows(hwnd: int) -> tuple[int, int, int, int] | None:
     import ctypes  # noqa: PLC0415
     from ctypes import wintypes  # noqa: PLC0415
 
-    user32 = ctypes.windll.user32
+    user32 = _win32_user32()
     _configure_window_query_api(user32, ctypes, wintypes)
     with per_monitor_dpi_context():
         rect = wintypes.RECT()
@@ -1327,7 +1356,7 @@ def _move_to_primary_windows(win: WindowInfo, primary: dict) -> tuple[bool, str]
     import ctypes  # noqa: PLC0415
     from ctypes import wintypes  # noqa: PLC0415
 
-    user32 = ctypes.windll.user32
+    user32 = _win32_user32()
     _configure_window_query_api(user32, ctypes, wintypes)
     hwnd = int(win.handle)
 
@@ -1381,7 +1410,7 @@ def _window_class_windows(hwnd: int) -> str:
     import ctypes  # noqa: PLC0415
     from ctypes import wintypes  # noqa: PLC0415
 
-    user32 = ctypes.windll.user32
+    user32 = _win32_user32()
     _configure_window_query_api(user32, ctypes, wintypes)
     buf = ctypes.create_unicode_buffer(256)
     if not user32.GetClassNameW(hwnd, buf, 256):
@@ -1438,7 +1467,7 @@ def window_frame_rect(win: WindowInfo) -> tuple[int, int, int, int] | None:
         from ctypes import wintypes  # noqa: PLC0415
 
         hwnd = int(win.handle)
-        user32 = ctypes.windll.user32
+        user32 = _win32_user32()
         _configure_window_query_api(user32, ctypes, wintypes)
         with per_monitor_dpi_context():
             rect = wintypes.RECT()
@@ -1644,7 +1673,7 @@ def window_is_maximized(win: WindowInfo) -> bool | None:
         _SW_SHOWMAXIMIZED = 3
         wp = _WINDOWPLACEMENT()
         wp.length = ctypes.sizeof(_WINDOWPLACEMENT)
-        user32 = ctypes.windll.user32
+        user32 = _win32_user32()
         _configure_window_query_api(user32, ctypes, wintypes)
         if not user32.GetWindowPlacement(int(win.handle), ctypes.byref(wp)):
             return None
@@ -1712,7 +1741,7 @@ def maximize_window(win: WindowInfo) -> tuple[bool, str]:
                 return False, "no window handle to maximize"
             import ctypes  # noqa: PLC0415
 
-            user32 = ctypes.windll.user32
+            user32 = _win32_user32()
             hwnd = int(win.handle)
             _GWL_STYLE, _WS_MAXIMIZEBOX = -16, 0x00010000
             _SW_MAXIMIZE = 3
