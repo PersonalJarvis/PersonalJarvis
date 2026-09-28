@@ -62,7 +62,12 @@ from .schema import normalize_relationship
 # A pragmatic, dependency-free e-mail check (cloud-first base install stays light —
 # no `email-validator`/`libphonenumber`). Good enough to reject obvious garbage
 # before it lands in a file; the UI is the authority for what the user wants.
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+#
+# Same language as ``^[^@\s]+@[^@\s]+\.[^@\s]+$`` (a dot somewhere inside the
+# domain, neither first nor last), written so the domain has exactly one way
+# to split at its first inner dot: the ambiguous split was quadratic on long
+# dotted input (CodeQL py/polynomial-redos), and vCard files are untrusted.
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s][^@\s.]*\.[^@\s]+$")
 _NON_DIGIT_RE = re.compile(r"\D")
 
 #: The only address sub-keys we persist (anything else is dropped).
