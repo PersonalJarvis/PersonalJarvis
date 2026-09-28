@@ -262,6 +262,7 @@ export function createNewPaneChatStore(options: NewPaneChatOptions) {
       // shared composer calls them without asking which surface it is on.
       cancel: async () => undefined,
       decide: async () => undefined,
+      answerQuestion: async () => undefined,
       ingest: () => undefined,
       disconnect: () => undefined,
     };

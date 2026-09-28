@@ -681,6 +681,7 @@ export function createPaneChatStore(options: PaneChatStoreOptions) {
       },
       // Approvals never come out of a transcript — the CLI asks in its own TUI.
       decide: async () => undefined,
+      answerQuestion: async () => undefined,
       ingest: (event: AgentChatEvent) => set({ timeline: reduceEvent(get().timeline, event) }),
       disconnect: () => get().stop(),
 
