@@ -188,3 +188,15 @@ def test_snapshot_records_whether_an_agent_was_running() -> None:
     # Older snapshots carry no field: every pane counts as running.
     parsed = resume_store.SnapshotTerminal.from_dict({"name": "T1", "agent": "claude"})
     assert parsed is not None and parsed.running is True
+
+
+def test_a_damaged_snapshot_is_kept_aside_instead_of_overwritten() -> None:
+    path = resume_store._store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"workspaces": [', encoding="utf-8")
+
+    assert resume_store.load() is None
+
+    assert not path.exists()
+    kept = list(path.parent.glob(f"{path.stem}.damaged-*{path.suffix}"))
+    assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == '{"workspaces": ['

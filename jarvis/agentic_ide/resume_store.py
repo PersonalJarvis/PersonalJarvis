@@ -608,10 +608,32 @@ def load() -> Snapshot | None:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
-    except (OSError, ValueError) as exc:
+    except ValueError as exc:
+        # Moved aside rather than ignored: the next save merges with what
+        # ``load`` returns, so a file read as "nothing" would be overwritten
+        # and every remembered workspace in it lost for good (RUB-102).
+        kept = _quarantine(path)
+        logger.warning(
+            "Agentic IDE: resume snapshot is damaged ({}) — kept as {} and starting without it",
+            exc,
+            kept or "nothing (could not be moved)",
+        )
+        return None
+    except OSError as exc:
         logger.warning("Agentic IDE: unreadable resume snapshot, ignoring it: {}", exc)
         return None
     return Snapshot.from_dict(data)
+
+
+def _quarantine(path: Path) -> Path | None:
+    """Move a damaged store out of the way, next to it, with a timestamp."""
+    target = path.with_name(f"{path.stem}.damaged-{int(time.time())}{path.suffix}")
+    try:
+        os.replace(path, target)
+    except OSError as exc:
+        logger.warning("Agentic IDE: damaged resume snapshot could not be moved: {}", exc)
+        return None
+    return target
 
 
 def _all_closed_path() -> Path:
