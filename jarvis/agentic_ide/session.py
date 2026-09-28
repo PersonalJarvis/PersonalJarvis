@@ -1006,6 +1006,9 @@ class Terminal:
     # then run on unwatched, which is the whole thing the kill prevents.
     stopping: bool = False
     exit_code: int | None = None
+    # Restored from the snapshot: was this pane's agent running when the app
+    # last saved? Read once, by ``_resume_after_reboot``.
+    was_running: bool = False
     error: str = ""
     started_at: float | None = None
     last_output_at: float | None = None
@@ -1439,7 +1442,25 @@ class Terminal:
             folder=self.folder,
             branch=self.branch,
             fork_from=self.fork_from,
+            running=self._counts_as_running(),
         )
+
+    def _counts_as_running(self) -> bool:
+        """Should a reboot bring this pane's agent back?
+
+        A live agent, obviously. So is one that died with anything but a clean
+        exit: a host that went away with the machine reports an unknown code,
+        and a crash is exactly what recovery is for. An agent that exited 0
+        ended by itself (``/exit``, a finished task) and stays ended, and a
+        pane that never started keeps what the last snapshot said about it.
+        """
+        if self.status == "live":
+            return True
+        if self.status == "exited":
+            return self.exit_code != 0
+        if self.status == "pending":
+            return self.was_running
+        return False
 
     def cwd(self, workspace_folder: str) -> str:
         """The folder this pane's agent runs in: its own worktree, else the workspace's."""
@@ -2137,48 +2158,84 @@ class Registry:
                 info.meta.get("name", "unnamed"),
             )
             manager.kill_hosted(info.terminal_id)  # type: ignore[union-attr]
-        await self._continue_interrupted_after_reboot()
+        await self._resume_after_reboot()
 
-    async def _continue_interrupted_after_reboot(self) -> None:
-        """Carry on with the work a reboot interrupted, in every workspace.
+    async def _resume_after_reboot(self) -> None:
+        """Bring back every agent a power-off or reboot ended, in every workspace.
 
-        Only panes whose agent did NOT survive (nothing in the PTY host claimed
-        them — the machine restarted, or the host died) and whose last
-        checkpoint saw them actively working. ``interrupted.continue_panes``
-        applies the rest of the gate: a pane showing a question or waiting for
-        an approval is never typed into, and a pane that finished or was
-        stopped carries no ``continuation_pending`` in the first place.
+        What Herdr calls native agent-session resume: the agents' processes died
+        with the machine, so each one is started again on ITS OWN conversation
+        (the CLI's ``--resume <id>`` and equivalents, see ``agent_sessions``) —
+        not a fresh CLI, and not only in the workspace somebody happens to open.
 
-        Their agents are started here without a viewer, so continuing does not
-        depend on somebody opening each workspace; the ``continue`` is held
-        until each CLI's input line is writable (``defer_continue``).
+        Which panes: every one still ``pending`` after the PTY host had its say
+        (a pane whose agent survived was re-joined and is ``live``), whose agent
+        was running at the last save (``Terminal.was_running`` — an agent that
+        ended by itself stays ended), and whose CLI really holds the
+        conversation its handle points at. A pane that was never given an
+        instruction has nothing to resume and keeps starting when it is opened.
+
+        On top of that, panes whose last checkpoint saw them WORKING are told to
+        carry on (``interrupted.continue_panes``). That gate stays strict: a
+        pane that was idle, finished or waiting for an answer or an approval is
+        resumed but never typed into.
+
+        The starts run without a viewer and go through the ordinary cold-start
+        gate, so a dozen agents come back a few at a time.
         """
         from . import interrupted
 
+        pending = [
+            (session, term)
+            for session in self._sessions.values()
+            for term in session.terminals
+            if term.status == "pending"
+            and term.was_running
+            and term.resume is not None
+            and accepts_prompts(term.agent)
+        ]
+
+        def _with_conversation() -> list[tuple[Session, Terminal]]:
+            found: list[tuple[Session, Terminal]] = []
+            for session, term in pending:
+                try:
+                    if has_conversation(
+                        term.agent, term.resume, account_home(term.agent, term.account)
+                    ):
+                        found.append((session, term))
+                except Exception as exc:  # noqa: BLE001 - one unreadable history skips one pane
+                    logger.debug(
+                        "Agentic IDE: could not check {}'s conversation: {}", term.name, exc
+                    )
+            return found
+
+        resumable = await asyncio.to_thread(_with_conversation)
         try:
             report = await interrupted.continue_panes(self)
         except Exception as exc:  # noqa: BLE001 - startup must not fail on this
             logger.warning("Agentic IDE: interrupted work not continued at startup: {}", exc)
-            return
-        starts = [
-            (session, term)
-            for session in self._sessions.values()
-            for term in session.terminals
-            if term.status == "pending" and term.continue_when_ready
-        ]
+            report = None
+        starts = list(resumable)
+        chosen = {id(term) for _session, term in starts}
+        for session in self._sessions.values():
+            for term in session.terminals:
+                if term.status == "pending" and term.continue_when_ready and id(term) not in chosen:
+                    starts.append((session, term))
         for session, term in starts:
             task = asyncio.create_task(
-                self._start_unviewed(session, term), name=f"ide-continue-{term.key}"
+                self._start_unviewed(session, term), name=f"ide-resume-{term.key}"
             )
             self._cold_start_holds.add(task)
             task.add_done_callback(self._cold_start_holds.discard)
-        if starts or report.continued:
+        if starts:
             logger.info(
-                "Agentic IDE: continuing {} interrupted pane(s) after a restart ({} started "
-                "without a viewer)",
-                len(starts) + len(report.continued),
+                "Agentic IDE: resuming {} agent(s) that a reboot ended ({} of them "
+                "told to continue their work)",
                 len(starts),
+                sum(1 for _session, term in starts if term.continue_when_ready),
             )
+        elif report is not None and report.continued:
+            logger.info("Agentic IDE: continued {} interrupted pane(s)", len(report.continued))
 
     async def _start_unviewed(self, session: Session, term: Terminal) -> None:
         """Start a pane's agent with nobody watching (the registry records output)."""
@@ -2784,6 +2841,7 @@ class Registry:
                 folder=entry.folder if entry.folder and Path(entry.folder).is_dir() else "",
                 branch=entry.branch if entry.folder and Path(entry.folder).is_dir() else "",
                 fork_from=entry.fork_from,
+                was_running=entry.running,
             )
 
         terminals = [_restored(index, entry) for index, entry in enumerate(space.terminals)]

@@ -106,6 +106,12 @@ class SnapshotTerminal:
     # process started; kept here so a fork that never got to start before a
     # restart still starts as the copy it was opened as.
     fork_from: ResumeHandle | None = None
+    # Was this pane's agent running when the snapshot was written? A reboot
+    # brings back exactly those (``Registry._resume_after_reboot``); an agent
+    # that ended by itself — ``/exit``, a finished one-shot — stays ended.
+    # Missing on older snapshots means True: before this field, every pane in
+    # an open workspace was one the user expected to come back.
+    running: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -127,6 +133,7 @@ class SnapshotTerminal:
             "folder": self.folder,
             "branch": self.branch,
             "fork_from": self.fork_from.to_dict() if self.fork_from else None,
+            "running": self.running,
         }
 
     @staticmethod
@@ -160,6 +167,7 @@ class SnapshotTerminal:
             folder=str(data.get("folder") or "").strip(),
             branch=str(data.get("branch") or "").strip(),
             fork_from=ResumeHandle.from_dict(data.get("fork_from")),
+            running=data.get("running") is not False,
         )
 
 
