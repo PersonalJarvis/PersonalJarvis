@@ -336,7 +336,7 @@ class ContactStore:
     def get(self, slug: str) -> Contact | None:
         try:
             path = self._path(slug)
-        except UnsafePathError:
+        except UnsafePathError:  # an escaping slug is no stored contact: None = not found
             return None
         if not path.exists():
             return None
@@ -534,7 +534,7 @@ class ContactStore:
         existing = self.get(slug)
         try:
             path = self._path(slug)
-        except UnsafePathError:
+        except UnsafePathError:  # an escaping slug is no stored contact: nothing to delete
             return False
         try:
             path.unlink()

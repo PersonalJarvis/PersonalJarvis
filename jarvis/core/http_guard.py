@@ -112,7 +112,7 @@ async def _check_public_request(request: httpx.Request, schemes: frozenset[str])
     try:
         # A literal address needs no lookup.
         literal_ok = _is_public_ip(host)
-    except ValueError:
+    except ValueError:  # not an IP literal, so it is a hostname and DNS resolution below decides
         literal_ok = None
     if literal_ok is not None:
         if not literal_ok:

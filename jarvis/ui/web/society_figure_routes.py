@@ -57,7 +57,7 @@ def _figure_path(file_name: str) -> Path | None:
         return None
     try:
         return safe_child(figures_dir(), file_name)
-    except UnsafePathError:
+    except UnsafePathError:  # an escaping name is simply not a figure; the route answers 404
         return None
 
 

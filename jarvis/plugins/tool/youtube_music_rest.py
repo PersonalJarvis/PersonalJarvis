@@ -56,7 +56,7 @@ def _is_google_console_url(url: str) -> bool:
     """
     try:
         parts = urlsplit(url)
-    except ValueError:
+    except ValueError:  # an unparsable URL is by definition not the trusted Google console link
         return False
     host = (parts.hostname or "").lower()
     return (
