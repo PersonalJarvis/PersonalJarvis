@@ -198,11 +198,15 @@ required in CI: `test_routing`, `test_output_filter`,
 `test_hangup_reason_parity`, `test_turn_language`.
 
 The commit and push hooks block confirmed secret, private-key, withheld-path,
-language, and broken-bundle additions. CI keeps privacy, repository integrity,
-changed-file code policy, the four contract guards, and the frontend build as
-required checks. Broader tests remain visible evidence. A red non-required job
-is not proof of a new regression or permission to ignore it: triage it against
-the exact base before merging, and fix any new failure.
+language, and broken-bundle additions. CI (`docs/ci-pipeline.md`) has ONE
+required check, `CI gate`, over change-classified lanes; a test failure blocks
+unless it is listed in `scripts/ci/test-baseline-<os>.json`. Finished work in
+your own worktree lands with `python scripts/agent_land.py` (rebase onto main,
+auto-resolve generated files, gates, relevant tests, push); a `codex/`,
+`claude/`, `agent/` branch or an `auto-merge` label puts a PR on the merge
+train, which keeps it current with main and squash-merges it once green.
+Triage any red job against the exact base; never add to a baseline to hide a
+new failure.
 Run `check_boot_budget.py` after touching startup; CI cannot measure the live
 voice-ready path.
 
