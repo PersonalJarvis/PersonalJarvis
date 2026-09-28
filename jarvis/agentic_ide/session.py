@@ -65,6 +65,7 @@ import asyncio
 import hashlib
 import os
 import re
+import shlex
 import shutil
 import sys
 import threading
@@ -81,7 +82,16 @@ from loguru import logger
 from jarvis.workspace import agents as workspace_agents
 from jarvis.workspace import launch_picks
 
-from . import fork, layout_tree, library, opening, prompt_history, recap_engine, resume_store
+from . import (
+    fork,
+    layout_tree,
+    library,
+    opening,
+    prompt_history,
+    recap_engine,
+    remote,
+    resume_store,
+)
 from .activity import NO_READING, Reading, has_work_behind_it, observed
 from .agent_sessions import (
     ResumeHandle,
@@ -799,6 +809,28 @@ def account_home(agent: str, account_id: str | None) -> Path | None:
     return agent_accounts.config_dir_for(agent, account_id)  # type: ignore[arg-type]
 
 
+def remote_agent_argv(agent: str) -> tuple[str, ...] | None:
+    """argv for ``agent`` on a connected computer (a POSIX server).
+
+    Resolved THERE, by the server's own PATH (the pane starts in a login
+    shell), so only the command name travels, never this machine's absolute
+    path or a Windows shim. A plain terminal is the server's login shell.
+    """
+    spec = workspace_agents.get_agent(agent)
+    if spec is None:
+        return None
+    if not spec.is_coding_agent:
+        return ("bash", "-l")
+    if spec.shell_launch:
+        return ("sh", "-c", spec.launch_command or "")
+    binary = spec.executable or spec.launch_command or spec.name
+    name = binary.replace("\\", "/").rsplit("/", 1)[-1]
+    for suffix in (".cmd", ".bat", ".exe", ".ps1"):
+        if name.lower().endswith(suffix):
+            name = name[: -len(suffix)]
+    return (name, *spec.launch_args)
+
+
 def agent_argv(agent: str) -> tuple[str, ...] | None:
     """argv that runs ``agent`` as the PTY's own process, or None if missing.
 
@@ -994,6 +1026,14 @@ class Terminal:
     # own handle in `resume`), so a restart afterwards resumes the copy rather
     # than forking the original a second time.
     fork_from: ResumeHandle | None = None
+    # Where this pane's agent RUNS when that is a connected computer rather
+    # than this machine (``jarvis.computers``): the computer's id, the folder
+    # there, and the snapshot commit the code left here as. The agent then
+    # lives in a tmux session on that computer and keeps working while this
+    # app is closed; this pane is only its viewer. Empty = this machine.
+    computer_id: str = ""
+    remote_folder: str = ""
+    offload_snapshot: str = ""
     status: Status = "pending"
     pty_id: str | None = None
     # The geometry the PTY ACTUALLY holds, as last handed to `setwinsize`.
@@ -1371,6 +1411,9 @@ class Terminal:
             # Set only for a pane running in a git worktree of its own.
             "folder": self.folder,
             "branch": self.branch,
+            # Set only for a pane running on a connected computer.
+            "computer_id": self.computer_id,
+            "remote_folder": self.remote_folder,
             # Can this pane be forked with its conversation? False for a CLI
             # without a fork of its own — the fork then starts a fresh chat.
             "can_fork": can_fork(self.agent),
@@ -1467,6 +1510,9 @@ class Terminal:
             folder=self.folder,
             branch=self.branch,
             fork_from=self.fork_from,
+            computer_id=self.computer_id,
+            remote_folder=self.remote_folder,
+            offload_snapshot=self.offload_snapshot,
             running=self._counts_as_running(),
         )
 
@@ -2093,6 +2139,14 @@ class Registry:
         logger.info("Agentic IDE: new {} terminals will use {!r}", agent, account.label)
         return account
 
+    def _pool(self, term: Terminal) -> Any:
+        """The pool that owns ``term``'s process: its computer's, else this machine's."""
+        if term.computer_id:
+            from jarvis.computers.remote_terminal import pool_for
+
+            return pool_for(term.computer_id)
+        return self._manager()
+
     def _manager(self) -> PtyManager:
         if self._pty is None:
             # Lazy: keeps the terminal stack off the import/boot path (AP-26).
@@ -2387,7 +2441,7 @@ class Registry:
         by_history = self._hosted_for(manager)
         for term in session.terminals:
             info = by_history.pop(term.history_id, None)
-            if info is not None:
+            if info is not None and not term.computer_id:
                 await self._adopt_one(manager, term, info)
 
     async def _adopt_one(self, manager: Any, term: Terminal, info: Any) -> bool:
@@ -2977,6 +3031,9 @@ class Registry:
                 folder=entry.folder if entry.folder and Path(entry.folder).is_dir() else "",
                 branch=entry.branch if entry.folder and Path(entry.folder).is_dir() else "",
                 fork_from=entry.fork_from,
+                computer_id=entry.computer_id,
+                remote_folder=entry.remote_folder,
+                offload_snapshot=entry.offload_snapshot,
                 was_running=entry.running,
             )
 
@@ -3308,11 +3365,12 @@ class Registry:
             term.viewer_exit = None
             term.watchers.clear()
             term.prompt_viewers.clear()
-        if manager is not None:
-            for term in session.terminals:
+        for term in session.terminals:
+            owner = self._pool(term) if term.computer_id else manager
+            if owner is not None:
                 if term.pty_id:
                     try:
-                        manager.close(term.pty_id)
+                        owner.close(term.pty_id)
                     except Exception:  # noqa: BLE001, S110 - best-effort teardown
                         pass
         # Its pane notifications go with it. Each one is a "jump to this pane"
@@ -3713,8 +3771,10 @@ class Registry:
             # transcript's default is exactly the right answer.
             cols = max(term.pty_cols or term.transcript.cols, MIN_VIEWER_COLS)
             rows = max(term.pty_rows or term.transcript.rows, MIN_VIEWER_ROWS)
-        manager = await self._live_manager()
-        if not (term.pty_id and manager.has(term.pty_id)):
+        # A pane on a connected computer is driven by that computer's SSH pool;
+        # everything below (re-join, replay, resume) is the same path.
+        manager = self._pool(term) if term.computer_id else await self._live_manager()
+        if not term.computer_id and not (term.pty_id and manager.has(term.pty_id)):
             # Herdr's rule: attach to the running session first, start one only
             # when there is none. The host may still hold this pane's agent
             # from before the app restarted — whichever path restored the pane.
@@ -3793,7 +3853,7 @@ class Registry:
             logger.debug("Agentic IDE: {} re-joined a running agent", term.name)
             return term
 
-        argv = agent_argv(term.agent)
+        argv = remote_agent_argv(term.agent) if term.computer_id else agent_argv(term.agent)
         if argv is None:
             term.status = "error"
             term.error = f"{term.display_name} is not on PATH."
@@ -3822,8 +3882,12 @@ class Registry:
         # takes the same call to a thread for the same reason.
         home = account_home(term.agent, term.account)
         continuing = resume_argv(term.agent, term.resume)
-        if continuing is not None and not await asyncio.to_thread(
-            has_conversation, term.agent, term.resume, home
+        # A remote pane's history lives on that computer; its handle was
+        # carried there with it (``remote.push_conversation``), so trust it.
+        if (
+            continuing is not None
+            and not term.computer_id
+            and not await asyncio.to_thread(has_conversation, term.agent, term.resume, home)
         ):
             logger.info(
                 "Agentic IDE: {} has no conversation to continue — starting fresh",
@@ -3841,7 +3905,9 @@ class Registry:
         if continuing is None and term.fork_from is not None:
             source = term.fork_from
             term.fork_from = None
-            if await asyncio.to_thread(has_conversation, term.agent, source, home):
+            if not term.computer_id and await asyncio.to_thread(
+                has_conversation, term.agent, source, home
+            ):
                 forking = fork_argv(term.agent, source)
             if forking is None:
                 logger.info(
@@ -4015,7 +4081,11 @@ class Registry:
         # claimed to be starting forever, with the actual reason living only in
         # a socket frame the pane painted over a moment later.
         try:
-            if redirected_home is None:
+            if term.computer_id:
+                # The CLI's account, config and env are the SERVER's own;
+                # nothing of this machine's setup applies there.
+                env: dict[str, str] | None = {}
+            elif redirected_home is None:
                 env = await asyncio.to_thread(self._prepare_spawn, term, term.cwd(session.folder))
             else:
                 account_key = os.path.normcase(str(redirected_home))
@@ -4063,7 +4133,11 @@ class Registry:
                     pty_session = await manager.spawn(
                         shell_argv=argv,
                         shell_id=f"agentic-ide:{term.key}",
-                        cwd=term.cwd(session.folder),
+                        cwd=(
+                            term.remote_folder or term.cwd(session.folder)
+                            if term.computer_id
+                            else term.cwd(session.folder)
+                        ),
                         cols=cols,
                         rows=rows,
                         on_output=_output,
@@ -4090,7 +4164,7 @@ class Registry:
                                     "agent": term.agent,
                                 }
                             }
-                            if getattr(manager, "persistent", False)
+                            if getattr(manager, "persistent", False) or term.computer_id
                             else {}
                         ),
                     )
@@ -4159,9 +4233,10 @@ class Registry:
                     )
             finally:
                 agent_start_gate.release()
-        if term.resume is None and can_resume(term.agent):
+        if term.resume is None and can_resume(term.agent) and not term.computer_id:
             # A CLI that cannot be told its session id (Codex): find out which
-            # one it just created, shortly from now.
+            # one it just created, shortly from now. (Not on a remote pane:
+            # its history is on that computer, not in this machine's folders.)
             self._schedule_lookup(session, term, term.cwd(session.folder), term.started_at)
         if term.continue_when_ready:
             # Somebody pressed "Continue" while this pane was still waiting for
@@ -4399,7 +4474,7 @@ class Registry:
         owner, term = found
         if not term.pty_id:
             return False
-        manager = self._manager()
+        manager = self._pool(term)
         if is_pointer_noise_only(data):
             # A wheel tick, a click, a focus flip: the terminal talking, not a
             # person typing. It echoes nothing, so it must not arm the typing
@@ -4595,7 +4670,7 @@ class Registry:
         pty_id = term.pty_id
         if not pty_id:
             return False
-        manager = self._manager()
+        manager = self._pool(term)
         try:
             # The whole point of the nudge is a full repaint — which must read
             # as the redraw it is, not as the agent suddenly working. Stamped
@@ -4788,7 +4863,7 @@ class Registry:
         # transcript keeps wrapping at the old width.
         if (term.transcript.cols, term.transcript.rows) == (cols, rows):
             return True
-        if not self._manager().resize(term.pty_id, cols, rows):
+        if not self._pool(term).resize(term.pty_id, cols, rows):
             return False
         term.pty_cols, term.pty_rows = cols, rows
         # The TUI answers the new size with a full redraw — shadow it so a
@@ -5096,6 +5171,194 @@ class Registry:
             "can_fork": can_fork(term.agent),
             "has_conversation": term.resume is not None,
         }
+
+    # ------------------------------------------------------------ placement
+    async def place_terminal(
+        self, key: str, *, workspace_id: str | None, computer_id: str | None
+    ) -> dict[str, Any]:
+        """Run pane ``key`` on ``computer_id`` from now on (``None`` = this machine).
+
+        To a computer ("offload"): the pane's folder travels as it is, uncommitted
+        edits included, its conversation is copied so the agent continues with
+        ``--resume``, the local process ends and the agent starts again THERE,
+        inside tmux, where it keeps running while this app is closed.
+
+        Back ("bring back"): the agent on the server ends, the server's work and
+        the conversation come home (``remote.pull_code`` never overwrites local
+        changes made meanwhile), and the pane runs here again.
+
+        A pane that is not running just changes place; it starts there on its
+        next attach.
+        """
+        found = self._locate(key, workspace_id)
+        if found is None:
+            raise SessionError(f"Unknown terminal: {key}")
+        session, term = found
+        target = computer_id or ""
+        if term.computer_id == target:
+            return {"moved": False, "message": "The pane already runs there."}
+        async with term.attach_lock:
+            was_live = bool(term.pty_id)
+            if target:
+                message = await self._offload_locked(session, term, target, {})
+            else:
+                message = await self._bring_back_locked(session, term)
+            if was_live:
+                await self._restart_in_place(session, term)
+        await self._persist()
+        return {"moved": True, "message": message, "terminal": term.to_dict()}
+
+    async def place_workspace(
+        self, workspace_id: str, *, computer_id: str | None
+    ) -> dict[str, Any]:
+        """Move every pane of a workspace, one folder transfer per folder."""
+        session = self.get(workspace_id)
+        if session is None:
+            raise SessionError("Unknown workspace.")
+        target = computer_id or ""
+        placements: dict[str, remote.Placement] = {}
+        moved: list[str] = []
+        messages: list[str] = []
+        for term in list(session.terminals):
+            if term.computer_id == target:
+                continue
+            async with term.attach_lock:
+                was_live = bool(term.pty_id)
+                if target:
+                    message = await self._offload_locked(session, term, target, placements)
+                else:
+                    message = await self._bring_back_locked(session, term)
+                if was_live:
+                    await self._restart_in_place(session, term)
+            moved.append(term.key)
+            if message and message not in messages:
+                messages.append(message)
+        await self._persist()
+        return {"moved": moved, "messages": messages}
+
+    async def _stop_for_move(self, term: Terminal, pool: Any) -> None:
+        """End the pane's current process and wait until its exit is recorded."""
+        if not term.pty_id or pool is None:
+            return
+        term.stopping = True
+        try:
+            pool.close(term.pty_id)
+        except Exception as exc:  # noqa: BLE001 - the move proceeds; the process is gone or going
+            logger.info("Agentic IDE: stopping {} for a move: {}", term.name, exc)
+        # A local PTY reports its exit through `_closed`, which clears
+        # `pty_id` and must land BEFORE the new process is recorded. A remote
+        # pool's close is final at once and reports nothing.
+        if not getattr(pool, "computer_id", None):
+            for _ in range(50):
+                if term.pty_id is None:
+                    break
+                await asyncio.sleep(0.1)
+        term.pty_id = None
+
+    async def _offload_locked(
+        self,
+        session: Session,
+        term: Terminal,
+        computer_id: str,
+        placements: dict[str, remote.Placement],
+    ) -> str:
+        from jarvis.computers.remote_terminal import pool_for
+
+        pool = pool_for(computer_id)
+        local_folder = Path(term.cwd(session.folder))
+        folder_key = os.path.normcase(str(local_folder))
+        try:
+            placement = placements.get(folder_key)
+            if placement is None:
+                placement = await remote.push_code(pool, local_folder)
+                placements[folder_key] = placement
+            carried = await remote.push_conversation(
+                pool,
+                term.agent,
+                term.resume.id if term.resume else None,
+                placement.remote_folder,
+                account_home(term.agent, term.account),
+            )
+        except remote.MoveError as exc:
+            raise SessionError(str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - SSH/SFTP failures become one sentence
+            logger.warning("Agentic IDE: moving {} failed: {}", term.name, exc)
+            raise SessionError(f"The move failed: {exc}") from exc
+        if term.computer_id:
+            await self._stop_for_move(term, pool_for(term.computer_id))
+        else:
+            await self._stop_for_move(term, self._pty)
+        if not carried:
+            # Nothing to continue from on the server: start clean there rather
+            # than asking the CLI for a conversation it does not have.
+            term.resume = None
+        term.computer_id = computer_id
+        term.remote_folder = placement.remote_folder
+        term.offload_snapshot = placement.offload_snapshot or ""
+        return (
+            "Moved with its conversation." if carried else "Moved; the agent starts fresh there."
+        )
+
+    async def _bring_back_locked(self, session: Session, term: Terminal) -> str:
+        from jarvis.computers.remote_terminal import pool_for, tmux_session_name
+        from jarvis.computers.service import get_service
+
+        pool = pool_for(term.computer_id)
+        if term.pty_id:
+            await self._stop_for_move(term, pool)
+        else:
+            await pool.run(
+                f"tmux kill-session -t {shlex.quote(tmux_session_name(term.history_id))}"
+                " 2>/dev/null; true",
+                timeout_s=20,
+            )
+        local_folder = Path(term.cwd(session.folder))
+        try:
+            name = get_service().get(term.computer_id).name
+        except Exception:  # noqa: BLE001 - a removed computer still has a branch name
+            name = "server"
+        try:
+            outcome = await remote.pull_code(
+                pool, local_folder, term.remote_folder, term.offload_snapshot or None, name
+            )
+            carried = await remote.pull_conversation(
+                pool,
+                term.agent,
+                term.resume.id if term.resume else None,
+                local_folder,
+                account_home(term.agent, term.account),
+            )
+        except remote.MoveError as exc:
+            raise SessionError(str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - SSH/SFTP failures become one sentence
+            logger.warning("Agentic IDE: bringing {} back failed: {}", term.name, exc)
+            raise SessionError(f"Bringing the pane back failed: {exc}") from exc
+        if not carried:
+            term.resume = None
+        term.computer_id = ""
+        term.remote_folder = ""
+        term.offload_snapshot = ""
+        return outcome.message
+
+    async def _restart_in_place(self, session: Session, term: Terminal) -> None:
+        """Start the pane's agent in its new place for whoever is watching it."""
+
+        async def _discard(_data: Any) -> None:
+            return None
+
+        term.status = "pending"
+        term.stopping = False
+        try:
+            await self._attach_locked(
+                term.key,
+                term.pty_cols or term.transcript.cols,
+                term.pty_rows or term.transcript.rows,
+                term.viewer_output or _discard,
+                term.viewer_exit or _discard,
+                workspace_id=session.id,
+            )
+        except SessionError as exc:
+            logger.warning("Agentic IDE: {} did not start after its move: {}", term.name, exc)
 
     async def fork_terminal(
         self,
@@ -5505,9 +5768,10 @@ class Registry:
 
             for term in resolved:
                 term.stopping = True  # a deliberate kill, not a crashed resume
-                if term.pty_id and self._pty is not None:
+                pool = self._pool(term) if term.computer_id else self._pty
+                if term.pty_id and pool is not None:
                     try:
-                        self._pty.close(term.pty_id)
+                        pool.close(term.pty_id)
                     except Exception:  # noqa: BLE001, S110 - best-effort teardown
                         pass
                 term.pty_id = None
@@ -5752,7 +6016,7 @@ class Registry:
             not in (("asking", "waiting") if allow_question else ("waiting",))
         ):
             raise SessionError("The input request changed while waiting; nothing was sent.")
-        manager = self._manager()
+        manager = self._pool(term)
         multiline = "\n" in payload
 
         submitted = await self._write_and_confirm(term, payload, manager, multiline)
@@ -5932,7 +6196,7 @@ class Registry:
             if term.name not in ready:
                 declined[pick] = f"{term.name} is still starting — its input line never appeared."
                 continue
-            submitted = await self._write_and_confirm(term, line, self._manager(), False)
+            submitted = await self._write_and_confirm(term, line, self._pool(term), False)
             if submitted is False:
                 declined[pick] = f"{term.name} kept `{line}` in its input box instead of taking it."
                 continue

@@ -169,6 +169,21 @@ class ComputerService:
 
         self._store.update(computer_id, change)
 
+    async def connect(self, computer_id: str) -> Session:
+        """A long-lived authenticated connection; the caller closes it.
+
+        For callers that keep a connection open across many channels (the IDE's
+        remote terminals). Pins the host key on first contact like
+        :meth:`session`.
+        """
+        computer = self.get(computer_id)
+        try:
+            opened = await open_session(self._target(computer))
+        except SshError as exc:
+            raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
+        self._pin(computer_id, opened)
+        return opened
+
     @contextlib.asynccontextmanager
     async def session(self, computer_id: str) -> AsyncIterator[Session]:
         """An authenticated connection; pins the host key on first contact."""

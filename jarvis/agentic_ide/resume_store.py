@@ -106,6 +106,13 @@ class SnapshotTerminal:
     # process started; kept here so a fork that never got to start before a
     # restart still starts as the copy it was opened as.
     fork_from: ResumeHandle | None = None
+    # A pane placed on a connected computer (Computers): that computer's id,
+    # the folder its agent runs in there, and the snapshot commit the code
+    # left this machine as (what "bring back" compares against). Empty on
+    # older snapshots and on every pane running on this machine.
+    computer_id: str = ""
+    remote_folder: str = ""
+    offload_snapshot: str = ""
     # Was this pane's agent running when the snapshot was written? A reboot
     # brings back exactly those (``Registry._resume_after_reboot``); an agent
     # that ended by itself — ``/exit``, a finished one-shot — stays ended.
@@ -133,6 +140,9 @@ class SnapshotTerminal:
             "folder": self.folder,
             "branch": self.branch,
             "fork_from": self.fork_from.to_dict() if self.fork_from else None,
+            "computer_id": self.computer_id,
+            "remote_folder": self.remote_folder,
+            "offload_snapshot": self.offload_snapshot,
             "running": self.running,
         }
 
@@ -167,6 +177,9 @@ class SnapshotTerminal:
             folder=str(data.get("folder") or "").strip(),
             branch=str(data.get("branch") or "").strip(),
             fork_from=ResumeHandle.from_dict(data.get("fork_from")),
+            computer_id=str(data.get("computer_id") or "").strip(),
+            remote_folder=str(data.get("remote_folder") or "").strip(),
+            offload_snapshot=str(data.get("offload_snapshot") or "").strip(),
             running=data.get("running") is not False,
         )
 

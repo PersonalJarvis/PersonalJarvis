@@ -19,6 +19,10 @@
     POST   /api/computers/{id}/install-key        plant Jarvis's key with a password
     POST   /api/computers/{id}/trust-host-key     accept a changed server identity
     POST   /api/computers/{id}/power              start / stop a local VM
+    GET    /api/computers/{id}/readiness          tmux / git / agent CLIs / logins
+    POST   /api/computers/{id}/install            install what is missing (job)
+    GET    /api/computers/{id}/install            that job's state and log
+    POST   /api/computers/{id}/copy-login         copy this computer's CLI login there
 
 Static paths are registered before ``/{computer_id}`` so the dynamic route
 cannot swallow them. Store reads are plain ``def`` (threadpool); anything that
@@ -35,7 +39,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from jarvis.computers import cloud, identity, local_vm
+from jarvis.computers import cloud, identity, local_vm, toolbox
 from jarvis.computers.models import Computer
 from jarvis.computers.service import ComputerError, get_service
 
@@ -96,6 +100,14 @@ class ImportBody(BaseModel):
     name: str | None = Field(default=None, max_length=120)
     username: str = Field(default="root", max_length=64)
     password: str | None = Field(default=None, max_length=1024)
+
+
+class InstallBody(BaseModel):
+    items: list[Literal["tmux", "git", "node", "claude", "codex"]] = Field(min_length=1)
+
+
+class CopyLoginBody(BaseModel):
+    agent: Literal["claude", "codex"]
 
 
 class LocalVmBody(BaseModel):
@@ -276,6 +288,10 @@ async def remove_computer(computer_id: str, destroy_vm: bool = False) -> dict[st
         removed = await get_service().remove(computer_id, destroy_vm=destroy_vm)
     except ComputerError as exc:
         raise _fail(exc) from exc
+    # Its IDE panes' connection goes with it (the agents on it are not killed).
+    from jarvis.computers.remote_terminal import forget_pool
+
+    forget_pool(computer_id)
     return {"removed": removed}
 
 
@@ -324,3 +340,39 @@ async def power_computer(computer_id: str, body: PowerBody) -> dict[str, Any]:
         return _row(await get_service().power(computer_id, body.action))
     except ComputerError as exc:
         raise _fail(exc) from exc
+
+
+@router.get("/{computer_id}/readiness")
+async def computer_readiness(computer_id: str) -> dict[str, Any]:
+    """What coding agents need on this computer, and what is there."""
+    try:
+        readiness = await toolbox.inspect(computer_id)
+    except ComputerError as exc:
+        raise _fail(exc) from exc
+    job = toolbox.job(computer_id)
+    return {**readiness.to_dict(), "install": job.to_dict() if job else None}
+
+
+@router.post("/{computer_id}/install", status_code=202)
+async def install_tools(computer_id: str, body: InstallBody) -> dict[str, Any]:
+    try:
+        job = await toolbox.start_install(computer_id, list(body.items))
+    except ComputerError as exc:
+        raise _fail(exc) from exc
+    return job.to_dict()
+
+
+@router.get("/{computer_id}/install")
+def install_state(computer_id: str) -> dict[str, Any]:
+    job = toolbox.job(computer_id)
+    return {"install": job.to_dict() if job else None}
+
+
+@router.post("/{computer_id}/copy-login")
+async def copy_login(computer_id: str, body: CopyLoginBody) -> dict[str, Any]:
+    """Copy this computer's CLI login to the server — only ever on this request."""
+    try:
+        await toolbox.copy_login(computer_id, body.agent)
+    except ComputerError as exc:
+        raise _fail(exc) from exc
+    return {"copied": body.agent}

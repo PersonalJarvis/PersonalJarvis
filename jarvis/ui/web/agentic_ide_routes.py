@@ -267,6 +267,21 @@ class StartSessionRequest(BaseModel):
         default_factory=list,
         description="One entry per terminal, in grid order.",
     )
+    computer_id: str | None = Field(
+        default=None,
+        description=(
+            "Run every terminal on this connected computer (Computers) instead of "
+            "this machine; the folder is copied there first."
+        ),
+    )
+
+
+class PlaceRequest(BaseModel):
+    workspace_id: str | None = Field(default=None, description="Workspace the pane is in.")
+    computer_id: str | None = Field(
+        default=None,
+        description="Connected computer to run on; null brings the work back to this machine.",
+    )
 
 
 class ForkTerminalRequest(BaseModel):
@@ -2240,6 +2255,14 @@ async def start_session(request: Request, req: StartSessionRequest) -> dict:
         )
     except SessionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if req.computer_id:
+        # Placed BEFORE anyone is told the workspace exists: a pane that
+        # attached first would start its agent on this machine instead.
+        try:
+            await get_registry().place_workspace(session.id, computer_id=req.computer_id)
+        except SessionError as exc:
+            await get_registry().end(session.id)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     split: dict[str, int] = {}
     for terminal in session.terminals:
@@ -2822,6 +2845,48 @@ async def fork_suggestion(name: str, workspace_id: str | None = None) -> dict:
     except SessionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"ok": True, **suggestion}
+
+
+@router.post(
+    "/terminals/{name}/place",
+    summary="Run a terminal on a connected computer, or bring it back",
+)
+async def place_terminal(request: Request, name: str, req: PlaceRequest) -> dict:
+    """Move one pane's agent to a computer (a VPS, a local VM) or back here.
+
+    The folder travels with its uncommitted edits, the conversation is carried
+    so the agent continues, and on the computer the agent runs inside tmux,
+    so it keeps working while this app is closed. ``computer_id: null`` brings
+    it back; the server's work returns (never overwriting local changes).
+    """
+    registry = get_registry()
+    try:
+        result = await registry.place_terminal(
+            name, workspace_id=req.workspace_id, computer_id=req.computer_id
+        )
+    except SessionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    session = registry.get(req.workspace_id) if req.workspace_id else None
+    if session is not None:
+        await _announce_workspace(request, session, "updated")
+    return {"ok": True, **result, "state": registry.state()}
+
+
+@router.post(
+    "/workspaces/{workspace_id}/place",
+    summary="Run a whole workspace on a connected computer, or bring it back",
+)
+async def place_workspace(request: Request, workspace_id: str, req: PlaceRequest) -> dict:
+    """Every pane of the workspace, moved in one go (one folder transfer)."""
+    registry = get_registry()
+    try:
+        result = await registry.place_workspace(workspace_id, computer_id=req.computer_id)
+    except SessionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    session = registry.get(workspace_id)
+    if session is not None:
+        await _announce_workspace(request, session, "updated")
+    return {"ok": True, **result, "state": registry.state()}
 
 
 @router.post("/terminals/{name}/fork", summary="Fork a terminal's chat into a new terminal")
