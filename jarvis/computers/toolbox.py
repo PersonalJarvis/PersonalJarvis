@@ -250,7 +250,7 @@ async def _run_install(current: InstallJob, script: str) -> None:
         else:
             current.state = "failed"
             current.message = f"The installation stopped (exit {code}). See the log."
-    except ComputerError as exc:
+    except ComputerError as exc:  # recorded on the job the UI polls
         current.state = "failed"
         current.message = exc.message
     except Exception as exc:  # noqa: BLE001 — reported in the job, logged here

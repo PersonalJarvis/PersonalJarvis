@@ -22,7 +22,7 @@ from jarvis.core.http_pool import HttpClientPool
 
 log = logging.getLogger(__name__)
 
-CloudProviderId = Literal["hostinger", "hetzner", "digitalocean"]
+CloudProviderId = Literal["hostinger", "hetzner", "digitalocean", "vultr", "linode"]
 
 _POOL = HttpClientPool(timeout_s=20.0)
 _MAX_PAGES = 20
@@ -39,6 +39,8 @@ class CloudProvider:
     #: True when Jarvis can put its key on an EXISTING server through the API.
     attaches_keys: bool
     base_url: str
+    #: What the provider calls the credential, as its own panel names it.
+    credential_label: str = "API token"
 
 
 PROVIDERS: Final[dict[CloudProviderId, CloudProvider]] = {
@@ -71,6 +73,29 @@ PROVIDERS: Final[dict[CloudProviderId, CloudProvider]] = {
         setup_hint="Control panel -> API -> Tokens (scope droplet:read)",
         attaches_keys=False,
         base_url="https://api.digitalocean.com",
+        credential_label="Personal access token",
+    ),
+    "vultr": CloudProvider(
+        id="vultr",
+        name="Vultr",
+        keyring_slot="vultr_api_token",
+        env_var="VULTR_API_KEY",
+        console_url="https://my.vultr.com/settings/#settingsapi",
+        setup_hint="Account -> API -> Enable API, then allow your IP (or all IPv4)",
+        attaches_keys=False,
+        base_url="https://api.vultr.com",
+        credential_label="API key",
+    ),
+    "linode": CloudProvider(
+        id="linode",
+        name="Akamai Cloud (Linode)",
+        keyring_slot="linode_api_token",
+        env_var="LINODE_TOKEN",
+        console_url="https://cloud.linode.com/profile/tokens",
+        setup_hint="Profile -> API Tokens -> Create a Personal Access Token (Linodes: Read Only)",
+        attaches_keys=False,
+        base_url="https://api.linode.com",
+        credential_label="Personal access token",
     ),
 }
 
@@ -286,6 +311,81 @@ def parse_digitalocean(payload: Any) -> list[CloudServer]:
     return servers
 
 
+def parse_vultr(payload: Any) -> list[CloudServer]:
+    servers: list[CloudServer] = []
+    for row in (payload or {}).get("instances", []) if isinstance(payload, dict) else []:
+        if not isinstance(row, dict) or not row.get("id"):
+            continue
+        ip = row.get("main_ip")
+        status = str(row.get("power_status") or row.get("status") or "unknown")
+        servers.append(
+            CloudServer(
+                id=str(row["id"]),
+                name=str(row.get("label") or row.get("hostname") or row["id"]),
+                host=ip if ip and ip != "0.0.0.0" else None,  # noqa: S104 — Vultr's "no IP yet"
+                status=status,
+                running=status == "running" and row.get("status") == "active",
+                os=row.get("os") or None,
+                plan=row.get("plan") or None,
+                region=row.get("region") or None,
+                cpus=_as_int(row.get("vcpu_count")),
+                memory_mb=_as_int(row.get("ram")),
+                disk_gb=float(row["disk"]) if row.get("disk") is not None else None,
+            )
+        )
+    return servers
+
+
+def parse_linode(payload: Any) -> list[CloudServer]:
+    servers: list[CloudServer] = []
+    for row in (payload or {}).get("data", []) if isinstance(payload, dict) else []:
+        if not isinstance(row, dict) or row.get("id") is None:
+            continue
+        ipv4 = [ip for ip in row.get("ipv4") or [] if isinstance(ip, str)]
+        public = next((ip for ip in ipv4 if not _is_private(ip)), None)
+        specs = row.get("specs") or {}
+        disk_mb = _as_int(specs.get("disk"))
+        image = str(row.get("image") or "")
+        status = str(row.get("status") or "unknown")
+        servers.append(
+            CloudServer(
+                id=str(row["id"]),
+                name=str(row.get("label") or row["id"]),
+                host=public,
+                status=status,
+                running=status == "running",
+                os=image.split("/", 1)[-1] if image else None,
+                plan=row.get("type") or None,
+                region=row.get("region") or None,
+                cpus=_as_int(specs.get("vcpus")),
+                memory_mb=_as_int(specs.get("memory")),
+                disk_gb=round(disk_mb / 1024, 1) if disk_mb else None,
+            )
+        )
+    return servers
+
+
+_INTERNAL_NETS = (
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+)
+
+
+def _is_private(ip: str) -> bool:
+    """A provider-internal address (not reachable from here), by RFC 1918 & co."""
+    import ipaddress
+
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:  # not an IP at all: never offer it as the address
+        return True
+    return any(address in ipaddress.ip_network(net) for net in _INTERNAL_NETS)
+
+
 # -- listing -----------------------------------------------------------------
 
 
@@ -326,6 +426,39 @@ async def list_servers(provider_id: str, *, client: Any | None = None) -> list[C
             servers.extend(parse_hetzner(payload))
             pagination = ((payload or {}).get("meta") or {}).get("pagination") or {}
             page = _as_int(pagination.get("next_page"))
+        return servers
+
+    if spec.id == "vultr":
+        servers = []
+        cursor: str | None = ""
+        for _ in range(_MAX_PAGES):
+            params: dict[str, Any] = {"per_page": 100}
+            if cursor:
+                params["cursor"] = cursor
+            payload = await _request(
+                spec, api_token, "GET", "/v2/instances", params=params, client=client
+            )
+            servers.extend(parse_vultr(payload))
+            links = ((payload or {}).get("meta") or {}).get("links") or {}
+            cursor = links.get("next") or None
+            if not cursor:
+                break
+        return servers
+
+    if spec.id == "linode":
+        servers = []
+        for page_no in range(1, _MAX_PAGES + 1):
+            payload = await _request(
+                spec,
+                api_token,
+                "GET",
+                "/v4/linode/instances",
+                params={"page": page_no, "page_size": 100},
+                client=client,
+            )
+            servers.extend(parse_linode(payload))
+            if page_no >= (_as_int((payload or {}).get("pages")) or 1):
+                break
         return servers
 
     servers = []

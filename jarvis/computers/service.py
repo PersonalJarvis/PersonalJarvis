@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
 import re
 import secrets
@@ -26,7 +27,7 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
-from jarvis.computers import cloud, identity, local_vm
+from jarvis.computers import cloud, identity, local_vm, providers
 from jarvis.computers.models import (
     AuthMethod,
     Computer,
@@ -67,6 +68,68 @@ class ComputerError(Exception):
 
 def _password_slot(computer_id: str) -> str:
     return f"computer_password_{computer_id}"
+
+
+def _private_key_slot(computer_id: str) -> str:
+    return f"computer_private_key_{computer_id}"
+
+
+def _passphrase_slot(computer_id: str) -> str:
+    return f"computer_key_passphrase_{computer_id}"
+
+
+def _forget_secrets(computer_id: str, *, keep: str | None = None) -> None:
+    """Drop every stored credential of a computer except the ``keep`` kind."""
+    if keep != "password":
+        delete_secret(_password_slot(computer_id))
+    if keep != "private_key":
+        delete_secret(_private_key_slot(computer_id))
+        delete_secret(_passphrase_slot(computer_id))
+
+
+def import_private_key(pem: str | None, passphrase: str | None) -> Any:
+    """The user's own SSH key as an asyncssh key; a 400 sentence when unusable."""
+    import asyncssh
+
+    text = (pem or "").strip()
+    if not text:
+        raise ComputerError("Paste your private SSH key.", kind="bad_key")
+    if text.startswith(("ssh-", "ecdsa-")):
+        raise ComputerError(
+            "That is a public key. Paste the PRIVATE key (it starts with -----BEGIN).",
+            kind="bad_key",
+        )
+    try:
+        return asyncssh.import_private_key(text + "\n", passphrase or None)
+    except asyncssh.KeyEncryptionError as exc:
+        raise ComputerError(
+            "The passphrase does not unlock this key."
+            if passphrase
+            else "This key is protected. Enter its passphrase.",
+            kind="bad_key",
+        ) from exc
+    except (asyncssh.KeyImportError, ValueError) as exc:
+        raise ComputerError(
+            "This does not look like a private SSH key (OpenSSH or PEM format).",
+            kind="bad_key",
+        ) from exc
+
+
+def _check_provider(provider_id: str) -> str:
+    if not providers.is_known(provider_id):
+        raise ComputerError(f"Unknown provider: {provider_id}.")
+    return provider_id
+
+
+def _test_result(ok: bool, kind: str | None, message: str | None) -> dict[str, Any]:
+    return {
+        "ok": ok,
+        "kind": kind,
+        "message": message,
+        "host_fingerprint": None,
+        "facts": None,
+        "latency_ms": None,
+    }
 
 
 def _new_id() -> str:
@@ -133,6 +196,20 @@ class ComputerService:
                 username=computer.username,
                 host_key=computer.host_key,
                 password=password,
+            )
+        if computer.auth == "private_key":
+            pem = get_secret(_private_key_slot(computer.id), env_fallback="")
+            if not pem:
+                raise ComputerError(
+                    "The saved SSH key is missing. Paste it again.", status=409, kind="auth"
+                )
+            phrase = get_secret(_passphrase_slot(computer.id), env_fallback="")
+            return SshTarget(
+                host=computer.host,
+                port=computer.port,
+                username=computer.username,
+                host_key=computer.host_key,
+                client_key=import_private_key(pem, phrase),
             )
         if computer.auth == "password":
             stored = get_secret(_password_slot(computer.id), env_fallback="")
@@ -326,6 +403,8 @@ class ComputerService:
         auth: AuthMethod = "key",
         password: str | None = None,
         keep_password: bool = False,
+        private_key: str | None = None,
+        passphrase: str | None = None,
         provider: ProviderId = "generic",
         provider_ref: str | None = None,
         region: str | None = None,
@@ -336,7 +415,7 @@ class ComputerService:
             id=_new_id(),
             name=_clean_name(name),
             kind="server",
-            provider=provider,
+            provider=_check_provider(provider),
             host=_check_host(host),
             port=port,
             username=_check_user(username),
@@ -361,8 +440,104 @@ class ComputerService:
                 computer = computer.model_copy(
                     update={"host_key": proof.host_key, "host_fingerprint": proof.host_fingerprint}
                 )
+        elif auth == "private_key":
+            import_private_key(private_key, passphrase)
+            self._save_private_key(computer.id, private_key or "", passphrase)
+            computer = computer.model_copy(update={"auth": "private_key"})
         self._store.add(computer)
         return await self.check(computer.id)
+
+    def _save_private_key(self, computer_id: str, pem: str, passphrase: str | None) -> None:
+        if not set_secret(_private_key_slot(computer_id), pem.strip()):
+            raise ComputerError("The SSH key could not be saved to the keyring.", status=500)
+        if passphrase:
+            if not set_secret(_passphrase_slot(computer_id), passphrase):
+                raise ComputerError("The passphrase could not be saved to the keyring.", status=500)
+        else:
+            delete_secret(_passphrase_slot(computer_id))
+
+    async def test_connection(
+        self,
+        *,
+        host: str,
+        port: int = 22,
+        username: str = "root",
+        auth: AuthMethod = "key",
+        password: str | None = None,
+        private_key: str | None = None,
+        passphrase: str | None = None,
+    ) -> dict[str, Any]:
+        """Try a login WITHOUT saving anything; nothing is planted on the server."""
+        try:
+            base = SshTarget(host=_check_host(host), port=port, username=_check_user(username))
+            if auth == "password":
+                if not password:
+                    raise ComputerError("Enter the password for this login.", kind="auth")
+                target = dataclasses.replace(base, password=password)
+            elif auth == "private_key":
+                key = import_private_key(private_key, passphrase)
+                target = dataclasses.replace(base, client_key=key)
+            else:
+                target = dataclasses.replace(base, client_key=identity.private_key())
+        except ComputerError as exc:  # the answer IS the result: shown in the form
+            return _test_result(False, exc.kind or "protocol", exc.message)
+        except identity.IdentityError as exc:  # reported in the result, not raised
+            return _test_result(False, "protocol", str(exc))
+        try:
+            opened = await open_session(target)
+        except SshError as exc:  # a failed login is the test's answer, not an error
+            message = exc.message
+            if exc.kind == "auth" and auth == "key":
+                message = (
+                    "The server does not accept the app's key yet. Add the public key on "
+                    "the server, or log in once with the password."
+                )
+            return _test_result(False, exc.kind, message)
+        facts: dict[str, Any] | None = None
+        try:
+            probe = await run_command(opened, PROBE_SCRIPT, timeout_s=_PROBE_TIMEOUT_S)
+            facts = parse_probe(probe.stdout).facts.model_dump(mode="json")
+        except SshError as exc:
+            log.info("computers: test probe failed after login: %s", exc.message)
+        finally:
+            close(opened)
+        return {
+            "ok": True,
+            "kind": None,
+            "message": None,
+            "host_fingerprint": opened.host_fingerprint,
+            "facts": facts,
+            "latency_ms": opened.latency_ms,
+        }
+
+    async def set_credentials(
+        self,
+        computer_id: str,
+        *,
+        auth: AuthMethod,
+        password: str | None = None,
+        keep_password: bool = False,
+        private_key: str | None = None,
+        passphrase: str | None = None,
+    ) -> Computer:
+        """Switch how the app logs in to an existing computer."""
+        self.get(computer_id)
+        if auth == "password":
+            if not password:
+                raise ComputerError("Enter the password for this login.")
+            if not keep_password:
+                return await self.install_key(computer_id, password)
+            if not set_secret(_password_slot(computer_id), password):
+                raise ComputerError("The password could not be saved to the keyring.", status=500)
+            _forget_secrets(computer_id, keep="password")
+        elif auth == "private_key":
+            import_private_key(private_key, passphrase)
+            self._save_private_key(computer_id, private_key or "", passphrase)
+            _forget_secrets(computer_id, keep="private_key")
+        else:
+            _forget_secrets(computer_id)
+        self._store.update(computer_id, lambda row: row.model_copy(update={"auth": auth}))
+        return await self.check(computer_id)
 
     async def install_key(self, computer_id: str, password: str) -> Computer:
         """Plant Jarvis's key with a one-time password; switch to key login."""
@@ -371,7 +546,7 @@ class ComputerService:
             raise ComputerError("Enter the password for this login.")
         proof = await self._plant_key(self._target(computer, password=password))
         close(proof)
-        delete_secret(_password_slot(computer_id))
+        _forget_secrets(computer_id)
         self._store.update(
             computer_id,
             lambda row: row.model_copy(
@@ -424,7 +599,7 @@ class ComputerService:
                 await local_vm.delete(computer.provider_ref)
             except local_vm.LocalVmError as exc:
                 raise ComputerError(exc.message, status=502) from exc
-        delete_secret(_password_slot(computer_id))
+        _forget_secrets(computer_id)
         return self._store.remove(computer_id)
 
     # -- cloud import ---------------------------------------------------------

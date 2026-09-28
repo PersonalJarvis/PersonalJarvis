@@ -4,6 +4,9 @@
     POST   /api/computers                         add an SSH server
     POST   /api/computers/check-all               check every computer
     GET    /api/computers/identity                Jarvis's public key + fingerprint
+    GET    /api/computers/providers               provider catalog (SSH guides, API)
+    POST   /api/computers/test                    try a login without saving
+    PUT    /api/computers/{id}/credentials        switch the login method
     GET    /api/computers/cloud                   hosting providers + token state
     PUT    /api/computers/cloud/{provider}/token  save an API token (keyring)
     DELETE /api/computers/cloud/{provider}/token  forget it
@@ -39,7 +42,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from jarvis.computers import cloud, identity, local_vm, toolbox
+from jarvis.computers import cloud, identity, local_vm, providers, toolbox
 from jarvis.computers.models import Computer
 from jarvis.computers.service import ComputerError, get_service
 
@@ -55,10 +58,14 @@ def _fail(exc: ComputerError) -> HTTPException:
 def _row(computer: Computer) -> dict[str, Any]:
     data = computer.model_dump(mode="json")
     data["busy"] = get_service().is_busy(computer.id)
+    data["provider_name"] = providers.display_name(computer.provider)
     return data
 
 
 # -- request bodies ----------------------------------------------------------
+
+
+AuthLiteral = Literal["key", "password", "private_key"]
 
 
 class AddServerBody(BaseModel):
@@ -66,9 +73,33 @@ class AddServerBody(BaseModel):
     host: str = Field(min_length=1, max_length=253)
     port: int = Field(default=22, ge=1, le=65535)
     username: str = Field(default="root", min_length=1, max_length=64)
-    auth: Literal["key", "password"] = "key"
+    auth: AuthLiteral = "key"
     password: str | None = Field(default=None, max_length=1024)
     keep_password: bool = False
+    private_key: str | None = Field(default=None, max_length=32_000)
+    passphrase: str | None = Field(default=None, max_length=1024)
+    provider: str = Field(default="generic", max_length=40)
+
+
+class TestBody(BaseModel):
+    name: str | None = Field(default=None, max_length=120)
+    host: str = Field(min_length=1, max_length=253)
+    port: int = Field(default=22, ge=1, le=65535)
+    username: str = Field(default="root", min_length=1, max_length=64)
+    auth: AuthLiteral = "key"
+    password: str | None = Field(default=None, max_length=1024)
+    keep_password: bool = False
+    private_key: str | None = Field(default=None, max_length=32_000)
+    passphrase: str | None = Field(default=None, max_length=1024)
+    provider: str = Field(default="generic", max_length=40)
+
+
+class CredentialsBody(BaseModel):
+    auth: AuthLiteral
+    password: str | None = Field(default=None, max_length=1024)
+    keep_password: bool = False
+    private_key: str | None = Field(default=None, max_length=32_000)
+    passphrase: str | None = Field(default=None, max_length=1024)
 
 
 class UpdateBody(BaseModel):
@@ -137,10 +168,33 @@ async def add_computer(body: AddServerBody) -> dict[str, Any]:
             auth=body.auth,
             password=body.password,
             keep_password=body.keep_password,
+            private_key=body.private_key,
+            passphrase=body.passphrase,
+            provider=body.provider,
         )
     except ComputerError as exc:
         raise _fail(exc) from exc
     return _row(computer)
+
+
+@router.post("/test")
+async def test_computer(body: TestBody) -> dict[str, Any]:
+    """Try the login a form describes, saving nothing and planting nothing."""
+    return await get_service().test_connection(
+        host=body.host,
+        port=body.port,
+        username=body.username,
+        auth=body.auth,
+        password=body.password,
+        private_key=body.private_key,
+        passphrase=body.passphrase,
+    )
+
+
+@router.get("/providers")
+def list_providers() -> dict[str, Any]:
+    """Every place a computer can come from, with how to reach it there."""
+    return {"providers": providers.catalog_rows()}
 
 
 @router.post("/check-all")
@@ -170,6 +224,7 @@ def list_cloud_providers() -> dict[str, Any]:
                 "name": spec.name,
                 "connected": bool(cloud.token(spec.id)),
                 "console_url": spec.console_url,
+                "token_label": spec.credential_label,
                 "setup_hint": spec.setup_hint,
                 "attaches_keys": spec.attaches_keys,
             }
@@ -316,6 +371,23 @@ async def run_on_computer(computer_id: str, body: RunBody) -> dict[str, Any]:
         "duration_ms": result.duration_ms,
         "truncated": result.truncated,
     }
+
+
+@router.put("/{computer_id}/credentials")
+async def set_credentials(computer_id: str, body: CredentialsBody) -> dict[str, Any]:
+    """Switch the login method (a password alone plants the app's key once)."""
+    try:
+        computer = await get_service().set_credentials(
+            computer_id,
+            auth=body.auth,
+            password=body.password,
+            keep_password=body.keep_password,
+            private_key=body.private_key,
+            passphrase=body.passphrase,
+        )
+    except ComputerError as exc:
+        raise _fail(exc) from exc
+    return _row(computer)
 
 
 @router.post("/{computer_id}/install-key")

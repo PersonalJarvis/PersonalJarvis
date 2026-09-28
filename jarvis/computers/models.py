@@ -15,12 +15,16 @@ from pydantic import BaseModel, ConfigDict, Field
 #: A rented or self-hosted machine reached over the network, or a VM on this box.
 ComputerKind = Literal["server", "local_vm"]
 
-#: Where the machine came from. ``generic`` is any SSH host typed in by hand.
-ProviderId = Literal["generic", "hostinger", "hetzner", "digitalocean", "multipass"]
+#: Where the machine came from: an id from :mod:`jarvis.computers.providers`
+#: (``generic`` for any SSH host typed in by hand, ``multipass`` for a local
+#: VM). A plain string so the catalog can grow without a schema change; the
+#: service validates it against the catalog on every write.
+ProviderId = str
 
 #: How Jarvis logs in. ``key`` is Jarvis's own key pair (the default and the
-#: recommended path); ``password`` keeps a password in the OS keyring.
-AuthMethod = Literal["key", "password"]
+#: recommended path); ``password`` keeps a password in the OS keyring;
+#: ``private_key`` is the user's own SSH key, kept in the OS keyring.
+AuthMethod = Literal["key", "password", "private_key"]
 
 #: The state a check leaves behind. ``provisioning`` belongs to a local VM that
 #: is still being created; ``stopped`` to a local VM that is powered off.

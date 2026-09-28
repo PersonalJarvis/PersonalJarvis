@@ -81,7 +81,7 @@ def test_routes_list_identity_and_providers(client: TestClient) -> None:
     assert client.get("/api/computers/identity").json()["public_key"] == ident["public_key"]
 
     providers = {p["id"]: p for p in client.get("/api/computers/cloud").json()["providers"]}
-    assert set(providers) == {"hostinger", "hetzner", "digitalocean"}
+    assert set(providers) == {"hostinger", "hetzner", "digitalocean", "vultr", "linode"}
     assert providers["hostinger"]["attaches_keys"] is True
     assert providers["hostinger"]["connected"] is False
 
