@@ -153,17 +153,37 @@ External files and clipboard images are copied into the Git-ignored
 `.jarvis/drops` folder; project files stay where they are. Later drops clean up
 old copies. This is local working data, not a secure or permanent archive.
 
+## Closing the App, Rebooting, Stopping
+
+Coding agents do not run inside the app window. They run in a small background
+process, the terminal host, which the app starts and reconnects to. What happens
+to them depends on what ended:
+
+| What happened | What the agents do | What you see next time |
+|---|---|---|
+| You closed the app, or it crashed or restarted | They keep working | The last open workspaces come back by themselves in the same layout, with the same focused pane, and each pane shows what its agent printed meanwhile |
+| The computer was turned off or restarted | They stopped with the machine | After you sign in, Jarvis starts again (login autostart is on by default) and brings every agent that was running back on its own conversation. Agents that were in the middle of a task are told to continue; agents that were idle or waiting for your answer or an approval are resumed but not typed into |
+| An agent ended by itself (for example `/exit`) | It stays ended | The pane comes back and starts when you open it |
+| You closed every workspace before quitting | Nothing runs | Nothing reopens by itself; the workspaces stay in the sidebar |
+| You pressed **Stop all agents** in the Agents panel | Every agent in every workspace ends | Same as closing every workspace |
+
+The terminal host exits on its own about a minute after its last agent ends.
+If it cannot run on an install, agents run inside the app as before and end
+with it.
+
 ## Resume, Continue, or Forget
 
-The local restore point records folders, tab names, pane positions, call-signs,
-account choices, and conversation handles. **Resume** reopens only the most
-recent session; older remembered folders are not silently reopened.
+The local restore point records folders, tab names, pane positions, the focused
+pane, call-signs, account choices, conversation handles, and whether each agent
+was running. **Resume** reopens only the most recent session; older remembered
+folders are not silently reopened. A damaged restore point is kept aside as
+`last_session.damaged-<time>.json` instead of being overwritten.
 
 A pane is **available** when its folder and CLI can open. It is **resumable**
 only when that account's CLI history proves the conversation exists. Otherwise
-it opens fresh in the same layout. Resumed conversations wait at their prompts;
-review them before **Continue interrupted work**. **Queued** or **unconfirmed**
-does not mean running.
+it opens fresh in the same layout. Inside a running app, resumed conversations
+wait at their prompts; review them before **Continue interrupted work**.
+**Queued** or **unconfirmed** does not mean running.
 
 **Forget** removes only the restore point. It does not stop running agents,
 delete project changes, clear prompt-history files, remove dropped files, or
