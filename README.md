@@ -450,6 +450,11 @@ contributions are welcome when the author can explain and verify the result.
 Repository contributions are written in English. Report vulnerabilities
 privately through the [security policy](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SECURITY.md).
 
+**Start here:** pick an issue labelled
+[good first issue](https://github.com/PersonalJarvis/PersonalJarvis/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22),
+follow [your first contribution in 10 minutes](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md#your-first-contribution-in-10-minutes),
+and say hello in the [welcome discussion](https://github.com/PersonalJarvis/PersonalJarvis/discussions/230).
+
 ## Contributors
 
 <!-- contributors:start -->
