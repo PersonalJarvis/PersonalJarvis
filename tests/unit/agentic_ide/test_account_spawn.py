@@ -14,6 +14,7 @@ prevents that, and it is pinned down here.
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from jarvis import agent_accounts
 from jarvis.agentic_ide import layout_tree
 from jarvis.agentic_ide import session as session_mod
 from jarvis.agentic_ide.session import Registry, SessionError
+from jarvis.workspace import agents as workspace_agents
 from tests.fakes.fake_pty_manager import FakePtyManager
 
 
@@ -344,16 +346,34 @@ async def test_a_pane_on_an_added_account_spawns_with_that_config_dir(
 async def test_a_pane_on_the_builtin_account_spawns_exactly_as_it_always_did(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
-    """No environment is passed at all — plain inheritance, byte for byte.
+    """The machine's own environment, with no account redirection in it.
 
     This is the promise to everyone who never opens the switcher: adding the
-    feature changed nothing about how their panes start. Read together with
-    ``_launched_from_a_plain_shell`` above, which is what makes "at all" a
+    feature changed nothing about how their panes start. The one addition is the
+    entry's fixed pane setting (click capture off, see the Claude Code entry),
+    which every pane of that CLI carries whatever its account. Read together
+    with ``_launched_from_a_plain_shell`` above, which is what makes this a
     statement about this code rather than about the terminal running the suite.
     """
     await registry.start(str(tmp_path), [{"agent": "claude"}])
     await _attach(registry, registry.session.terminals[0].name)
-    assert _env_of(fake_pty) is None
+    env = _env_of(fake_pty)
+    assert env is not None
+    assert env == {**os.environ, "CLAUDE_CODE_DISABLE_MOUSE_CLICKS": "1"}
+
+
+@pytest.mark.parametrize("agent", ["claude", "glm"])
+def test_a_claude_code_pane_keeps_clicks_out_of_the_cli(agent: str) -> None:
+    """Clicking a pane must not re-lay the agent's screen out.
+
+    Claude Code's fullscreen renderer otherwise captures every click and pointer
+    move — hover highlights, click-to-expand, its own selection — and each one
+    redraws the whole pane, which read as the terminal jumping and resizing
+    under every click in the IDE. Wheel scrolling stays with the CLI.
+    """
+    spec = workspace_agents.get_agent(agent)
+    assert spec is not None
+    assert ("CLAUDE_CODE_DISABLE_MOUSE_CLICKS", "1") in spec.spawn_env
 
 
 async def test_the_spawn_environment_keeps_PATH(
@@ -537,8 +557,9 @@ async def test_two_panes_can_run_two_different_subscriptions_at_once(
     for term in registry.session.terminals:
         await _attach(registry, term.name)
     first_env, second_env = _env_of(fake_pty, 0), _env_of(fake_pty, 1)
-    # The default pane inherits untouched; the second is pinned to its own seat.
-    assert first_env is None
+    # The default pane carries no seat; the second is pinned to its own.
+    assert first_env is not None
+    assert first_env.get("CLAUDE_CONFIG_DIR") == os.environ.get("CLAUDE_CONFIG_DIR")
     assert second_env is not None
     assert second_env["CLAUDE_CONFIG_DIR"] == str(second.config_dir)
 
