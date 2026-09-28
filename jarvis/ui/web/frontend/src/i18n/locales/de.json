@@ -5410,6 +5410,8 @@
       "hub:models": "Kesselhaus"
     },
     "card": {
+      "runs_on_saving": "Wird verschoben…",
+      "runs_on_badge": "Läuft auf {computer}",
       "brain_shared_hint": "Das Gehirn des getippten Chats, gewählt an der Modell-Pille im Chat. Sprache läuft über das Realtime-Gehirn aus den Sprach-Einstellungen.",
       "instructions_file": "Ständige Anweisungen ({0})",
       "instructions_empty": "Noch keine ständigen Anweisungen — die Vorlage ist einen Klick entfernt.",
@@ -5563,6 +5565,12 @@
       "shoes": "Schuhe"
     },
     "create": {
+      "runs_on": "Läuft auf",
+      "runs_on_here": "Dieser Computer",
+      "runs_on_here_hint": "Der Agent arbeitet auf diesem Computer.",
+      "runs_on_remote_hint": "Befehle und Coding-CLI des Agenten laufen per SSH auf diesem Computer; {name} behält den Chat hier.",
+      "runs_on_offline_hint": "Dieser Computer ist gerade nicht erreichbar; Läufe des Agenten scheitern, bis er wieder online ist.",
+      "runs_on_connect": "Computer verbinden",
       "import": ".glb importieren",
       "importing": "Wird geprüft…",
       "import_hint": "Bring deine eigene Figur mit — ein binäres glTF, das den Figurenvertrag einhält (docs/agent-society/character-pipeline.md).",

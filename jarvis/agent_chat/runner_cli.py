@@ -122,6 +122,8 @@ CLI_BINARIES: Final[dict[str, tuple[str, ...]]] = {
 
 
 def _which(*names: str) -> str | None:
+    if _REMOTE_PLANNING.get():
+        return names[0] if names else None
     # The well-known install dirs a GUI-launched process does not inherit
     # (``~/.local/bin``, ``~/.grok/bin``, npm's prefix) — best-effort, and the
     # same augmentation a pane runs before it resolves its CLI.
@@ -230,6 +232,10 @@ ACCOUNT_OVERRIDE: ContextVar[str] = ContextVar("agent_chat.account_override", de
 
 
 _CATALOG_IGNORE_CONFIG: ContextVar[bool] = ContextVar("cli_catalog.ignore_config", default=False)
+#: Set while a turn is planned for ANOTHER computer (a society agent placed on
+#: a VPS): binary lookups answer the bare name, since the CLI is found on the
+#: remote PATH, not this one (``jarvis.agent_chat.remote_cli``).
+_REMOTE_PLANNING: ContextVar[bool] = ContextVar("agent_chat.remote_planning", default=False)
 _CATALOG_CWD: ContextVar[Path | None] = ContextVar("cli_catalog.cwd", default=None)
 _ACCOUNT_ENVS: ContextVar[dict[str, dict[str, str]] | None] = ContextVar(
     "cli_catalog.envs", default=None
@@ -2729,13 +2735,18 @@ async def _run_cli_once(
     usage: dict[str, int] = {}
     cost_usd: float | None = None
     vendor_session: str | None = None
+    from jarvis.society.remote import placement_for_session
+
+    # A society agent placed on another computer runs its CLI there over SSH.
+    placement = await placement_for_session(session)
+    remote_token = _REMOTE_PLANNING.set(placement is not None)
 
     try:
         with cli_catalog_scope(
             cwd=cwd,
             ignore_user_config=identity is not None or bool(getattr(handle, "gateway_only", False)),
         ):
-            if runner == "codex-cli":
+            if runner == "codex-cli" and placement is None:
                 models = await asyncio.to_thread(read_codex_models, required_model=session.model)
                 if session.model and (
                     models is None or not any(row["id"] == session.model for row in models)
@@ -2750,7 +2761,7 @@ async def _run_cli_once(
                     if row["id"] == session.model:
                         effort = snap_to_ladder(session.effort, list(row.get("efforts", [])))
                         break
-            if runner == "agy-cli":
+            if runner == "agy-cli" and placement is None:
                 # A chat can start before the model picker has loaded its catalog.
                 # Resolve the installed CLI's effort ladder off the event loop so
                 # newly available models keep the required model/effort pairing.
@@ -2792,6 +2803,8 @@ async def _run_cli_once(
                     raise CliUnavailable("The selected runner cannot isolate task tools.")
     except CliUnavailable as exc:
         return _Outcome("error", str(exc), {}, None, None)
+    finally:
+        _REMOTE_PLANNING.reset(remote_token)
 
     vendor_session = plan.vendor_session
     if (
@@ -2805,32 +2818,59 @@ async def _run_cli_once(
     log.info("agent chat %s: %s argv=%s", handle.turn_id, runner, plan.argv[:6])
     started_at = time.time()
     tree = None
-    if getattr(handle, "goal_turn", False) or (
-        session.surface == "society" and session.permission_mode == "plan"
+    if placement is None and (
+        getattr(handle, "goal_turn", False)
+        or (session.surface == "society" and session.permission_mode == "plan")
     ):
         from jarvis.core.process_tree import make_process_tree
 
         tree = make_process_tree("chat-controlled-cli")
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *plan.argv,
-            cwd=str(cwd),
-            env=plan.env,
-            stdin=asyncio.subprocess.PIPE
-            if plan.stdin_text is not None
-            else asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            creationflags=NO_WINDOW_CREATIONFLAGS,
-            start_new_session=tree is not None and os.name != "nt",
-            limit=_READLINE_LIMIT,
-        )
-        if tree is not None:
-            tree.assign(proc.pid)
-    except (OSError, ValueError) as exc:
-        if tree is not None:
-            tree.close()
-        return _Outcome("error", f"Could not start {runner}: {exc}", {}, None, None)
+    proc: Any
+    if placement is not None:
+        from jarvis.agent_chat.remote_cli import RemoteCliUnavailable, spawn
+
+        prompt_files: dict[str, str] = {}
+        if identity is not None and identity.path is not None:
+            try:
+                prompt_files[str(identity.path)] = await asyncio.to_thread(
+                    Path(identity.path).read_text, encoding="utf-8"
+                )
+            except OSError:
+                log.warning("agent chat: identity file unreadable for a remote turn")
+        try:
+            proc = await spawn(
+                placement[0],
+                agent_id=placement[1],
+                runner=runner,
+                binary=CLI_BINARIES[runner][0],
+                argv=plan.argv,
+                local_cwd=str(cwd),
+                env=plan.env,
+                system_prompt_files=prompt_files,
+            )
+        except RemoteCliUnavailable as exc:
+            return _Outcome("error", str(exc), {}, None, None)
+    else:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *plan.argv,
+                cwd=str(cwd),
+                env=plan.env,
+                stdin=asyncio.subprocess.PIPE
+                if plan.stdin_text is not None
+                else asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+                start_new_session=tree is not None and os.name != "nt",
+                limit=_READLINE_LIMIT,
+            )
+            if tree is not None:
+                tree.assign(proc.pid)
+        except (OSError, ValueError) as exc:
+            if tree is not None:
+                tree.close()
+            return _Outcome("error", f"Could not start {runner}: {exc}", {}, None, None)
 
     make_state, translate = _SHAPES[plan.shape]
     state: Any = make_state(handle.turn_id, vendor_session)
@@ -3044,7 +3084,12 @@ async def _run_cli_once(
     usage = dict(state.usage)
     cost_usd = getattr(state, "cost_usd", None)
     vendor_session = state.vendor_session or vendor_session
-    if vendor_session is None and plan.discover is not None and status == "done":
+    if (
+        vendor_session is None
+        and plan.discover is not None
+        and status == "done"
+        and placement is None  # the CLI's store lives on the remote machine
+    ):
         # A CLI that never said which conversation it opened: ask its store.
         vendor_session = await asyncio.to_thread(plan.discover, cwd, started_at)
     result_text = str(getattr(state, "result_text", "") or "")

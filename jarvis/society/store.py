@@ -135,6 +135,12 @@ class SocietyStore:
                 "TEXT NOT NULL DEFAULT '[]'"
             )
             log.info("society store: migration applied — added browser_allowed_domains")
+        if "computer_id" not in existing:
+            # NULL = this computer; every existing agent keeps running here.
+            await self.conn.execute(
+                "ALTER TABLE society_agents ADD COLUMN computer_id TEXT DEFAULT NULL"
+            )
+            log.info("society store: migration applied — added computer_id")
         await self._migrate_checkpoint_vocabulary()
 
     async def _migrate_checkpoint_vocabulary(self) -> None:

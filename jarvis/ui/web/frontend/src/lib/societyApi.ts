@@ -160,6 +160,8 @@ export interface SocietyAgentRow {
   max_concurrent_runs: number;
   browser_mode: BrowserMode;
   browser_allowed_domains: string[];
+  /** Where the agent runs: null = this computer, else a connected computer id. */
+  computer_id: string | null;
   session_id: string;
   created_ms: number;
   updated_ms: number;

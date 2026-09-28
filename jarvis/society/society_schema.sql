@@ -44,6 +44,9 @@ CREATE TABLE IF NOT EXISTS society_agents (
                         CHECK (browser_mode IN ('own', 'attach')),
     browser_allowed_domains_json TEXT NOT NULL DEFAULT '[]',
     max_concurrent_runs INTEGER NOT NULL DEFAULT 1,
+    -- Where the agent's work executes: NULL = this computer, else the id of a
+    -- connected machine in jarvis/computers (a VPS or a local VM, over SSH).
+    computer_id         TEXT DEFAULT NULL,
     created_ms          INTEGER NOT NULL,
     updated_ms          INTEGER NOT NULL
 );

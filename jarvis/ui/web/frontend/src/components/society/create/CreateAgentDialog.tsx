@@ -37,6 +37,7 @@ import { Switch } from "@/components/ui/switch";
 import { Combobox, isComboboxPanelEvent, type ComboboxGroup } from "@/components/ui/combobox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/i18n";
+import { ComputerPicker } from "./ComputerPicker";
 import {
   fetchAgentChatCatalog,
   fetchAgentConnections,
@@ -128,6 +129,8 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("");
   const [accountId, setAccountId] = useState("");
+  // "" = this computer; otherwise a connected computer (VPS / local VM) id.
+  const [computerId, setComputerId] = useState("");
   const [ceiling, setCeiling] = useState<PermissionCeiling>("monitor");
   const [budget, setBudget] = useState("2");
   // A cap is the default because an agent that can spend without one is the
@@ -366,6 +369,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
         model,
         effort,
         accountId,
+        computerId,
         // Every tool Jarvis has connected; what the agent reaches for first
         // is settled in its own chat afterwards (maintainer, 2026-09-02).
         grantMode: "all",
@@ -568,6 +572,8 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                   )}
                   <p className="mt-1 text-xs text-muted-foreground">{t("society.create.brain_hint")}</p>
                 </div>
+
+                <ComputerPicker value={computerId} onChange={setComputerId} labelClass={labelClass} />
 
                 <Collapsible.Root open={advanced} onOpenChange={setAdvanced}>
                   <Collapsible.Trigger asChild>

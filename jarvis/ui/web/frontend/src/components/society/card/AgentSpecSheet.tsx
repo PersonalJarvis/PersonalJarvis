@@ -31,12 +31,13 @@
  * Every string goes through the locale files.
  */
 import { useMemo, useState } from "react";
-import { MessageSquare, Pause, Play } from "lucide-react";
+import { MessageSquare, Pause, Play, Server } from "lucide-react";
 
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { useT } from "@/i18n";
+import { useComputers } from "@/hooks/useComputers";
 import { societyDisplayName } from "@/lib/societyDisplayName";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
@@ -48,6 +49,7 @@ import { useAgentActivity, useAgentSkills, type AgentActivity } from "../cardDat
 import { PERMISSION_CEILINGS } from "@/lib/societyApi";
 
 import {
+  useSetAgentComputer,
   useSetAgentPaused,
   useSocietyCapabilities,
   useUpdateAgentDescription,
@@ -58,6 +60,7 @@ import {
   type SocietyAgent,
 } from "../data";
 import { CapabilityTile } from "./CapabilityTile";
+import { ComputerPicker } from "../create/ComputerPicker";
 import { LeadBrain, LeadInstructions } from "./LeadSections";
 
 import "./agentCard.css";
@@ -218,6 +221,10 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
   const activity = useAgentActivity(agent.agentId);
   const skills = useAgentSkills(agent.agentId);
   const setPaused = useSetAgentPaused();
+  const computers = useComputers();
+  const remoteComputer = agent.computerId
+    ? (computers.data ?? []).find((c) => c.id === agent.computerId) ?? null
+    : null;
   const [busy, setBusy] = useState(false);
   const byId = useMemo(() => {
     const map = new Map<string, Capability>();
@@ -277,6 +284,16 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
               .join(" · ")}
           </span>
         </span>
+        {remoteComputer ? (
+          <span
+            data-testid="agent-remote-badge"
+            title={t("society.card.runs_on_badge").replace("{computer}", remoteComputer.name)}
+            className="inline-flex max-w-[40%] shrink-0 items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground"
+          >
+            <Server className="h-3 w-3 shrink-0" aria-hidden />
+            <span className="truncate">{remoteComputer.name}</span>
+          </span>
+        ) : null}
         <span className={cn("ac-dot", STATE_FILL[agent.state])} data-state={agent.state} aria-hidden />
         <span className="shrink-0 text-xs text-muted-foreground">
           {activeRuns > 0
@@ -348,6 +365,8 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
               </ul>
             </section>
           ) : null}
+
+          {agent.tier !== "lead" && <RunsOnSection agent={agent} />}
 
           <LimitsSection
             agent={agent}
@@ -767,5 +786,36 @@ function RuleRow({ label, ids, byId }: { label: string; ids: string[]; byId: Map
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * Where the agent's work executes — this computer or a connected one. The
+ * change applies from the agent's next turn; a turn already running finishes
+ * where it started.
+ */
+function RunsOnSection({ agent }: { agent: SocietyAgent }) {
+  const t = useT();
+  const setComputer = useSetAgentComputer();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <section className="flex flex-col gap-2" data-testid="agent-runs-on">
+      <ComputerPicker
+        value={agent.computerId ?? ""}
+        labelClass="ac-head mb-1 block"
+        testId="agent-runs-on-picker"
+        onChange={(id) => {
+          if (saving || id === (agent.computerId ?? "")) return;
+          setSaving(true);
+          setError("");
+          setComputer(agent, id)
+            .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+            .finally(() => setSaving(false));
+        }}
+      />
+      {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
+      {saving ? <p className="text-xs text-muted-foreground">{t("society.card.runs_on_saving")}</p> : null}
+    </section>
   );
 }

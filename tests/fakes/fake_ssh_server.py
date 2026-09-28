@@ -11,6 +11,7 @@ and key installation end to end on every OS.
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -55,6 +56,10 @@ class FakeSshState:
     username: str = "root"
     authorized: set[str] = field(default_factory=set)
     commands: list[str] = field(default_factory=list)
+    #: Optional scripted command handler: return True when it answered the
+    #: process (wrote output and called ``exit``); False falls through to the
+    #: built-in behaviour. Lets a test play a remote CLI or a shell.
+    handler: Callable[[str, Any], Awaitable[bool]] | None = None
 
 
 def _key_body(line: str) -> str:
@@ -96,6 +101,8 @@ class FakeSshServer:
     async def _process(self, process: asyncssh.SSHServerProcess) -> None:
         command = process.command or ""
         self.state.commands.append(command)
+        if self.state.handler is not None and await self.state.handler(command, process):
+            return
         if command == PROBE_SCRIPT:
             process.stdout.write(LINUX_PROBE_OUTPUT)
             process.exit(0)

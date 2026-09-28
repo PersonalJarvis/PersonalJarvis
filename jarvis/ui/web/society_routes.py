@@ -93,6 +93,8 @@ class CreateAgentBody(BaseModel):
     avatar: dict[str, Any] | None = None
     browser_mode: str | None = None
     browser_allowed_domains: list[str] | None = None
+    #: Where the agent runs: "" = this computer, else a connected computer id.
+    computer_id: str | None = None
 
 
 class PatchAgentBody(BaseModel):
@@ -120,6 +122,8 @@ class PatchAgentBody(BaseModel):
     checkpoint: str | None = None
     browser_mode: str | None = None
     browser_allowed_domains: list[str] | None = None
+    #: Where the agent runs: "" = this computer, else a connected computer id.
+    computer_id: str | None = None
 
 
 class MessageBody(BaseModel):

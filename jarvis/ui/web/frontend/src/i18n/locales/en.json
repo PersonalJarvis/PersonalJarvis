@@ -5443,6 +5443,8 @@
       "hub:models": "Boiler House"
     },
     "card": {
+      "runs_on_saving": "Moving…",
+      "runs_on_badge": "Runs on {computer}",
       "brain_shared_hint": "The brain of the typed chat, picked in the chat's model pill. Voice runs on the realtime brain from the voice settings.",
       "instructions_file": "Standing instructions ({0})",
       "instructions_empty": "No standing instructions yet — the template is a click away.",
@@ -5596,6 +5598,12 @@
       "shoes": "Shoes"
     },
     "create": {
+      "runs_on": "Runs on",
+      "runs_on_here": "This computer",
+      "runs_on_here_hint": "The agent works on this computer.",
+      "runs_on_remote_hint": "The agent’s commands and coding CLI run on that computer over SSH; {name} keeps the chat here.",
+      "runs_on_offline_hint": "That computer is not reachable right now; the agent’s runs fail until it is back online.",
+      "runs_on_connect": "Connect a computer",
       "import": "Import .glb",
       "importing": "Checking…",
       "import_hint": "Bring your own figure — a binary glTF that honours the character contract (docs/agent-society/character-pipeline.md).",

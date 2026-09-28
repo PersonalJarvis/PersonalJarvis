@@ -5410,6 +5410,8 @@
       "hub:models": "Sala de Calderas"
     },
     "card": {
+      "runs_on_saving": "Moviendo…",
+      "runs_on_badge": "Se ejecuta en {computer}",
       "brain_shared_hint": "El cerebro del chat escrito, elegido en la píldora de modelo del chat. La voz usa el cerebro en tiempo real de los ajustes de voz.",
       "instructions_file": "Instrucciones permanentes ({0})",
       "instructions_empty": "Aún no hay instrucciones permanentes; la plantilla está a un clic.",
@@ -5563,6 +5565,12 @@
       "shoes": "Zapatos"
     },
     "create": {
+      "runs_on": "Se ejecuta en",
+      "runs_on_here": "Este ordenador",
+      "runs_on_here_hint": "El agente trabaja en este ordenador.",
+      "runs_on_remote_hint": "Los comandos y la CLI de programación del agente se ejecutan en ese ordenador por SSH; {name} mantiene el chat aquí.",
+      "runs_on_offline_hint": "Ese ordenador no está accesible ahora; las ejecuciones del agente fallarán hasta que vuelva a estar en línea.",
+      "runs_on_connect": "Conectar un ordenador",
       "import": "Importar .glb",
       "importing": "Comprobando…",
       "import_hint": "Trae tu propia figura: un glTF binario que cumpla el contrato de personajes (docs/agent-society/character-pipeline.md).",
