@@ -64,17 +64,24 @@
          there is NO blank screen while the (large) JS bundle loads + React
          mounts. React's createRoot clears #root on its first render; AuthGate
          then renders the SAME markup (src/components/BootSplash.tsx), carries
-         on in the same animation phase through --jbs-shift, and plays the exit
-         once the app is mounted underneath. Keep the two markups in lockstep.
+         on in the same animation phase through --jbs-shift, drives the
+         progress line from real milestones, and plays the exit once the app
+         is mounted underneath. Keep the two markups in lockstep.
+
+         Restraint is the design: a flat, neutral ground (docs/BRAND.md — the
+         accent never fills a surface), the mark, the name, and one hairline
+         whose accent fill is the only colour on screen.
 
          Choreography, measured from the moment the window opens:
-           0.00s  the ambient light blooms in behind where the mark will sit
-           0.12s  the mark resolves (scale + blur + lift)
-           0.50s  the name tracks in from wide letter-spacing
-           0.95s  a glint passes over the mark (repeats every 5.2 s)
-           1.00s  the hairline progress and the status line fade in
-           exit   the stage lifts toward the viewer while the ground dissolves
-                  into the app underneath (.jbs-exit, 0.62 s)
+           0.00s  the mark settles in (fade + scale, with its shadow)
+           0.28s  the name rises into place
+           0.48s  the progress line and status fade in
+           ....   the line fills with each milestone (page painted, bundle
+                  running, backend answering, session granted); a soft light
+                  travels along the filled part so a long cold boot never
+                  looks frozen
+           exit   the content steps back and the ground dissolves into the
+                  app underneath (.jbs-exit)
 
          The two grounds match the pywebview window colour for their theme
          (jarvis/ui/theme.py WINDOW_BACKGROUND) and --background in index.css,
@@ -84,202 +91,153 @@
         --jbs-bg: #ffffff;
         --jbs-accent: #096cdc;
         --jbs-ring: rgba(9, 108, 220, 0.22);
-        --jbs-glow: rgba(9, 108, 220, 0.13);
-        --jbs-floor: rgba(9, 108, 220, 0.05);
-        --jbs-vignette: rgba(0, 0, 0, 0.035);
-        --jbs-track: rgba(0, 0, 0, 0.08);
-        --jbs-rim: rgba(0, 0, 0, 0.1);
-        --jbs-shadow: rgba(0, 0, 0, 0.2);
+        --jbs-track: rgba(0, 0, 0, 0.07);
+        --jbs-rim: rgba(0, 0, 0, 0.08);
+        --jbs-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 12px 28px -6px rgba(0, 0, 0, 0.22);
         --jbs-name: #171717;
-        --jbs-sub: #666666;
+        --jbs-sub: #757575;
         --jbs-ease: cubic-bezier(.16, 1, .3, 1);
       }
       :root.dark {
         --jbs-bg: #0a0a0a;
         --jbs-accent: #3d8bff;
         --jbs-ring: rgba(61, 139, 255, 0.2);
-        --jbs-glow: rgba(61, 139, 255, 0.17);
-        --jbs-floor: rgba(61, 139, 255, 0.06);
-        --jbs-vignette: rgba(0, 0, 0, 0.6);
         --jbs-track: rgba(255, 255, 255, 0.08);
-        --jbs-rim: rgba(255, 255, 255, 0.16);
-        --jbs-shadow: rgba(0, 0, 0, 0.65);
+        --jbs-rim: rgba(255, 255, 255, 0.1);
+        --jbs-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 16px 36px -8px rgba(0, 0, 0, 0.8);
         --jbs-name: #fafafa;
-        --jbs-sub: #a1a1a1;
+        --jbs-sub: #7a7a7a;
       }
       html, body { margin: 0; height: 100%; background: var(--jbs-bg); }
       #jarvis-boot-splash {
-        --jbs-mark: clamp(92px, 12vmin, 136px);
         position: fixed; inset: 0; z-index: 2147483000;
         display: flex; flex-direction: column;
-        align-items: center; justify-content: center;
-        overflow: hidden; isolation: isolate;
+        align-items: center; justify-content: center; gap: 8px;
         background: var(--jbs-bg);
-        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable Display", "Segoe UI", sans-serif;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", sans-serif;
         -webkit-font-smoothing: antialiased;
         color: var(--jbs-accent);
+        cursor: default; -webkit-user-select: none; -moz-user-select: none; user-select: none;
       }
-      /* Ambient light: one soft pool behind the mark and a faint floor glow,
-         drifting so slowly that it reads as depth rather than motion. */
-      #jarvis-boot-splash::before {
-        content: ""; position: absolute; inset: -20%; z-index: -2;
-        background:
-          radial-gradient(34% 30% at 50% 44%, var(--jbs-glow), transparent 72%),
-          radial-gradient(60% 46% at 50% 118%, var(--jbs-floor), transparent 72%);
-        animation: jbs-field-in 1.6s var(--jbs-ease) both,
-                   jbs-field-drift 9s ease-in-out infinite alternate;
-        animation-delay: var(--jbs-shift, 0s), calc(1.6s + var(--jbs-shift, 0s));
-      }
-      #jarvis-boot-splash::after {
-        content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
-        background: radial-gradient(ellipse at 50% 45%, transparent 50%, var(--jbs-vignette));
-      }
-      #jarvis-boot-splash .jbs-stage {
-        position: relative; display: grid; place-items: center;
-        width: var(--jbs-mark); height: var(--jbs-mark);
-      }
-      #jarvis-boot-splash .jbs-aura {
-        position: absolute; inset: -85%; border-radius: 50%; pointer-events: none;
-        background: radial-gradient(closest-side, var(--jbs-glow), transparent);
-        animation: jbs-aura-in 1.4s var(--jbs-ease) both,
-                   jbs-aura-breathe 4.8s ease-in-out infinite;
-        animation-delay: calc(.05s + var(--jbs-shift, 0s)), calc(1.45s + var(--jbs-shift, 0s));
+      #jarvis-boot-splash .jbs-group {
+        display: flex; flex-direction: column; align-items: center;
+        /* Optical centre: a touch above the geometric middle. */
+        margin-top: -4vh;
       }
       #jarvis-boot-splash .jbs-mark {
-        position: relative; width: 100%; height: 100%;
-        animation: jbs-mark-in 1.1s var(--jbs-ease) both;
-        animation-delay: calc(.12s + var(--jbs-shift, 0s));
+        width: 96px; height: 96px; border-radius: 24%;
+        box-shadow: var(--jbs-shadow), 0 0 0 1px var(--jbs-rim);
+        animation: jbs-mark-in .9s var(--jbs-ease) both;
+        animation-delay: var(--jbs-shift, 0s);
       }
       #jarvis-boot-splash .jbs-mark img {
         display: block; width: 100%; height: 100%;
-        filter: drop-shadow(0 0 .5px var(--jbs-rim)) drop-shadow(0 22px 44px var(--jbs-shadow));
-        -webkit-user-drag: none; -webkit-user-select: none; -moz-user-select: none; user-select: none;
-      }
-      /* The glint: a skewed band of light clipped to the mark's own silhouette
-         (the logo is its own mask), so it never spills past the icon edge. */
-      #jarvis-boot-splash .jbs-sheen {
-        position: absolute; inset: 0; overflow: hidden; pointer-events: none;
-        -webkit-mask: url(/jarvis-gigi-256.png) center / 100% 100% no-repeat;
-        mask: url(/jarvis-gigi-256.png) center / 100% 100% no-repeat;
-      }
-      #jarvis-boot-splash .jbs-sheen::before {
-        content: ""; position: absolute; top: -10%; bottom: -10%; left: 0; width: 45%;
-        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .22) 50%, transparent);
-        transform: translateX(-160%) skewX(-18deg);
-        animation: jbs-sheen 5.2s cubic-bezier(.45, 0, .2, 1) infinite;
-        animation-delay: calc(.95s + var(--jbs-shift, 0s));
+        -webkit-user-drag: none;
       }
       #jarvis-boot-splash .name {
-        margin-top: 30px;
-        font-size: 21px; font-weight: 600; letter-spacing: .02em; line-height: 1.2;
+        margin-top: 28px;
+        font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -.02em;
         color: var(--jbs-name);
-        animation: jbs-name-in 1.1s var(--jbs-ease) both;
-        animation-delay: calc(.5s + var(--jbs-shift, 0s));
+        animation: jbs-rise .8s var(--jbs-ease) both;
+        animation-delay: calc(.28s + var(--jbs-shift, 0s));
       }
       #jarvis-boot-splash .name:empty { display: none; }
       #jarvis-boot-splash .jbs-progress {
         position: relative; overflow: hidden;
-        width: 116px; height: 2px; margin-top: 22px; border-radius: 2px;
+        width: 144px; height: 2px; margin-top: 24px; border-radius: 2px;
         background: var(--jbs-track);
-        animation: jbs-fade-in .8s ease both;
-        animation-delay: calc(1s + var(--jbs-shift, 0s));
+        animation: jbs-fade-in .6s ease both;
+        animation-delay: calc(.48s + var(--jbs-shift, 0s));
       }
-      #jarvis-boot-splash .jbs-progress span {
-        position: absolute; top: 0; bottom: 0; left: 0; width: 42%; border-radius: inherit;
-        background: linear-gradient(90deg, transparent, var(--jbs-accent) 55%, transparent);
-        animation: jbs-scan 1.6s cubic-bezier(.65, 0, .35, 1) infinite;
-        animation-delay: calc(1s + var(--jbs-shift, 0s));
+      /* The fill. In static HTML it creeps to 30 % on its own — the page is
+         painted and the bundle is on its way. React then sets --jbs-p per
+         milestone (.jbs-live), and the transition carries it there. */
+      #jarvis-boot-splash .jbs-progress i {
+        position: absolute; inset: 0; border-radius: inherit;
+        background: var(--jbs-accent);
+        transform-origin: left center;
+        transform: scaleX(var(--jbs-p, 0));
+        animation: jbs-creep 2.4s cubic-bezier(.2, .7, .2, 1) both;
+        animation-delay: calc(.48s + var(--jbs-shift, 0s));
+      }
+      #jarvis-boot-splash .jbs-progress.jbs-live i {
+        animation: none;
+        transition: transform var(--jbs-pt, .8s) cubic-bezier(.2, .7, .2, 1);
+      }
+      /* A soft light travelling along the track, masked to the filled part by
+         mix-blend: it only shows where the accent is. */
+      #jarvis-boot-splash .jbs-progress::after {
+        content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 40%;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .55), transparent);
+        mix-blend-mode: soft-light;
+        transform: translateX(-100%);
+        animation: jbs-glide 2s cubic-bezier(.45, 0, .25, 1) infinite;
+        animation-delay: calc(1.2s + var(--jbs-shift, 0s));
       }
       #jarvis-boot-splash .sub {
-        margin-top: 14px;
-        font-size: 12.5px; letter-spacing: .05em; line-height: 1.5;
+        margin-top: 12px;
+        font-size: 12px; line-height: 16px; letter-spacing: .01em;
         color: var(--jbs-sub); text-align: center;
-        animation: jbs-fade-in .8s ease both;
-        animation-delay: calc(1.05s + var(--jbs-shift, 0s));
+        animation: jbs-fade-in .6s ease both;
+        animation-delay: calc(.48s + var(--jbs-shift, 0s));
       }
       /* Exit — added by AuthGate once the app is mounted underneath. */
       #jarvis-boot-splash.jbs-exit {
         pointer-events: none;
-        animation: jbs-exit .62s cubic-bezier(.4, 0, .2, 1) forwards;
+        animation: jbs-fade-out .5s cubic-bezier(.4, 0, .2, 1) .1s forwards;
       }
-      #jarvis-boot-splash.jbs-exit .jbs-stage {
-        animation: jbs-stage-out .62s cubic-bezier(.4, 0, .2, 1) forwards;
+      #jarvis-boot-splash.jbs-exit .jbs-group {
+        animation: jbs-step-back .36s cubic-bezier(.4, 0, 1, 1) forwards;
       }
-      #jarvis-boot-splash.jbs-exit .name,
-      #jarvis-boot-splash.jbs-exit .jbs-progress,
-      #jarvis-boot-splash.jbs-exit .sub {
-        animation: jbs-fade-out .28s ease forwards;
-      }
-      @keyframes jbs-field-in { from { opacity: 0; transform: scale(.85); } }
-      @keyframes jbs-field-drift { to { transform: translate3d(0, -1.5%, 0) scale(1.05); } }
-      @keyframes jbs-aura-in { from { opacity: 0; transform: scale(.5); } }
-      @keyframes jbs-aura-breathe { 50% { opacity: .62; transform: scale(1.07); } }
       @keyframes jbs-mark-in {
-        from { opacity: 0; transform: translateY(8px) scale(.86); filter: blur(12px); }
-        to { opacity: 1; transform: none; filter: blur(0); }
+        from { opacity: 0; transform: scale(.92); }
       }
-      @keyframes jbs-sheen {
-        0% { transform: translateX(-160%) skewX(-18deg); }
-        24%, 100% { transform: translateX(300%) skewX(-18deg); }
-      }
-      @keyframes jbs-name-in {
-        from { opacity: 0; letter-spacing: .34em; filter: blur(6px); }
-        to { opacity: 1; letter-spacing: .02em; filter: blur(0); }
-      }
+      @keyframes jbs-rise { from { opacity: 0; transform: translateY(6px); } }
       @keyframes jbs-fade-in { from { opacity: 0; } }
       @keyframes jbs-fade-out { to { opacity: 0; } }
-      @keyframes jbs-pulse { 50% { opacity: .35; } }
-      @keyframes jbs-scan {
-        from { transform: translateX(-100%); }
-        to { transform: translateX(240%); }
+      @keyframes jbs-creep { to { transform: scaleX(.3); } }
+      @keyframes jbs-glide {
+        0% { transform: translateX(-100%); }
+        60%, 100% { transform: translateX(260%); }
       }
-      @keyframes jbs-exit { 0%, 30% { opacity: 1; } 100% { opacity: 0; } }
-      @keyframes jbs-stage-out {
-        to { opacity: 0; transform: scale(1.1); filter: blur(6px); }
+      @keyframes jbs-step-back {
+        to { opacity: 0; transform: scale(.97) translateY(-4px); }
       }
       @media (prefers-reduced-motion: reduce) {
-        #jarvis-boot-splash::before,
-        #jarvis-boot-splash .jbs-aura,
         #jarvis-boot-splash .jbs-mark,
         #jarvis-boot-splash .name,
         #jarvis-boot-splash .jbs-progress,
         #jarvis-boot-splash .sub,
-        #jarvis-boot-splash.jbs-exit .jbs-stage,
-        #jarvis-boot-splash.jbs-exit .name,
-        #jarvis-boot-splash.jbs-exit .jbs-progress,
-        #jarvis-boot-splash.jbs-exit .sub { animation: none; }
-        #jarvis-boot-splash .jbs-sheen { display: none; }
-        #jarvis-boot-splash .jbs-progress span {
-          width: 100%; animation: jbs-pulse 2s ease-in-out infinite;
-        }
+        #jarvis-boot-splash .jbs-progress::after,
+        #jarvis-boot-splash.jbs-exit .jbs-group { animation: none; }
+        #jarvis-boot-splash .jbs-progress i { animation: none; --jbs-p: .3; }
+        #jarvis-boot-splash .jbs-progress.jbs-live i { transition: none; }
         #jarvis-boot-splash.jbs-exit { animation: jbs-fade-out .2s ease forwards; }
       }
       @media (max-height: 420px) {
-        #jarvis-boot-splash { --jbs-mark: 72px; }
-        #jarvis-boot-splash .name { margin-top: 18px; }
+        #jarvis-boot-splash .jbs-mark { width: 64px; height: 64px; }
+        #jarvis-boot-splash .name { margin-top: 16px; }
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-f_xDuHaJ.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DrfavODg.css">
+    <script type="module" crossorigin src="/assets/index-CVFI4DDj.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BRpQ_mMb.css">
   </head>
   <body>
     <div id="root">
       <div id="jarvis-boot-splash">
-        <div class="jbs-stage" aria-hidden="true">
-          <span class="jbs-aura"></span>
-          <div class="jbs-mark">
+        <div class="jbs-group">
+          <div class="jbs-mark" aria-hidden="true">
             <img src="/jarvis-gigi-256.png" alt="" width="256" height="256" />
-            <span class="jbs-sheen"></span>
           </div>
+          <!-- Painted synchronously by the inline script below from the cached
+               assistant name (the user's chosen wake word, e.g. "Nico"). Left
+               empty in static HTML so the very first run — before any name is
+               cached — shows only the emblem, never a hardcoded / trademarked
+               name. -->
+          <div class="name"></div>
+          <div class="jbs-progress" aria-hidden="true"><i></i></div>
+          <div class="sub" role="status" aria-live="polite">Starting up…</div>
         </div>
-        <!-- Painted synchronously by the inline script below from the cached
-             assistant name (the user's chosen wake word, e.g. "Nico"). Left
-             empty in static HTML so the very first run — before any name is
-             cached — shows only the emblem, never a hardcoded / trademarked
-             name. -->
-        <div class="name"></div>
-        <div class="jbs-progress" aria-hidden="true"><span></span></div>
-        <div class="sub" role="status" aria-live="polite">Starting up…</div>
       </div>
     </div>
     <script>
@@ -445,16 +403,16 @@
           if (!root || root.childElementCount > 0) return;
           var box = document.createElement("div");
           box.id = "jarvis-boot-splash";
-          var visual = document.createElement("div");
-          visual.className = "jbs-stage";
-          visual.setAttribute("aria-hidden", "true");
-          visual.innerHTML = '<span class="jbs-aura"></span><div class="jbs-mark">' +
-            '<img src="/jarvis-gigi-256.png" alt="" width="256" height="256">' +
-            '<span class="jbs-sheen"></span></div>';
+          var group = document.createElement("div");
+          group.className = "jbs-group";
+          var mark = document.createElement("div");
+          mark.className = "jbs-mark";
+          mark.setAttribute("aria-hidden", "true");
+          mark.innerHTML = '<img src="/jarvis-gigi-256.png" alt="" width="256" height="256">';
           var progress = document.createElement("div");
           progress.className = "jbs-progress";
           progress.setAttribute("aria-hidden", "true");
-          progress.appendChild(document.createElement("span"));
+          progress.appendChild(document.createElement("i"));
           var name = document.createElement("div");
           name.className = "name";
           try {
@@ -466,10 +424,11 @@
           sub.className = "sub";
           sub.setAttribute("role", "status");
           sub.textContent = "Updating interface…";
-          box.appendChild(visual);
-          box.appendChild(name);
-          box.appendChild(progress);
-          box.appendChild(sub);
+          group.appendChild(mark);
+          group.appendChild(name);
+          group.appendChild(progress);
+          group.appendChild(sub);
+          box.appendChild(group);
           root.appendChild(box);
         }
 
