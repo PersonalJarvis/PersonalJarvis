@@ -5,8 +5,8 @@
 <h2 align="center">Your personal AI ecosystem. One desktop, connected by voice.</h2>
 
 <p align="center">
-  Talk to Jarvis. Work with your agents. Bring your tools, models, and knowledge together.<br />
-  An open-source workspace for conversations and the work that follows.
+  Talk to it, run coding agents side by side, and let it use your browser and desktop.<br />
+  Free and open source for Windows, macOS, and Linux. Bring any model provider or run local models.
 </p>
 
 <p align="center">
@@ -14,6 +14,55 @@
   <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE"><img alt="Apache 2.0" src="https://img.shields.io/badge/License-Apache_2.0-F7F7F4?labelColor=0A0A0A" /></a>
   <a href="https://discord.gg/x7USduHxbc"><img alt="Join Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&amp;logoColor=white" /></a>
 </p>
+
+<p align="center">
+  <a href="#install"><b>Install</b></a> ·
+  <a href="#jarvis-your-voice-orchestrator">See how it works</a> ·
+  <a href="https://personaljarvis.ai">Website</a> ·
+  <a href="https://discord.gg/x7USduHxbc">Discord</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.mp4">
+    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.gif" alt="Illustrative desktop conversation: the app window and sidebar stay visible as Hey George activates listening, followed by a project-planning exchange" width="1000" />
+  </a>
+</p>
+
+<p align="center">
+  <sub>Illustrative recreation of the interface. Click it for the 60 fps video.</sub>
+</p>
+
+<p align="center">
+  If Personal Jarvis is useful to you, a star helps other people find it.
+</p>
+
+## Install
+
+**Windows — PowerShell**
+
+```powershell
+irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex
+```
+
+**macOS and Linux**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
+```
+
+The installer checks Python 3.11+ and Git, offers to install missing prerequisites
+through the host package manager, installs the applicable desktop components,
+registers the desktop launcher, and opens the app. Language, wake phrase, and provider setup happen in the app.
+OS permissions and hardware capabilities affect voice and desktop control.
+Re-running the installer updates an existing installation.
+
+Personal Jarvis is free and open source. Hosted models, coding subscriptions,
+and optional services are billed by their respective providers. Supported local
+models do not require a cloud model account.
+
+[Full installation, platform requirements, and uninstall instructions](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/install/README.md).
+
+## What Personal Jarvis is
 
 **Personal Jarvis is an open-source AI ecosystem that runs on your own computer.**
 At its center is Jarvis, a voice orchestrator that connects a conversation to
@@ -46,40 +95,6 @@ and [how the system fits together](#how-it-works).
 [Discord](https://discord.gg/x7USduHxbc) · [X](https://x.com/Ruben_Luetke) ·
 [Instagram](https://www.instagram.com/personaljarvis/)
 
-**Build with us.** Personal Jarvis spans a Python/FastAPI backend, a React/TypeScript
-desktop interface, voice, agents, and OS integrations. If you want to improve a
-specific part and help maintain it over time, start with a scoped issue or PR.
-[Choose a contribution](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md#choose-a-first-contribution) ·
-[Set up a development checkout](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md#development-setup) ·
-[See the architecture](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/architecture-overview.md) ·
-[Discuss an approach](https://github.com/PersonalJarvis/PersonalJarvis/discussions)
-
-## Install
-
-**Windows — PowerShell**
-
-```powershell
-irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex
-```
-
-**macOS and Linux**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
-```
-
-The installer checks Python 3.11+ and Git, offers to install missing prerequisites
-through the host package manager, installs the applicable desktop components,
-registers the desktop launcher, and opens the app. Language, wake phrase, and provider setup happen in the app.
-OS permissions and hardware capabilities affect voice and desktop control.
-Re-running the installer updates an existing installation.
-
-Personal Jarvis is free and open source. Hosted models, coding subscriptions,
-and optional services are billed by their respective providers. Supported local
-models do not require a cloud model account.
-
-[Full installation, platform requirements, and uninstall instructions](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/install/README.md).
-
 ## Jarvis: your voice orchestrator
 
 Start a **Voice Chat**, tap the voice bar, or use your configured wake phrase.
@@ -99,13 +114,7 @@ under Jarvis's control.
 <br />
 
 <p align="center">
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.mp4">
-    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.gif" alt="Illustrative desktop conversation: the app window and sidebar stay visible as Hey George activates listening, followed by a project-planning exchange" width="1000" />
-  </a>
-</p>
-
-<p align="center">
-  <sub>“Hey George” → listening → conversation. The desktop window and navigation stay in view.</sub>
+  <sub>The demo at the top of this page shows this flow.</sub>
 </p>
 
 The demos on this page are **Remotion recreations of the interface with
