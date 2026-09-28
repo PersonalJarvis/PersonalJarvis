@@ -101,7 +101,7 @@ export function Desk({ face }: { face: ScreenFace }) {
       <mesh position={[0, 1.18, -0.212]} material={screenMaterial(face)}>
         <planeGeometry args={[0.66, 0.38]} />
       </mesh>
-      <Box size={[0.42, 0.02, 0.14]} position={[0, 0.78, 0.1]} material={MAT.keyboard} />
+      <Box size={[0.42, 0.02, 0.14]} position={[0, 0.78, 0.24]} material={MAT.keyboard} />
       <Chair />
     </group>
   );
@@ -110,7 +110,7 @@ export function Desk({ face }: { face: ScreenFace }) {
 /** Office swivel chair behind the desk (local +z side). */
 export function Chair() {
   return (
-    <group position={[0, 0, 0.72]}>
+    <group position={[0, 0, 0.62]}>
       <mesh geometry={GEO.cyl} material={MAT.chair} position={[0, 0.03, 0]} scale={[0.3, 0.04, 0.3]} castShadow />
       <mesh geometry={GEO.cyl} material={MAT.chair} position={[0, 0.25, 0]} scale={[0.03, 0.42, 0.03]} />
       <Rounded size={[0.5, 0.08, 0.48]} radius={0.03} position={[0, 0.48, 0]} material={MAT.chairSeat} />

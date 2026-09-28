@@ -14,7 +14,7 @@ import type { ScreenFace } from "./screenTextures";
 
 interface Part { geometry: BufferGeometry; material: Material; position: [number, number, number]; scale?: [number, number, number]; cast: boolean }
 
-const CHAIR_Z = 0.72;
+const CHAIR_Z = 0.62;
 const rounded = (w: number, h: number, d: number, r: number) => new RoundedBoxGeometry(w, h, d, 2, r);
 
 const PARTS: Part[] = [
@@ -25,7 +25,7 @@ const PARTS: Part[] = [
   { geometry: GEO.box, material: MAT.monitor, position: [0, 0.87, -0.22], scale: [0.08, 0.2, 0.08], cast: true },
   { geometry: GEO.box, material: MAT.monitor, position: [0, 0.78, -0.22], scale: [0.24, 0.02, 0.16], cast: true },
   { geometry: rounded(0.72, 0.44, 0.05, 0.02), material: MAT.monitor, position: [0, 1.18, -0.24], cast: true },
-  { geometry: GEO.box, material: MAT.keyboard, position: [0, 0.78, 0.1], scale: [0.42, 0.02, 0.14], cast: true },
+  { geometry: GEO.box, material: MAT.keyboard, position: [0, 0.78, 0.24], scale: [0.42, 0.02, 0.14], cast: true },
   { geometry: GEO.cyl, material: MAT.chair, position: [0, 0.03, CHAIR_Z], scale: [0.3, 0.04, 0.3], cast: true },
   { geometry: GEO.cyl, material: MAT.chair, position: [0, 0.25, CHAIR_Z], scale: [0.03, 0.42, 0.03], cast: false },
   { geometry: rounded(0.5, 0.08, 0.48, 0.03), material: MAT.chairSeat, position: [0, 0.48, CHAIR_Z], cast: true },

@@ -11,6 +11,7 @@ import {
   CircleGeometry, CylinderGeometry, DoubleSide, MeshStandardMaterial, Vector3,
   type Group, type Mesh, type MeshBasicMaterial,
 } from "three";
+import { useT } from "@/i18n";
 import { plateScale } from "./OfficeAgents";
 import { cachedCanvasTexture } from "./OfficeProps";
 import type { Checkpoint } from "./officeLayout";
@@ -119,29 +120,38 @@ export function CheckpointMarker({ checkpoint, label, icon, active, animate, onA
   const world = useMemo(() => new Vector3(), []);
   // A per-checkpoint phase so the tokens do not bob in lockstep.
   const phase = useMemo(() => [...checkpoint.id].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 7, [checkpoint.id]);
+  const t = useT();
+  const hint = t(`society.office.cp_${checkpoint.id}_hint`);
   const face = faceMaterial(icon);
   const ringOpacity = active ? 0.95 : 0.6;
   const fillOpacity = active ? 0.16 : 0.07;
 
   useFrame(({ clock, camera }, delta) => {
-    const t = clock.elapsedTime + phase;
+    const time = clock.elapsedTime + phase;
     if (token.current) {
+      // Turn the icon face towards the camera (a full spin showed it edge-on half
+      // the time); animation only adds a gentle bob and sway around that.
+      const toCamera = Math.atan2(camera.position.x - checkpoint.x, camera.position.z - checkpoint.z);
       if (animate) {
-        token.current.position.y = TOKEN_Y + Math.sin(t * 1.8) * 0.07;
-        token.current.rotation.y += delta * (active ? 1.2 : 0.6);
+        token.current.position.y = TOKEN_Y + Math.sin(time * 1.8) * 0.07;
+        const sway = Math.sin(time * (active ? 2.2 : 1.1)) * (active ? 0.45 : 0.3);
+        const goal = toCamera + sway;
+        // Ease towards the goal along the shorter way round, so orbiting never snaps it.
+        const diff = Math.atan2(Math.sin(goal - token.current.rotation.y), Math.cos(goal - token.current.rotation.y));
+        token.current.rotation.y += diff * Math.min(1, delta * 6);
       } else {
         token.current.position.y = TOKEN_Y;
-        token.current.rotation.y = Math.PI / 4;
+        token.current.rotation.y = toCamera;
       }
     }
     if (ring.current) {
       const material = ring.current.material as MeshBasicMaterial;
-      material.opacity = animate && active ? 0.75 + Math.sin(t * 4) * 0.2 : ringOpacity;
+      material.opacity = animate && active ? 0.75 + Math.sin(time * 4) * 0.2 : ringOpacity;
     }
     if (pulse.current) {
       const material = pulse.current.material as MeshBasicMaterial;
       if (animate && active) {
-        const k = (t % 1.6) / 1.6;
+        const k = (time % 1.6) / 1.6;
         pulse.current.visible = true;
         pulse.current.scale.setScalar(1 + k * 0.35);
         material.opacity = 0.6 * (1 - k);
@@ -199,9 +209,14 @@ export function CheckpointMarker({ checkpoint, label, icon, active, animate, onA
       <group ref={anchor} position={[0, LABEL_Y, 0]}>
         <Html center zIndexRange={[20, 0]}>
           <button ref={pill} type="button" data-office-ui className="office-checkpoint" data-active={active ? "true" : "false"}
+            aria-label={hint ? `${label}: ${hint}` : label} title={hint || undefined}
             onClick={(event) => { event.stopPropagation(); onActivate(); }}>
             <span className="office-checkpoint-badge"><IconSvg icon={icon} /></span>
-            <span className="office-checkpoint-label">{label}</span>
+            <span className="office-checkpoint-text">
+              <span className="office-checkpoint-label">{label}</span>
+              {/* Up close, say what the place does, not only what it is called. */}
+              {active && hint ? <span className="office-checkpoint-hint">{hint}</span> : null}
+            </span>
           </button>
         </Html>
       </group>

@@ -136,7 +136,7 @@ export const BENCH_DEPTH_Z = 4.2;
 export const DESK_HALF_GAP = 0.45;
 export const DESK_SIZE = { w: 1.5, d: 0.8 } as const;
 /** Chair centre behind a desk, along the agent's back direction. */
-export const SEAT_OFFSET = 0.72;
+export const SEAT_OFFSET = 0.62;
 export const DESKS_PER_ROW = 4;
 const SEATS_PER_BENCH = DESKS_PER_ROW * 2;
 const MIN_BENCHES = 1;
@@ -263,6 +263,16 @@ function wallsOf(room: Room): WallSegment[] {
     push(cursor, end);
   }
   return out;
+}
+
+/** The free-standing name arch of an open (unwalled) room: two posts on its north edge. */
+export const ARCH = { halfSpan: 0.95, inset: 0.25, post: 0.08 } as const;
+
+/** Post centres of an open room's name arch; the renderer and navigation share them. */
+export function archPosts(room: Rect): Point[] {
+  const cx = (room.minX + room.maxX) / 2;
+  const z = room.minZ + ARCH.inset;
+  return [{ x: cx - ARCH.halfSpan, z }, { x: cx + ARCH.halfSpan, z }];
 }
 
 function wallRect(w: WallSegment): Rect {
@@ -428,6 +438,10 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[]): OfficeLa
     // Department sign walls along each department's north edge.
     ...departments.map((d) => ({ minX: d.minX + 0.2, maxX: d.maxX - 0.2, minZ: d.minZ + 0.02, maxZ: d.minZ + 0.2 })),
     ...furniture.filter((f) => FURNITURE_SIZE[f.kind].solid).map(footprint),
+    // The posts of an open room's name arch are solid too; nobody walks through them.
+    ...rooms.filter((r) => !r.walled).flatMap(archPosts).map((p) => ({
+      minX: p.x - ARCH.post / 2, maxX: p.x + ARCH.post / 2, minZ: p.z - ARCH.post / 2, maxZ: p.z + ARCH.post / 2,
+    })),
   ];
 
   const floor = { minX: minX - EDGE + 0.35, maxX: maxX + EDGE - 0.35, minZ: topZ - EDGE + 0.35, maxZ: bottomZ + EDGE - 0.35 };

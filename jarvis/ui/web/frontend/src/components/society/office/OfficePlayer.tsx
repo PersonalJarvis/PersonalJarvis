@@ -7,14 +7,19 @@ import { useEffect, useMemo, useRef } from "react";
 import { Html } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import { DoubleSide, Vector3, type Group, type Mesh, type MeshBasicMaterial } from "three";
-import { FigureRig, type FigureDrive } from "../figures/FigureRig";
-import type { FigureRecipe } from "../figures/figureRecipe";
+import type { FigureDrive } from "../figures/FigureRig";
+import { ToyFigure } from "./ToyFigure";
+import type { ToyLook } from "./toyFigureModel";
 import { findPath, isWalkable, nearestWalkable, type NavGrid } from "./officeNav";
-import { RUN_SPEED, stepMover, turnToward, WALK_SPEED } from "./officeMotion";
+import { stepMover, turnToward } from "./officeMotion";
 import { player, sameSelection, useOfficeStore, type Selection } from "./officeStore";
 import { agentPositions } from "./walkerRegistry";
 import { OFFICE_FIGURE_HEIGHT_M } from "./OfficeAgents";
 import type { OfficeLayout } from "./officeLayout";
+
+/** The person's pace: a brisk walk, and a sprint on Shift (m/s). */
+export const PLAYER_WALK_SPEED = 2.0;
+export const PLAYER_SPRINT_SPEED = 4.4;
 
 /** Talk range to an agent, in metres. */
 export const AGENT_TALK_RANGE = 1.8;
@@ -79,8 +84,8 @@ function nearestInteractable(layout: OfficeLayout): Selection | null {
   return best;
 }
 
-export function OfficePlayer({ layout, grid, recipe, name, awake, reduced }: {
-  layout: OfficeLayout; grid: NavGrid; recipe: FigureRecipe; name: string; awake: boolean; reduced: boolean;
+export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
+  layout: OfficeLayout; grid: NavGrid; look: ToyLook; name: string; awake: boolean; reduced: boolean;
 }) {
   const group = useRef<Group>(null);
   const ring = useRef<Mesh>(null);
@@ -112,7 +117,7 @@ export function OfficePlayer({ layout, grid, recipe, name, awake, reduced }: {
     // Keyboard movement, relative to where the camera looks.
     let ix = 0, iz = 0;
     for (const code of pressed.current) { ix += MOVE_KEYS[code][0]; iz += MOVE_KEYS[code][1]; }
-    const speed = run.current ? RUN_SPEED : WALK_SPEED;
+    const speed = run.current ? PLAYER_SPRINT_SPEED : PLAYER_WALK_SPEED;
     let moved = 0;
     if (ix !== 0 || iz !== 0) {
       player.path = [];
@@ -156,7 +161,7 @@ export function OfficePlayer({ layout, grid, recipe, name, awake, reduced }: {
         <ringGeometry args={[0.42, 0.52, 40]} />
         <meshBasicMaterial color="#f5b83d" transparent opacity={0.8} side={DoubleSide} depthWrite={false} />
       </mesh>
-      <FigureRig recipe={recipe} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} />
+      <ToyFigure look={look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} />
       <Html center position={[0, OFFICE_FIGURE_HEIGHT_M + 0.35, 0]} zIndexRange={[25, 0]}>
         <span className="office-plate office-plate-player" data-office-ui>
           <span className="office-plate-badge" style={{ background: "#f5b83d" }} aria-hidden>★</span>

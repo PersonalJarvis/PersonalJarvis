@@ -81,12 +81,17 @@ describe("planFor", () => {
 
   it("answers a call by walking up to the caller and talking", () => {
     const caller = layout.checkpoints.find((c) => c.id === "create")!;
-    const plan = planFor(input("a3", "working", { calledTo: caller }));
+    const plan = planFor(input("a3", "idle", { calledTo: caller }));
     expect(plan.kind).toBe("called");
     expect(plan.pose).toBe("talk");
     expect(plan.dwellMs).toBe(15000);
     expect(isWalkable(grid, plan.target)).toBe(true);
     expect(Math.hypot(plan.target.x - caller.x, plan.target.z - caller.z)).toBeLessThan(2);
+  });
+
+  it("keeps a working agent at its screen even when called", () => {
+    const caller = layout.checkpoints.find((c) => c.id === "create")!;
+    expect(planFor(input("a3", "working", { calledTo: caller })).kind).toBe("work");
   });
 
   function idleSequence(seed: string, steps: number, colleagues: PlanInput["workingColleagues"] = []): ActivityKind[] {

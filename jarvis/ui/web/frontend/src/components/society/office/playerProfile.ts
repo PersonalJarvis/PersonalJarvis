@@ -7,12 +7,27 @@
  */
 import { CATALOG } from "../figures/figureRegistry";
 import { shufflePalette, type FigureRecipe } from "../figures/figureRecipe";
+import { toyLookFor, type HairStyle, type ToyLook } from "./toyFigureModel";
 
 const STORAGE_KEY = "jarvis.office.player.v1";
 
 export interface PlayerProfile {
   name: string;
   recipe: FigureRecipe;
+  /** The toy figure's hair; absent means the stable default from the player's identity. */
+  hairStyle?: HairStyle;
+}
+
+export const HAIR_STYLES: readonly HairStyle[] = ["short", "spiky", "bun", "curly", "long", "beanie", "cap", "bald"];
+
+/** The look the office draws for the person. */
+export function playerLook(profile: PlayerProfile): ToyLook {
+  const look = toyLookFor(profile.recipe, "office-player");
+  return profile.hairStyle ? { ...look, hairStyle: profile.hairStyle } : look;
+}
+
+export function withHairStyle(profile: PlayerProfile, hairStyle: HairStyle): PlayerProfile {
+  return { ...profile, hairStyle };
 }
 
 /** Bodies offered in the wardrobe: two-legged, first-party, not reserved. */
@@ -43,6 +58,7 @@ export function loadProfile(): PlayerProfile {
     return {
       name: typeof parsed.name === "string" ? parsed.name.slice(0, 40) : fallback.name,
       recipe: isRecipe(parsed.recipe) ? parsed.recipe : fallback.recipe,
+      hairStyle: HAIR_STYLES.includes(parsed.hairStyle as HairStyle) ? parsed.hairStyle : undefined,
     };
   } catch (error) {
     // Blocked storage (private window, thumbnail capture): the default look is the honest answer.

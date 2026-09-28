@@ -6,7 +6,7 @@
  */
 import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Canvas } from "@react-three/fiber";
+import { advance, Canvas } from "@react-three/fiber";
 import { useReducedMotion } from "framer-motion";
 import { useCanvasAwake } from "@/hooks/useCanvasAwake";
 import { useWebglSurface } from "@/hooks/useWebglSurface";
@@ -18,9 +18,12 @@ import { allDesks, buildOfficeLayout, countStates, MAX_SEATED } from "./officeLa
 import { buildNavGrid } from "./officeNav";
 import { SpotBook } from "./officeBehavior";
 import { CAMERA_FOV } from "./officeCamera";
+import { ZOOM_SECONDS } from "./OfficeCameraRig";
+import { useDeskChats } from "./useDeskChats";
+import type { Point } from "./officeLayout";
 import { player, useOfficeStore } from "./officeStore";
-import { knownAgents } from "./walkerRegistry";
-import { loadProfile, saveProfile, type PlayerProfile } from "./playerProfile";
+import { agentPositions, knownAgents, seatedAtDesk } from "./walkerRegistry";
+import { loadProfile, playerLook, saveProfile, type PlayerProfile } from "./playerProfile";
 import { AgentPanel, CheckpointPanel, type OfficeActions } from "./OfficePanels";
 import type { WalkerContext } from "./OfficeAgents";
 import { ownsKeyboard } from "./OfficePlayer";
@@ -28,7 +31,9 @@ import "./office.css";
 import "./officeHud.css";
 
 // Dev-only handles for runtime checks of walking and panels.
-if (import.meta.env.DEV && typeof window !== "undefined") Object.assign(window, { __officeStore: useOfficeStore, __officePlayer: player });
+if (import.meta.env.DEV && typeof window !== "undefined") Object.assign(window, { __officeStore: useOfficeStore, __officePlayer: player, __officeAgents: agentPositions, __officeSeated: seatedAtDesk,
+  // Steps the scene without requestAnimationFrame (hidden test tabs): __officeStep(frames, dtMs).
+  __officeStep: (frames = 60, dtMs = 16) => { let t = performance.now(); for (let i = 0; i < frames; i += 1) { t += dtMs; advance(t); } } });
 
 /** Status refresh while the office is on screen; jittered so windows never poll in lockstep (AP-33). */
 const REFRESH_MS = 5000;
@@ -124,6 +129,20 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     };
   }, [layout, grid, book]);
 
+  const sessions = useMemo(() => new Map(active.filter((a) => a.chatSessionId).map((a) => [a.agentId, a.chatSessionId as string])), [active]);
+  const chats = useDeskChats(sessions, awake);
+  // Clicking a monitor dives into it, then opens that agent's chat.
+  const openTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(openTimer.current), []);
+  const openScreen = useCallback((agentId: string, screen: Point & { y: number }, facing: number) => {
+    const eye: [number, number, number] = [screen.x + Math.sin(facing) * 0.62, screen.y + 0.02, screen.z + Math.cos(facing) * 0.62];
+    select(null);
+    clearTimeout(openTimer.current);
+    if (reduced) { onSelectAgent?.(agentId); return; }
+    useOfficeStore.getState().zoomInto(eye, [screen.x, screen.y, screen.z]);
+    openTimer.current = setTimeout(() => onSelectAgent?.(agentId), ZOOM_SECONDS * 1000 + 120);
+  }, [onSelectAgent, reduced, select]);
+
   const counts = countStates(active);
   const updateProfile = useCallback((next: PlayerProfile) => { setProfile(next); saveProfile(next); }, []);
   const actions = useMemo<OfficeActions>(() => ({
@@ -161,7 +180,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   const nearbyLabel = nearby
     ? nearby.kind === "agent"
       ? t("society.office.prompt_agent").replace("{0}", agents.get(nearby.id)?.name ?? "")
-      : t("society.office.prompt_checkpoint").replace("{0}", t(`society.office.cp_${nearby.id}`))
+      : t(`society.office.cp_${nearby.id}_hint`)
     : null;
   const playerName = profile.name.trim() || t("society.office.you");
 
@@ -176,8 +195,8 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
                 frameloop={!awake ? "never" : "always"}
                 onPointerMissed={() => select(null)}>
                 <OfficeScene layout={layout} grid={grid} walkers={walkers} agents={agents} newcomers={newcomers}
-                  awake={awake} reduced={reduced} overview={overview} player={{ recipe: profile.recipe, name: playerName }}
-                  selection={selection} nearby={nearby} />
+                  awake={awake} reduced={reduced} overview={overview} player={{ look: playerLook(profile), name: playerName }}
+                  selection={selection} nearby={nearby} chats={chats} onOpenScreen={openScreen} />
               </Canvas>
             </Suspense>
           </RenderBoundary>
@@ -192,7 +211,8 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
         <div className="office-card office-counts" role="status" aria-live="polite">
           <span data-tone="working"><i aria-hidden />{t("society.office.count_working").replace("{0}", String(counts.working))}</span>
           <span data-tone="waiting"><i aria-hidden />{t("society.office.count_waiting").replace("{0}", String(counts.waiting))}</span>
-          <span data-tone="idle"><i aria-hidden />{t("society.office.count_idle").replace("{0}", String(counts.idle + counts.paused))}</span>
+          <span data-tone="idle"><i aria-hidden />{t("society.office.count_idle").replace("{0}", String(counts.idle))}</span>
+          {counts.paused > 0 && <span data-tone="paused"><i aria-hidden />{t("society.office.count_paused").replace("{0}", String(counts.paused))}</span>}
         </div>
         {roster.data?.sample && <p className="office-card office-note">{t("society.office.sample")}</p>}
         {active.length > MAX_SEATED && <p className="office-card office-note">{t("society.office.overflow").replace("{0}", String(MAX_SEATED))}</p>}

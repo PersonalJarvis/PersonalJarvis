@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { allDesks, buildOfficeLayout, countStates, departmentKey, groupDepartments, MAX_DEPARTMENTS, MIN_DEPARTMENTS, type OfficeAgentInput } from "./officeLayout";
+import {
+  allDesks, archPosts, buildOfficeLayout, countStates, departmentKey, FURNITURE_SIZE, footprint, groupDepartments,
+  MAX_DEPARTMENTS, MIN_DEPARTMENTS, type OfficeAgentInput,
+} from "./officeLayout";
 import { cameraHome, fitDistance, focusBounds } from "./officeCamera";
 
 const agent = (id: string, provider: string, extra: Partial<OfficeAgentInput> = {}): OfficeAgentInput => ({
@@ -53,6 +56,25 @@ describe("office layout", () => {
     const layout = buildOfficeLayout([]);
     expect(layout.departments).toHaveLength(MIN_DEPARTMENTS);
     expect(layout.departments.every((d) => d.label === "" && d.desks.length > 0)).toBe(true);
+  });
+
+  it("makes the posts of an open room's name arch solid", () => {
+    const layout = buildOfficeLayout([agent("a1", "Codex")]);
+    const open = layout.rooms.filter((r) => !r.walled);
+    expect(open.length).toBeGreaterThan(0);
+    for (const post of open.flatMap(archPosts)) {
+      const covered = layout.obstacles.some((o) => post.x >= o.minX && post.x <= o.maxX && post.z >= o.minZ && post.z <= o.maxZ);
+      expect(covered).toBe(true);
+    }
+  });
+
+  it("keeps every checkpoint centre clear of solid furniture", () => {
+    const layout = buildOfficeLayout(Array.from({ length: 12 }, (_, i) => agent(`a${i}`, i % 2 ? "Codex" : "Gemini")));
+    const solid = layout.furniture.filter((f) => FURNITURE_SIZE[f.kind].solid).map(footprint);
+    for (const cp of layout.checkpoints) {
+      const inside = solid.some((o) => cp.x >= o.minX && cp.x <= o.maxX && cp.z >= o.minZ && cp.z <= o.maxZ);
+      expect(inside, cp.id).toBe(false);
+    }
   });
 
   it("counts states", () => {

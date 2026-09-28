@@ -24,6 +24,9 @@ interface OfficeState {
   /** One-shot camera fly-to request, consumed by the camera rig. */
   focus: { point: Point; seq: number } | null;
   summons: Record<string, Summon>;
+  /** One-shot camera dive into a desk monitor (then the chat opens), consumed by the camera rig. */
+  zoom: { eye: [number, number, number]; target: [number, number, number]; seq: number } | null;
+  zoomInto: (eye: [number, number, number], target: [number, number, number]) => void;
   /** Walk the character to this point (click-to-move / "walk there"), consumed by the player. */
   walkTo: { point: Point; seq: number } | null;
   /** Agents picked for a new team, carried from agent panels to the team room. */
@@ -48,6 +51,8 @@ export const useOfficeStore = create<OfficeState>((set) => ({
   focus: null,
   summons: {},
   walkTo: null,
+  zoom: null,
+  zoomInto: (eye, target) => set({ zoom: { eye, target, seq: ++seq }, follow: false }),
   teamDraft: [],
   toggleDraft: (agentId) => set((s) => ({
     teamDraft: s.teamDraft.includes(agentId) ? s.teamDraft.filter((id) => id !== agentId) : [...s.teamDraft, agentId],
@@ -59,8 +64,10 @@ export const useOfficeStore = create<OfficeState>((set) => ({
   setFollow: (follow) => set((s) => (s.follow === follow ? s : { follow })),
   focusOn: (point) => set({ focus: { point, seq: ++seq }, follow: false }),
   summon: (agentIds, target, durationMs) => set((s) => {
-    const untilMs = Date.now() + durationMs;
-    const next = { ...s.summons };
+    const now = Date.now();
+    const untilMs = now + durationMs;
+    // Expired calls are dropped here, so the map never grows with old calls.
+    const next = Object.fromEntries(Object.entries(s.summons).filter(([, summon]) => summon.untilMs > now));
     agentIds.forEach((id, i) => {
       // Fan the group out around the target so nobody stands inside anybody.
       const angle = (i / Math.max(1, agentIds.length)) * Math.PI * 2;

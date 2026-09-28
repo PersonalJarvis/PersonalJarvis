@@ -17,6 +17,8 @@ import { player, useOfficeStore } from "./officeStore";
 /** Where the camera starts: close behind the character, south-east, looking down. */
 export const FOLLOW_DISTANCE = 15;
 const TARGET_HEIGHT = 0.8;
+/** How long the dive into a monitor takes before the chat opens. */
+export const ZOOM_SECONDS = 0.9;
 
 export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; overview: number }) {
   const controls = useRef<OrbitControlsImpl>(null);
@@ -25,6 +27,10 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
   const lastFocus = useRef(0);
+  const lastZoom = useRef(0);
+  const backOff = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(backOff.current), []);
+  const dive = useRef<{ fromEye: Vector3; toEye: Vector3; fromTarget: Vector3; toTarget: Vector3; t: number } | null>(null);
   const flight = useRef<{ from: Vector3; to: Vector3; t: number } | null>(null);
   const desired = useRef(new Vector3());
   const delta = useRef(new Vector3());
@@ -68,6 +74,34 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
     if (!c) return;
     const dt = Math.min(rawDt, 0.1);
     const store = useOfficeStore.getState();
+    if (store.zoom && store.zoom.seq !== lastZoom.current) {
+      lastZoom.current = store.zoom.seq;
+      flight.current = null;
+      dive.current = { fromEye: camera.position.clone(), toEye: new Vector3(...store.zoom.eye),
+        fromTarget: c.target.clone(), toTarget: new Vector3(...store.zoom.target), t: 0 };
+      // Orbit limits (minimum distance, pitch) would stop the camera short of the glass.
+      c.enabled = false;
+    }
+    if (dive.current) {
+      // Dive: eye and target travel together into the monitor, easing in at the end.
+      const d = dive.current;
+      d.t = Math.min(1, d.t + dt / ZOOM_SECONDS);
+      const ease = 1 - (1 - d.t) ** 3;
+      camera.position.lerpVectors(d.fromEye, d.toEye, ease);
+      c.target.lerpVectors(d.fromTarget, d.toTarget, ease);
+      camera.lookAt(c.target);
+      if (d.t >= 1) {
+        dive.current = null;
+        // If the chat does not take over (no handler), hand the camera back a step away.
+        backOff.current = setTimeout(() => {
+          const away = camera.position.clone().sub(c.target).setLength(CAMERA_LIMITS.minDistance + 1);
+          camera.position.copy(c.target).add(away);
+          c.enabled = true;
+          c.update();
+        }, 1500);
+      }
+      return;
+    }
     if (store.focus && store.focus.seq !== lastFocus.current) {
       lastFocus.current = store.focus.seq;
       flight.current = { from: c.target.clone(), to: new Vector3(store.focus.point.x, TARGET_HEIGHT, store.focus.point.z), t: 0 };

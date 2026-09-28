@@ -7,7 +7,7 @@ import { useEffect, useMemo } from "react";
 import { MeshStandardMaterial, RepeatWrapping, type Texture } from "three";
 import { Box, MAT, Rounded } from "./OfficeFurniture";
 import { cachedCanvasTexture } from "./OfficeProps";
-import type { Door, Room, RoomKind, WallSegment } from "./officeLayout";
+import { ARCH, archPosts, type Door, type Room, type RoomKind, type WallSegment } from "./officeLayout";
 import { OFFICE, ROOM_FLOOR_COLOURS } from "./officePalette";
 
 // ---------------------------------------------------------------------------
@@ -168,10 +168,20 @@ function signMaterial(label: string): MeshStandardMaterial {
       ctx.fillStyle = OFFICE.signBoard;
       ctx.fillRect(0, 0, w, h);
       ctx.fillStyle = OFFICE.signText;
-      ctx.font = "600 56px system-ui, -apple-system, 'Segoe UI', sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(label.length > 16 ? `${label.slice(0, 15)}…` : label, w / 2, h / 2 + 2);
+      // Shrink long names (e.g. "Despacho del líder") to fit before cutting them off.
+      const room = w - 32;
+      let size = 56;
+      const font = (px: number) => `600 ${px}px system-ui, -apple-system, 'Segoe UI', sans-serif`;
+      ctx.font = font(size);
+      while (size > 34 && ctx.measureText(label).width > room) {
+        size -= 2;
+        ctx.font = font(size);
+      }
+      let text = label;
+      while (text.length > 1 && ctx.measureText(text).width > room) text = text.slice(0, -1);
+      ctx.fillText(text === label ? label : `${text.slice(0, -1).trimEnd()}…`, w / 2, h / 2 + 2);
     });
     material = new MeshStandardMaterial({ color: map ? "#ffffff" : OFFICE.signBoard, map, roughness: 0.8 });
     signMaterials.set(label, material);
@@ -219,11 +229,15 @@ export function RoomSign({ room, label }: { room: Room; label: string }) {
     );
   }
   const archY = 2.3;
+  const postH = archY + SIGN_H / 2;
+  // Post positions come from the layout, which also makes them navigation obstacles.
+  const [west, east] = archPosts(room);
+  const cx = (west.x + east.x) / 2;
   return (
-    <group position={[(room.minX + room.maxX) / 2, 0, room.minZ + 0.25]}>
-      <Box size={[0.08, archY + SIGN_H / 2, 0.08]} position={[-0.95, (archY + SIGN_H / 2) / 2, 0]} material={MAT.woodDark} />
-      <Box size={[0.08, archY + SIGN_H / 2, 0.08]} position={[0.95, (archY + SIGN_H / 2) / 2, 0]} material={MAT.woodDark} />
-      <Box size={[1.98, 0.06, 0.08]} position={[0, archY - SIGN_H / 2 - 0.03, 0]} material={MAT.woodDark} />
+    <group position={[cx, 0, west.z]}>
+      <Box size={[ARCH.post, postH, ARCH.post]} position={[west.x - cx, postH / 2, 0]} material={MAT.woodDark} />
+      <Box size={[ARCH.post, postH, ARCH.post]} position={[east.x - cx, postH / 2, 0]} material={MAT.woodDark} />
+      <Box size={[east.x - west.x + ARCH.post, 0.06, ARCH.post]} position={[0, archY - SIGN_H / 2 - 0.03, 0]} material={MAT.woodDark} />
       <group position={[0, archY, 0]}><SignBoard label={label} /></group>
     </group>
   );

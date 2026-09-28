@@ -9,3 +9,6 @@ export const agentPositions = new Map<string, Point>();
 
 /** Agent ids the office has already seen; a newcomer arrives by the elevator. */
 export const knownAgents = new Set<string>();
+
+/** Agents sitting at their own desk right now — their monitor shows their chat. */
+export const seatedAtDesk = new Set<string>();

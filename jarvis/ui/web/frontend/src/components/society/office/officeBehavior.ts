@@ -211,7 +211,8 @@ export function planFor(input: PlanInput): Plan {
   const { agentId, state, desk, book } = input;
   book.release(agentId);
 
-  if (input.calledTo) return calledPlan(input, input.calledTo);
+  // A working agent stays at its screen: the map mirrors real work and never interrupts it, not even visually.
+  if (input.calledTo && input.state !== "working") return calledPlan(input, input.calledTo);
 
   if (state === "working") {
     if (desk) {

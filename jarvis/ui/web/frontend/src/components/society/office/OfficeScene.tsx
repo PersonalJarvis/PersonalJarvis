@@ -9,21 +9,23 @@ import type { ThreeEvent } from "@react-three/fiber";
 import { CanvasTexture, Color, RepeatWrapping, SRGBColorSpace, type Texture } from "three";
 import { useT } from "@/i18n";
 import type { SocietyAgent } from "../data";
-import type { FigureRecipe } from "../figures/figureRecipe";
+import type { ToyLook } from "./toyFigureModel";
 import { Railing, SignWall } from "./OfficeFurniture";
 import { DeskInstances } from "./DeskInstances";
+import { LiveMonitors } from "./LiveMonitors";
+import type { DeskChat } from "./useDeskChats";
 import { FurniturePiece, MeetingChairs } from "./OfficeProps";
 import { RoomFloors, RoomSign, RoomWalls } from "./OfficeRooms";
-import { CheckpointMarker } from "./CheckpointMarker";
+import { CheckpointMarker, type CheckpointIcon } from "./CheckpointMarker";
 import { OfficeAgents, type WalkerContext } from "./OfficeAgents";
 import { OfficePlayer } from "./OfficePlayer";
 import { OfficeCameraRig } from "./OfficeCameraRig";
-import { allDesks, type CheckpointKind, type Department, type OfficeLayout } from "./officeLayout";
+import { allDesks, type CheckpointKind, type Department, type OfficeLayout, type Point } from "./officeLayout";
 import type { NavGrid } from "./officeNav";
 import { DEPARTMENT_TINTS, OFFICE } from "./officePalette";
 import { useOfficeStore, type Selection } from "./officeStore";
 
-const CHECKPOINT_ICON: Record<CheckpointKind, "plus" | "list" | "team" | "shirt" | "star" | "coffee"> = {
+const CHECKPOINT_ICON: Record<CheckpointKind, CheckpointIcon> = {
   create: "plus", manage: "list", team: "team", wardrobe: "shirt", lead: "star", break: "coffee",
 };
 
@@ -115,12 +117,14 @@ export interface OfficeSceneProps {
   awake: boolean;
   reduced: boolean;
   overview: number;
-  player: { recipe: FigureRecipe; name: string };
+  player: { look: ToyLook; name: string };
   selection: Selection | null;
   nearby: Selection | null;
+  chats: ReadonlyMap<string, DeskChat>;
+  onOpenScreen: (agentId: string, screen: Point & { y: number }, facing: number) => void;
 }
 
-export function OfficeScene({ layout, grid, walkers, agents, newcomers, awake, reduced, overview, player, selection, nearby }: OfficeSceneProps) {
+export function OfficeScene({ layout, grid, walkers, agents, newcomers, awake, reduced, overview, player, selection, nearby, chats, onOpenScreen }: OfficeSceneProps) {
   const t = useT();
   const desks = useMemo(() => allDesks(layout), [layout]);
   const background = useMemo(() => new Color(OFFICE.space), []);
@@ -151,6 +155,7 @@ export function OfficeScene({ layout, grid, walkers, agents, newcomers, awake, r
       {layout.rooms.map((room) => <RoomSign key={room.id} room={room} label={t(`society.office.room_${room.kind}`)} />)}
       {layout.departments.map((dept) => <DepartmentArea key={dept.id} dept={dept} />)}
       <DeskInstances desks={desks} agents={agents} />
+      <LiveMonitors desks={desks} agents={agents} chats={chats} onOpen={onOpenScreen} />
       {layout.furniture.map((item) => <FurniturePiece key={item.id} item={item} />)}
       {table && <MeetingChairs table={table} />}
       {layout.checkpoints.map((cp) => (
@@ -158,7 +163,7 @@ export function OfficeScene({ layout, grid, walkers, agents, newcomers, awake, r
           active={(nearby?.kind === "checkpoint" && nearby.id === cp.id) || (selection?.kind === "checkpoint" && selection.id === cp.id)}
           animate={awake && !reduced} onActivate={() => select({ kind: "checkpoint", id: cp.id })} />
       ))}
-      <OfficePlayer layout={layout} grid={grid} recipe={player.recipe} name={player.name} awake={awake} reduced={reduced} />
+      <OfficePlayer layout={layout} grid={grid} look={player.look} name={player.name} awake={awake} reduced={reduced} />
       <OfficeAgents desks={desks} agents={agents} ctx={walkers} newcomers={newcomers} awake={awake} reduced={reduced}
         selectedId={selection?.kind === "agent" ? selection.id : null} onSelect={(id) => select({ kind: "agent", id })} />
       <OfficeCameraRig layout={layout} overview={overview} />

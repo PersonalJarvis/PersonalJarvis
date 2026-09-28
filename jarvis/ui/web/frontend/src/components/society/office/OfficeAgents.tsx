@@ -13,35 +13,36 @@ import { useFrame } from "@react-three/fiber";
 import { DoubleSide, Vector3, type Group, type Mesh, type MeshBasicMaterial } from "three";
 import { useT } from "@/i18n";
 import type { SocietyAgent } from "../data";
-import { FigureRig, type FigureDrive, type FigureMode } from "../figures/FigureRig";
-import { shufflePalette, type FigureRecipe } from "../figures/figureRecipe";
+import type { FigureDrive, FigureMode } from "../figures/FigureRig";
+import { ToyFigure } from "./ToyFigure";
+import { SEAT_HEIGHT, toyLookFor } from "./toyFigureModel";
 import { OFFICE } from "./officePalette";
 import type { DeskSlot, OfficeLayout, Point } from "./officeLayout";
-import { findPath, type NavGrid } from "./officeNav";
+import { findPath, isWalkable, type NavGrid } from "./officeNav";
+import { AgentFollower } from "../companion/AgentFollower";
+import { resolveCompanion } from "../companion/appearance";
+import type { TrailPoint } from "../companion/trail";
 import { stepMover, turnToward, WALK_SPEED, type Mover } from "./officeMotion";
 import { createRng, planFor, type ActivityKind, type Plan, type Pose, type SpotBook } from "./officeBehavior";
 import { useOfficeStore } from "./officeStore";
-import { agentPositions } from "./walkerRegistry";
+import { agentPositions, seatedAtDesk } from "./walkerRegistry";
+
+/** The agent's symbol walks behind it as a little pet, about a fifth of its height. */
+export const PET_SIZE_M = 0.26;
+const PET_FOLLOW_M = 0.7;
 
 /** Every figure shares one toy scale, so desks and couches read the same everywhere. */
 export const OFFICE_FIGURE_HEIGHT_M = 1.3;
 
-/** Agents without a stored character get a stable chibi look from their id. */
-export function fallbackRecipe(agentId: string): FigureRecipe {
-  let hash = 0;
-  for (const ch of agentId) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  return { contract: 1, archetype: "biped", base: "chibi", parts: {}, palette: shufflePalette((hash % 10_000) / 10_000) };
-}
-
 /** Pose → animation clip. Seated work uses the seated clip; the monitor shows the typing. */
 export const POSE_CLIP: Record<Pose, FigureMode> = { sit: "sit", work: "sit", stand: "idle", wave: "wave", talk: "talk", sleep: "sleep" };
 
-/** How far a seated figure is lifted onto its seat, per activity. */
-function seatLift(kind: ActivityKind): number {
-  if (kind === "work" || kind === "desk" || kind === "meeting") return 0.12;
-  if (kind === "couch" || kind === "nap") return 0.04;
-  if (kind === "beanbag") return -0.1;
-  return 0;
+/** The seat-top height under a seated agent, per activity; the figure puts its hips exactly there. */
+export function seatHeightFor(kind: ActivityKind): number {
+  if (kind === "couch" || kind === "nap") return SEAT_HEIGHT.couch;
+  if (kind === "beanbag") return SEAT_HEIGHT.beanbag;
+  if (kind === "meeting") return SEAT_HEIGHT.meeting;
+  return SEAT_HEIGHT.chair;
 }
 
 /** Nameplate scale by camera distance: readable up close, compact in the overview, never huge. */
@@ -99,7 +100,7 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
   agent: SocietyAgent; desk: DeskSlot | null; ctx: WalkerContext; arrivesByElevator: boolean;
   awake: boolean; reduced: boolean; selected: boolean; onSelect: (id: string) => void;
 }) {
-  const recipe = useMemo(() => agent.figure ?? fallbackRecipe(agent.agentId), [agent.figure, agent.agentId]);
+  const look = useMemo(() => toyLookFor(agent.figure, agent.agentId), [agent.figure, agent.agentId]);
   const group = useRef<Group>(null);
   const body = useRef<Group>(null);
   const ring = useRef<Mesh>(null);
@@ -113,9 +114,19 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
   const planState = useRef("");
   const summonKey = useRef("");
   const [activity, setActivity] = useState<ActivityKind | null>(null);
+  const [seatHeight, setSeatHeight] = useState<number>(SEAT_HEIGHT.chair);
 
   // Leaving the office releases the agent's spot and its registry entry.
-  useEffect(() => () => { ctx.book.release(agent.agentId); agentPositions.delete(agent.agentId); }, [ctx.book, agent.agentId]);
+  useEffect(() => () => {
+    ctx.book.release(agent.agentId);
+    agentPositions.delete(agent.agentId);
+    seatedAtDesk.delete(agent.agentId);
+  }, [ctx.book, agent.agentId]);
+  const pet = useMemo(() => ({ ...resolveCompanion(agent.agentId, agent.figure?.companion), sizeM: PET_SIZE_M, followDistanceM: PET_FOLLOW_M }),
+    [agent.agentId, agent.figure?.companion]);
+  const petClear = useMemo(() => (point: TrailPoint, radius: number) =>
+    isWalkable(ctx.grid, { x: point[0] - radius, z: point[2] }) && isWalkable(ctx.grid, { x: point[0] + radius, z: point[2] })
+    && isWalkable(ctx.grid, { x: point[0], z: point[2] - radius }) && isWalkable(ctx.grid, { x: point[0], z: point[2] + radius }), [ctx.grid]);
 
   useFrame((_, rawDt) => {
     const dt = Math.min(rawDt, 0.1);
@@ -150,9 +161,10 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
         if (phase.current === "dwell") dwellUntil.current = now + next.dwellMs;
       }
       if (next.kind !== activity) setActivity(next.kind);
+      const nextSeat = seatHeightFor(next.kind);
+      if (nextSeat !== seatHeight) setSeatHeight(nextSeat);
     }
     const p = plan.current!;
-    let lift = 0;
     if (phase.current === "travel") {
       const { moved, arrived } = awake ? stepMover(m, WALK_SPEED, dt) : { moved: 0, arrived: false };
       drive.current.mode = "walk";
@@ -162,11 +174,12 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
       if (p.facing !== null) m.heading = turnToward(m.heading, p.facing, 8 * dt);
       drive.current.mode = POSE_CLIP[p.pose];
       drive.current.speed = 0;
-      if (p.pose === "sit" || p.pose === "work" || p.pose === "sleep") lift = seatLift(p.kind);
     }
     agentPositions.set(agent.agentId, { x: m.x, z: m.z });
+    if (phase.current === "dwell" && (p.kind === "work" || p.kind === "desk")) seatedAtDesk.add(agent.agentId);
+    else seatedAtDesk.delete(agent.agentId);
     if (group.current) group.current.position.set(m.x, 0, m.z);
-    if (body.current) { body.current.rotation.y = m.heading; body.current.position.y = lift; }
+    if (body.current) body.current.rotation.y = m.heading;
     if (ring.current) {
       const material = ring.current.material as MeshBasicMaterial;
       material.opacity = agent.state === "working" && awake && !reduced ? 0.55 + Math.sin(now / 330) * 0.3 : 0.8;
@@ -175,6 +188,7 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
   });
 
   return (
+    <>
     <group ref={group} userData={{ agentId: agent.agentId }}>
       <mesh ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
         <ringGeometry args={[selected ? 0.4 : 0.46, 0.54, 40]} />
@@ -184,10 +198,12 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
         onClick={(event) => { event.stopPropagation(); onSelect(agent.agentId); }}
         onPointerOver={() => { document.body.style.cursor = "pointer"; }}
         onPointerOut={() => { document.body.style.cursor = ""; }}>
-        <FigureRig recipe={recipe} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} />
+        <ToyFigure look={look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} seatHeight={seatHeight} />
       </group>
       <Nameplate agent={agent} activity={activity} selected={selected} onSelect={onSelect} />
     </group>
+    <AgentFollower owner={group} appearance={pet} paused={!awake || reduced} lead={agent.tier === "lead"} clear={petClear} />
+    </>
   );
 }
 
