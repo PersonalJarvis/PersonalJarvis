@@ -650,6 +650,10 @@ describe("ChatStage (agent chat)", () => {
     ]);
     useAgentChatStore.setState({ activeSessionId: "s5", timeline });
     render(<ChatStage />);
+    const fold = screen.queryByTestId("conversation-work-fold");
+    if (fold) fireEvent.click(within(fold).getByRole("button"));
+    const activity = document.querySelector<HTMLElement>("[data-trace-summary]");
+    if (activity) fireEvent.click(within(activity).getByRole("button"));
 
     const [shell, grep] = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-tool]"));
     fireEvent.click(within(shell).getByRole("button"));
@@ -676,6 +680,10 @@ describe("ChatStage (agent chat)", () => {
     ]);
     useAgentChatStore.setState({ activeSessionId: "s9", timeline });
     render(<ChatStage />);
+    const fold = screen.queryByTestId("conversation-work-fold");
+    if (fold) fireEvent.click(within(fold).getByRole("button"));
+    const activity = document.querySelector<HTMLElement>("[data-trace-summary]");
+    if (activity) fireEvent.click(within(activity).getByRole("button"));
 
     const tools = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-tool]"));
     expect(tools[0].textContent).toContain("Run command");

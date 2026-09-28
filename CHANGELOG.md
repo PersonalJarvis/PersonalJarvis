@@ -9,6 +9,11 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Center API Keys settings and show provider cards in two columns when the
+  window is wide enough, with a single column in narrower windows.
+
 ---
 
 ## [2.3.2] — 2026-09-23

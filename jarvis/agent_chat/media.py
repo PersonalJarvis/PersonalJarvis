@@ -96,7 +96,7 @@ def media_type(reference: str, hint: str = "") -> str | None:
             or normalized.startswith("/api/")
             else normalized
         )
-    except ValueError:
+    except ValueError:  # An invalid media URL has no supported type.
         return None
     path = re.sub(r"/(download|raw|view)$", "", path)
     return MEDIA_TYPES.get(Path(path).suffix.lower())
@@ -428,7 +428,7 @@ def normalize_media_event(
     if isinstance(value, str):
         try:
             parsed = json.loads(value) if value.lstrip().startswith(("{", "[")) else None
-        except ValueError:
+        except ValueError:  # Malformed JSON falls through to text normalization.
             parsed = None
         processed = normalizer.structured(parsed, scan_text=True) if parsed is not None else None
         rewritten = (

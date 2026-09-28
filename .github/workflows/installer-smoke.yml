@@ -26,49 +26,34 @@
 
 name: Installer smoke
 
+# Called by ci.yml's `installer` lane (path-gated there) and runnable by hand.
+# `force` runs both smokes regardless of the diff (full CI runs, manual runs).
 on:
-  push:
-    branches: [main]
-    paths:
-      - "install/**"
-      - "tests/unit/install/test_install_sh_stage1.py"
-      - "pyproject.toml"
-      - "requirements.txt"
-      - "jarvis/__main__.py"
-      - "jarvis/setup/prefetch.py"
-      - "jarvis/setup/model_report.py"
-      - "jarvis/speech/wake_model_fetch.py"
-      - ".github/workflows/sign-installer.yml"
-      - ".github/workflows/installer-smoke.yml"
-  pull_request:
-    branches: [main]
-    paths:
-      - "install/**"
-      - "tests/unit/install/test_install_sh_stage1.py"
-      - "pyproject.toml"
-      - "requirements.txt"
-      - "jarvis/__main__.py"
-      - "jarvis/setup/prefetch.py"
-      - "jarvis/setup/model_report.py"
-      - "jarvis/speech/wake_model_fetch.py"
-      - ".github/workflows/sign-installer.yml"
-      - ".github/workflows/installer-smoke.yml"
+  workflow_call:
+    inputs:
+      force:
+        type: boolean
+        default: false
+      include_macos:
+        type: boolean
+        default: false
+      tag:
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
+      force:
+        description: "Run both smokes regardless of the diff."
+        type: boolean
+        default: true
       include_macos:
-        description: "Also run the fresh-install macOS leg (~10x runner cost). On by default for a manual run, since proving macOS is usually the point of dispatching by hand."
+        description: "Also run the fresh-install macOS leg (~10x runner cost)."
         type: boolean
         default: true
       tag:
         description: "Release tag for the verify-release job (default: latest)"
         required: false
         default: ""
-
-# A new push to the same ref cancels the previous in-flight run so a burst of
-# commits doesn't stack billable minutes.
-concurrency:
-  group: installer-smoke-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -97,22 +82,22 @@ jobs:
         id: pick
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.include_macos }}" = "true" ]; then
+          if [ "${{ inputs.include_macos }}" = "true" ]; then
             echo 'os-matrix=["ubuntu-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
-            echo "macOS leg INCLUDED (manual dispatch)."
+            echo "macOS leg INCLUDED."
           else
             echo 'os-matrix=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
-            echo "macOS leg SKIPPED (cheap push/PR run). Dispatch manually to include it."
+            echo "macOS leg SKIPPED (the caller did not include macOS)."
           fi
 
       - name: Per-job path gates
         id: paths
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ inputs.force }}" = "true" ]; then
             echo "run-fresh=true" >> "$GITHUB_OUTPUT"
             echo "run-verify=true" >> "$GITHUB_OUTPUT"
-            echo "Manual dispatch — both smokes RUN."
+            echo "Forced run — both smokes RUN."
             exit 0
           fi
           base="${{ github.event.pull_request.base.sha }}"
@@ -374,7 +359,7 @@ jobs:
         id: tag
         run: |
           set -euo pipefail
-          INPUT_TAG="${{ github.event.inputs.tag }}"
+          INPUT_TAG="${{ inputs.tag }}"
           if [ -n "$INPUT_TAG" ]; then
               echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
               echo "Using manually-provided tag: $INPUT_TAG"

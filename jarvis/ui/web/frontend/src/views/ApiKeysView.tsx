@@ -137,13 +137,11 @@ export function ApiKeysView() {
         data-testid="api-keys-provider-scroll"
         className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-6 py-3"
       >
-        {/* Readability: the provider cards used to stretch across the full
-            window width (2000px+ on wide screens). One centered measure keeps
-            every card scannable; the key prop re-runs the rise animation on
-            each tab/mode change (respects prefers-reduced-motion). */}
+        {/* Use the available desktop width while keeping forms at a readable
+            measure. The key re-runs the rise animation on tab/mode changes. */}
         <div
           key={`${engineMode}-${active}`}
-          className="profile-rise w-full max-w-5xl"
+          className="profile-rise mx-auto w-full max-w-[1440px]"
         >
           {(active === "brain" ||
             active === "tts" ||
@@ -160,6 +158,7 @@ export function ApiKeysView() {
               health={health[active]}
               localMode={localMode}
               onDisableLocalMode={() => setLocalMode(false)}
+              wideGrid
             />
           )}
           {active === "realtime" && (

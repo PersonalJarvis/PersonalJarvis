@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Project the ``.claude/agents/`` definitions into the ``.codex/agents/`` twin.
+"""Project shared agent definitions into Codex's required TOML format.
 
 The repo carries THREE copies of the same agent knowledge:
 
-* ``.claude/agents/*.md``  — canonical, YAML front matter + Markdown body.
-* ``.agents/agents/*.md``  — byte-identical twin, kept by ``sync_agents_dir.py``.
+* ``.agents/agents/*.md``  — canonical, YAML front matter + Markdown body.
+* ``.claude/agents/*.md``  — compatibility copy, kept by ``sync_agents_dir.py``.
 * ``.codex/agents/*.toml`` — the same agents in the shape Codex reads.
 
 The first two were synced by a script from the day they existed; the third was
@@ -13,7 +13,7 @@ maintained by hand and drifted silently for months — by 2026-08-20 its
 a plan file that no longer exists, while its Markdown twin had moved on. A
 mirror nothing verifies is not a mirror. This script closes that gap.
 
-Direction is one-way on purpose: ``.claude/`` is canonical, ``.codex/`` is a
+Direction is one-way on purpose: ``.agents/`` is canonical, ``.codex/`` is a
 projection. Editing a ``.toml`` by hand is not supported — the next run
 overwrites it, and ``--check`` fails the build until the Markdown side carries
 the change instead.
@@ -43,7 +43,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SOURCE_DIR = REPO_ROOT / ".claude" / "agents"
+SOURCE_DIR = REPO_ROOT / ".agents" / "agents"
 TARGET_DIR = REPO_ROOT / ".codex" / "agents"
 
 # ``INDEX.md`` is a human-facing catalogue of the other files, not an agent
@@ -120,24 +120,47 @@ def render_toml(name: str, description: str, body: str) -> str:
     )
 
 
-def git_add(paths: list[Path]) -> None:
+def git_add(paths: list[Path]) -> bool:
     """Stage exactly the files this script touched.
 
     Scoped to explicit paths on purpose: the working tree is frequently shared
     with other agent sessions, and a broad ``git add`` sweeps their in-flight
-    work into someone else's commit (CLAUDE.md §9).
+    work into someone else's commit (AGENTS.md §1).
     """
     if not paths:
-        return
+        return True
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["git", "add", "--", *(str(p) for p in paths)],
             cwd=REPO_ROOT,
             check=False,
             capture_output=True,
         )
     except OSError:
-        pass  # no git on PATH: the projection is still written, just not staged
+        return False
+    return result.returncode == 0
+
+
+def staged_agent_stems() -> set[str]:
+    """Find source or projection paths already staged in this commit."""
+    proc = subprocess.run(
+        [
+            "git",
+            "diff",
+            "--cached",
+            "--name-only",
+            "-z",
+            "--",
+            ".agents/agents",
+            ".codex/agents",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return set()
+    return {Path(path.decode("utf-8")).stem for path in proc.stdout.split(b"\0") if path}
 
 
 def project(check_only: bool, stage: bool = False, quiet: bool = False) -> int:
@@ -186,7 +209,7 @@ def project(check_only: bool, stage: bool = False, quiet: bool = False) -> int:
                 print(f"sync_codex_agents: ORPHANED .codex/agents/{name}")
             print(
                 "\nThe Codex mirror is out of date. Edit the Markdown side under "
-                ".claude/agents/, then run:\n"
+                ".agents/agents/, then run:\n"
                 "    python scripts/ci/sync_codex_agents.py",
                 file=sys.stderr,
             )
@@ -202,9 +225,12 @@ def project(check_only: bool, stage: bool = False, quiet: bool = False) -> int:
         say(f"sync_codex_agents: {len(expected)} agents already in sync.")
 
     if stage:
-        touched = [TARGET_DIR / n for n in stale]
-        touched += [TARGET_DIR / n for n in orphaned]
-        git_add(touched)
+        involved = staged_agent_stems()
+        touched = [path for path in expected if path.stem in involved]
+        touched += [TARGET_DIR / n for n in orphaned if Path(n).stem in involved]
+        if not git_add(touched):
+            print("sync_codex_agents: 'git add' failed", file=sys.stderr)
+            return 1
 
     return 0
 
