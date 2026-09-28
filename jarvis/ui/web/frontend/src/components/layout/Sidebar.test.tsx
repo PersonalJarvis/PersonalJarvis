@@ -38,6 +38,8 @@ test("IDE sidebar puts Projects first and returns to the normal chat navigation"
   act(() => useEventStore.setState({ activeSection: "agentic-ide" }));
   renderSidebar();
   expect(screen.getByTestId("ide-project-tree")).toBeDefined();
+  // The agents list lives in the IDE's right-hand side panel now.
+  expect(screen.queryByTestId("ide-workspace-agents")).toBeNull();
   expect(screen.queryByTestId("sidebar-new-chat")).toBeNull();
   expect(screen.queryByTestId("nav-row-agentic-ide")).toBeNull();
   fireEvent.click(screen.getByTestId("ide-back-to-jarvis"));

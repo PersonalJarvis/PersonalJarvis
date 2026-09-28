@@ -5762,5 +5762,43 @@
     "build_active": "Arbeitsmodus",
     "control_turn": "Agentenarbeit",
     "verifying": "Ausführung abgeschlossen; Ergebnis wird geprüft."
+  },
+  "ide_side_panel": {
+    "aria": "Seitenleiste",
+    "tabs_aria": "Tabs der Seitenleiste",
+    "expand": "Seitenleiste öffnen",
+    "collapse": "Seitenleiste schließen",
+    "resize": "Breite der Seitenleiste ändern",
+    "add_tab": "Tab hinzufügen",
+    "all_open": "Alle Tabs sind bereits offen",
+    "close_tab": "Tab schließen",
+    "tabs": {
+      "agents": "Agents"
+    },
+    "agents": {
+      "aria": "Agents in diesem Workspace",
+      "count_one": "{n} Agent",
+      "count_other": "{n} Agents",
+      "no_workspace": "Wähle einen Workspace, um seine Agents zu sehen.",
+      "empty": "In diesem Workspace laufen keine Agents.",
+      "for": "seit {time}",
+      "last_output": "Letzte Ausgabe vor {time}",
+      "summary": {
+        "waiting": "{n} warten auf dich",
+        "working": "{n} arbeiten",
+        "error": "{n} fehlgeschlagen",
+        "idle": "{n} fertig oder im Leerlauf"
+      },
+      "state": {
+        "starting": "Startet",
+        "working": "Arbeitet",
+        "needs_input": "Wartet auf dich",
+        "failed": "Fehlgeschlagen",
+        "error": "Fehler",
+        "exited": "Beendet",
+        "done": "Fertig",
+        "idle": "Im Leerlauf"
+      }
+    }
   }
 }

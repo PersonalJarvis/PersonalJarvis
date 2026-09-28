@@ -5795,5 +5795,43 @@
     "build_active": "Build mode",
     "control_turn": "Agent work",
     "verifying": "Execution finished; verifying the result."
+  },
+  "ide_side_panel": {
+    "aria": "Side panel",
+    "tabs_aria": "Side panel tabs",
+    "expand": "Open side panel",
+    "collapse": "Close side panel",
+    "resize": "Resize side panel",
+    "add_tab": "Add a tab",
+    "all_open": "Every tab is already open",
+    "close_tab": "Close tab",
+    "tabs": {
+      "agents": "Agents"
+    },
+    "agents": {
+      "aria": "Agents in this workspace",
+      "count_one": "{n} agent",
+      "count_other": "{n} agents",
+      "no_workspace": "Select a workspace to see its agents.",
+      "empty": "No agents running in this workspace.",
+      "for": "for {time}",
+      "last_output": "Last output {time} ago",
+      "summary": {
+        "waiting": "{n} need input",
+        "working": "{n} working",
+        "error": "{n} failed",
+        "idle": "{n} idle or done"
+      },
+      "state": {
+        "starting": "Starting",
+        "working": "Working",
+        "needs_input": "Needs input",
+        "failed": "Failed",
+        "error": "Error",
+        "exited": "Exited",
+        "done": "Done",
+        "idle": "Idle"
+      }
+    }
   }
 }

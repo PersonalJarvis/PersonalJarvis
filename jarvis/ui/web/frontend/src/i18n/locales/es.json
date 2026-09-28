@@ -5762,5 +5762,43 @@
     "build_active": "Modo de trabajo",
     "control_turn": "Trabajo del agente",
     "verifying": "Ejecución finalizada; verificando el resultado."
+  },
+  "ide_side_panel": {
+    "aria": "Panel lateral",
+    "tabs_aria": "Pestañas del panel lateral",
+    "expand": "Abrir panel lateral",
+    "collapse": "Cerrar panel lateral",
+    "resize": "Cambiar el ancho del panel lateral",
+    "add_tab": "Añadir una pestaña",
+    "all_open": "Todas las pestañas ya están abiertas",
+    "close_tab": "Cerrar pestaña",
+    "tabs": {
+      "agents": "Agentes"
+    },
+    "agents": {
+      "aria": "Agentes de este espacio de trabajo",
+      "count_one": "{n} agente",
+      "count_other": "{n} agentes",
+      "no_workspace": "Selecciona un espacio de trabajo para ver sus agentes.",
+      "empty": "No hay agentes en este espacio de trabajo.",
+      "for": "desde hace {time}",
+      "last_output": "Última salida hace {time}",
+      "summary": {
+        "waiting": "{n} esperan tu respuesta",
+        "working": "{n} trabajando",
+        "error": "{n} con error",
+        "idle": "{n} listos o inactivos"
+      },
+      "state": {
+        "starting": "Iniciando",
+        "working": "Trabajando",
+        "needs_input": "Espera tu respuesta",
+        "failed": "Falló",
+        "error": "Error",
+        "exited": "Terminado",
+        "done": "Listo",
+        "idle": "Inactivo"
+      }
+    }
   }
 }

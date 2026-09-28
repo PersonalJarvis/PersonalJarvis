@@ -5,6 +5,7 @@ import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/comp
 import { WorkspaceTerminalGrid } from "@/components/agentic/WorkspaceTerminalGrid";
 import { WorkspaceAgentSetup } from "@/components/agentic/WorkspaceAgentSetup";
 import { WorkspaceOptionsDialog } from "@/components/agentic/WorkspaceOptionsDialog";
+import { IdeSidePanelFrame } from "@/components/agentic/sidePanel/IdeSidePanel";
 import { fitsWorkspace, isBalancedWorkspace, canSplitFit } from "@/components/agentic/workspaceDocking";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { SplitRightIcon, SplitBelowIcon, SplitLeftIcon, SplitAboveIcon } from "@/components/agentic/splitIcons";
@@ -354,6 +355,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       />
 
     <main className="min-h-0 flex-1">
+      <IdeSidePanelFrame>
       {session ? <WorkspaceTerminalGrid key={session.id} session={session} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
         onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} fontSize={fontSize} appearance={appearance} disabled={busy}
         onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} />
@@ -363,6 +365,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
         <p className="max-w-md text-sm text-muted-foreground">{projects.some((project) => !project.scratch && !project.archived) ? "Select a workspace from Projects, or create one with + beside its project." : "Connect a folder to bring its coding agents and Jarvis into one workspace."}</p>
         <button type="button" onClick={() => setProjectDialog(true)} className="mt-2 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent">Connect folder</button>
       </div>}
+      </IdeSidePanelFrame>
     </main>
 
     <VoiceBubble open={voiceOpen} onClose={closeVoice} onScreen={onScreen} onJumpToPane={jumpToPane} promptTarget={selected} />

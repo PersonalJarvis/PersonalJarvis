@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { IdeWorkspaceAgents } from "./IdeWorkspaceAgents";
+import { AgentsOverview } from "./AgentsOverview";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { resetWorkspacePanesPoll, useWorkspacePanesStore } from "@/store/workspacePanes";
@@ -72,12 +72,12 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-describe("IdeWorkspaceAgents", () => {
+describe("AgentsOverview", () => {
   it("lists only the active workspace agents with names and live dots", () => {
-    render(<IdeWorkspaceAgents />);
+    render(<AgentsOverview />);
     const rows = screen.getAllByTestId("ide-workspace-agent-row");
     expect(rows.map((row) => row.getAttribute("data-pane"))).toEqual(["T1", "T2", "T3"]);
-    expect(screen.getByTestId("ide-workspace-agents-count").textContent).toBe("3");
+    expect(screen.getByTestId("ide-workspace-agents-count").textContent).toBe("3 agents");
     expect(rows[0].getAttribute("data-kind")).toBe("working");
     expect(rows[1].getAttribute("data-kind")).toBe("waiting");
     expect(rows[2].getAttribute("data-kind")).toBe("idle");
@@ -93,30 +93,30 @@ describe("IdeWorkspaceAgents", () => {
         pane("T9", "w1", { status: "live", activity: "", worked: false }),
       ],
     });
-    render(<IdeWorkspaceAgents />);
+    render(<AgentsOverview />);
     const rows = screen.getAllByTestId("ide-workspace-agent-row");
     expect(rows[0].getAttribute("data-kind")).toBe("error");
     expect(rows[1].getAttribute("data-kind")).toBe("idle");
   });
 
   it("switches the list when the workspace tab changes", () => {
-    const { rerender } = render(<IdeWorkspaceAgents />);
+    const { rerender } = render(<AgentsOverview />);
     expect(screen.getAllByTestId("ide-workspace-agent-row")).toHaveLength(3);
     act(() => useIdeProjectsStore.setState({ activeWorkspaceId: "w2" }));
-    rerender(<IdeWorkspaceAgents />);
+    rerender(<AgentsOverview />);
     const rows = screen.getAllByTestId("ide-workspace-agent-row");
     expect(rows.map((row) => row.getAttribute("data-pane"))).toEqual(["T1"]);
   });
 
   it("asks the IDE view to focus the pane on click", () => {
-    render(<IdeWorkspaceAgents />);
+    render(<AgentsOverview />);
     fireEvent.click(screen.getByRole("button", { name: /T2, Codex/ }));
     expect(useIdeChatStore.getState().paneRequest).toMatchObject({ workspaceId: "w1", pane: "T2" });
   });
 
   it("highlights the staged pane", () => {
     useIdeChatStore.setState({ stagedPane: "T2" });
-    render(<IdeWorkspaceAgents />);
+    render(<AgentsOverview />);
     const rows = screen.getAllByTestId("ide-workspace-agent-row");
     expect(rows[1].getAttribute("aria-current")).toBe("true");
     expect(rows[0].getAttribute("aria-current")).toBeNull();
@@ -124,8 +124,37 @@ describe("IdeWorkspaceAgents", () => {
 
   it("shows an empty hint when the workspace has no agents", () => {
     useIdeProjectsStore.setState({ activeWorkspaceId: "w9" });
-    render(<IdeWorkspaceAgents />);
+    render(<AgentsOverview />);
     expect(screen.queryByTestId("ide-workspace-agent-row")).toBeNull();
     expect(screen.getByTestId("ide-workspace-agents").textContent).toContain("No agents");
+  });
+
+  it("summarises the workspace by state, needs-input first", () => {
+    render(<AgentsOverview />);
+    const summary = screen.getByTestId("ide-agents-summary");
+    const kinds = Array.from(summary.querySelectorAll("[data-kind]")).map((node) => node.getAttribute("data-kind"));
+    expect(kinds).toEqual(["waiting", "working", "idle"]);
+    expect(summary.textContent).toContain("1 need input");
+    expect(summary.textContent).toContain("1 working");
+  });
+
+  it("shows each agent's state, its last task and its last output", () => {
+    const now = Math.floor(Date.now() / 1000);
+    useWorkspacePanesStore.setState({
+      panes: [
+        pane("T1", "w1", {
+          activity: "working",
+          activity_since: now - 180,
+          last_output_at: now - 5,
+          recap: "Fix the login test",
+        }),
+      ],
+    });
+    render(<AgentsOverview />);
+    const row = screen.getByTestId("ide-workspace-agent-row");
+    expect(screen.getByTestId("ide-agent-state").textContent).toBe("Working");
+    expect(row.textContent).toContain("for 3m");
+    expect(screen.getByTestId("ide-agent-task").textContent).toBe("Fix the login test");
+    expect(row.textContent).toMatch(/Last output \d+s ago/);
   });
 });

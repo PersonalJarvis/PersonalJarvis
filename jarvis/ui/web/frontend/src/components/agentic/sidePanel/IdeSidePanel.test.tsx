@@ -1,0 +1,89 @@
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { IdeSidePanelFrame } from "./IdeSidePanel";
+import { IdeSidePanelToggle } from "./IdeSidePanelToggle";
+import { useEventStore } from "@/store/events";
+import { useIdeProjectsStore } from "@/store/ideProjects";
+import { useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { resetWorkspacePanesPoll, useWorkspacePanesStore } from "@/store/workspacePanes";
+
+function Harness() {
+  return (
+    <>
+      <IdeSidePanelToggle />
+      <IdeSidePanelFrame>
+        <div data-testid="grid">grid</div>
+      </IdeSidePanelFrame>
+    </>
+  );
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  resetWorkspacePanesPoll();
+  useWorkspacePanesStore.setState({ panes: [], activeId: null, loaded: true, load: async () => {} });
+  useIdeProjectsStore.setState({ activeWorkspaceId: null });
+  useEventStore.setState({ activeSection: "agentic-ide" });
+  useIdeSidePanelStore.setState({ open: false, tabs: ["agents"], active: "agents" });
+});
+
+afterEach(cleanup);
+
+describe("IdeSidePanel", () => {
+  it("opens from the caption toggle and closes from its own header", () => {
+    render(<Harness />);
+    expect(screen.queryByTestId("ide-side-panel")).toBeNull();
+    expect(screen.getByTestId("ide-side-panel-host").style.width).toBe("0px");
+
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
+    expect(screen.getByTestId("ide-side-panel")).toBeTruthy();
+    expect(screen.getByTestId("ide-side-panel-tab-agents").getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("ide-workspace-agents")).toBeTruthy();
+    expect(screen.getByTestId("ide-side-panel-resizer")).toBeTruthy();
+    expect(localStorage.getItem("jarvis.agenticIde.sidePanelOpen")).toBe("1");
+
+    fireEvent.click(screen.getByTestId("ide-side-panel-collapse"));
+    expect(screen.queryByTestId("ide-side-panel")).toBeNull();
+    expect(localStorage.getItem("jarvis.agenticIde.sidePanelOpen")).toBe("0");
+  });
+
+  it("keeps the grid mounted while the panel opens and closes", () => {
+    render(<Harness />);
+    const grid = screen.getByTestId("grid");
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
+    fireEvent.click(screen.getByTestId("ide-side-panel-collapse"));
+    expect(screen.getByTestId("grid")).toBe(grid);
+  });
+
+  it("collapses when the last tab closes and reopens with Agents", () => {
+    act(() => useIdeSidePanelStore.getState().setOpen(true));
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId("ide-side-panel-close-agents"));
+    expect(screen.queryByTestId("ide-side-panel")).toBeNull();
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
+    expect(screen.getByTestId("ide-side-panel-tab-agents")).toBeTruthy();
+  });
+
+  it("disables + while every tab is already open", () => {
+    act(() => useIdeSidePanelStore.getState().setOpen(true));
+    render(<Harness />);
+    expect((screen.getByTestId("ide-side-panel-add") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("offers a closed tab again through +", () => {
+    act(() => useIdeSidePanelStore.setState({ open: true, tabs: [], active: "agents" }));
+    render(<Harness />);
+    const add = screen.getByTestId("ide-side-panel-add") as HTMLButtonElement;
+    expect(add.disabled).toBe(false);
+    fireEvent.click(add);
+    fireEvent.click(screen.getByTestId("ide-side-panel-add-agents"));
+    expect(useIdeSidePanelStore.getState().tabs).toEqual(["agents"]);
+    expect(screen.getByTestId("ide-side-panel-tab-agents")).toBeTruthy();
+  });
+
+  it("shows the toggle only in the Agentic IDE", () => {
+    act(() => useEventStore.setState({ activeSection: "chats" }));
+    render(<IdeSidePanelToggle />);
+    expect(screen.queryByTestId("ide-side-panel-toggle")).toBeNull();
+  });
+});
