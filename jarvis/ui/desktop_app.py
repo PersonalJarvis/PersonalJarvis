@@ -2863,6 +2863,14 @@ class DesktopApp:
                 # mission/wiki/session/channel init. TTI forensic 2026-07-02:
                 # the window served at 1.2 s but set_app happened at +16 s,
                 # which is the "Getting ready" wall the user actually sees.
+                # BEFORE the UI can reach the API: the grid restores and
+                # attaches panes the moment it can, and each of them must
+                # re-join the agent the PTY host kept running instead of
+                # starting it again in this process (RUB-102). A bare flag —
+                # the registry and the reattach pass come after server.start.
+                from jarvis.agentic_ide import host_mode
+
+                host_mode.enable()
                 bootstrap.set_app(server.app)
                 _db_mark("app_interactive")
                 if _bp:

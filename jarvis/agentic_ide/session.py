@@ -1930,7 +1930,15 @@ class Registry:
         # instead of this process. Off until the app turns it on through
         # ``boot_restore``: a registry built by a test, a script or the CLI
         # keeps its terminals in-process and never starts a background process.
-        self._host_enabled = False
+        # On when the app's entry point switched it on before the UI could
+        # reach the API (``host_mode``); ``enable_host`` / ``boot_restore``
+        # turn it on later otherwise. Off for tests, scripts and the CLI.
+        from . import host_mode
+
+        self._host_enabled = host_mode.enabled()
+        # What ``_manager`` hands a synchronous caller while the host is enabled
+        # but not attached yet: an empty pool, never pinned (see ``_manager``).
+        self._idle_pool: PtyManager | None = None
         # Set by ``set_surface_context`` when the focused pane changed, so the
         # route can save it without saving on every repeated report.
         self._focus_dirty = False
@@ -2090,8 +2098,31 @@ class Registry:
             # Lazy: keeps the terminal stack off the import/boot path (AP-26).
             from jarvis.terminal.pty_manager import PtyManager
 
+            if self._host_enabled:
+                # Never PINNED here while the PTY host is in use. A synchronous
+                # caller (a write, a resize, a status read) can arrive before
+                # the async path has attached to the host; pinning an
+                # in-process pool at that moment made every pane of a reopened
+                # app start its agent again inside the app while the originals
+                # kept running, unseen, in the host (RUB-102, 2026-09-28). An
+                # empty pool answers those callers truthfully: nothing of
+                # theirs runs in this process.
+                if self._idle_pool is None:
+                    self._idle_pool = PtyManager()
+                return self._idle_pool
             self._pty = PtyManager()
         return self._pty
+
+    def enable_host(self) -> None:
+        """Put new and re-joined panes in the PTY host from now on.
+
+        Synchronous and called by the app's entry points BEFORE the UI can
+        reach the registry, so no pane ever starts in-process ahead of it.
+        """
+        from . import host_mode
+
+        host_mode.enable()
+        self._host_enabled = True
 
     # ---------------------------------------------------------- PTY host
     async def _live_manager(self) -> PtyManager:
@@ -2123,11 +2154,57 @@ class Registry:
             self._pty = cast("PtyManager", remote)
             return self._pty
 
+    async def _attached_host(self) -> Any:
+        """The PTY host's pool when one is running, WITHOUT starting one.
+
+        Every re-join goes through here, whichever path gets there first — the
+        boot pass, a workspace the UI restores, a pane that connects. None when
+        the host is disabled, not running, or this process already keeps its
+        agents in-process.
+        """
+        current = self._pty
+        if current is not None and getattr(current, "persistent", False):
+            if getattr(current, "connected", False):
+                return current
+        if not self._host_enabled:
+            return None
+        async with self._host_lock:
+            current = self._pty
+            if current is not None and not getattr(current, "persistent", False):
+                return None
+            if current is not None and getattr(current, "connected", False):
+                return current
+            remote = await _connect_pty_host(start=False)
+            if remote is not None:
+                self._pty = cast("PtyManager", remote)
+            return remote
+
+    @staticmethod
+    def _hosted_for(manager: Any) -> dict[str, Any]:
+        """The host's not-yet-adopted terminals by pane identity, newest wins."""
+        found: dict[str, Any] = {}
+        if manager is None or not hasattr(manager, "hosted"):
+            return found
+        for info in manager.hosted():
+            history = str(info.meta.get("history_id") or "")
+            if not history:
+                continue
+            older = found.get(history)
+            if older is None or info.started_at > older.started_at:
+                found[history] = info
+        return found
+
     def _fallback_manager(self) -> PtyManager:
-        """An in-process pool, replacing a host connection that is gone."""
-        if self._pty is not None and getattr(self._pty, "persistent", False):
-            self._pty = None
-        return self._manager()
+        """An in-process pool, replacing a host that is gone or cannot start.
+
+        Pinned on purpose (``_manager`` would not pin one in host mode): a host
+        that failed to start is not worth a retry on every pane that connects.
+        """
+        if self._pty is None or getattr(self._pty, "persistent", False):
+            from jarvis.terminal.pty_manager import PtyManager
+
+            self._pty = PtyManager()
+        return self._pty
 
     async def boot_restore(self) -> None:
         """Bring back what was open when the app last ran — once per process.
@@ -2154,11 +2231,7 @@ class Registry:
             return
         self._boot_restored = True
         self._host_enabled = True
-        async with self._host_lock:
-            if self._pty is None:
-                remote = await _connect_pty_host(start=False)
-                if remote is not None:
-                    self._pty = cast("PtyManager", remote)
+        await self._attached_host()
         try:
             snapshot = await asyncio.to_thread(resume_store.load)
             closed_at = await asyncio.to_thread(resume_store.all_closed_at)
@@ -2177,15 +2250,24 @@ class Registry:
                     await self.restore(snapshot)
                 except SessionError as exc:
                     logger.info("Agentic IDE: nothing reopened at startup: {}", exc)
-        manager = self._pty
+        # Ended only when NO workspace could ever claim them — neither an open
+        # one nor any the restore point remembers. A remembered workspace that
+        # was not reopened now can still be reopened by hand, and its agents
+        # must be there to re-join rather than killed on a guess.
+        manager: Any = self._pty
+        known = set(self._sessions) | {
+            w.session_id for w in (snapshot.workspaces if snapshot is not None else [])
+        }
         hosted = manager.hosted() if manager is not None and hasattr(manager, "hosted") else []
         for info in hosted:
+            if str(info.meta.get("workspace_id") or "") in known:
+                continue
             logger.info(
-                "Agentic IDE: ending hosted terminal {} — no reopened pane claims it ({})",
+                "Agentic IDE: ending hosted terminal {} — no workspace claims it ({})",
                 info.terminal_id,
                 info.meta.get("name", "unnamed"),
             )
-            manager.kill_hosted(info.terminal_id)  # type: ignore[union-attr]
+            manager.kill_hosted(info.terminal_id)
         await self._resume_after_reboot()
 
     async def _resume_after_reboot(self) -> None:
@@ -2297,57 +2379,52 @@ class Registry:
         replay buffer, so the viewer that connects next takes the ordinary
         "re-join a running agent" path in ``_attach_locked``.
         """
-        # Only the host's pool can adopt; typed loosely because the registry
-        # otherwise sees every pool as the in-process ``PtyManager``.
-        manager: Any = self._pty
+        # Attached here rather than trusted to be attached already: the UI can
+        # restore a workspace before the boot pass has reached the host.
+        manager: Any = await self._attached_host()
         if manager is None or not hasattr(manager, "adopt"):
             return
-        by_history: dict[str, Any] = {}
-        for info in manager.hosted():
-            history = str(info.meta.get("history_id") or "")
-            if not history:
-                continue
-            older = by_history.get(history)
-            if older is None or info.started_at > older.started_at:
-                by_history[history] = info
+        by_history = self._hosted_for(manager)
         for term in session.terminals:
             info = by_history.pop(term.history_id, None)
-            if info is None:
-                continue
-            on_output, on_closed = self._adopted_callbacks(term)
-            try:
-                result = await manager.adopt(info.terminal_id, on_output, on_closed)
-            except Exception as exc:  # noqa: BLE001 - the pane falls back to a resume
-                logger.warning("Agentic IDE: {} could not be re-joined: {}", term.name, exc)
-                continue
-            if not result.alive:
-                continue
-            cols = result.cols or term.transcript.cols
-            rows = result.rows or term.transcript.rows
-            term.transcript.resize(cols, rows)
-            term.transcript.feed(result.replay)
-            term.replay.clear()
-            term.replay.feed(result.replay)
-            if result.truncated:
-                term.replay.truncated = True
-            term.pty_id = info.terminal_id
-            term.pty_cols, term.pty_rows = cols, rows
-            term.status = "live"
-            term.error = ""
-            term.exit_code = None
-            term.resumed = False
-            term.worked_while_detached = term.resume_continuation_needed
-            # Never interrupted, so never offered a "continue" — the flag
-            # ``_mark_restored_continuations`` may have raised assumed a restart.
-            term.continuation_pending = False
-            term.resume_continuation_needed = False
-            term.started_at = info.started_at or time.time()
-            term.last_output_at = time.time() if result.replay else None
-            if await self._adopted_with_work(term):
-                term.adopted_generation = term.process_generation
-            logger.info(
-                "Agentic IDE: {} re-joined its running agent after an app restart", term.name
-            )
+            if info is not None:
+                await self._adopt_one(manager, term, info)
+
+    async def _adopt_one(self, manager: Any, term: Terminal, info: Any) -> bool:
+        """Re-join ``term`` to the hosted terminal ``info``. True when it is live."""
+        on_output, on_closed = self._adopted_callbacks(term)
+        try:
+            result = await manager.adopt(info.terminal_id, on_output, on_closed)
+        except Exception as exc:  # noqa: BLE001 - the pane falls back to a resume
+            logger.warning("Agentic IDE: {} could not be re-joined: {}", term.name, exc)
+            return False
+        if not result.alive:
+            return False
+        cols = result.cols or term.transcript.cols
+        rows = result.rows or term.transcript.rows
+        term.transcript.resize(cols, rows)
+        term.transcript.feed(result.replay)
+        term.replay.clear()
+        term.replay.feed(result.replay)
+        if result.truncated:
+            term.replay.truncated = True
+        term.pty_id = info.terminal_id
+        term.pty_cols, term.pty_rows = cols, rows
+        term.status = "live"
+        term.error = ""
+        term.exit_code = None
+        term.resumed = False
+        term.worked_while_detached = term.resume_continuation_needed
+        # Never interrupted, so never offered a "continue" — the flag
+        # ``_mark_restored_continuations`` may have raised assumed a restart.
+        term.continuation_pending = False
+        term.resume_continuation_needed = False
+        term.started_at = info.started_at or time.time()
+        term.last_output_at = time.time() if result.replay else None
+        if await self._adopted_with_work(term):
+            term.adopted_generation = term.process_generation
+        logger.info("Agentic IDE: {} re-joined its running agent after an app restart", term.name)
+        return True
 
     @staticmethod
     async def _adopted_with_work(term: Terminal) -> bool:
@@ -3637,6 +3714,13 @@ class Registry:
             cols = max(term.pty_cols or term.transcript.cols, MIN_VIEWER_COLS)
             rows = max(term.pty_rows or term.transcript.rows, MIN_VIEWER_ROWS)
         manager = await self._live_manager()
+        if not (term.pty_id and manager.has(term.pty_id)):
+            # Herdr's rule: attach to the running session first, start one only
+            # when there is none. The host may still hold this pane's agent
+            # from before the app restarted — whichever path restored the pane.
+            hosted = self._hosted_for(manager).get(term.history_id)
+            if hosted is not None:
+                await self._adopt_one(manager, term, hosted)
         if appearance in THEME_COLOURS:
             term.queries.appearance = appearance
             if term.pty_id and hasattr(manager, "set_appearance"):
@@ -6291,6 +6375,8 @@ def schedule_boot_restore() -> asyncio.Task[None] | None:
     which tests boot against the real user data directory and must not attach
     to the user's PTY host or reopen their workspaces.
     """
+    # Before anything can reach the registry — see ``Registry.enable_host``.
+    get_registry().enable_host()
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
