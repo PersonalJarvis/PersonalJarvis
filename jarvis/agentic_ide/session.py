@@ -430,6 +430,19 @@ COLD_START_HOLD_MAX_S = 15.0
 # short enough that nobody sees a pane one row short.
 REPAINT_NUDGE_S = 0.08
 
+# A nudge is a request, and a busy agent may ignore it: measured against Claude
+# Code 2.1.283 on Windows (2026-09-28), 10 of 20 nudges sent while it worked
+# drew nothing, and a longer hold (0.3 s) or a width nudge did no better. A
+# viewer that re-joined on a cut replay then keeps empty rectangles wherever
+# the agent's screen does not change. So a full-screen agent's answer — the
+# whole-screen erase its repaint opens with — is waited for, and the nudge
+# repeated when none comes. Re-sending right away answered within two tries in
+# every one of 12 measured runs; five bound the cost for an agent that never
+# repaints this way.
+REPAINT_CONFIRM_S = 0.5
+REPAINT_NUDGE_ATTEMPTS = 5
+REPAINT_POLL_S = 0.05
+
 # Bracketed paste. A TUI that has enabled it receives everything between these
 # markers as ONE pasted block rather than as keystrokes, which is the only way
 # a structured prompt survives the trip: a bare "\n" written to a PTY IS the
@@ -1898,6 +1911,9 @@ class Registry:
         # references to tasks; without this set a hold could be collected
         # mid-wait and its slot never given back.
         self._cold_start_holds: set[asyncio.Task[None]] = set()
+        # The follow-ups checking that a repaint nudge was answered (see
+        # ``_confirm_repaint``), held for the same weak-reference reason.
+        self._repaint_checks: set[asyncio.Task[None]] = set()
         # Whether panes may live in the PTY host (``jarvis.terminal.pty_host``)
         # instead of this process. Off until the app turns it on through
         # ``boot_restore``: a registry built by a test, a script or the CLI
@@ -4404,10 +4420,63 @@ class Registry:
         Never fatal: a pane whose PTY refuses to resize is one whose screen
         could not have been repaired anyway, and that must not cost the user
         the reconnect itself.
+
+        A full-screen agent may let a nudge pass without redrawing (see
+        ``REPAINT_CONFIRM_S``), so for one the answer is checked in the
+        background and the nudge repeated — off the caller's path, because
+        the caller holds the registry lock every other pane's attach waits on.
+        """
+        clears_before = term.replay.clears
+        if not await self._resize_there_and_back(term, cols, rows):
+            return
+        if not term.replay.holds_screen:
+            # A line-mode CLI or a shell answers with no whole-screen erase at
+            # all; waiting for one would only nudge it four more times.
+            return
+        task = asyncio.get_running_loop().create_task(self._confirm_repaint(term, clears_before))
+        self._repaint_checks.add(task)
+        task.add_done_callback(self._repaint_checks.discard)
+
+    async def _confirm_repaint(self, term: Terminal, clears_before: int) -> None:
+        """Repeat the nudge until the agent's screen has really been redrawn.
+
+        Each retry uses the size the pane has NOW: a viewer may have resized it
+        meanwhile, and nudging back to the size captured earlier would undo
+        that. A new process in the pane ends the check — its first paint is
+        whole anyway.
         """
         pty_id = term.pty_id
+        generation = term.process_generation
+        loop = asyncio.get_running_loop()
+        for attempt in range(1, REPAINT_NUDGE_ATTEMPTS + 1):
+            deadline = loop.time() + REPAINT_CONFIRM_S
+            while loop.time() < deadline:
+                if term.replay.clears != clears_before:
+                    return
+                await asyncio.sleep(REPAINT_POLL_S)
+            if term.replay.clears != clears_before:
+                return
+            if term.pty_id != pty_id or term.process_generation != generation:
+                return
+            if not term.pty_cols or not term.pty_rows:
+                return
+            if attempt == REPAINT_NUDGE_ATTEMPTS:
+                break
+            clears_before = term.replay.clears
+            if not await self._resize_there_and_back(term, term.pty_cols, term.pty_rows):
+                return
+        logger.info(
+            "Agentic IDE: {} did not redraw after {} nudges; its pane may show gaps "
+            "until the agent next repaints",
+            term.name,
+            REPAINT_NUDGE_ATTEMPTS,
+        )
+
+    async def _resize_there_and_back(self, term: Terminal, cols: int, rows: int) -> bool:
+        """One nudge: the height one row short, then back. False if it failed."""
+        pty_id = term.pty_id
         if not pty_id:
-            return
+            return False
         manager = self._manager()
         try:
             # The whole point of the nudge is a full repaint — which must read
@@ -4424,6 +4493,8 @@ class Registry:
             term.last_resize_at = time.time()
         except Exception as exc:  # noqa: BLE001 - a stale screen beats a failed reconnect
             logger.debug("Agentic IDE: could not nudge {} into a repaint: {}", term.name, exc)
+            return False
+        return True
 
     def claim_viewer(
         self,

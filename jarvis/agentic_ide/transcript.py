@@ -56,6 +56,8 @@ _PRIVATE_MODE_RE = re.compile(r"\x1b\[\?([0-9;]+)([hl])")
 # after any byte, including between ``ESC[?10`` and ``00h``.
 _PRIVATE_MODE_PARTIAL_RE = re.compile(r"\x1b(?:\[(?:\?(?:[0-9;]*))?)?$")
 _PRIVATE_MODE_PARTIAL_MAX = 128
+#: ``ESC [ 2 J`` — erase the whole screen, the first thing a full repaint sends.
+_FULL_CLEAR = "\x1b[2J"
 
 _DECORATION_CHARS = set("─│┌┐└┘├┤┬┴┼━┃╭╮╯╰═║╔╗╚╝╠╣╦╩╬▀▄█▌▐░▒▓▔▁·.-_=*#~ ")
 _SPINNER_CHARS = set("|/\\-◐◓◑◒✻✽✢·✳✶⣿")
@@ -193,7 +195,9 @@ class ReplayBuffer:
 
     Whoever replays a truncated buffer therefore has to ask the agent for a
     fresh paint afterwards; :meth:`SessionRegistry.attach` does it with a
-    window-size change, the one request every TUI answers with a full redraw.
+    window-size change, the one request every TUI answers with a full redraw —
+    usually. Claude Code 2.1.283 let half of them pass unanswered while busy
+    (measured 2026-09-28), so the answer is checked for, via :attr:`clears`.
 
     **The modes are kept even when the bytes that set them are gone.** A CLI
     negotiates what kind of terminal it is talking to exactly ONCE, in its first
@@ -230,11 +234,22 @@ class ReplayBuffer:
     _modes: dict[str, bool] = field(default_factory=dict, init=False)
     #: Incomplete private-mode prefix from the preceding PTY read.
     _mode_scan_tail: str = field(default="", init=False)
+    #: How many whole-screen erases have gone past — a counter, never reset by
+    #: a rebase. A full repaint of a full-screen TUI starts with one, so this
+    #: rising is how the repaint nudge knows it was answered (see
+    #: ``SessionRegistry._confirm_repaint``).
+    clears: int = field(default=0, init=False)
+    #: The last bytes of the preceding read, in case it split an erase.
+    _clear_scan_tail: str = field(default="", init=False)
 
     def feed(self, chunk: str) -> None:
         if not chunk:
             return
         self._note_modes(chunk)
+        scanned = self._clear_scan_tail + chunk
+        # The tail is shorter than the sequence, so no erase is counted twice.
+        self.clears += scanned.count(_FULL_CLEAR)
+        self._clear_scan_tail = scanned[-(len(_FULL_CLEAR) - 1) :]
         self._chunks.append(chunk)
         self._size += len(chunk)
         while self._size > self.limit and len(self._chunks) > 1:
@@ -263,6 +278,11 @@ class ReplayBuffer:
         self._mode_scan_tail = (
             candidate if len(candidate) <= _PRIVATE_MODE_PARTIAL_MAX else ""
         )
+
+    @property
+    def holds_screen(self) -> bool:
+        """Is the agent drawing on the alternate screen, i.e. a full-screen TUI?"""
+        return self._modes.get("1049", False)
 
     def _mode_prologue(self) -> str:
         """The negotiation a truncated replay lost, re-stated in order."""
@@ -331,6 +351,7 @@ class ReplayBuffer:
         self._open_escape = False
         self._modes.clear()
         self._mode_scan_tail = ""
+        self._clear_scan_tail = ""
 
 
 __all__ = [

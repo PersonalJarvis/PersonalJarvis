@@ -8,6 +8,7 @@ could interrupt, kill, or drive the keyboard shortcuts of a coding agent.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -347,11 +348,103 @@ async def test_a_geometry_change_rebases_an_intact_replay_and_repaints(
         on_replay=_capture_replay,
     )
 
+    # The agent answers the nudge with its full repaint.
+    await fake_pty.emit(pty, "\x1b[2J\x1b[HNEW FRAME")
+    await asyncio.gather(*registry._repaint_checks)
+
     sizes = [(cols, rows) for tid, cols, rows in fake_pty.resizes if tid == pty]
     restored = "".join(replayed)
     assert "OLD STATUS ROW" not in restored
     assert "\x1b[?1049h" in restored, "alternate-screen ownership must survive"
     assert sizes == [(100, 30), (100, 29), (100, 30)]
+
+
+async def _rejoin_cut_fullscreen_pane(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> tuple[object, str]:
+    """A full-screen agent whose replay lost its start, re-joined at 80x24."""
+    session = await _open(registry, tmp_path, [{"agent": "claude"}])
+    term = session.terminals[0]
+    await registry.attach(term.name, 80, 24, _noop_output, _noop_exit)
+    pty = term.pty_id
+    term.replay.limit = 64
+    await fake_pty.emit(pty, "\x1b[?1049h\x1b[2J\x1b[Hthe frame with the prompt box")
+    await fake_pty.emit(pty, "\x1b[Kspinner" * 10)
+    assert term.replay.truncated
+    registry.detach(term.key, session.id)
+    fake_pty.resizes.clear()
+    await registry.attach(term.name, 80, 24, _noop_output, _noop_exit)
+    return term, pty
+
+
+async def test_an_ignored_repaint_nudge_is_sent_again(
+    registry: Registry,
+    fake_pty: FakePtyManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A busy agent may let a nudge pass; the pane must not keep the gaps.
+
+    Claude Code 2.1.283 ignored half of the nudges sent while it worked
+    (2026-09-28). The re-joined viewer then showed empty rectangles wherever
+    the agent's screen did not change, next to panes that looked fine.
+    """
+    monkeypatch.setattr(session_mod, "REPAINT_CONFIRM_S", 0.05)
+    monkeypatch.setattr(session_mod, "REPAINT_POLL_S", 0.01)
+    plain_resize = FakePtyManager.resize
+
+    def answer_second_nudge(self: FakePtyManager, tid: str, cols: int, rows: int) -> bool:
+        # The first nudge goes unanswered; the second one gets the repaint.
+        done = plain_resize(self, tid, cols, rows)
+        if len(self.resizes) == 4:
+            asyncio.get_running_loop().create_task(
+                self.emit(tid, "\x1b[2J\x1b[Hthe whole frame again")
+            )
+        return done
+
+    monkeypatch.setattr(FakePtyManager, "resize", answer_second_nudge)
+    _term, pty = await _rejoin_cut_fullscreen_pane(registry, fake_pty, tmp_path)
+    await asyncio.gather(*registry._repaint_checks)
+
+    sizes = [(cols, rows) for tid, cols, rows in fake_pty.resizes if tid == pty]
+    assert sizes == [(80, 23), (80, 24), (80, 23), (80, 24)]
+
+
+async def test_repaint_nudges_stop_at_the_bound_and_leave_the_real_size(
+    registry: Registry,
+    fake_pty: FakePtyManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(session_mod, "REPAINT_CONFIRM_S", 0.02)
+    monkeypatch.setattr(session_mod, "REPAINT_POLL_S", 0.005)
+    _term, pty = await _rejoin_cut_fullscreen_pane(registry, fake_pty, tmp_path)
+
+    await asyncio.gather(*registry._repaint_checks)
+
+    sizes = [(cols, rows) for tid, cols, rows in fake_pty.resizes if tid == pty]
+    assert len(sizes) == 2 * session_mod.REPAINT_NUDGE_ATTEMPTS
+    assert sizes[-1] == (80, 24), "the pane must be left at the size it really is"
+
+
+async def test_a_line_mode_agent_is_nudged_once(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """Without the alternate screen there is no whole-screen erase to wait for."""
+    session = await _open(registry, tmp_path, [{"agent": "claude"}])
+    term = session.terminals[0]
+    await registry.attach(term.name, 80, 24, _noop_output, _noop_exit)
+    pty = term.pty_id
+    term.replay.limit = 64
+    await fake_pty.emit(pty, "the first lines of a line-mode CLI")
+    await fake_pty.emit(pty, "line mode output " * 10)
+    assert term.replay.truncated
+    registry.detach(term.key, session.id)
+    fake_pty.resizes.clear()
+    await registry.attach(term.name, 80, 24, _noop_output, _noop_exit)
+
+    assert not registry._repaint_checks
+    assert [(c, r) for tid, c, r in fake_pty.resizes if tid == pty] == [(80, 23), (80, 24)]
 
 
 async def test_a_crowded_grid_never_squeezes_the_agent_out_of_drawing(

@@ -328,3 +328,25 @@ def test_a_replay_forgets_the_modes_when_it_is_cleared() -> None:
     buffer.feed("fresh")
 
     assert buffer.text() == "fresh"
+
+
+def test_whole_screen_erases_are_counted_even_split_across_reads() -> None:
+    """The repaint nudge reads this counter to know its request was answered."""
+    buffer = ReplayBuffer()
+    buffer.feed("\x1b[?1049h\x1b[2J\x1b[Hframe")
+    assert buffer.clears == 1
+    buffer.feed("spinner\x1b[")
+    buffer.feed("2J\x1b[Hframe again")
+    assert buffer.clears == 2, "a PTY read may cut the erase after any byte"
+    buffer.rebase_for_resize()
+    assert buffer.clears == 2, "a rebase changes what is replayed, not what went past"
+
+
+def test_only_an_alternate_screen_agent_holds_the_screen() -> None:
+    buffer = ReplayBuffer()
+    buffer.feed("plain shell output")
+    assert buffer.holds_screen is False
+    buffer.feed("\x1b[?1049h")
+    assert buffer.holds_screen is True
+    buffer.feed("\x1b[?1049l")
+    assert buffer.holds_screen is False
