@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Dices, FolderGit2, FolderTree, GitBranch, GitBranchPlus, GitFork, Loader2, Sparkles } from "lucide-react";
+import { ChevronDown, Dices, FolderGit2, FolderTree, GitBranch, GitBranchPlus, GitFork, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { folderName, inspectGit, type GitPlan, type GitPrepareMode, type GitRepoInfo } from "@/lib/gitApi";
 import { GitStatusLine } from "./GitStatusLine";
@@ -43,6 +43,10 @@ export function GitCheckoutPicker({ folder, value, onChange, disabled, context, 
   const [info, setInfo] = useState<GitRepoInfo | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  // Keeping the checkout is the default and needs no decision, so the choices
+  // stay folded behind one summary line until someone asks to change it.
+  const [unfolded, setUnfolded] = useState(false);
+  const expanded = unfolded || value.mode !== "current";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -107,9 +111,37 @@ export function GitCheckoutPicker({ folder, value, onChange, disabled, context, 
   const preview = value.mode === "new_worktree" && info?.main_root
     ? `${folderName(info.main_root)}/.worktrees/${value.branch.trim().replace(/\s+/g, "-").replace(/\//g, "-") || "…"}` : "";
 
+  const summary = !info?.is_repo
+    ? { title: "Opens the folder as it is", hint: "No git here. You can set it up if you like." }
+    : context === "agent"
+      ? { title: info.branch ? <>Works on <span className="font-mono">{info.branch}</span></> : "Works in the project folder", hint: "Same folder as your other agents. Nothing to set up." }
+      : { title: info.branch ? <>Works on <span className="font-mono">{info.branch}</span></> : "Works in the project folder", hint: "In the project folder, as it is now. Nothing to set up." };
+
+  if (!expanded && !error && (loading || info?.git_available)) {
+    return <section aria-label="Git" data-testid="git-checkout-picker">
+      <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5">
+        <FolderTree className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="min-w-0 flex-1">
+          {loading ? <span className="flex items-center gap-1.5 text-sm text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Reading repository…</span>
+            : <>
+              <span className="block truncate text-sm font-medium text-foreground">{summary.title}</span>
+              <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">{summary.hint}</span>
+            </>}
+        </span>
+        <button type="button" disabled={disabled || loading} aria-expanded={false} onClick={() => setUnfolded(true)}
+          className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+          Git options<ChevronDown className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      </div>
+    </section>;
+  }
+
   return <section aria-label="Git" data-testid="git-checkout-picker" className="space-y-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <span className="text-xs font-medium text-muted-foreground">Git</span>
+      <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">Git
+        {value.mode === "current" && <button type="button" aria-expanded onClick={() => setUnfolded(false)}
+          className="rounded-md px-1.5 py-0.5 text-xs font-normal hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Hide options</button>}
+      </span>
       {loading ? <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Reading repository…</span>
         : info?.is_repo ? <GitStatusLine info={info} /> : null}
     </div>

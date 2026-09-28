@@ -84,10 +84,18 @@ describe("GitPanelDialog", () => {
 });
 
 describe("GitCheckoutPicker", () => {
+  it("folds the default choice into one plain summary", async () => {
+    render(<GitCheckoutPicker folder="/code/app" value={KEEP_CHECKOUT} onChange={vi.fn()} context="agent" />);
+    expect(await screen.findByText("Same folder as your other agents. Nothing to set up.")).toBeTruthy();
+    expect(screen.getByText("feature/login")).toBeTruthy();
+    expect(screen.queryByRole("radio")).toBeNull();
+  });
+
   it("offers an agent its own worktree but never an in-place branch switch", async () => {
     const onChange = vi.fn();
     render(<GitCheckoutPicker folder="/code/app" value={KEEP_CHECKOUT} onChange={onChange} context="agent" />);
-    fireEvent.click(await screen.findByRole("radio", { name: /New worktree/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Git options/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /New worktree/ }));
     expect(onChange).toHaveBeenCalledWith({ mode: "new_worktree", branch: "agent/brave-river-0001", base: "feature/login" });
     expect(screen.queryByRole("radio", { name: /New branch/ })).toBeNull();
     expect(screen.getByRole("radio", { name: /Existing worktree/ })).toBeTruthy();
@@ -103,7 +111,8 @@ describe("GitCheckoutPicker", () => {
     git.inspectGit.mockResolvedValue({ ...info, is_repo: false });
     const onChange = vi.fn();
     render(<GitCheckoutPicker folder="/code/app" value={KEEP_CHECKOUT} onChange={onChange} context="workspace" />);
-    fireEvent.click(await screen.findByRole("radio", { name: /Initialize git/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Git options/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /Initialize git/ }));
     expect(onChange).toHaveBeenCalledWith({ mode: "init", branch: "", base: "" });
   });
 });
