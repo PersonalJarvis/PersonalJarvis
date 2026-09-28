@@ -99,6 +99,9 @@ export class GitApiError extends Error {
 const BASE = "/api/agentic-ide/git";
 
 async function failure(res: Response): Promise<GitApiError> {
+  // A backend that predates these routes: new code ships as a frontend bundle
+  // that reloads on its own, while Python routes load at the next app start.
+  if (res.status === 404) return new GitApiError("Git options load after the next app restart.", "unavailable");
   try {
     const body = (await res.json()) as { detail?: unknown };
     const detail = body.detail;
