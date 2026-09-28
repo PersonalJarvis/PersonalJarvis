@@ -65,6 +65,18 @@ export function GitCheckoutPicker({ folder, value, onChange, disabled, context, 
     return [...new Set([...ordered, ...info.remote_branches])];
   }, [info]);
 
+  // A plan preset from outside ("New workspace in a worktree") learns its
+  // branch name and base once the repository is read; a mode this folder
+  // cannot offer (a worktree of a plain folder) falls back to keeping it.
+  useEffect(() => {
+    if (!info || !info.git_available) return;
+    const creates = value.mode === "new_worktree" || value.mode === "new_branch";
+    if (creates && !info.is_repo) onChange({ mode: "current", branch: "", base: "" });
+    else if (creates && !value.branch) onChange({ ...value, branch: info.suggested_branch, base: value.base || info.branch });
+    // Only when the inspection lands — not on every keystroke in the branch field.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [info]);
+
   const options: Option[] = !info?.is_repo
     ? [
       { mode: "current", title: "Without git", hint: "Open the folder as it is", Icon: FolderTree, recommended: true },

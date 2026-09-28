@@ -93,6 +93,12 @@ describe("GitCheckoutPicker", () => {
     expect(screen.getByRole("radio", { name: /Existing worktree/ })).toBeTruthy();
   });
 
+  it("completes a preset worktree plan once the repository is read", async () => {
+    const onChange = vi.fn();
+    render(<GitCheckoutPicker folder="/code/app" value={{ mode: "new_worktree", branch: "", base: "" }} onChange={onChange} context="workspace" />);
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith({ mode: "new_worktree", branch: "agent/brave-river-0001", base: "feature/login" }));
+  });
+
   it("offers git init for a plain folder", async () => {
     git.inspectGit.mockResolvedValue({ ...info, is_repo: false });
     const onChange = vi.fn();

@@ -289,7 +289,7 @@ it("offers the project's real launchers and runs them", async () => {
   await screen.findByRole("menuitem", { name: "Open on GitHub" });
   const menu = screen.getByRole("menu", { name: "Project actions for App" });
   expect(Array.from(menu.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent)).toEqual([
-    "New workspace", "Open in VS Code", expect.stringMatching(/^Show in /), "Open on GitHub",
+    "New workspace", "New workspace in a worktreeOwn folder and branch for its agents", "Open in VS Code", expect.stringMatching(/^Show in /), "Open on GitHub",
     "Rename project", "Pin project", "Delete project",
   ]);
   fireEvent.click(screen.getByRole("menuitem", { name: "Open in VS Code" }));
@@ -326,6 +326,16 @@ it("adds an agent, duplicates the line-up and interrupts only working agents", a
   await waitFor(() => expect(addTerminal).toHaveBeenCalledWith({ workspace_id: "p1-w1" }));
 });
 
+it("opens the Git panel and a worktree workspace from the menus", async () => {
+  render(<IdeProjectTree />);
+  fireEvent.click(screen.getByRole("button", { name: "Workspace actions for Work" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: /^Git/ }));
+  expect(useIdeProjectsStore.getState().action).toMatchObject({ kind: "git-panel", workspaceId: "p1-w1" });
+  fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: /New workspace in a worktree/ }));
+  expect(useIdeProjectsStore.getState().action).toMatchObject({ kind: "new-workspace", projectId: "p1", worktree: true });
+});
+
 it("offers a closed workspace only what works on it", async () => {
   useIdeProjectsStore.setState({
     projects: [{
@@ -338,7 +348,7 @@ it("offers a closed workspace only what works on it", async () => {
   fireEvent.contextMenu(screen.getByTestId("ide-workspace-row-p1-w1"));
   await screen.findByRole("menuitem", { name: "Open in VS Code" });
   expect(screen.getByRole("menuitem", { name: "Reopen workspace" })).toBeDefined();
-  for (const missing of [/Rename workspace/, /Add another agent/, /Duplicate/, /Interrupt/]) {
+  for (const missing of [/Rename workspace/, /Add another agent/, /Duplicate/, /Interrupt/, /^Git/]) {
     expect(screen.queryByRole("menuitem", { name: missing })).toBeNull();
   }
 });

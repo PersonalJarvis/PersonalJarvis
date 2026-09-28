@@ -263,13 +263,22 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     handledAction.current = action.nonce;
     if (action.kind === "connect-project") { setProjectDialog(true); return; }
     if (action.kind === "workspace-options") { if (action.workspaceId === session?.id) setOptionsOpen(true); return; }
+    if (action.kind === "git-panel") {
+      // The panel follows the ACTIVE workspace: bring the asked one to the front first.
+      if (action.workspaceId !== session?.id) void activateFromTree(action.workspaceId);
+      setGitOpen(true);
+      return;
+    }
     if (action.kind === "toggle-voice") {
       setVoiceOpen((current) => { const next = !current; storeVoiceBubbleOpen(next); return next; });
       return;
     }
     if (action.kind === "new-workspace") {
       const project = projects.find((entry) => entry.id === action.projectId);
-      if (project) { setWorkspaceProject(project); setWorkspaceName(""); setWorkspaceAgents([installed[0]?.name ?? ""]); setWorkspaceGit(KEEP_CHECKOUT); }
+      if (project) {
+        setWorkspaceProject(project); setWorkspaceName(""); setWorkspaceAgents([installed[0]?.name ?? ""]);
+        setWorkspaceGit(action.worktree ? { mode: "new_worktree", branch: "", base: "" } : KEEP_CHECKOUT);
+      }
       return;
     }
     void activateFromTree(action.workspaceId);

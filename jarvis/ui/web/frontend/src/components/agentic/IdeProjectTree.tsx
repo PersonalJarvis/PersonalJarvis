@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUpRight, Check, ChevronDown, ChevronRight, Copy, CopyPlus, Folder, FolderOpen, FolderPlus, Globe, Loader2, Mic, MoreHorizontal, OctagonPause, Pencil, Pin, PinOff, Plus, SquareCode, Trash2, X, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, ChevronRight, Copy, CopyPlus, Folder, FolderGit2, GitBranch, FolderOpen, FolderPlus, Globe, Loader2, Mic, MoreHorizontal, OctagonPause, Pencil, Pin, PinOff, Plus, SquareCode, Trash2, X, type LucideIcon } from "lucide-react";
 import { ChatLibraryError, deleteProject, openProject, patchProject, reorderProjects, revealProject, fetchProjectLaunchers, openProjectIn, type ProjectLaunchers } from "@/lib/chatLibraryApi";
 import { robustCopy } from "@/lib/clipboard";
 import { addTerminal, fetchWorkspacePanes, interruptTerminal, removeWorkspace, renameWorkspace, startIdeSession, IdeApiError, reorderWorkspaces, type IdeProject, type ProjectWorkspace, type WorkspacePaneRow } from "@/lib/agenticIdeApi";
@@ -69,6 +69,7 @@ export function IdeProjectTree() {
   const connectProject = useIdeProjectsStore((state) => state.connectProject);
   const newWorkspace = useIdeProjectsStore((state) => state.newWorkspace);
   const activateWorkspace = useIdeProjectsStore((state) => state.activateWorkspace);
+  const openGitPanel = useIdeProjectsStore((state) => state.openGitPanel);
   const toggleVoice = useIdeProjectsStore((state) => state.toggleVoice);
   const requestRefresh = useIdeProjectsStore((state) => state.requestRefresh);
   const pushToast = useEventStore((state) => state.pushToast);
@@ -613,6 +614,8 @@ export function IdeProjectTree() {
   const projectMenuSections = (project: IdeProject): TreeMenuItem[][] => [
     [
       { id: "new", label: "New workspace", icon: FolderPlus, testId: "ide-project-menu-new", onSelect: run(() => newWorkspace(project.id)) },
+      { id: "new-worktree", label: "New workspace in a worktree", icon: FolderGit2, testId: "ide-project-menu-new-worktree",
+        hint: "Own folder and branch for its agents", onSelect: run(() => newWorkspace(project.id, { worktree: true })) },
       ...launcherItems(project, "project"),
     ],
     [
@@ -646,6 +649,10 @@ export function IdeProjectTree() {
         ...launcherItems(project, "workspace"),
         { id: "copy", label: "Copy folder path", icon: Copy, testId: "ide-workspace-menu-copy", onSelect: run(() => void copyPath(workspace.folder || project.path)) },
       ],
+      isOpen ? [
+        { id: "git", label: "Git", icon: GitBranch, testId: "ide-workspace-menu-git", hint: "Commit, push, pull request, worktrees",
+          onSelect: run(() => openGitPanel(workspace.id)) },
+      ] : [],
       isOpen ? [
         { id: "rename", label: "Rename workspace", icon: Pencil, testId: "ide-workspace-menu-rename",
           onSelect: run(() => { setDraftWorkspaceName(workspace.name); setRenamingWorkspaceId(workspace.id); setProjectOpen(project.id, true); }) },
