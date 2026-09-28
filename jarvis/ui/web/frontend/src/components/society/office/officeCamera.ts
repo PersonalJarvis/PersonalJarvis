@@ -20,7 +20,7 @@ export interface Bounds { minX: number; maxX: number; minZ: number; maxZ: number
 export interface CameraPose { position: [number, number, number]; target: [number, number, number] }
 
 /** Distance that fits a floor of this footprint into a viewport of this aspect. */
-export function fitDistance(bounds: Bounds, aspect: number, fovDeg = CAMERA_FOV): number {
+export function fitDistance(bounds: Bounds, aspect: number, fovDeg = CAMERA_FOV, tightness = 0.62): number {
   const width = bounds.maxX - bounds.minX;
   const depth = bounds.maxZ - bounds.minZ;
   // Seen diagonally, the floor's screen width is roughly its diagonal; its
@@ -30,7 +30,7 @@ export function fitDistance(bounds: Bounds, aspect: number, fovDeg = CAMERA_FOV)
   const hHalf = Math.atan(Math.tan(vHalf) * Math.max(0.3, aspect));
   const needH = (diagonal * 0.5) / Math.tan(hHalf);
   const needV = (diagonal * Math.sin(HOME_PITCH_RAD) * 0.5 + 1.5) / Math.tan(vHalf);
-  return Math.min(CAMERA_LIMITS.maxDistance, Math.max(CAMERA_LIMITS.minDistance, Math.max(needH, needV) * 0.62));
+  return Math.min(CAMERA_LIMITS.maxDistance, Math.max(CAMERA_LIMITS.minDistance, Math.max(needH, needV) * tightness));
 }
 
 /** Smallest area the home view frames, so a lone agent still shows its neighbourhood. */
@@ -51,7 +51,8 @@ export function focusBounds(points: readonly { x: number; z: number }[]): Bounds
 export function cameraHome(bounds: Bounds, aspect: number, focus: Bounds | null = null): CameraPose {
   const frame = focus ?? bounds;
   const target: [number, number, number] = [(frame.minX + frame.maxX) / 2, 0, (frame.minZ + frame.maxZ) / 2];
-  const distance = fitDistance(frame, aspect);
+  // The whole floor must fit edge to edge; a focus area may crop its padding.
+  const distance = fitDistance(frame, aspect, CAMERA_FOV, focus ? 0.62 : 0.9);
   const horizontal = Math.cos(HOME_PITCH_RAD) * distance;
   return {
     target,

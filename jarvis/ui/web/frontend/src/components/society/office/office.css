@@ -31,4 +31,13 @@
 .office-plate[data-state="working"] .office-plate-state i { background:#4ade80; box-shadow:0 0 6px #4ade80; }
 .office-plate[data-state="waiting"] .office-plate-state i { background:#fbbf24; }
 .office-plate:focus-visible { outline:2px solid #93c5fd; outline-offset:2px; }
+/* Checkpoint label pills: same dark in-world pill as .office-plate, with a gold hexagon badge. */
+.office-checkpoint { transform-origin:center center; display:inline-flex; align-items:center; gap:6px; padding:3px 11px 3px 3px; border:1px solid rgb(245 184 61 / .55); border-radius:999px; background:rgb(24 26 32 / .86); color:#fff7ec; cursor:pointer; font-family:inherit; font-size:12px; font-weight:700; white-space:nowrap; user-select:none; box-shadow:0 2px 8px rgb(0 0 0 / .35); transition:background .15s, border-color .15s, box-shadow .15s; }
+.office-checkpoint:hover { background:rgb(36 39 48 / .95); border-color:#f5b83d; }
+.office-checkpoint-badge { display:inline-flex; align-items:center; justify-content:center; flex:none; width:20px; height:20px; background:#f5b83d; color:#2a1d0a; clip-path:polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%); }
+.office-checkpoint-badge svg { width:12px; height:12px; }
+.office-checkpoint-label { max-width:12em; overflow:hidden; text-overflow:ellipsis; }
+.office-checkpoint[data-active="true"] { background:rgb(58 42 12 / .94); border-color:#f5b83d; color:#fff; box-shadow:0 0 0 2px rgb(245 184 61 / .35), 0 2px 14px rgb(245 184 61 / .5); }
+.office-checkpoint:focus-visible { outline:2px solid #93c5fd; outline-offset:2px; }
+@media (prefers-reduced-motion:reduce) { .office-checkpoint { transition:none; } }
 @media (max-width:600px) { .office-help { display:none; } .office-counts { gap:8px; } }

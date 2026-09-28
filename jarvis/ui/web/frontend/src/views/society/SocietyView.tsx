@@ -184,7 +184,8 @@ export function SocietyView() {
           <div className="min-w-0 flex-1">
             <CanvasActivity.Provider value={!openPlace && !creating}>
               <Suspense fallback={null}>
-                <JarvisAgentsBoard onSelectAgent={onIslandSelect} onSelectPlace={onIslandPlace} onOpenAgents={() => switchMode("agents")} />
+                <JarvisAgentsBoard onSelectAgent={onIslandSelect} onSelectPlace={onIslandPlace} onOpenAgents={() => switchMode("agents")}
+                  onCreateAgent={() => setCreating(true)} onOpenGroup={(groupId) => { selectGroup(groupId); switchMode("agents"); }} />
               </Suspense>
             </CanvasActivity.Provider>
           </div>

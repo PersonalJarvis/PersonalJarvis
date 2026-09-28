@@ -12,7 +12,7 @@ import { RoundedBoxGeometry } from "three-stdlib";
 import { OFFICE } from "./officePalette";
 import { screenTexture, type ScreenFace } from "./screenTextures";
 
-const matte = (color: string, extra: Partial<ConstructorParameters<typeof MeshStandardMaterial>[0]> = {}) =>
+export const matte = (color: string, extra: Partial<ConstructorParameters<typeof MeshStandardMaterial>[0]> = {}) =>
   new MeshStandardMaterial({ color, roughness: 0.85, metalness: 0, ...extra });
 
 export const MAT = {
@@ -39,14 +39,14 @@ export const MAT = {
   books: OFFICE.book.map((c) => matte(c)),
 };
 
-const GEO = {
+export const GEO = {
   box: new BoxGeometry(1, 1, 1),
   cyl: new CylinderGeometry(1, 1, 1, 16),
   potCyl: new CylinderGeometry(1, 0.8, 1, 16),
   blob: new IcosahedronGeometry(1, 0),
 };
 
-function Box({ size, position, material, cast = true }: {
+export function Box({ size, position, material, cast = true }: {
   size: [number, number, number]; position: [number, number, number]; material: MeshStandardMaterial; cast?: boolean;
 }) {
   return <mesh geometry={GEO.box} material={material} position={position} scale={size} castShadow={cast} receiveShadow />;
@@ -54,7 +54,7 @@ function Box({ size, position, material, cast = true }: {
 
 /** Rounded boxes are cached by size: every desk shares the same few geometries. */
 const roundedCache = new Map<string, RoundedBoxGeometry>();
-function Rounded({ size, radius, position, material, cast = true }: {
+export function Rounded({ size, radius, position, material, cast = true }: {
   size: [number, number, number]; radius: number; position: [number, number, number]; material: MeshStandardMaterial; cast?: boolean;
 }) {
   const key = `${size.join("x")}:${radius}`;
@@ -67,7 +67,7 @@ function Rounded({ size, radius, position, material, cast = true }: {
 }
 
 const screenMaterials = new Map<ScreenFace, MeshStandardMaterial>();
-function screenMaterial(face: ScreenFace): MeshStandardMaterial {
+export function screenMaterial(face: ScreenFace): MeshStandardMaterial {
   let material = screenMaterials.get(face);
   if (!material) {
     const map = screenTexture(face);

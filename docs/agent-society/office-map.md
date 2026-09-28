@@ -1,6 +1,6 @@
 # Agent office map
 
-Status: **first map built 2026-09-28, awaiting the maintainer's visual review.**
+Status: **walkable prototype built 2026-09-28, awaiting the maintainer's visual review.**
 It replaces the Mars colony as the renderer behind **Agents > Map**. The Mars
 code, its backend contracts and the communications station remain in the tree
 and reachable from the Agents workspace; only the map surface changed.
@@ -48,37 +48,70 @@ the renderer is already Three.js inside the WebView, the figures and their
 animation clips (`sit`, `work`, `idle`, `walk`, …) already exist, and every OS
 target runs WebGL.
 
-## 4. Layout model
+## 4. Floor plan and data model
 
-`officeLayout.ts` is pure and tested:
+`officeLayout.ts` is pure and tested. It builds the whole floor from the roster:
 
-- Departments = provider families (`providerLabel`; empty means Jarvis' own
-  brain). At most six; the rest fold into "Other". The floor always shows at
-  least four; spare ones are "Open space" with free desks.
-- Each department is benches of back-to-back desks, four per row, eight per
-  bench, one to four benches.
-- The lead tier sits in a glass office at the back; a lounge fills the front.
-- Seating is by arrival (`createdMs`, then id), so a refetch never re-seats
-  anyone; run state changes only repaint monitors and rings.
+- **North strip:** lead office (lead-tier agents), team room (long table, board),
+  wardrobe (lockers, mirror). Glass walls with a door towards the office.
+- **Middle:** departments = provider families (`providerLabel`; empty means
+  Jarvis' own brain), two columns, at least four (spare ones are "Open space"),
+  at most six (the rest fold into "Other"). Benches of back-to-back desks.
+- **South strip:** an open reception/lobby with the elevator, the reception desk
+  and the agent board; a walled break room with couches, coffee bar, water
+  cooler, arcade and beanbags.
+- **Furniture** has fixed footprints (`FURNITURE_SIZE`) shared by renderer and
+  navigation; **spots** are hangout places with pose and facing; **checkpoints**
+  are action places; **obstacles** are every solid footprint.
+- Seating is by arrival (`createdMs`, then id), so a refetch never re-seats anyone.
 
-## 5. Plan
+## 5. Behaviour, player and interaction
 
-1. **First map (done):** floor, departments, lead office, lounge, seated
-   figures, state rings/monitors/pills, HUD counts, camera, click-to-open.
-2. **Review:** the maintainer looks at the map in the app. Capture feedback on
-   look, camera and department grouping before any further art.
-3. **Life:** optional short walks (desk ↔ lounge when idle for long), typing
-   animation while working, a "waiting for you" bubble. Driven only by real
-   state changes, never by LLM calls.
-4. **Detail pass:** a coffee corner, meeting room for group chats, per-department
-   decor, name boards with provider logos.
-5. **Scale and performance:** instanced desks for large rosters, measured frame
-   times on a laptop GPU and a low-end integrated GPU.
+- **Navigation** (`officeNav.ts`): a 0.2 m occupancy grid, A* with line-of-sight
+  smoothing, and a final snap onto seats that sit inside a furniture footprint.
+- **Agents** (`officeBehavior.ts`, `OfficeAgents.tsx`): working → seated at their
+  own screen; waiting → standing at the desk, waving; paused → napping on a
+  couch; idle → a weighted day of coffee, couch, window, arcade, books, water
+  cooler, team table, strolling or chatting at a busy colleague's desk. Spots are
+  reserved so nobody sits on anybody. All of it is client-side, deterministic
+  per agent, costs no tokens and never starts or stops work. Reduced motion
+  places agents without walking. Agents created while the office is open arrive
+  by the elevator.
+- **The person's character** (`OfficePlayer.tsx`, `playerProfile.ts`): WASD /
+  arrows (camera-relative, Shift runs) or click the floor to walk; E interacts
+  with the nearest agent or checkpoint. Name and body are chosen in the
+  wardrobe and stored per browser profile (not roster data).
+- **Camera** (`OfficeCameraRig.tsx`): one orbit camera that glides after the
+  character; zoom out and it is the overview. Everything stays clickable from
+  afar, so walking is optional. A right-drag pan or a fly-to stops following;
+  moving resumes it.
+- **Checkpoints** (`OfficePanels.tsx`): reception → create an agent (existing
+  dialog); agent board → list, show on map, open, agent management; team room →
+  pick agents and create a team (existing chat groups), gather teams at the
+  table; wardrobe → your look; lead office → talk to the lead; break room → call
+  free agents for a coffee break (visual only).
+- **Agent panel:** open chat, walk there, call over, show on map, add to a new team.
 
-## 6. Verification so far
+## 6. Plan
 
-- Unit tests: `officeLayout.test.ts` (grouping, stable seating, no overlap,
-  empty roster, camera framing), `JarvisAgentsView.test.tsx`.
+1. First map (done 2026-09-28).
+2. Walkable prototype (done 2026-09-28): rooms, checkpoints, agent life, own character.
+3. **Review:** the maintainer plays it and gives feedback on look, camera, rooms and actions.
+4. Polish: typing animation while working, speech bubbles for "waiting for you",
+   door animations, agents greeting the person, sound.
+5. Scale: instanced chairs/props beyond desks, measured frame times on a laptop
+   GPU and a low-end integrated GPU, macOS/Linux WebViews.
+
+## 7. Verification so far
+
+- Unit tests: layout (grouping, stable seating, no overlap, camera framing),
+  navigation (every seat, spot and checkpoint reachable from the elevator for
+  0/10/40 agents; paths never cross obstacles), motion, behaviour (state rules,
+  exclusive spots, determinism), props (every kind renders inside its footprint).
+- Runtime (Chrome, dev build, live roster of ten agents): walking by click and
+  by keyboard, camera follow and overview, nearby prompt and E, agent panel,
+  "call over". Desks are instanced; the full floor measured ~730 draw calls and
+  ~18 ms per frame on the development machine.
 - Runtime: checked in Chrome against the live roster (ten agents, one lead)
   through a temporary dev preview: rendering, click on figure and on pill.
 - Not yet measured: frame time and device coverage; macOS/Linux WebViews.

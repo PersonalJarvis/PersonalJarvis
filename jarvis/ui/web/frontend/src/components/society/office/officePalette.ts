@@ -38,3 +38,45 @@ export const OFFICE = {
 
 /** Carpet tints per department — soft, desaturated, readable next to wood. */
 export const DEPARTMENT_TINTS = ["#9aa6b8", "#a9b59a", "#b8a39a", "#a39ab8", "#9ab5b1", "#b8b19a"] as const;
+
+/** Colours of the room props (lobby, team room, wardrobe, break room). */
+export const PROP_COLOURS = {
+  steel: "#aab2bc",
+  steelDark: "#6f7782",
+  elevatorShaft: "#e7e4de",
+  indicator: "#ffb347",
+  lockers: ["#5fa8a0", "#e2856e", "#f2c14e", "#9b8ac4"],
+  lockerVent: "#2f3440",
+  mirror: "#d6ecf8",
+  waterBottle: "#6fb7ea",
+  waterTap: ["#e05a4f", "#4f8fe0"],
+  mug: "#fdfbf7",
+  coffee: "#5a3a24",
+  espresso: "#c9ced4",
+  chalkboard: "#2c3a33",
+  arcadeBody: "#5b4a9e",
+  arcadeTrim: "#2a2140",
+  arcadeMarquee: "#ff7ab8",
+  joystick: "#e0463c",
+  arcadeButtons: ["#f2c14e", "#4fb3e0", "#6fd07a"],
+  beanbag: ["#e27d60", "#85cdca", "#e8a87c", "#c38d9e", "#7d9bd6"],
+  bell: "#e0b64a",
+  boardFrame: "#d7d9dd",
+  boardWhite: "#fbfbf8",
+  kioskBody: "#f4f2ee",
+  kioskHead: "#2a2e36",
+  paper: "#fdfcf9",
+  rugInner: "#c9b28f",
+} as const;
+
+/** Floor overlays per room kind: base colour plus the pattern's accent tones. */
+export const ROOM_FLOOR_COLOURS = {
+  lead: { base: "#a9774d", accents: ["#b3825a", "#9e6d45", "#ad7b52", "#a47249"] },
+  team: { base: "#7fb3ad", accents: ["#8bbdb7", "#74a7a1", "#86b8b2"] },
+  wardrobe: { base: "#ddd3ea", accents: ["#cfc3e0", "#e6ddf1"] },
+  reception: { base: "#e7e2d9", accents: ["#ece8e0", "#e0dacf", "#e9e4dc"] },
+  break: { base: "#d98b6e", accents: ["#e0967a", "#d08065", "#dc9074"] },
+} as const;
+
+/** Checkpoint gold: floor ring, hexagon token and the label badge. */
+export const CHECKPOINT_GOLD = { ring: "#f5b83d", rim: "#e0a02a", face: "#f7c65a", faceDeep: "#e39b1f", icon: "#ffffff" } as const;

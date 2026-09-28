@@ -1,20 +1,29 @@
 /**
- * Agents at their desks: the stored character, seated, with a floating name
- * pill and a floor ring in the colour of its run state. The office is a
- * projection of the roster — nothing here moves an agent or starts work.
+ * Agents living in the office. Working agents sit at their screens, waiting
+ * agents stand and wave at their desk, idle agents wander: coffee, couch,
+ * window, arcade, a chat at a busy colleague's desk. Paused agents nap.
+ *
+ * The office is a projection of the roster: run state comes from the backend,
+ * everything else is client-side choreography that costs no tokens and never
+ * starts or stops work.
  */
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Html } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { DoubleSide, Vector3, type Group, type Mesh, type MeshBasicMaterial } from "three";
 import { useT } from "@/i18n";
 import type { SocietyAgent } from "../data";
-import { FigureRig, type FigureDrive } from "../figures/FigureRig";
+import { FigureRig, type FigureDrive, type FigureMode } from "../figures/FigureRig";
 import { shufflePalette, type FigureRecipe } from "../figures/figureRecipe";
 import { OFFICE } from "./officePalette";
-import type { DeskSlot } from "./officeLayout";
+import type { DeskSlot, OfficeLayout, Point } from "./officeLayout";
+import { findPath, type NavGrid } from "./officeNav";
+import { stepMover, turnToward, WALK_SPEED, type Mover } from "./officeMotion";
+import { createRng, planFor, type ActivityKind, type Plan, type Pose, type SpotBook } from "./officeBehavior";
+import { useOfficeStore } from "./officeStore";
+import { agentPositions } from "./walkerRegistry";
 
-/** Seated figures share one toy scale, so the desks read the same everywhere. */
+/** Every figure shares one toy scale, so desks and couches read the same everywhere. */
 export const OFFICE_FIGURE_HEIGHT_M = 1.3;
 
 /** Agents without a stored character get a stable chibi look from their id. */
@@ -24,25 +33,15 @@ export function fallbackRecipe(agentId: string): FigureRecipe {
   return { contract: 1, archetype: "biped", base: "chibi", parts: {}, palette: shufflePalette((hash % 10_000) / 10_000) };
 }
 
-const RING_COLOUR = {
-  working: OFFICE.ringWorking,
-  idle: OFFICE.ringIdle,
-  waiting: OFFICE.ringWaiting,
-  paused: OFFICE.ringPaused,
-} as const;
+/** Pose → animation clip. Seated work uses the seated clip; the monitor shows the typing. */
+export const POSE_CLIP: Record<Pose, FigureMode> = { sit: "sit", work: "sit", stand: "idle", wave: "wave", talk: "talk", sleep: "sleep" };
 
-function StatusRing({ state, animate }: { state: SocietyAgent["state"]; animate: boolean }) {
-  const ref = useRef<Mesh>(null);
-  useFrame(({ clock }) => {
-    if (!ref.current || !animate || state !== "working") return;
-    (ref.current.material as MeshBasicMaterial).opacity = 0.55 + Math.sin(clock.elapsedTime * 3) * 0.3;
-  });
-  return (
-    <mesh ref={ref} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
-      <ringGeometry args={[0.46, 0.54, 40]} />
-      <meshBasicMaterial color={RING_COLOUR[state]} transparent opacity={0.8} side={DoubleSide} depthWrite={false} />
-    </mesh>
-  );
+/** How far a seated figure is lifted onto its seat, per activity. */
+function seatLift(kind: ActivityKind): number {
+  if (kind === "work" || kind === "desk" || kind === "meeting") return 0.12;
+  if (kind === "couch" || kind === "nap") return 0.04;
+  if (kind === "beanbag") return -0.1;
+  return 0;
 }
 
 /** Nameplate scale by camera distance: readable up close, compact in the overview, never huge. */
@@ -50,11 +49,14 @@ export function plateScale(distance: number): number {
   return Math.min(1.05, Math.max(0.8, 24 / Math.max(1, distance)));
 }
 
-function Nameplate({ agent, onSelect }: { agent: SocietyAgent; onSelect: (id: string) => void }) {
+const RING_COLOUR = { working: OFFICE.ringWorking, idle: OFFICE.ringIdle, waiting: OFFICE.ringWaiting, paused: OFFICE.ringPaused } as const;
+
+function Nameplate({ agent, activity, selected, onSelect }: {
+  agent: SocietyAgent; activity: ActivityKind | null; selected: boolean; onSelect: (id: string) => void;
+}) {
   const t = useT();
-  const lead = agent.tier === "lead";
-  const anchor = useRef<Group>(null);
   const plate = useRef<HTMLButtonElement>(null);
+  const anchor = useRef<Group>(null);
   const last = useRef(0);
   const world = useMemo(() => new Vector3(), []);
   useFrame(({ camera }) => {
@@ -64,62 +66,143 @@ function Nameplate({ agent, onSelect }: { agent: SocietyAgent; onSelect: (id: st
     last.current = scale;
     plate.current.style.transform = `scale(${scale.toFixed(2)})`;
   });
+  const detail = agent.state !== "idle" ? t(`society.office.state_${agent.state}`) : activity ? t(`society.office.activity_${activity}`) : "";
   return (
     <group ref={anchor} position={[0, OFFICE_FIGURE_HEIGHT_M + 0.35, 0]}>
-    <Html center zIndexRange={[20, 0]}>
-      <button ref={plate} type="button" data-office-ui className="office-plate" data-state={agent.state}
-        onClick={(event) => { event.stopPropagation(); onSelect(agent.agentId); }}
-        aria-label={t("society.office.open_agent").replace("{0}", agent.name)}>
-        <span className="office-plate-badge" style={{ background: agent.palette.primary }} aria-hidden>
-          {lead ? "★" : agent.name.slice(0, 1).toUpperCase()}
-        </span>
-        <span className="office-plate-name">{agent.name}</span>
-        <span className="office-plate-state" title={t(`society.office.state_${agent.state}`)}>
-          <i aria-hidden />
-          {agent.state === "idle" ? null : <em>{t(`society.office.state_${agent.state}`)}</em>}
-        </span>
-      </button>
-    </Html>
+      <Html center zIndexRange={[20, 0]}>
+        <button ref={plate} type="button" data-office-ui className="office-plate" data-state={agent.state} data-selected={selected || undefined}
+          onClick={(event) => { event.stopPropagation(); onSelect(agent.agentId); }}
+          aria-label={t("society.office.open_agent").replace("{0}", agent.name)}>
+          <span className="office-plate-badge" style={{ background: agent.palette.primary }} aria-hidden>
+            {agent.tier === "lead" ? "★" : agent.name.slice(0, 1).toUpperCase()}
+          </span>
+          <span className="office-plate-name">{agent.name}</span>
+          <span className="office-plate-state" title={t(`society.office.state_${agent.state}`)}>
+            <i aria-hidden />{detail ? <em>{detail}</em> : null}
+          </span>
+        </button>
+      </Html>
     </group>
   );
 }
 
-function SeatedAgent({ agent, desk, awake, reduced, onSelect }: {
-  agent: SocietyAgent; desk: DeskSlot; awake: boolean; reduced: boolean; onSelect: (id: string) => void;
+export interface WalkerContext {
+  layout: OfficeLayout;
+  grid: NavGrid;
+  book: SpotBook;
+  /** Busy colleagues someone idle may visit, refreshed with the roster. */
+  colleagues: () => { agentId: string; desk: DeskSlot }[];
+  spawn: Point;
+}
+
+function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected, onSelect }: {
+  agent: SocietyAgent; desk: DeskSlot | null; ctx: WalkerContext; arrivesByElevator: boolean;
+  awake: boolean; reduced: boolean; selected: boolean; onSelect: (id: string) => void;
 }) {
   const recipe = useMemo(() => agent.figure ?? fallbackRecipe(agent.agentId), [agent.figure, agent.agentId]);
-  // Seated at every state; the monitor and the ring carry the difference.
-  const drive = useRef<FigureDrive>({ mode: "sit", speed: 0 });
+  const group = useRef<Group>(null);
+  const body = useRef<Group>(null);
+  const ring = useRef<Mesh>(null);
+  const drive = useRef<FigureDrive>({ mode: "idle", speed: 0 });
+  const rng = useMemo(() => createRng(agent.agentId), [agent.agentId]);
+  const mover = useRef<Mover>({ ...(arrivesByElevator ? ctx.spawn : { x: 0, z: 0 }), heading: Math.PI, path: [] });
+  const plan = useRef<Plan | null>(null);
+  const phase = useRef<"travel" | "dwell">("dwell");
+  const dwellUntil = useRef(0);
+  const placed = useRef(arrivesByElevator);
+  const planState = useRef("");
+  const summonKey = useRef("");
+  const [activity, setActivity] = useState<ActivityKind | null>(null);
+
+  // Leaving the office releases the agent's spot and its registry entry.
+  useEffect(() => () => { ctx.book.release(agent.agentId); agentPositions.delete(agent.agentId); }, [ctx.book, agent.agentId]);
+
+  useFrame((_, rawDt) => {
+    const dt = Math.min(rawDt, 0.1);
+    const now = Date.now();
+    const m = mover.current;
+    const summon = useOfficeStore.getState().summons[agent.agentId];
+    const calledTo = summon && summon.untilMs > now ? summon.target : null;
+    const sKey = calledTo ? `${calledTo.x.toFixed(2)},${calledTo.z.toFixed(2)}` : "";
+    const needsPlan = !plan.current || planState.current !== agent.state || summonKey.current !== sKey
+      || (phase.current === "dwell" && now >= dwellUntil.current);
+    if (needsPlan) {
+      const next = planFor({
+        agentId: agent.agentId, state: agent.state, desk, layout: ctx.layout, grid: ctx.grid, rng, book: ctx.book,
+        previous: plan.current?.kind ?? null, workingColleagues: ctx.colleagues().filter((c) => c.agentId !== agent.agentId), calledTo,
+      });
+      // Reduced motion: no idle wandering — a placement holds until the state changes.
+      if (reduced && !calledTo) next.dwellMs = Infinity;
+      plan.current = next;
+      planState.current = agent.state;
+      summonKey.current = sKey;
+      if (!placed.current || reduced) {
+        // First sight (or reduced motion): already there, no walk across the floor.
+        m.x = next.target.x; m.z = next.target.z; m.path = [];
+        if (next.facing !== null) m.heading = next.facing;
+        placed.current = true;
+        phase.current = "dwell";
+        dwellUntil.current = now + next.dwellMs;
+      } else {
+        m.path = findPath(ctx.grid, m, next.target) ?? [];
+        if (m.path.length === 0) { m.x = next.target.x; m.z = next.target.z; }
+        phase.current = m.path.length > 0 ? "travel" : "dwell";
+        if (phase.current === "dwell") dwellUntil.current = now + next.dwellMs;
+      }
+      if (next.kind !== activity) setActivity(next.kind);
+    }
+    const p = plan.current!;
+    let lift = 0;
+    if (phase.current === "travel") {
+      const { moved, arrived } = awake ? stepMover(m, WALK_SPEED, dt) : { moved: 0, arrived: false };
+      drive.current.mode = "walk";
+      drive.current.speed = moved / Math.max(dt, 1e-3);
+      if (arrived) { phase.current = "dwell"; dwellUntil.current = now + p.dwellMs; }
+    } else {
+      if (p.facing !== null) m.heading = turnToward(m.heading, p.facing, 8 * dt);
+      drive.current.mode = POSE_CLIP[p.pose];
+      drive.current.speed = 0;
+      if (p.pose === "sit" || p.pose === "work" || p.pose === "sleep") lift = seatLift(p.kind);
+    }
+    agentPositions.set(agent.agentId, { x: m.x, z: m.z });
+    if (group.current) group.current.position.set(m.x, 0, m.z);
+    if (body.current) { body.current.rotation.y = m.heading; body.current.position.y = lift; }
+    if (ring.current) {
+      const material = ring.current.material as MeshBasicMaterial;
+      material.opacity = agent.state === "working" && awake && !reduced ? 0.55 + Math.sin(now / 330) * 0.3 : 0.8;
+      ring.current.visible = phase.current === "dwell" || selected;
+    }
+  });
+
   return (
-    <group position={[desk.x, 0, desk.z]} rotation={[0, desk.facing === "north" ? 0 : Math.PI, 0]}>
-      <group position={[0, 0, 0.72]}>
-        <StatusRing state={agent.state} animate={awake && !reduced} />
-        {/* Figures face +z; the agent looks at its monitor on the local -z side. */}
-        <group rotation={[0, Math.PI, 0]} position={[0, SEAT_LIFT_M, SEAT_BACK_M]}
-          onClick={(event) => { event.stopPropagation(); onSelect(agent.agentId); }}
-          onPointerOver={() => { document.body.style.cursor = "pointer"; }}
-          onPointerOut={() => { document.body.style.cursor = ""; }}>
-          <FigureRig recipe={recipe} drive={drive} paused={!awake || reduced} heightM={OFFICE_FIGURE_HEIGHT_M} />
-        </group>
-        <Nameplate agent={agent} onSelect={onSelect} />
+    <group ref={group} userData={{ agentId: agent.agentId }}>
+      <mesh ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
+        <ringGeometry args={[selected ? 0.4 : 0.46, 0.54, 40]} />
+        <meshBasicMaterial color={selected ? "#93c5fd" : RING_COLOUR[agent.state]} transparent opacity={0.8} side={DoubleSide} depthWrite={false} />
+      </mesh>
+      <group ref={body}
+        onClick={(event) => { event.stopPropagation(); onSelect(agent.agentId); }}
+        onPointerOver={() => { document.body.style.cursor = "pointer"; }}
+        onPointerOut={() => { document.body.style.cursor = ""; }}>
+        <FigureRig recipe={recipe} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} />
       </group>
+      <Nameplate agent={agent} activity={activity} selected={selected} onSelect={onSelect} />
     </group>
   );
 }
 
-/** Seat offsets for the shared "sit" clip, measured in the runtime against the chair. */
-export const SEAT_LIFT_M = 0.12;
-export const SEAT_BACK_M = 0.04;
-
-export function OfficeAgents({ desks, agents, awake, reduced, onSelect }: {
-  desks: DeskSlot[]; agents: ReadonlyMap<string, SocietyAgent>; awake: boolean; reduced: boolean; onSelect: (id: string) => void;
+export function OfficeAgents({ desks, agents, ctx, newcomers, awake, reduced, selectedId, onSelect }: {
+  desks: DeskSlot[]; agents: ReadonlyMap<string, SocietyAgent>; ctx: WalkerContext; newcomers: ReadonlySet<string>;
+  awake: boolean; reduced: boolean; selectedId: string | null; onSelect: (id: string) => void;
 }) {
+  const deskOf = useMemo(() => new Map(desks.filter((d) => d.agentId).map((d) => [d.agentId as string, d])), [desks]);
   return (
     <group>
-      {desks.map((desk) => {
-        const agent = desk.agentId ? agents.get(desk.agentId) : undefined;
-        return agent ? <SeatedAgent key={agent.agentId} agent={agent} desk={desk} awake={awake} reduced={reduced} onSelect={onSelect} /> : null;
-      })}
+      {[...agents.values()].map((agent) => (
+        <Walker key={agent.agentId} agent={agent} desk={deskOf.get(agent.agentId) ?? null} ctx={ctx}
+          arrivesByElevator={newcomers.has(agent.agentId)} awake={awake} reduced={reduced}
+          selected={selectedId === agent.agentId} onSelect={onSelect} />
+      ))}
     </group>
   );
 }
