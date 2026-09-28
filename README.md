@@ -5,8 +5,8 @@
 <h2 align="center">Your personal AI ecosystem. One desktop, connected by voice.</h2>
 
 <p align="center">
-  Talk to Jarvis. Work with your agents. Bring your tools, models, and knowledge together.<br />
-  An open-source workspace for conversations and the work that follows.
+  Talk to it, run coding agents side by side, and let it use your browser and desktop.<br />
+  Free and open source for Windows, macOS, and Linux. Bring any model provider or run local models.
 </p>
 
 <p align="center">
@@ -15,44 +15,26 @@
   <a href="https://discord.gg/x7USduHxbc"><img alt="Join Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&amp;logoColor=white" /></a>
 </p>
 
-**Personal Jarvis is an open-source AI ecosystem that runs on your own computer.**
-At its center is Jarvis, a voice orchestrator that connects a conversation to
-[agents](#jarvis-agents), [coding sessions](#coding-workspace), desktop actions,
-and the services you choose to connect. Speak naturally or type a message:
-Jarvis can answer, use a tool, or delegate work while you follow the conversation
-and inspect what happens. The desktop app brings those conversations, your team,
-and their results into one workspace on Windows, macOS, and Linux.
+<p align="center">
+  <a href="#install"><b>Install</b></a> ·
+  <a href="#jarvis-your-voice-orchestrator">See how it works</a> ·
+  <a href="https://personaljarvis.ai">Website</a> ·
+  <a href="https://discord.gg/x7USduHxbc">Discord</a>
+</p>
 
-The workspace extends beyond the conversation. Build persistent specialists with
-their own instructions and recurring routines. Use [Jarvis Voice](#jarvis-voice-dictation)
-to dictate into other apps. Connect [plugins, skills, and MCP servers](#plugins-skills-and-mcp),
-work alongside coding CLIs, keep knowledge in a [local Markdown wiki](#memory-and-knowledge),
-and open generated reports, pages, and files in [Artifacts](#artifacts-and-run-history).
-These are connected parts of the same application: a request can start with your
-voice, continue with an agent, and leave behind something you can read, use, or edit.
+<p align="center">
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.mp4">
+    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.gif" alt="Illustrative desktop conversation: the app window and sidebar stay visible as Hey George activates listening, followed by a project-planning exchange" width="1000" />
+  </a>
+</p>
 
-**Choose the models and services that fit your work.** Jarvis supports hosted
-providers, [local models](#local-models), and mixed setups. Your selected provider
-supplies the intelligence; Jarvis manages application state, tool access,
-approvals, and execution. Local speech and model options can keep supported
-work on your hardware. Cloud models and connected services receive the content
-needed for their requests; running the app locally does not make every integration
-offline. See [privacy and local data](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/privacy-and-local-data.md)
-and [how the system fits together](#how-it-works).
+<p align="center">
+  <sub>Illustrative recreation of the interface. Click it for the 60 fps video.</sub>
+</p>
 
-[Website](https://personaljarvis.ai) · [Getting started](#your-first-steps-in-the-desktop-app) ·
-[Documentation](#documentation) · [GitHub](https://github.com/PersonalJarvis/PersonalJarvis) ·
-[YouTube](https://www.youtube.com/@PersonalJarvis) ·
-[Discord](https://discord.gg/x7USduHxbc) · [X](https://x.com/Ruben_Luetke) ·
-[Instagram](https://www.instagram.com/personaljarvis/)
-
-**Build with us.** Personal Jarvis spans a Python/FastAPI backend, a React/TypeScript
-desktop interface, voice, agents, and OS integrations. If you want to improve a
-specific part and help maintain it over time, start with a scoped issue or PR.
-[Choose a contribution](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md#choose-a-first-contribution) ·
-[Set up a development checkout](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md#development-setup) ·
-[See the architecture](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/architecture-overview.md) ·
-[Discuss an approach](https://github.com/PersonalJarvis/PersonalJarvis/discussions)
+<p align="center">
+  If Personal Jarvis is useful to you, a star helps other people find it.
+</p>
 
 ## Install
 
@@ -80,6 +62,36 @@ models do not require a cloud model account.
 
 [Full installation, platform requirements, and uninstall instructions](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/install/README.md).
 
+## What Personal Jarvis is
+
+One desktop app that connects your voice, your AI models, your coding agents,
+and the tools you already use. The app runs on your own computer.
+
+| You want to | Jarvis does it with |
+| --- | --- |
+| **Talk instead of type** | [Voice chat](#jarvis-your-voice-orchestrator) with your own wake phrase, plus [dictation](#jarvis-voice-dictation) into any app |
+| **Run several coding agents at once** | [Agentic IDE](#coding-workspace): Claude Code, Codex, Gemini CLI, OpenCode and more side by side, each in its own terminal pane |
+| **Hand off longer work** | [Jarvis Agents](#jarvis-agents): persistent specialists with their own instructions, routines, and review |
+| **Let the computer do the clicking** | [Computer use](#computer-use-and-connected-channels) in the browser and on the desktop, with approvals |
+| **Stay private or offline** | [Local models](#local-models) through Ollama and local speech recognition |
+| **Connect your tools** | [Plugins, skills, and MCP](#plugins-skills-and-mcp), plus a [local Markdown wiki](#memory-and-knowledge) as memory |
+| **Keep work running elsewhere** | Place agents on a VPS or a local VM over SSH |
+
+**Choose the models and services that fit your work.** Jarvis supports hosted
+providers, [local models](#local-models), and mixed setups. Your selected provider
+supplies the intelligence; Jarvis manages application state, tool access,
+approvals, and execution. Local speech and model options can keep supported
+work on your hardware. Cloud models and connected services receive the content
+needed for their requests; running the app locally does not make every integration
+offline. See [privacy and local data](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/privacy-and-local-data.md)
+and [how the system fits together](#how-it-works).
+
+[Website](https://personaljarvis.ai) · [Getting started](#your-first-steps-in-the-desktop-app) ·
+[Documentation](#documentation) · [GitHub](https://github.com/PersonalJarvis/PersonalJarvis) ·
+[YouTube](https://www.youtube.com/@PersonalJarvis) ·
+[Discord](https://discord.gg/x7USduHxbc) · [X](https://x.com/Ruben_Luetke) ·
+[Instagram](https://www.instagram.com/personaljarvis/)
+
 ## Jarvis: your voice orchestrator
 
 Start a **Voice Chat**, tap the voice bar, or use your configured wake phrase.
@@ -99,13 +111,7 @@ under Jarvis's control.
 <br />
 
 <p align="center">
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.mp4">
-    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.gif" alt="Illustrative desktop conversation: the app window and sidebar stay visible as Hey George activates listening, followed by a project-planning exchange" width="1000" />
-  </a>
-</p>
-
-<p align="center">
-  <sub>“Hey George” → listening → conversation. The desktop window and navigation stay in view.</sub>
+  <sub>The demo at the top of this page shows this flow.</sub>
 </p>
 
 The demos on this page are **Remotion recreations of the interface with
@@ -443,6 +449,11 @@ to agree on a larger design or offer sustained help in a subsystem. AI-assisted
 contributions are welcome when the author can explain and verify the result.
 Repository contributions are written in English. Report vulnerabilities
 privately through the [security policy](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SECURITY.md).
+
+**Start here:** pick an issue labelled
+[good first issue](https://github.com/PersonalJarvis/PersonalJarvis/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22),
+follow [your first contribution in 10 minutes](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md#your-first-contribution-in-10-minutes),
+and say hello in the [welcome discussion](https://github.com/PersonalJarvis/PersonalJarvis/discussions/230).
 
 ## Contributors
 

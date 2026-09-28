@@ -55,10 +55,13 @@ on:
         default: false
 
 # A pull request (or a train-dispatched branch run) collapses to its newest
-# commit. main, the nightly run and a full manual dispatch are never cancelled:
-# every commit on main gets its own verdict.
+# commit. A run on main is never cancelled once it runs, but pushes to main
+# share one group: GitHub keeps a single PENDING run and drops older pending
+# ones, so a burst of agent pushes cannot stack a backlog behind the
+# organisation's concurrent-job limit — the newest run covers every commit
+# before it. The nightly run and manual dispatches get their own group.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && format('branch-{0}', github.ref)) || github.run_id }}
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && format('branch-{0}', github.ref)) || (github.event_name == 'push' && 'main-push') || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') }}
 
 permissions:
