@@ -271,10 +271,16 @@ async def live_models() -> dict[str, list[dict[str, Any]]]:
         "opencode-cli": read_opencode_models,
     }
     installed = await asyncio.to_thread(lambda: [r for r in readers if _installed(r)])
-    tasks = {runner: _shared_read(runner, readers[runner]) for runner in installed}
-    if not tasks:
-        return out
-    done, pending = await asyncio.wait(tasks.values(), timeout=_LIVE_MODELS_BUDGET_S)
+    reads = {runner: _shared_read(runner, readers[runner]) for runner in installed}
+    tasks = {runner: task for runner, (task, _) in reads.items()}
+    # A read an EARLIER request started (still running past its budget) is not
+    # waited for again: otherwise every picker open pays the full budget until
+    # a minute-long ``agy models`` finally ends.
+    fresh = [task for task, started_here in reads.values() if started_here]
+    if fresh:
+        await asyncio.wait(fresh, timeout=_LIVE_MODELS_BUDGET_S)
+    done = {task for task in tasks.values() if task.done()}
+    pending = {task for task, started_here in reads.values() if started_here and not task.done()}
     for task in pending:
         # Nobody awaits it any more; keep it referenced until it finishes and
         # log its failure instead of letting asyncio warn about it.
@@ -311,7 +317,8 @@ _BACKGROUND_READS: set[Any] = set()
 _IN_FLIGHT: dict[tuple[Any, ...], Any] = {}
 
 
-def _shared_read(runner: str, read: Any) -> Any:
+def _shared_read(runner: str, read: Any) -> tuple[Any, bool]:
+    """The in-flight read for ``runner`` in this scope, and whether this call started it."""
     import asyncio
 
     from jarvis.agent_chat import runner_cli
@@ -323,11 +330,12 @@ def _shared_read(runner: str, read: Any) -> Any:
         runner_cli._CATALOG_IGNORE_CONFIG.get(),
     )
     task = _IN_FLIGHT.get(key)
-    if task is None or task.done():
-        task = asyncio.ensure_future(asyncio.to_thread(read))
-        _IN_FLIGHT[key] = task
-        task.add_done_callback(functools.partial(_forget_read, key))
-    return task
+    if task is not None and not task.done():
+        return task, False
+    task = asyncio.ensure_future(asyncio.to_thread(read))
+    _IN_FLIGHT[key] = task
+    task.add_done_callback(functools.partial(_forget_read, key))
+    return task, True
 
 
 def _forget_read(key: tuple[Any, ...], task: Any) -> None:

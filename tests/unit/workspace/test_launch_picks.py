@@ -205,3 +205,34 @@ async def test_live_models_answers_within_budget_while_a_slow_cli_keeps_loading(
         assert out == {"codex-cli": [{"id": "gpt"}], "opencode-cli": []}
     finally:
         release.set()
+
+
+async def test_live_models_does_not_wait_again_for_a_read_an_earlier_request_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The slow read left running by one picker open must not cost the next
+    open its budget again; the second request answers at once."""
+    import threading
+    import time
+
+    from jarvis.agent_chat import runner_cli
+
+    release = threading.Event()
+    calls = []
+
+    def slow_agy() -> list[dict[str, str]]:
+        calls.append(1)
+        release.wait(5.0)
+        return [{"id": "late"}]
+
+    monkeypatch.setattr(runner_cli, "read_agy_models", slow_agy)
+    monkeypatch.setattr(launch_picks, "_installed", lambda r: r == "agy-cli")
+    monkeypatch.setattr(launch_picks, "_LIVE_MODELS_BUDGET_S", 0.2)
+    try:
+        assert await launch_picks.live_models() == {}
+        started = time.monotonic()
+        assert await launch_picks.live_models() == {}
+        assert time.monotonic() - started < 0.15
+        assert len(calls) == 1  # joined, not started twice
+    finally:
+        release.set()
