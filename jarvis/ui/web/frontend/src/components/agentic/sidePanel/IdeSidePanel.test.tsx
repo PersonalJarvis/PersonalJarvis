@@ -64,10 +64,25 @@ describe("IdeSidePanel", () => {
     expect(screen.getByTestId("ide-side-panel-tab-agents")).toBeTruthy();
   });
 
-  it("disables + while every tab is already open", () => {
+  it("keeps + usable with every tab listed, open ones ticked, and focuses an open one", () => {
     act(() => useIdeSidePanelStore.setState({ open: true, tabs: ["agents", "changes", "files"], active: "agents" }));
     render(<Harness />);
-    expect((screen.getByTestId("ide-side-panel-add") as HTMLButtonElement).disabled).toBe(true);
+    const add = screen.getByTestId("ide-side-panel-add") as HTMLButtonElement;
+    expect(add.disabled).toBe(false);
+    fireEvent.click(add);
+    expect(screen.getByTestId("ide-side-panel-add-changes").getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByTestId("ide-side-panel-add-changes"));
+    expect(useIdeSidePanelStore.getState()).toMatchObject({ active: "changes", tabs: ["agents", "changes", "files"] });
+  });
+
+  it("starts with Agents alone and adds Changes and Folder from +", () => {
+    act(() => useIdeSidePanelStore.setState({ open: true, tabs: ["agents"], active: "agents" }));
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId("ide-side-panel-add"));
+    expect(screen.getByTestId("ide-side-panel-add-files").getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(screen.getByTestId("ide-side-panel-add-files"));
+    expect(useIdeSidePanelStore.getState()).toMatchObject({ active: "files", tabs: ["agents", "files"] });
+    expect(screen.getByTestId("ide-side-panel-tab-files")).toBeTruthy();
   });
 
   it("offers a closed tab again through +", () => {

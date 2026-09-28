@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { MoveHorizontal, PanelRightClose, Plus, X } from "lucide-react";
+import { Check, MoveHorizontal, PanelRightClose, Plus, X } from "lucide-react";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useResizablePane } from "@/hooks/useResizablePane";
@@ -173,7 +173,6 @@ export function IdeSidePanel() {
   const setOpen = useIdeSidePanelStore((state) => state.setOpen);
   const [menuOpen, setMenuOpen] = useState(false);
   const menu = useRef<HTMLDivElement>(null);
-  const addable = SIDE_PANEL_TABS.filter((tab) => !tabs.includes(tab.id));
   const current = sidePanelTab(active);
 
   useEffect(() => {
@@ -243,30 +242,36 @@ export function IdeSidePanel() {
             type="button"
             data-testid="ide-side-panel-add"
             aria-label={t("ide_side_panel.add_tab")}
-            title={addable.length ? t("ide_side_panel.add_tab") : t("ide_side_panel.all_open")}
+            title={t("ide_side_panel.add_tab")}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
-            disabled={addable.length === 0}
             onClick={() => setMenuOpen((value) => !value)}
             className={HEADER_BTN}
           >
             <Plus className="h-4 w-4" aria-hidden />
           </button>
-          {menuOpen && addable.length > 0 && (
-            <div role="menu" className="absolute right-0 top-full z-30 mt-1 min-w-44 rounded-lg border border-border bg-popover p-1 shadow-float">
-              {addable.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  role="menuitem"
-                  data-testid={`ide-side-panel-add-${tab.id}`}
-                  onClick={() => { openTab(tab.id); setMenuOpen(false); }}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-secondary"
-                >
-                  <tab.icon className="h-4 w-4 text-muted-foreground" aria-hidden />
-                  {t(tab.labelKey)}
-                </button>
-              ))}
+          {/* Every tab the panel can hold, always: an open one is ticked and
+              picking it brings it forward, a closed one is added. */}
+          {menuOpen && (
+            <div role="menu" aria-label={t("ide_side_panel.add_tab")} className="absolute right-0 top-full z-30 mt-1 min-w-48 rounded-lg border border-border bg-popover p-1 shadow-float">
+              {SIDE_PANEL_TABS.map((tab) => {
+                const isOpen = tabs.includes(tab.id);
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={isOpen}
+                    data-testid={`ide-side-panel-add-${tab.id}`}
+                    onClick={() => { openTab(tab.id); setMenuOpen(false); }}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-secondary"
+                  >
+                    <tab.icon className="h-4 w-4 text-muted-foreground" aria-hidden />
+                    <span className="flex-1">{t(tab.labelKey)}</span>
+                    {isOpen && <Check className="h-3.5 w-3.5 text-accent" aria-hidden />}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

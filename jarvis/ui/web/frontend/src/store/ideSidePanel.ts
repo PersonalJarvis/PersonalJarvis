@@ -16,10 +16,11 @@ export type SidePanelTabId = "agents" | "changes" | "files";
 export const SIDE_PANEL_TAB_IDS: readonly SidePanelTabId[] = ["agents", "changes", "files"];
 
 const OPEN_KEY = "jarvis.agenticIde.sidePanelOpen";
-// v3: Changes became its own tab beside Folder; a v2 list would have hidden it.
-const TABS_KEY = "jarvis.agenticIde.sidePanelTabs.v3";
+// v4: the panel starts with Agents alone and the other tabs are added from
+// its "+" menu (maintainer, 2026-09-28); older lists opened every tab.
+const TABS_KEY = "jarvis.agenticIde.sidePanelTabs.v4";
 
-const DEFAULT_TABS: SidePanelTabId[] = ["agents", "changes", "files"];
+const DEFAULT_TABS: SidePanelTabId[] = ["agents"];
 
 const isTabId = (value: unknown): value is SidePanelTabId =>
   typeof value === "string" && (SIDE_PANEL_TAB_IDS as readonly string[]).includes(value);
