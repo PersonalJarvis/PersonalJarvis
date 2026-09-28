@@ -153,3 +153,16 @@ describe("planFor", () => {
     expect(book.isFree(idle.spotId!)).toBe(true);
   });
 });
+
+describe("SpotBook.retain", () => {
+  it("keeps claims on surviving spots and drops the rest", () => {
+    const book = new SpotBook();
+    book.claim("couch-a1", "a1");
+    book.claim("window-dept-9", "a2");
+    book.retain(new Set(["couch-a1"]));
+    expect(book.holder("couch-a1")).toBe("a1");
+    expect(book.isFree("window-dept-9")).toBe(true);
+    // The dropped agent can claim again.
+    expect(book.claim("couch-a2", "a2")).toBe(true);
+  });
+});

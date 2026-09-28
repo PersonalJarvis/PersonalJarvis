@@ -23,6 +23,7 @@ import { knownAgents } from "./walkerRegistry";
 import { loadProfile, saveProfile, type PlayerProfile } from "./playerProfile";
 import { AgentPanel, CheckpointPanel, type OfficeActions } from "./OfficePanels";
 import type { WalkerContext } from "./OfficeAgents";
+import { ownsKeyboard } from "./OfficePlayer";
 import "./office.css";
 import "./officeHud.css";
 
@@ -71,6 +72,9 @@ function useNewcomers(active: SocietyAgent[]): ReadonlySet<string> {
   useEffect(() => {
     if (active.length === 0) return;
     if (knownAgents.size === 0) { active.forEach((a) => knownAgents.add(a.agentId)); return; }
+    // Forget agents that left, so the set never outgrows the roster.
+    const present = new Set(active.map((a) => a.agentId));
+    for (const id of [...knownAgents]) if (!present.has(id)) knownAgents.delete(id);
     const fresh = active.filter((a) => !knownAgents.has(a.agentId)).map((a) => a.agentId);
     if (fresh.length === 0) return;
     fresh.forEach((id) => knownAgents.add(id));
@@ -105,7 +109,10 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [seatingKey]);
   const grid = useMemo(() => buildNavGrid(layout), [layout]);
-  const book = useMemo(() => new SpotBook(), [layout]);
+  // One reservation book for the whole visit: a rebuilt floor plan (someone
+  // joined or left) must not forget who already sits on which couch.
+  const [book] = useState(() => new SpotBook());
+  useEffect(() => { book.retain(new Set(layout.spots.map((spot) => spot.id))); }, [book, layout]);
   const agentsRef = useRef(agents);
   agentsRef.current = agents;
   const walkers = useMemo<WalkerContext>(() => {
@@ -127,7 +134,8 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   // Escape closes an open panel before it can leave the map.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || !useOfficeStore.getState().selection) return;
+      // A field or a dialog (e.g. the create dialog opened from reception) owns its own Escape.
+      if (event.key !== "Escape" || !useOfficeStore.getState().selection || ownsKeyboard(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
       select(null);
@@ -135,6 +143,14 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
   }, [select]);
+
+  // Leaving the map forgets panels and calls; the office opens fresh next time.
+  useEffect(() => () => {
+    const store = useOfficeStore.getState();
+    store.select(null);
+    store.setNearby(null);
+    store.clearSummons();
+  }, []);
 
   // A panel for an agent that left the roster closes itself.
   useEffect(() => {

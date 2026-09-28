@@ -26,6 +26,8 @@ const MOVE_KEYS: Record<string, [number, number]> = {
 
 /** Keys typed into a field, a dialog or any other DOM control never walk the character. */
 export function ownsKeyboard(target: EventTarget | null): boolean {
+  // An open modal owns every key, wherever focus happens to sit.
+  if (typeof document !== "undefined" && document.querySelector("[role='dialog'][data-state='open'], [role='alertdialog'][data-state='open']")) return true;
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
   const tag = target.tagName;

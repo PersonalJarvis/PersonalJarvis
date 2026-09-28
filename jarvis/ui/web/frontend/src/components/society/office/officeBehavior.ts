@@ -69,6 +69,13 @@ export class SpotBook {
     if (this.bySpot.get(spotId) === agentId) this.bySpot.delete(spotId);
   }
 
+  /** Keep only claims on spots that still exist (after the floor plan was rebuilt). */
+  retain(spotIds: ReadonlySet<string>): void {
+    for (const [spotId, agentId] of [...this.bySpot]) {
+      if (!spotIds.has(spotId)) { this.bySpot.delete(spotId); this.byAgent.delete(agentId); }
+    }
+  }
+
   holder(spotId: string): string | null {
     return this.bySpot.get(spotId) ?? null;
   }
