@@ -334,6 +334,8 @@ def _has_current_instruction(term: Any) -> bool:
     Continue submissions and is reset by spawning a new process, so it is the
     narrow proof required before movement may become a live ``working`` claim.
     """
+    if _adopted_with_work(term):
+        return True
     if not getattr(term, "last_submit_at", None):
         return False
     try:
@@ -341,6 +343,23 @@ def _has_current_instruction(term: Any) -> bool:
             getattr(term, "process_generation", 0)
         )
     except (TypeError, ValueError):  # Malformed legacy counters mean no matching run.
+        return False
+
+
+def _adopted_with_work(term: Any) -> bool:
+    """Is this the process re-joined after an app restart, already on a job?
+
+    An agent that kept running in the PTY host through an app restart received
+    its instruction in the previous app's lifetime, so no submit stamp of THIS
+    app can prove it. ``Session._adopt_hosted`` records the proof it had then
+    (a conversation on disk, prompts sent, work seen at the last checkpoint) as
+    ``adopted_generation``; it holds only for that very process.
+    """
+    try:
+        return int(getattr(term, "adopted_generation", -1)) == int(
+            getattr(term, "process_generation", 0)
+        )
+    except (TypeError, ValueError):
         return False
 
 
@@ -560,6 +579,8 @@ def has_work_behind_it(term: Any) -> bool:
     recap saying it had worked for ten minutes.
     """
     if getattr(term, "last_submit_at", None):
+        return True
+    if _adopted_with_work(term):
         return True
     try:
         if int(getattr(term, "prompts_sent", 0) or 0) > 0:

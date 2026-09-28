@@ -1190,6 +1190,13 @@ class Terminal:
     # A startup repaint has no such stamp, even if the pane resumes an old
     # conversation whose historical prompt count is non-zero.
     submit_generation: int = -1
+    # The process generation re-joined after an app restart while its agent
+    # already had a job — a conversation on disk, prompts sent, or work seen at
+    # the last checkpoint. The instruction behind that job was submitted in the
+    # previous app's lifetime, so ``submit_generation`` cannot prove it; this
+    # does, for exactly this process (a respawn moves the generation on).
+    # Without it every re-joined agent read "done" while still working.
+    adopted_generation: int = -1
     transcript: Transcript = field(default_factory=Transcript)
     # The RAW output stream, kept so the next viewer can be handed the screen
     # this pane is actually showing. Cleared on a fresh spawn, so what a viewer
@@ -2336,9 +2343,30 @@ class Registry:
             term.resume_continuation_needed = False
             term.started_at = info.started_at or time.time()
             term.last_output_at = time.time() if result.replay else None
+            if await self._adopted_with_work(term):
+                term.adopted_generation = term.process_generation
             logger.info(
                 "Agentic IDE: {} re-joined its running agent after an app restart", term.name
             )
+
+    @staticmethod
+    async def _adopted_with_work(term: Terminal) -> bool:
+        """Had this re-joined agent been given a job before the app restarted?
+
+        Cheap proofs first; the conversation file is the one that survives a
+        pane driven purely by hand (its submit stamps died with the old app).
+        """
+        if term.worked_while_detached or has_work_behind_it(term):
+            return True
+        if term.resume is None:
+            return False
+        try:
+            return await asyncio.to_thread(
+                has_conversation, term.agent, term.resume, account_home(term.agent, term.account)
+            )
+        except Exception as exc:  # noqa: BLE001 - an unreadable history only costs the word
+            logger.debug("Agentic IDE: could not check {}'s conversation: {}", term.name, exc)
+            return False
 
     def _adopted_callbacks(self, term: Terminal) -> tuple[Any, Any]:
         """Output/exit callbacks for an agent this process did not start.

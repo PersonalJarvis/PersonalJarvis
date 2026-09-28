@@ -66,3 +66,25 @@ export function compactSince(at: number | null | undefined, nowMs: number = Date
   if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h`;
   return `${Math.floor(seconds / 86_400)}d`;
 }
+
+/** The three columns of the Agents tab, top to bottom. */
+export type AgentColumn = "done" | "working" | "reviewed";
+
+export const COLUMN_ORDER: readonly AgentColumn[] = ["done", "working", "reviewed"];
+
+/**
+ * Where one agent belongs.
+ *
+ * Working is the live reading. Anything settled — finished, asking, failed —
+ * is Done until the user looks at it, and Reviewed once a look is newer than
+ * the moment it settled (`activity_since`), so a reviewed agent that finishes
+ * another job comes back to Done. A pane never given a job has nothing to
+ * review and waits under Reviewed.
+ */
+export function columnFor(pane: WorkspacePaneRow, reviewedAt: number | undefined): AgentColumn {
+  const kind = dotKindFor(pane);
+  if (kind === "working") return "working";
+  if (kind === "idle" && !pane.worked) return "reviewed";
+  if (reviewedAt !== undefined && reviewedAt >= (pane.activity_since || 0)) return "reviewed";
+  return "done";
+}

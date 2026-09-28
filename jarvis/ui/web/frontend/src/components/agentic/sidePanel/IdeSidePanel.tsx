@@ -6,6 +6,7 @@ import { useResizablePane } from "@/hooks/useResizablePane";
 import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { useExplorerPathRouting } from "@/store/ideExplorer";
+import { usePaneReviewTracking } from "@/store/paneReviews";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useWorkspacePanes } from "@/store/workspacePanes";
 import { dotKindFor, workspaceAgents } from "./agentStatus";
@@ -38,6 +39,8 @@ export function IdeSidePanelFrame({ children }: { children: ReactNode }) {
   const open = useIdeSidePanelStore((state) => state.open);
   // Ctrl+click on a path in any terminal opens it in the Explorer tab.
   useExplorerPathRouting();
+  // A click on a pane in the grid counts as reviewing that agent.
+  usePaneReviewTracking();
   const frame = useRef<HTMLDivElement>(null);
   const [frameWidth, setFrameWidth] = useState(0);
 

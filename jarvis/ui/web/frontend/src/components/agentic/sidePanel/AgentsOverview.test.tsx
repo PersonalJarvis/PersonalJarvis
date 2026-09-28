@@ -5,6 +5,7 @@ import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { usePaneRecapsStore } from "@/store/paneRecaps";
+import { markPaneReviewed, usePaneReviewsStore } from "@/store/paneReviews";
 import type { TerminalRecap } from "@/lib/agenticIdeApi";
 import { resetWorkspacePanesPoll, useWorkspacePanesStore } from "@/store/workspacePanes";
 import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
@@ -43,6 +44,7 @@ function pane(name: string, workspaceId: string, overrides: Partial<WorkspacePan
 beforeEach(() => {
   resetWorkspacePanesPoll();
   useIdeSidePanelStore.setState({ spotlight: null });
+  usePaneReviewsStore.setState({ reviewed: {} });
   usePaneRecapsStore.setState({ workspaceId: null, byName: {}, load: async () => {} });
   useWorkspacePanesStore.setState({
     panes: [
@@ -77,67 +79,95 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+const column = (id: string) => screen.getByTestId(`ide-agents-column-${id}`);
+const panesIn = (id: string) =>
+  Array.from(column(id).querySelectorAll('[data-testid="ide-workspace-agent-row"]')).map((row) =>
+    row.getAttribute("data-pane"),
+  );
+
 describe("AgentsOverview", () => {
-  it("titles a card with the model's short goal instead of the call-sign", () => {
+  it("sorts the active workspace's agents into Done, Working and Reviewed", () => {
+    render(<AgentsOverview />);
+    // T1 works; T2 asks and T3 finished — both need a look; w2's T1 is not here.
+    expect(panesIn("working")).toEqual(["T1"]);
+    expect(panesIn("done").sort()).toEqual(["T2", "T3"]);
+    expect(panesIn("reviewed")).toEqual([]);
+    expect(screen.getByTestId("ide-agents-column-count-done").textContent).toBe("2");
+    const order = Array.from(document.querySelectorAll("[data-testid^='ide-agents-column-']"))
+      .map((node) => node.getAttribute("data-testid"))
+      .filter((id) => id && !id.includes("count"));
+    expect(order).toEqual(["ide-agents-column-done", "ide-agents-column-working", "ide-agents-column-reviewed"]);
+  });
+
+  it("shows the brand mark, the goal and the live state on each card", () => {
     usePaneRecapsStore.setState({
       workspaceId: "w1",
       byName: { T2: { recap: "Login flow — flaky tests", source: "model" } as TerminalRecap },
     });
     render(<AgentsOverview />);
-    const rows = screen.getAllByTestId("ide-workspace-agent-row");
-    expect(rows[1].querySelector('[data-testid="ide-agent-title"]')?.textContent).toBe("Login flow — flaky tests");
-    expect(rows[1].textContent).not.toContain("T2");
+    const t2 = column("done").querySelector('[data-pane="T2"]')!;
+    expect(t2.querySelector('[data-testid="ide-agent-title"]')?.textContent).toBe("Login flow — flaky tests");
+    expect(t2.querySelector('[data-testid="agent-mark-codex"]')).not.toBeNull();
+    expect(t2.getAttribute("data-kind")).toBe("waiting");
+    const t1 = column("working").querySelector('[data-pane="T1"]')!;
+    expect(t1.querySelector('[data-testid="ide-agent-state"]')?.textContent).toContain("Working");
   });
 
-  it("lists only the active workspace agents with names and live dots", () => {
+  it("moves a finished agent to Reviewed when its card is clicked, and focuses its pane", () => {
     render(<AgentsOverview />);
-    const rows = screen.getAllByTestId("ide-workspace-agent-row");
-    expect(rows.map((row) => row.getAttribute("data-pane"))).toEqual(["T1", "T2", "T3"]);
-    expect(screen.getByTestId("ide-workspace-agents-count").textContent).toBe("3 agents");
-    expect(rows[0].getAttribute("data-kind")).toBe("working");
-    expect(rows[1].getAttribute("data-kind")).toBe("waiting");
-    expect(rows[2].getAttribute("data-kind")).toBe("idle");
-    expect(rows[0].textContent).toContain("Claude Code");
-    expect(rows[0].querySelector('[data-testid="agent-mark-claude"]')).not.toBeNull();
-    expect(rows[1].querySelector('[data-testid="agent-mark-codex"]')).not.toBeNull();
-    expect(rows[1].textContent).toContain("Codex");
+    fireEvent.click(column("done").querySelector('[data-pane="T3"]')!);
+    expect(panesIn("reviewed")).toEqual(["T3"]);
+    expect(useIdeChatStore.getState().paneRequest).toMatchObject({ workspaceId: "w1", pane: "T3" });
+    expect(useIdeSidePanelStore.getState().spotlight).toEqual({ workspaceId: "w1", pane: "T3" });
   });
 
-  it("marks errors red and idle panes gray", () => {
+  it("counts a click on the pane in the grid as a review too", () => {
+    render(<AgentsOverview />);
+    act(() => markPaneReviewed("w1", "T2"));
+    expect(panesIn("reviewed")).toEqual(["T2"]);
+  });
+
+  it("puts a reviewed agent back under Done once it finishes a newer job", () => {
+    usePaneReviewsStore.setState({ reviewed: { "T3@w1": 100 } });
     useWorkspacePanesStore.setState({
-      panes: [
-        pane("T1", "w1", { status: "error", activity: "" }),
-        pane("T9", "w1", { status: "live", activity: "", worked: false }),
-      ],
+      panes: [pane("T3", "w1", { activity: "waiting", activity_since: 50 })],
     });
-    render(<AgentsOverview />);
-    const rows = screen.getAllByTestId("ide-workspace-agent-row");
-    expect(rows[0].getAttribute("data-kind")).toBe("error");
-    expect(rows[1].getAttribute("data-kind")).toBe("idle");
+    const { rerender } = render(<AgentsOverview />);
+    expect(panesIn("reviewed")).toEqual(["T3"]);
+    act(() =>
+      useWorkspacePanesStore.setState({ panes: [pane("T3", "w1", { activity: "waiting", activity_since: 200 })] }),
+    );
+    rerender(<AgentsOverview />);
+    expect(panesIn("done")).toEqual(["T3"]);
   });
 
-  it("switches the list when the workspace tab changes", () => {
+  it("keeps an agent nobody ever tasked out of Done", () => {
+    useWorkspacePanesStore.setState({ panes: [pane("T9", "w1", { activity: "waiting", worked: false })] });
+    render(<AgentsOverview />);
+    expect(panesIn("reviewed")).toEqual(["T9"]);
+    expect(panesIn("done")).toEqual([]);
+  });
+
+  it("marks errors red", () => {
+    useWorkspacePanesStore.setState({ panes: [pane("T1", "w1", { status: "error", activity: "" })] });
+    render(<AgentsOverview />);
+    const row = column("done").querySelector('[data-pane="T1"]')!;
+    expect(row.getAttribute("data-kind")).toBe("error");
+  });
+
+  it("switches with the workspace tab", () => {
     const { rerender } = render(<AgentsOverview />);
-    expect(screen.getAllByTestId("ide-workspace-agent-row")).toHaveLength(3);
     act(() => useIdeProjectsStore.setState({ activeWorkspaceId: "w2" }));
     rerender(<AgentsOverview />);
-    const rows = screen.getAllByTestId("ide-workspace-agent-row");
-    expect(rows.map((row) => row.getAttribute("data-pane"))).toEqual(["T1"]);
-  });
-
-  it("asks the IDE view to focus the pane on click", () => {
-    render(<AgentsOverview />);
-    fireEvent.click(screen.getByRole("button", { name: /T2, Codex/ }));
-    expect(useIdeChatStore.getState().paneRequest).toMatchObject({ workspaceId: "w1", pane: "T2" });
-    expect(useIdeSidePanelStore.getState().spotlight).toEqual({ workspaceId: "w1", pane: "T2" });
+    expect(panesIn("working")).toEqual(["T1"]);
+    expect(panesIn("done")).toEqual([]);
   });
 
   it("marks the card whose pane is spotlit", () => {
     useIdeSidePanelStore.setState({ spotlight: { workspaceId: "w1", pane: "T2" } });
     render(<AgentsOverview />);
-    const rows = screen.getAllByTestId("ide-workspace-agent-row");
-    expect(rows[1].getAttribute("aria-current")).toBe("true");
-    expect(rows[0].getAttribute("aria-current")).toBeNull();
+    expect(column("done").querySelector('[data-pane="T2"]')?.getAttribute("aria-current")).toBe("true");
+    expect(column("working").querySelector('[data-pane="T1"]')?.getAttribute("aria-current")).toBeNull();
   });
 
   it("shows an empty hint when the workspace has no agents", () => {
@@ -145,59 +175,5 @@ describe("AgentsOverview", () => {
     render(<AgentsOverview />);
     expect(screen.queryByTestId("ide-workspace-agent-row")).toBeNull();
     expect(screen.getByTestId("ide-workspace-agents").textContent).toContain("No agents");
-  });
-
-  it("summarises the workspace by state, needs-input first", () => {
-    render(<AgentsOverview />);
-    const summary = screen.getByTestId("ide-agents-summary");
-    const kinds = Array.from(summary.querySelectorAll("[data-kind]")).map((node) => node.getAttribute("data-kind"));
-    expect(kinds).toEqual(["waiting", "working", "idle"]);
-    expect(summary.textContent).toContain("1 need input");
-    expect(summary.textContent).toContain("1 working");
-  });
-
-  it("shows each agent's state, its last task and its last output", () => {
-    const now = Math.floor(Date.now() / 1000);
-    useWorkspacePanesStore.setState({
-      panes: [
-        pane("T1", "w1", {
-          activity: "working",
-          activity_since: now - 180,
-          last_output_at: now - 5,
-          recap: "Fix the login test",
-        }),
-      ],
-    });
-    render(<AgentsOverview />);
-    const row = screen.getByTestId("ide-workspace-agent-row");
-    expect(screen.getByTestId("ide-agent-state").textContent).toBe("Working · 3m");
-    expect(screen.getByTestId("ide-agent-title").textContent).toBe("Fix the login test");
-    expect(row.textContent).toMatch(/Last output \d+s ago/);
-  });
-});
-
-describe("stopping every agent", () => {
-  it("asks first, then stops the runtime and refreshes the workspace list", async () => {
-    const calls: string[] = [];
-    const realFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      calls.push(`${init?.method ?? "GET"} ${String(input)}`);
-      return new Response(JSON.stringify({ ok: true, closed_workspaces: 2 }), { status: 200 });
-    }) as typeof fetch;
-    try {
-      render(<AgentsOverview />);
-      fireEvent.click(screen.getByTestId("ide-agents-stop-all"));
-      // Nothing is stopped by the first click — it only asks.
-      expect(calls).toEqual([]);
-      expect(screen.getByRole("alertdialog")).toBeTruthy();
-      await act(async () => {
-        fireEvent.click(screen.getByTestId("ide-agents-stop-confirm"));
-      });
-      expect(calls).toEqual(["POST /api/agentic-ide/runtime/stop"]);
-      expect(useIdeProjectsStore.getState().refreshRequest).not.toBeNull();
-      expect(screen.queryByRole("alertdialog")).toBeNull();
-    } finally {
-      globalThis.fetch = realFetch;
-    }
   });
 });

@@ -5807,6 +5807,16 @@
       "count_other": "{n} Agents",
       "no_workspace": "Wähle einen Workspace, um seine Agents zu sehen.",
       "empty": "In diesem Workspace laufen keine Agents.",
+      "columns": {
+        "done": "Fertig",
+        "working": "Arbeitet",
+        "reviewed": "Angesehen"
+      },
+      "column_empty": {
+        "done": "Nichts Neues ist fertig geworden.",
+        "working": "Gerade arbeitet kein Agent.",
+        "reviewed": "Klicke einen fertigen Agent an, um ihn hierher zu verschieben."
+      },
       "last_output": "Letzte Ausgabe vor {time}",
       "runtime_note": "Agents laufen weiter, wenn du die App schließt.",
       "stop_all": "Alle Agents stoppen",

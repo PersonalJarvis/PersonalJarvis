@@ -342,3 +342,41 @@ async def test_a_lost_host_is_reconnected_with_start_for_the_next_pane(
     assert not getattr(fallback, "persistent", False)
     assert await registry._live_manager() is fallback  # noqa: SLF001
     assert connect.calls == [False, True, True]
+
+
+# ------------------------------------------- a re-joined agent keeps its job
+async def test_a_rejoined_agent_that_had_a_job_reads_working_while_it_moves(
+    tmp_path: Path,
+) -> None:
+    """Its instruction was sent before the restart; movement must still count.
+
+    Maintainer report 2026-09-28: after an app restart, three agents visibly
+    mid-task were listed "done" for the next half hour, because no submit stamp
+    of the NEW app proved their work.
+    """
+    from jarvis.agentic_ide import activity
+
+    pool = FakeHostedPool()
+    registry = ide.Registry(pty_manager=pool)
+    session = await registry.start(
+        str(tmp_path), [{"agent": "claude", "name": "T1"}, {"agent": "claude", "name": "T2"}]
+    )
+    t1, t2 = session.find("T1"), session.find("T2")
+    t1.prompts_sent = 2  # it had been given work before the restart
+    pool.add_hosted("busy", history_id=t1.history_id, replay="Processing…")
+    pool.add_hosted("fresh", history_id=t2.history_id, replay="")
+
+    await registry._adopt_hosted(session)  # noqa: SLF001 - the unit under test
+
+    now = time.time()
+    t1.last_output_at = now
+    t2.last_output_at = now
+    assert activity.read_activity(t1, now=now) == "working"
+    # A re-joined pane nobody ever tasked keeps the strict rule: its repaint is
+    # not work.
+    assert activity.read_activity(t2, now=now) == "waiting"
+    assert activity.has_work_behind_it(t1)
+
+    # The proof belongs to that one process: a respawn moves the generation on.
+    t1.process_generation += 1
+    assert activity.read_activity(t1, now=now) == "waiting"
