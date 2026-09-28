@@ -45,8 +45,20 @@ env:
   NODE_VERSION: "22"
 
 jobs:
+  # Release admission (release-gate.yml): tag == version, on main, CI green on
+  # this exact commit. Skipped for a manual run from a branch, which builds
+  # without publishing a release.
+  admit:
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: read
+      checks: read
+    uses: ./.github/workflows/release-gate.yml
+
   # ------------------------------------------------------------------ Windows
   windows:
+    needs: admit
+    if: ${{ !failure() && !cancelled() }}
     name: Windows installer (x64)
     runs-on: windows-latest
     timeout-minutes: 90
@@ -152,6 +164,8 @@ jobs:
 
   # -------------------------------------------------------------------- macOS
   macos:
+    needs: admit
+    if: ${{ !failure() && !cancelled() }}
     name: macOS installer (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
@@ -240,6 +254,8 @@ jobs:
 
   # -------------------------------------------------------------------- Linux
   linux:
+    needs: admit
+    if: ${{ !failure() && !cancelled() }}
     name: Linux installer (x86_64)
     # 22.04, not latest: an AppImage inherits the glibc of the machine that
     # built it, so building on the OLDEST supported runner is what makes it run

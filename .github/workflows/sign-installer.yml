@@ -50,6 +50,9 @@ on:
   push:
     tags:
       - "v*.*.*"
+  # Dispatched on the tag by release-cut.yml: a tag pushed with GITHUB_TOKEN
+  # fires no push event.
+  workflow_dispatch: {}
 
 # Wave 1 (keyless) needs no secrets — it uses OIDC. Wave 2 (Ed25519) and
 # Wave 4 (ML-DSA-65) read their PRIVATE KEYS from the WAVE2_OFFLINE_KEY_B64
@@ -66,6 +69,16 @@ permissions:
   actions: read      # required by slsa-github-generator (Wave 3)
 
 jobs:
+  # Release admission (release-gate.yml): tag == version, on main, CI green on
+  # this exact commit. Skipped for a manual run from a branch, which builds
+  # without publishing a release.
+  admit:
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: read
+      checks: read
+    uses: ./.github/workflows/release-gate.yml
+
   # ----------------------------------------------------------------------
   # Job -1 (Wave 6): pip-audit — strict transitive-dependency CVE gate.
   #
@@ -87,6 +100,8 @@ jobs:
   # through the 4-axis signing + SLSA generator.
   # ----------------------------------------------------------------------
   pip-audit:
+    needs: admit
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
