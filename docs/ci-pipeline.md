@@ -57,9 +57,12 @@ Agents push branches named `codex/…`, `claude/…`, `agent/…`, `gemini/…`,
 merge train runs on every push to main, after every CI run, and every 15
 minutes:
 
-1. A pull request behind main gets main merged into it
-   (`scripts/ci/agent_integrate.py`). No force push, so an agent that keeps
-   pushing to its branch is never overwritten.
+1. A pull request that **conflicts** with main (or whose CI failed while it
+   was behind) gets main merged into it (`scripts/ci/agent_integrate.py`).
+   No force push, so an agent that keeps pushing to its branch is never
+   overwritten. A pull request that is merely behind is left alone: with
+   several agents pushing to main, re-testing every PR on every push meant
+   nothing ever landed.
 2. Conflicts resolve by file class: **generated** files (frontend `dist/`,
    agent mirrors, CLI reference docs, lockfiles, timing caches) take main's
    copy and are regenerated; **append-only** files (CHANGELOG, allowlists,
@@ -69,9 +72,9 @@ minutes:
    and must still parse, and CI re-runs on it before anything lands. What
    stays unresolved aborts cleanly, gets the `needs-rebase` label and a
    comment listing the files. `git rerere` replays recorded resolutions.
-3. The first up-to-date pull request with a green `CI gate` is squash-merged.
-   One merge per tick means every landing was tested on top of the exact main
-   it lands on.
+3. The first green, conflict-free pull request is squash-merged, one per
+   tick. Main's full post-merge test run is the backstop for changes that
+   pass alone and break together — GitHub's non-strict model, as in Hermes.
 
 Opt out with `no-auto-merge`, `do-not-merge`, `wip` or `needs-human`.
 `priority` moves a pull request to the front. Forks and Dependabot never ride

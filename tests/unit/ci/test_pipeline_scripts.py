@@ -307,6 +307,17 @@ def test_train_uses_the_newest_verdict_and_redispatches_a_cancelled_run():
     assert agent_integrate.run_state([old, new, cancelled]) == "missing"
 
 
+def test_train_updates_only_conflicting_or_stale_red_branches():
+    decide = agent_integrate.decide
+    assert decide("CONFLICTING", "success", True) == "update"
+    assert decide("MERGEABLE", "success", True) == "merge"  # behind main is fine
+    assert decide("MERGEABLE", "pending", True) == "wait"
+    assert decide("MERGEABLE", "missing", False) == "dispatch"
+    assert decide("MERGEABLE", "failure", True) == "update"
+    assert decide("MERGEABLE", "failure", False) == "wait"
+    assert decide("UNKNOWN", "success", False) == "wait"
+
+
 # --------------------------------------------------------------------------- release
 
 

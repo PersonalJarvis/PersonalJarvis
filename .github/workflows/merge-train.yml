@@ -6,12 +6,16 @@
 #      codex/ claude/ agent/ gemini/ cursor/ bot/ — or labelled `auto-merge`.
 #      `no-auto-merge`, `do-not-merge`, `wip` or `needs-human` opt a PR out.
 #      Forks and Dependabot never qualify (supply-chain bumps stay human).
-#   2. A PR behind main is brought up to date by merging main into it
-#      (scripts/ci/agent_integrate.py): generated files are regenerated,
-#      append-only files union-merged, everything else goes to the optional AI
-#      resolver or is reported with a `needs-rebase` label. No force push.
-#   3. The first up-to-date PR whose `CI gate` is green is squash-merged —
-#      one per tick, so every landing is tested on top of the main it lands on.
+#   2. A PR that CONFLICTS with main (or whose CI failed while it was behind)
+#      gets main merged into it (scripts/ci/agent_integrate.py): generated
+#      files are regenerated, append-only files union-merged, everything else
+#      goes to the optional AI resolver or is reported with a `needs-rebase`
+#      label. No force push. A PR that is merely behind is left alone — with
+#      several agents pushing to main, re-testing every PR on every push meant
+#      nothing ever landed.
+#   3. The first green, conflict-free PR is squash-merged — one per tick. The
+#      full post-merge run on main is the backstop for changes that pass alone
+#      and break together (the same model as GitHub's non-strict checks).
 #
 # Tokens: with the optional INTEGRATION_TOKEN secret (a fine-grained PAT or App
 # token with contents + pull-requests write), pushes and merges fire the normal
