@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
  * section on the right:
  *
  *   General: Settings, Profile, {name}.md, Contacts, Socials
- *   System: API Keys, Local models, Computers, Wallpaper
+ *   System: API Keys, Local models, Wallpaper
  *   Activity: Spend, Feedback
  *
  * Same merged-section pattern as VoiceHubView / ClisHubView: the active
@@ -71,9 +71,6 @@ const LocalModelsTab = lazy(() =>
     default: m.LocalModelsView,
   })),
 );
-const ComputersTab = lazy(() =>
-  import("@/views/ComputersView").then((m) => ({ default: m.ComputersView })),
-);
 const WallpaperTab = lazy(() =>
   import("@/views/WallpaperView").then((m) => ({ default: m.WallpaperView })),
 );
@@ -86,7 +83,7 @@ const FeedbackTab = lazy(() =>
   })),
 );
 
-/** The eleven entries of the left navigation, in display order. */
+/** The ten entries of the left navigation, in display order. */
 type HubNavId =
   | "settings"
   | "profile"
@@ -95,7 +92,6 @@ type HubNavId =
   | "socials"
   | "apikeys"
   | "local-models"
-  | "computers"
   | "wallpaper"
   | "costs"
   | "feedback";
@@ -107,7 +103,7 @@ const HUB_NAV_GROUPS: readonly { labelKey: string; ids: readonly HubNavId[] }[] 
   },
   {
     labelKey: "settings_hub.group_system",
-    ids: ["apikeys", "local-models", "computers", "wallpaper"],
+    ids: ["apikeys", "local-models", "wallpaper"],
   },
   {
     labelKey: "settings_hub.group_activity",
@@ -124,7 +120,6 @@ const TAB_CONTENT: Record<HubNavId | "telephony-setup", LazyExoticComponent<Comp
   apikeys: ApiKeysTab,
   "telephony-setup": TelephonySetupTab,
   "local-models": LocalModelsTab,
-  computers: ComputersTab,
   wallpaper: WallpaperTab,
   costs: CostsTab,
   feedback: FeedbackTab,
@@ -152,8 +147,6 @@ function resolveHubTab(active: string): { content: HubNavId | "telephony-setup";
       return { content: "telephony-setup", highlight: "apikeys" };
     case "local-models":
       return { content: "local-models", highlight: "local-models" };
-    case "computers":
-      return { content: "computers", highlight: "computers" };
     case "wallpaper":
       return { content: "wallpaper", highlight: "wallpaper" };
     case "costs":
@@ -208,7 +201,7 @@ export function SettingsHubView() {
   const matches = (item: NavItem) =>
     needle === "" || resolveNavLabel(t, item).toLowerCase().includes(needle);
 
-  // Eleven entries — filtered inline; no memo needed at this size.
+  // Ten entries — filtered inline; no memo needed at this size.
   const visibleGroups = HUB_NAV_GROUPS.map((group) => ({
     ...group,
     items: group.ids.map(findNavItem).filter(matches),

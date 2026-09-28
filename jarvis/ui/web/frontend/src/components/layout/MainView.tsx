@@ -85,6 +85,10 @@ function lazyPropView<P>(
 // statically owns only its shell; every tab stays its own lazy chunk (see
 // SettingsHubView), so this one import replaces the eleven per-view imports
 // below without merging their chunks back together.
+// Computers: its own section (servers, VPS, local VMs), not a Settings tab.
+const ComputersView = lazyView(() =>
+  import("@/views/ComputersView").then((m) => ({ default: m.ComputersView })),
+);
 const SettingsHubView = lazyView(() =>
   import("@/views/SettingsHubView").then((m) => ({ default: m.SettingsHubView })),
 );
@@ -510,7 +514,6 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     case "telephony":
     case "telephony-setup":
     case "local-models":
-    case "computers":
     case "wallpaper":
     case "costs":
     case "feedback":
@@ -534,6 +537,8 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     // place, installable without leaving the app.
     case "marketplace":
       return <MarketplaceView />;
+    case "computers":
+      return <ComputersView />;
     // Deliberately nothing: the coding workspace is rendered by the STICKY
     // branch in `MainView` above, which keeps it mounted across section
     // changes. This switch is not rendered at all while one of those ids is
