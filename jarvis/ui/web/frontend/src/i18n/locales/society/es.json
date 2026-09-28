@@ -823,7 +823,12 @@
       "hair_beanie": "Gorro",
       "hair_cap": "Gorra",
       "hair_bald": "Calvo",
-      "hair_label": "Peinado o sombrero"
+      "hair_label": "Peinado o sombrero",
+      "minimap_title": "Plano de la planta",
+      "minimap_expand": "Mostrar plano",
+      "minimap_collapse": "Ocultar plano",
+      "minimap_aria": "Plano de la planta: {0} agentes, {1} trabajando",
+      "minimap_you": "Tú"
     }
   }
 }

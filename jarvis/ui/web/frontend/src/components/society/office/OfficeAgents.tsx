@@ -15,6 +15,9 @@ import { useT } from "@/i18n";
 import type { SocietyAgent } from "../data";
 import type { FigureDrive, FigureMode } from "../figures/FigureRig";
 import { ToyFigure } from "./ToyFigure";
+import { GigiFlyer } from "./GigiFlyer";
+import type { GigiFlightMode } from "./gigiFlight";
+import { useEventStore } from "@/store/events";
 import { SEAT_HEIGHT, toyLookFor } from "./toyFigureModel";
 import { OFFICE } from "./officePalette";
 import type { DeskSlot, OfficeLayout, Point } from "./officeLayout";
@@ -52,8 +55,16 @@ export function plateScale(distance: number): number {
 
 const RING_COLOUR = { working: OFFICE.ringWorking, idle: OFFICE.ringIdle, waiting: OFFICE.ringWaiting, paused: OFFICE.ringPaused } as const;
 
-function Nameplate({ agent, activity, selected, onSelect }: {
-  agent: SocietyAgent; activity: ActivityKind | null; selected: boolean; onSelect: (id: string) => void;
+/** Jarvis is not a person in the office: it is Gigi, flying at chest height. */
+function gigiModeFor(pose: Pose | null, travelling: boolean): GigiFlightMode {
+  if (travelling || !pose) return "idle";
+  if (pose === "sit" || pose === "work") return "work";
+  if (pose === "stand") return "idle";
+  return pose;
+}
+
+function Nameplate({ agent, activity, selected, onSelect, height = OFFICE_FIGURE_HEIGHT_M + 0.35 }: {
+  agent: SocietyAgent; activity: ActivityKind | null; selected: boolean; onSelect: (id: string) => void; height?: number;
 }) {
   const t = useT();
   const plate = useRef<HTMLButtonElement>(null);
@@ -69,7 +80,7 @@ function Nameplate({ agent, activity, selected, onSelect }: {
   });
   const detail = agent.state !== "idle" ? t(`society.office.state_${agent.state}`) : activity ? t(`society.office.activity_${activity}`) : "";
   return (
-    <group ref={anchor} position={[0, OFFICE_FIGURE_HEIGHT_M + 0.35, 0]}>
+    <group ref={anchor} position={[0, height, 0]}>
       <Html center zIndexRange={[20, 0]}>
         <button ref={plate} type="button" data-office-ui className="office-plate" data-state={agent.state} data-selected={selected || undefined}
           onClick={(event) => { event.stopPropagation(); onSelect(agent.agentId); }}
@@ -115,6 +126,9 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
   const summonKey = useRef("");
   const [activity, setActivity] = useState<ActivityKind | null>(null);
   const [seatHeight, setSeatHeight] = useState<number>(SEAT_HEIGHT.chair);
+  const isGigi = agent.tier === "lead";
+  const [gigiPose, setGigiPose] = useState<{ pose: Pose | null; travelling: boolean }>({ pose: null, travelling: false });
+  const speaking = useEventStore((s) => isGigi && s.voiceState === "speaking");
 
   // Leaving the office releases the agent's spot and its registry entry.
   useEffect(() => () => {
@@ -161,6 +175,7 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
         if (phase.current === "dwell") dwellUntil.current = now + next.dwellMs;
       }
       if (next.kind !== activity) setActivity(next.kind);
+      if (isGigi) setGigiPose({ pose: next.pose, travelling: phase.current === "travel" });
       const nextSeat = seatHeightFor(next.kind);
       if (nextSeat !== seatHeight) setSeatHeight(nextSeat);
     }
@@ -169,7 +184,11 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
       const { moved, arrived } = awake ? stepMover(m, WALK_SPEED, dt) : { moved: 0, arrived: false };
       drive.current.mode = "walk";
       drive.current.speed = moved / Math.max(dt, 1e-3);
-      if (arrived) { phase.current = "dwell"; dwellUntil.current = now + p.dwellMs; }
+      if (arrived) {
+        phase.current = "dwell";
+        dwellUntil.current = now + p.dwellMs;
+        if (isGigi) setGigiPose({ pose: p.pose, travelling: false });
+      }
     } else {
       if (p.facing !== null) m.heading = turnToward(m.heading, p.facing, 8 * dt);
       drive.current.mode = POSE_CLIP[p.pose];
@@ -183,7 +202,7 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
     if (ring.current) {
       const material = ring.current.material as MeshBasicMaterial;
       material.opacity = agent.state === "working" && awake && !reduced ? 0.55 + Math.sin(now / 330) * 0.3 : 0.8;
-      ring.current.visible = phase.current === "dwell" || selected;
+      ring.current.visible = !isGigi && (phase.current === "dwell" || selected);
     }
   });
 
@@ -198,11 +217,13 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
         onClick={(event) => { event.stopPropagation(); onSelect(agent.agentId); }}
         onPointerOver={() => { document.body.style.cursor = "pointer"; }}
         onPointerOut={() => { document.body.style.cursor = ""; }}>
-        <ToyFigure look={look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} seatHeight={seatHeight} />
+        {!isGigi && <ToyFigure look={look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} seatHeight={seatHeight} />}
       </group>
-      <Nameplate agent={agent} activity={activity} selected={selected} onSelect={onSelect} />
+      <Nameplate agent={agent} activity={activity} selected={selected} onSelect={onSelect} height={isGigi ? 1.75 : undefined} />
     </group>
-    <AgentFollower owner={group} appearance={pet} paused={!awake || reduced} lead={agent.tier === "lead"} clear={petClear} />
+    {isGigi
+      ? <GigiFlyer owner={mover} mode={gigiModeFor(gigiPose.pose, gigiPose.travelling)} speaking={speaking} paused={!awake} reduced={reduced} />
+      : <AgentFollower owner={group} appearance={pet} paused={!awake || reduced} clear={petClear} />}
     </>
   );
 }

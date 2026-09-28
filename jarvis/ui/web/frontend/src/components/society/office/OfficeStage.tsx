@@ -21,7 +21,7 @@ import { CAMERA_FOV } from "./officeCamera";
 import { ZOOM_SECONDS } from "./OfficeCameraRig";
 import { useDeskChats } from "./useDeskChats";
 import type { Point } from "./officeLayout";
-import { player, useOfficeStore } from "./officeStore";
+import { cameraView, player, useOfficeStore } from "./officeStore";
 import { agentPositions, knownAgents, seatedAtDesk } from "./walkerRegistry";
 import { loadProfile, playerLook, saveProfile, type PlayerProfile } from "./playerProfile";
 import { AgentPanel, CheckpointPanel, type OfficeActions } from "./OfficePanels";
@@ -29,6 +29,8 @@ import type { WalkerContext } from "./OfficeAgents";
 import { ownsKeyboard } from "./OfficePlayer";
 import "./office.css";
 import "./officeHud.css";
+import "./officeMinimap.css";
+import { OfficeMinimap } from "./OfficeMinimap";
 
 // Dev-only handles for runtime checks of walking and panels.
 if (import.meta.env.DEV && typeof window !== "undefined") Object.assign(window, { __officeStore: useOfficeStore, __officePlayer: player, __officeAgents: agentPositions, __officeSeated: seatedAtDesk,
@@ -242,6 +244,8 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
           <kbd>E</kbd>{nearbyLabel}
         </button>
       )}
+      <OfficeMinimap layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null}
+        camera={() => (cameraView.ready ? cameraView : null)} />
       <p className="office-hud office-help" data-office-ui>{t("society.office.help")}</p>
     </section>
   );

@@ -1,0 +1,13 @@
+/* Office minimap card: theme tokens only, so light and dark mode both work. The map picture reads the same tokens. */
+.office-minimap { right:14px; bottom:44px; display:flex; flex-direction:column; padding:4px 6px 6px; user-select:none; }
+.office-minimap[data-collapsed="true"] { padding-bottom:4px; }
+.office-minimap-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:0 0 4px 4px; }
+.office-minimap[data-collapsed="true"] .office-minimap-head { padding-bottom:0; }
+.office-minimap-title { font-size:11px; font-weight:600; color:hsl(var(--muted-foreground)); }
+.office-minimap-toggle { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; padding:0; }
+.office-minimap-map { position:relative; border-radius:8px; overflow:hidden; border:1px solid hsl(var(--border)); background:hsl(var(--background)); }
+.office-minimap-canvas { display:block; cursor:crosshair; touch-action:manipulation; }
+.office-minimap-tooltip { position:absolute; z-index:1; transform:translateY(-100%); padding:2px 7px; border-radius:6px; border:1px solid hsl(var(--border)); background:hsl(var(--popover)); color:hsl(var(--popover-foreground)); font-size:11px; font-weight:600; white-space:nowrap; max-width:180px; overflow:hidden; text-overflow:ellipsis; pointer-events:none; box-shadow:0 2px 8px rgb(0 0 0 / .2); }
+.office-minimap-tooltip[data-side="left"] { transform:translate(-100%, -100%); }
+@media (max-height:520px) { .office-minimap { display:none; } }
+@media (max-width:600px) { .office-minimap { display:none; } }

@@ -31,10 +31,10 @@ import {
 const HD = TOY.head;
 
 const GEO = {
-  sphere: new SphereGeometry(1, 22, 16),
-  lowSphere: new SphereGeometry(1, 12, 8),
+  sphere: new SphereGeometry(1, 40, 28),
+  lowSphere: new SphereGeometry(1, 16, 12),
   /** Upper half of a sphere, reaching slightly past the equator: hair caps and hats. */
-  dome: new SphereGeometry(1, 22, 10, 0, Math.PI * 2, 0, Math.PI * 0.56),
+  dome: new SphereGeometry(1, 40, 18, 0, Math.PI * 2, 0, Math.PI * 0.56),
   pelvis: new RoundedBoxGeometry(TOY.pelvis.w, TOY.pelvis.h, TOY.pelvis.d, 3, 0.05),
   chest: new RoundedBoxGeometry(TOY.torso.w, TOY.torso.h - 0.02, TOY.torso.d, 3, 0.08),
   thigh: new CapsuleGeometry(TOY.legRadius, 0.12, 4, 10),
@@ -87,6 +87,7 @@ function faceZ(x: number, y: number, inset = 0): number {
 function Face({ look }: { look: ToyLook }) {
   const skin = matte(look.skin);
   const blush = matte(mix(look.skin, "#ff6f7d", 0.38));
+  const brow = matte(look.hairStyle === "bald" ? mix(look.skin, "#2a1a12", 0.55) : mix(look.hair, "#1a1210", 0.35));
   const eyeY = HD.y - 0.03;
   return (
     <group>
@@ -100,14 +101,24 @@ function Face({ look }: { look: ToyLook }) {
           </group>
         );
       })}
+      {/* Soft brows give the face an expression; hair-coloured, or a darker skin tone when bald. */}
+      {[-1, 1].map((sx) => {
+        const x = sx * 0.1;
+        const y = eyeY + 0.056;
+        return (
+          <mesh key={`w${sx}`} geometry={GEO.sphere} material={brow} position={[x, y, faceZ(x, y, 0.006)]}
+            rotation={[0, sx * 0.4, sx * -0.12]} scale={[0.036, 0.0095, 0.012]} />
+        );
+      })}
       <mesh geometry={GEO.sphere} material={skin} position={[0, HD.y - 0.085, faceZ(0, HD.y - 0.085, 0.006)]} scale={[0.026, 0.021, 0.02]} />
       <mesh geometry={GEO.smile} material={MOUTH} position={[0, HD.y - 0.115, faceZ(0, HD.y - 0.115, 0.004)]} rotation={[-0.25, 0, Math.PI]} />
       {look.blush && [-1, 1].map((sx) => {
-        const x = sx * 0.175;
-        const y = HD.y - 0.095;
+        // Inside the face outline: further out, the cheek pokes past the head's silhouette.
+        const x = sx * 0.145;
+        const y = HD.y - 0.085;
         return (
           <mesh key={`b${sx}`} geometry={GEO.sphere} material={blush} position={[x, y, faceZ(x, y, 0.008)]}
-            rotation={[0, sx * 0.62, 0]} scale={[0.045, 0.026, 0.012]} />
+            rotation={[0, sx * 0.5, 0]} scale={[0.04, 0.024, 0.012]} />
         );
       })}
       {[-1, 1].map((sx) => (
@@ -118,10 +129,24 @@ function Face({ look }: { look: ToyLook }) {
 }
 
 /** Hair cap shared by most styles: a dome tilted back so the forehead shows. */
-function HairCap({ color, grow = 0 }: { color: string; grow?: number }) {
+/** Tufts along the hairline: a soft fringe instead of the hard rim of a bowl cut. */
+const FRINGE: Array<[number, number, number]> = [[-0.2, 0.075, -0.55], [-0.105, 0.098, -0.25], [0, 0.105, 0], [0.105, 0.098, 0.25], [0.2, 0.075, 0.55]];
+
+function HairCap({ color, grow = 0, fringe = true }: { color: string; grow?: number; fringe?: boolean }) {
+  const material = matte(color);
   return (
-    <mesh geometry={GEO.dome} material={matte(color)} position={[0, HD.y, 0]} rotation={[-0.4, 0, 0]}
-      scale={[HD.rx + 0.018 + grow, HD.ry + 0.02 + grow, HD.rz + 0.02 + grow]} castShadow />
+    <group>
+      {/* Tilted back just enough to free the forehead; further and the crown shows skin. */}
+      <mesh geometry={GEO.dome} material={material} position={[0, HD.y + 0.01, -0.005]} rotation={[-0.5, 0, 0]}
+        scale={[HD.rx + 0.018 + grow, HD.ry + 0.03 + grow, HD.rz + 0.03 + grow]} castShadow />
+      {fringe && FRINGE.map(([x, dy, rz], i) => {
+        const y = HD.y + dy;
+        return (
+          <mesh key={i} geometry={GEO.sphere} material={material} position={[x, y, faceZ(x, y, -0.012)]}
+            rotation={[0.35, 0, rz]} scale={[0.085, 0.05, 0.045]} castShadow />
+        );
+      })}
+    </group>
   );
 }
 
@@ -208,8 +233,9 @@ function Hair({ style, look }: { style: HairStyle; look: ToyLook }) {
       return (
         <group>
           <HairCap color={look.hair} />
-          <mesh geometry={GEO.dome} material={cap} position={[0, HD.y + 0.035, 0]} rotation={[-0.12, 0, 0]}
-            scale={[HD.rx + 0.022, HD.ry - 0.02, HD.rz + 0.03]} castShadow />
+          {/* Clearly larger than the hair cap underneath: equal shells z-fight and the hair flickers through. */}
+          <mesh geometry={GEO.dome} material={cap} position={[0, HD.y + 0.03, 0]} rotation={[-0.12, 0, 0]}
+            scale={[HD.rx + 0.045, HD.ry + 0.0, HD.rz + 0.05]} castShadow />
           <mesh geometry={GEO.brim} material={cap} position={[0, HD.y + 0.07, HD.rz + 0.06]} rotation={[0.14, 0, 0]} castShadow />
           <mesh geometry={GEO.lowSphere} material={cap} position={[0, HD.y + HD.ry + 0.01, -0.02]} scale={0.022} />
         </group>

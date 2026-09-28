@@ -823,7 +823,12 @@
       "hair_beanie": "Mütze",
       "hair_cap": "Cap",
       "hair_bald": "Glatze",
-      "hair_label": "Frisur oder Kopfbedeckung"
+      "hair_label": "Frisur oder Kopfbedeckung",
+      "minimap_title": "Grundriss",
+      "minimap_expand": "Grundriss einblenden",
+      "minimap_collapse": "Grundriss ausblenden",
+      "minimap_aria": "Grundriss: {0} Agenten, {1} arbeiten",
+      "minimap_you": "Du"
     }
   }
 }

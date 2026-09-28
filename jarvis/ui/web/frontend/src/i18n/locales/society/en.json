@@ -823,7 +823,12 @@
       "hair_beanie": "Beanie",
       "hair_cap": "Cap",
       "hair_bald": "Bald",
-      "hair_label": "Hair or hat"
+      "hair_label": "Hair or hat",
+      "minimap_title": "Floor map",
+      "minimap_expand": "Show floor map",
+      "minimap_collapse": "Hide floor map",
+      "minimap_aria": "Floor map: {0} agents, {1} working",
+      "minimap_you": "You"
     }
   }
 }

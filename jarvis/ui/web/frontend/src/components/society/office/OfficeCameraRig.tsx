@@ -12,7 +12,7 @@ import { Vector3 } from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { cameraHome, CAMERA_LIMITS, HOME_PITCH_RAD, HOME_YAW_RAD } from "./officeCamera";
 import type { OfficeLayout } from "./officeLayout";
-import { player, useOfficeStore } from "./officeStore";
+import { cameraView, player, useOfficeStore } from "./officeStore";
 
 /** Where the camera starts: close behind the character, south-east, looking down. */
 export const FOLLOW_DISTANCE = 15;
@@ -72,6 +72,12 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
   useFrame((_, rawDt) => {
     const c = controls.current;
     if (!c) return;
+    // Publish the view for the minimap: where the camera stands and which way it looks.
+    const lens = camera as unknown as { fov: number; aspect: number };
+    cameraView.x = camera.position.x; cameraView.z = camera.position.z;
+    cameraView.yaw = Math.atan2(c.target.x - camera.position.x, c.target.z - camera.position.z);
+    cameraView.halfWidth = Math.atan(Math.tan(((lens.fov ?? 35) * Math.PI) / 360) * (lens.aspect ?? 1.6));
+    cameraView.ready = true;
     const dt = Math.min(rawDt, 0.1);
     const store = useOfficeStore.getState();
     if (store.zoom && store.zoom.seq !== lastZoom.current) {
