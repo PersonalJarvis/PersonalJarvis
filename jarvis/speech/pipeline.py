@@ -86,6 +86,7 @@ from jarvis.core.events import (
     WakeWordDetected,
 )
 from jarvis.core.protocols import AudioChunk, Transcript
+from jarvis.core.redact import safe_preview
 from jarvis.core.turn_language import (
     DEFAULT_LOCALE,
     normalize_language_tag,
@@ -9580,7 +9581,7 @@ class SpeechPipeline:
                         "— dropping it instead of speaking the error phrase: "
                         "%r",
                         scrubbed.actions,
-                        text[:80],
+                        safe_preview(text, max_chars=80),
                     )
                     return
                 cleaned = scrubbed.cleaned.strip()
@@ -9763,7 +9764,13 @@ class SpeechPipeline:
                                 else TurnTakingState.LISTENING
                             )
             elif kind == "provider_error":
-                log.warning("Realtime desktop status: %s", message)
+                # Only the redacted, capped error text -- never the raw
+                # message dict, whose provider detail may echo a credential
+                # or a provider error body (AP-34).
+                log.warning(
+                    "Realtime desktop status: provider_error: %s",
+                    safe_preview(message.get("error"), max_chars=300),
+                )
             elif kind == "provider_fallback":
                 # The call is crossing to a DIFFERENT provider family, which can
                 # mean a different billing path (AP-22). The user-facing notice
