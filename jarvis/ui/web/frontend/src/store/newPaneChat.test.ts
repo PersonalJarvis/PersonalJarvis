@@ -77,7 +77,10 @@ const MISSING: SplitAgentChoice = {
   kind: "cli",
 };
 
-function store(agents: SplitAgentChoice[], open = vi.fn(async () => undefined)) {
+function store(
+  agents: SplitAgentChoice[],
+  open = vi.fn(async (_: NewPaneRequest) => undefined),
+) {
   return {
     hook: createNewPaneChatStore({ folder: "C:/work/app", agents, open }),
     open,
