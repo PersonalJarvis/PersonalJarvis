@@ -40,6 +40,7 @@ Cross-platform: the command is stored verbatim and started through this host's
 own shell (``jarvis.terminal.shells``), so a Windows entry may be a ``.cmd`` and
 a Linux one a shell function without either needing to know about the other.
 """
+
 from __future__ import annotations
 
 import json
@@ -53,6 +54,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
+from jarvis.core.path_safety import UnsafePathError, safe_child
 from jarvis.core.paths import workspace_clis_dir, workspace_clis_path
 
 log = logging.getLogger(__name__)
@@ -307,9 +309,7 @@ def _write(entries: Iterable[CustomCli]) -> None:
         "entries": [entry.to_dict() for entry in entries],
     }
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, path)
     _bump()
 
@@ -429,9 +429,7 @@ def update_custom_cli(
     if description is not None:
         entry = replace(entry, description=_clean_description(description))
     if file_reference is not None:
-        entry = replace(
-            entry, file_reference="at" if file_reference == "at" else "quoted"
-        )
+        entry = replace(entry, file_reference="at" if file_reference == "at" else "quoted")
     entries[index] = entry
     _write(entries)
     return entry
@@ -458,9 +456,25 @@ def delete_custom_cli(entry_id: str) -> CustomCli:
 # --------------------------------------------------------------------------
 
 
+def _logo_path(entry_id: str, suffix: str) -> Path | None:
+    """The logo file for this id, or None when the id is not a plain name.
+
+    Ids normally come from :func:`_slug`, but the store is a JSON file a person
+    can edit by hand, so the name is still checked to stay inside
+    :func:`logo_dir` before anything reads, writes or deletes it.
+    """
+    try:
+        return safe_child(logo_dir(), f"{entry_id}{suffix}")
+    except UnsafePathError:
+        log.warning("workspace-clis: refusing logo path for id %r", entry_id)
+        return None
+
+
 def _remove_logo_files(entry_id: str) -> None:
     for suffix in LOGO_TYPES:
-        candidate = logo_dir() / f"{entry_id}{suffix}"
+        candidate = _logo_path(entry_id, suffix)
+        if candidate is None:
+            continue
         try:
             candidate.unlink(missing_ok=True)
         except OSError as exc:  # noqa: PERF203 - one failure must not stop the rest
@@ -497,16 +511,16 @@ def set_logo(entry_id: str, data: bytes, filename: str) -> CustomCli:
     if not data:
         raise CustomCliError("That file is empty.")
     if len(data) > MAX_LOGO_BYTES:
-        raise CustomCliError(
-            f"Keep the logo under {MAX_LOGO_BYTES // 1024} KB."
-        )
+        raise CustomCliError(f"Keep the logo under {MAX_LOGO_BYTES // 1024} KB.")
     if not _looks_like(suffix, data):
         raise CustomCliError(f"That file is not really a {suffix.lstrip('.').upper()}.")
 
     # One logo per entry: the old file goes first, so a switch from PNG to SVG
     # does not leave a stale sibling that a later lookup could pick up.
+    target = _logo_path(entry_id, suffix)
+    if target is None:
+        raise CustomCliError("That CLI's id cannot name a logo file.")
     _remove_logo_files(entry_id)
-    target = logo_dir() / f"{entry_id}{suffix}"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(data)
 
@@ -541,7 +555,9 @@ def logo_file(entry_id: str) -> tuple[Path, str] | None:
     media = LOGO_TYPES.get(suffix)
     if media is None:
         return None
-    path = logo_dir() / f"{entry_id}{suffix}"
+    path = _logo_path(entry_id, suffix)
+    if path is None:
+        return None
     return (path, media) if path.is_file() else None
 
 

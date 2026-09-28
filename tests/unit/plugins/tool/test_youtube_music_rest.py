@@ -879,3 +879,17 @@ async def test_execute_routes_and_validates():
     assert not res.success and "unknown action" in res.error
     res = await tool.execute({"action": "now_playing"}, ctx=None)  # type: ignore[arg-type]
     assert res.success and res.output["track"] == "Karma Police"
+
+
+def test_activation_link_must_be_a_google_console_host() -> None:
+    """The link is shown to the user to click, so its host is parsed, not grepped."""
+    from jarvis.plugins.tool.youtube_music_rest import _is_google_console_url
+
+    assert _is_google_console_url(
+        "https://console.developers.google.com/apis/api/youtube.googleapis.com/overview"
+    )
+    assert _is_google_console_url("https://console.cloud.google.com/apis/library")
+    assert not _is_google_console_url("https://console.evil.example/google.com/")
+    assert not _is_google_console_url("https://console.google.com.evil.example/x")
+    assert not _is_google_console_url("https://console.x.google.com@evil.example/")
+    assert not _is_google_console_url("http://console.cloud.google.com/")

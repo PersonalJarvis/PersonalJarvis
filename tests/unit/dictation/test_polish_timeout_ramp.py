@@ -36,6 +36,10 @@ from jarvis.dictation import polish
 from jarvis.dictation.polish import polish_transcript
 from jarvis.dictation.polish_client import POLISH_FAMILIES, PolishFamily
 
+# The deadline is a difference of monotonic clock readings, so an exact budget
+# can come back a few ULPs above its ceiling (1.2000000000007 <= 1.2 fails).
+_FLOAT_SLACK = 1e-9
+
 pytestmark = pytest.mark.asyncio
 
 GROQ: PolishFamily = POLISH_FAMILIES[0]
@@ -119,7 +123,7 @@ async def test_a_short_dictation_keeps_the_configured_ceiling(
     # The walk hands the client the time REMAINING, so a few milliseconds of
     # our own work are legitimately missing; what must not happen is the
     # budget growing.
-    assert 1.0 < deadline <= 1.2
+    assert 1.0 < deadline <= 1.2 + _FLOAT_SLACK
 
 
 async def test_a_long_dictation_is_given_more_time_than_a_short_one(
@@ -138,7 +142,7 @@ async def test_a_long_dictation_is_given_more_time_than_a_short_one(
     # 60 words = 35 over the free allowance, 15 ms each on top of 1200 ms, and
     # still short of the 2000 ms cap — so this asserts the RAMP rather than
     # the ceiling the next test owns.
-    assert 1.5 < long <= 1.725
+    assert 1.5 < long <= 1.725 + _FLOAT_SLACK
 
 
 async def test_the_extra_time_stops_at_the_configured_maximum(
@@ -153,7 +157,7 @@ async def test_the_extra_time_stops_at_the_configured_maximum(
         monkeypatch, 5000, _Cfg(polish_timeout_ms=1200, polish_timeout_max_ms=2500)
     )
 
-    assert 2.3 < deadline <= 2.5
+    assert 2.3 < deadline <= 2.5 + _FLOAT_SLACK
 
 
 async def test_a_maximum_at_the_base_switches_the_ramp_off(
@@ -169,7 +173,7 @@ async def test_a_maximum_at_the_base_switches_the_ramp_off(
         monkeypatch, 800, _Cfg(polish_timeout_ms=900, polish_timeout_max_ms=900)
     )
 
-    assert 0.7 < deadline <= 0.9
+    assert 0.7 < deadline <= 0.9 + _FLOAT_SLACK
 
 
 async def test_a_maximum_below_the_base_never_shortens_the_base(
@@ -186,7 +190,7 @@ async def test_a_maximum_below_the_base_never_shortens_the_base(
         monkeypatch, 800, _Cfg(polish_timeout_ms=1500, polish_timeout_max_ms=400)
     )
 
-    assert 1.3 < deadline <= 1.5
+    assert 1.3 < deadline <= 1.5 + _FLOAT_SLACK
 
 
 async def test_an_explicit_override_is_never_ramped(
@@ -202,7 +206,7 @@ async def test_an_explicit_override_is_never_ramped(
 
     await polish_transcript(_words(900), language="en", cfg=_Cfg(), timeout_s=0.5)
 
-    assert client.calls and 0 < client.calls[0] <= 0.5
+    assert client.calls and 0 < client.calls[0] <= 0.5 + _FLOAT_SLACK
 
 
 async def test_a_config_that_never_heard_of_the_maximum_still_ramps(

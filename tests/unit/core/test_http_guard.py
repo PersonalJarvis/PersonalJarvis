@@ -11,7 +11,13 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from jarvis.core.http_guard import InsecureRedirect, https_only, https_only_async
+from jarvis.core.http_guard import (
+    BlockedDestination,
+    InsecureRedirect,
+    https_only,
+    https_only_async,
+    public_only_async,
+)
 
 
 def _redirecting(target: str) -> httpx.MockTransport:
@@ -75,3 +81,71 @@ def test_sync_client_guard_refuses_too() -> None:
     ) as client:
         with pytest.raises(InsecureRedirect):
             client.get("https://start.example/skill.md")
+
+
+# --------------------------------------------------------------------------
+# public_only_async — a user-pasted URL may be http, but never non-public
+# --------------------------------------------------------------------------
+
+
+def _public_redirecting(target: str) -> httpx.MockTransport:
+    """http://8.8.8.8 (a literal public address, no DNS) redirects to target."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "8.8.8.8":
+            return httpx.Response(302, headers={"location": target})
+        return httpx.Response(200, text="landed")
+
+    return httpx.MockTransport(handler)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8765/api/anything",
+        "http://localhost:8765/api/anything",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://192.168.1.1/admin",
+        "http://[::1]/",
+        "http://[::ffff:127.0.0.1]/",
+    ],
+)
+@pytest.mark.asyncio
+async def test_public_only_refuses_non_public_first_hop(url: str) -> None:
+    async with httpx.AsyncClient(
+        transport=_public_redirecting("https://1.1.1.1/x"),
+        **public_only_async(schemes=("http", "https")),
+    ) as client:
+        with pytest.raises(BlockedDestination):
+            await client.get(url)
+
+
+@pytest.mark.asyncio
+async def test_public_only_refuses_a_redirect_into_the_lan() -> None:
+    async with httpx.AsyncClient(
+        transport=_public_redirecting("http://10.0.0.5/secret"),
+        follow_redirects=True,
+        **public_only_async(schemes=("http", "https")),
+    ) as client:
+        with pytest.raises(httpx.HTTPError):
+            await client.get("http://8.8.8.8/skill.md")
+
+
+@pytest.mark.asyncio
+async def test_public_only_follows_a_public_redirect() -> None:
+    async with httpx.AsyncClient(
+        transport=_public_redirecting("https://1.1.1.1/skill.md"),
+        follow_redirects=True,
+        **public_only_async(schemes=("http", "https")),
+    ) as client:
+        resp = await client.get("http://8.8.8.8/skill.md")
+    assert resp.text == "landed"
+
+
+@pytest.mark.asyncio
+async def test_public_only_default_is_https_only() -> None:
+    async with httpx.AsyncClient(
+        transport=_public_redirecting("https://1.1.1.1/x"), **public_only_async()
+    ) as client:
+        with pytest.raises(BlockedDestination):
+            await client.get("http://8.8.8.8/skill.md")

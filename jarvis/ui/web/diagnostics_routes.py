@@ -120,7 +120,8 @@ async def cancel_scopes() -> dict[str, Any]:
     try:
         from anyio._backends._asyncio import CancelScope  # type: ignore[import-not-found]
     except Exception as exc:  # noqa: BLE001 — anyio absent or reshaped
-        return {"error": f"anyio backend CancelScope unavailable: {exc}"}
+        log.opt(exception=exc).warning("anyio backend CancelScope unavailable")
+        return {"error": "anyio backend CancelScope unavailable"}
 
     def _task_brief(task: Any) -> str:
         try:
