@@ -16,7 +16,9 @@ type SplashPhase = "shown" | "exiting" | "gone";
 const DESKTOP_TOKEN_WAIT_MS = 300;
 /** Shortest time the boot splash stays up, measured from the window opening,
  *  so a warm start still reads as one deliberate reveal rather than a flash. */
-const SPLASH_MIN_MS = 1200;
+const SPLASH_MIN_MS = 1100;
+/** Time the progress line gets to visibly complete before the splash leaves. */
+const SPLASH_COMPLETE_MS = 380;
 /** Removes the splash even when `animationend` never fires (a hidden window
  *  throttles animations, and a test environment has none at all). */
 const SPLASH_EXIT_FALLBACK_MS = 1000;
@@ -77,7 +79,10 @@ export function AuthGate({ children }: AuthGateProps) {
   useEffect(() => {
     if (state === "checking" || splash !== "shown") return;
     const openedAt = window.__JARVIS_BOOT_STARTED_AT ?? 0;
-    const wait = Math.max(0, SPLASH_MIN_MS - (performance.now() - openedAt));
+    const wait = Math.max(
+      SPLASH_COMPLETE_MS,
+      SPLASH_MIN_MS - (performance.now() - openedAt),
+    );
     let frame = 0;
     const timer = window.setTimeout(() => {
       frame = requestAnimationFrame(() => {
@@ -208,6 +213,11 @@ export function AuthGate({ children }: AuthGateProps) {
   };
 
   const statusLabel = t(backendWarming ? "auth_gate.starting" : "auth_gate.checking");
+  // The progress line follows real milestones. The bundle running is 55 %;
+  // a warming backend approaches 90 % slowly (it can take a while and must
+  // never look stalled or finished); an answer from the gate completes it.
+  const [progress, settle] =
+    state !== "checking" ? [1, 0.35] : backendWarming ? [0.9, 25] : [0.55, 0.9];
   // The wrapper is not decoration: the blank-window watchdog in index.html
   // treats a bare splash in #root as "bundle still loading" and reloads it
   // after its grace period. A held cold boot can legitimately outlast that,
@@ -219,6 +229,8 @@ export function AuthGate({ children }: AuthGateProps) {
           name={readCachedAssistantName("")}
           status={statusLabel}
           shift={bootShift.current}
+          progress={progress}
+          settle={settle}
           exiting={splash === "exiting"}
           onExited={() => setSplash("gone")}
         />
