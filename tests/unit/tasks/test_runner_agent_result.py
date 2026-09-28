@@ -331,3 +331,30 @@ async def test_no_brain_after_seat_failure_says_there_was_no_other_path(
     assert row is not None and row["state"] == "failed"
     assert row["last_error"] is not None
     assert "not rerouted" in row["last_error"]
+
+
+class FailingAgentBrain(FakeAgentBrain):
+    async def run_task(self, **kwargs: Any):
+        raise RuntimeError("The routine chat failed: Individual quota reached {see plan}")
+
+
+async def test_a_failed_agent_routine_is_announced_as_a_sentence(store: TaskStore) -> None:
+    """Read aloud, the raw ``last_error`` was "RuntimeError: The routine chat
+    failed: …" — and it became a conversation title. The announcement names
+    the routine and the reason; the stored error keeps the precise line."""
+    bus = EventBus()
+    spoken = _collect(bus, AnnouncementRequested)
+    runner = TaskRunner(store, bus, agent_brain=FailingAgentBrain())
+    spec = TaskSpec(
+        title="[agent:Mailbox] Inbox sweep",
+        trigger=TriggerAfterDelay(delay_seconds=0.01),
+        action=AgentAction(prompt="Sort the inbox."),
+        tags=("society", "agent:mailbox"),
+    )
+    task_id = await store.insert(spec)
+    await asyncio.wait_for(runner.run(task_id, CancelToken()), timeout=2.0)
+    assert [e.text for e in spoken] == [
+        'The routine "Inbox sweep" failed: Individual quota reached {see plan}.'
+    ]
+    row = await store.get(task_id)
+    assert row is not None and row["last_error"].startswith("RuntimeError: ")

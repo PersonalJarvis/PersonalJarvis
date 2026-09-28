@@ -245,7 +245,10 @@ class TaskRunner:
             if template:
                 await self._announce(template, fail_ctx)
             elif "society" in tags:
-                await self._announce(error_msg, fail_ctx)
+                # The template path formats ``{…}``; an error text is not a
+                # template, so its braces are escaped before it goes through.
+                spoken = spoken_routine_failure(str(getattr(spec, "title", "") or ""), error_msg)
+                await self._announce(spoken.replace("{", "{{").replace("}", "}}"), fail_ctx)
             return
 
         duration_ms = int((time.perf_counter() - start) * 1000)
@@ -870,6 +873,29 @@ def _event_context(trigger_event: dict[str, Any] | None) -> dict[str, Any]:
         return {}
     drop = {"trace_id", "timestamp_ns", "source_layer"}
     return {k: v for k, v in trigger_event.items() if k not in drop}
+
+
+_EXCEPTION_PREFIX_RE = re.compile(r"^(?:[A-Za-z_][\w.]*(?:Error|Exception)):\s*")
+_EXCEPTION_NAME_RE = re.compile(r"[A-Za-z_][\w.]*(?:Error|Exception)")
+_AGENT_TITLE_TAG_RE = re.compile(r"^\s*\[agent:[^\]]*\]\s*")
+_ROUTINE_WRAPPER_RE = re.compile(r"^The routine chat failed:\s*", re.IGNORECASE)
+
+
+def spoken_routine_failure(title: str, error: str) -> str:
+    """The sentence an agent routine's failure is announced with.
+
+    ``last_error`` keeps the precise ``Type: message`` line for the Runs tab;
+    read aloud (and turned into a conversation title) that line was
+    "RuntimeError: The routine chat failed: …". A person hears which routine
+    failed and why, without the exception class or the wrapper phrase.
+    """
+    reason = _EXCEPTION_PREFIX_RE.sub("", error.strip())
+    reason = _ROUTINE_WRAPPER_RE.sub("", reason).strip().rstrip(".")
+    if _EXCEPTION_NAME_RE.fullmatch(reason):
+        reason = ""  # a bare class name tells a listener nothing
+    name = _AGENT_TITLE_TAG_RE.sub("", title).strip()
+    head = f'The routine "{name}" failed' if name else "A routine failed"
+    return f"{head}: {reason}." if reason else f"{head}."
 
 
 def _safe_format(template: str, ctx: dict[str, Any]) -> str:
