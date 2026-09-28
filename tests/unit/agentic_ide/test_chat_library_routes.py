@@ -205,3 +205,58 @@ def test_destructive_routes_declare_themselves(client: TestClient) -> None:
         "/api/chat-library/projects/{project_id}/chats/{chat_id}",
     ):
         assert schema[path]["delete"]["x-jarvis-dangerous"] is True
+
+
+def test_project_order_survives_a_reorder_and_a_reopen(client: TestClient, tmp_path: Path) -> None:
+    """Drag and drop arranges the folders; reopening one must not reshuffle them."""
+    for name in ("alpha", "bravo", "gamma"):
+        (tmp_path / name).mkdir()
+        library.ensure_project(tmp_path / name)
+    body = client.get("/api/chat-library/projects").json()
+    assert [p["name"] for p in body["projects"]] == ["alpha", "bravo", "gamma"]
+
+    moved = client.put(
+        "/api/chat-library/projects/order",
+        json={
+            "project_ids": [
+                body["projects"][2]["id"],
+                body["projects"][0]["id"],
+                body["projects"][1]["id"],
+            ]
+        },
+    )
+    assert moved.status_code == 200
+    assert [p["name"] for p in moved.json()["projects"]] == ["gamma", "alpha", "bravo"]
+
+    # Reopening bumps last_opened_at, which used to BE the order — it must not
+    # undo the arrangement any more.
+    library.ensure_project(tmp_path / "bravo")
+    again = client.get("/api/chat-library/projects").json()
+    assert [p["name"] for p in again["projects"]] == ["gamma", "alpha", "bravo"]
+
+    # A brand-new folder lands behind every arranged one.
+    (tmp_path / "delta").mkdir()
+    library.ensure_project(tmp_path / "delta")
+    latest = client.get("/api/chat-library/projects").json()
+    assert [p["name"] for p in latest["projects"]] == ["gamma", "alpha", "bravo", "delta"]
+
+
+def test_invalid_project_order_is_rejected_without_mutation(
+    client: TestClient, tmp_path: Path
+) -> None:
+    (tmp_path / "repo").mkdir()
+    project = library.ensure_project(tmp_path / "repo")
+    before = client.get("/api/chat-library/projects").json()
+
+    assert (
+        client.put("/api/chat-library/projects/order", json={"project_ids": ["nope"]}).status_code
+        == 422
+    )
+    assert (
+        client.put(
+            "/api/chat-library/projects/order",
+            json={"project_ids": [project.id, project.id]},
+        ).status_code
+        == 422
+    )
+    assert client.get("/api/chat-library/projects").json() == before

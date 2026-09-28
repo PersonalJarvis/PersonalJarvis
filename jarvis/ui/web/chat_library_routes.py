@@ -4,6 +4,7 @@ Endpoints (mounted by the WebServer in ``_build_app()``):
 
     GET    /api/chat-library/projects                       → every project
     POST   /api/chat-library/projects                       → open/create one
+    PUT    /api/chat-library/projects/order                 → reorder projects via drag and drop
     PATCH  /api/chat-library/projects/{pid}                 → rename, pin, archive
     DELETE /api/chat-library/projects/{pid}                 → forget it and its chats
     GET    /api/chat-library/projects/{pid}/chats           → that project's chats
@@ -57,6 +58,8 @@ class ProjectOut(BaseModel):
     name: str
     color: str | None = None
     pinned: bool = False
+    #: Manual sidebar position, set by drag and drop. 0.0 until arranged.
+    position: float = 0.0
     archived: bool = False
     created_at: float = 0.0
     last_opened_at: float = 0.0
@@ -85,6 +88,12 @@ class PatchProjectIn(BaseModel):
     color: str | None = None
     pinned: bool | None = None
     archived: bool | None = None
+
+
+class ProjectOrderIn(BaseModel):
+    project_ids: list[str] = Field(
+        description="Visible project ids front to back, in sidebar order.",
+    )
 
 
 class ChatOut(BaseModel):
@@ -218,6 +227,16 @@ def open_scratch() -> ProjectOut:
     the sidebar lists its chats on their own instead of among the projects.
     """
     return _project_out(library.ensure_scratch())
+
+
+@router.put("/projects/order", response_model=ProjectsOut, summary="Reorder projects")
+def reorder_projects(body: ProjectOrderIn) -> ProjectsOut:
+    """Persist a drag-and-drop sidebar order. Nothing is renamed or moved on disk."""
+    try:
+        ordered = library.reorder_projects(body.project_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ProjectsOut(projects=[_project_out(p) for p in ordered])
 
 
 @router.patch(
