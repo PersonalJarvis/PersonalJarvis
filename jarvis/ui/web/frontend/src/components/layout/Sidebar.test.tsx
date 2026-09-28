@@ -649,7 +649,7 @@ describe("compact sidebar navigation", () => {
 
   test("keeps core destinations above visible recent chats", () => {
     renderSidebar();
-    for (const id of ["agents", "dictation", "visualization", "tasks", "plugins", "marketplace"]) {
+    for (const id of ["agents", "dictation", "visualization", "agentic-ide", "plugins", "marketplace"]) {
       expect(screen.getByTestId(`nav-row-${id}`)).toBeTruthy();
     }
     expect(screen.getByTestId("recent-chats")).toBeTruthy();

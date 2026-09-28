@@ -333,13 +333,13 @@ export function Sidebar({
 
   const allItems = NAV_GROUPS.flat();
   const findItem = (id: string) => allItems.find((item) => item.id === id)!;
-  const toolIds = ["memory", "board", "docs", "sessions", "run_inspector", "clis", "agentic-ide"];
+  const toolIds = ["memory", "board", "docs", "sessions", "run_inspector", "clis", "tasks"];
   const toolItems = toolIds.map(findItem);
   // Artifacts ("visualization") sits directly in the main list where the
   // retired "Jarvis Tools" folder used to be — it was the only entry hiding
   // behind "Show more" that users reached for daily, while the tools folder
   // duplicated exactly what "Show more" already lists.
-  const primaryIds = ["chats", "agents", "dictation", "visualization", "tasks", "plugins", "marketplace"];
+  const primaryIds = ["chats", "agents", "dictation", "visualization", "agentic-ide", "plugins", "marketplace"];
   // The Settings hub owns its entries — they live in the hub's left
   // navigation now, so "Show more" must not list them a second time. The set
   // itself is named once in `navGroups` (`SETTINGS_HUB_IDS`).
@@ -513,7 +513,7 @@ export function Sidebar({
           </ul>
           <ul className="space-y-1">
             {renderRow(findItem("visualization"))}
-            {renderRow({ ...findItem("tasks"), labelKey: "sidebar.scheduled" })}
+            {renderRow(findItem("agentic-ide"))}
             {renderRow({ ...findItem("plugins"), labelKey: "sidebar.extensions_label" })}
           </ul>
           <button type="button" onClick={() => { setMoreOpen(!moreOpen); }} aria-expanded={moreOpen}
@@ -521,7 +521,7 @@ export function Sidebar({
             <MoreHorizontal aria-hidden className="h-4 w-4 shrink-0" />
             {!railed && <span>{t(moreOpen ? "sidebar.show_less" : "sidebar.more")}</span>}
           </button>
-          {moreOpen && <ul id="sidebar-more" className="space-y-1">{moreItems.map((item) => renderRow(item))}</ul>}
+          {moreOpen && <ul id="sidebar-more" className="space-y-1">{moreItems.map((item) => item.id === "tasks" ? renderRow({ ...item, labelKey: "sidebar.scheduled" }) : renderRow(item))}</ul>}
         </nav>}
         {!railed && (onIdeSection
           ? <IdeProjectTree />
