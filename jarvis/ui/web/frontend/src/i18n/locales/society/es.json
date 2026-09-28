@@ -718,6 +718,27 @@
         "cloud": "Nube",
         "drop": "Gota"
       }
+    },
+    "office": {
+      "title": "Oficina de agentes",
+      "subtitle": "{0} agentes en la oficina",
+      "viewport": "Mapa de la oficina de agentes",
+      "loading": "Preparando la oficina…",
+      "no_graphics": "El renderizado 3D no está disponible aquí. El estado de cada agente sigue en la lista de agentes.",
+      "count_working": "{0} trabajando",
+      "count_waiting": "{0} esperando",
+      "count_idle": "{0} libres",
+      "state_working": "Trabajando",
+      "state_idle": "Libre",
+      "state_waiting": "Te espera",
+      "state_paused": "En pausa",
+      "open_agent": "Abrir {0}",
+      "overview": "Vista general",
+      "ledger": "Lista de agentes",
+      "help": "Arrastra para girar · Clic derecho para desplazar · Rueda para zoom · Clic en un agente para abrirlo",
+      "sample": "Agentes de ejemplo: el backend aún no está disponible.",
+      "overflow": "Solo los primeros {0} agentes tienen escritorio; la lista muestra a todos.",
+      "open_space": "Espacio abierto"
     }
   }
 }

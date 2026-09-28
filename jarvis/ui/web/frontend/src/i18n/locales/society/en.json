@@ -718,6 +718,27 @@
         "cloud": "Cloud",
         "drop": "Drop"
       }
+    },
+    "office": {
+      "title": "Agent office",
+      "subtitle": "{0} agents on the floor",
+      "viewport": "Agent office map",
+      "loading": "Setting up the office…",
+      "no_graphics": "3D rendering is unavailable here. Every agent's status stays available in the agents list.",
+      "count_working": "{0} working",
+      "count_waiting": "{0} waiting",
+      "count_idle": "{0} idle",
+      "state_working": "Working",
+      "state_idle": "Idle",
+      "state_waiting": "Waiting for you",
+      "state_paused": "Paused",
+      "open_agent": "Open {0}",
+      "overview": "Overview",
+      "ledger": "Agents list",
+      "help": "Drag to rotate · Right-drag to pan · Scroll to zoom · Click an agent to open it",
+      "sample": "Sample agents — the backend is not reachable yet.",
+      "overflow": "Only the first {0} agents have a desk; the list shows everyone.",
+      "open_space": "Open space"
     }
   }
 }

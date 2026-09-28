@@ -718,6 +718,27 @@
         "cloud": "Wolke",
         "drop": "Tropfen"
       }
+    },
+    "office": {
+      "title": "Agenten-Büro",
+      "subtitle": "{0} Agenten im Büro",
+      "viewport": "Karte des Agenten-Büros",
+      "loading": "Das Büro wird eingerichtet…",
+      "no_graphics": "3D-Darstellung ist hier nicht verfügbar. Den Status aller Agenten siehst du weiterhin in der Agentenliste.",
+      "count_working": "{0} arbeiten",
+      "count_waiting": "{0} warten",
+      "count_idle": "{0} frei",
+      "state_working": "Arbeitet",
+      "state_idle": "Frei",
+      "state_waiting": "Wartet auf dich",
+      "state_paused": "Pausiert",
+      "open_agent": "{0} öffnen",
+      "overview": "Übersicht",
+      "ledger": "Agentenliste",
+      "help": "Ziehen zum Drehen · Rechts ziehen zum Verschieben · Scrollen zum Zoomen · Agent anklicken zum Öffnen",
+      "sample": "Beispiel-Agenten – das Backend ist noch nicht erreichbar.",
+      "overflow": "Nur die ersten {0} Agenten haben einen Schreibtisch; die Liste zeigt alle.",
+      "open_space": "Open Space"
     }
   }
 }
