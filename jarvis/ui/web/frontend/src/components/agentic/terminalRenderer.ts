@@ -1,0 +1,154 @@
+/**
+ * Which engine draws a terminal pane's glyphs — and what happens when it dies.
+ *
+ * WebGL first. A coding agent's output SCROLLS, and a scroll moves every row
+ * of the viewport, so each new line is a full-screen repaint. The canvas
+ * renderer does that repaint on the main thread, one `drawImage` + `clip` per
+ * cell run; the WebGL renderer uploads the cell data and draws the whole
+ * screen in one GPU call. Measured on 2026-09-28 with eight panes each
+ * scrolling a line every 120 ms (the shape of eight busy agents): the canvas
+ * renderer held one core at 88 % and fell to ~38 fps, WebGL used 8 % at a
+ * steady 60 fps. The same app profile showed the canvas path as the single
+ * largest cost in the IDE view (`drawImage`, `clip`, `save`/`restore`) — on
+ * a machine already saturated by the agents themselves, that is the work that
+ * turned into multi-second frames, panes painting black, and half-drawn rows.
+ *
+ * Canvas stays as the fallback, and is never worse than what shipped before:
+ *
+ * - no WebGL at all (a headless box, a blocklisted GPU, a driver that refuses
+ *   the context) — the addon throws on load and the pane goes straight to
+ *   canvas;
+ * - too many contexts — a page may only hold so many live WebGL contexts
+ *   before the browser silently kills the oldest, and a 3D scene elsewhere in
+ *   the app needs its own. Past {@link MAX_WEBGL_PANES} a new pane takes
+ *   canvas instead of evicting someone else's context;
+ * - context LOST later (a GPU reset, a driver update, VRAM exhausted by a
+ *   local model) — the addon is disposed and canvas takes over in place.
+ *   Lost is terminal for that pane's WebGL: it does not try again, because a
+ *   GPU that just dropped a context is exactly the one that would drop it
+ *   again (AP-32: survive the loss, release what was held).
+ */
+
+import { CanvasAddon } from "@xterm/addon-canvas";
+import { WebglAddon } from "@xterm/addon-webgl";
+import type { ITerminalAddon, Terminal } from "@xterm/xterm";
+
+/**
+ * How many panes may draw with WebGL at once.
+ *
+ * Chromium keeps 16 live WebGL contexts per page and evicts the oldest past
+ * that. Twelve leaves room for the app's own 3D views without either side
+ * losing a context to the other; a workspace holds at most eight panes, so
+ * this only bites when several workspaces keep their panes mounted.
+ */
+export const MAX_WEBGL_PANES = 12;
+
+export type TerminalRendererKind = "webgl" | "canvas" | "dom";
+
+/** The addon surface this module needs — narrowed so tests can hand in fakes. */
+export interface WebglLike extends ITerminalAddon {
+  onContextLoss: (listener: () => void) => { dispose(): void };
+}
+
+export interface RendererDeps {
+  createWebgl: () => WebglLike;
+  createCanvas: () => ITerminalAddon;
+}
+
+const realDeps: RendererDeps = {
+  createWebgl: () => new WebglAddon(),
+  createCanvas: () => new CanvasAddon(),
+};
+
+let webglPanes = 0;
+
+/** Test hook: forget every pane counted so far. */
+export function resetWebglPaneCount(): void {
+  webglPanes = 0;
+}
+
+export interface AttachedRenderer {
+  /** What is drawing right now — changes from "webgl" to "canvas" on a loss. */
+  readonly kind: TerminalRendererKind;
+  /** Release the renderer's slot. The terminal's own dispose frees the addon. */
+  dispose(): void;
+}
+
+/**
+ * Give `term` the fastest renderer it can keep. Call after `term.open()`.
+ *
+ * `onFallback` hears about a WebGL pane that had to fall back later, so the
+ * caller can repaint — a pane that swaps renderers mid-life starts from an
+ * empty surface.
+ */
+export function attachTerminalRenderer(
+  term: Terminal,
+  onFallback?: () => void,
+  deps: RendererDeps = realDeps,
+): AttachedRenderer {
+  let kind: TerminalRendererKind = "dom";
+  let counted = false;
+  let released = false;
+
+  const release = () => {
+    if (!counted) return;
+    counted = false;
+    webglPanes = Math.max(0, webglPanes - 1);
+  };
+
+  const loadCanvas = (): TerminalRendererKind => {
+    try {
+      term.loadAddon(deps.createCanvas());
+      return "canvas";
+    } catch {
+      // No 2D canvas either: xterm keeps its DOM renderer, which draws
+      // correctly, just more slowly. Nothing to report — it still works.
+      return "dom";
+    }
+  };
+
+  if (webglPanes < MAX_WEBGL_PANES) {
+    let webgl: WebglLike | null = null;
+    try {
+      webgl = deps.createWebgl();
+      term.loadAddon(webgl);
+      webglPanes += 1;
+      counted = true;
+      kind = "webgl";
+    } catch {
+      // No usable WebGL here — canvas is the answer, and that is not an error.
+      try {
+        webgl?.dispose();
+      } catch {
+        /* a half-activated addon has nothing left worth releasing */
+      }
+      webgl = null;
+    }
+    if (webgl) {
+      const lossSubscription = webgl.onContextLoss(() => {
+        lossSubscription.dispose();
+        release();
+        try {
+          webgl?.dispose();
+        } catch {
+          /* the context is already gone; dispose only tidies listeners */
+        }
+        webgl = null;
+        if (released) return;
+        kind = loadCanvas();
+        onFallback?.();
+      });
+    }
+  }
+  if (kind === "dom") kind = loadCanvas();
+
+  return {
+    get kind() {
+      return kind;
+    },
+    dispose() {
+      released = true;
+      release();
+    },
+  };
+}

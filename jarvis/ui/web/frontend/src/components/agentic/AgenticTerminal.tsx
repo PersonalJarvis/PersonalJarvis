@@ -53,7 +53,6 @@ import { createPortal } from "react-dom";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { CanvasAddon } from "@xterm/addon-canvas";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import {
@@ -98,6 +97,7 @@ import { describeExit, explainExit } from "./paneExit";
 import { PaneActivityPill } from "./PaneActivityPill";
 import { PaneRecap } from "./PaneRecap";
 import { attachToTerminal } from "@/lib/agenticIdeApi";
+import { attachTerminalRenderer } from "./terminalRenderer";
 import type { RecapReason, RecapSource } from "@/lib/agenticIdeApi";
 import { attachTerminalBridge } from "@/lib/editActions";
 import { robustCopy, robustPaste } from "@/lib/clipboard";
@@ -861,11 +861,11 @@ export function AgenticTerminal({
       // module exists to prevent.
       fontFamily: TERMINAL_FONT_STACK,
       fontSize: fontSizeRef.current,
-      // Roomier than a console default — the single biggest readability win for
-      // an agent that prints prose, diffs and file trees rather than log lines.
-      // Kept integral-friendly: fractional cell heights round differently per
-      // row and make a redrawn TUI box look ragged.
-      lineHeight: 1.3,
+      // A dense console line height, like a standalone terminal: at 1.3 a pane
+      // showed far fewer rows than the same window in a native terminal, which
+      // read as "zoomed in". Kept integral-friendly: fractional cell heights
+      // round differently per row and make a redrawn TUI box look ragged.
+      lineHeight: 1.2,
       // Zero, not 0.2: extra tracking is added per cell, so a box-drawing frame
       // and the text under it accumulate different sub-pixel offsets and the
       // frame visibly bends. Monospace legibility comes from the line height.
@@ -922,16 +922,17 @@ export function AgenticTerminal({
     // when the CLI feels like it, which is the per-provider inconsistency the
     // scroll rebuild removed. See captureWheelForTerminalHistory.
     term.attachCustomWheelEventHandler(captureWheelForTerminalHistory(term));
-    // Canvas rather than the DOM renderer: a coding agent's TUI redraws its
-    // prompt box on every keystroke, and per-cell DOM elements both lag and
-    // land on fractional pixel offsets. Loaded AFTER open() because it needs
-    // the mounted element. A failure here is not fatal — xterm falls back to
-    // the DOM renderer, which draws correctly, just less crisply.
-    try {
-      term.loadAddon(new CanvasAddon());
-    } catch {
-      /* no canvas in this environment — the DOM renderer still works */
-    }
+    // WebGL where the page can afford it, the 2D canvas otherwise, and the DOM
+    // renderer as the last resort — never the DOM renderer by choice: a coding
+    // agent's TUI redraws its prompt box on every keystroke, and per-cell DOM
+    // elements both lag and land on fractional pixel offsets. Loaded AFTER
+    // open() because it needs the mounted element. See ./terminalRenderer for
+    // why the canvas renderer alone froze a wall of streaming panes.
+    const renderer = attachTerminalRenderer(term, () => {
+      if (disposed) return;
+      // The fallback renderer starts on an empty surface.
+      term.refresh(0, term.rows - 1);
+    });
     termRef.current = term;
     fitRef.current = fit;
     setTerminalEpoch((current) => current + 1);
@@ -2008,6 +2009,8 @@ export function AgenticTerminal({
       } catch {
         /* ignore */
       }
+      // Before the terminal: frees this pane's WebGL context slot.
+      renderer.dispose();
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
