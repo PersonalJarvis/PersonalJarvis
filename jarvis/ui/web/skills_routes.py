@@ -34,6 +34,7 @@ from jarvis.skills.finder import SearchFilters, SkillFinder
 from jarvis.skills.loader import parse_skill
 from jarvis.skills.origin import read_origin
 from jarvis.skills.schema import RESOURCE_KINDS, Skill, SkillLifecycleState
+from jarvis.ui.web.error_text import internal_error
 from jarvis.ui.web.upload_intake import (
     read_upload_entries,
     upload_http_error,
@@ -1870,7 +1871,7 @@ async def install_from_catalog(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
-            status_code=500, detail=f"Installation failed: {exc}"
+            status_code=500, detail=internal_error("Installation", exc)
         ) from exc
 
     # Registry refresh — the new skill should appear in the sidebar immediately
@@ -1882,7 +1883,7 @@ async def install_from_catalog(
             "ok": True,
             "name": body.name,
             "path": str(target_path),
-            "reload_warning": str(exc),
+            "reload_warning": internal_error("Skill registry reload", exc),
         }
 
     try:
