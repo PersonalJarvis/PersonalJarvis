@@ -5,7 +5,7 @@ import { WorkspaceOptionsDialog } from "./WorkspaceOptionsDialog";
 afterEach(cleanup);
 const setup = () => ({
   open: true, onOpenChange: vi.fn(), workspace: "Installer", count: 6, busy: false, canAdd: true,
-  maxPanes: 16, onAdd: vi.fn(), onBalance: vi.fn(), onRename: vi.fn(), onClose: vi.fn(),
+  maxPanes: 16, onAdd: vi.fn(), onBalance: vi.fn(), onRename: vi.fn(), onClose: vi.fn(), onGit: vi.fn(),
   appearance: null, onAppearance: vi.fn(),
 });
 

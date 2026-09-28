@@ -12,6 +12,8 @@ const api = vi.hoisted(() => ({
   syncAgenticIdeSurface: vi.fn(() => Promise.resolve()),
 }));
 const openProject = vi.hoisted(() => vi.fn());
+const git = vi.hoisted(() => ({ inspectGit: vi.fn(), prepareGit: vi.fn() }));
+vi.mock("@/lib/gitApi", async (importOriginal) => ({ ...(await importOriginal<object>()), ...git }));
 vi.mock("@/lib/agenticIdeApi", () => api);
 vi.mock("@/lib/chatLibraryApi", () => ({ openProject }));
 vi.mock("@/store/events", () => ({ useEventStore: (select: (value: unknown) => unknown) => select({ pushToast: api.pushToast }) }));
@@ -22,6 +24,14 @@ vi.mock("@/components/agentic/WorkspaceTerminalGrid", () => ({ WorkspaceTerminal
 const emptyState = { active: false, session: null, max_terminals: 8, workspaces: [], active_id: null };
 const project = { id: "p1", path: "/code/app", name: "App", color: null, pinned: false, archived: false,
   created_at: 0, last_opened_at: 0, exists: true, chats: 0, scratch: false, workspaces: [] };
+const repoInfo = {
+  folder: "/code/app", git_available: true, gh_available: false, is_repo: true, root: "/code/app", main_root: "/code/app",
+  is_worktree: false, branch: "main", detached: false, unborn: false, head: "abc", upstream: "", ahead: 0, behind: 0,
+  staged: 0, unstaged: 0, untracked: 0, conflicted: 0, insertions: 0, deletions: 0, dirty: false, default_branch: "main",
+  remotes: [], branches: [{ name: "main", current: true, upstream: "", committed_at: 0, worktree: "/code/app" }],
+  remote_branches: [], worktrees: [{ path: "/code/app", branch: "main", head: "abc", main: true, detached: false, locked: false, prunable: false, current: true }],
+  changes: [], suggested_branch: "agent/brave-river-0001", worktree_dir: "/code/app/.worktrees/agent-brave-river-0001",
+};
 const agent = { name: "codex", display_name: "Codex", installed: true, version: "1", install_command: null };
 
 beforeEach(() => {
@@ -30,6 +40,7 @@ beforeEach(() => {
   api.fetchIdeProjects.mockResolvedValue({ projects: [], active_project_id: null, active_workspace_id: null, max_terminals: 8 });
   api.fetchIdeAgents.mockResolvedValue({ terminal_available: true, max_terminals: 8, suggested_names: [], agents: [agent] });
   useIdeProjectsStore.setState({ projects: [], activeWorkspaceId: null, pendingWorkspaceId: null, refreshRequest: null, action: null });
+  git.inspectGit.mockResolvedValue(repoInfo);
 });
 afterEach(cleanup);
 
@@ -66,6 +77,21 @@ describe("Agentic IDE project flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
     await waitFor(() => expect(api.startIdeSession).toHaveBeenCalledWith("/code/app", [{ agent: "codex" }, { agent: "claude" }], { projectId: "p1", name: "Installer" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "New workspace" })).toBeNull());
+  });
+
+  it("opens a new workspace in a fresh git worktree", async () => {
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_project_id: null, active_workspace_id: null, max_terminals: 8 });
+    api.startIdeSession.mockResolvedValue(emptyState);
+    git.prepareGit.mockResolvedValue({ folder: "/code/app/.worktrees/agent-brave-river-0001", branch: "agent/brave-river-0001", created: true, message: "" });
+    render(<AgenticIdeView />);
+    await screen.findByText("Choose a workspace");
+    act(() => useIdeProjectsStore.getState().newWorkspace("p1"));
+    const dialog = await screen.findByRole("dialog", { name: "New workspace" });
+    fireEvent.click(await within(dialog).findByRole("radio", { name: /New worktree/ }));
+    expect((within(dialog).getByLabelText("Branch name") as HTMLInputElement).value).toBe("agent/brave-river-0001");
+    fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
+    await waitFor(() => expect(git.prepareGit).toHaveBeenCalledWith("/code/app", { mode: "new_worktree", branch: "agent/brave-river-0001", base: "main" }));
+    expect(api.startIdeSession).toHaveBeenCalledWith("/code/app/.worktrees/agent-brave-river-0001", [{ agent: "codex" }], { projectId: "p1", name: "agent/brave-river-0001" });
   });
 
   it("keeps the launch dialog open while creation is in flight", async () => {

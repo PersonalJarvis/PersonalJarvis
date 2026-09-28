@@ -9,6 +9,9 @@ import { IdeSidePanelFrame } from "@/components/agentic/sidePanel/IdeSidePanel";
 import { GRID_LIMIT_HINT, MAX_WORKSPACE_PANES, canSplitFit, fitsWorkspace, isBalancedWorkspace } from "@/components/agentic/workspaceDocking";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { CloseAgentDialog, type CloseTarget } from "@/components/agentic/CloseAgentDialog";
+import { GitCheckoutPicker } from "@/components/agentic/git/GitCheckoutPicker";
+import { GitPanelDialog } from "@/components/agentic/git/GitPanelDialog";
+import { KEEP_CHECKOUT, prepareGit, type GitPlan } from "@/lib/gitApi";
 import { SplitRightIcon, SplitBelowIcon, SplitLeftIcon, SplitAboveIcon } from "@/components/agentic/splitIcons";
 import type { PaneSplitDirection } from "@/components/agentic/WorkspaceTerminalHeader";
 import { cn } from "@/lib/utils";
@@ -68,6 +71,11 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [workspaceProject, setWorkspaceProject] = useState<IdeProject | null>(null);
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceAgents, setWorkspaceAgents] = useState<string[]>([]);
+  // The git half of "New workspace" and "Add coding agent": keep the checkout,
+  // branch, or give the agents a worktree of their own.
+  const [workspaceGit, setWorkspaceGit] = useState<GitPlan>(KEEP_CHECKOUT);
+  const [agentGit, setAgentGit] = useState<GitPlan>(KEEP_CHECKOUT);
+  const [gitOpen, setGitOpen] = useState(false);
   const [selected, setSelected] = useState("");
   const [agentPicker, setAgentPicker] = useState<{ id: string; name: string } | null>(null);
   // Where the next agent opens: split off `splitAnchor` (a pane call-sign) in
@@ -259,7 +267,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     }
     if (action.kind === "new-workspace") {
       const project = projects.find((entry) => entry.id === action.projectId);
-      if (project) { setWorkspaceProject(project); setWorkspaceName(""); setWorkspaceAgents([installed[0]?.name ?? ""]); }
+      if (project) { setWorkspaceProject(project); setWorkspaceName(""); setWorkspaceAgents([installed[0]?.name ?? ""]); setWorkspaceGit(KEEP_CHECKOUT); }
       return;
     }
     void activateFromTree(action.workspaceId);
@@ -273,17 +281,44 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     setProjects(listing.projects);
     publishProjects(listing.projects, listing.active_workspace_id);
     const found = listing.projects.find((entry) => entry.id === project.id);
-    if (found) { setWorkspaceProject(found); setWorkspaceAgents([installed[0]?.name ?? ""]); }
+    if (found) { setWorkspaceProject(found); setWorkspaceAgents([installed[0]?.name ?? ""]); setWorkspaceGit(KEEP_CHECKOUT); }
   });
 
   const createWorkspace = () => void run(async () => {
     if (!workspaceProject || workspaceAgents.length === 0 || workspaceAgents.some((agent) => !agent)) throw new Error("Choose an installed coding agent for every session.");
-    const next = await startIdeSession(workspaceProject.path, workspaceAgents.map((agent) => ({ agent })), {
-      projectId: workspaceProject.id, name: workspaceName.trim() || undefined,
+    // Git first: a new branch or worktree decides WHICH folder the agents start in.
+    const prepared = workspaceGit.mode === "current" ? null : await prepareGit(workspaceProject.path, workspaceGit);
+    const ownCheckout = workspaceGit.mode === "new_worktree" || workspaceGit.mode === "open_worktree";
+    const next = await startIdeSession(prepared?.folder ?? workspaceProject.path, workspaceAgents.map((agent) => ({ agent })), {
+      projectId: workspaceProject.id, name: workspaceName.trim() || (ownCheckout && prepared?.branch ? prepared.branch : undefined),
     });
     setState(next);
     setWorkspaceProject(null);
+    if (prepared?.message) pushToast("success", prepared.message);
   });
+
+  // An agent with a worktree of its own opens as its own workspace tab in that
+  // worktree, grouped under the same project, so its files never collide with
+  // the agents sharing the original checkout.
+  const addAgentInWorktree = (agentName: string, plan: GitPlan) => void run(async () => {
+    if (!session) return;
+    const prepared = await prepareGit(session.folder, plan);
+    setState(await startIdeSession(prepared.folder, [{ agent: agentName }], {
+      projectId: session.project_id ?? undefined, name: prepared.branch || undefined,
+    }));
+    if (prepared.message) pushToast("success", prepared.message);
+  });
+  const openWorktreeWorkspace = (path: string, branch: string) => void run(async () => {
+    const agent = installed[0]?.name;
+    if (!agent) throw new Error("Connect a coding agent in CLIs to continue.");
+    setState(await startIdeSession(path, [{ agent }], { projectId: session?.project_id ?? undefined, name: branch || undefined }));
+  });
+  const newWorktreeWorkspace = () => {
+    const project = projects.find((entry) => entry.id === session?.project_id);
+    if (!project) { pushToast("error", "This workspace belongs to no connected project."); return; }
+    setWorkspaceProject(project); setWorkspaceName(""); setWorkspaceAgents([installed[0]?.name ?? ""]);
+    setWorkspaceGit({ mode: "new_worktree", branch: "", base: "" });
+  };
 
   const addAgent = (
     agentName: string,
@@ -342,6 +377,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     const pane = named || (isBalancedWorkspace(session.layout, session.terminals) ? "" : selected);
     setSplitAnchor(session.terminals.some((terminal) => terminal.name === pane) ? pane : "");
     setSplitDirection(isSplitDirection(direction) ? direction : storedSplitDirection());
+    setAgentGit(KEEP_CHECKOUT);
     setAgentPicker({ id: session.id, name: session.name ?? session.project.name });
   }, [session, selected]);
   // The chosen direction when it fits; otherwise the first that does; null
@@ -386,8 +422,10 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     <WorkspaceOptionsDialog open={optionsOpen && !!session} onOpenChange={setOptionsOpen} workspace={session?.name ?? session?.project.name ?? ""}
       count={session?.terminals.length ?? 0} maxPanes={maxPanes} busy={busy} canAdd={installed.length > 0}
       onAdd={openAgentPicker} onBalance={balanceLayout} onRename={() => { setRenameValue(session?.name ?? session?.project.name ?? ""); setRenameOpen(true); }}
-      onClose={stopWorkspace} fontSize={fontSize} onFontSize={saveFont} appearance={appearance} onAppearance={saveAppearance}
+      onClose={stopWorkspace} onGit={() => setGitOpen(true)} fontSize={fontSize} onFontSize={saveFont} appearance={appearance} onAppearance={saveAppearance}
       />
+    {session && <GitPanelDialog open={gitOpen} onOpenChange={setGitOpen} folder={session.folder} workspace={session.name ?? session.project.name}
+      onOpenWorktree={(tree) => openWorktreeWorkspace(tree.path, tree.branch)} onNewWorktree={newWorktreeWorkspace} />}
     <CloseAgentDialog target={closeTarget} busy={busy} onCancel={() => setCloseRequest(null)} onConfirm={confirmClose} />
 
     <main className="min-h-0 flex-1">
@@ -415,7 +453,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
           <button type="button" aria-label="Close" onClick={() => setAgentPicker(null)} className="rounded-md p-1.5 hover:bg-muted"><X className="h-4 w-4" /></button>
         </div>
 
-        {session && session.terminals.length > 0 && (() => {
+        {session && <div className="mb-4"><GitCheckoutPicker folder={session.folder} value={agentGit} onChange={setAgentGit} disabled={busy} context="agent" /></div>}
+
+        {session && session.terminals.length > 0 && agentGit.mode === "current" && (() => {
           const anchorTerminal = session.terminals.find((terminal) => terminal.name === splitAnchor);
           return <div className="mb-4 space-y-2.5 rounded-xl border border-border bg-muted/40 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -447,10 +487,14 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
         })()}
 
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {workspaceFull && <p role="status" className="col-span-full rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          {workspaceFull && agentGit.mode === "current" && <p role="status" className="col-span-full rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
             This workspace is full ({maxPanes} agents). Close a pane, or open another workspace for more agents.</p>}
-          {installed.map((agent) => <button key={agent.name} type="button" disabled={busy || workspaceFull}
-            onClick={() => { const owner = agentPicker.id; setAgentPicker(null); addAgent(agent.name, owner, effectiveDirection ? splitAnchor : undefined, effectiveDirection ?? "down"); }}
+          {installed.map((agent) => <button key={agent.name} type="button" disabled={busy || (workspaceFull && agentGit.mode === "current")}
+            onClick={() => {
+              const owner = agentPicker.id; setAgentPicker(null);
+              if (agentGit.mode !== "current") addAgentInWorktree(agent.name, agentGit);
+              else addAgent(agent.name, owner, effectiveDirection ? splitAnchor : undefined, effectiveDirection ?? "down");
+            }}
             className="flex min-h-12 items-center gap-3 rounded-lg border border-border px-3 py-2 text-left text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <AgentMark agent={agent.name} label={agent.display_name} logoUrl={agent.logo_url} variant="plain" />{agent.display_name}
           </button>)}
@@ -488,6 +532,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
               placeholder="Workspace" className="mt-2 h-11 w-full rounded-lg border border-input bg-background/60 px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring/30" />
           </label>
           <WorkspaceAgentSetup agents={installed} sessions={workspaceAgents} onChange={setWorkspaceAgents} disabled={busy} maxSessions={maxPanes} />
+          <GitCheckoutPicker folder={workspaceProject.path} value={workspaceGit} onChange={setWorkspaceGit} disabled={busy} context="workspace" />
         </div>
         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-6 py-4 sm:px-8">
           <span className="text-xs text-muted-foreground" aria-live="polite">{workspaceAgents.length} {workspaceAgents.length === 1 ? "session" : "sessions"} · {new Set(workspaceAgents.filter(Boolean)).size} {new Set(workspaceAgents.filter(Boolean)).size === 1 ? "agent" : "agents"}</span>

@@ -2384,10 +2384,19 @@ class Registry:
                 raise SessionError(f"Cannot open {root}: {exc}") from exc
 
             if project_id:
+                # Local: git is needed only for this one check.
+                from .git_ops import same_repository
+
                 project = await asyncio.to_thread(library.get_project, project_id)
                 if project is None and project_id != library.project_id_for(root):
                     raise SessionError("That project does not exist.")
-                if project and library.project_id_for(root) != library.project_id_for(project.path):
+                if (
+                    project
+                    and library.project_id_for(root) != library.project_id_for(project.path)
+                    # A git worktree of the project's repository belongs to it
+                    # too: that is how a workspace gets a checkout of its own.
+                    and not await asyncio.to_thread(same_repository, root, project.path)
+                ):
                     raise SessionError("The workspace folder must belong to its project.")
 
             unknown = {

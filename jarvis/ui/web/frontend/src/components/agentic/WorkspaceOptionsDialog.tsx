@@ -1,5 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { Columns2, X } from "lucide-react";
+import { Columns2, GitBranch, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -15,6 +15,8 @@ interface Props {
   onBalance: () => void;
   onRename: () => void;
   onClose: () => void;
+  /** Opens the workspace's Git panel. */
+  onGit: () => void;
   appearance: "light" | "dark" | null;
   onAppearance: (appearance: "light" | "dark" | null) => void;
 }
@@ -48,6 +50,7 @@ export function WorkspaceOptionsDialog(props: Props) {
         </section>
         <div className="border-t border-border pt-2">
           <button type="button" disabled={props.busy || !props.canAdd || props.count >= props.maxPanes} onClick={() => choose(props.onAdd)} className="block w-full rounded-lg px-2 py-2.5 text-left text-sm hover:bg-muted disabled:opacity-40">Add coding agent</button>
+          <button type="button" disabled={props.busy} onClick={() => choose(props.onGit)} className="flex w-full items-center gap-2 rounded-lg px-2 py-2.5 text-left text-sm hover:bg-muted disabled:opacity-40"><GitBranch className="h-4 w-4 text-muted-foreground" />Git: branches, commits, worktrees</button>
           <button type="button" disabled={props.busy} onClick={() => choose(props.onRename)} className="block w-full rounded-lg px-2 py-2.5 text-left text-sm hover:bg-muted disabled:opacity-40">Rename workspace</button>
           <button type="button" disabled={props.busy} onClick={() => choose(props.onClose)} className="block w-full rounded-lg px-2 py-2.5 text-left text-sm text-destructive hover:bg-muted disabled:opacity-40">Close workspace</button>
         </div>

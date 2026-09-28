@@ -333,6 +333,7 @@ class WebServer:
         from .agent_accounts_routes import router as agent_accounts_router
         from .agent_chat_routes import router as agent_chat_router
         from .agent_mcp_routes import router as agent_mcp_router
+        from .agentic_ide_git_routes import router as agentic_ide_git_router
         from .agentic_ide_routes import router as agentic_ide_router
         from .antigravity_routes import router as antigravity_router
         from .board_routes import (
@@ -526,6 +527,8 @@ class WebServer:
         # doing?") and promptable from Jarvis. Reuses the same PTY stack as the
         # workspace above; adds the folder picker, call-signs, transcripts, and
         # the focused coding mode.
+        # Before the IDE router, so its /{…} paths never shadow /git/….
+        app.include_router(agentic_ide_git_router)
         app.include_router(agentic_ide_router)
         # The pane-activity sweep has no bus of its own (the registry is a plain
         # holder by design); this is the one place that holds one, so the sweep
