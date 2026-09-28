@@ -229,28 +229,83 @@ TOOL_XML_RE = re.compile(
 # format. The brain occasionally leaks this verbatim into the output. The
 # pattern matches the whole block, greedy up to the closing tag. Also a
 # standalone ``<invoke>`` in case the ``</function_calls>`` wrapper is missing.
-ANTHROPIC_FUNCTION_CALLS_RE = re.compile(
-    r"<function_calls>.*?</function_calls>",
-    re.DOTALL | re.IGNORECASE,
-)
-_FUNCTION_CALLS_CLOSE_RE = re.compile(r"</function_calls>", re.IGNORECASE)
+_FUNCTION_CALLS_TAG_RE = re.compile(r"<function_calls>|</function_calls>", re.IGNORECASE)
 
 
 def _strip_function_call_blocks(text: str) -> str:
-    """``ANTHROPIC_FUNCTION_CALLS_RE.sub("", text)`` in linear time.
+    """Remove every ``<function_calls>…</function_calls>`` block, in linear time.
 
-    No block can end past the LAST closing tag, so only the text up to it is
-    handed to the pattern. On its own, every unclosed opener after that tag
-    rescanned the rest of the text before failing, which is quadratic on
-    long LLM output (CodeQL py/polynomial-redos). The result is identical.
+    Same result as ``re.sub(r"<function_calls>.*?</function_calls>", "", text,
+    flags=re.DOTALL | re.IGNORECASE)``: each block runs from the leftmost
+    opener to the first closer after it. That lazy regex rescanned the rest of
+    the text from every unclosed opener, which is quadratic on long LLM output
+    (CodeQL py/polynomial-redos), so the tags are walked once instead. The two
+    tags cannot overlap each other, so a single left-to-right token pass sees
+    exactly the tags the regex would.
     """
-    last = None
-    for last in _FUNCTION_CALLS_CLOSE_RE.finditer(text):  # noqa: B007 - keep the last
-        pass
-    if last is None:
+    pieces: list[str] = []
+    kept_from = 0
+    block_start = -1
+    for tag in _FUNCTION_CALLS_TAG_RE.finditer(text):
+        closing = tag.group().startswith("</")
+        if block_start < 0 and not closing:
+            block_start = tag.start()
+        elif block_start >= 0 and closing:
+            pieces.append(text[kept_from:block_start])
+            kept_from = tag.end()
+            block_start = -1
+    pieces.append(text[kept_from:])
+    return "".join(pieces)
+
+
+_UNICODE_DASH_RE = re.compile(r"[—–]")
+_DOUBLE_HYPHEN_RE = re.compile(r"-{2,}")
+
+
+def _collapse_unicode_dashes(text: str) -> str:
+    """Replace each em/en dash and the blanks around it with ", ".
+
+    Same result as ``re.sub(r"\\s*[—–]\\s*", ", ", text)``, in linear time:
+    that pattern restarted ``\\s*`` at every position of a long blank run and
+    rescanned the run each time (CodeQL py/polynomial-redos). Splitting at the
+    dashes and trimming the blanks next to each cut is the same edit.
+    """
+    parts = _UNICODE_DASH_RE.split(text)
+    if len(parts) == 1:
         return text
-    cut = last.end()
-    return ANTHROPIC_FUNCTION_CALLS_RE.sub("", text[:cut]) + text[cut:]
+    last = len(parts) - 1
+    return ", ".join(
+        part.rstrip() if i == 0 else part.lstrip() if i == last else part.strip()
+        for i, part in enumerate(parts)
+    )
+
+
+def _collapse_double_hyphens(text: str) -> str:
+    """Replace each blank-framed ``--`` aside (and its blanks) with ", ".
+
+    Same result as ``re.sub(r"\\s+-{2,}\\s+", ", ", text)``, in linear time
+    (that pattern had the same restart problem as the dash rewrite above). A
+    hyphen run counts only when blanks frame it on both sides; blanks already
+    swallowed by the previous replacement cannot frame the next one.
+    """
+    pieces: list[str] = []
+    kept_from = 0
+    size = len(text)
+    for run in _DOUBLE_HYPHEN_RE.finditer(text):
+        start, end = run.span()
+        left = start
+        while left > kept_from and text[left - 1].isspace():
+            left -= 1
+        if left == start or end >= size or not text[end].isspace():
+            continue
+        right = end
+        while right < size and text[right].isspace():
+            right += 1
+        pieces.append(text[kept_from:left])
+        pieces.append(", ")
+        kept_from = right
+    pieces.append(text[kept_from:])
+    return "".join(pieces)
 
 
 ANTHROPIC_INVOKE_RE = re.compile(
@@ -823,21 +878,13 @@ def scrub_for_voice(
     #     comma. Hyphen compounds ("Browser-Provider", "Sub-Agent") use a plain
     #     ASCII '-' with no surrounding whitespace and are NOT in the class below,
     #     so they survive untouched.
-    #     The blank run in front is matched only from its first character
-    #     (lookbehind): starting ``\s*`` at every position inside a long run
-    #     rescanned it each time, which is quadratic (CodeQL
-    #     py/polynomial-redos). A match never starts mid-run otherwise — the
-    #     trailing ``\s*`` of a previous match swallows its whole run — so the
-    #     result is unchanged; a dash right after such a match is the second
-    #     branch.
-    new = re.sub(r"(?<!\s)\s+[—–]\s*|[—–]\s*", ", ", out)
+    new = _collapse_unicode_dashes(out)
     # ASCII double hyphen used as a dash-aside (" -- ") reads as the same hard
     # TTS pause; collapse it too (2026-06-30: the Unicode-only scrub missed it,
     # and several canned phrases / LLM outputs use " -- "). Require surrounding
     # whitespace so hyphen compounds ("T-Shirt") and numeric ranges ("20-30") —
-    # which have no spaces — survive untouched. Same start-of-run lookbehind as
-    # above, for the same linear-time reason; the result is unchanged.
-    new = re.sub(r"(?<!\s)\s+-{2,}\s+", ", ", new)
+    # which have no spaces — survive untouched.
+    new = _collapse_double_hyphens(new)
     if new != out:
         actions.append("removed_em_dash")
         out = new

@@ -203,50 +203,67 @@ _TASK_CLAUSE_RE = re.compile(
     r",\s+(?:and|und)\s+(?=(?:please\s+|bitte\s+)?"  # i18n-allow
     + _FS_VERB_RE.pattern + r")"
 )
-_QUOTED_LITERAL_RE = re.compile(
-    r'''(?<!\w)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`[^`]*`)'''
-)
-# The body of each quote kind, possessive, without the closing quote: where it
-# stops tells whether (and where) a literal opened there would fail.
-_QUOTED_BODY_RE = {
-    '"': re.compile(r'"(?:\\.|[^"\\])*+'),
-    "'": re.compile(r"'(?:\\.|[^'\\])*+"),
-    "`": re.compile(r"`[^`]*+"),
-}
 _QUOTE_CHAR_RE = re.compile(r"[\"'`]")
 
 
-def _sub_quoted_literals(repl: Callable[[re.Match[str]], str], text: str) -> str:
-    """``_QUOTED_LITERAL_RE.sub(repl, text)`` in linear time.
+def _scan_quoted_literal(text: str, start: int) -> tuple[bool, int]:
+    """Scan the literal opened by the quote at ``start``.
 
-    ``re.sub`` retries the pattern at every quote character. An unclosed
-    literal rescans the rest of the text before failing, and a run of escaped
-    quotes (``"\\"\\"\\"…``) repeats that from each of them — quadratic on long
-    input (CodeQL py/polynomial-redos). A quote of the same kind inside a
-    failed scan was consumed as an escaped pair by that scan, so a scan opened
-    there resumes in step with it and stops at the same place: it must fail
-    too and is skipped. Every surviving attempt is the original pattern, so
-    the matches — and the result — are identical.
+    Returns ``(True, end)`` with ``end`` just past the closing quote, or
+    ``(False, stop)`` with the index where the scan gave up. Inside ``"…"``
+    and ``'…'`` a backslash escapes any next character except a line break
+    (a backslash before a line break, or at the end, ends the scan); a
+    backtick literal runs to the next backtick.
+    """
+    kind = text[start]
+    size = len(text)
+    if kind == "`":
+        close = text.find("`", start + 1)
+        return (False, size) if close < 0 else (True, close + 1)
+    pos = start + 1
+    while pos < size:
+        char = text[pos]
+        if char == "\\":
+            if pos + 1 < size and text[pos + 1] != "\n":
+                pos += 2
+                continue
+            return False, pos
+        if char == kind:
+            return True, pos + 1
+        pos += 1
+    return False, size
+
+
+def _sub_quoted_literals(repl: Callable[[int, str], str], text: str) -> str:
+    """Replace every quoted literal with ``repl(start, literal)``, in linear time.
+
+    Same matches as ``re.sub`` with the pattern
+    ``(?<!\\w)(?:"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|`[^`]*`)``. That
+    regex retried at every quote character, and an unclosed literal — or a run
+    of escaped quotes (``"\\"\\"\\"…``) — rescanned the rest of the text from
+    each of them: quadratic on long input (CodeQL py/polynomial-redos). Here a
+    quote of the same kind inside a failed scan is skipped: that scan consumed
+    it as an escaped pair, so a scan opened there would resume in step and fail
+    at the same place.
     """
     pieces: list[str] = []
     consumed = 0
-    dead_until = dict.fromkeys(_QUOTED_BODY_RE, -1)
+    dead_until = {'"': -1, "'": -1, "`": -1}
     for quote in _QUOTE_CHAR_RE.finditer(text):
         start = quote.start()
         kind = quote.group()
         if start < consumed or start < dead_until[kind]:
             continue
-        match = _QUOTED_LITERAL_RE.match(text, start)
-        if match is not None:
-            pieces.append(text[consumed:start])
-            pieces.append(repl(match))
-            consumed = match.end()
+        closed, stop = _scan_quoted_literal(text, start)
+        if not closed:
+            dead_until[kind] = stop
             continue
-        # Either the ``(?<!\w)`` guard or the scan failed. Only a failed scan
-        # (its body does not end on the closing quote) poisons the region.
-        body = _QUOTED_BODY_RE[kind].match(text, start)
-        if body is not None and not text.startswith(kind, body.end()):
-            dead_until[kind] = body.end()
+        before = text[start - 1] if start else ""
+        if before.isalnum() or before == "_":
+            continue  # the ``(?<!\w)`` guard: a quote inside a word ("don't")
+        pieces.append(text[consumed:start])
+        pieces.append(repl(start, text[start:stop]))
+        consumed = stop
     pieces.append(text[consumed:])
     return "".join(pieces)
 
@@ -298,10 +315,10 @@ def resolve_local_outcome_mandate(utterance: str) -> tuple[str, str] | None:
         return None
     # A quoted filename or example is a literal, not an instruction/context
     # marker. Preserve apostrophes inside words such as "don't".
-    def mask_literal(match: re.Match[str]) -> str:
+    def mask_literal(start: int, _literal: str) -> str:
         # An explicit "run <quoted command>" still names an executable object.
         # Its contents remain shielded from negation and vehicle detection.
-        prefix = _normalize(raw[:match.start()])
+        prefix = _normalize(raw[:start])
         return " command " if _COMMAND_LITERAL_PREFIX_RE.search(prefix) else " quoted_literal "
 
     normalized = _normalize(_sub_quoted_literals(mask_literal, raw))

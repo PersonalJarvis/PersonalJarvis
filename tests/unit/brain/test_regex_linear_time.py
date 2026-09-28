@@ -98,6 +98,17 @@ def test_mission_command_pathological(build: Callable[[], str]) -> None:
 
 # --- output_filter ----------------------------------------------------------
 
+# The original patterns, kept here as the reference the linear rewrites must
+# reproduce on short inputs.
+_FUNCTION_CALLS_REFERENCE = re.compile(
+    r"<function_calls>.*?</function_calls>", re.DOTALL | re.IGNORECASE
+)
+_UNICODE_DASH_REFERENCE = re.compile(r"\s*[—–]\s*")
+_DOUBLE_HYPHEN_REFERENCE = re.compile(r"\s+-{2,}\s+")
+_QUOTED_LITERAL_REFERENCE = re.compile(
+    r"""(?<!\w)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`[^`]*`)"""
+)
+
 
 @pytest.mark.parametrize(
     "text",
@@ -110,13 +121,56 @@ def test_mission_command_pathological(build: Callable[[], str]) -> None:
     ],
 )
 def test_strip_function_call_blocks_matches_pattern(text: str) -> None:
-    expected = output_filter.ANTHROPIC_FUNCTION_CALLS_RE.sub("", text)
+    expected = _FUNCTION_CALLS_REFERENCE.sub("", text)
     assert output_filter._strip_function_call_blocks(text) == expected
 
 
-def test_strip_function_call_blocks_pathological() -> None:
-    text = "x</function_calls>" + "<function_calls>" * (_N // 16)
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: "x</function_calls>" + "<function_calls>" * (_N // 16),
+        lambda: "<function_calls>" + "<" * _N,
+        lambda: ("<function_calls>" + "<" * 100 + "</function_calls>") * 400,
+    ],
+    ids=["unclosed-openers", "opener-then-brackets", "many-blocks"],
+)
+def test_strip_function_call_blocks_pathological(build: Callable[[], str]) -> None:
+    text = build()
     _fast(lambda: output_filter._strip_function_call_blocks(text))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Fine — thanks",
+        "a — — b",
+        "  –x—  ",
+        "a\n — \tb",
+        "none",
+        "That is -- as I said -- fine",
+        "a -- -- b",
+        "a ---x -- y",
+        " -- ",
+        "x --\n--  y",
+        "-- a --",
+    ],
+)
+def test_dash_helpers_match_patterns(text: str) -> None:
+    unicode_expected = _UNICODE_DASH_REFERENCE.sub(", ", text)
+    hyphen_expected = _DOUBLE_HYPHEN_REFERENCE.sub(", ", text)
+    assert output_filter._collapse_unicode_dashes(text) == unicode_expected
+    assert output_filter._collapse_double_hyphens(text) == hyphen_expected
+
+
+@pytest.mark.parametrize(
+    "build",
+    [lambda: "a" + " " * _N + "x", lambda: "a" + " -- " * (_N // 4), lambda: "—" * _N],
+    ids=["blank-run", "many-asides", "many-dashes"],
+)
+def test_dash_helpers_pathological(build: Callable[[], str]) -> None:
+    text = build()
+    _fast(lambda: output_filter._collapse_unicode_dashes(text))
+    _fast(lambda: output_filter._collapse_double_hyphens(text))
 
 
 @pytest.mark.parametrize(
@@ -146,7 +200,11 @@ def test_dash_scrub_pathological(build: Callable[[], str]) -> None:
 
 
 def _mark(match: re.Match[str]) -> str:
-    return f"<{match.start()}>"
+    return f"<{match.start()}:{match.group()}>"
+
+
+def _mark_literal(start: int, literal: str) -> str:
+    return f"<{start}:{literal}>"
 
 
 @pytest.mark.parametrize(
@@ -161,8 +219,8 @@ def _mark(match: re.Match[str]) -> str:
     ],
 )
 def test_sub_quoted_literals_matches_pattern(text: str) -> None:
-    expected = local_outcome_gate._QUOTED_LITERAL_RE.sub(_mark, text)
-    assert local_outcome_gate._sub_quoted_literals(_mark, text) == expected
+    expected = _QUOTED_LITERAL_REFERENCE.sub(_mark, text)
+    assert local_outcome_gate._sub_quoted_literals(_mark_literal, text) == expected
 
 
 @pytest.mark.parametrize(
@@ -172,7 +230,7 @@ def test_sub_quoted_literals_matches_pattern(text: str) -> None:
 )
 def test_sub_quoted_literals_pathological(build: Callable[[], str]) -> None:
     text = build()
-    _fast(lambda: local_outcome_gate._sub_quoted_literals(_mark, text))
+    _fast(lambda: local_outcome_gate._sub_quoted_literals(_mark_literal, text))
 
 
 def test_local_outcome_mandate_escaped_quote_run() -> None:
