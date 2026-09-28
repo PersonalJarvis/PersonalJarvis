@@ -190,3 +190,52 @@ def test_runtime_status_before_anything_started() -> None:
         "workspaces": 0,
         "live_agents": 0,
     }
+
+
+# ------------------------------------------------- finished while closed
+async def _idle_pane(registry: ide.Registry, folder: Path):
+    async def noop(_value: object) -> None:
+        return None
+
+    session = await registry.start(str(folder), [{"agent": "claude", "name": "Alex"}])
+    term = await registry.attach("Alex", 100, 30, noop, noop)
+    term.transcript.feed("\r\n❯ \r\n")
+    term.last_output_at = 0.0
+    term.last_input_at = None
+    return session, term
+
+
+async def test_a_job_finished_while_the_app_was_closed_rings_the_bell(tmp_path: Path) -> None:
+    from jarvis.agentic_ide import notifications
+    from jarvis.agentic_ide.notifications import SETTLE_S
+
+    notifications.reset()
+    try:
+        registry = ide.Registry(pty_manager=FakeHostedPool())
+        _session, term = await _idle_pane(registry, tmp_path)
+        # Re-joined after an app restart; the last checkpoint saw it working.
+        term.worked_while_detached = True
+        watcher = notifications.watcher()
+
+        assert watcher.poll(registry, now=100.0) == []  # first sight files nothing
+        filed: list[notifications.Notification] = []
+        for moment in (105.0, 105.0 + SETTLE_S + 1.0, 130.0 + SETTLE_S):
+            filed += watcher.poll(registry, now=moment)
+        assert [entry.kind for entry in filed] == ["completed"]
+        assert term.worked_while_detached is False
+    finally:
+        notifications.reset()
+
+
+async def test_an_idle_rejoined_pane_stays_quiet(tmp_path: Path) -> None:
+    from jarvis.agentic_ide import notifications
+
+    notifications.reset()
+    try:
+        registry = ide.Registry(pty_manager=FakeHostedPool())
+        await _idle_pane(registry, tmp_path)
+        watcher = notifications.watcher()
+        for moment in (100.0, 110.0, 200.0, 900.0):
+            assert watcher.poll(registry, now=moment) == []
+    finally:
+        notifications.reset()

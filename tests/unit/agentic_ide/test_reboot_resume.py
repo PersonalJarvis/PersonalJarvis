@@ -200,3 +200,21 @@ def test_a_damaged_snapshot_is_kept_aside_instead_of_overwritten() -> None:
     assert not path.exists()
     kept = list(path.parent.glob(f"{path.stem}.damaged-*{path.suffix}"))
     assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == '{"workspaces": ['
+
+
+async def test_a_survivor_that_was_working_is_marked_for_the_bell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws, _ = _save(tmp_path, [_pane(1, working=True), _pane(2)])
+    _store(ws)
+    pool = FakeHostedPool()
+    pool.add_hosted("h-1", history_id="hist-1")
+    pool.add_hosted("h-2", history_id="hist-2")
+
+    registry, nudged = await _boot(monkeypatch, pool)
+
+    session = registry.sessions[0]
+    assert session.find("T1").worked_while_detached is True
+    assert session.find("T2").worked_while_detached is False
+    # Re-joined agents are never nudged: they never stopped.
+    assert nudged == []

@@ -1022,6 +1022,11 @@ class Terminal:
     # Restored from the snapshot: was this pane's agent running when the app
     # last saved? Read once, by ``_resume_after_reboot``.
     was_running: bool = False
+    # Re-joined after an app restart while its last checkpoint saw it working:
+    # whatever it finished in the meantime nobody was watching. The pane
+    # watcher reads this once, on first sight, to report that finish instead
+    # of treating it as history (``notifications.ActivityWatcher._step``).
+    worked_while_detached: bool = False
     error: str = ""
     started_at: float | None = None
     last_output_at: float | None = None
@@ -2324,6 +2329,7 @@ class Registry:
             term.error = ""
             term.exit_code = None
             term.resumed = False
+            term.worked_while_detached = term.resume_continuation_needed
             # Never interrupted, so never offered a "continue" — the flag
             # ``_mark_restored_continuations`` may have raised assumed a restart.
             term.continuation_pending = False
