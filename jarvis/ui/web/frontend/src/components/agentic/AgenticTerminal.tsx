@@ -129,6 +129,7 @@ import {
   bindTerminalScrollRegion,
   captureWheelForTerminalHistory,
 } from "./terminalScrollSurface";
+import { installMouseSelection } from "./terminalMouseSelection";
 import {
   openPaneSocket,
   type PaneSocket,
@@ -889,6 +890,9 @@ export function AgenticTerminal({
       // ordinary click on an OSC-8 link as navigation and shows a native
       // warning dialog inside the desktop WebView.
       linkHandler: createTerminalOscLinkHandler(linkOptions),
+      // Lets Option force a selection on macOS while a CLI has mouse tracking
+      // on — the chord ./terminalMouseSelection marks every plain press with.
+      macOptionClickForcesSelection: true,
       // Windows only. ConPTY re-emits and re-wraps lines in a way a POSIX pty
       // never does; without telling xterm which backend it is talking to, those
       // re-emitted lines pile up as duplicated, half-overwritten rows. Harmless
@@ -956,6 +960,9 @@ export function AgenticTerminal({
     // one working, silently. See ./terminalKeyChain.
     const keys = createKeyEventChain(term);
     const isMac = /mac|iphone|ipad/i.test(navigator.userAgent);
+    // A plain left-button drag selects text even while the agent's CLI has
+    // mouse tracking on, which every coding agent negotiates at start-up.
+    const disposeMouseSelection = installMouseSelection(container, term, isMac);
     // The desktop IDE reserves its platform copy chord for copying. In
     // particular, an unselected Ctrl+C on Windows/Linux must not reach Codex
     // as `^C`, where it cancels the current turn or exits the pane.
@@ -2006,6 +2013,7 @@ export function AgenticTerminal({
       ro.disconnect();
       io?.disconnect();
       disposeFontSync();
+      disposeMouseSelection();
       disposeCopyBridge();
       disposePasteBridge();
       disposeNewlineBridge();
