@@ -238,6 +238,20 @@ class TestScanTextForSecrets:
         text = f"OPENAI_API_KEY = '{_REAL_OPENAI}'\n"
         assert gate.scan_text_for_secrets("config.py", text, {}, set()) == []
 
+    def test_finding_carries_its_line_number(self):
+        text = f"# header\n\nOPENAI_API_KEY = '{_REAL_OPENAI}'\n"
+        findings = gate.scan_text_for_secrets("config.py", text, _COMPILED, set())
+        assert findings[0]["line"] == 3
+
+    def test_description_never_contains_the_secret(self):
+        text = f"# header\nOPENAI_API_KEY = '{_REAL_OPENAI}'\n"
+        finding = gate.scan_text_for_secrets("config.py", text, _COMPILED, set())[0]
+        described = gate.describe_secret_finding(finding)
+        assert _REAL_OPENAI not in described
+        assert _REAL_OPENAI[:8] not in described
+        assert "config.py:2" in described
+        assert "openai_legacy" in described
+
 
 # --------------------------------------------------------------------------- #
 # main() orchestration — git/IO monkeypatched so the suite stays hermetic

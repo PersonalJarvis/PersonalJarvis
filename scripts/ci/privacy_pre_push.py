@@ -199,7 +199,9 @@ def scan_text_for_secrets(
     unless the exact (value, rel) pair is in the allowlist (the ship skill's
     secret-allowlist, loaded as a set of (value, path) tuples).
 
-    Returns: list of {"path": rel, "pattern": <name>, "value": <matched>}.
+    Returns: list of {"path": rel, "pattern": <name>, "value": <matched>,
+    "line": <1-based line number>}. ``value`` is for allowlist matching only --
+    print a finding with :func:`describe_secret_finding`, never the raw value.
     """
     findings: list[dict] = []
     for name, rx in compiled_patterns.items():
@@ -207,8 +209,23 @@ def scan_text_for_secrets(
             value = m.group(0)
             if (value, rel) in allowlist:
                 continue
-            findings.append({"path": rel, "pattern": name, "value": value})
+            line = text.count("\n", 0, m.start()) + 1
+            findings.append({"path": rel, "pattern": name, "value": value, "line": line})
     return findings
+
+
+def describe_secret_finding(finding: dict) -> str:
+    """Human-readable location of a secret finding WITHOUT the secret itself.
+
+    Terminal output of a git hook ends up in CI logs, agent transcripts and
+    screen shares, so only the pattern name, the file:line and the match
+    length are shown; the author opens the file to see the value.
+    """
+    where = finding["path"]
+    if finding.get("line"):
+        where = f"{where}:{finding['line']}"
+    length = len(finding.get("value") or "")
+    return f"secret ({finding['pattern']}) in {where} [{length} chars, value hidden]"
 
 
 # --------------------------------------------------------------------------- #
@@ -513,8 +530,7 @@ def main(argv: list[str], stdin) -> int:
                         blocked = True
                         for s in secrets:
                             print(
-                                f"\nPUSH BLOCKED: secret ({s['pattern']}) in "
-                                f"{s['path']}: {s['value']}",
+                                f"\nPUSH BLOCKED: {describe_secret_finding(s)}",
                                 file=sys.stderr,
                             )
 
