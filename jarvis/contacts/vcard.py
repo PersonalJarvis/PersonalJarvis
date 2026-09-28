@@ -318,5 +318,8 @@ def import_records(store: ContactStore, records: list[dict[str, Any]]) -> dict[s
             skipped += 1
             if len(errors) < _MAX_ERRORS_REPORTED:
                 errors.append(f"{name}: {exc}")
-            log.warning("vcard import: skipped %r: %s", name, exc)
+            # The contact name and the store's reason (which may quote an email
+            # or phone number) go back to the caller in ``errors`` only; the
+            # app log gets no personal data.
+            log.warning("vcard import: skipped a record (%s)", type(exc).__name__)
     return {"created": created, "updated": updated, "skipped": skipped, "errors": errors}

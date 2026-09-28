@@ -427,9 +427,11 @@ describe("PkceConnectDialog own-client + production hint", () => {
     await waitFor(() =>
       expect(
         calls.some(
-          (c) =>
-            c.url === "/api/settings/open-external" &&
-            c.body.includes("https://api.slack.com/apps"),
+          (c) => {
+            if (c.url !== "/api/settings/open-external") return false;
+            const opened = new URL(JSON.parse(c.body).url as string);
+            return opened.hostname === "api.slack.com" && opened.pathname === "/apps";
+          },
         ),
       ).toBe(true),
     );

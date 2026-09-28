@@ -166,6 +166,7 @@ describe("pageTitleFromPreview", () => {
   it("reads a page's own title and decodes the common entities", () => {
     expect(pageTitleFromPreview(DASH_HTML)).toBe("Umsatz-Dashboard");
     expect(pageTitleFromPreview("<title>  A &amp; B\n  </title>")).toBe("A & B");
+    expect(pageTitleFromPreview("<title>&amp;lt;tag&amp;gt;</title>")).toBe("&lt;tag&gt;");
     expect(pageTitleFromPreview("<html><body>no title</body></html>")).toBeNull();
     expect(pageTitleFromPreview(null)).toBeNull();
   });

@@ -39,6 +39,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date as _date
@@ -47,6 +48,25 @@ from pathlib import Path
 from typing import Any
 
 from jarvis.dictation._locks import store_lock
+
+# Windows antivirus and indexers briefly hold a freshly written file open, so
+# os.replace onto it can fail with WinError 5/32 even under our own lock. A
+# short bounded retry rides that out; any other error still fails at once.
+_REPLACE_RETRY_DELAYS_S: tuple[float, ...] = (0.0, 0.02, 0.05, 0.1, 0.2, 0.4)
+
+
+def _replace_with_retry(src: str, dst: Path) -> None:
+    last_error: PermissionError | None = None
+    for delay_s in _REPLACE_RETRY_DELAYS_S:
+        if delay_s:
+            time.sleep(delay_s)
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError as exc:  # transient share lock: retried, re-raised at the end
+            last_error = exc
+    if last_error is not None:
+        raise last_error
 
 log = logging.getLogger(__name__)
 
@@ -349,7 +369,7 @@ class DictationStats:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(payload, fh, ensure_ascii=False, indent=2)
-            os.replace(tmp_name, self._path)
+            _replace_with_retry(tmp_name, self._path)
         except Exception:
             try:
                 os.unlink(tmp_name)

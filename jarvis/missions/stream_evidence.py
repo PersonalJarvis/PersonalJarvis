@@ -597,9 +597,18 @@ def _command_from_tool_input(tool_name: str, tool_input: dict) -> str:
 # NON-option word, so ``git log --grep=push`` does NOT match (``log`` is not a
 # mutating subcommand and the ``push`` inside the flag value is never in
 # subcommand position).
+# Every option token has exactly ONE parse (CodeQL py/redos): a value that is
+# itself a dash-word (``-c -x``) or an ``--git-dir=…`` form is read only by the
+# plain-flag arm ``-\S+`` (which also covers ``--x``); two readings per token
+# made a failing match exponential in the number of options. A value therefore
+# starts with a non-dash, or is a lone "-" (which no flag can be) — spelled as
+# character classes, not a lookahead, so the static analysis sees the one
+# parse too. The set of matched commands is unchanged.
+_GIT_OPTION_VALUE = r"(?:[^\s-]\S*|-)"
 _MUTATING_CMD_RE = re.compile(
-    r"\bgit\b(?:\s+(?:-[cC]\s+\S+|--(?:git-dir|work-tree|namespace)(?:=|\s+)\S+"
-    r"|--?\S+))*\s+(?:push|commit|merge|tag|cherry-pick|revert|am)\b"
+    rf"\bgit\b(?:\s+(?:-[cC]\s+{_GIT_OPTION_VALUE}"
+    rf"|--(?:git-dir|work-tree|namespace)\s+{_GIT_OPTION_VALUE}"
+    r"|-\S+))*\s+(?:push|commit|merge|tag|cherry-pick|revert|am)\b"
     r"|\bgh\s+(?:pr|issue|release|repo|gist)\s+"
     r"(?:create|merge|close|edit|comment|review|delete|reopen)\b",
     re.IGNORECASE,
