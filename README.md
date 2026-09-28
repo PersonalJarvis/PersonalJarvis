@@ -64,21 +64,18 @@ models do not require a cloud model account.
 
 ## What Personal Jarvis is
 
-**Personal Jarvis is an open-source AI ecosystem that runs on your own computer.**
-At its center is Jarvis, a voice orchestrator that connects a conversation to
-[agents](#jarvis-agents), [coding sessions](#coding-workspace), desktop actions,
-and the services you choose to connect. Speak naturally or type a message:
-Jarvis can answer, use a tool, or delegate work while you follow the conversation
-and inspect what happens. The desktop app brings those conversations, your team,
-and their results into one workspace on Windows, macOS, and Linux.
+One desktop app that connects your voice, your AI models, your coding agents,
+and the tools you already use. The app runs on your own computer.
 
-The workspace extends beyond the conversation. Build persistent specialists with
-their own instructions and recurring routines. Use [Jarvis Voice](#jarvis-voice-dictation)
-to dictate into other apps. Connect [plugins, skills, and MCP servers](#plugins-skills-and-mcp),
-work alongside coding CLIs, keep knowledge in a [local Markdown wiki](#memory-and-knowledge),
-and open generated reports, pages, and files in [Artifacts](#artifacts-and-run-history).
-These are connected parts of the same application: a request can start with your
-voice, continue with an agent, and leave behind something you can read, use, or edit.
+| You want to | Jarvis does it with |
+| --- | --- |
+| **Talk instead of type** | [Voice chat](#jarvis-your-voice-orchestrator) with your own wake phrase, plus [dictation](#jarvis-voice-dictation) into any app |
+| **Run several coding agents at once** | [Agentic IDE](#coding-workspace): Claude Code, Codex, Gemini CLI, OpenCode and more side by side, each in its own terminal pane |
+| **Hand off longer work** | [Jarvis Agents](#jarvis-agents): persistent specialists with their own instructions, routines, and review |
+| **Let the computer do the clicking** | [Computer use](#computer-use-and-connected-channels) in the browser and on the desktop, with approvals |
+| **Stay private or offline** | [Local models](#local-models) through Ollama and local speech recognition |
+| **Connect your tools** | [Plugins, skills, and MCP](#plugins-skills-and-mcp), plus a [local Markdown wiki](#memory-and-knowledge) as memory |
+| **Keep work running elsewhere** | Place agents on a VPS or a local VM over SSH |
 
 **Choose the models and services that fit your work.** Jarvis supports hosted
 providers, [local models](#local-models), and mixed setups. Your selected provider
