@@ -1,5 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { Columns2, Minus, Plus, X } from "lucide-react";
+import { Columns2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -13,8 +13,6 @@ interface Props {
   onBalance: () => void;
   onRename: () => void;
   onClose: () => void;
-  fontSize: number;
-  onFontSize: (size: number) => void;
   appearance: "light" | "dark" | null;
   onAppearance: (appearance: "light" | "dark" | null) => void;
 }
@@ -36,14 +34,6 @@ export function WorkspaceOptionsDialog(props: Props) {
           <button type="button" disabled={props.busy || props.count < 2} onClick={() => choose(props.onBalance)}
             className="flex w-full items-center gap-2 rounded-lg border border-border px-3 py-2.5 text-sm hover:bg-muted disabled:opacity-40"><Columns2 className="h-4 w-4" />Balance layout</button>
           <p className="text-xs leading-relaxed text-muted-foreground">Drag a terminal title to an edge to place it beside, above or below another terminal. Drop in the center to swap positions.</p>
-        </section>
-        <section aria-label="Terminal text size" className="flex items-center justify-between gap-2">
-          <span className="text-sm font-medium">Text size</span>
-          <div className="flex items-center gap-2">
-            <button type="button" aria-label="Decrease terminal text size" disabled={props.fontSize <= 9} onClick={() => props.onFontSize(props.fontSize - 1)} className={icon}><Minus className="h-3.5 w-3.5" /></button>
-            <span className="w-5 text-center text-sm tabular-nums">{props.fontSize}</span>
-            <button type="button" aria-label="Increase terminal text size" disabled={props.fontSize >= 22} onClick={() => props.onFontSize(props.fontSize + 1)} className={icon}><Plus className="h-3.5 w-3.5" /></button>
-          </div>
         </section>
         <section aria-label="Terminal appearance">
           <p className="mb-2 text-sm font-medium">Terminal appearance</p>

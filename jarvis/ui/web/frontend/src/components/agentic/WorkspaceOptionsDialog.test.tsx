@@ -6,15 +6,14 @@ afterEach(cleanup);
 const setup = () => ({
   open: true, onOpenChange: vi.fn(), workspace: "Installer", count: 6, busy: false, canAdd: true,
   onAdd: vi.fn(), onBalance: vi.fn(), onRename: vi.fn(), onClose: vi.fn(),
-  fontSize: 20, onFontSize: vi.fn(), appearance: null, onAppearance: vi.fn(),
+  appearance: null, onAppearance: vi.fn(),
 });
 
 it("keeps arrangement and display controls accessible without a main toolbar", () => {
   const props = setup();
   render(<WorkspaceOptionsDialog {...props} />);
   expect(screen.getByRole("dialog", { name: "Workspace options" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Decrease terminal text size" }));
-  expect(props.onFontSize).toHaveBeenCalledWith(19);
+  expect(screen.queryByRole("button", { name: "Decrease terminal text size" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "light terminals" }));
   expect(props.onAppearance).toHaveBeenCalledWith("light");
   fireEvent.click(screen.getByRole("button", { name: "Balance layout" }));

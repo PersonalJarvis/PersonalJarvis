@@ -5,6 +5,7 @@ import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/comp
 import { WorkspaceTerminalGrid } from "@/components/agentic/WorkspaceTerminalGrid";
 import { WorkspaceAgentSetup } from "@/components/agentic/WorkspaceAgentSetup";
 import { WorkspaceOptionsDialog } from "@/components/agentic/WorkspaceOptionsDialog";
+import { FONT_DEFAULT } from "@/components/agentic/paneFont";
 import { IdeSidePanelFrame } from "@/components/agentic/sidePanel/IdeSidePanel";
 import { fitsWorkspace, isBalancedWorkspace, canSplitFit } from "@/components/agentic/workspaceDocking";
 import { AgentMark } from "@/components/agentic/AgentMark";
@@ -21,7 +22,6 @@ import {
   type AgentStatus, type IdeProject, type IdeState, type TerminalState,
 } from "@/lib/agenticIdeApi";
 
-const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
 const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
 const SPLIT_DIRECTION_KEY = "jarvis.agenticIde.splitDirection";
 
@@ -78,7 +78,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(storedVoiceBubbleOpen);
-  const [fontSize, setFontSize] = useState(() => Number(localStorage.getItem(FONT_KEY)) || 13);
+  // One fixed, dense text size (the look of a standalone terminal); the
+  // maintainer does not want a per-user zoom for the workspace terminals.
+  const fontSize = FONT_DEFAULT;
   const [appearance, setAppearance] = useState<"light" | "dark" | null>(() => {
     const stored = localStorage.getItem(APPEARANCE_KEY);
     return stored === "light" || stored === "dark" ? stored : null;
@@ -308,7 +310,6 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     await closeTerminal(terminal.history_id ? `pane:${terminal.history_id}` : terminal.name, session.id);
   });
 
-  const saveFont = (size: number) => { const next = Math.max(9, Math.min(22, size)); setFontSize(next); localStorage.setItem(FONT_KEY, String(next)); };
   const saveAppearance = (next: "light" | "dark" | null) => { setAppearance(next); if (next) localStorage.setItem(APPEARANCE_KEY, next); else localStorage.removeItem(APPEARANCE_KEY); };
   const balanceLayout = () => void run(async () => {
     if (!session) return;
@@ -364,7 +365,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     <WorkspaceOptionsDialog open={optionsOpen && !!session} onOpenChange={setOptionsOpen} workspace={session?.name ?? session?.project.name ?? ""}
       count={session?.terminals.length ?? 0} busy={busy} canAdd={installed.length > 0}
       onAdd={openAgentPicker} onBalance={balanceLayout} onRename={() => { setRenameValue(session?.name ?? session?.project.name ?? ""); setRenameOpen(true); }}
-      onClose={stopWorkspace} fontSize={fontSize} onFontSize={saveFont} appearance={appearance} onAppearance={saveAppearance}
+      onClose={stopWorkspace} appearance={appearance} onAppearance={saveAppearance}
       />
 
     <main className="min-h-0 flex-1">
