@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgenticIdeView } from "./AgenticIdeView";
 import { useIdeProjectsStore } from "@/store/ideProjects";
+import { useIdeChatStore } from "@/store/ideChat";
 import { balancedLayout } from "@/components/agentic/workspaceDocking";
 
 const api = vi.hoisted(() => ({
@@ -194,6 +195,27 @@ describe("Agentic IDE project flow", () => {
     await act(async () => finishAdd(otherSession));
     expect(api.reorderIdeTerminals).not.toHaveBeenCalled();
     expect(screen.getByTestId("live-grid").textContent).toBe("w2");
+  });
+
+  it("focuses the requested pane from the sidebar agents list", async () => {
+    const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "A", created_at: 0,
+      focus_mode: false, project: { name: "App" }, terminals: [{ key: "a", history_id: "a", name: "T1" }], layout: balancedLayout(["a"]) };
+    const current = { ...emptyState, active: true, active_id: "w1", session };
+    const otherSession = { ...session, id: "w2", name: "B" };
+    const other = { ...current, active_id: "w2", session: otherSession };
+    api.fetchIdeState.mockResolvedValue(current);
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
+    api.activateWorkspace.mockImplementation(async () => {
+      api.fetchIdeState.mockResolvedValue(other);
+      api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w2" });
+      return other;
+    });
+    useIdeChatStore.setState({ paneRequest: null, stagedPane: null });
+    render(<AgenticIdeView onScreen={false} />);
+    await screen.findByTestId("live-grid");
+    act(() => useIdeChatStore.getState().requestPane("w2", "T1"));
+    await waitFor(() => expect(api.activateWorkspace).toHaveBeenCalledWith("w2"));
+    await waitFor(() => expect(useIdeChatStore.getState().stagedPane).toBe("T1"));
   });
 
 });

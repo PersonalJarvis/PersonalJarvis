@@ -30,6 +30,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const refreshRequest = useIdeProjectsStore((state) => state.refreshRequest);
   const setWorkspace = useIdeChatStore((state) => state.setWorkspace);
   const setWorkspaces = useIdeChatStore((state) => state.setWorkspaces);
+  const paneRequest = useIdeChatStore((state) => state.paneRequest);
+  const setStagedPane = useIdeChatStore((state) => state.setStagedPane);
   const [state, setState] = useState<IdeState | null>(null);
   const [projects, setProjects] = useState<IdeProject[]>([]);
   const [agents, setAgents] = useState<AgentStatus[]>([]);
@@ -52,6 +54,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     return stored === "light" || stored === "dark" ? stored : null;
   });
   const handledAction = useRef(0);
+  const handledPaneRequest = useRef(0);
   const refreshEpoch = useRef(0);
   const activationRunning = useRef(false);
   const pendingActivation = useRef<string | null>(null);
@@ -264,6 +267,14 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     if (workspaceId !== session?.id) setState(await activateWorkspace(workspaceId));
     setSelected(pane);
   });
+  useEffect(() => {
+    if (!paneRequest || handledPaneRequest.current === paneRequest.nonce) return;
+    handledPaneRequest.current = paneRequest.nonce;
+    jumpToPane(paneRequest.workspaceId, paneRequest.pane);
+  }, [paneRequest, jumpToPane]);
+  useEffect(() => {
+    setStagedPane(session ? selected : null);
+  }, [session, selected, setStagedPane]);
   const saveWorkspaceName = () => void run(async () => {
     if (!session || !renameValue.trim()) return;
     setState(await renameWorkspace(session.id, renameValue.trim()));
