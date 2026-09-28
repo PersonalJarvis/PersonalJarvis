@@ -9576,12 +9576,15 @@ class SpeechPipeline:
                     # Filler-only surface text. The residue guard turned it
                     # into the generic error phrase; re-rendering that would
                     # announce a failure the user does not have.
+                    # Only the scrub actions and the length: the filler text
+                    # itself stems from the provider message and carries no
+                    # diagnostic value worth logging.
                     log.info(
                         "Realtime surface fallback carried no substance (%s) "
-                        "— dropping it instead of speaking the error phrase: "
-                        "%r",
+                        "— dropping it instead of speaking the error phrase "
+                        "(%d chars)",
                         scrubbed.actions,
-                        safe_preview(text, max_chars=80),
+                        len(text),
                     )
                     return
                 cleaned = scrubbed.cleaned.strip()
