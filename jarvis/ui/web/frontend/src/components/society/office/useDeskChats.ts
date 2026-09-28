@@ -8,6 +8,9 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchAgentChatSession } from "@/lib/agentChatApi";
 import { chatLines, chatVersion, type ChatLine } from "./deskChat";
+
+/** Events fetched per poll: enough for a full screen after tool noise is filtered out. */
+const TAIL_EVENTS = 60;
 import { seatedAtDesk } from "./walkerRegistry";
 
 const POLL_MS = 2500;
@@ -29,7 +32,7 @@ export function useDeskChats(sessions: ReadonlyMap<string, string>, awake: boole
       const due = [...seatedAtDesk].filter((id) => sessionsRef.current.has(id)).slice(0, MAX_PER_TICK);
       const results = await Promise.all(due.map(async (agentId) => {
         try {
-          const detail = await fetchAgentChatSession(sessionsRef.current.get(agentId)!);
+          const detail = await fetchAgentChatSession(sessionsRef.current.get(agentId)!, { tail: TAIL_EVENTS });
           return [agentId, { lines: chatLines(detail.events), version: chatVersion(detail.events) }] as const;
         } catch (error) {
           // The monitor keeps its last good frame; the chat view itself reports real failures.

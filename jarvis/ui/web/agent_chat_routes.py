@@ -687,14 +687,20 @@ async def create_session(body: CreateSessionBody, request: Request) -> dict[str,
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(session_id: str, request: Request) -> dict[str, Any]:
+async def get_session(
+    session_id: str,
+    request: Request,
+    tail: int | None = Query(
+        None, ge=1, le=500, description="Only the newest N events (e.g. a live preview)."
+    ),
+) -> dict[str, Any]:
     svc = _service(request)
     session = svc.store.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
     d = session.to_dict()
     d["running"] = svc.is_running(session_id)
-    return {"session": d, "events": svc.store.list_events(session_id)}
+    return {"session": d, "events": svc.store.list_events(session_id, tail=tail)}
 
 
 @router.patch("/sessions/{session_id}")

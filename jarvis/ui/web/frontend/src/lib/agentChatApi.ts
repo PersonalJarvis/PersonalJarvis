@@ -358,9 +358,11 @@ export async function deleteAgentChatSession(sessionId: string): Promise<void> {
 
 export async function fetchAgentChatSession(
   sessionId: string,
+  options: { tail?: number } = {},
 ): Promise<{ session: AgentChatSession; events: AgentChatEvent[] }> {
+  const query = options.tail ? `?tail=${Math.max(1, Math.round(options.tail))}` : "";
   return json(
-    await fetch(`/api/agent-chat/sessions/${encodeURIComponent(sessionId)}`),
+    await fetch(`/api/agent-chat/sessions/${encodeURIComponent(sessionId)}${query}`),
     "session-failed",
   );
 }
