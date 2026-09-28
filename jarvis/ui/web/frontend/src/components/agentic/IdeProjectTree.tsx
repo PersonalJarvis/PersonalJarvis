@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as Rea
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, ChevronRight, Folder, FolderPlus, Loader2, Mic, MoreHorizontal, Pencil, Pin, Plus, Trash2, X } from "lucide-react";
 import { ChatLibraryError, deleteProject, openProject, patchProject, reorderProjects } from "@/lib/chatLibraryApi";
-import { closeWorkspace, removeWorkspace, renameWorkspace, IdeApiError, reorderWorkspaces, type IdeProject, type ProjectWorkspace } from "@/lib/agenticIdeApi";
+import { removeWorkspace, renameWorkspace, IdeApiError, reorderWorkspaces, type IdeProject, type ProjectWorkspace } from "@/lib/agenticIdeApi";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 
@@ -21,6 +21,18 @@ const REORDER_NEEDS_RESTART = "This view is newer than the backend — restart t
 function reorderErrorMessage(error: unknown): string {
   if (error instanceof IdeApiError && error.status === 405) return REORDER_NEEDS_RESTART;
   if (error instanceof ChatLibraryError && error.status === 405) return REORDER_NEEDS_RESTART;
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * A removal failure in the user's terms. FastAPI answers an unknown route with
+ * a bare "Not Found" (the route's own 404 says which workspace is missing), so
+ * that exact pair means a backend older than this view: restart it.
+ */
+function removalErrorMessage(error: unknown): string {
+  if (error instanceof IdeApiError && (error.status === 405 || (error.status === 404 && error.message === "Not Found"))) {
+    return REORDER_NEEDS_RESTART;
+  }
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -223,7 +235,7 @@ export function IdeProjectTree() {
       setContextMenu(null);
       requestRefresh();
     } catch (error) {
-      pushToast("error", (error as Error).message);
+      pushToast("error", removalErrorMessage(error));
     } finally {
       setConfirmBusy(false);
     }
@@ -238,12 +250,12 @@ export function IdeProjectTree() {
     }
     setConfirmBusy(true);
     try {
-      // A project with open workspaces would otherwise come straight back:
-      // the sidebar derives a project row from every running workspace, so
-      // deleting the library entry alone changes nothing on screen. The
-      // confirm dialog says so, and confirming stops the agents first.
-      for (const workspace of target.workspaces.filter((entry) => entry.status === "open")) {
-        await closeWorkspace(workspace.id);
+      // A project with workspaces would otherwise come straight back: the
+      // sidebar derives a project row from every open AND remembered
+      // workspace, so deleting the library entry alone changes nothing on
+      // screen. Removing each one stops its agents and forgets its record.
+      for (const workspace of target.workspaces) {
+        await removeWorkspace(workspace.id);
       }
       await deleteProject(target.id);
       setConfirmProject(null);
@@ -251,7 +263,7 @@ export function IdeProjectTree() {
       setMenuId(null);
       requestRefresh();
     } catch (error) {
-      pushToast("error", (error as Error).message);
+      pushToast("error", removalErrorMessage(error));
     } finally {
       setConfirmBusy(false);
     }

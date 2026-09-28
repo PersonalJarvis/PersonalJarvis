@@ -1339,7 +1339,9 @@ export async function removeWorkspace(id: string): Promise<IdeState> {
     `/api/agentic-ide/workspaces/${encodeURIComponent(id)}/record`,
     { method: "DELETE" },
   );
-  if (!res.ok) throw new Error(await detail(res));
+  // Carries the status: a bare "Not Found" means a backend older than this
+  // route, which the sidebar explains as "restart the app".
+  if (!res.ok) throw new IdeApiError(await detail(res), res.status);
   const body = (await res.json()) as { state: IdeState };
   return body.state;
 }

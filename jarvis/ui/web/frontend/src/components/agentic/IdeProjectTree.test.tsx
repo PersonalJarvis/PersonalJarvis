@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { IdeProjectTree } from "./IdeProjectTree";
 import { useIdeProjectsStore } from "@/store/ideProjects";
-import type { IdeProject } from "@/lib/agenticIdeApi";
+import { IdeApiError, type IdeProject } from "@/lib/agenticIdeApi";
 import { ChatLibraryError } from "@/lib/chatLibraryApi";
 
 const patchProject = vi.hoisted(() => vi.fn());
@@ -225,10 +225,24 @@ it("asks for confirmation before deleting a project with no open workspaces", as
   expect(screen.getByTestId("ide-project-confirm-delete")).toBeDefined();
   expect(deleteProject).not.toHaveBeenCalled();
   fireEvent.click(screen.getByTestId("ide-project-confirm-delete-confirm"));
+  // The closed workspace is forgotten too, or it would re-derive the project row.
+  await waitFor(() => expect(removeWorkspace).toHaveBeenCalledWith("p1-w1"));
   await waitFor(() => expect(deleteProject).toHaveBeenCalledWith("p1"));
 });
 
-it("closes open workspaces when a project is deleted", async () => {
+it("says to restart when the backend predates workspace removal", async () => {
+  const { useEventStore } = await import("@/store/events");
+  const pushToast = vi.fn();
+  useEventStore.setState({ pushToast } as never);
+  removeWorkspace.mockRejectedValue(new IdeApiError("Not Found", 404));
+  render(<IdeProjectTree />);
+  fireEvent.contextMenu(screen.getByTestId("ide-workspace-row-p1-w1"));
+  fireEvent.click(screen.getByTestId("ide-workspace-menu-close"));
+  fireEvent.click(screen.getByTestId("ide-workspace-confirm-close-confirm"));
+  await waitFor(() => expect(pushToast).toHaveBeenCalledWith("error", expect.stringContaining("restart the app")));
+});
+
+it("removes open workspaces when a project is deleted", async () => {
   render(<IdeProjectTree />);
   fireEvent.contextMenu(screen.getByTestId("ide-project-header-p1"));
   fireEvent.click(screen.getByTestId("ide-project-menu-delete"));
@@ -236,7 +250,7 @@ it("closes open workspaces when a project is deleted", async () => {
   expect((confirm as HTMLButtonElement).disabled).toBe(false);
   expect(deleteProject).not.toHaveBeenCalled();
   fireEvent.click(confirm);
-  await waitFor(() => expect(closeWorkspace).toHaveBeenCalledWith("p1-w1"));
+  await waitFor(() => expect(removeWorkspace).toHaveBeenCalledWith("p1-w1"));
   await waitFor(() => expect(deleteProject).toHaveBeenCalledWith("p1"));
   await waitFor(() => expect(useIdeProjectsStore.getState().refreshRequest?.nonce).toBe(1));
 });
