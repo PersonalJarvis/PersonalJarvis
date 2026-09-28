@@ -27,11 +27,20 @@ handles as "the download failed".
 
 from __future__ import annotations
 
+import asyncio
+import ipaddress
+import socket
 from typing import Any
 
 import httpx
 
-__all__ = ["InsecureRedirect", "https_only", "https_only_async"]
+__all__ = [
+    "BlockedDestination",
+    "InsecureRedirect",
+    "https_only",
+    "https_only_async",
+    "public_only_async",
+]
 
 
 class InsecureRedirect(httpx.HTTPError):
@@ -68,3 +77,70 @@ def https_only() -> dict[str, Any]:
 def https_only_async() -> dict[str, Any]:
     """The same, for ``httpx.AsyncClient`` — its hooks must be awaitable."""
     return {"event_hooks": {"response": [_check_async]}}
+
+
+# ---------------------------------------------------------------------------
+# Public-destination guard: for a URL the USER pasted (not a registry entry),
+# plain http is fine, but the fetch runs server-side, so it must never reach
+# the loopback API, the LAN, or a cloud metadata endpoint. It runs as a
+# REQUEST hook, so every redirect hop is checked before it is sent.
+# ---------------------------------------------------------------------------
+
+
+class BlockedDestination(httpx.HTTPError):
+    """The request targeted a non-public address or a disallowed scheme.
+
+    An ``httpx.HTTPError`` for the same reason as :class:`InsecureRedirect`:
+    call sites already report that as "the download failed".
+    """
+
+
+def _is_public_ip(value: str) -> bool:
+    ip = ipaddress.ip_address(value.split("%", 1)[0])  # drop an IPv6 zone id
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_global and not ip.is_multicast
+
+
+async def _check_public_request(request: httpx.Request, schemes: frozenset[str]) -> None:
+    url = request.url
+    if url.scheme not in schemes:
+        raise BlockedDestination(f"refusing a {url.scheme!r} URL")
+    host = url.host
+    if not host:
+        raise BlockedDestination("refusing a URL without a host")
+    try:
+        # A literal address needs no lookup.
+        literal_ok = _is_public_ip(host)
+    except ValueError:
+        literal_ok = None
+    if literal_ok is not None:
+        if not literal_ok:
+            raise BlockedDestination(f"refusing non-public address {host}")
+        return
+    port = url.port or (443 if url.scheme == "https" else 80)
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise BlockedDestination(f"cannot resolve {host}") from exc
+    addresses = {info[4][0] for info in infos}
+    # Every address must be public: a name that resolves to both a public and a
+    # private address could otherwise be connected to on the private one.
+    if not addresses or not all(_is_public_ip(str(a)) for a in addresses):
+        raise BlockedDestination(f"refusing {host}: it resolves to a non-public address")
+
+
+def public_only_async(*, schemes: tuple[str, ...] = ("https",)) -> dict[str, Any]:
+    """``httpx.AsyncClient`` kwargs that refuse non-public destinations.
+
+    Every request — the first and each redirect hop — must use one of
+    ``schemes`` and resolve only to globally routable addresses. The lookup
+    happens just before httpx connects; this narrows but does not fully close a
+    DNS-rebinding window, which is acceptable for a user-initiated download.
+    """
+    allowed = frozenset(s.lower() for s in schemes)
+
+    async def _hook(request: httpx.Request) -> None:
+        await _check_public_request(request, allowed)
+
+    return {"event_hooks": {"request": [_hook]}}

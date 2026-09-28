@@ -684,12 +684,17 @@ async def import_skill(body: SkillImportBody, request: Request) -> dict[str, Any
 
     import httpx
 
+    from jarvis.core.http_guard import public_only_async
+
     reg = _require_registry(request)
     raw_url = _extract_import_url(body.input)
 
+    # The download runs server-side, so the pasted link (and every redirect it
+    # takes) must not reach the loopback API, the LAN or a metadata endpoint.
     async with httpx.AsyncClient(
         follow_redirects=True,
         timeout=httpx.Timeout(20.0),
+        **public_only_async(schemes=("http", "https")),
     ) as client:
         try:
             resp = await client.get(raw_url)
