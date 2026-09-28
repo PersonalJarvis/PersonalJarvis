@@ -678,7 +678,14 @@ def agy_model_args(
         return ["--effort", effort] if effort in _AGY_EFFORT_SUFFIXES else []
     row = by_id.get(model)
     if row is None:
-        # A suffixed or unknown id: pass it through untouched.
+        if _is_base_gemini_id(model):
+            # A Gemini release newer than the catalog Jarvis holds (live
+            # 2026-09: "gemini-3.8-flash" in a routine). agy refuses a base id
+            # without a level ("requires --effort"), and nobody picks efforts
+            # by hand, so the chosen one or agy's own default is filled in.
+            level = effort if effort in _AGY_EFFORT_SUFFIXES else _AGY_DEFAULT_EFFORT
+            return ["--model", model, "--effort", level]
+        # A suffixed or non-Gemini unknown id: pass it through untouched.
         return ["--model", model]
     ladder = list(row.get("efforts") or [])
     if not ladder:
@@ -688,6 +695,18 @@ def agy_model_args(
         return ["--model", model]
     level = effort if effort in ladder else _nearest_lower(effort, ladder)
     return ["--model", model, "--effort", level]
+
+
+#: The level a base Gemini id newer than the catalog runs at when nobody chose
+#: one: every Gemini ladder agy publishes has it (Pro knows only low/high).
+_AGY_DEFAULT_EFFORT: Final = "high"
+
+
+def _is_base_gemini_id(model: str) -> bool:
+    """``gemini-3.8-flash`` yes; ``gemini-3.8-flash-high`` and ``claude-…`` no."""
+    return model.startswith("gemini-") and not model.endswith(
+        tuple(f"-{level}" for level in _AGY_EFFORT_SUFFIXES)
+    )
 
 
 def _nearest_lower(effort: str, ladder: list[str]) -> str:
