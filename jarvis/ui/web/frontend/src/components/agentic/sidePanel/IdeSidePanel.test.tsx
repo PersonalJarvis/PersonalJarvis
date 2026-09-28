@@ -65,7 +65,7 @@ describe("IdeSidePanel", () => {
   });
 
   it("disables + while every tab is already open", () => {
-    act(() => useIdeSidePanelStore.getState().setOpen(true));
+    act(() => useIdeSidePanelStore.setState({ open: true, tabs: ["agents", "files"], active: "agents" }));
     render(<Harness />);
     expect((screen.getByTestId("ide-side-panel-add") as HTMLButtonElement).disabled).toBe(true);
   });
@@ -85,5 +85,15 @@ describe("IdeSidePanel", () => {
     act(() => useEventStore.setState({ activeSection: "chats" }));
     render(<IdeSidePanelToggle />);
     expect(screen.queryByTestId("ide-side-panel-toggle")).toBeNull();
+  });
+
+  it("leaves a labelled rail on the right edge while closed, and opens at the tab picked there", () => {
+    render(<Harness />);
+    const rail = screen.getByTestId("ide-side-panel-rail");
+    expect(rail.textContent).toContain("Agents");
+    expect(rail.textContent).toContain("Explorer");
+    fireEvent.click(screen.getByTestId("ide-side-panel-rail-files"));
+    expect(useIdeSidePanelStore.getState()).toMatchObject({ open: true, active: "files" });
+    expect(screen.queryByTestId("ide-side-panel-rail")).toBeNull();
   });
 });

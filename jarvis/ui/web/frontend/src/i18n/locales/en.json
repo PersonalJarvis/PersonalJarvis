@@ -5805,8 +5805,33 @@
     "add_tab": "Add a tab",
     "all_open": "Every tab is already open",
     "close_tab": "Close tab",
+    "rail_aria": "Side panel tabs",
+    "rail_waiting": "{n} waiting for you",
+    "explorer": {
+      "aria": "Workspace files and changes",
+      "no_workspace": "Select a workspace to see its files.",
+      "refresh": "Refresh",
+      "views": "Explorer views",
+      "view_changes": "Changes",
+      "view_files": "Files",
+      "filter": "Filter files",
+      "clear_filter": "Clear filter",
+      "loading": "Loading…",
+      "no_git": "This folder is not a git repository, so changes cannot be shown.",
+      "no_match": "No file matches the filter.",
+      "clean": "No changes since the last commit.",
+      "changes_error": "Changes could not be loaded ({error}). Restarting the app may be needed after an update.",
+      "drag_hint": "Drag onto a terminal to reference it",
+      "truncated": "The list was shortened; open the folder for the rest.",
+      "reference_in": "Reference in {pane}",
+      "open_externally": "Open on this computer",
+      "back": "Back",
+      "binary": "This file cannot be shown as text.",
+      "unchanged": "Unchanged since the last commit."
+    },
     "tabs": {
-      "agents": "Agents"
+      "agents": "Agents",
+      "files": "Explorer"
     },
     "agents": {
       "aria": "Agents in this workspace",

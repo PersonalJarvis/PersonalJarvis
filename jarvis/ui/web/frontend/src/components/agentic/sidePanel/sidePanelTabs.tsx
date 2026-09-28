@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
-import { Bot, type LucideIcon } from "lucide-react";
+import { Bot, FolderTree, type LucideIcon } from "lucide-react";
 import type { SidePanelTabId } from "@/store/ideSidePanel";
 import { AgentsOverview } from "./AgentsOverview";
+import { ExplorerPanel } from "./explorer/ExplorerPanel";
 
 /** One function the side panel can show. */
 export interface SidePanelTabDef {
@@ -25,6 +26,12 @@ export const SIDE_PANEL_TABS: readonly SidePanelTabDef[] = [
     labelKey: "ide_side_panel.tabs.agents",
     icon: Bot,
     render: () => <AgentsOverview />,
+  },
+  {
+    id: "files",
+    labelKey: "ide_side_panel.tabs.files",
+    icon: FolderTree,
+    render: () => <ExplorerPanel />,
   },
 ];
 

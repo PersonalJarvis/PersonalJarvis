@@ -5772,8 +5772,33 @@
     "add_tab": "Añadir una pestaña",
     "all_open": "Todas las pestañas ya están abiertas",
     "close_tab": "Cerrar pestaña",
+    "rail_aria": "Pestañas del panel lateral",
+    "rail_waiting": "{n} esperan tu respuesta",
+    "explorer": {
+      "aria": "Archivos y cambios del espacio de trabajo",
+      "no_workspace": "Selecciona un espacio de trabajo para ver sus archivos.",
+      "refresh": "Actualizar",
+      "views": "Vistas del explorador",
+      "view_changes": "Cambios",
+      "view_files": "Archivos",
+      "filter": "Filtrar archivos",
+      "clear_filter": "Borrar filtro",
+      "loading": "Cargando…",
+      "no_git": "Esta carpeta no es un repositorio git, así que no hay vista de cambios.",
+      "no_match": "Ningún archivo coincide con el filtro.",
+      "clean": "Sin cambios desde el último commit.",
+      "changes_error": "No se pudieron cargar los cambios ({error}). Tras una actualización puede hacer falta reiniciar la app.",
+      "drag_hint": "Arrástralo a una terminal para referenciarlo",
+      "truncated": "La lista se acortó; abre la carpeta para ver el resto.",
+      "reference_in": "Referenciar en {pane}",
+      "open_externally": "Abrir en este equipo",
+      "back": "Volver",
+      "binary": "Este archivo no se puede mostrar como texto.",
+      "unchanged": "Sin cambios desde el último commit."
+    },
     "tabs": {
-      "agents": "Agentes"
+      "agents": "Agentes",
+      "files": "Explorador"
     },
     "agents": {
       "aria": "Agentes de este espacio de trabajo",

@@ -5772,8 +5772,33 @@
     "add_tab": "Tab hinzufügen",
     "all_open": "Alle Tabs sind bereits offen",
     "close_tab": "Tab schließen",
+    "rail_aria": "Tabs der Seitenleiste",
+    "rail_waiting": "{n} warten auf dich",
+    "explorer": {
+      "aria": "Dateien und Änderungen im Workspace",
+      "no_workspace": "Wähle einen Workspace, um seine Dateien zu sehen.",
+      "refresh": "Aktualisieren",
+      "views": "Explorer-Ansichten",
+      "view_changes": "Änderungen",
+      "view_files": "Dateien",
+      "filter": "Dateien filtern",
+      "clear_filter": "Filter leeren",
+      "loading": "Lädt…",
+      "no_git": "Dieser Ordner ist kein Git-Repository, daher gibt es keine Änderungsansicht.",
+      "no_match": "Keine Datei passt zum Filter.",
+      "clean": "Keine Änderungen seit dem letzten Commit.",
+      "changes_error": "Änderungen konnten nicht geladen werden ({error}). Nach einem Update ist eventuell ein Neustart der App nötig.",
+      "drag_hint": "Auf ein Terminal ziehen, um die Datei dort zu referenzieren",
+      "truncated": "Die Liste wurde gekürzt; öffne den Ordner für den Rest.",
+      "reference_in": "In {pane} referenzieren",
+      "open_externally": "Auf diesem Computer öffnen",
+      "back": "Zurück",
+      "binary": "Diese Datei lässt sich nicht als Text anzeigen.",
+      "unchanged": "Seit dem letzten Commit unverändert."
+    },
     "tabs": {
-      "agents": "Agents"
+      "agents": "Agents",
+      "files": "Explorer"
     },
     "agents": {
       "aria": "Agents in diesem Workspace",

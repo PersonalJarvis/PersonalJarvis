@@ -83,6 +83,7 @@ from jarvis.agentic_ide import (
     agent_transcript,
     drop_analysis,
     drops,
+    git_changes,
     interrupted,
     native_picker,
     notifications,
@@ -828,6 +829,52 @@ class WorkspaceFilesResponse(BaseModel):
     error: str | None = None
 
 
+class ChangedFileItem(BaseModel):
+    """One path an agent changed, relative to the workspace root."""
+
+    path: str
+    status: str = Field(description="'modified', 'added', 'deleted', 'untracked' or 'conflicted'.")
+    added: int | None = Field(default=None, description="Lines added; null when unknown.")
+    removed: int | None = Field(default=None, description="Lines removed; null when unknown.")
+    is_directory: bool = False
+
+
+class WorkspaceChangesResponse(BaseModel):
+    """What git reports as changed under the workspace folder."""
+
+    workspace_id: str
+    available: bool = Field(description="False when git or the repository is not usable.")
+    branch: str = ""
+    files: list[ChangedFileItem] = Field(default_factory=list)
+    truncated: bool = False
+    reason: str = ""
+
+
+class DiffLineItem(BaseModel):
+    kind: str = Field(description="'add', 'del' or 'ctx'.")
+    text: str
+    old_no: int | None = None
+    new_no: int | None = None
+
+
+class DiffHunkItem(BaseModel):
+    header: str
+    lines: list[DiffLineItem] = Field(default_factory=list)
+
+
+class WorkspaceFileDiffResponse(BaseModel):
+    """One file's difference from the last commit; an untracked file is all new."""
+
+    workspace_id: str
+    path: str
+    status: str
+    binary: bool = False
+    added: int = 0
+    removed: int = 0
+    hunks: list[DiffHunkItem] = Field(default_factory=list)
+    truncated: bool = False
+
+
 class WorkspaceFilePreviewResponse(BaseModel):
     """A bounded in-app preview without exposing an absolute host path."""
 
@@ -1570,6 +1617,53 @@ async def get_workspace_files(workspace_id: str, path: str = "") -> WorkspaceFil
         truncated=listing.truncated,
         error=listing.error,
     )
+
+
+@router.get(
+    "/workspaces/{workspace_id}/changes",
+    response_model=WorkspaceChangesResponse,
+    summary="Files the agents changed in an open workspace",
+)
+async def get_workspace_changes(workspace_id: str) -> WorkspaceChangesResponse:
+    """Git's view of what changed under the workspace folder.
+
+    Paths are relative to the workspace, like the file tree's. A folder that is
+    not a repository, or a machine without git, answers ``available=false`` with
+    the reason rather than an error: the explorer still works without it.
+    """
+    session = get_registry().get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    changes = await asyncio.to_thread(git_changes.workspace_changes, session.folder)
+    return WorkspaceChangesResponse(
+        workspace_id=workspace_id,
+        available=changes.available,
+        branch=changes.branch,
+        files=[ChangedFileItem(**asdict(item)) for item in changes.files],
+        truncated=changes.truncated,
+        reason=changes.reason,
+    )
+
+
+@router.get(
+    "/workspaces/{workspace_id}/diff",
+    response_model=WorkspaceFileDiffResponse,
+    summary="How one workspace file differs from the last commit",
+)
+async def get_workspace_file_diff(workspace_id: str, path: str) -> WorkspaceFileDiffResponse:
+    """Removed and added lines of one file, for the explorer's diff view.
+
+    ``path`` may be workspace-relative or an absolute path inside the workspace
+    (what a terminal printed). Anything outside the workspace is refused.
+    """
+    session = get_registry().get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    try:
+        diff = await asyncio.to_thread(git_changes.file_diff, session.folder, path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return WorkspaceFileDiffResponse(workspace_id=workspace_id, **asdict(diff))
 
 
 @router.get("/folders/search", response_model=SearchResponse, summary="Search folders by name")
