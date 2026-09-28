@@ -87,7 +87,12 @@ export function AddComputerWizard({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/50 p-4 backdrop-blur-sm"
-      onClick={onClose}
+      // Only an untouched first step closes on a click beside the dialog; once
+      // the user picked a provider, a stray click (or a layout shift under the
+      // pointer) must not throw the half-filled wizard away. X and Esc still close.
+      onClick={() => {
+        if (step === 0) onClose();
+      }}
     >
       <div
         role="dialog"
