@@ -2,10 +2,21 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { IdeProjectTree } from "./IdeProjectTree";
 import { useIdeProjectsStore } from "@/store/ideProjects";
-import type { IdeProject } from "@/lib/agenticIdeApi";
+import { IdeApiError, type IdeProject } from "@/lib/agenticIdeApi";
 
 const reorderWorkspaces = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/agenticIdeApi", () => ({ reorderWorkspaces }));
+vi.mock("@/lib/agenticIdeApi", () => {
+  class MockIdeApiError extends Error {
+    constructor(
+      message: string,
+      readonly status: number,
+    ) {
+      super(message);
+      this.name = "IdeApiError";
+    }
+  }
+  return { reorderWorkspaces, IdeApiError: MockIdeApiError };
+});
 vi.mock("@/lib/chatLibraryApi", () => ({
   patchProject: vi.fn(async () => ({})),
   openProject: vi.fn(async () => ({ id: "p1" })),
@@ -100,4 +111,21 @@ it("shows a toast instead of reordering when the backend rejects", async () => {
     fireEvent.keyDown(screen.getByTestId("ide-workspace-w1"), { key: "ArrowDown", altKey: true });
   });
   await waitFor(() => expect(pushToast).toHaveBeenCalledWith("error", "stale list"));
+});
+
+it("names the restart when the backend predates the reorder endpoint", async () => {
+  reorderWorkspaces.mockRejectedValueOnce(new IdeApiError("Method Not Allowed", 405));
+  const { useEventStore } = await import("@/store/events");
+  const pushToast = vi.fn();
+  useEventStore.setState({ pushToast } as never);
+  render(<IdeProjectTree />);
+  act(() => {
+    fireEvent.keyDown(screen.getByTestId("ide-workspace-w1"), { key: "ArrowDown", altKey: true });
+  });
+  await waitFor(() =>
+    expect(pushToast).toHaveBeenCalledWith(
+      "error",
+      "This view is newer than the backend — restart the app and try again.",
+    ),
+  );
 });

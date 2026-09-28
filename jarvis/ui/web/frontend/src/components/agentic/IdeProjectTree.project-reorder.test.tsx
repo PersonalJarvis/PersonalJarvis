@@ -4,19 +4,38 @@ import { IdeProjectTree } from "./IdeProjectTree";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import type { IdeProject } from "@/lib/agenticIdeApi";
 
+import { ChatLibraryError } from "@/lib/chatLibraryApi";
+
 const reorderProjects = vi.hoisted(() => vi.fn());
 const reorderWorkspaces = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/chatLibraryApi", () => ({
-  patchProject: vi.fn(async () => ({})),
-  openProject: vi.fn(async () => ({ id: "p1" })),
-  reorderProjects,
-  ChatLibraryError: class extends Error {
-    constructor(message: string, readonly status: number) {
+vi.mock("@/lib/chatLibraryApi", () => {
+  class MockChatLibraryError extends Error {
+    constructor(
+      message: string,
+      readonly status: number,
+    ) {
       super(message);
     }
-  },
-}));
-vi.mock("@/lib/agenticIdeApi", () => ({ reorderWorkspaces }));
+  }
+  return {
+    patchProject: vi.fn(async () => ({})),
+    openProject: vi.fn(async () => ({ id: "p1" })),
+    reorderProjects,
+    ChatLibraryError: MockChatLibraryError,
+  };
+});
+vi.mock("@/lib/agenticIdeApi", () => {
+  class MockIdeApiError extends Error {
+    constructor(
+      message: string,
+      readonly status: number,
+    ) {
+      super(message);
+      this.name = "IdeApiError";
+    }
+  }
+  return { reorderWorkspaces, IdeApiError: MockIdeApiError };
+});
 
 function folder(id: string, name: string, pinned = false): IdeProject {
   return {
@@ -135,4 +154,24 @@ it("shows a toast instead of reordering when the backend rejects", async () => {
     });
   });
   await waitFor(() => expect(pushToast).toHaveBeenCalledWith("error", "stale list"));
+});
+
+it("names the restart when the backend predates the reorder endpoint", async () => {
+  reorderProjects.mockRejectedValueOnce(new ChatLibraryError("Method Not Allowed", 405));
+  const { useEventStore } = await import("@/store/events");
+  const pushToast = vi.fn();
+  useEventStore.setState({ pushToast } as never);
+  render(<IdeProjectTree />);
+  act(() => {
+    fireEvent.keyDown(screen.getByRole("button", { name: "Collapse AiGrokAgents" }), {
+      key: "ArrowDown",
+      altKey: true,
+    });
+  });
+  await waitFor(() =>
+    expect(pushToast).toHaveBeenCalledWith(
+      "error",
+      "This view is newer than the backend — restart the app and try again.",
+    ),
+  );
 });

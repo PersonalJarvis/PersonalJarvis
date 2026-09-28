@@ -435,6 +435,10 @@ export async function reorderIdeTerminals(id: string, terminalIds: string[]): Pr
  * `workspaceIds` must contain every open workspace exactly once, in
  * left-to-right order. Nothing starts, stops or restarts — only the tab
  * positions move, and the order survives restarts via the resume snapshot.
+ *
+ * Throws {@link IdeApiError} carrying the HTTP status, so callers can tell
+ * "the backend refused" apart from "the backend is too old to know this
+ * endpoint" (405).
  */
 export async function reorderWorkspaces(workspaceIds: string[]): Promise<IdeState> {
   const res = await fetch("/api/agentic-ide/workspaces/order", {
@@ -442,8 +446,19 @@ export async function reorderWorkspaces(workspaceIds: string[]): Promise<IdeStat
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ workspace_ids: workspaceIds }),
   });
-  if (!res.ok) throw new Error(await detail(res));
+  if (!res.ok) throw new IdeApiError(await detail(res), res.status);
   return ((await res.json()) as { state: IdeState }).state;
+}
+
+/** An IDE API failure with its HTTP status attached. */
+export class IdeApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "IdeApiError";
+  }
 }
 
 /**
