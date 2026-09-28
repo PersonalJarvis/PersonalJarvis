@@ -139,6 +139,8 @@ class TaskScheduler:
         self._fired_dedup: dict[tuple[str, str], None] = {}
         # Pending runner tasks, so we can clean up on cancel.
         self._runner_tasks: set[asyncio.Task[Any]] = set()
+        #: TaskScheduled publishes still in flight (kept referenced until done).
+        self._publish_tasks: set[asyncio.Task[Any]] = set()
         # Per-run cancel tokens (H-03): cancel_task() fires the token of a
         # RUNNING task so its harness action stops; cleared in _safe_run.
         self._running_tokens: dict[str, Any] = {}
@@ -162,15 +164,24 @@ class TaskScheduler:
         due_at_ns = row.get("due_at_ns") if row is not None else self._due_at_ns_for(spec)
         self._register_in_memory(spec, task_id, stored_due_at_ns=due_at_ns)
         # The event, heap and database must agree even across a clock boundary.
-        await self._bus.publish(
-            TaskScheduled(
-                task_id=task_id,
-                trigger_type=spec.trigger.type,
-                due_at_ns=due_at_ns or 0,
-                title=spec.title,
-                source_layer="tasks.scheduler",
-            )
+        # Published without waiting: every bus-wide listener (chat bridges, the
+        # web forwarder, this scheduler's own locked handler) may take seconds,
+        # and the caller — often a person pressing "Save" — needs only the id.
+        # Heap and row are already consistent, so nothing depends on the order.
+        publish = asyncio.create_task(
+            self._bus.publish(
+                TaskScheduled(
+                    task_id=task_id,
+                    trigger_type=spec.trigger.type,
+                    due_at_ns=due_at_ns or 0,
+                    title=spec.title,
+                    source_layer="tasks.scheduler",
+                )
+            ),
+            name=f"task-scheduled-{task_id}",
         )
+        self._publish_tasks.add(publish)
+        publish.add_done_callback(self._publish_tasks.discard)
         self._wakeup.set()
         return task_id
 

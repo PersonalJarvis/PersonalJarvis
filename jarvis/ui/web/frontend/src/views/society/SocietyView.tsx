@@ -102,9 +102,12 @@ export function SocietyView() {
     }
   }, [agents, openAgentId]);
 
-  const onCreated = useCallback(() => {
+  // The new agent is already on the rail (the create patched the roster), so
+  // it opens straight away — the person's next step is almost always with it.
+  const onCreated = useCallback((agentId: string) => {
     setCreating(false);
-  }, []);
+    selectAgent(agentId);
+  }, [selectAgent]);
 
   const [fullscreenError, setFullscreenError] = useState(false);
   const switchMode = useCallback((next: "agents" | "world") => {

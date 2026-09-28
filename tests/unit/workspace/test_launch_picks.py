@@ -169,3 +169,39 @@ def test_a_live_list_replaces_the_curated_one() -> None:
     assert launch_picks.offered_models("codex", live) == live["codex-cli"]
     # And a pick off that list is accepted, not measured against the fallback.
     assert launch_picks.runner_of("codex") == "codex-cli"
+
+
+async def test_live_models_answers_within_budget_while_a_slow_cli_keeps_loading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cold ``agy models`` took over a minute on a real box; the picker must
+    not wait for it. The fast readers answer, the slow one is left out (its
+    curated fallback stands) and finishes in the background."""
+    import threading
+    import time
+
+    from jarvis.agent_chat import runner_cli
+
+    release = threading.Event()
+
+    def slow_agy() -> list[dict[str, str]]:
+        release.wait(5.0)
+        return [{"id": "late"}]
+
+    monkeypatch.setattr(runner_cli, "read_agy_models", slow_agy)
+    monkeypatch.setattr(runner_cli, "read_codex_models", lambda: [{"id": "gpt"}])
+    monkeypatch.setattr(runner_cli, "read_grok_models", lambda: None)
+    monkeypatch.setattr(runner_cli, "read_opencode_models", lambda: [])
+    monkeypatch.setattr(
+        launch_picks,
+        "_installed",
+        lambda r: r in {"agy-cli", "codex-cli", "grok-cli", "opencode-cli"},
+    )
+    monkeypatch.setattr(launch_picks, "_LIVE_MODELS_BUDGET_S", 0.2)
+    try:
+        started = time.monotonic()
+        out = await launch_picks.live_models()
+        assert time.monotonic() - started < 2.0
+        assert out == {"codex-cli": [{"id": "gpt"}], "opencode-cli": []}
+    finally:
+        release.set()

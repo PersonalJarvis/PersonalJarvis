@@ -1668,6 +1668,13 @@ def shared_catalog() -> ModelCatalog:
     return _shared_catalog
 
 
+#: A provider whose live list just failed (a local server that is not running:
+#: on Windows each refused connect costs about two seconds) is not asked again
+#: for this long; the picker gets its fallback at once. ``force_refresh`` and a
+#: successful fetch clear it.
+_FETCH_RETRY_SECONDS = 30.0
+
+
 class ModelCatalog:
     """Live model lists per provider with a TTL cache and honest fallbacks."""
 
@@ -1684,6 +1691,7 @@ class ModelCatalog:
         # provider -> (fetched_at, models)
         self._cache: dict[str, tuple[float, list[ModelInfo]]] = {}
         self._lock = asyncio.Lock()
+        self._fetch_failed_at: dict[str, float] = {}
         self._client_factory = http_client_factory
         # When the discovery feed last failed to load (0 = never).
         self._discovery_failed_at = 0.0
@@ -1828,10 +1836,16 @@ class ModelCatalog:
                     "model",
                 )
 
+            failed_at = self._fetch_failed_at.get(provider, 0.0)
+            recently_failed = not force_refresh and time.time() - failed_at < _FETCH_RETRY_SECONDS
             try:
+                if recently_failed:
+                    raise RuntimeError("the last fetch failed moments ago")
                 models = await self._fetch_raw(provider)
             except Exception as exc:  # noqa: BLE001 — a UI list must never crash the page.
-                log.info("Model catalog fetch for %s failed: %s", provider, exc)
+                if not recently_failed:
+                    log.info("Model catalog fetch for %s failed: %s", provider, exc)
+                    self._fetch_failed_at[provider] = time.time()
                 if cached:
                     return CatalogResult(
                         provider,
@@ -1853,6 +1867,7 @@ class ModelCatalog:
                 )
 
             now = time.time()
+            self._fetch_failed_at.pop(provider, None)
             self._cache[provider] = (now, models)
             self._save_cache()
             return CatalogResult(

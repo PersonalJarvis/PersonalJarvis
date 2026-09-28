@@ -13,14 +13,14 @@
  * the five-layer parity test (AP-4).
  */
 import { useCallback, useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { MentionPlugin } from "./chat/mentionItems";
 
 import type { Checkpoint, SocietyAgentRow } from "@/lib/societyApi";
 
 import { PALETTE_PRESETS, resolvePalette, type FigureRecipe } from "./figures/figureRecipe";
 import { SAMPLE_ROSTER } from "./mockRoster";
-import { beginRetirement, retirementRunning } from "./world/retireStore";
+import { beginRetirement, retirementRunning, retirementStageMounted } from "./world/retireStore";
 import { announceSpawn } from "./world/spawnStore";
 
 /** MASTERPLAN §2.5 — exactly one lead (Jarvis), orchestrators may ASSIGN. */
@@ -280,6 +280,21 @@ async function fetchSocietyRoster(): Promise<RosterData> {
   return { agents: rows, sample: true };
 }
 
+/**
+ * Apply a change to the cached roster right away, then refresh it in the
+ * background. A create or a retirement shows on the rail the moment the
+ * server said yes, instead of after a second full `GET /agents`.
+ */
+function patchRoster(
+  client: QueryClient,
+  change: (agents: readonly SocietyAgent[]) => SocietyAgent[],
+): void {
+  client.setQueryData<RosterData>(ROSTER_QUERY_KEY, (prev) =>
+    prev && !prev.sample ? { ...prev, agents: change(prev.agents) } : prev,
+  );
+  void client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+}
+
 export function useSocietyRoster() {
   return useQuery({
     queryKey: ROSTER_QUERY_KEY,
@@ -397,8 +412,12 @@ export function useCreateAgent() {
           const created = (await res.json()) as { agent: SocietyAgentRow };
           // The island owes this row an entrance: it walks out of the foundry.
           announceSpawn(created.agent.agent_id);
-          await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
-          return rowToAgent(created.agent);
+          const agent = rowToAgent(created.agent);
+          patchRoster(client, (agents) => [
+            ...agents.filter((a) => a.agentId !== agent.agentId),
+            agent,
+          ]);
+          return agent;
         }
         if (res.status !== 404 && res.status !== 503) {
           const detail = (await res.json().catch(() => null)) as { detail?: unknown } | null;
@@ -650,6 +669,13 @@ export function useRetireAgent() {
               : String(detail?.detail ?? res.status);
           throw new Error(`retire ${reason}`);
         }
+      }
+      // No island on screen (the Agents ledger, the office): there is no
+      // ceremony to wait for, so the row leaves the rail now.
+      if (sample || !retirementStageMounted()) {
+        patchRoster(client, (agents) => agents.filter((a) => a.agentId !== agent.agentId));
+        if (sample) await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+        return;
       }
       const started = beginRetirement({
         agentId: agent.agentId,
