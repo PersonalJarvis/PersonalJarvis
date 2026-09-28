@@ -81,12 +81,14 @@ from loguru import logger
 from jarvis.workspace import agents as workspace_agents
 from jarvis.workspace import launch_picks
 
-from . import layout_tree, library, opening, prompt_history, recap_engine, resume_store
+from . import fork, layout_tree, library, opening, prompt_history, recap_engine, resume_store
 from .activity import NO_READING, Reading, has_work_behind_it, observed
 from .agent_sessions import (
     ResumeHandle,
+    can_fork,
     can_resume,
     discover,
+    fork_argv,
     has_conversation,
     launch_extra,
     resume_argv,
@@ -968,6 +970,17 @@ class Terminal:
     #: the timeline can tell a pick the chat just typed in from the older
     #: value the CLI's record still carries until its next reply.
     picked_at: dict[str, float] = field(default_factory=dict)
+    # Where this pane's agent runs, when that is NOT the workspace folder: the
+    # git worktree a fork was opened in (see `Registry.fork_terminal`). Empty
+    # means the workspace folder, which is every pane that is not such a fork.
+    # `branch` is that worktree's branch, shown in the pane header.
+    folder: str = ""
+    branch: str = ""
+    # The conversation this pane is a COPY of, until its first process has
+    # copied it. Spent by `attach` on the first spawn (the copy then has its
+    # own handle in `resume`), so a restart afterwards resumes the copy rather
+    # than forking the original a second time.
+    fork_from: ResumeHandle | None = None
     status: Status = "pending"
     pty_id: str | None = None
     # The geometry the PTY ACTUALLY holds, as last handed to `setwinsize`.
@@ -1327,6 +1340,12 @@ class Terminal:
             "archived": self.archived,
             "account": self.account,
             "account_label": account_label(self.account),
+            # Set only for a pane running in a git worktree of its own.
+            "folder": self.folder,
+            "branch": self.branch,
+            # Can this pane be forked with its conversation? False for a CLI
+            # without a fork of its own — the fork then starts a fresh chat.
+            "can_fork": can_fork(self.agent),
         }
 
     def to_row(self) -> dict[str, Any]:
@@ -1417,7 +1436,14 @@ class Terminal:
             model=self.model,
             effort=self.effort,
             permission_mode=self.permission_mode,
+            folder=self.folder,
+            branch=self.branch,
+            fork_from=self.fork_from,
         )
+
+    def cwd(self, workspace_folder: str) -> str:
+        """The folder this pane's agent runs in: its own worktree, else the workspace's."""
+        return self.folder or workspace_folder
 
 
 @dataclass(slots=True)
@@ -2752,6 +2778,12 @@ class Registry:
                 model=entry.model,
                 effort=entry.effort,
                 permission_mode=entry.permission_mode,
+                # A worktree deleted in the meantime would leave the agent with
+                # no folder to start in; the pane then falls back to the
+                # workspace folder rather than failing the reopen.
+                folder=entry.folder if entry.folder and Path(entry.folder).is_dir() else "",
+                branch=entry.branch if entry.folder and Path(entry.folder).is_dir() else "",
+                fork_from=entry.fork_from,
             )
 
         terminals = [_restored(index, entry) for index, entry in enumerate(space.terminals)]
@@ -3598,6 +3630,23 @@ class Registry:
             )
             term.resume = None
             continuing = None
+        # A forked pane's FIRST process starts as a copy of the conversation it
+        # was forked from (see `Registry.fork_terminal`). Spent here, once: the
+        # copy gets its own handle, and every later start resumes THAT rather
+        # than forking the original again. A source without a conversation on
+        # disk — never prompted, or pruned since — leaves nothing to copy, and
+        # the pane starts fresh like any other.
+        forking: tuple[tuple[str, ...], ResumeHandle | None] | None = None
+        if continuing is None and term.fork_from is not None:
+            source = term.fork_from
+            term.fork_from = None
+            if await asyncio.to_thread(has_conversation, term.agent, source, home):
+                forking = fork_argv(term.agent, source)
+            if forking is None:
+                logger.info(
+                    "Agentic IDE: {} has no conversation to fork — starting fresh",
+                    term.name,
+                )
         # What the pane was OPENED on, put back on the command line. A resume
         # gets them too: the CLI reads a conversation back, never the model or
         # the permission stance it ran under, so a restored pane without these
@@ -3617,6 +3666,14 @@ class Registry:
         if continuing is not None:
             argv = (*argv, *continuing)
             term.resumed = True
+        elif forking is not None:
+            extra, minted = forking
+            argv = (*argv, *extra)
+            # A copy of an existing conversation — the same "continued, not
+            # empty" claim a resume makes, and the same early-exit recovery
+            # (`_closed`) if the CLI refuses the fork: the pane restarts fresh.
+            term.resumed = True
+            term.resume = minted
         else:
             if term.resume is None and term.prompts_sent and can_resume(term.agent):
                 # A pane that was WORKED IN and still has no conversation id is
@@ -3758,12 +3815,14 @@ class Registry:
         # a socket frame the pane painted over a moment later.
         try:
             if redirected_home is None:
-                env = await asyncio.to_thread(self._prepare_spawn, term, session.folder)
+                env = await asyncio.to_thread(self._prepare_spawn, term, term.cwd(session.folder))
             else:
                 account_key = os.path.normcase(str(redirected_home))
                 account_gate = self._account_prepare_locks.setdefault(account_key, asyncio.Lock())
                 async with account_gate:
-                    env = await asyncio.to_thread(self._prepare_spawn, term, session.folder)
+                    env = await asyncio.to_thread(
+                        self._prepare_spawn, term, term.cwd(session.folder)
+                    )
         except SessionError as exc:
             term.status = "error"
             term.error = str(exc)
@@ -3803,7 +3862,7 @@ class Registry:
                     pty_session = await manager.spawn(
                         shell_argv=argv,
                         shell_id=f"agentic-ide:{term.key}",
-                        cwd=session.folder,
+                        cwd=term.cwd(session.folder),
                         cols=cols,
                         rows=rows,
                         on_output=_output,
@@ -3902,7 +3961,7 @@ class Registry:
         if term.resume is None and can_resume(term.agent):
             # A CLI that cannot be told its session id (Codex): find out which
             # one it just created, shortly from now.
-            self._schedule_lookup(session, term, session.folder, term.started_at)
+            self._schedule_lookup(session, term, term.cwd(session.folder), term.started_at)
         if term.continue_when_ready:
             # Somebody pressed "Continue" while this pane was still waiting for
             # a cold-start slot. The wish outlives the wait — see
@@ -4127,7 +4186,9 @@ class Registry:
             return
         if term.lookup_at and time.monotonic() - term.lookup_at < LOOKUP_COOLDOWN_S:
             return
-        self._schedule_lookup(owner, term, owner.folder, term.started_at, CONVERSATION_DELAYS_S)
+        self._schedule_lookup(
+            owner, term, term.cwd(owner.folder), term.started_at, CONVERSATION_DELAYS_S
+        )
 
     def write(self, key: str, data: str, workspace_id: str | None = None) -> bool:
         """Raw keystrokes from the pane's own xterm (not the injection path)."""
@@ -4762,6 +4823,92 @@ class Registry:
                 base.name if base else "the grid",
             )
             return term
+
+    def fork_suggestion(self, wanted: str, workspace_id: str | None = None) -> dict[str, Any]:
+        """What the fork dialog offers for pane ``wanted``, before anything is made.
+
+        Blocking (a few ``git`` calls) — callers run it in a worker thread.
+        """
+        found = self._locate(wanted, workspace_id)
+        if found is None:
+            raise self._unknown_terminal(wanted)
+        session, term = found
+        base = term.cwd(session.folder)
+        return {
+            "name": fork.suggest_name(base, term.name, recap_engine.known_headline(term)),
+            "in_repo": fork.repo_root(base) is not None,
+            "can_fork": can_fork(term.agent),
+            "has_conversation": term.resume is not None,
+        }
+
+    async def fork_terminal(
+        self,
+        wanted: str,
+        *,
+        workspace_id: str | None = None,
+        worktree: bool = False,
+        name: str | None = None,
+        direction: str = "right",
+    ) -> Terminal:
+        """Open a new pane that starts from a copy of pane ``wanted``'s chat.
+
+        The new pane runs the same CLI on the same account (its conversation
+        lives in that account's history) with the same picks, beside the
+        original. Its first process copies the conversation through the CLI's
+        own fork (:func:`.agent_sessions.fork_argv`); a CLI without one, or a
+        pane with nothing said yet, gives a fresh chat instead.
+
+        ``worktree=True`` first creates a git worktree on a new branch called
+        ``name`` (:func:`.fork.create_worktree`) and runs the new pane there,
+        so the two agents can change files without touching each other's work.
+        """
+        found = self._locate(wanted, workspace_id)
+        if found is None:
+            raise self._unknown_terminal(wanted)
+        session, source = found
+        if not accepts_prompts(source.agent):
+            raise SessionError(f"{source.name} is a plain terminal — it has no chat to fork.")
+        # Checked before a worktree is created, so a full workspace does not
+        # leave an orphaned branch behind.
+        if len(session.terminals) >= MAX_TERMINALS:
+            raise SessionError(
+                f"This workspace already has the maximum of {MAX_TERMINALS} terminals."
+            )
+        folder = ""
+        branch = ""
+        if worktree:
+            base = source.cwd(session.folder)
+            wanted_name = (name or "").strip() or await asyncio.to_thread(
+                fork.suggest_name, base, source.name, recap_engine.known_headline(source)
+            )
+            try:
+                created = await asyncio.to_thread(fork.create_worktree, base, wanted_name)
+            except fork.ForkError as exc:
+                raise SessionError(str(exc)) from exc
+            folder, branch = str(created.folder), created.branch
+        term = await self.add_terminal(
+            workspace_id=session.id,
+            agent=source.agent,
+            anchor=source.name,
+            direction=direction,
+            account=source.account,
+            model=source.model,
+            effort=source.effort,
+            permission_mode=source.permission_mode,
+        )
+        # No await between the pane's creation and these, so no viewer can
+        # attach (and spawn) before the pane knows it is a fork.
+        term.folder = folder
+        term.branch = branch
+        term.fork_from = source.resume
+        await self._persist()
+        logger.info(
+            "Agentic IDE: forked {} into {}{}",
+            source.name,
+            term.name,
+            f" on worktree branch {branch}" if branch else "",
+        )
+        return term
 
     async def add_terminals(
         self,

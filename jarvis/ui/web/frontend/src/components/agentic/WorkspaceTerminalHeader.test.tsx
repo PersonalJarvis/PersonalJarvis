@@ -10,6 +10,17 @@ function pressPointer(target: Element, button = 0) {
 }
 
 describe("compact workspace terminal header", () => {
+  it("offers a fork button and menu entry, and shows a worktree fork's branch", () => {
+    const fork = vi.fn();
+    render(<WorkspaceTerminalHeader {...BASE} onFork={fork} branch="dana-fix-login" />);
+    fireEvent.click(screen.getByRole("button", { name: "Fork Dana" }));
+    expect(fork).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("pane-branch-Dana").textContent).toBe("dana-fix-login");
+    fireEvent.click(screen.getByRole("button", { name: "More actions for Dana" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Fork…" }));
+    expect(fork).toHaveBeenCalledTimes(2);
+  });
+
   it("uses the name and accurate status without a verbose toolbar", () => {
     render(<WorkspaceTerminalHeader {...BASE} onOpenConversation={() => {}} />);
     const header = screen.getByTestId("workspace-terminal-header-Dana");

@@ -97,6 +97,15 @@ class SnapshotTerminal:
     model: str = ""
     effort: str = ""
     permission_mode: str = ""
+    # Where this pane runs when it is not the workspace folder — a git worktree
+    # a fork was opened in — and that worktree's branch. Empty on older
+    # snapshots and on every ordinary pane: the workspace folder, as before.
+    folder: str = ""
+    branch: str = ""
+    # The conversation a forked pane has yet to copy. Cleared once its first
+    # process started; kept here so a fork that never got to start before a
+    # restart still starts as the copy it was opened as.
+    fork_from: ResumeHandle | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -115,6 +124,9 @@ class SnapshotTerminal:
             "model": self.model,
             "effort": self.effort,
             "permission_mode": self.permission_mode,
+            "folder": self.folder,
+            "branch": self.branch,
+            "fork_from": self.fork_from.to_dict() if self.fork_from else None,
         }
 
     @staticmethod
@@ -145,6 +157,9 @@ class SnapshotTerminal:
             model=str(data.get("model") or "").strip(),
             effort=str(data.get("effort") or "").strip(),
             permission_mode=str(data.get("permission_mode") or "").strip(),
+            folder=str(data.get("folder") or "").strip(),
+            branch=str(data.get("branch") or "").strip(),
+            fork_from=ResumeHandle.from_dict(data.get("fork_from")),
         )
 
 

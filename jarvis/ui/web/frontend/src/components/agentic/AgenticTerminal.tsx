@@ -435,6 +435,10 @@ interface AgenticTerminalProps {
   displayName: string;
   /** Compact workspace chrome is opt-in; legacy grids retain their existing header. */
   headerMode?: "legacy" | "compact";
+  /** Compact header only: opens the fork dialog for this pane. */
+  onFork?: () => void;
+  /** Compact header only: the worktree branch this pane runs on, if any. */
+  branch?: string;
   /** Registry identity and optional custom logo for the compact header. */
   agent?: string;
   agentLogoUrl?: string;
@@ -563,6 +567,8 @@ export function AgenticTerminal({
   workspaceId,
   displayName,
   headerMode = "legacy",
+  onFork,
+  branch,
   agent,
   agentLogoUrl,
   recap,
@@ -2368,6 +2374,8 @@ export function AgenticTerminal({
         onOpenConversation={() => setHistoryOpen(true)}
         onOpenChat={onOpenChat}
         onRestart={onRestart}
+        onFork={onFork}
+        branch={branch}
       /> : <PaneHeader
         workspaceId={workspaceId}
         status={visibleStatus}

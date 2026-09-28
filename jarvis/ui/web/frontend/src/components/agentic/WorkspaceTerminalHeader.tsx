@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties, type MouseEvent, type PointerEvent, type SVGProps } from "react";
 import { createPortal } from "react-dom";
-import { Check, Maximize2, Minimize2, MoreHorizontal, Plus, X } from "lucide-react";
+import { Check, GitBranch, GitFork, Maximize2, Minimize2, MoreHorizontal, Plus, X } from "lucide-react";
 import { AgentMark } from "./AgentMark";
 import { usePaneTitle } from "@/store/paneRecaps";
 import { PromptHistoryButton } from "./PromptHistoryButton";
@@ -30,6 +30,10 @@ interface Props {
   onOpenConversation?: () => void;
   onOpenChat?: () => void;
   onRestart?: () => void;
+  /** Opens the fork dialog: a new agent continuing a copy of this pane's chat. */
+  onFork?: () => void;
+  /** The git worktree branch this pane runs on, when it is a worktree fork. */
+  branch?: string;
 }
 
 type MenuIcon = ComponentType<SVGProps<SVGSVGElement>>;
@@ -48,7 +52,7 @@ const ACTION_CLASS = "flex h-7 w-7 shrink-0 items-center justify-center rounded 
 export function WorkspaceTerminalHeader({
   name, workspaceId, promptCount = 0, agent, agentLogoUrl, displayName, status, appearance, arranging = false,
   maximized = false, addDisabled = false, onArrangeStart, onActivate, onToggleMaximize,
-  onAdd, onClose, onRename, onOpenConversation, onOpenChat, onRestart,
+  onAdd, onClose, onRename, onOpenConversation, onOpenChat, onRestart, onFork, branch,
 }: Props) {
   const brand = PANE_BRAND[appearance];
   // The pane's goal in a few words, in place of its call-sign; the call-sign
@@ -147,6 +151,10 @@ export function WorkspaceTerminalHeader({
         <AgentMark agent={agent} label={displayName} logoUrl={agentLogoUrl} variant="plain" size="sm"
           className="!text-[color:var(--pane-ink)] [&>.bg-foreground]:!bg-[color:var(--pane-ink)]" />
         <span data-testid={`pane-title-${name}`} title={title ? `${title} (${name})` : name} className="truncate">{title || name}</span>
+        {branch && <span data-testid={`pane-branch-${name}`} title={`Runs in its own git worktree on branch ${branch}`}
+          className="flex min-w-0 max-w-[45%] shrink items-center gap-1 rounded bg-[color:var(--pane-chip)] px-1.5 py-0.5 font-mono text-[11px] font-normal text-[color:var(--pane-ink-muted)]">
+          <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" /><span className="truncate">{branch}</span>
+        </span>}
       </button> : <form data-header-control="true" className="flex min-w-0 flex-1 items-center gap-1"
         onSubmit={(event) => { event.preventDefault(); void commitRename(); }}>
         <input autoFocus aria-label={`Name for ${name}`} value={draft} maxLength={40} disabled={saving}
@@ -166,6 +174,8 @@ export function WorkspaceTerminalHeader({
           className={ACTION_CLASS}><MoreHorizontal className="h-4 w-4" /></button>
         <button type="button" aria-label={`${maximized ? "Restore" : "Maximize"} ${name}`} disabled={!onToggleMaximize}
           onClick={onToggleMaximize} className={ACTION_CLASS}>{maximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}</button>
+        {onFork && <button type="button" data-testid={`pane-fork-${name}`} aria-label={`Fork ${name}`} title={`Fork ${name}`}
+          disabled={addDisabled} onClick={onFork} className={ACTION_CLASS}><GitFork className="h-3.5 w-3.5" /></button>}
         <button type="button" aria-label={`Add agent beside ${name}`} disabled={addDisabled || !onAdd}
           onClick={() => onAdd?.("right")} className={ACTION_CLASS}><Plus className="h-4 w-4" /></button>
         <button type="button" aria-label={`Close ${name}`} disabled={!onClose} onClick={onClose} className={ACTION_CLASS}><X className="h-4 w-4" /></button>
@@ -191,6 +201,7 @@ export function WorkspaceTerminalHeader({
       }}>
       {([
         onRename && { label: "Rename", run: () => { setDraft(name); setRenameError(""); } },
+        onFork && !addDisabled && { label: "Fork…", Icon: GitFork, run: onFork },
         ...(onAdd && !addDisabled ? SPLIT_ITEMS.map((item, index) => ({
           label: `${item.label}…`, Icon: item.Icon, separated: index === 0, run: () => onAdd(item.direction),
         })) : []),

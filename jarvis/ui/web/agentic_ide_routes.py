@@ -267,6 +267,22 @@ class StartSessionRequest(BaseModel):
     )
 
 
+class ForkTerminalRequest(BaseModel):
+    workspace_id: str | None = Field(default=None, description="Workspace the pane is in.")
+    worktree: bool = Field(
+        default=False,
+        description=(
+            "False copies the chat into a new pane in the same folder; true first "
+            "creates a git worktree on a new branch and runs the copy there."
+        ),
+    )
+    name: str | None = Field(
+        default=None,
+        description="Branch and worktree name (worktree forks only); suggested when omitted.",
+    )
+    direction: str = Field(default="right", description="Where the fork opens beside the pane.")
+
+
 class AddTerminalRequest(BaseModel):
     workspace_id: str | None = Field(default=None, description="Workspace to add the session to.")
     agent: str | None = Field(
@@ -2653,6 +2669,42 @@ async def add_terminal(req: AddTerminalRequest) -> dict:
             model=req.model,
             effort=req.effort,
             permission_mode=req.permission_mode,
+        )
+    except SessionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "terminal": term.to_dict(), "state": get_registry().state()}
+
+
+@router.get("/terminals/{name}/fork", summary="What a fork of a terminal would be called")
+async def fork_suggestion(name: str, workspace_id: str | None = None) -> dict:
+    """The worktree name the fork dialog pre-fills, and whether a fork can copy the chat.
+
+    ``in_repo`` is false outside a git checkout — the dialog then offers only
+    the chat fork. ``can_fork`` is false for a CLI without a fork of its own,
+    whose "fork" is a fresh chat of the same CLI.
+    """
+    try:
+        suggestion = await asyncio.to_thread(get_registry().fork_suggestion, name, workspace_id)
+    except SessionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True, **suggestion}
+
+
+@router.post("/terminals/{name}/fork", summary="Fork a terminal's chat into a new terminal")
+async def fork_terminal(name: str, req: ForkTerminalRequest) -> dict:
+    """Open a new pane that continues a copy of this pane's conversation.
+
+    Same CLI, account, model, effort and permission stance, opened beside the
+    original. With ``worktree`` the copy runs in a new git worktree on branch
+    ``name``, so both agents can edit files without colliding.
+    """
+    try:
+        term = await get_registry().fork_terminal(
+            name,
+            workspace_id=req.workspace_id,
+            worktree=req.worktree,
+            name=req.name,
+            direction=req.direction,
         )
     except SessionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

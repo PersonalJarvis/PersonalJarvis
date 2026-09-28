@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AgenticTerminal } from "./AgenticTerminal";
 import { AgentMark } from "./AgentMark";
+import { ForkPaneDialog, type ForkMode, type ForkSource } from "./ForkPaneDialog";
 import type { PaneSplitDirection } from "./WorkspaceTerminalHeader";
 import type { SessionState, TerminalState } from "@/lib/agenticIdeApi";
-import { moveTerminal, renameTerminal, type PaneMovePosition } from "@/lib/agenticIdeApi";
+import { forkTerminal, moveTerminal, renameTerminal, type PaneMovePosition } from "@/lib/agenticIdeApi";
 import { useThemeValue } from "@/hooks/useTheme";
 import { useEventStore } from "@/store/events";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
@@ -49,6 +50,8 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
   const [maximized, setMaximized] = useState<string | null>(null);
   const [restarts, setRestarts] = useState<Record<string, number>>({});
   const [announcement, setAnnouncement] = useState("");
+  const [forking, setForking] = useState<ForkSource | null>(null);
+  const [forkBusy, setForkBusy] = useState(false);
   const dragCleanup = useRef<(() => void) | null>(null);
   const saveInFlight = useRef(false);
   const mounted = useRef(true);
@@ -187,6 +190,29 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     } catch (error) { pushToast("error", (error as Error).message); return false; }
     finally { latest.current.onMutationEnd?.(); }
   };
+  // A fork opens beside its source; the new pane becomes the selected one,
+  // because it was opened to be worked with next.
+  const fork = async ({ mode, branch }: { mode: ForkMode; branch: string }) => {
+    if (!forking) return;
+    const owner = latest.current.session;
+    setForkBusy(true);
+    latest.current.onMutationStart?.();
+    try {
+      const { session: next, terminal } = await forkTerminal(forking.name, {
+        workspaceId: owner.id, worktree: mode === "worktree", branch: mode === "worktree" ? branch : undefined,
+      });
+      if (!mounted.current) return;
+      setForking(null);
+      if (next.id !== latest.current.session.id) return;
+      latest.current.onChanged(next);
+      latest.current.onSelect(terminal.name);
+      setAnnouncement(terminal.branch ? `${forking.name} forked into ${terminal.name} on branch ${terminal.branch}.` : `${forking.name} forked into ${terminal.name}.`);
+    } catch (error) { pushToast("error", (error as Error).message); }
+    finally {
+      latest.current.onMutationEnd?.();
+      if (mounted.current) setForkBusy(false);
+    }
+  };
   const dragged = drag ? session.terminals.find((terminal) => idOf(terminal) === drag.id) : null;
 
   // A pane picked from the side panel may sit off-screen on a narrow grid.
@@ -243,7 +269,9 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             onClose={() => onClose(terminal)} onAttachError={(message) => pushToast("error", message)}
             onRename={(name) => rename(terminal, name)}
             restartToken={restarts[id] ?? 0} onRestart={() => setRestarts((current) => ({ ...current, [id]: (current[id] ?? 0) + 1 }))}
-            splitDisabled={tiles.length >= maxPanes} onSplit={(direction) => onAdd(terminal.name, direction)} />
+            splitDisabled={tiles.length >= maxPanes} onSplit={(direction) => onAdd(terminal.name, direction)}
+            branch={terminal.branch || undefined}
+            onFork={terminal.accepts_prompts === false ? undefined : () => setForking({ name: terminal.name, agent: terminal.agent, displayName: terminal.display_name, workspaceId: session.id })} />
           {drag?.target?.id === id && <div aria-hidden="true" data-testid="dock-preview" data-position={drag.target.position}
             className={cn("pointer-events-none absolute z-20 flex items-center justify-center rounded-xl border-2 p-2", drag.target.allowed ? "border-ring/70 bg-accent/[0.15]" : "border-destructive bg-background/80",
               drag.target.position === "left" ? "inset-y-1 left-1 w-1/2" : drag.target.position === "right" ? "inset-y-1 right-1 w-1/2" : drag.target.position === "above" ? "inset-x-1 top-1 h-1/2" : drag.target.position === "below" ? "inset-x-1 bottom-1 h-1/2" : "inset-1")}>
@@ -257,5 +285,6 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
       <AgentMark agent={dragged.agent} label={dragged.display_name} variant="plain" />{dragged.name}
     </div>}
     <span className="sr-only" role="status">{announcement}</span>
+    <ForkPaneDialog source={forking} busy={forkBusy} onCancel={() => setForking(null)} onConfirm={(choice) => void fork(choice)} />
   </div>;
 }

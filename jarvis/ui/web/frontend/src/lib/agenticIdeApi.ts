@@ -227,6 +227,12 @@ export interface TerminalState {
   account?: string | null;
   /** Its display name, so the pane header can show it without a second lookup. */
   account_label?: string | null;
+  /** Set only for a pane running in a git worktree of its own (a worktree fork). */
+  folder?: string;
+  /** That worktree's branch, shown in the pane header. */
+  branch?: string;
+  /** Can a fork of this pane copy its chat? False: the fork starts a fresh chat. */
+  can_fork?: boolean;
   /**
    * What this pane is doing, in one clause — the pane header's label.
    *
@@ -1522,6 +1528,58 @@ export async function renameTerminal(
   if (!body.state.session)
     throw new Error("The workspace closed while renaming a terminal.");
   return body.state.session;
+}
+
+/** What the fork dialog pre-fills for a pane, and what a fork of it can do. */
+export interface ForkSuggestion {
+  /** A free branch/worktree name that reads like the pane, e.g. "t3-fix-login". */
+  name: string;
+  /** False outside a git checkout: only the chat fork is possible. */
+  in_repo: boolean;
+  /** False for a CLI without its own fork: the fork starts a fresh chat. */
+  can_fork: boolean;
+  /** Whether the pane holds a conversation handle at all yet. */
+  has_conversation: boolean;
+}
+
+export async function fetchForkSuggestion(
+  name: string,
+  workspaceId?: string,
+): Promise<ForkSuggestion> {
+  const query = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : "";
+  const res = await fetch(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/fork${query}`,
+  );
+  if (!res.ok) throw new Error(await detail(res));
+  return (await res.json()) as ForkSuggestion;
+}
+
+/**
+ * Open a new pane beside `name` that continues a copy of its chat. With
+ * `worktree`, the copy runs in a new git worktree on branch `branch`.
+ * Returns the updated workspace and the new pane's call-sign.
+ */
+export async function forkTerminal(
+  name: string,
+  options: { workspaceId?: string; worktree: boolean; branch?: string },
+): Promise<{ session: SessionState; terminal: TerminalState }> {
+  const res = await fetch(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/fork`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        workspace_id: options.workspaceId,
+        worktree: options.worktree,
+        name: options.branch,
+      }),
+    },
+  );
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { state: IdeState; terminal: TerminalState };
+  if (!body.state.session)
+    throw new Error("The workspace closed while forking a terminal.");
+  return { session: body.state.session, terminal: body.terminal };
 }
 
 /** Stop one terminal's agent and remove its pane. Returns the updated workspace. */
