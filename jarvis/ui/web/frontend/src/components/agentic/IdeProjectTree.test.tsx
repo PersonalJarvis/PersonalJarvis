@@ -7,9 +7,19 @@ import { ChatLibraryError } from "@/lib/chatLibraryApi";
 
 const patchProject = vi.hoisted(() => vi.fn());
 const openProject = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/chatLibraryApi", () => ({ patchProject, openProject,
+const deleteProject = vi.hoisted(() => vi.fn());
+const reorderProjects = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/chatLibraryApi", () => ({ patchProject, openProject, deleteProject, reorderProjects,
   ChatLibraryError: class extends Error { constructor(message: string, readonly status: number) { super(message); } },
 }));
+
+const renameWorkspace = vi.hoisted(() => vi.fn());
+const closeWorkspace = vi.hoisted(() => vi.fn());
+const reorderWorkspaces = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/agenticIdeApi", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/agenticIdeApi")>();
+  return { ...actual, renameWorkspace, closeWorkspace, reorderWorkspaces };
+});
 
 const project = (id = "p1", pinned = false) => ({ id, path: `/${id}`, name: id === "p1" ? "App" : "New App",
   color: null, pinned, archived: false, scratch: false, created_at: 0, last_opened_at: 0, exists: true, chats: 0,
@@ -19,6 +29,11 @@ beforeEach(() => {
   localStorage.clear();
   patchProject.mockReset().mockResolvedValue({});
   openProject.mockReset().mockResolvedValue({ id: "p1" });
+  deleteProject.mockReset().mockResolvedValue(true);
+  reorderProjects.mockReset().mockResolvedValue([]);
+  renameWorkspace.mockReset().mockResolvedValue({});
+  closeWorkspace.mockReset().mockResolvedValue({});
+  reorderWorkspaces.mockReset().mockResolvedValue({});
   useIdeProjectsStore.setState({ projects: [project()], activeWorkspaceId: "p1-w1", pendingWorkspaceId: null, refreshRequest: null, action: null });
 });
 afterEach(cleanup);
@@ -142,4 +157,62 @@ it("submits only one metadata mutation when a project action is pressed twice", 
   expect(patchProject).toHaveBeenCalledTimes(1);
   act(() => finish({}));
   await waitFor(() => expect(useIdeProjectsStore.getState().refreshRequest?.nonce).toBe(1));
+});
+
+it("opens a workspace menu on right-click with rename and close", () => {
+  render(<IdeProjectTree />);
+  const row = screen.getByTestId("ide-workspace-row-p1-w1");
+  fireEvent.contextMenu(row);
+  expect(screen.getByTestId("ide-workspace-menu")).toBeDefined();
+  expect(screen.getByTestId("ide-workspace-menu-rename").textContent).toContain("Rename workspace");
+  expect(screen.getByTestId("ide-workspace-menu-close").textContent).toContain("Close workspace");
+  expect(screen.getByTestId("ide-workspace-menu-open")).toBeDefined();
+});
+
+it("renames a workspace from its right-click menu", async () => {
+  render(<IdeProjectTree />);
+  fireEvent.contextMenu(screen.getByTestId("ide-workspace-row-p1-w1"));
+  fireEvent.click(screen.getByTestId("ide-workspace-menu-rename"));
+  fireEvent.change(screen.getByRole("textbox", { name: "Rename Work" }), { target: { value: "Better Work" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save Work" }));
+  await waitFor(() => expect(renameWorkspace).toHaveBeenCalledWith("p1-w1", "Better Work"));
+  await waitFor(() => expect(useIdeProjectsStore.getState().refreshRequest?.nonce).toBe(1));
+});
+
+it("asks for confirmation before closing a workspace", async () => {
+  render(<IdeProjectTree />);
+  fireEvent.contextMenu(screen.getByTestId("ide-workspace-row-p1-w1"));
+  fireEvent.click(screen.getByTestId("ide-workspace-menu-close"));
+  expect(screen.getByTestId("ide-workspace-confirm-close")).toBeDefined();
+  expect(closeWorkspace).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByTestId("ide-workspace-confirm-close-confirm"));
+  await waitFor(() => expect(closeWorkspace).toHaveBeenCalledWith("p1-w1"));
+  await waitFor(() => expect(useIdeProjectsStore.getState().refreshRequest?.nonce).toBe(1));
+});
+
+it("asks for confirmation before deleting a project with no open workspaces", async () => {
+  useIdeProjectsStore.setState({
+    projects: [{
+      ...project(),
+      workspaces: [{ ...project().workspaces[0], status: "closed", live_terminals: 0 } as IdeProject["workspaces"][number]],
+    }],
+    activeWorkspaceId: null,
+  });
+  render(<IdeProjectTree />);
+  fireEvent.contextMenu(screen.getByTestId("ide-project-header-p1"));
+  expect(screen.getByTestId("ide-project-menu")).toBeDefined();
+  fireEvent.click(screen.getByTestId("ide-project-menu-delete"));
+  expect(screen.getByTestId("ide-project-confirm-delete")).toBeDefined();
+  expect(deleteProject).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByTestId("ide-project-confirm-delete-confirm"));
+  await waitFor(() => expect(deleteProject).toHaveBeenCalledWith("p1"));
+});
+
+it("blocks project deletion while a workspace is still open", () => {
+  render(<IdeProjectTree />);
+  fireEvent.contextMenu(screen.getByTestId("ide-project-header-p1"));
+  fireEvent.click(screen.getByTestId("ide-project-menu-delete"));
+  const confirm = screen.getByTestId("ide-project-confirm-delete-confirm");
+  expect((confirm as HTMLButtonElement).disabled).toBe(true);
+  expect(deleteProject).not.toHaveBeenCalled();
 });
