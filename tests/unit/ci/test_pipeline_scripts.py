@@ -340,3 +340,22 @@ def test_apply_moves_notes_under_a_dated_section(tmp_path):
     assert release_admit.versions(tmp_path) == ("1.1.0", "1.1.0")
     assert release_admit.check_identity("v1.1.0", tmp_path) == []
     assert release_admit.check_identity("v1.2.0", tmp_path)
+
+
+def test_any_failure_inside_a_flaky_file_is_known(tmp_path):
+    baseline = tmp_path / "b.json"
+    baseline.write_text(
+        json.dumps({"flaky_files": ["tests/unit/x/test_timing.py"], "known_failures": []}),
+        encoding="utf-8",
+    )
+    flip = _report(tmp_path / "r1.json", ["tests.unit.x.test_timing::test_ramp"])
+    crash = _report(tmp_path / "r2.json", ["tests/unit/x/test_timing.py::<timeout 300s>"])
+    other = _report(tmp_path / "r3.json", ["tests.unit.x.test_timing_other::test_a"])
+    assert ratchet_tests.main(["check", "--baseline", str(baseline), str(flip)]) == 0
+    assert ratchet_tests.main(["check", "--baseline", str(baseline), str(crash)]) == 0
+    assert ratchet_tests.main(["check", "--baseline", str(baseline), str(other)]) == 1
+    out = tmp_path / "b.json"
+    assert ratchet_tests.main(["update", "--out", str(out), str(other)]) == 0
+    assert json.loads(out.read_text(encoding="utf-8"))["flaky_files"] == [
+        "tests/unit/x/test_timing.py"
+    ]
