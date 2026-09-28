@@ -2199,6 +2199,27 @@ export function AgenticTerminal({
   }, [maximized]);
 
   /*
+   * Maximizing or restoring a pane from its header leaves the keyboard IN it.
+   *
+   * The button click took focus away from the terminal, so the user had to
+   * click the pane a second time before typing reached the agent. Toggling is
+   * an explicit "I want to work in this pane" — it becomes the focused pane and
+   * its terminal takes the keyboard once the new layout has settled (a frame
+   * for the size change, a short timer for the grid re-laying out around it).
+   * Only on the user's own toggle, never from the `maximized` prop, so a pane
+   * maximized by a cross-pane request does not steal the keyboard.
+   */
+  const toggleMaximizeAndFocusPane = useCallback(() => {
+    onToggleMaximize?.();
+    onFocus?.();
+    takeOwnershipRef.current?.();
+    const focusTerminal = () => termRef.current?.focus();
+    requestAnimationFrame(focusTerminal);
+    window.setTimeout(focusTerminal, 120);
+  }, [onToggleMaximize, onFocus]);
+  const toggleMaximizeAndFocus = onToggleMaximize ? toggleMaximizeAndFocusPane : undefined;
+
+  /*
    * Catch up the instant a drag lets go.
    *
    * While `layoutBusy` is true the pane deliberately ignores its own
@@ -2376,7 +2397,7 @@ export function AgenticTerminal({
         addDisabled={splitDisabled}
         onArrangeStart={onArrangeStart}
         onActivate={() => { onFocus?.(); takeOwnershipRef.current?.(); }}
-        onToggleMaximize={onToggleMaximize}
+        onToggleMaximize={toggleMaximizeAndFocus}
         onAdd={onSplit ? (direction) => onSplit(direction) : undefined}
         onClose={onClose}
         onRename={onRename}
@@ -2405,7 +2426,7 @@ export function AgenticTerminal({
         appearance={appearance}
         focused={focused}
         maximized={maximized}
-        onToggleMaximize={onToggleMaximize}
+        onToggleMaximize={toggleMaximizeAndFocus}
         onSplit={onSplit}
         agents={agents}
         onAgentsChanged={onAgentsChanged}
