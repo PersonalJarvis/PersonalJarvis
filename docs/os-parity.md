@@ -22,10 +22,20 @@ token handed over in the environment, and exits after 60 s with no terminal
 and no client. Where the probe fails, or the host cannot start, the registry
 keeps the in-process pool: terminals work as before and die with the app. A
 headless `python:3.11-slim` without `ptyprocess` reports the same missing-PTY
-error it always did. Verified live on Windows (host survives its client's
-process exit, adopt replays the screen); macOS and Linux run the same code
-path through `ptyprocess` and are covered by the process-level test in
-`tests/integration/terminal/test_pty_host_process.py`, not yet by a live run.
+error it always did.
+
+After a power-off the host is gone, so the next start resumes every agent that
+was running on its own conversation (each CLI's resume argument), in every
+workspace, and tells the ones that were working to continue. That path is
+identical on every OS; it depends only on login autostart, which is on by
+default on Windows, macOS and Linux (and a no-op on a headless host).
+
+Evidence: Windows verified live — the host survives its client's hard exit
+with the same PIDs and a replayed screen, and a real Claude Code pane killed
+together with its host came back `--resume`d on the same session id and
+recalled its conversation. Linux: the host process test and the client suite
+pass in `python:3.11-slim` (kernel 6.6, `ptyprocess`). macOS runs the same
+`ptyprocess` path and has not had a live run yet.
 
 ## iGentic project workspaces (T3)
 
