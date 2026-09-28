@@ -9,42 +9,30 @@ import { Button } from "@/components/ui/button";
 import type { SocietyAgent } from "../data";
 import { AgentSwatch } from "../AgentSwatch";
 import { defaultRecipe, EDITABLE_CELLS, resolvePalette, type FigureRecipe } from "../figures/figureRecipe";
-import { basesForStyle, CATALOG, catalogBaseFor, isReservedStyle, keepablePartsFor, partsForSlot, slotsWithParts, stylesWithBases } from "../figures/figureRegistry";
+import { HAIR_STYLES } from "../office/playerProfile";
+import { toyLookFor } from "../office/toyFigureModel";
 import { CompanionEditor } from "./CompanionEditor";
 import { resolveCompanion } from "./appearance";
 
 const AgentFigureViewer = lazy(() => import("../figures/AgentFigureViewer").then(m => ({ default: m.AgentFigureViewer })));
-const selectClass = "min-w-0 rounded-md border border-border bg-background p-2 text-sm text-foreground";
 
-function CharacterEditor({ value, onChange, disabled, lead }: { value: FigureRecipe; onChange: (r: FigureRecipe) => void; disabled: boolean; lead: boolean }) {
+/** The toy figure's look: hair or hat, and the six colours it wears. */
+function CharacterEditor({ value, onChange, disabled }: { value: FigureRecipe; onChange: (r: FigureRecipe) => void; disabled: boolean }) {
   const t = useT();
-  const base = catalogBaseFor(value);
-  const style = value.model ? "custom" : value.style && base?.styles.includes(value.style) ? value.style : base?.styles[0] ?? "modern";
-  const availableStyles = [...stylesWithBases(), ...(lead || isReservedStyle(style) ? ["spirit"] : [])];
   const colors = resolvePalette(value);
-  const selectBase = (id: string, nextStyle: string) => {
-    const entry = CATALOG.bases.find(b => b.base === id);
-    if (!entry) return;
-    const { model: _model, ...rest } = value;
-    onChange({ ...rest, base: entry.base, archetype: entry.archetype, style: nextStyle,
-      heightM: entry.heightM, parts: keepablePartsFor(value.parts, entry.archetype, nextStyle, entry.family ?? null, entry.fitSize ?? null) });
-  };
-  const slots = value.model ? [] : slotsWithParts(value.archetype, style, base?.family ?? null, base?.fitSize ?? null);
+  const hair = toyLookFor(value, "").hairStyle;
   return <fieldset disabled={disabled} className="grid gap-4 p-4" data-testid="character-editor">
     <div className="h-60"><Suspense fallback={null}><AgentFigureViewer recipe={value} quiet /></Suspense></div>
-    <label className="grid grid-cols-[6rem_1fr] items-center gap-3 text-sm">{t("society.create.style")}<select aria-label={t("society.create.style")} className={selectClass} value={style} onChange={e => {
-      const first = basesForStyle(e.target.value)[0]; if (first) selectBase(first.base, e.target.value);
-    }}>{availableStyles.map(s => <option key={s} value={s}>{t(`society.style.${s}`)}</option>)}{value.model && <option value={style}>{t("society.style.custom")}</option>}</select></label>
-    {!value.model && <label className="grid grid-cols-[6rem_1fr] items-center gap-3 text-sm">{t("society.create.base")}<select aria-label={t("society.create.base")} className={selectClass} value={value.base} onChange={e => selectBase(e.target.value, style)}>
-      {basesForStyle(style).map(b => <option key={b.id} value={b.base}>{b.label}</option>)}
-    </select></label>}
-    {slots.map(slot => <label key={slot} className="grid grid-cols-[6rem_1fr] items-center gap-3 text-sm">{t(`society.slot.${slot}`)}<select className={selectClass} value={value.parts[slot] ?? ""} onChange={e => {
-      const parts = { ...value.parts }; if (e.target.value) parts[slot] = e.target.value; else delete parts[slot]; onChange({ ...value, parts });
-    }}><option value="">{t("society.create.none")}</option>{partsForSlot(slot, value.archetype, style, base?.family ?? null, base?.fitSize ?? null).map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</select></label>)}
+    <div className="grid gap-2 text-sm">
+      <span>{t("society.office.hair_label")}</span>
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label={t("society.office.hair_label")}>
+        {HAIR_STYLES.map(style => <button key={style} type="button" aria-pressed={hair === style} onClick={() => onChange({ ...value, hairStyle: style })}
+          className={`rounded-full border px-2.5 py-1 text-xs ${hair === style ? "border-transparent bg-primary text-primary-foreground" : "border-border bg-background text-foreground hover:bg-secondary"}`}>
+          {t(`society.office.hair_${style}`)}
+        </button>)}
+      </div>
+    </div>
     <div className="grid grid-cols-2 gap-3">{EDITABLE_CELLS.map(cell => <label key={cell} className="flex items-center justify-between gap-2 text-sm">{t(`society.cell.${cell}`)}<input type="color" value={colors[cell]} onChange={e => onChange({ ...value, palette: { ...value.palette, [cell]: e.target.value } })} className="h-8 w-10 rounded border border-border bg-background" /></label>)}</div>
-    <label className="text-sm">{t("society.create.height")} <span className="float-right">{(value.heightM ?? base?.heightM ?? 1.75).toFixed(2)} m</span>
-      <input className="mt-2 w-full" type="range" min={0.6} max={2.4} step={0.05} value={value.heightM ?? base?.heightM ?? 1.75} onChange={e => onChange({ ...value, heightM: Number(e.target.value) })} />
-    </label>
   </fieldset>;
 }
 
@@ -77,7 +65,7 @@ export function AgentAppearanceDialog({ agent, sample, onClose }: { agent: Socie
     <Dialog.Content data-testid="agent-appearance-dialog" onCloseAutoFocus={e => { e.preventDefault(); opener.current?.focus(); }} className="fixed left-1/2 top-1/2 z-50 flex max-h-[90dvh] w-[min(640px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-border bg-popover text-foreground shadow-float">
       <header className="flex items-center gap-3 border-b border-border p-4"><AgentSwatch agent={{ ...agent, figure: recipe }} size={48} /><div className="flex-1"><Dialog.Title className="font-semibold">{displayName}</Dialog.Title><Dialog.Description className="text-sm text-muted-foreground">{t("society.companion.appearance")}</Dialog.Description></div><button aria-label={t("society.card.close")} onClick={close} className="rounded p-2 hover:bg-secondary"><X size={18} /></button></header>
       <div className="flex shrink-0 gap-2 border-b border-border p-3" role="tablist" aria-label={t("society.companion.appearance")}>{(["character", "companion"] as const).map(value => <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => setTab(value)} className={`rounded-md px-3 py-2 text-sm ${tab === value ? "bg-secondary text-foreground" : "text-muted-foreground"}`}>{t(`society.companion.${value}`)}</button>)}</div>
-      <div className="min-h-0 overflow-y-auto">{tab === "character" ? <CharacterEditor value={recipe} onChange={setRecipe} disabled={saving || sample} lead={agent.tier === "lead"} /> : <CompanionEditor value={resolveCompanion(agent.agentId, recipe.companion)} onChange={companion => setRecipe(r => ({ ...r, companion }))} disabled={saving || sample} lead={agent.tier === "lead"} />}</div>
+      <div className="min-h-0 overflow-y-auto">{tab === "character" ? <CharacterEditor value={recipe} onChange={setRecipe} disabled={saving || sample} /> : <CompanionEditor value={resolveCompanion(agent.agentId, recipe.companion)} onChange={companion => setRecipe(r => ({ ...r, companion }))} disabled={saving || sample} lead={agent.tier === "lead"} />}</div>
       <footer className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border p-4">
         {error && <p role="alert" className="w-full text-sm text-destructive">{t("society.profile_card.save_error")}</p>}
         {discard ? <><span className="mr-auto text-sm" role="alert">{t("society.profile_card.unsaved")}</span><Button variant="ghost" onClick={() => setDiscard(false)}>{t("society.profile_card.keep_editing")}</Button><Button variant="secondary" onClick={onClose}>{t("society.profile_card.discard")}</Button></> : <><Button variant="ghost" onClick={close} disabled={saving}>{t("society.card.close")}</Button><Button onClick={() => void save()} disabled={!dirty || saving || sample}>{t(saving ? "society.card.saving" : "society.card.save")}</Button></>}

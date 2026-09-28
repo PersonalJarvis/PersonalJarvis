@@ -822,7 +822,8 @@
       "hair_long": "Largo",
       "hair_beanie": "Gorro",
       "hair_cap": "Gorra",
-      "hair_bald": "Calvo"
+      "hair_bald": "Calvo",
+      "hair_label": "Peinado o sombrero"
     }
   }
 }

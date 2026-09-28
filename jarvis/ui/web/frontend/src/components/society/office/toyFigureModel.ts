@@ -17,7 +17,7 @@
  *   the hip joints sit HIP_UP above it.
  */
 
-import type { FigureRecipe, Palette } from "../figures/figureRecipe";
+import { recipeKey, type FigureRecipe, type Palette } from "../figures/figureRecipe";
 import type { FigureMode } from "../figures/FigureRig";
 
 // ---------------------------------------------------------------------------
@@ -115,6 +115,17 @@ function naturalSkinFor(hex: string): string {
  * primary → shirt, accent → shirt accent, secondary → trousers, shoes), with a
  * stable hash of `identity` choosing the hair style, blush and any missing colour.
  */
+/** The hair the recipe names explicitly, when it is one this figure can draw. */
+function chosenHair(recipe: FigureRecipe | null): HairStyle | null {
+  const value = recipe?.hairStyle;
+  return typeof value === "string" && (HAIR_STYLE_WHEEL as readonly string[]).includes(value) ? (value as HairStyle) : null;
+}
+
+/**
+ * The toy look for a stored figure. Hair comes from the recipe itself (its own
+ * field, else a hash of the recipe), never from the agent id, so the creator's
+ * preview and the office always draw the same person.
+ */
 export function toyLookFor(recipe: FigureRecipe | null, identity: string): ToyLook {
   const hash = hashString(identity || "toy");
   const palette: Partial<Palette> = recipe?.palette ?? {};
@@ -123,7 +134,7 @@ export function toyLookFor(recipe: FigureRecipe | null, identity: string): ToyLo
   return {
     skin,
     hair: validColour(palette.hair) ?? pick(HAIR_COLOURS, hash, 0x7a),
-    hairStyle: pick(HAIR_STYLE_WHEEL, hash, 0x3c),
+    hairStyle: chosenHair(recipe) ?? pick(HAIR_STYLE_WHEEL, recipe ? hashString(recipeKey({ ...recipe, hairStyle: undefined })) : hash, 0x3c),
     shirt: validColour(palette.primary) ?? pick(SHIRT_COLOURS, hash, 0x19),
     shirtAccent: validColour(palette.accent) ?? pick(SHIRT_COLOURS, hash, 0x2d),
     pants: validColour(palette.secondary) ?? pick(PANTS_COLOURS, hash, 0x44),

@@ -54,6 +54,8 @@ export interface FigureRecipe {
   model?: string;
   /** The style the look was picked from — metadata for the creator, never read by the runtime. */
   style?: string;
+  /** The toy figure's hair or hat ("short", "spiky", "bun", …); absent = derived from the rest of the recipe. */
+  hairStyle?: string;
 }
 
 /** The biped's default look — the built sheet's own strip, for a natural first figure. */
@@ -208,7 +210,7 @@ export function recipeKey(recipe: FigureRecipe): string {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, v]) => `${k}=${v}`)
     .join(";");
-  return `${recipe.archetype}/${recipe.base}|${recipe.model ?? ""}|${parts}|${palette}|${recipe.heightM ?? ""}`;
+  return `${recipe.archetype}/${recipe.base}|${recipe.model ?? ""}|${parts}|${palette}|${recipe.heightM ?? ""}|${recipe.hairStyle ?? ""}`;
 }
 
 /**

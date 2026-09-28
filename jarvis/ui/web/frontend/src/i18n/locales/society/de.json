@@ -822,7 +822,8 @@
       "hair_long": "Lang",
       "hair_beanie": "Mütze",
       "hair_cap": "Cap",
-      "hair_bald": "Glatze"
+      "hair_bald": "Glatze",
+      "hair_label": "Frisur oder Kopfbedeckung"
     }
   }
 }

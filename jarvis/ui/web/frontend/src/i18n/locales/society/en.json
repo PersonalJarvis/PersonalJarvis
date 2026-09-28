@@ -822,7 +822,8 @@
       "hair_long": "Long",
       "hair_beanie": "Beanie",
       "hair_cap": "Cap",
-      "hair_bald": "Bald"
+      "hair_bald": "Bald",
+      "hair_label": "Hair or hat"
     }
   }
 }
