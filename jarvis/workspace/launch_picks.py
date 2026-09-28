@@ -270,7 +270,7 @@ async def live_models() -> dict[str, list[dict[str, Any]]]:
         "grok-cli": read_grok_models,
         "opencode-cli": read_opencode_models,
     }
-    installed = await asyncio.to_thread(lambda: [r for r in readers if _installed(r)])
+    installed = await _off_loop(lambda: [r for r in readers if _installed(r)])
     reads = {runner: _shared_read(runner, readers[runner]) for runner in installed}
     tasks = {runner: task for runner, (task, _) in reads.items()}
     # A read an EARLIER request started (still running past its budget) is not
@@ -332,10 +332,30 @@ def _shared_read(runner: str, read: Any) -> tuple[Any, bool]:
     task = _IN_FLIGHT.get(key)
     if task is not None and not task.done():
         return task, False
-    task = asyncio.ensure_future(asyncio.to_thread(read))
+    task = asyncio.ensure_future(_off_loop(read))
     _IN_FLIGHT[key] = task
     task.add_done_callback(functools.partial(_forget_read, key))
     return task, True
+
+
+#: The CLI model-list reads get their own threads. A cold ``agy models`` can
+#: run for over a minute, and in the loop's shared default pool a few of them
+#: left every other ``to_thread`` caller in the app queueing behind them —
+#: including this module's own installed-check, which runs before the budget.
+_READ_POOL: Any = None
+
+
+def _off_loop(fn: Any) -> Any:
+    """Run ``fn`` on the model-list pool, carrying the catalog scope's context."""
+    import asyncio
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor
+
+    global _READ_POOL
+    if _READ_POOL is None:
+        _READ_POOL = ThreadPoolExecutor(max_workers=6, thread_name_prefix="cli-model-list")
+    ctx = contextvars.copy_context()
+    return asyncio.get_running_loop().run_in_executor(_READ_POOL, ctx.run, fn)
 
 
 def _forget_read(key: tuple[Any, ...], task: Any) -> None:
