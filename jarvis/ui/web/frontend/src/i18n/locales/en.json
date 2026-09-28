@@ -5814,7 +5814,6 @@
       "count_other": "{n} agents",
       "no_workspace": "Select a workspace to see its agents.",
       "empty": "No agents running in this workspace.",
-      "for": "for {time}",
       "last_output": "Last output {time} ago",
       "summary": {
         "waiting": "{n} need input",

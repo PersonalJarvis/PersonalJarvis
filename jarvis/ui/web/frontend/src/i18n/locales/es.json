@@ -5781,7 +5781,6 @@
       "count_other": "{n} agentes",
       "no_workspace": "Selecciona un espacio de trabajo para ver sus agentes.",
       "empty": "No hay agentes en este espacio de trabajo.",
-      "for": "desde hace {time}",
       "last_output": "Última salida hace {time}",
       "summary": {
         "waiting": "{n} esperan tu respuesta",

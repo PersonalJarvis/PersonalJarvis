@@ -18,6 +18,7 @@ vi.mock("./AgenticTerminal", () => ({ AgenticTerminal: (props: {
 </div> }));
 vi.mock("@/hooks/useTheme", () => ({ useThemeValue: () => "dark" }));
 import { WorkspaceTerminalGrid } from "./WorkspaceTerminalGrid";
+import { useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { balancedLayout, previewDock } from "./workspaceDocking";
 
 class ResizeObserverStub { observe() {} disconnect() {} }
@@ -178,4 +179,23 @@ it("only restarts the addressed session and shows survivors after maximized clos
   fireEvent.click(screen.getByRole("button", { name: "Maximize T1" }));
   rerender(<WorkspaceTerminalGrid {...props} session={makeSession(["T2"])} />);
   await waitFor(() => expect(screen.getByRole("button", { name: "Maximize T2" }).closest("[data-session-id]")?.className).not.toContain("hidden"));
+});
+
+it("frames the pane an agent card spotlit and drops the frame when another pane takes focus", () => {
+  useIdeSidePanelStore.setState({ spotlight: { workspaceId: "w1", pane: "T2" } });
+  render(<WorkspaceTerminalGrid {...props} session={makeSession()} />);
+  const spotlit = document.querySelector<HTMLElement>('[data-session-id="T2"]')!;
+  expect(spotlit.dataset.spotlit).toBe("true");
+  expect(spotlit.className).toContain("ring-accent");
+  expect(document.querySelector<HTMLElement>('[data-session-id="T1"]')!.dataset.spotlit).toBeUndefined();
+  fireEvent.mouseDown(screen.getByLabelText("Terminal input T1"));
+  expect(useIdeSidePanelStore.getState().spotlight).toBeNull();
+  expect(document.querySelector<HTMLElement>('[data-session-id="T2"]')!.dataset.spotlit).toBeUndefined();
+});
+
+it("ignores a spotlight aimed at another workspace", () => {
+  useIdeSidePanelStore.setState({ spotlight: { workspaceId: "w9", pane: "T2" } });
+  render(<WorkspaceTerminalGrid {...props} session={makeSession()} />);
+  expect(document.querySelector("[data-spotlit]")).toBeNull();
+  useIdeSidePanelStore.setState({ spotlight: null });
 });

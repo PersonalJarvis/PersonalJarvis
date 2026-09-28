@@ -54,6 +54,15 @@ function persist(open: boolean, tabs: SidePanelTabId[], active: SidePanelTabId):
   }
 }
 
+/**
+ * The pane an agent card pointed at: the grid frames it in the signal blue
+ * until the user focuses another pane, picks another card, or closes the panel.
+ */
+export interface PaneSpotlight {
+  workspaceId: string;
+  pane: string;
+}
+
 interface IdeSidePanelState {
   open: boolean;
   tabs: SidePanelTabId[];
@@ -65,6 +74,8 @@ interface IdeSidePanelState {
   select: (id: SidePanelTabId) => void;
   /** Closing the last tab collapses the panel; reopening starts fresh. */
   closeTab: (id: SidePanelTabId) => void;
+  spotlight: PaneSpotlight | null;
+  setSpotlight: (spotlight: PaneSpotlight | null) => void;
 }
 
 const initialTabs = storedTabs();
@@ -79,7 +90,12 @@ export const useIdeSidePanelStore = create<IdeSidePanelState>((set, get) => {
     open: storedOpen(),
     tabs: initialTabs.tabs,
     active: initialTabs.active,
-    setOpen: (open) => commit({ open }),
+    spotlight: null,
+    setSpotlight: (spotlight) => set({ spotlight }),
+    setOpen: (open) => {
+      if (!open) set({ spotlight: null });
+      commit({ open });
+    },
     toggle: () => get().setOpen(!get().open),
     openTab: (id) => {
       const { tabs } = get();
@@ -94,6 +110,7 @@ export const useIdeSidePanelStore = create<IdeSidePanelState>((set, get) => {
       if (index < 0) return;
       const rest = tabs.filter((tab) => tab !== id);
       if (rest.length === 0) {
+        set({ spotlight: null });
         commit({ open: false, tabs: DEFAULT_TABS, active: DEFAULT_TABS[0] });
         return;
       }

@@ -5781,7 +5781,6 @@
       "count_other": "{n} Agents",
       "no_workspace": "Wähle einen Workspace, um seine Agents zu sehen.",
       "empty": "In diesem Workspace laufen keine Agents.",
-      "for": "seit {time}",
       "last_output": "Letzte Ausgabe vor {time}",
       "summary": {
         "waiting": "{n} warten auf dich",

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentsOverview } from "./AgentsOverview";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
+import { useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { resetWorkspacePanesPoll, useWorkspacePanesStore } from "@/store/workspacePanes";
 import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
 
@@ -39,6 +40,7 @@ function pane(name: string, workspaceId: string, overrides: Partial<WorkspacePan
 
 beforeEach(() => {
   resetWorkspacePanesPoll();
+  useIdeSidePanelStore.setState({ spotlight: null });
   useWorkspacePanesStore.setState({
     panes: [
       pane("T1", "w1", { activity: "working" }),
@@ -83,6 +85,8 @@ describe("AgentsOverview", () => {
     expect(rows[2].getAttribute("data-kind")).toBe("idle");
     expect(rows[0].textContent).toContain("T1");
     expect(rows[0].textContent).toContain("Claude Code");
+    expect(rows[0].querySelector('[data-testid="agent-mark-claude"]')).not.toBeNull();
+    expect(rows[1].querySelector('[data-testid="agent-mark-codex"]')).not.toBeNull();
     expect(rows[1].textContent).toContain("Codex");
   });
 
@@ -112,10 +116,11 @@ describe("AgentsOverview", () => {
     render(<AgentsOverview />);
     fireEvent.click(screen.getByRole("button", { name: /T2, Codex/ }));
     expect(useIdeChatStore.getState().paneRequest).toMatchObject({ workspaceId: "w1", pane: "T2" });
+    expect(useIdeSidePanelStore.getState().spotlight).toEqual({ workspaceId: "w1", pane: "T2" });
   });
 
-  it("highlights the staged pane", () => {
-    useIdeChatStore.setState({ stagedPane: "T2" });
+  it("marks the card whose pane is spotlit", () => {
+    useIdeSidePanelStore.setState({ spotlight: { workspaceId: "w1", pane: "T2" } });
     render(<AgentsOverview />);
     const rows = screen.getAllByTestId("ide-workspace-agent-row");
     expect(rows[1].getAttribute("aria-current")).toBe("true");
@@ -152,8 +157,7 @@ describe("AgentsOverview", () => {
     });
     render(<AgentsOverview />);
     const row = screen.getByTestId("ide-workspace-agent-row");
-    expect(screen.getByTestId("ide-agent-state").textContent).toBe("Working");
-    expect(row.textContent).toContain("for 3m");
+    expect(screen.getByTestId("ide-agent-state").textContent).toBe("Working · 3m");
     expect(screen.getByTestId("ide-agent-task").textContent).toBe("Fix the login test");
     expect(row.textContent).toMatch(/Last output \d+s ago/);
   });
