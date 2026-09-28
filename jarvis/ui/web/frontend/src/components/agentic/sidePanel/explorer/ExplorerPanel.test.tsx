@@ -16,7 +16,14 @@ const CHANGES = {
   truncated: false,
   reason: "",
   files: [
-    { path: "src/app.ts", status: "modified", added: 3, removed: 1, is_directory: false },
+    {
+      path: "src/app.ts",
+      status: "modified",
+      added: 3,
+      removed: 1,
+      is_directory: false,
+      authors: [{ pane: "T2", history_id: "h2", agent: "codex", display_name: "Codex", last_edit_ms: 5 }],
+    },
     { path: "old.md", status: "deleted", added: 0, removed: 4, is_directory: false },
   ],
 };
@@ -64,8 +71,8 @@ beforeEach(() => {
   }));
   useEventStore.setState({ activeSection: "agentic-ide" });
   useIdeChatStore.setState({ workspace: { id: "w1", name: "App", path: "/code/app" }, stagedPane: null });
-  useIdeExplorerStore.setState({ view: "changes", opened: null });
-  useIdeSidePanelStore.setState({ open: false, tabs: ["agents", "files"], active: "agents" });
+  useIdeExplorerStore.setState({ opened: { changes: null, files: null } });
+  useIdeSidePanelStore.setState({ open: false, tabs: ["agents", "changes", "files"], active: "agents" });
 });
 
 afterEach(() => {
@@ -75,7 +82,7 @@ afterEach(() => {
 
 describe("ExplorerPanel", () => {
   it("lists what changed — deleted red, edited green — with line counts and the branch", async () => {
-    render(<ExplorerPanel />);
+    render(<ExplorerPanel view="changes" />);
     const rows = await screen.findAllByTestId("explorer-change-row");
     expect(rows.map((row) => row.dataset.path)).toEqual(["src/app.ts", "old.md"]);
     expect(rows[0].textContent).toContain("+3");
@@ -85,8 +92,18 @@ describe("ExplorerPanel", () => {
     expect(screen.getByTestId("explorer-branch").textContent).toBe("main");
   });
 
+  it("names the coding agent that changed a file, and only where one is known", async () => {
+    render(<ExplorerPanel view="changes" />);
+    const rows = await screen.findAllByTestId("explorer-change-row");
+    const authors = rows[0].querySelector('[data-testid="explorer-change-authors"]');
+    expect(authors?.textContent).toContain("Codex");
+    expect(authors?.getAttribute("title")).toContain("T2");
+    expect(rows[1].querySelector('[data-testid="explorer-change-authors"]')).toBeNull();
+    expect(screen.queryByRole("tablist")).toBeNull();
+  });
+
   it("hands a terminal the absolute path when a row is dragged", async () => {
-    render(<ExplorerPanel />);
+    render(<ExplorerPanel view="changes" />);
     const [row] = await screen.findAllByTestId("explorer-change-row");
     const data: Record<string, string> = {};
     const dataTransfer = { setData: (type: string, value: string) => { data[type] = value; }, effectAllowed: "" };
@@ -95,7 +112,7 @@ describe("ExplorerPanel", () => {
   });
 
   it("opens a changed file as a diff with removed and added lines", async () => {
-    render(<ExplorerPanel />);
+    render(<ExplorerPanel view="changes" />);
     const [row] = await screen.findAllByTestId("explorer-change-row");
     fireEvent.click(row);
     const diff = await screen.findByTestId("explorer-diff");
@@ -105,9 +122,8 @@ describe("ExplorerPanel", () => {
     expect(diff.querySelector('[data-kind="add"]')?.className).toContain("bg-success/10");
   });
 
-  it("shows the folder as a lazy tree in the Files view", async () => {
-    useIdeExplorerStore.setState({ view: "files" });
-    render(<ExplorerPanel />);
+  it("shows the folder as a lazy tree in the Folder tab", async () => {
+    render(<ExplorerPanel view="files" />);
     await waitFor(() => expect(screen.getAllByTestId("explorer-tree-row")).toHaveLength(2));
     const rows = screen.getAllByTestId("explorer-tree-row");
     expect(rows.map((row) => row.dataset.path)).toEqual(["src", "README.md"]);
@@ -117,12 +133,12 @@ describe("ExplorerPanel", () => {
 });
 
 describe("terminal path clicks", () => {
-  it("open the file in the Explorer instead of the OS when the IDE is mounted", async () => {
+  it("open the file in the Folder tab instead of the OS when the IDE is mounted", async () => {
     renderHook(() => useExplorerPathRouting());
     act(() =>
       activateTerminalLink(new MouseEvent("click", { button: 0, ctrlKey: true }), "src/app.ts", { workspaceId: "w1" }),
     );
-    expect(useIdeExplorerStore.getState().opened).toEqual({ workspaceId: "w1", path: "src/app.ts" });
+    expect(useIdeExplorerStore.getState().opened.files).toEqual({ workspaceId: "w1", path: "src/app.ts" });
     expect(useIdeSidePanelStore.getState()).toMatchObject({ open: true, active: "files" });
     expect(calls.some((url) => url.includes("terminal-target"))).toBe(false);
   });
@@ -130,7 +146,7 @@ describe("terminal path clicks", () => {
   it("fall back to the OS for another workspace's pane", () => {
     renderHook(() => useExplorerPathRouting());
     activateTerminalLink(new MouseEvent("click", { button: 0, ctrlKey: true }), "src/app.ts", { workspaceId: "w9" });
-    expect(useIdeExplorerStore.getState().opened).toBeNull();
+    expect(useIdeExplorerStore.getState().opened.files).toBeNull();
     expect(calls.some((url) => url.includes("terminal-target"))).toBe(true);
   });
 });

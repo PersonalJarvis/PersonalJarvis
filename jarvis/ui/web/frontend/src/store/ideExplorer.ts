@@ -6,12 +6,13 @@ import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
 
 /**
- * The Explorer tab's state: which list it shows and which file is open.
+ * The Changes and Folder tabs' state: which file each of them has open.
  *
  * Kept outside the component because a file can be opened from elsewhere: a
  * Ctrl+click on a path a coding agent printed in its terminal lands here (see
- * `OPEN_PATH_EVENT`), opens the side panel on the Explorer, and shows that
- * file's diff.
+ * `OPEN_PATH_EVENT`), opens the side panel on the Folder tab, and shows that
+ * file's diff. Each tab keeps its own open file, so opening one in Changes
+ * does not cover the tree in Folder.
  */
 export type ExplorerView = "files" | "changes";
 
@@ -22,19 +23,15 @@ export interface OpenedFile {
 }
 
 interface IdeExplorerState {
-  view: ExplorerView;
-  opened: OpenedFile | null;
-  setView: (view: ExplorerView) => void;
-  open: (file: OpenedFile) => void;
-  close: () => void;
+  opened: Record<ExplorerView, OpenedFile | null>;
+  open: (view: ExplorerView, file: OpenedFile) => void;
+  close: (view: ExplorerView) => void;
 }
 
 export const useIdeExplorerStore = create<IdeExplorerState>((set) => ({
-  view: "changes",
-  opened: null,
-  setView: (view) => set({ view }),
-  open: (file) => set({ opened: file }),
-  close: () => set({ opened: null }),
+  opened: { files: null, changes: null },
+  open: (view, file) => set((state) => ({ opened: { ...state.opened, [view]: file } })),
+  close: (view) => set((state) => ({ opened: { ...state.opened, [view]: null } })),
 }));
 
 export interface OpenPathDetail {
@@ -42,14 +39,14 @@ export interface OpenPathDetail {
   path: string;
 }
 
-/** Open a file in the side panel's Explorer, bringing the panel up if needed. */
+/** Open a file in the side panel's Folder tab, bringing the panel up if needed. */
 export function openInExplorer(file: OpenedFile): void {
-  useIdeExplorerStore.getState().open(file);
+  useIdeExplorerStore.getState().open("files", file);
   useIdeSidePanelStore.getState().openTab("files");
 }
 
 /**
- * Route terminal path clicks into the Explorer while the Agentic IDE is mounted.
+ * Route terminal path clicks into the Folder tab while the Agentic IDE is mounted.
  *
  * Only for the workspace on screen: a path from another workspace's pane has
  * no tree here to show it in, so it keeps the old behaviour.

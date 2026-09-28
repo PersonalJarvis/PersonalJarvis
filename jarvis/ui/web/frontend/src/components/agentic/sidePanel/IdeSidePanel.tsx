@@ -283,7 +283,8 @@ export function IdeSidePanel() {
           <PanelRightClose className="h-4 w-4" aria-hidden />
         </button>
       </div>
-      <div id={`${SIDE_PANEL_ID}-content`} role="tabpanel" className="min-h-0 flex-1">
+      {/* Keyed by tab: Changes and Folder share one component and must not share its state. */}
+      <div key={active} id={`${SIDE_PANEL_ID}-content`} role="tabpanel" className="min-h-0 flex-1">
         {current?.render()}
       </div>
     </aside>

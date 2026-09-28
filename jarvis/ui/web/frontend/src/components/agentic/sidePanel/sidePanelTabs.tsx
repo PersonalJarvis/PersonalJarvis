@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Bot, FolderTree, type LucideIcon } from "lucide-react";
+import { Bot, FileDiff, FolderTree, type LucideIcon } from "lucide-react";
 import type { SidePanelTabId } from "@/store/ideSidePanel";
 import { AgentsOverview } from "./AgentsOverview";
 import { ExplorerPanel } from "./explorer/ExplorerPanel";
@@ -28,10 +28,16 @@ export const SIDE_PANEL_TABS: readonly SidePanelTabDef[] = [
     render: () => <AgentsOverview />,
   },
   {
+    id: "changes",
+    labelKey: "ide_side_panel.tabs.changes",
+    icon: FileDiff,
+    render: () => <ExplorerPanel view="changes" />,
+  },
+  {
     id: "files",
     labelKey: "ide_side_panel.tabs.files",
     icon: FolderTree,
-    render: () => <ExplorerPanel />,
+    render: () => <ExplorerPanel view="files" />,
   },
 ];
 

@@ -2,6 +2,17 @@
 
 export type ChangeStatus = "modified" | "added" | "deleted" | "untracked" | "conflicted";
 
+/** A pane whose coding agent wrote a changed file, read from that agent's own record. */
+export interface ChangeAuthor {
+  /** The pane's call-sign, e.g. "T3". */
+  pane: string;
+  history_id: string;
+  agent: string;
+  display_name: string;
+  /** When it last wrote the file (epoch ms); 0 when unknown. */
+  last_edit_ms: number;
+}
+
 export interface ChangedFile {
   /** POSIX path relative to the workspace root. */
   path: string;
@@ -9,6 +20,8 @@ export interface ChangedFile {
   added: number | null;
   removed: number | null;
   is_directory: boolean;
+  /** Newest first; empty when no agent's record names the file (a shell edit, a closed pane). */
+  authors?: ChangeAuthor[];
 }
 
 export interface WorkspaceChanges {

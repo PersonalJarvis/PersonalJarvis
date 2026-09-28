@@ -81,6 +81,7 @@ from pydantic import BaseModel, Field
 
 from jarvis.agentic_ide import (
     agent_transcript,
+    change_authors,
     drop_analysis,
     drops,
     git_changes,
@@ -829,6 +830,16 @@ class WorkspaceFilesResponse(BaseModel):
     error: str | None = None
 
 
+class ChangeAuthorItem(BaseModel):
+    """A pane whose coding agent wrote a changed file, by its own record."""
+
+    pane: str = Field(description="The pane's call-sign, e.g. 'T3'.")
+    history_id: str
+    agent: str
+    display_name: str
+    last_edit_ms: int = Field(default=0, description="When it last wrote the file; 0 if unknown.")
+
+
 class ChangedFileItem(BaseModel):
     """One path an agent changed, relative to the workspace root."""
 
@@ -837,6 +848,10 @@ class ChangedFileItem(BaseModel):
     added: int | None = Field(default=None, description="Lines added; null when unknown.")
     removed: int | None = Field(default=None, description="Lines removed; null when unknown.")
     is_directory: bool = False
+    authors: list[ChangeAuthorItem] = Field(
+        default_factory=list,
+        description="Panes whose agent wrote this file, newest first; empty when unknown.",
+    )
 
 
 class WorkspaceChangesResponse(BaseModel):
@@ -1635,11 +1650,36 @@ async def get_workspace_changes(workspace_id: str) -> WorkspaceChangesResponse:
     if session is None:
         raise HTTPException(status_code=404, detail="Workspace not found.")
     changes = await asyncio.to_thread(git_changes.workspace_changes, session.folder)
+    authors: dict[str, list[change_authors.ChangeAuthor]] = {}
+    if changes.files:
+        records = [
+            change_authors.PaneRecord(
+                pane=term.name,
+                history_id=term.history_id,
+                agent=term.agent,
+                display_name=term.display_name,
+                session_id=term.resume.id,
+                home=account_home(term.agent, term.account),
+                folder=term.folder or session.folder,
+            )
+            for term in session.terminals
+            if term.resume is not None and agent_transcript.can_read(term.agent)
+        ]
+        authors = await asyncio.to_thread(change_authors.change_authors, session.folder, records)
     return WorkspaceChangesResponse(
         workspace_id=workspace_id,
         available=changes.available,
         branch=changes.branch,
-        files=[ChangedFileItem(**asdict(item)) for item in changes.files],
+        files=[
+            ChangedFileItem(
+                **asdict(item),
+                authors=[
+                    ChangeAuthorItem(**asdict(a))
+                    for a in change_authors.authors_for(item.path, item.is_directory, authors)
+                ],
+            )
+            for item in changes.files
+        ],
         truncated=changes.truncated,
         reason=changes.reason,
     )

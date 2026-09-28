@@ -11,15 +11,15 @@ import { create } from "zustand";
  */
 
 /** Every function the panel can show. A new one is a new id plus a registry entry. */
-export type SidePanelTabId = "agents" | "files";
+export type SidePanelTabId = "agents" | "changes" | "files";
 
-export const SIDE_PANEL_TAB_IDS: readonly SidePanelTabId[] = ["agents", "files"];
+export const SIDE_PANEL_TAB_IDS: readonly SidePanelTabId[] = ["agents", "changes", "files"];
 
 const OPEN_KEY = "jarvis.agenticIde.sidePanelOpen";
-// v2: the Explorer joined the default tabs; a v1 list would have hidden it.
-const TABS_KEY = "jarvis.agenticIde.sidePanelTabs.v2";
+// v3: Changes became its own tab beside Folder; a v2 list would have hidden it.
+const TABS_KEY = "jarvis.agenticIde.sidePanelTabs.v3";
 
-const DEFAULT_TABS: SidePanelTabId[] = ["agents", "files"];
+const DEFAULT_TABS: SidePanelTabId[] = ["agents", "changes", "files"];
 
 const isTabId = (value: unknown): value is SidePanelTabId =>
   typeof value === "string" && (SIDE_PANEL_TAB_IDS as readonly string[]).includes(value);

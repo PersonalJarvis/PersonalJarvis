@@ -24,14 +24,18 @@ import {
   type WorkspaceFilePreviewResponse,
 } from "@/lib/agenticIdeApi";
 import { WORKSPACE_PATH_TYPE } from "@/components/agentic/paneDrop";
+import { AgentMark } from "@/components/agentic/AgentMark";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
-import { useIdeExplorerStore } from "@/store/ideExplorer";
+import { useIdeExplorerStore, type ExplorerView } from "@/store/ideExplorer";
+import { paneTitleFrom, usePaneRecapPoll, usePaneRecapsStore } from "@/store/paneRecaps";
+import { useWorkspacePanesStore } from "@/store/workspacePanes";
 import { DiffView } from "./DiffView";
 import {
   absoluteWorkspacePath,
   fetchFileDiff,
   fetchWorkspaceChanges,
+  type ChangeAuthor,
   type ChangeStatus,
   type ChangedFile,
   type FileDiff,
@@ -39,7 +43,7 @@ import {
 } from "./explorerApi";
 import { fileIcon } from "./fileIcon";
 
-/** How often git is asked what changed while the Explorer is on screen. */
+/** How often git is asked what changed while the Changes or Folder tab is on screen. */
 const CHANGES_POLL_MS = 6000;
 const CHANGES_JITTER_MS = 1200;
 
@@ -127,18 +131,60 @@ function StatusLetter({ status }: { status: ChangeStatus }) {
 }
 
 /**
- * The Explorer tab: the workspace's folder as a tree, what the agents changed,
- * and any file's diff — drag a row onto a terminal to reference that file.
+ * Which coding agents wrote a changed file: each one's brand mark and the
+ * pane's title (its call-sign's CLI when it has none yet), newest first.
  */
-export function ExplorerPanel() {
+function ChangeAuthors({ authors, workspaceId }: { authors: ChangeAuthor[]; workspaceId: string }) {
+  const t = useT();
+  const recaps = usePaneRecapsStore((state) => (state.workspaceId === workspaceId ? state.byName : undefined));
+  const rows = useWorkspacePanesStore((state) => state.panes);
+  if (authors.length === 0) return null;
+  const named = authors.map((author) => {
+    const row = rows.find((pane) => pane.history_id === author.history_id);
+    const title = paneTitleFrom(recaps?.[author.pane], row);
+    return { ...author, label: title || author.display_name || author.agent };
+  });
+  const who = named.map((author) => `${author.label} (${author.pane}, ${author.display_name})`).join(", ");
+  const [first, ...rest] = named;
+  return (
+    <span
+      data-testid="explorer-change-authors"
+      title={fill(t("ide_side_panel.explorer.changed_by"), { who })}
+      className="flex min-w-0 max-w-[60%] shrink items-center gap-1 text-[10.5px] text-muted-foreground"
+    >
+      <span className="flex shrink-0 items-center -space-x-1">
+        {named.slice(0, 3).map((author) => (
+          <AgentMark
+            key={author.history_id}
+            agent={author.agent}
+            label={author.display_name}
+            size="sm"
+            variant="plain"
+            className="h-3.5 w-3.5"
+          />
+        ))}
+      </span>
+      <span className="truncate">{first.label}</span>
+      {rest.length > 0 && <span className="shrink-0 tabular-nums">+{rest.length}</span>}
+    </span>
+  );
+}
+
+/**
+ * The Changes tab (what the agents changed, and which agent) or the Folder tab
+ * (the workspace's folder as a tree); either opens any file's diff — drag a
+ * row onto a terminal to reference that file.
+ */
+export function ExplorerPanel({ view }: { view: ExplorerView }) {
   const t = useT();
   const workspace = useIdeChatStore((state) => state.workspace);
   const stagedPane = useIdeChatStore((state) => state.stagedPane);
-  const view = useIdeExplorerStore((state) => state.view);
-  const setView = useIdeExplorerStore((state) => state.setView);
-  const opened = useIdeExplorerStore((state) => state.opened);
-  const open = useIdeExplorerStore((state) => state.open);
-  const close = useIdeExplorerStore((state) => state.close);
+  const opened = useIdeExplorerStore((state) => state.opened[view]);
+  const openIn = useIdeExplorerStore((state) => state.open);
+  const closeIn = useIdeExplorerStore((state) => state.close);
+  const close = () => closeIn(view);
+  // Pane titles for the "changed by" line.
+  usePaneRecapPoll();
   const pushToast = useEventStore((state) => state.pushToast);
   const [filter, setFilter] = useState("");
   const workspaceId = workspace?.id ?? null;
@@ -195,10 +241,16 @@ export function ExplorerPanel() {
 
   const needle = filter.trim().toLowerCase();
   const changedFiles = (changes?.files ?? []).filter((file) => !needle || file.path.toLowerCase().includes(needle));
-  const openFile = (path: string) => open({ workspaceId, path });
+  const openFile = (path: string) => openIn(view, { workspaceId, path });
+  const changeCount = changes?.files.length ?? 0;
 
   return (
-    <section data-testid="ide-explorer" aria-label={t("ide_side_panel.explorer.aria")} className="flex h-full min-h-0 flex-col">
+    <section
+      data-testid="ide-explorer"
+      data-view={view}
+      aria-label={t(view === "changes" ? "ide_side_panel.tabs.changes" : "ide_side_panel.tabs.files")}
+      className="flex h-full min-h-0 flex-col"
+    >
       <div className="shrink-0 space-y-2 border-b border-border/60 px-3 pb-2.5 pt-3">
         <div className="flex items-center gap-2">
           <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -214,6 +266,14 @@ export function ExplorerPanel() {
               <span className="truncate">{changes.branch}</span>
             </span>
           )}
+          {view === "changes" && changeCount > 0 && (
+            <span
+              data-testid="explorer-change-count"
+              className="shrink-0 rounded bg-success/15 px-1 text-[10px] tabular-nums text-success"
+            >
+              {changeCount}
+            </span>
+          )}
           <button
             type="button"
             onClick={refresh}
@@ -223,27 +283,6 @@ export function ExplorerPanel() {
           >
             <RefreshCw className="h-3.5 w-3.5" aria-hidden />
           </button>
-        </div>
-        <div role="tablist" aria-label={t("ide_side_panel.explorer.views")} className="grid grid-cols-2 gap-1 rounded-lg bg-muted/60 p-0.5">
-          {(["changes", "files"] as const).map((id) => (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              aria-selected={view === id}
-              data-testid={`explorer-view-${id}`}
-              onClick={() => setView(id)}
-              className={cn(
-                "flex h-7 items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                view === id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {t(`ide_side_panel.explorer.view_${id}`)}
-              {id === "changes" && (changes?.files.length ?? 0) > 0 && (
-                <span className="rounded bg-success/15 px-1 text-[10px] tabular-nums text-success">{changes?.files.length}</span>
-              )}
-            </button>
-          ))}
         </div>
         <label className="flex h-8 items-center gap-2 rounded-lg border border-border/60 bg-background/50 px-2.5 focus-within:border-ring">
           <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
@@ -283,6 +322,7 @@ export function ExplorerPanel() {
             <ul data-testid="explorer-changes">
               {changedFiles.map((file) => {
                 const Icon = file.is_directory ? Folder : fileIcon(file.path);
+                const authors = file.authors ?? [];
                 return (
                   <li key={file.path}>
                     <button
@@ -293,15 +333,25 @@ export function ExplorerPanel() {
                       data-testid="explorer-change-row"
                       data-path={file.path}
                       title={`${file.path} — ${t("ide_side_panel.explorer.drag_hint")}`}
-                      className="group flex h-9 w-full items-center gap-2 px-3 text-left hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
+                      className="group flex min-h-9 w-full items-center gap-2 px-3 py-1 text-left hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
                     >
                       <Icon className={cn("h-4 w-4 shrink-0", STATUS_TONE[file.status])} aria-hidden />
                       <span className="flex min-w-0 flex-1 flex-col leading-tight">
                         <span className={cn("truncate text-[13px] text-foreground", file.status === "deleted" && "line-through decoration-destructive/60")}>
                           {baseName(file.path)}
                         </span>
-                        {parentPath(file.path) && (
-                          <span className="truncate text-[10.5px] text-muted-foreground">{parentPath(file.path)}</span>
+                        {(parentPath(file.path) || authors.length > 0) && (
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            {parentPath(file.path) && (
+                              <span className="min-w-0 truncate text-[10.5px] text-muted-foreground">{parentPath(file.path)}</span>
+                            )}
+                            {parentPath(file.path) && authors.length > 0 && (
+                              <span className="shrink-0 text-[10.5px] text-muted-foreground/60" aria-hidden>
+                                ·
+                              </span>
+                            )}
+                            <ChangeAuthors authors={authors} workspaceId={workspaceId} />
+                          </span>
                         )}
                       </span>
                       <ChangeCounts file={file} />
