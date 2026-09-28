@@ -16,8 +16,6 @@ set by the ``WebServer`` at startup (after ``ensure_user_skills_dir()``).
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
 import importlib.util
 import re
 from dataclasses import replace
@@ -28,6 +26,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
+from jarvis.core.admin_password import check_admin_pass
 from jarvis.core.paths import user_skills_dir
 from jarvis.core.uploads import UploadRejected, stage_upload
 from jarvis.skills.builtin import BUILTIN_SKILL_NAMES
@@ -209,15 +208,10 @@ def _check_admin_pass(provided: str | None, security_cfg: Any) -> bool:
 
     - No hash set (empty string) -> always False (built-in edits locked).
     - No password provided -> False.
-    - Otherwise: compare SHA-256, constant-time via ``hmac.compare_digest``.
+    - Otherwise: salted scrypt check (legacy SHA-256 hex still accepted),
+      constant-time -- see ``jarvis.core.admin_password``.
     """
-    if security_cfg is None:
-        return False
-    expected = getattr(security_cfg, "admin_password_hash", "")
-    if not expected or not provided:
-        return False
-    computed = hashlib.sha256(provided.encode("utf-8")).hexdigest()
-    return hmac.compare_digest(computed, expected)
+    return check_admin_pass(provided, security_cfg)
 
 
 # ----------------------------------------------------------------------
