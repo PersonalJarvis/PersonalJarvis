@@ -126,16 +126,6 @@ export const NAV_GROUPS: NavItem[][] = [
   // 1) Workspace — what the user builds with and reads back.
   [
     { id: "agents", labelKey: "nav.agents", icon: Users },
-    // Computers: the servers and virtual machines the assistant and its agents
-    // can work on besides this one — a rented VPS, a hosting-account import,
-    // a local Multipass VM. Its own section, not a Settings tab: IDE sessions
-    // and agents are placed ON these machines.
-    {
-      id: "computers",
-      labelKey: "nav.computers",
-      icon: Server,
-      fallbackLabel: "Computers",
-    },
     // The compact catalog opens on Plugins; direct section navigation selects
     // its corresponding tab and keeps this shared row highlighted.
     {
@@ -210,6 +200,15 @@ export const NAV_GROUPS: NavItem[][] = [
   // Telefonie" voice command lands on the "telephony" id. Settings likewise
   // fronts the former "Taskbar" + "Languages" sections.
   [
+    // Computers: the servers and virtual machines the assistant and its agents
+    // can work on besides this one (a rented VPS, a hosting-account import, a
+    // local VM). A Settings-hub entry, first under System.
+    {
+      id: "computers",
+      labelKey: "nav.computers",
+      icon: Server,
+      fallbackLabel: "Computers",
+    },
     {
       id: "apikeys",
       labelKey: "nav.apikeys",
@@ -288,6 +287,7 @@ export const SETTINGS_HUB_IDS: readonly SectionId[] = [
   "telephony",
   "telephony-setup",
   "local-models",
+  "computers",
   "wallpaper",
   "costs",
   "feedback",

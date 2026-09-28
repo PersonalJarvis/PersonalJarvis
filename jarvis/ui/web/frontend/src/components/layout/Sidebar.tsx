@@ -342,7 +342,7 @@ export function Sidebar({
   // retired "Jarvis Tools" folder used to be — it was the only entry hiding
   // behind "Show more" that users reached for daily, while the tools folder
   // duplicated exactly what "Show more" already lists.
-  const primaryIds = ["chats", "agents", "dictation", "visualization", "agentic-ide", "computers", "plugins", "marketplace"];
+  const primaryIds = ["chats", "agents", "dictation", "visualization", "agentic-ide", "plugins", "marketplace"];
   // The Settings hub owns its entries — they live in the hub's left
   // navigation now, so "Show more" must not list them a second time. The set
   // itself is named once in `navGroups` (`SETTINGS_HUB_IDS`).
@@ -526,7 +526,6 @@ export function Sidebar({
           <ul className="space-y-1">
             {renderRow(findItem("visualization"))}
             {renderRow(findItem("agentic-ide"))}
-            {renderRow(findItem("computers"))}
             {renderRow({ ...findItem("plugins"), labelKey: "sidebar.extensions_label" })}
           </ul>
           <button type="button" onClick={() => { setMoreOpen(!moreOpen); }} aria-expanded={moreOpen}
