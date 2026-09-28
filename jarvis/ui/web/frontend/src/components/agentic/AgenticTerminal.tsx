@@ -384,6 +384,36 @@ function documentHidden(): boolean {
 }
 
 /**
+ * The smallest window a pane will still measure itself in.
+ *
+ * Far below any window a person reads a terminal in, and far above the stub
+ * a minimized desktop window leaves behind: WebView2 on Windows shrinks the
+ * page to about 158x26 px while the app sits in the taskbar (measured
+ * 2026-09-28). A pane measured in that stub is not a real measurement — the
+ * full-width top pane still came out at the 10x4 floor, its agent redrew its
+ * whole interface ten columns wide, and restoring the window left that frame
+ * shredded over the real one until a click made the agent paint again.
+ */
+const MIN_WINDOW_WIDTH_PX = 320;
+const MIN_WINDOW_HEIGHT_PX = 160;
+
+/**
+ * Is the window itself collapsed to a size no pane can honestly be fitted to?
+ *
+ * Deliberately not `document.hidden`: the desktop shell can report a window
+ * that is plainly on screen as hidden for minutes (see `viewerMayOwn`), and a
+ * pane that refused to fit then could not follow a real resize. The viewport's
+ * own size cannot be wrong that way. A window that restores comes back through
+ * the ResizeObserver, which measures again.
+ */
+export function windowCollapsed(
+  width: number = typeof window !== "undefined" ? window.innerWidth : Infinity,
+  height: number = typeof window !== "undefined" ? window.innerHeight : Infinity,
+): boolean {
+  return width < MIN_WINDOW_WIDTH_PX || height < MIN_WINDOW_HEIGHT_PX;
+}
+
+/**
  * A coding CLI a split may start.
  *
  * Re-exported rather than declared here: the same list is offered by the chat
@@ -1007,7 +1037,9 @@ export function AgenticTerminal({
     });
     /** Is this pane's tile something that can honestly be measured right now? */
     const measurable = () =>
-      container.clientWidth >= 8 && container.clientHeight >= 8;
+      !windowCollapsed() &&
+      container.clientWidth >= 8 &&
+      container.clientHeight >= 8;
     /** Did the grid below come from the tile, or is it still the constructed default? */
     let mountMeasured = false;
 

@@ -427,6 +427,39 @@ async def test_repaint_nudges_stop_at_the_bound_and_leave_the_real_size(
     assert sizes[-1] == (80, 24), "the pane must be left at the size it really is"
 
 
+async def test_a_viewer_resize_the_agent_ignored_is_nudged_again(
+    registry: Registry,
+    fake_pty: FakePtyManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resize is a repaint request too, and an ignored one must not stick.
+
+    Restoring a minimized window resizes every pane; a full-screen agent that
+    let that pass left its old frame shredded across the new grid until a
+    click made it paint (2026-09-28).
+    """
+    monkeypatch.setattr(session_mod, "REPAINT_CONFIRM_S", 0.02)
+    monkeypatch.setattr(session_mod, "REPAINT_POLL_S", 0.005)
+    await _open(registry, tmp_path, [{"agent": "claude"}])
+    await registry.attach("T1", 80, 24, _noop_output, _noop_exit)
+    term = registry.session.terminals[0]
+    pty = term.pty_id
+    await fake_pty.emit(pty, "\x1b[?1049h\x1b[2J\x1b[Hthe frame")
+    fake_pty.resizes.clear()
+
+    assert registry.resize(term.key, 120, 40) is True
+    # The agent ignores the resize, then answers the first nudge.
+    await asyncio.sleep(0.04)
+    await fake_pty.emit(pty, "\x1b[2J\x1b[Hthe whole frame again")
+    await asyncio.gather(*registry._repaint_checks)
+
+    sizes = [(cols, rows) for tid, cols, rows in fake_pty.resizes if tid == pty]
+    assert sizes[:3] == [(120, 40), (120, 39), (120, 40)]
+    assert sizes[-1] == (120, 40), "the pane must be left at the size it really is"
+    assert not registry._repaint_check_by_pane
+
+
 async def test_a_line_mode_agent_is_nudged_once(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:

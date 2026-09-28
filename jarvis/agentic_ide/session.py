@@ -1960,6 +1960,8 @@ class Registry:
         # The follow-ups checking that a repaint nudge was answered (see
         # ``_confirm_repaint``), held for the same weak-reference reason.
         self._repaint_checks: set[asyncio.Task[None]] = set()
+        # The newest of those per pane, so a burst of resizes keeps one alive.
+        self._repaint_check_by_pane: dict[str, object] = {}
         # Whether panes may live in the PTY host (``jarvis.terminal.pty_host``)
         # instead of this process. Off until the app turns it on through
         # ``boot_restore``: a registry built by a test, a script or the CLI
@@ -4601,21 +4603,47 @@ class Registry:
         clears_before = term.replay.clears
         if not await self._resize_there_and_back(term, cols, rows):
             return
+        self._watch_repaint(term, clears_before)
+
+    def _watch_repaint(self, term: Terminal, clears_before: int) -> None:
+        """Check in the background that a size change was answered by a repaint.
+
+        Only for a full-screen agent: a line-mode CLI or a shell answers with no
+        whole-screen erase at all, and waiting for one would only nudge it four
+        more times. Needs a running loop; a synchronous caller without one (a
+        test, a script) simply goes unchecked.
+        """
         if not term.replay.holds_screen:
-            # A line-mode CLI or a shell answers with no whole-screen erase at
-            # all; waiting for one would only nudge it four more times.
             return
-        task = asyncio.get_running_loop().create_task(self._confirm_repaint(term, clears_before))
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        # One check per pane: a dragged seam resizes many times a second, and
+        # only the newest size's repaint is worth waiting for. An older check is
+        # retired by the token below rather than cancelled — cancelling one in
+        # the middle of its own nudge would leave the PTY a row short.
+        token = object()
+        self._repaint_check_by_pane[term.key] = token
+        task = loop.create_task(self._confirm_repaint(term, clears_before, token))
         self._repaint_checks.add(task)
         task.add_done_callback(self._repaint_checks.discard)
 
-    async def _confirm_repaint(self, term: Terminal, clears_before: int) -> None:
+        def _forget(_done: asyncio.Task[None], key: str = term.key) -> None:
+            if self._repaint_check_by_pane.get(key) is token:
+                del self._repaint_check_by_pane[key]
+
+        task.add_done_callback(_forget)
+
+    async def _confirm_repaint(
+        self, term: Terminal, clears_before: int, token: object | None = None
+    ) -> None:
         """Repeat the nudge until the agent's screen has really been redrawn.
 
         Each retry uses the size the pane has NOW: a viewer may have resized it
         meanwhile, and nudging back to the size captured earlier would undo
         that. A new process in the pane ends the check — its first paint is
-        whole anyway.
+        whole anyway — and so does a newer check for the same pane (``token``).
         """
         pty_id = term.pty_id
         generation = term.process_generation
@@ -4631,6 +4659,8 @@ class Registry:
             if term.pty_id != pty_id or term.process_generation != generation:
                 return
             if not term.pty_cols or not term.pty_rows:
+                return
+            if token is not None and self._repaint_check_by_pane.get(term.key) is not token:
                 return
             if attempt == REPAINT_NUDGE_ATTEMPTS:
                 break
@@ -4842,9 +4872,17 @@ class Registry:
         # transcript keeps wrapping at the old width.
         if (term.transcript.cols, term.transcript.rows) == (cols, rows):
             return True
+        clears_before = term.replay.clears
         if not self._pool(term).resize(term.pty_id, cols, rows):
             return False
         term.pty_cols, term.pty_rows = cols, rows
+        # A viewer's resize is a repaint request like any nudge, and a busy
+        # full-screen agent may let it pass (see ``REPAINT_CONFIRM_S``). The
+        # viewer has already reflowed its grid, so an unanswered one leaves the
+        # old frame shredded across the new rows until something else makes the
+        # agent paint (seen after restoring a minimized window, 2026-09-28).
+        # Checked, and re-nudged, like a re-join.
+        self._watch_repaint(term, clears_before)
         # The TUI answers the new size with a full redraw — shadow it so a
         # finished pane does not read as "working" every time the grid
         # re-lays itself out (chat view toggle, maximize, a dragged seam).
@@ -5274,9 +5312,7 @@ class Registry:
         term.computer_id = computer_id
         term.remote_folder = placement.remote_folder
         term.offload_snapshot = placement.offload_snapshot or ""
-        return (
-            "Moved with its conversation." if carried else "Moved; the agent starts fresh there."
-        )
+        return "Moved with its conversation." if carried else "Moved; the agent starts fresh there."
 
     async def _bring_back_locked(self, session: Session, term: Terminal) -> str:
         from jarvis.computers.remote_terminal import pool_for, tmux_session_name
