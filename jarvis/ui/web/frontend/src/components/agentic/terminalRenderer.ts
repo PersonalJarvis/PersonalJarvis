@@ -36,6 +36,19 @@
  * from coordinates that now point at other glyphs. Seen 2026-09-28: splitting
  * a new pane (whose mount restates theme and size, each with a clear) turned
  * the idle rows of three neighbouring panes into glyph soup.
+ *
+ * And the atlas can reshuffle itself without anyone asking. Once it holds the
+ * maximum number of pages it MERGES four of them into one and shifts every
+ * later page down an index. Each pane keeps its own GPU copy of every page and
+ * decides whether to re-upload by comparing a per-INDEX version number — but
+ * after the shift, index i holds a different page whose version can equal the
+ * one the pane uploaded for the old page there. The pane then keeps sampling
+ * the old texture with the new coordinates: overprinted, half-legible rows.
+ * Maximizing and restoring a pane is what fills the atlas fastest (a whole
+ * window of new glyphs, then every hidden neighbour repainting at once), which
+ * is how it was reported (2026-09-28). Measured in a six-pane harness: 8 merges
+ * left 6 panes drawing from a stale page; with {@link forgetUploadedAtlasPages}
+ * on every merge, none. So a merge makes every WebGL pane re-upload its pages.
  */
 
 import { CanvasAddon } from "@xterm/addon-canvas";
@@ -57,6 +70,8 @@ export type TerminalRendererKind = "webgl" | "canvas" | "dom";
 /** The addon surface this module needs — narrowed so tests can hand in fakes. */
 export interface WebglLike extends ITerminalAddon {
   onContextLoss: (listener: () => void) => { dispose(): void };
+  /** Fires for each page a shared-atlas merge removes (see the module comment). */
+  onRemoveTextureAtlasCanvas?: (listener: () => void) => { dispose(): void };
 }
 
 export interface RendererDeps {
@@ -71,12 +86,16 @@ const realDeps: RendererDeps = {
 
 let webglPanes = 0;
 
+/** One repaint per frame after an atlas merge, however many panes report it. */
+let repaintScheduled = false;
+
 /** Terminals currently drawing with WebGL — the ones sharing a glyph atlas. */
 const webglTerminals = new Set<Terminal>();
 
 /** Test hook: forget every pane counted so far. */
 export function resetWebglPaneCount(): void {
   webglPanes = 0;
+  repaintScheduled = false;
   webglTerminals.clear();
 }
 
@@ -92,6 +111,51 @@ export function clearTerminalTextureAtlas(term: Terminal): void {
   for (const other of webglTerminals) {
     if (other !== term) other.clearTextureAtlas?.();
   }
+}
+
+/**
+ * The slice of the WebGL addon's internals that holds a pane's GPU copies of
+ * the atlas pages. Not public API: every step is optional, so a future addon
+ * that renames any of it degrades to doing nothing rather than throwing.
+ */
+interface GlyphRendererInternals {
+  _core?: {
+    _renderService?: {
+      _renderer?: {
+        value?: { _glyphRenderer?: { value?: { _atlasTextures?: Array<{ version: number }> } } };
+      };
+    };
+  };
+}
+
+/**
+ * Make `term` re-upload every atlas page on its next frame — what the addon
+ * itself does when a pane switches atlas (`setAtlas`).
+ */
+export function forgetUploadedAtlasPages(term: Terminal): void {
+  const textures = (term as unknown as GlyphRendererInternals)._core?._renderService?._renderer
+    ?.value?._glyphRenderer?.value?._atlasTextures;
+  if (!Array.isArray(textures)) return;
+  for (const texture of textures) texture.version = -1;
+}
+
+
+/**
+ * An atlas merge just shifted the shared pages: every WebGL pane re-uploads
+ * them. Synchronous for the invalidation — the merge happens inside one pane's
+ * frame, before that pane uploads — and one repaint per animation frame for
+ * everyone else, however many pages and panes reported the same merge.
+ */
+function handleAtlasMerge(): void {
+  for (const term of webglTerminals) forgetUploadedAtlasPages(term);
+  if (repaintScheduled) return;
+  repaintScheduled = true;
+  const repaint = () => {
+    repaintScheduled = false;
+    for (const term of webglTerminals) term.refresh?.(0, Math.max(0, term.rows - 1));
+  };
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(repaint);
+  else repaint();
 }
 
 export interface AttachedRenderer {
@@ -154,8 +218,10 @@ export function attachTerminalRenderer(
       webgl = null;
     }
     if (webgl) {
+      const mergeSubscription = webgl.onRemoveTextureAtlasCanvas?.(handleAtlasMerge);
       const lossSubscription = webgl.onContextLoss(() => {
         lossSubscription.dispose();
+        mergeSubscription?.dispose();
         release();
         try {
           webgl?.dispose();

@@ -5,6 +5,7 @@ import {
   MAX_WEBGL_PANES,
   attachTerminalRenderer,
   clearTerminalTextureAtlas,
+  forgetUploadedAtlasPages,
   resetWebglPaneCount,
   type RendererDeps,
   type WebglLike,
@@ -25,6 +26,14 @@ function fakeTerminal(opts: { refuse?: (addon: ITerminalAddon) => boolean } = {}
 class FakeWebgl implements WebglLike {
   disposed = false;
   private listeners: Array<() => void> = [];
+  private mergeListeners: Array<() => void> = [];
+  onRemoveTextureAtlasCanvas(listener: () => void) {
+    this.mergeListeners.push(listener);
+    return { dispose: () => {} };
+  }
+  mergeAtlasPages() {
+    for (const l of [...this.mergeListeners]) l();
+  }
   activate() {}
   dispose() {
     this.disposed = true;
@@ -153,5 +162,46 @@ describe("clearTerminalTextureAtlas", () => {
     expect(c.clears()).toBe(0);
     clearTerminalTextureAtlas(c.term);
     expect(a.clears()).toBe(1);
+  });
+});
+
+/** A WebGL-drawn terminal exposing the GPU page copies the addon keeps. */
+function glTerminal(pages: number) {
+  const textures = Array.from({ length: pages }, (_, i) => ({ version: i + 1 }));
+  const refreshed: Array<[number, number]> = [];
+  const term = {
+    rows: 24,
+    loadAddon() {},
+    refresh(start: number, end: number) {
+      refreshed.push([start, end]);
+    },
+    _core: { _renderService: { _renderer: { value: { _glyphRenderer: { value: { _atlasTextures: textures } } } } } },
+  } as unknown as Terminal;
+  return { term, textures, refreshed };
+}
+
+describe("an atlas page merge", () => {
+  it("makes every WebGL pane re-upload its pages and repaint", async () => {
+    const d = deps();
+    const a = glTerminal(3);
+    const b = glTerminal(3);
+    attachTerminalRenderer(a.term, undefined, d);
+    attachTerminalRenderer(b.term, undefined, d);
+
+    d.webgls[0].mergeAtlasPages();
+    d.webgls[1].mergeAtlasPages();
+
+    // Invalidated synchronously: the merging pane uploads in the same frame.
+    expect(a.textures.every((t) => t.version === -1)).toBe(true);
+    expect(b.textures.every((t) => t.version === -1)).toBe(true);
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    // One repaint each, however many panes reported the merge.
+    expect(a.refreshed).toEqual([[0, 23]]);
+    expect(b.refreshed).toEqual([[0, 23]]);
+  });
+
+  it("leaves a terminal without the addon's internals alone", () => {
+    const { term } = fakeTerminal();
+    expect(() => forgetUploadedAtlasPages(term)).not.toThrow();
   });
 });
