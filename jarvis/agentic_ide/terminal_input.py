@@ -53,7 +53,7 @@ DEFAULT_APPEARANCE = "dark"
 
 #: (foreground, background) per appearance, mirroring ``terminalThemes.ts``.
 THEME_COLOURS: dict[str, tuple[str, str]] = {
-    "dark": ("#e8e8ec", "#12141a"),
+    "dark": ("#f4f4f6", "#12141a"),
     "light": ("#2b2b33", "#fcfbf8"),
 }
 
@@ -162,7 +162,7 @@ def classify_terminal_input(data: str, bracketed_paste_active: bool) -> tuple[bo
 
 
 def _rgb(colour: str) -> str:
-    """``#e8e8ec`` → ``rgb:e8e8/e8e8/ecec`` — the 16-bit form terminals use."""
+    """``#f4f4f6`` → ``rgb:f4f4/f4f4/f6f6`` — the 16-bit form terminals use."""
     raw = colour.lstrip("#").lower()
     return "rgb:" + "/".join(raw[i : i + 2] * 2 for i in (0, 2, 4))
 
