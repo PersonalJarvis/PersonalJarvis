@@ -1,7 +1,7 @@
 /**
- * ComputersView: the empty page explains itself; the add-computer wizard goes
- * provider -> method -> test connection -> add; a failed test says how to fix
- * it; a machine opens on tabs and its console runs a command.
+ * ComputersView: the empty page explains itself; connecting needs only an
+ * address and a way in (tested before anything is saved); hosting accounts are
+ * an optional shortcut; a machine opens on tabs and its console runs a command.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -136,7 +136,7 @@ describe("ComputersView", () => {
     expect(screen.getByTestId("computers-add-first")).toBeTruthy();
   });
 
-  it("adds a server: provider, method, test connection, add", async () => {
+  it("connects a server from just its address and password", async () => {
     let rows: Computer[] = [];
     const calls = installFetch({
       "GET /api/computers": () => ({ computers: rows }),
@@ -158,59 +158,46 @@ describe("ComputersView", () => {
     renderView();
 
     fireEvent.click(await screen.findByTestId("computers-add-first"));
-    fireEvent.click(await screen.findByTestId("wz-provider-ionos"));
-    // IONOS has no API: the password path is recommended and pre-selected.
-    expect(screen.queryByTestId("wz-method-api")).toBeNull();
-    expect(screen.getByTestId("wz-method-password").getAttribute("aria-checked")).toBe("true");
-    fireEvent.click(screen.getByTestId("wz-continue"));
+    const connect = await screen.findByTestId("cx-connect");
+    expect((connect as HTMLButtonElement).disabled).toBe(true);
+    // A whole "ssh user@host:port" line is understood.
+    fireEvent.change(screen.getByTestId("cx-address"), { target: { value: "ssh admin@203.0.113.15:2222" } });
+    fireEvent.change(screen.getByTestId("cx-password"), { target: { value: "hunter2" } });
+    fireEvent.click(connect);
 
-    fireEvent.change(await screen.findByTestId("wz-host"), { target: { value: "203.0.113.15" } });
-    fireEvent.change(screen.getByTestId("wz-password"), { target: { value: "hunter2" } });
-    expect((screen.getByTestId("wz-add") as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByTestId("wz-test"));
-    expect(await screen.findByTestId("wz-test-ok")).toBeTruthy();
-    fireEvent.click(screen.getByTestId("wz-add"));
-
-    expect(await screen.findByTestId("wz-done")).toBeTruthy();
+    expect(await screen.findByTestId("computer-detail")).toBeTruthy();
     const post = calls.find((c) => c.method === "POST" && c.url === "/api/computers");
     expect(post?.body).toMatchObject({
       host: "203.0.113.15",
-      username: "root",
+      port: 2222,
+      username: "admin",
       auth: "password",
       password: "hunter2",
-      provider: "ionos",
     });
-    fireEvent.click(screen.getByTestId("wz-open"));
-    expect(await screen.findByTestId("computer-detail")).toBeTruthy();
   });
 
-  it("recommends the API import where the provider plants keys", async () => {
+  it("offers hosting accounts as an optional shortcut", async () => {
     installFetch({
       "GET /api/computers": () => ({ computers: [] }),
       "GET /api/computers/providers": () => ({ providers: PROVIDERS }),
+      "GET /api/computers/identity": () => IDENTITY,
     });
     renderView();
 
     fireEvent.click(await screen.findByTestId("computers-add-first"));
-    fireEvent.click(await screen.findByTestId("wz-provider-hostinger"));
-
-    expect(screen.getByTestId("wz-method-api").getAttribute("aria-checked")).toBe("true");
-    for (const method of ["password", "private_key", "jarvis_key"]) {
-      expect(screen.getByTestId(`wz-method-${method}`)).toBeTruthy();
-    }
-    fireEvent.click(screen.getByTestId("wz-continue"));
+    fireEvent.click(await screen.findByTestId("cx-account-hostinger"));
     expect(await screen.findByTestId("wz-token")).toBeTruthy();
   });
 
-  it("shows a fix-it sentence when the test fails", async () => {
-    installFetch({
+  it("says how to fix a failed connection and saves nothing", async () => {
+    const calls = installFetch({
       "GET /api/computers": () => ({ computers: [] }),
       "GET /api/computers/providers": () => ({ providers: PROVIDERS }),
       "GET /api/computers/identity": () => IDENTITY,
       "POST /api/computers/test": () => ({
         ok: false,
-        kind: "bad_key",
-        message: "The key could not be read.",
+        kind: "auth",
+        message: null,
         host_fingerprint: null,
         facts: null,
         latency_ms: null,
@@ -219,16 +206,12 @@ describe("ComputersView", () => {
     renderView();
 
     fireEvent.click(await screen.findByTestId("computers-add-first"));
-    fireEvent.click(await screen.findByTestId("wz-provider-raspberry_pi"));
-    fireEvent.click(screen.getByTestId("wz-method-private_key"));
-    fireEvent.click(screen.getByTestId("wz-continue"));
-    fireEvent.change(await screen.findByTestId("wz-host"), { target: { value: "192.168.1.20" } });
-    fireEvent.change(screen.getByTestId("wz-private-key"), { target: { value: "-----BEGIN KEY-----" } });
-    fireEvent.click(screen.getByTestId("wz-test"));
+    fireEvent.change(await screen.findByTestId("cx-address"), { target: { value: "192.168.1.20" } });
+    fireEvent.change(screen.getByTestId("cx-password"), { target: { value: "wrong" } });
+    fireEvent.click(screen.getByTestId("cx-connect"));
 
-    expect(await screen.findByTestId("wz-test-failed")).toBeTruthy();
-    expect(screen.getByText(/Paste the private key/)).toBeTruthy();
-    expect((screen.getByTestId("wz-add") as HTMLButtonElement).disabled).toBe(true);
+    expect(await screen.findByText(/refused the login/)).toBeTruthy();
+    expect(calls.some((c) => c.method === "POST" && c.url === "/api/computers")).toBe(false);
   });
 
   it("lists a machine, opens it and runs a console command", async () => {

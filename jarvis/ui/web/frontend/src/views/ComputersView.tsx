@@ -21,7 +21,7 @@ import { ComputerDetail, type DetailTab } from "@/views/computers/ComputerDetail
 import { ComputerRow, ComputerTableHead } from "@/views/computers/ComputerRow";
 import { KeepWorking } from "@/views/computers/KeepWorking";
 import { CopyField, needsAttention } from "@/views/computers/parts";
-import { AddComputerWizard } from "@/views/computers/wizard/AddComputerWizard";
+import { ConnectDialog } from "@/views/computers/ConnectDialog";
 
 /** Keyframes the provisioning bar uses; scoped by name, shipped with the view. */
 const KEYFRAMES = `@keyframes computers-indeterminate {
@@ -188,7 +188,7 @@ export function ComputersView() {
         </div>
       </ScrollArea>
 
-      {adding && <AddComputerWizard onClose={() => setAdding(false)} onOpen={openComputer} />}
+      {adding && <ConnectDialog onClose={() => setAdding(false)} onOpen={openComputer} />}
     </div>
   );
 }
