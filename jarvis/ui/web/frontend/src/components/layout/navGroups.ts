@@ -21,6 +21,7 @@ import {
   Mic,
   Notebook,
   ScrollText,
+  Server,
   Settings,
   Shapes,
   Share2,
@@ -213,6 +214,14 @@ export const NAV_GROUPS: NavItem[][] = [
       icon: OllamaIcon,
       fallbackLabel: "Local models",
     },
+    // Computers: the servers and virtual machines Jarvis can work on besides
+    // this one — a rented VPS, a hosting-account import, a local Multipass VM.
+    {
+      id: "computers",
+      labelKey: "nav.computers",
+      icon: Server,
+      fallbackLabel: "Computers",
+    },
     {
       id: "settings",
       labelKey: "nav.settings",
@@ -277,6 +286,7 @@ export const SETTINGS_HUB_IDS: readonly SectionId[] = [
   "telephony",
   "telephony-setup",
   "local-models",
+  "computers",
   "wallpaper",
   "costs",
   "feedback",

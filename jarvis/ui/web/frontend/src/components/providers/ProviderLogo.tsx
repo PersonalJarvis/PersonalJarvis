@@ -29,11 +29,14 @@ interface FamilyLogo {
 const PROVIDER_FAMILY_LOGOS: Record<string, FamilyLogo> = {
   antigravity: { file: "antigravity.svg", render: "colour" },
   cartesia: { file: "cartesia.svg", render: "own" },
+  digitalocean: { file: "digitalocean.svg", render: "mono" },
   claude: { file: "claude.svg", render: "colour" },
   elevenlabs: { file: "elevenlabs.svg", render: "mono" },
   gemini: { file: "gemini.svg", render: "colour" },
   "google-cloud": { file: "google-cloud.svg", render: "colour" },
   groq: { file: "groq.svg", render: "mono" },
+  hetzner: { file: "hetzner.svg", render: "mono" },
+  hostinger: { file: "hostinger.svg", render: "mono" },
   inworld: { file: "inworld.png", render: "own" },
   nvidia: { file: "nvidia.svg", render: "colour" },
   ollama: { file: "ollama.svg", render: "mono" },
@@ -79,13 +82,18 @@ export function providerFamily(providerId: string): string | null {
   if (id.includes("cartesia")) return "cartesia";
   if (id.includes("inworld")) return "inworld";
   if (id.includes("nvidia") || id.includes("nemotron")) return "nvidia";
+  // Hosting providers (Settings -> Computers cloud import).
+  if (id.includes("hostinger")) return "hostinger";
+  if (id.includes("hetzner")) return "hetzner";
+  if (id.includes("digitalocean")) return "digitalocean";
   return null;
 }
 
 /** An on-device engine or a self-hosted server: a capability, not a brand. */
 function localGlyph(providerId: string): "device" | "server" | null {
   const id = providerId.toLowerCase();
-  if (id.startsWith("local-")) return "server";
+  if (id.startsWith("local-") || id === "generic") return "server";
+  if (id === "multipass") return "device";
   if (id.includes("faster-whisper") || id.includes("piper")) return "device";
   return null;
 }

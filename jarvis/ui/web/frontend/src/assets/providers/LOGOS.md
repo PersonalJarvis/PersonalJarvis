@@ -52,10 +52,13 @@ Two render paths, chosen per file and recorded in the table:
 | antigravity | lobehub/lobe-icons `antigravity-color.svg` | MIT | colour | 2026-08-23 |
 | cartesia | Cartesia's own site icon, `https://cartesia.ai/favicon.svg` | vendor asset | own ground | 2026-08-23 |
 | claude | lobehub/lobe-icons `claude-color.svg` | MIT | colour | 2026-08-23 |
+| digitalocean | simple-icons `digitalocean.svg` (Computers section, cloud import) | CC0-1.0 | mono | 2026-09-28 |
 | elevenlabs | lobehub/lobe-icons `elevenlabs.svg` | MIT | mono | 2026-08-23 |
 | gemini | lobehub/lobe-icons `gemini-color.svg` | MIT | colour | 2026-08-23 |
 | google-cloud | lobehub/lobe-icons `googlecloud-color.svg` (Vertex AI cards) | MIT | colour | 2026-08-23 |
 | groq | lobehub/lobe-icons `groq.svg` | MIT | mono | 2026-08-23 |
+| hetzner | simple-icons `hetzner.svg` (Computers section, cloud import) | CC0-1.0 | mono | 2026-09-28 |
+| hostinger | simple-icons `hostinger.svg` (Computers section, cloud import) | CC0-1.0 | mono | 2026-09-28 |
 | inworld | Inworld's own site icon, `https://inworld.ai/icon.png` (PNG, 180 px) | vendor asset | own ground | 2026-08-23 |
 | nvidia | lobehub/lobe-icons `nvidia-color.svg` | MIT | colour | 2026-08-23 |
 | ollama | lobehub/lobe-icons `ollama.svg` | MIT | mono | 2026-08-23 |

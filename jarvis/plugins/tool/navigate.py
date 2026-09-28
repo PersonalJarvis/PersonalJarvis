@@ -43,6 +43,8 @@ KNOWN: frozenset[str] = frozenset(
         "apikeys",
         # Local models: the Ollama server, installed models and the catalogue.
         "local-models",
+        # Computers: the user's servers and local VMs, reached over SSH.
+        "computers",
         "settings",
         "telephony",
         "telephony-setup",
@@ -159,6 +161,15 @@ _ALIASES: dict[str, str] = {
     "wiki": "memory",
     "local models": "local-models",
     "local-models": "local-models",
+    "computers": "computers",
+    "servers": "computers",
+    "vps": "computers",
+    "virtual machines": "computers",
+    "virtual machine": "computers",
+    "vms": "computers",
+    "virtuelle maschinen": "computers",  # i18n-allow: input vocab
+    "ordenadores": "computers",  # i18n-allow: input vocab
+    "servidores": "computers",  # i18n-allow: input vocab
     "local model": "local-models",
     "ollama": "local-models",
     "lokale modelle": "local-models",  # i18n-allow: input vocab
