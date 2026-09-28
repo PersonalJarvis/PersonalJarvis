@@ -5653,7 +5653,22 @@
     "hint": "Wähle Tools für die nächste Nachricht. Berechtigungen gelten weiterhin.",
     "done": "Fertig"
   },
+  "question_card": {
+    "aria": "Rückfrage des Agenten",
+    "title": "Rückfrage",
+    "recommended": "Empfohlen",
+    "why": "Warum: {reason}",
+    "own_answer": "Andere Antwort eingeben…",
+    "own_placeholder": "Deine Antwort",
+    "send": "Senden",
+    "countdown": "Ohne Antwort wird in {time} automatisch die Empfehlung gewählt.",
+    "choosing": "Die Empfehlung wird gewählt…",
+    "auto_picked": "automatisch gewählt (keine Antwort in 5 Minuten)",
+    "own_words": "deine eigene Antwort",
+    "unanswered": "Nicht beantwortet – der Durchlauf wurde beendet."
+  },
   "work_trace": {
+    "question": "Wartet auf deine Antwort",
     "integration_used": "{service} verwendet",
     "activity_command": "Befehle ausgeführt",
     "activity_edit": "Dateien bearbeitet",

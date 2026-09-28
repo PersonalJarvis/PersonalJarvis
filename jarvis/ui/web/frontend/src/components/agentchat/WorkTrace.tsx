@@ -1,5 +1,5 @@
 import { createContext, memo, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Brain, Check, ChevronRight, CircleAlert, CircleDashed, FilePenLine, FileText, FolderSearch, ShieldQuestion, Terminal } from "lucide-react";
+import { Brain, Check, ChevronRight, CircleAlert, CircleDashed, FilePenLine, FileText, FolderSearch, MessageCircleQuestion, ShieldQuestion, Terminal } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useT } from "@/i18n";
@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
 import type { ReasoningBlock, TextBlock, ToolBlock, TurnBlock, TurnItem, TurnStatus } from "./reduce";
 import { ChatMarkdown } from "./ChatMarkdown";
+import { QuestionCard } from "./QuestionCard";
 import { toolDiff } from "./toolDiff";
 import { formatTokens, outputTokens } from "./toolView";
 import { activityParts, traceToolIdentity, traceToolName } from "./traceActivity";
@@ -46,7 +47,12 @@ function operation(name: string): string | null {
 }
 
 function attention(block: ToolBlock) {
-  return block.isError || Boolean(block.approval);
+  return block.isError || Boolean(block.approval) || Boolean(block.question);
+}
+
+/** An agent's question still waiting for the person — it never folds away. */
+function isOpenQuestion(block: TurnBlock): block is ToolBlock {
+  return block.kind === "tool" && Boolean(block.question && block.question.answer === null);
 }
 
 /** Only adjacent, successful, read-only operations may lose individual rows. */
@@ -99,7 +105,7 @@ export function splitConversationTurn(blocks: TurnBlock[]): { work: TurnBlock[];
 }
 
 function isPendingApproval(block: TurnBlock): block is ToolBlock {
-  return block.kind === "tool" && Boolean(block.approval && block.approval.decision === null);
+  return (block.kind === "tool" && Boolean(block.approval && block.approval.decision === null)) || isOpenQuestion(block);
 }
 
 function hasFoldableWork(blocks: TurnBlock[]): boolean {
@@ -292,6 +298,11 @@ function Detail({ label, text }: { label: string; text: string }) {
 }
 
 export const TraceTool = memo(function TraceTool({ block, status, onDecide }: { block: ToolBlock; status: TurnStatus; onDecide?: Decide }) {
+  if (block.question) return <QuestionCard question={block.question} />;
+  return <TraceToolRow block={block} status={status} onDecide={onDecide} />;
+});
+
+function TraceToolRow({ block, status, onDecide }: { block: ToolBlock; status: TurnStatus; onDecide?: Decide }) {
   const t = useT();
   const pending = Boolean(block.approval && block.approval.decision === null);
   const denied = block.approval?.decision === "deny";
@@ -341,7 +352,7 @@ export const TraceTool = memo(function TraceTool({ block, status, onDecide }: { 
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
     </div> : null}
   </div>;
-});
+}
 
 function ActivitySummary({ blocks, live }: { blocks: TurnBlock[]; live: boolean }) {
   const t = useT();
@@ -445,9 +456,10 @@ export function WorkTrace({ blocks, status, startedMs, durationMs, error, onDeci
   }, [split]);
   const groups = useMemo(() => conversation ? groupConversationTrace(fold ? fold.workAll : blocks) : groupActivityTrace(blocks), [blocks, conversation, fold]);
   const restGroups = useMemo(() => fold ? groupConversationTrace(fold.answer) : null, [fold]);
-  const pending = blocks.some(block => block.kind === "tool" && block.approval?.decision === null);
-  const outcome = pending ? "approval" : live ? "working" : status === "error" ? "failed" : status === "cancelled" ? "stopped" : "done";
-  const Icon = pending ? ShieldQuestion : live ? CircleDashed : status === "error" ? CircleAlert : Check;
+  const asking = blocks.some(isOpenQuestion);
+  const pending = asking || blocks.some(block => block.kind === "tool" && block.approval?.decision === null);
+  const outcome = asking ? "question" : pending ? "approval" : live ? "working" : status === "error" ? "failed" : status === "cancelled" ? "stopped" : "done";
+  const Icon = asking ? MessageCircleQuestion : pending ? ShieldQuestion : live ? CircleDashed : status === "error" ? CircleAlert : Check;
   const groupProps = { live, status, onDecide, renderText, conversation };
   // A turn-level error next to a reply folds with the work — it stays one
   // tap away behind the toggle. With no reply the error IS the outcome, so

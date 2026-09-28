@@ -13,6 +13,8 @@ import {
   isApiRunner,
   patchAgentChatSession,
   resolveAgentChatApproval,
+  answerAgentChatQuestion,
+  type QuestionAnswerInput,
   sendAgentChatMessage,
   type AgentChatCatalog,
   type AgentChatEvent,
@@ -156,6 +158,8 @@ export interface AgentChatStore {
   send: (text: string, attachments?: ChatAttachment[], toolChoices?: string[]) => Promise<void>;
   cancel: () => Promise<void>;
   decide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
+  /** Answer an agent's question card in the active session; throws so the card can say why. */
+  answerQuestion: (questionId: string, answer: QuestionAnswerInput) => Promise<void>;
   /** Tests and the socket: fold one event into the active timeline. */
   ingest: (event: AgentChatEvent) => void;
   disconnect: () => void;
@@ -692,6 +696,12 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
         } catch (err) {
           set({ lastError: errorText(err) });
         }
+      },
+
+      answerQuestion: async (questionId, answer) => {
+        const sid = get().activeSessionId;
+        if (!sid) throw new Error("no open chat");
+        await answerAgentChatQuestion(sid, questionId, answer);
       },
 
       ingest: (event) => {

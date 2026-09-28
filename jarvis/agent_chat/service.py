@@ -37,6 +37,13 @@ from jarvis.agent_chat.catalog import PROVIDER_ROWS, api_seat, offers, provider_
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import ladder_key, normalize_permission
+from jarvis.agent_chat.questions import (
+    QUESTION_TIMEOUT_S,
+    QuestionAnswer,
+    QuestionSpec,
+    answer_from,
+    timeout_answer,
+)
 from jarvis.agent_chat.runner_api import TurnHandle, run_api_turn, supports_api_runner
 from jarvis.agent_chat.runner_brain import run_brain_turn
 from jarvis.agent_chat.runner_cli import run_cli_turn, supports_cli_runner
@@ -149,6 +156,18 @@ def stop_cli_at_cwd(cwd: str) -> int:
     return stopped
 
 
+class _OpenQuestion:
+    __slots__ = ("future", "session_id", "spec", "turn_id")
+
+    def __init__(
+        self, session_id: str, turn_id: str, spec: QuestionSpec, future: asyncio.Future[Any]
+    ) -> None:
+        self.session_id = session_id
+        self.turn_id = turn_id
+        self.spec = spec
+        self.future = future
+
+
 class _Running:
     __slots__ = ("task", "cancel", "turn_id")
 
@@ -187,6 +206,8 @@ class AgentChatService:
         self._subscribers: dict[str, set[Subscriber]] = {}
         self._approvals: dict[str, asyncio.Future[str]] = {}
         self._approval_session: dict[str, str] = {}
+        # Questions an agent is waiting on (questions.py), by question id.
+        self._questions: dict[str, _OpenQuestion] = {}
         # "Always allow" on the Jarvis surface: the tools a person waved through
         # for the rest of the session, per session. Claude Code's "don't ask
         # again for this tool" rather than a mode flip — the unified ladder has
@@ -789,6 +810,7 @@ class AgentChatService:
                     self._approval_session.pop(aid, None)
                     if fut is not None and not fut.done():
                         fut.set_result("cancel")
+                self._cancel_questions(session_id)
                 if hasattr(self, "_controls"):
                     await self._controls.turn_completed(
                         session_id, turn_id, origin.user_text, origin.direct_user, read_only
@@ -896,6 +918,7 @@ class AgentChatService:
             fut = self._approvals.get(aid)
             if fut is not None and not fut.done():
                 fut.set_result("cancel")
+        self._cancel_questions(session_id)
         return True
 
     async def cancel(self, session_id: str, *, expected_turn_id: str | None = None) -> bool:
@@ -1013,6 +1036,110 @@ class AgentChatService:
             return False
         fut.set_result(decision)
         return True
+
+    # ------------------------------------------------------------ questions
+
+    async def ask_question(
+        self,
+        session_id: str,
+        spec: QuestionSpec,
+        *,
+        timeout_s: float = QUESTION_TIMEOUT_S,
+    ) -> QuestionAnswer:
+        """Show ``spec`` as a card in the session's running turn and wait for a pick.
+
+        Never waits longer than ``timeout_s``: the recommended option (index
+        0) is then chosen on the person's behalf, so a workflow behind this
+        turn keeps moving. A cancelled or finished turn answers ``cancelled``.
+        Raises ``RuntimeError`` when the session has no running turn — there
+        is no card to show and no one to wait for.
+        """
+        run = self._running.get(session_id)
+        if run is None or run.task is None or run.task.done():
+            raise RuntimeError("this chat has no running turn to ask in")
+        question_id = uuid.uuid4().hex
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[Any] = loop.create_future()
+        self._questions[question_id] = _OpenQuestion(session_id, run.turn_id, spec, fut)
+        await self._emit(
+            session_id,
+            make_event(
+                "question_required",
+                {
+                    "turn_id": run.turn_id,
+                    "question_id": question_id,
+                    **spec.to_payload(),
+                    "timeout_s": timeout_s,
+                    "expires_ms": int(time.time() * 1000 + timeout_s * 1000),
+                },
+            ),
+        )
+        try:
+            answer: QuestionAnswer = await asyncio.wait_for(asyncio.shield(fut), timeout_s)
+        except asyncio.CancelledError:
+            # The caller went away (a cancelled tool call, a CLI that gave up
+            # on the MCP request): close the card rather than leave it open.
+            self._questions.pop(question_id, None)
+            await self._emit(
+                session_id,
+                make_event(
+                    "question_resolved",
+                    {
+                        "turn_id": run.turn_id,
+                        "question_id": question_id,
+                        **QuestionAnswer("", None, "cancelled").to_payload(),
+                    },
+                ),
+            )
+            raise
+        except TimeoutError:  # the designed outcome: the recommendation wins
+            answer = timeout_answer(spec)
+            log.info(
+                "agent chat: question %s in %s timed out; the recommendation was chosen",
+                question_id,
+                session_id,
+            )
+        finally:
+            self._questions.pop(question_id, None)
+            if not fut.done():
+                fut.cancel()
+        await self._emit(
+            session_id,
+            make_event(
+                "question_resolved",
+                {"turn_id": run.turn_id, "question_id": question_id, **answer.to_payload()},
+            ),
+        )
+        return answer
+
+    def resolve_question(
+        self,
+        session_id: str,
+        question_id: str,
+        *,
+        option_index: int | None = None,
+        text: str | None = None,
+    ) -> bool:
+        """The person's pick. False for an unknown, foreign or already answered question.
+
+        Raises ``ValueError`` for an answer that does not fit the question.
+        """
+        open_q = self._questions.get(question_id)
+        if open_q is None or open_q.session_id != session_id or open_q.future.done():
+            return False
+        answer = answer_from(open_q.spec, option_index=option_index, text=text)
+        open_q.future.set_result(answer)
+        return True
+
+    def pending_questions(self, session_id: str) -> list[str]:
+        return [qid for qid, q in self._questions.items() if q.session_id == session_id]
+
+    def _cancel_questions(self, session_id: str) -> None:
+        # Tolerates a service built without __init__ (test doubles), like _controls.
+        questions: dict[str, _OpenQuestion] = getattr(self, "_questions", {})
+        for open_q in list(questions.values()):
+            if open_q.session_id == session_id and not open_q.future.done():
+                open_q.future.set_result(QuestionAnswer("", None, "cancelled"))
 
 
 __all__ = [

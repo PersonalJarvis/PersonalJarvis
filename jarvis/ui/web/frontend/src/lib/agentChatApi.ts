@@ -473,6 +473,28 @@ export async function resolveAgentChatApproval(
   );
 }
 
+/** The person's answer to an agent's question: one option, or their own words. */
+export type QuestionAnswerInput = { optionIndex: number } | { text: string };
+
+export async function answerAgentChatQuestion(
+  sessionId: string,
+  questionId: string,
+  answer: QuestionAnswerInput,
+): Promise<void> {
+  const body = "optionIndex" in answer ? { option_index: answer.optionIndex } : { text: answer.text };
+  await json(
+    await fetch(
+      `/api/agent-chat/sessions/${encodeURIComponent(sessionId)}/questions/${encodeURIComponent(questionId)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+    "question-failed",
+  );
+}
+
 export async function pickAgentChatFolder(start?: string): Promise<string | null> {
   const data = await json<{ path: string | null; cancelled: boolean }>(
     await fetch("/api/agent-chat/pick-folder", {

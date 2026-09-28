@@ -5653,7 +5653,22 @@
     "hint": "Elige herramientas para el próximo mensaje. Se siguen aplicando los permisos.",
     "done": "Listo"
   },
+  "question_card": {
+    "aria": "Pregunta del agente",
+    "title": "Pregunta",
+    "recommended": "Recomendada",
+    "why": "Por qué: {reason}",
+    "own_answer": "Escribir otra respuesta…",
+    "own_placeholder": "Tu respuesta",
+    "send": "Enviar",
+    "countdown": "Sin respuesta en {time}, se elige automáticamente la opción recomendada.",
+    "choosing": "Eligiendo la opción recomendada…",
+    "auto_picked": "elegida automáticamente (sin respuesta en 5 minutos)",
+    "own_words": "tu propia respuesta",
+    "unanswered": "Sin responder: el turno terminó."
+  },
   "work_trace": {
+    "question": "Esperando tu respuesta",
     "integration_used": "Usó {service}",
     "activity_command": "Ejecutó comandos",
     "activity_edit": "Editó archivos",

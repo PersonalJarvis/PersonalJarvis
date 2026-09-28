@@ -13,6 +13,7 @@ Prefix ``/api/agent-chat``:
     POST   /sessions/{id}/messages           {text, attachments} -> starts a turn
     POST   /sessions/{id}/cancel
     POST   /sessions/{id}/approvals/{aid}    {decision: allow | allow_always | deny}
+    POST   /sessions/{id}/questions/{qid}    {option_index} or {text} -> answer an agent's question
     WS     /sessions/{id}/ws?after=<seq>     snapshot, then live events
     POST   /attachments                      drop/paste/pick files for the next message
     POST   /pick-folder                      the system folder dialog (desktop only)
@@ -163,6 +164,13 @@ class MessageBody(BaseModel):
 
 class ApprovalBody(BaseModel):
     decision: str
+
+
+class QuestionAnswerBody(BaseModel):
+    #: The picked option (0 is the agent's recommendation) ...
+    option_index: int | None = None
+    #: ... or the person's own typed answer. Exactly one of the two.
+    text: str | None = None
 
 
 class PickFolderBody(BaseModel):
@@ -844,6 +852,25 @@ async def resolve_approval(
     return {"ok": True, "approval_id": approval_id, "decision": body.decision}
 
 
+@router.post(
+    "/sessions/{session_id}/questions/{question_id}",
+    summary="Answer an agent's multiple-choice question",
+)
+async def answer_question(
+    session_id: str, question_id: str, body: QuestionAnswerBody, request: Request
+) -> dict[str, Any]:
+    svc = _service(request)
+    try:
+        ok = svc.resolve_question(
+            session_id, question_id, option_index=body.option_index, text=body.text
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not ok:
+        raise HTTPException(status_code=404, detail="no such open question")
+    return {"ok": True, "question_id": question_id}
+
+
 # ------------------------------------------------------------------ attachments
 
 
@@ -976,6 +1003,7 @@ async def session_stream(ws: WebSocket, session_id: str) -> None:
         d = session.to_dict()
         d["running"] = svc.is_running(session_id)
         d["pending_approvals"] = svc.pending_approvals(session_id)
+        d["pending_questions"] = svc.pending_questions(session_id)
         await ws.send_json({"type": "snapshot", "session": d, "events": events})
         last_seq = events[-1]["seq"] if events else after
 

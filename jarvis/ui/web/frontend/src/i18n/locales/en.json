@@ -5686,7 +5686,22 @@
     "hint": "Pick tools for your next message. Permissions still apply.",
     "done": "Done"
   },
+  "question_card": {
+    "aria": "Question from the agent",
+    "title": "Question",
+    "recommended": "Recommended",
+    "why": "Why: {reason}",
+    "own_answer": "Type a different answer…",
+    "own_placeholder": "Your answer",
+    "send": "Send",
+    "countdown": "No answer in {time} and the recommended option is chosen automatically.",
+    "choosing": "Choosing the recommended option…",
+    "auto_picked": "chosen automatically (no answer within 5 minutes)",
+    "own_words": "your own answer",
+    "unanswered": "Not answered — the turn ended."
+  },
   "work_trace": {
+    "question": "Waiting for your answer",
     "integration_used": "Used {service}",
     "activity_command": "Ran commands",
     "activity_edit": "Edited files",
