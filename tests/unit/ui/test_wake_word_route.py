@@ -282,6 +282,8 @@ def test_activation_reports_a_failed_persist_instead_of_500(monkeypatch) -> None
     assert body["ok"] is True
     assert body["persisted"] is False
     assert "could not be saved" in body["message"]
+    # The raw exception text stays in the server log, never in the response.
+    assert "invalid continuation" not in body["message"]
     # The switch still reached the running pipeline — it just will not survive
     # a restart, which is exactly what `persisted` tells the caller.
     assert pipe.activation is True

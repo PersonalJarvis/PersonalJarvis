@@ -42,6 +42,7 @@ from jarvis.memory.wiki.integration import get_running_curator
 from jarvis.speech.local_models import FASTER_WHISPER_PACKAGE
 from jarvis.ui.overlay_styles import OVERLAY_STYLES, normalize_overlay_style
 
+from .error_text import LOG_HINT
 from .lifecycle_guard import require_interactive_desktop_action
 
 if TYPE_CHECKING:
@@ -1499,15 +1500,14 @@ def set_wake_activation(body: WakeActivationBody, request: Request) -> dict[str,
     # The failure is REPORTED, never swallowed: `persisted` and `message` carry
     # it so the UI can say the setting will not survive a restart.
     persisted = False
-    persist_error = ""
     try:
         from jarvis.core import config_writer
 
         config_writer.set_wake_word_enabled(bool(body.enabled))
         persisted = True
-    except Exception as exc:  # noqa: BLE001 — best-effort, reported not raised
-        persist_error = str(exc)
-        log.warning("wake activation persist failed: %s", exc)
+    except Exception:  # noqa: BLE001 — best-effort, reported not raised
+        # The traceback stays in the log; the client gets a stable sentence.
+        log.warning("wake activation persist failed", exc_info=True)
     # Best-effort in-memory update so a later cfg read agrees pre-restart.
     cfg = _config(request)
     if cfg is not None and getattr(cfg, "trigger", None) is not None:
@@ -1534,7 +1534,7 @@ def set_wake_activation(body: WakeActivationBody, request: Request) -> dict[str,
         "message": (
             ""
             if persisted
-            else f"The setting could not be saved to jarvis.toml: {persist_error}"
+            else f"The setting could not be saved to jarvis.toml. {LOG_HINT}"
         ),
     }
 
@@ -2229,8 +2229,12 @@ async def put_overlay_style(body: OverlayStyleBody, request: Request) -> dict[st
                 bool(result.get("applied_live")) if isinstance(result, dict) else bool(result)
             )
         except Exception as exc:  # noqa: BLE001 — never fail the toggle on an apply hiccup
-            log.warning("overlay-style live-apply failed (persisted; applies on restart): %s", exc)
-            detail = str(exc)
+            log.warning(
+                "overlay-style live-apply failed (persisted; applies on restart): %s",
+                exc,
+                exc_info=True,
+            )
+            detail = f"The live switch failed; the style applies on restart. {LOG_HINT}"
 
     return {
         "ok": True,
