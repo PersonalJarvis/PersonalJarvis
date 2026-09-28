@@ -68,6 +68,9 @@ env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 jobs:
+  # Matrix jobs carry no explicit `name:`: a skipped matrix job renders an
+  # interpolated name raw ("tests macos ${{ matrix.shard }}") in the check
+  # list. The job id plus the matrix value reads cleanly in both states.
   detect:
     name: detect lanes
     runs-on: ubuntu-latest
@@ -240,7 +243,6 @@ jobs:
         run: python -m mypy jarvis/
 
   tests-linux:
-    name: tests linux ${{ matrix.shard }}/6
     needs: detect
     if: needs.detect.outputs.python == 'true'
     strategy:
@@ -287,7 +289,6 @@ jobs:
           retention-days: 14
 
   tests-windows:
-    name: tests windows ${{ matrix.shard }}
     needs: detect
     if: needs.detect.outputs.python == 'true'
     strategy:
@@ -357,7 +358,6 @@ jobs:
           retention-days: 14
 
   tests-macos:
-    name: tests macos ${{ matrix.shard }}/3
     needs: detect
     if: needs.detect.outputs.macos == 'true' && needs.detect.outputs.python == 'true'
     strategy:
@@ -457,7 +457,6 @@ jobs:
         run: python3 scripts/ci/check_frontend_bundle_budget.py
 
   jarvisctl:
-    name: jarvisctl light install (${{ matrix.os }})
     needs: detect
     if: needs.detect.outputs.cli == 'true'
     strategy:
@@ -511,7 +510,6 @@ jobs:
         run: python scripts/ci/check_portable_install_matrix.py --jobs 4
 
   realtime-contract:
-    name: realtime contract (${{ matrix.os }})
     needs: detect
     if: needs.detect.outputs.realtime == 'true'
     strategy:
@@ -580,7 +578,6 @@ jobs:
       - run: python scripts/realtime_reliability_gate.py --contract-soak
 
   dragdrop:
-    name: dragdrop (${{ matrix.os }})
     needs: detect
     if: needs.detect.outputs.dragdrop == 'true'
     strategy:

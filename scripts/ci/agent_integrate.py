@@ -356,11 +356,25 @@ def update(onto: str, mode: str, resolver_cmd: str, cwd: Path = REPO_ROOT) -> di
                 git("rebase", "--skip", check=False, cwd=cwd)
     if regen:
         failed = regenerate(regen, cwd)
-        paths = [p for p, _ in GENERATED] + ["jarvis/ui/web/dist"]
-        git("add", "-A", "--", *[p.rstrip("*") for p in paths], check=False, cwd=cwd)
+        # One missing pathspec makes `git add` stage NOTHING, so pass only the
+        # generated paths that exist — a half-staged frontend bundle is the
+        # exact breakage the dist-consistency gate exists for.
+        specs = {p.rstrip("*").rstrip("/") for p, _ in GENERATED}
+        existing = sorted(s for s in specs if (cwd / s).exists())
+        if existing:
+            git("add", "-A", "--", *existing, cwd=cwd)
         staged = git("diff", "--cached", "--name-only", cwd=cwd).stdout.strip()
         if staged:
-            git("commit", "-m", "chore: regenerate generated files after update", cwd=cwd)
+            commit = git(
+                "commit",
+                "-m",
+                "chore: regenerate generated files after update",
+                check=False,
+                cwd=cwd,
+            )
+            if commit.returncode != 0:
+                print(commit.stdout[-3000:] + commit.stderr[-3000:], flush=True)
+                return {"status": "conflict", "unresolved": ["<regenerated files rejected>"]}
         report["regenerated"] = sorted(regen - set(failed))
         if failed:
             report["regen_failed"] = failed
@@ -448,7 +462,18 @@ def train(repo: str, max_updates: int, resolver_cmd: str, dry_run: bool, token_i
                 summary.append(f"#{number}: behind main, waits for a free update slot")
                 continue
             updates += 1
-            summary.append(f"#{number}: " + update_pr(pr, resolver_cmd, dry_run, token_is_bot))
+            try:
+                outcome = update_pr(pr, resolver_cmd, dry_run, token_is_bot)
+            except (subprocess.CalledProcessError, OSError) as exc:
+                # One broken branch must never stop the train for the others.
+                print(f"[train] #{number}: update crashed: {exc}", flush=True)
+                outcome = f"update crashed ({type(exc).__name__}); left for the next tick"
+            finally:
+                git("merge", "--abort", check=False)
+                git("rebase", "--abort", check=False)
+                git("reset", "-q", "--hard", check=False)
+                git("clean", "-fdq", "--", "jarvis/ui/web/dist", check=False)
+            summary.append(f"#{number}: {outcome}")
             continue
         state = gate_state(repo, sha)
         if state == "success" and not merged:
