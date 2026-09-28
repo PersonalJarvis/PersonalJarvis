@@ -1,0 +1,128 @@
+# Cut a release — maintainer-only, manual. A release never happens by itself.
+#
+# Actions tab -> "Release cut" -> Run workflow (or `gh workflow run release-cut.yml
+# -f bump=patch`). It:
+#
+#   1. refuses unless the latest `CI gate` on main is green,
+#   2. bumps pyproject.toml + jarvis/__init__.py and writes the CHANGELOG
+#      section (scripts/ci/cut_release.py: [Unreleased] notes, or the
+#      Conventional Commits since the last tag),
+#   3. commits "chore(release): publish vX.Y.Z" to main, dispatches CI for it,
+#   4. pushes the annotated tag and dispatches the three publishing workflows
+#      on it (PyPI, desktop installers, signed installer). Each of them starts
+#      with release-gate.yml, which waits for CI on the release commit.
+#   5. publishes the GitHub Release with the notes and the resumable
+#      personal-jarvis-src.tar.gz asset the install scripts fall back to. The
+#      in-app updater follows releases/latest, so this is the step that reaches
+#      users.
+#
+# Tags pushed with GITHUB_TOKEN fire no `push: tags` event, which is why step 4
+# dispatches explicitly; workflow_dispatch is the documented exception.
+
+name: Release cut
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "SemVer part to bump"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: "Exact version instead of a bump (optional, X.Y.Z)"
+        required: false
+        default: ""
+
+concurrency:
+  group: release-cut
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+  checks: read
+
+jobs:
+  cut:
+    name: cut release
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: main must be green
+        run: |
+          state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?check_name=CI%20gate" \
+            --jq '[.check_runs[] | select(.status=="completed")][0].conclusion // "missing"')"
+          echo "CI gate on $GITHUB_SHA: $state"
+          [ "$state" = "success" ] || { echo "::error::main is not green ($state) - no release."; exit 1; }
+      - name: Bump version + CHANGELOG
+        id: bump
+        env:
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$VERSION" ]; then arg=(--version "$VERSION"); else arg=(--bump "$BUMP"); fi
+          new="$(python scripts/ci/cut_release.py "${arg[@]}" --notes-out "$RUNNER_TEMP/notes.md" | tail -1)"
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+          git diff --stat
+      - name: Commit, dispatch CI, tag
+        env:
+          V: ${{ steps.bump.outputs.version }}
+        run: |
+          git config user.name "jarvis-release[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml jarvis/__init__.py CHANGELOG.md
+          git commit -m "chore(release): publish v$V"
+          git push origin HEAD:main
+          gh workflow run ci.yml --ref main -f full=true -f include_macos=false
+          git tag -a "v$V" -m "v$V"
+          git push origin "v$V"
+      - name: Dispatch the publishing workflows on the tag
+        env:
+          V: ${{ steps.bump.outputs.version }}
+        run: |
+          for wf in release.yml desktop-installers.yml sign-installer.yml; do
+            gh workflow run "$wf" --ref "v$V"
+          done
+
+  publish:
+    name: publish GitHub Release
+    needs: cut
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      V: ${{ needs.cut.outputs.version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: v${{ needs.cut.outputs.version }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      # The Release is what the in-app updater follows, so it waits for the
+      # same admission the publishing workflows wait for.
+      - name: Wait for CI on the release commit
+        run: python scripts/ci/release_admit.py --tag "v$V" --sha "$(git rev-parse HEAD)" --repo "$GITHUB_REPOSITORY"
+      - name: Publish the Release + resumable source asset
+        run: |
+          python scripts/ci/cut_release.py --print-notes "$V" > "$RUNNER_TEMP/notes.md"
+          git archive --format=tar.gz --prefix=personal-jarvis/ -o personal-jarvis-src.tar.gz "v$V"
+          if gh release view "v$V" >/dev/null 2>&1; then
+            gh release edit "v$V" --notes-file "$RUNNER_TEMP/notes.md" --draft=false
+            gh release upload "v$V" personal-jarvis-src.tar.gz --clobber
+          else
+            gh release create "v$V" --title "v$V" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag personal-jarvis-src.tar.gz
+          fi

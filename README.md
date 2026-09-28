@@ -46,6 +46,14 @@ and [how the system fits together](#how-it-works).
 [Discord](https://discord.gg/x7USduHxbc) · [X](https://x.com/Ruben_Luetke) ·
 [Instagram](https://www.instagram.com/personaljarvis/)
 
+**Build with us.** Personal Jarvis spans a Python/FastAPI backend, a React/TypeScript
+desktop interface, voice, agents, and OS integrations. If you want to improve a
+specific part and help maintain it over time, start with a scoped issue or PR.
+[Choose a contribution](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md#choose-a-first-contribution) ·
+[Set up a development checkout](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md#development-setup) ·
+[See the architecture](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/architecture-overview.md) ·
+[Discuss an approach](https://github.com/PersonalJarvis/PersonalJarvis/discussions)
+
 ## Install
 
 **Windows — PowerShell**
@@ -420,21 +428,21 @@ Open **Docs** in the app for searchable product guides, or follow the topics her
 | [Architecture decisions](https://github.com/PersonalJarvis/PersonalJarvis/tree/main/docs/adr/) | Design decisions and their context. |
 | [README media source](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/scripts/readme-video/README.md) | Provenance, example data, still previews, and rendering commands. |
 
-## Community and contributing
+## Build with us
 
-Follow the project on the [website](https://personaljarvis.ai),
-[X](https://x.com/Ruben_Luetke), and
-[Instagram](https://www.instagram.com/personaljarvis/).
+Contributions are useful across desktop accessibility, platform support,
+voice reliability, provider integrations, tests, and documentation. The
+[contributor guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md)
+maps those areas to code, a development setup, and review expectations. A small,
+reproducible improvement is a good place to begin; you do not need to understand
+the entire application first.
 
-Questions, ideas, and bug reports are welcome on [Discord](https://discord.gg/x7USduHxbc)
-and [GitHub](https://github.com/PersonalJarvis/PersonalJarvis/issues/new/choose).
-Watch walkthroughs on the [Personal Jarvis channel](https://www.youtube.com/@PersonalJarvis).
-
-Read [CONTRIBUTING.md](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md) before a pull request. Hardware reports,
-provider integrations, accessibility improvements, and native-language feedback
-are especially useful. AI-assisted contributions are welcome; review focuses
-on the change and its evidence. Repository contributions are written in English.
-Report vulnerabilities privately through [SECURITY.md](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SECURITY.md).
+Use [issues](https://github.com/PersonalJarvis/PersonalJarvis/issues) for bugs
+and scoped work, and [Discussions](https://github.com/PersonalJarvis/PersonalJarvis/discussions)
+to agree on a larger design or offer sustained help in a subsystem. AI-assisted
+contributions are welcome when the author can explain and verify the result.
+Repository contributions are written in English. Report vulnerabilities
+privately through the [security policy](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SECURITY.md).
 
 ## Contributors
 

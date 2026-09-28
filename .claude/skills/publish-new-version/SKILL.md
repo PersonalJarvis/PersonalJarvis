@@ -7,7 +7,7 @@ description: >-
   "mach ein Release", "publish the new version", "cut a release", "neue
   Public-Version". NOT for an ordinary push — "push", "push nach GitHub",
   "sichere den Stand", "commit and push" mean `git push`, no skill, no
-  ceremony (CLAUDE.md §2). NOT for untangling git chaos (use git-rescue).
+  ceremony (AGENTS.md §4). NOT for untangling git chaos (use git-rescue).
 ---
 
 # Cut a New Release
@@ -18,7 +18,7 @@ A release is a **normal push plus four things**: a version bump, a CHANGELOG
 entry, a tag, and a published GitHub Release. Nothing else. There is no
 snapshot build, no staging tree, no parallel clone, no privacy sub-agent —
 that ceremony was retired on 2026-08-05 after it was measured at ~440k tokens
-per push (CLAUDE.md §2). There is also no review sub-agent (retired
+per push (AGENTS.md §4). There is also no review sub-agent (retired
 2026-08-12): a release ships commits that already exist, and that code was
 reviewed when it was written — never spawn `code-reviewer` for a version
 bump, changelog entry, tag, or push. If you catch yourself preparing a clean
@@ -50,7 +50,7 @@ Verify each **with evidence**; report every item as **PASS** or **STOP**:
 - **Completeness** — scan the diff since the last tag for
   `TODO`/`FIXME`/`NotImplementedError`/stub markers in non-test code. No
   half-built user-facing feature ships.
-- **Works for an ARBITRARY downloader (CLAUDE.md §3, AP-23)** — the touched
+- **Works for an ARBITRARY downloader (AGENTS.md §2, AP-23)** — the touched
   surface must not be pinned to the maintainer's keys, provider, or OS.
   Confirm by test or honest trace: fresh-install-with-one-key, headless-Linux
   boot, cross-family fallback. If you cannot verify, say so and STOP.
