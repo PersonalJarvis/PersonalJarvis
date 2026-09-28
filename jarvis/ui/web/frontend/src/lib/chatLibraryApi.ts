@@ -18,6 +18,8 @@ export interface ChatProject {
   name: string;
   color: string | null;
   pinned: boolean;
+  /** Manual sidebar position, set by drag and drop. Absent on an older backend. */
+  position?: number;
   archived: boolean;
   created_at: number;
   last_opened_at: number;
@@ -134,6 +136,21 @@ export async function deleteProject(projectId: string): Promise<boolean> {
     { method: "DELETE" },
   );
   return body.removed;
+}
+
+/**
+ * Persist a drag-and-drop folder order in the sidebar.
+ *
+ * `projectIds` carries the visible projects front to back. Pinning still
+ * groups first: within each section the given order wins, and a folder never
+ * leaves its section by being dragged.
+ */
+export async function reorderProjects(projectIds: string[]): Promise<ChatProject[]> {
+  const body = await request<{ projects: ChatProject[] }>("/projects/order", {
+    method: "PUT",
+    body: JSON.stringify({ project_ids: projectIds }),
+  });
+  return body.projects;
 }
 
 /** One project's chats. Called when a project is opened, never on mount. */
