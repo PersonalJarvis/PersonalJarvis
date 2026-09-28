@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType
 import { createPortal } from "react-dom";
 import { Check, Maximize2, Minimize2, MoreHorizontal, Plus, X } from "lucide-react";
 import { AgentMark } from "./AgentMark";
+import { usePaneTitle } from "@/store/paneRecaps";
 import { PromptHistoryButton } from "./PromptHistoryButton";
 import { SplitAboveIcon, SplitBelowIcon, SplitLeftIcon, SplitRightIcon } from "./splitIcons";
 import { PANE_BRAND, PANE_CHROME, themeFor, type PaneEdgeState, type TerminalAppearance } from "./terminalThemes";
@@ -50,6 +51,9 @@ export function WorkspaceTerminalHeader({
   onAdd, onClose, onRename, onOpenConversation, onOpenChat, onRestart,
 }: Props) {
   const brand = PANE_BRAND[appearance];
+  // The pane's goal in a few words, in place of its call-sign; the call-sign
+  // stays reachable in the tooltip, the accessible name and the rename field.
+  const title = usePaneTitle(workspaceId, name);
   const chrome = PANE_CHROME[appearance];
   const theme = themeFor(appearance);
   const menuId = useId();
@@ -142,7 +146,7 @@ export function WorkspaceTerminalHeader({
           style={{ background: status === "live" ? theme.green : status === "error" ? theme.red : status === "connecting" ? theme.yellow : brand.inkFaint }} />
         <AgentMark agent={agent} label={displayName} logoUrl={agentLogoUrl} variant="plain" size="sm"
           className="!text-[color:var(--pane-ink)] [&>.bg-foreground]:!bg-[color:var(--pane-ink)]" />
-        <span className="truncate">{name}</span>
+        <span data-testid={`pane-title-${name}`} title={title ? `${title} (${name})` : name} className="truncate">{title || name}</span>
       </button> : <form data-header-control="true" className="flex min-w-0 flex-1 items-center gap-1"
         onSubmit={(event) => { event.preventDefault(); void commitRename(); }}>
         <input autoFocus aria-label={`Name for ${name}`} value={draft} maxLength={40} disabled={saving}

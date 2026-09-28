@@ -7,7 +7,7 @@ import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { useWorkspacePanes } from "@/store/workspacePanes";
 import { AgentMark } from "@/components/agentic/AgentMark";
-import { sessionTitle } from "@/components/agentic/sessionTitle";
+import { paneTitleFrom, usePaneRecapPoll, usePaneRecapsStore } from "@/store/paneRecaps";
 import {
   DOT_STYLE,
   SUMMARY_ORDER,
@@ -56,6 +56,8 @@ export function AgentsOverview() {
   const spotlight = useIdeSidePanelStore((state) => state.spotlight);
   const setSpotlight = useIdeSidePanelStore((state) => state.setSpotlight);
   const panes = useWorkspacePanes();
+  usePaneRecapPoll();
+  const recaps = usePaneRecapsStore((state) => state);
   const mine = workspaceAgents(panes, activeWorkspaceId);
 
   const counts = new Map<AgentDotKind, number>();
@@ -118,27 +120,28 @@ export function AgentsOverview() {
               spotlight !== null && spotlight.workspaceId === pane.workspace_id && spotlight.pane === pane.name;
             const since = compactSince(pane.activity_since, now);
             const lastOutput = compactSince(pane.last_output_at, now);
-            const title = sessionTitle(pane);
-            const hasTitle = title !== cli && title !== pane.name;
+            const recap = recaps.workspaceId === pane.workspace_id ? recaps.byName[pane.name] : undefined;
+            const title = paneTitleFrom(recap, pane);
             return (
               <li key={pane.history_id}>
                 <button
                   type="button"
                   onClick={() => pick(pane)}
-                  aria-label={`${pane.name}, ${cli}, ${stateLabel}`}
+                  aria-label={`${title || pane.name}, ${cli}, ${stateLabel}`}
+                  title={title ? `${title} (${pane.name})` : pane.name}
                   aria-current={selected ? "true" : undefined}
                   data-testid="ide-workspace-agent-row"
                   data-pane={pane.name}
                   data-kind={kind}
                   className={cn(
-                    "group flex w-full flex-col gap-2.5 rounded-xl border p-3 text-left transition-[border-color,background-color,box-shadow] duration-150",
+                    "group flex w-full items-center rounded-xl border p-3 text-left transition-[border-color,background-color,box-shadow] duration-150",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
                     selected
                       ? "border-accent bg-accent/[0.06] ring-1 ring-accent/40"
                       : "border-border/60 bg-background/40 hover:border-border hover:bg-muted/50",
                   )}
                 >
-                  <span className="flex w-full items-center gap-3">
+                  <span className="flex w-full items-start gap-3">
                     <span className="relative shrink-0">
                       <AgentMark agent={pane.agent} label={cli} size="md" />
                       <span
@@ -151,16 +154,18 @@ export function AgentsOverview() {
                         <span className={cn("relative h-2 w-2 rounded-full", style.dot)} />
                       </span>
                     </span>
-                    <span className="flex min-w-0 flex-1 flex-col">
-                      <span className="flex min-w-0 items-baseline gap-2">
-                        <span className="shrink-0 text-sm font-semibold text-foreground">{pane.name}</span>
-                        <span className="min-w-0 truncate text-xs text-muted-foreground">{cli}</span>
+                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span
+                        data-testid="ide-agent-title"
+                        className="line-clamp-2 text-sm font-semibold leading-snug text-foreground"
+                      >
+                        {title || cli}
                       </span>
-                      {lastOutput && (
-                        <span className="text-[11px] tabular-nums text-muted-foreground">
-                          {fill(t("ide_side_panel.agents.last_output"), { time: lastOutput })}
-                        </span>
-                      )}
+                      <span className="truncate text-[11px] tabular-nums text-muted-foreground">
+                        {[title ? cli : "", lastOutput ? fill(t("ide_side_panel.agents.last_output"), { time: lastOutput }) : ""]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
                     </span>
                     <span
                       data-testid="ide-agent-state"
@@ -174,14 +179,6 @@ export function AgentsOverview() {
                       {since && <span className="opacity-70"> · {since}</span>}
                     </span>
                   </span>
-                  {hasTitle && (
-                    <span
-                      data-testid="ide-agent-task"
-                      className="line-clamp-2 w-full border-t border-border/50 pt-2 text-[13px] leading-snug text-foreground/85"
-                    >
-                      {title}
-                    </span>
-                  )}
                 </button>
               </li>
             );

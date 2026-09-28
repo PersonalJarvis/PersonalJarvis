@@ -4,6 +4,8 @@ import { AgentsOverview } from "./AgentsOverview";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { usePaneRecapsStore } from "@/store/paneRecaps";
+import type { TerminalRecap } from "@/lib/agenticIdeApi";
 import { resetWorkspacePanesPoll, useWorkspacePanesStore } from "@/store/workspacePanes";
 import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
 
@@ -41,6 +43,7 @@ function pane(name: string, workspaceId: string, overrides: Partial<WorkspacePan
 beforeEach(() => {
   resetWorkspacePanesPoll();
   useIdeSidePanelStore.setState({ spotlight: null });
+  usePaneRecapsStore.setState({ workspaceId: null, byName: {}, load: async () => {} });
   useWorkspacePanesStore.setState({
     panes: [
       pane("T1", "w1", { activity: "working" }),
@@ -75,6 +78,17 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("AgentsOverview", () => {
+  it("titles a card with the model's short goal instead of the call-sign", () => {
+    usePaneRecapsStore.setState({
+      workspaceId: "w1",
+      byName: { T2: { recap: "Login flow — flaky tests", source: "model" } as TerminalRecap },
+    });
+    render(<AgentsOverview />);
+    const rows = screen.getAllByTestId("ide-workspace-agent-row");
+    expect(rows[1].querySelector('[data-testid="ide-agent-title"]')?.textContent).toBe("Login flow — flaky tests");
+    expect(rows[1].textContent).not.toContain("T2");
+  });
+
   it("lists only the active workspace agents with names and live dots", () => {
     render(<AgentsOverview />);
     const rows = screen.getAllByTestId("ide-workspace-agent-row");
@@ -83,7 +97,6 @@ describe("AgentsOverview", () => {
     expect(rows[0].getAttribute("data-kind")).toBe("working");
     expect(rows[1].getAttribute("data-kind")).toBe("waiting");
     expect(rows[2].getAttribute("data-kind")).toBe("idle");
-    expect(rows[0].textContent).toContain("T1");
     expect(rows[0].textContent).toContain("Claude Code");
     expect(rows[0].querySelector('[data-testid="agent-mark-claude"]')).not.toBeNull();
     expect(rows[1].querySelector('[data-testid="agent-mark-codex"]')).not.toBeNull();
@@ -158,7 +171,7 @@ describe("AgentsOverview", () => {
     render(<AgentsOverview />);
     const row = screen.getByTestId("ide-workspace-agent-row");
     expect(screen.getByTestId("ide-agent-state").textContent).toBe("Working · 3m");
-    expect(screen.getByTestId("ide-agent-task").textContent).toBe("Fix the login test");
+    expect(screen.getByTestId("ide-agent-title").textContent).toBe("Fix the login test");
     expect(row.textContent).toMatch(/Last output \d+s ago/);
   });
 });
