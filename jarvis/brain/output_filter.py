@@ -233,6 +233,26 @@ ANTHROPIC_FUNCTION_CALLS_RE = re.compile(
     r"<function_calls>.*?</function_calls>",
     re.DOTALL | re.IGNORECASE,
 )
+_FUNCTION_CALLS_CLOSE_RE = re.compile(r"</function_calls>", re.IGNORECASE)
+
+
+def _strip_function_call_blocks(text: str) -> str:
+    """``ANTHROPIC_FUNCTION_CALLS_RE.sub("", text)`` in linear time.
+
+    No block can end past the LAST closing tag, so only the text up to it is
+    handed to the pattern. On its own, every unclosed opener after that tag
+    rescanned the rest of the text before failing, which is quadratic on
+    long LLM output (CodeQL py/polynomial-redos). The result is identical.
+    """
+    last = None
+    for last in _FUNCTION_CALLS_CLOSE_RE.finditer(text):  # noqa: B007 - keep the last
+        pass
+    if last is None:
+        return text
+    cut = last.end()
+    return ANTHROPIC_FUNCTION_CALLS_RE.sub("", text[:cut]) + text[cut:]
+
+
 ANTHROPIC_INVOKE_RE = re.compile(
     r"<invoke\b[^>]*>.*?</invoke>",
     re.DOTALL | re.IGNORECASE,
@@ -671,12 +691,12 @@ def scrub_for_voice(
         out = new
 
     # 3. Tool-Call-JSON / -KW / -XML / YAML-Args / Anthropic-Tags / Base64 —
-    #    alle Tool-Use-/Internal-Leaks rausschneiden.
-    #    Reihenfolge: zuerst die groessten Wrapper-Bloecke (function_calls,
-    #    generic_tool_wrappers, base64_data_uri), dann verbleibende kleinere
-    #    Patterns. Sonst koennten innere Token-Patterns Teile des Wrapper-
-    #    Inhalts matchen und Whitespace-Reste hinterlassen.
-    new = ANTHROPIC_FUNCTION_CALLS_RE.sub("", out)
+    #    cut out every tool-use / internal leak.
+    #    Order: the largest wrapper blocks first (function_calls,
+    #    generic_tool_wrappers, base64_data_uri), then the remaining smaller
+    #    patterns. Otherwise inner token patterns could match parts of the
+    #    wrapper content and leave whitespace behind.
+    new = _strip_function_call_blocks(out)
     new = ANTHROPIC_INVOKE_RE.sub("", new)
     new = GENERIC_TOOL_WRAPPER_RE.sub("", new)
     new = BASE64_DATA_URI_RE.sub("", new)
@@ -803,13 +823,21 @@ def scrub_for_voice(
     #     comma. Hyphen compounds ("Browser-Provider", "Sub-Agent") use a plain
     #     ASCII '-' with no surrounding whitespace and are NOT in the class below,
     #     so they survive untouched.
-    new = re.sub(r"\s*[—–]\s*", ", ", out)
+    #     The blank run in front is matched only from its first character
+    #     (lookbehind): starting ``\s*`` at every position inside a long run
+    #     rescanned it each time, which is quadratic (CodeQL
+    #     py/polynomial-redos). A match never starts mid-run otherwise — the
+    #     trailing ``\s*`` of a previous match swallows its whole run — so the
+    #     result is unchanged; a dash right after such a match is the second
+    #     branch.
+    new = re.sub(r"(?<!\s)\s+[—–]\s*|[—–]\s*", ", ", out)
     # ASCII double hyphen used as a dash-aside (" -- ") reads as the same hard
     # TTS pause; collapse it too (2026-06-30: the Unicode-only scrub missed it,
     # and several canned phrases / LLM outputs use " -- "). Require surrounding
     # whitespace so hyphen compounds ("T-Shirt") and numeric ranges ("20-30") —
-    # which have no spaces — survive untouched.
-    new = re.sub(r"\s+-{2,}\s+", ", ", new)
+    # which have no spaces — survive untouched. Same start-of-run lookbehind as
+    # above, for the same linear-time reason; the result is unchanged.
+    new = re.sub(r"(?<!\s)\s+-{2,}\s+", ", ", new)
     if new != out:
         actions.append("removed_em_dash")
         out = new
@@ -826,7 +854,8 @@ def scrub_for_voice(
         actions.append("spelled_out_numbers")
         out = new
 
-    # 8. Whitespace normalisieren
+    # 8. Normalise whitespace. After the first line every blank run is a
+    #    single character, so the ``\s+`` patterns below cannot backtrack.
     out = re.sub(r"\s{2,}", " ", out).strip()
     out = re.sub(r"\s+([,.!?;:])", r"\1", out)
     # A dash->comma swap can leave a doubled or dangling comma; tidy it.

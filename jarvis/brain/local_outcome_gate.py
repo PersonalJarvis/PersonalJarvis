@@ -48,6 +48,7 @@ Stand-downs (each defers to the flow that owns the turn):
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from jarvis.brain.local_action_gate import requires_external_integration
 from jarvis.core.capabilities import _normalize
@@ -205,6 +206,51 @@ _TASK_CLAUSE_RE = re.compile(
 _QUOTED_LITERAL_RE = re.compile(
     r'''(?<!\w)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`[^`]*`)'''
 )
+# The body of each quote kind, possessive, without the closing quote: where it
+# stops tells whether (and where) a literal opened there would fail.
+_QUOTED_BODY_RE = {
+    '"': re.compile(r'"(?:\\.|[^"\\])*+'),
+    "'": re.compile(r"'(?:\\.|[^'\\])*+"),
+    "`": re.compile(r"`[^`]*+"),
+}
+_QUOTE_CHAR_RE = re.compile(r"[\"'`]")
+
+
+def _sub_quoted_literals(repl: Callable[[re.Match[str]], str], text: str) -> str:
+    """``_QUOTED_LITERAL_RE.sub(repl, text)`` in linear time.
+
+    ``re.sub`` retries the pattern at every quote character. An unclosed
+    literal rescans the rest of the text before failing, and a run of escaped
+    quotes (``"\\"\\"\\"…``) repeats that from each of them — quadratic on long
+    input (CodeQL py/polynomial-redos). A quote of the same kind inside a
+    failed scan was consumed as an escaped pair by that scan, so a scan opened
+    there resumes in step with it and stops at the same place: it must fail
+    too and is skipped. Every surviving attempt is the original pattern, so
+    the matches — and the result — are identical.
+    """
+    pieces: list[str] = []
+    consumed = 0
+    dead_until = dict.fromkeys(_QUOTED_BODY_RE, -1)
+    for quote in _QUOTE_CHAR_RE.finditer(text):
+        start = quote.start()
+        kind = quote.group()
+        if start < consumed or start < dead_until[kind]:
+            continue
+        match = _QUOTED_LITERAL_RE.match(text, start)
+        if match is not None:
+            pieces.append(text[consumed:start])
+            pieces.append(repl(match))
+            consumed = match.end()
+            continue
+        # Either the ``(?<!\w)`` guard or the scan failed. Only a failed scan
+        # (its body does not end on the closing quote) poisons the region.
+        body = _QUOTED_BODY_RE[kind].match(text, start)
+        if body is not None and not text.startswith(kind, body.end()):
+            dead_until[kind] = body.end()
+    pieces.append(text[consumed:])
+    return "".join(pieces)
+
+
 _COMMAND_LITERAL_PREFIX_RE = re.compile(
     r"\b(?:run|execute|launch|fuehre|starte)\s+(?:(?:the|this|following)\s+)?$",  # i18n-allow
     re.IGNORECASE,
@@ -258,7 +304,7 @@ def resolve_local_outcome_mandate(utterance: str) -> tuple[str, str] | None:
         prefix = _normalize(raw[:match.start()])
         return " command " if _COMMAND_LITERAL_PREFIX_RE.search(prefix) else " quoted_literal "
 
-    normalized = _normalize(_QUOTED_LITERAL_RE.sub(mask_literal, raw))
+    normalized = _normalize(_sub_quoted_literals(mask_literal, raw))
     tasks = [_positive_task_prefix(clause).strip() for clause in _TASK_CLAUSE_RE.split(normalized)]
     # An explicitly selected vehicle governs the subsequent action, even
     # across a sentence boundary ("Use the mouse. Create a folder.").
