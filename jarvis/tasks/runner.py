@@ -135,6 +135,7 @@ class TaskRunner:
         | None = None,
         workflow_services: Any = None,
         owned_action_guard: Callable[[tuple[str, ...]], Awaitable[None]] | None = None,
+        agent_brain_wait_s: float = 120.0,
     ) -> None:
         self._store = store
         self._bus = bus
@@ -143,6 +144,8 @@ class TaskRunner:
         self._executor = tool_executor
         self._tools = tool_registry
         self._brain = agent_brain
+        #: How long an agent run waits for a brain wired after boot.
+        self._agent_brain_wait_s = agent_brain_wait_s
         self._approver = auto_approver
         #: ``(tags, text, status)`` after an agent action — where a tagged
         #: task's result also goes (a society agent's routine reports into its
@@ -550,6 +553,19 @@ class TaskRunner:
             TaskStepRecorded(task_id=task_id, seq=seq, kind="log", source_layer="tasks.runner")
         )
 
+    async def _await_agent_brain(self, cancel_token: CancelToken | None) -> None:
+        """Give the agent brain time to arrive when a run starts before it.
+
+        The brain is wired after the deferred boot build, while the scheduler
+        is already firing the runs it missed: a routine due at startup died
+        with "Agent brain not configured" seconds before the brain existed
+        (live 2026-09-27 18:28:30). It waits, cancellable, instead.
+        """
+        deadline = time.monotonic() + self._agent_brain_wait_s
+        while self._brain is None and time.monotonic() < deadline:
+            self._check_cancel(cancel_token)
+            await asyncio.sleep(0.5)
+
     async def _run_agent(
         self,
         task_id: str,
@@ -626,6 +642,8 @@ class TaskRunner:
                         task_id=task_id, seq=seq, kind="log", source_layer="tasks.runner"
                     )
                 )
+        if self._brain is None and owned_result is None and owned_failed is None:
+            await self._await_agent_brain(cancel_token)
         if self._brain is None and owned_result is None:
             if owned_failed is not None:
                 raise RuntimeError(_seat_then_no_path(owned_failed)) from owned_failed

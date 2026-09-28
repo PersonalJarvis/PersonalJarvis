@@ -375,3 +375,41 @@ async def test_a_failed_agent_routine_reports_to_its_chat_and_never_speaks(
     ]
     row = await store.get(task_id)
     assert row is not None and row["last_error"].startswith("RuntimeError: ")
+
+
+async def test_an_agent_run_waits_for_a_brain_wired_after_boot(store: TaskStore) -> None:
+    """A routine due at startup fired before the deferred brain build and died
+    with "Agent brain not configured". It now waits for the brain."""
+    runner = TaskRunner(store, EventBus(), agent_brain=None, agent_brain_wait_s=5.0)
+    spec = TaskSpec(
+        title="[agent:Mailbox] Inbox sweep",
+        trigger=TriggerAfterDelay(delay_seconds=0.01),
+        action=AgentAction(prompt="Sort the inbox."),
+    )
+    task_id = await store.insert(spec)
+    brain = FakeAgentBrain()
+
+    async def wire_later() -> None:
+        await asyncio.sleep(0.3)
+        runner._brain = brain
+
+    await asyncio.gather(
+        asyncio.wait_for(runner.run(task_id, CancelToken()), timeout=5.0), wire_later()
+    )
+    row = await store.get(task_id)
+    assert row is not None and row["state"] == "completed"
+    assert brain.prompts
+
+
+async def test_an_agent_run_still_fails_when_no_brain_ever_arrives(store: TaskStore) -> None:
+    runner = TaskRunner(store, EventBus(), agent_brain=None, agent_brain_wait_s=0.2)
+    spec = TaskSpec(
+        title="plain",
+        trigger=TriggerAfterDelay(delay_seconds=0.01),
+        action=AgentAction(prompt="Say hi."),
+    )
+    task_id = await store.insert(spec)
+    await asyncio.wait_for(runner.run(task_id, CancelToken()), timeout=5.0)
+    row = await store.get(task_id)
+    assert row is not None and row["state"] == "failed"
+    assert "Agent brain not configured" in row["last_error"]
