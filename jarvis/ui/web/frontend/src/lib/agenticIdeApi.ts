@@ -1261,7 +1261,7 @@ export async function startIdeSession(
 const EMPTY_IDE_STATE: IdeState = {
   active: false,
   session: null,
-  max_terminals: 12,
+  max_terminals: 16,
   workspaces: [],
   active_id: null,
   max_workspaces: 6,

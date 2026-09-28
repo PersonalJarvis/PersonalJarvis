@@ -7,6 +7,8 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   workspace: string;
   count: number;
+  /** The server's per-workspace pane limit (`max_terminals`). */
+  maxPanes: number;
   busy: boolean;
   canAdd: boolean;
   onAdd: () => void;
@@ -45,7 +47,7 @@ export function WorkspaceOptionsDialog(props: Props) {
           </div>
         </section>
         <div className="border-t border-border pt-2">
-          <button type="button" disabled={props.busy || !props.canAdd || props.count >= 8} onClick={() => choose(props.onAdd)} className="block w-full rounded-lg px-2 py-2.5 text-left text-sm hover:bg-muted disabled:opacity-40">Add coding agent</button>
+          <button type="button" disabled={props.busy || !props.canAdd || props.count >= props.maxPanes} onClick={() => choose(props.onAdd)} className="block w-full rounded-lg px-2 py-2.5 text-left text-sm hover:bg-muted disabled:opacity-40">Add coding agent</button>
           <button type="button" disabled={props.busy} onClick={() => choose(props.onRename)} className="block w-full rounded-lg px-2 py-2.5 text-left text-sm hover:bg-muted disabled:opacity-40">Rename workspace</button>
           <button type="button" disabled={props.busy} onClick={() => choose(props.onClose)} className="block w-full rounded-lg px-2 py-2.5 text-left text-sm text-destructive hover:bg-muted disabled:opacity-40">Close workspace</button>
         </div>

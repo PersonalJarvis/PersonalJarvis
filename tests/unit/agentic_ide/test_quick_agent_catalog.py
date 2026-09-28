@@ -48,8 +48,8 @@ async def test_quick_catalog_resolves_off_loop_without_expensive_probes(
     result = await routes.get_agents(quick=True)
     assert resolved == ["example", "missing"]
     assert result.terminal_available is pty_available
-    assert result.max_terminals == 8
-    assert len(result.suggested_names) == 8
+    assert result.max_terminals == routes.MAX_TERMINALS
+    assert len(result.suggested_names) == routes.MAX_TERMINALS
     example, missing = result.agents
     assert example.installed is True
     assert missing.installed is False

@@ -2,7 +2,7 @@
 
 The IDE is organized as **Project > Workspace > Coding Agent session**. A
 project is a connected folder in the existing project library. A workspace is
-an independently named group of up to eight coding sessions in that project.
+an independently named group of up to sixteen coding sessions in that project.
 Multiple workspaces may use the same folder; independent sessions do not imply
 isolated source checkouts. Users who need separate files connect a worktree as
 another project.
@@ -15,9 +15,12 @@ shows open and saved workspaces, their session counts, and active selection.
 Selecting an open workspace changes the visible group and active runtime ID;
 it does not stop background agents. Restoring a closed workspace is explicit.
 
-The grid uses at most four columns and two rows on a sufficiently wide display.
-Narrow screens retain at most two rows and scroll horizontally when necessary,
-rather than shrinking the user's terminal font. Dragging a card header or using
+The grid uses at most four columns and four rows. The automatic even grid
+keeps one or two rows for up to eight sessions and adds a row per four sessions
+beyond that (nine is 3 x 3, sixteen is 4 x 4). Screens too small for every pane's
+minimum size scroll rather than shrinking the user's terminal font. The limit is
+`MAX_TERMINALS` in `jarvis/agentic_ide/session.py`; the frontend reads it from
+the state's `max_terminals`. Dragging a card header or using
 Alt+Arrow reorders stable session IDs. Reordering does not recreate the CLI
 process. Each tile uses the existing
 PTY adapter, output replay, reconnect budget, and terminal appearance tokens.
@@ -26,7 +29,7 @@ Project IDs come from the canonical folder identity. Workspace IDs survive
 restore. A coding session is addressed as `pane:<history_id>`; its display name
 and grid position are not execution identities. Additive snapshot migration
 retains older project-less workspaces and keeps sibling workspaces in the same
-folder distinct. Older snapshots above the eight-session limit are retained
+folder distinct. Older snapshots above the session limit are retained
 but cannot be restored into the new grid unchanged.
 
 ## Live integration

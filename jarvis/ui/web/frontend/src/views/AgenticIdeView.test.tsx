@@ -141,6 +141,20 @@ describe("Agentic IDE project flow", () => {
     expect(api.reorderIdeTerminals).not.toHaveBeenCalled();
   });
 
+  it("shows the pane count and refuses a new agent once the workspace is full", async () => {
+    const terminals = Array.from({ length: 16 }, (_, index) => ({ key: `t${index}`, history_id: `id${index}`, name: `T${index}`, display_name: "Codex" }));
+    const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "App work", created_at: 0,
+      focus_mode: false, project: { name: "App" }, terminals, layout: balancedLayout(terminals.map((terminal) => terminal.key)) };
+    api.fetchIdeState.mockResolvedValue({ ...emptyState, active: true, active_id: "w1", session, max_terminals: 16 });
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
+    render(<AgenticIdeView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pane add" }));
+    const dialog = screen.getByRole("dialog", { name: "Add coding agent" });
+    expect(within(dialog).getByText(/16 of 16 agents/)).toBeTruthy();
+    expect(within(dialog).getByRole("status").textContent).toContain("This workspace is full");
+    expect((within(dialog).getByRole("button", { name: "Codex" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("exposes compact workspace rename and close actions", async () => {
     const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "App work", created_at: 0,
       focus_mode: false, project: { name: "App" }, terminals: [] };

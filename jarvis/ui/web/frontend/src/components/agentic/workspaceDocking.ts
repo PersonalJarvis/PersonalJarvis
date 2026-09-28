@@ -6,10 +6,30 @@ export const DOCK_LABELS: Record<PaneMovePosition, string> = {
   above: "Place above", below: "Place below",
 };
 
-/** Balanced defaults: two panes share a row; three to eight use two rows. */
+/**
+ * The largest grid a workspace draws, and so how many agents it holds. Mirrors
+ * `MAX_GRID_COLUMNS` / `MAX_GRID_ROWS` in `jarvis/agentic_ide/session.py`; the
+ * live count limit comes from the server's `max_terminals`.
+ */
+export const MAX_GRID_COLUMNS = 4;
+export const MAX_GRID_ROWS = 4;
+export const MAX_WORKSPACE_PANES = MAX_GRID_COLUMNS * MAX_GRID_ROWS;
+export const GRID_LIMIT_HINT = `A workspace holds at most ${MAX_GRID_COLUMNS} columns and ${MAX_GRID_ROWS} rows.`;
+
+/**
+ * Columns of the even grid: two panes share a row, three to eight use two
+ * rows, beyond that one more row per four panes. Mirrors `balanced_columns`.
+ */
+export function balancedColumns(count: number): number {
+  if (count <= 2) return Math.max(1, count);
+  const rows = count <= 2 * MAX_GRID_COLUMNS ? 2 : Math.ceil(count / MAX_GRID_COLUMNS);
+  return Math.min(MAX_GRID_COLUMNS, Math.ceil(count / rows));
+}
+
+/** The even grid for `keys`, dealt row by row. */
 export function balancedLayout(keys: readonly string[]): LayoutNode | null {
   if (!keys.length) return null;
-  const columns = keys.length <= 2 ? keys.length : Math.ceil(keys.length / 2);
+  const columns = balancedColumns(keys.length);
   const split = (direction: "row" | "column", children: LayoutNode[]): LayoutNode =>
     children.length === 1 ? children[0] : { direction, children, weights: children.map(() => 1) };
   const rows: LayoutNode[] = [];
@@ -32,7 +52,7 @@ export function layoutSpan(tree: LayoutNode | null, axis: "row" | "column"): num
 }
 
 export function fitsWorkspace(tree: LayoutNode | null): boolean {
-  return layoutSpan(tree, "row") <= 4 && layoutSpan(tree, "column") <= 2;
+  return layoutSpan(tree, "row") <= MAX_GRID_COLUMNS && layoutSpan(tree, "column") <= MAX_GRID_ROWS;
 }
 
 export function isBalancedWorkspace(tree: LayoutNode | null | undefined, terminals: readonly Pick<TerminalState, "key" | "name">[]): boolean {
@@ -90,14 +110,15 @@ export function previewSplit(
   return insert(tree);
 }
 
-/** Check if splitting anchor in direction keeps the layout within 4 columns x 2 rows. */
+/** Whether one more pane split off `anchorKey` stays within the pane limit and the grid. */
 export function canSplitFit(
   tree: LayoutNode | null | undefined,
   terminals: readonly Pick<TerminalState, "key">[],
   anchorKey: string | undefined,
-  direction: "right" | "down" | "left" | "above"
+  direction: "right" | "down" | "left" | "above",
+  maxPanes: number = MAX_WORKSPACE_PANES,
 ): boolean {
-  if (terminals.length >= 8) return false;
+  if (terminals.length >= maxPanes) return false;
   if (terminals.length === 0 || !anchorKey) return true;
   const current = workspaceLayout(tree, terminals);
   if (!current) return true;

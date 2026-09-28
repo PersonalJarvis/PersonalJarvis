@@ -5,9 +5,8 @@ import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/comp
 import { WorkspaceTerminalGrid } from "@/components/agentic/WorkspaceTerminalGrid";
 import { WorkspaceAgentSetup } from "@/components/agentic/WorkspaceAgentSetup";
 import { WorkspaceOptionsDialog } from "@/components/agentic/WorkspaceOptionsDialog";
-import { FONT_DEFAULT } from "@/components/agentic/paneFont";
 import { IdeSidePanelFrame } from "@/components/agentic/sidePanel/IdeSidePanel";
-import { fitsWorkspace, isBalancedWorkspace, canSplitFit } from "@/components/agentic/workspaceDocking";
+import { GRID_LIMIT_HINT, MAX_WORKSPACE_PANES, canSplitFit, fitsWorkspace, isBalancedWorkspace } from "@/components/agentic/workspaceDocking";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { SplitRightIcon, SplitBelowIcon, SplitLeftIcon, SplitAboveIcon } from "@/components/agentic/splitIcons";
 import type { PaneSplitDirection } from "@/components/agentic/WorkspaceTerminalHeader";
@@ -22,6 +21,7 @@ import {
   type AgentStatus, type IdeProject, type IdeState, type TerminalState,
 } from "@/lib/agenticIdeApi";
 
+const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
 const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
 const SPLIT_DIRECTION_KEY = "jarvis.agenticIde.splitDirection";
 
@@ -78,9 +78,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(storedVoiceBubbleOpen);
-  // One fixed, dense text size (the look of a standalone terminal); the
-  // maintainer does not want a per-user zoom for the workspace terminals.
-  const fontSize = FONT_DEFAULT;
+  const [fontSize, setFontSize] = useState(() => Number(localStorage.getItem(FONT_KEY)) || 13);
   const [appearance, setAppearance] = useState<"light" | "dark" | null>(() => {
     const stored = localStorage.getItem(APPEARANCE_KEY);
     return stored === "light" || stored === "dark" ? stored : null;
@@ -93,6 +91,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const gridMutations = useRef(0);
   const normalizingLayout = useRef(false);
   const session = state?.session ?? null;
+  const maxPanes = state?.max_terminals ?? MAX_WORKSPACE_PANES;
   const installed = agents.filter((agent) => agent.installed && agent.kind !== "shell" && agent.accepts_prompts !== false);
   const dialogOpen = projectDialog || workspaceProject !== null || renameOpen || agentPicker !== null;
 
@@ -136,7 +135,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     }
     if (epoch !== refreshEpoch.current || pendingActivation.current || ((activationRunning.current || gridMutations.current > 0) && !allowDuringActivation) || nextState.active_id !== listing.active_workspace_id) return;
     const incoming = nextState.session;
-    if (incoming?.layout && incoming.terminals.length <= 8 && !fitsWorkspace(incoming.layout)) {
+    if (incoming?.layout && incoming.terminals.length <= (nextState.max_terminals ?? MAX_WORKSPACE_PANES) && !fitsWorkspace(incoming.layout)) {
       // Older snapshots and terminals opened outside this view may exceed the
       // grid bounds. Persist the same balanced fallback the grid displays.
       normalizingLayout.current = true;
@@ -310,6 +309,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     await closeTerminal(terminal.history_id ? `pane:${terminal.history_id}` : terminal.name, session.id);
   });
 
+  const saveFont = (size: number) => { const next = Math.max(9, Math.min(22, size)); setFontSize(next); localStorage.setItem(FONT_KEY, String(next)); };
   const saveAppearance = (next: "light" | "dark" | null) => { setAppearance(next); if (next) localStorage.setItem(APPEARANCE_KEY, next); else localStorage.removeItem(APPEARANCE_KEY); };
   const balanceLayout = () => void run(async () => {
     if (!session) return;
@@ -330,9 +330,10 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   }, [session, selected]);
   // The chosen direction when it fits; otherwise the first that does; null
   // when the anchor has no room at all (the agent then joins the even grid).
+  const workspaceFull = Boolean(session && session.terminals.length >= maxPanes);
   const pickerAnchorKey = session?.terminals.find((terminal) => terminal.name === splitAnchor)?.key;
   const directionFits = (direction: PaneSplitDirection) =>
-    Boolean(session && pickerAnchorKey && canSplitFit(session.layout, session.terminals, pickerAnchorKey, direction));
+    Boolean(session && pickerAnchorKey && canSplitFit(session.layout, session.terminals, pickerAnchorKey, direction, maxPanes));
   const effectiveDirection = !pickerAnchorKey ? null
     : directionFits(splitDirection) ? splitDirection
     : SPLIT_DIRECTIONS.find((item) => directionFits(item.id))?.id ?? null;
@@ -363,15 +364,15 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
 
   return <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="igentic-ide">
     <WorkspaceOptionsDialog open={optionsOpen && !!session} onOpenChange={setOptionsOpen} workspace={session?.name ?? session?.project.name ?? ""}
-      count={session?.terminals.length ?? 0} busy={busy} canAdd={installed.length > 0}
+      count={session?.terminals.length ?? 0} maxPanes={maxPanes} busy={busy} canAdd={installed.length > 0}
       onAdd={openAgentPicker} onBalance={balanceLayout} onRename={() => { setRenameValue(session?.name ?? session?.project.name ?? ""); setRenameOpen(true); }}
-      onClose={stopWorkspace} appearance={appearance} onAppearance={saveAppearance}
+      onClose={stopWorkspace} fontSize={fontSize} onFontSize={saveFont} appearance={appearance} onAppearance={saveAppearance}
       />
 
     <main className="min-h-0 flex-1">
       <IdeSidePanelFrame>
       {session ? <WorkspaceTerminalGrid key={session.id} session={session} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
-        onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} fontSize={fontSize} appearance={appearance} disabled={busy}
+        onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} maxPanes={maxPanes} fontSize={fontSize} appearance={appearance} disabled={busy}
         onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} />
       : <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
         <FolderPlus className="h-8 w-8 text-muted-foreground/70" />
@@ -389,7 +390,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="Add coding agent"
         className="w-full max-w-lg rounded-2xl border border-border bg-card p-5 shadow-2xl">
         <div className="mb-4 flex items-center justify-between gap-3">
-          <div><h2 className="text-base font-semibold">Add coding agent</h2><p className="mt-1 text-xs text-muted-foreground">{agentPicker.name}</p></div>
+          <div><h2 className="text-base font-semibold">Add coding agent</h2><p className="mt-1 text-xs text-muted-foreground">{agentPicker.name}{session && <> · {session.terminals.length} of {maxPanes} agents</>}</p></div>
           <button type="button" aria-label="Close" onClick={() => setAgentPicker(null)} className="rounded-md p-1.5 hover:bg-muted"><X className="h-4 w-4" /></button>
         </div>
 
@@ -412,7 +413,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
                 const fits = directionFits(item.id);
                 const checked = effectiveDirection === item.id;
                 return <button key={item.id} type="button" role="radio" aria-checked={checked} aria-label={`Split ${item.label.toLowerCase()}`}
-                  disabled={busy || !fits} title={fits ? item.hint : "No room: a workspace holds at most four columns and two rows."}
+                  disabled={busy || !fits} title={fits ? item.hint : `No room here. ${GRID_LIMIT_HINT}`}
                   onClick={() => { setSplitDirection(item.id); storeSplitDirection(item.id); }}
                   className={cn("flex flex-col items-center justify-center gap-1.5 rounded-lg border py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40",
                     checked ? "border-primary bg-primary/10 text-foreground ring-1 ring-primary/40" : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground")}>
@@ -425,7 +426,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
         })()}
 
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {installed.map((agent) => <button key={agent.name} type="button" disabled={busy}
+          {workspaceFull && <p role="status" className="col-span-full rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            This workspace is full ({maxPanes} agents). Close a pane, or open another workspace for more agents.</p>}
+          {installed.map((agent) => <button key={agent.name} type="button" disabled={busy || workspaceFull}
             onClick={() => { const owner = agentPicker.id; setAgentPicker(null); addAgent(agent.name, owner, effectiveDirection ? splitAnchor : undefined, effectiveDirection ?? "down"); }}
             className="flex min-h-12 items-center gap-3 rounded-lg border border-border px-3 py-2 text-left text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <AgentMark agent={agent.name} label={agent.display_name} logoUrl={agent.logo_url} variant="plain" />{agent.display_name}

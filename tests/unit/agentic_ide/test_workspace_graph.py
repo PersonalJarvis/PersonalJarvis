@@ -98,17 +98,18 @@ async def test_project_ownership_rejects_another_folder(registry, tmp_path):
     assert registry.sessions == []
 
 
-async def test_eight_cap_applies_to_create_add_and_batch(registry, tmp_path):
-    with pytest.raises(session.SessionError, match="At most 8"):
-        await registry.start(str(tmp_path), [{"agent": "claude"}] * 9)
-    space = await registry.start(str(tmp_path), [{"agent": "claude"}] * 7)
-    with pytest.raises(session.SessionError, match="at most 8"):
+async def test_pane_cap_applies_to_create_add_and_batch(registry, tmp_path):
+    cap = session.MAX_TERMINALS
+    with pytest.raises(session.SessionError, match=f"At most {cap}"):
+        await registry.start(str(tmp_path), [{"agent": "claude"}] * (cap + 1))
+    space = await registry.start(str(tmp_path), [{"agent": "claude"}] * (cap - 1))
+    with pytest.raises(session.SessionError, match=f"at most {cap}"):
         await registry.add_terminals(2)
-    assert len(space.terminals) == 7
+    assert len(space.terminals) == cap - 1
     await registry.add_terminal(agent="claude")
-    with pytest.raises(session.SessionError, match="maximum of 8"):
+    with pytest.raises(session.SessionError, match=f"maximum of {cap}"):
         await registry.add_terminal(agent="claude")
-    assert len(space.terminals) == 8
+    assert len(space.terminals) == cap
 
 
 @pytest.mark.parametrize(
@@ -232,13 +233,13 @@ async def test_oversized_legacy_workspace_is_preserved_without_partial_restore(r
         folder=str(tmp_path),
         terminals=[
             resume_store.SnapshotTerminal(key=f"t{i}", name=f"T{i}", agent="claude")
-            for i in range(9)
+            for i in range(session.MAX_TERMINALS + 1)
         ],
     )
     resume_store.save(resume_store.snapshot_now([saved]))
-    with pytest.raises(session.SessionError, match="limit is 8"):
+    with pytest.raises(session.SessionError, match=f"limit is {session.MAX_TERMINALS}"):
         await registry.restore_workspace(saved.session_id)
-    assert len(resume_store.load().workspaces[0].terminals) == 9
+    assert len(resume_store.load().workspaces[0].terminals) == session.MAX_TERMINALS + 1
     assert registry.sessions == []
 
 

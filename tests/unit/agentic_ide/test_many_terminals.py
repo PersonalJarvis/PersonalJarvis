@@ -205,3 +205,35 @@ async def test_the_snapshot_of_a_full_house_stays_a_sane_size(
     assert len(raw) < 100_000
     # And still valid JSON rather than something truncated.
     assert json.loads(raw)["workspaces"][0]["terminals"]
+
+
+# ------------------------------------------------------------- grid ceiling
+def test_the_ceiling_is_the_largest_grid_the_workspace_draws() -> None:
+    assert ide.MAX_TERMINALS == ide.MAX_GRID_COLUMNS * ide.MAX_GRID_ROWS
+    assert ide.MAX_TERMINALS > 8, "eight panes was a layout rule, not a resource limit"
+
+
+@pytest.mark.parametrize(
+    ("count", "columns", "rows"),
+    [(1, 1, 1), (2, 2, 1), (6, 3, 2), (8, 4, 2), (9, 3, 3), (12, 4, 3), (16, 4, 4)],
+)
+def test_an_even_grid_never_grows_wider_than_four_columns(
+    count: int, columns: int, rows: int
+) -> None:
+    assert ide.balanced_columns(count) == columns
+    assert -(-count // columns) == rows <= ide.MAX_GRID_ROWS
+
+
+async def test_a_full_workspace_rebalances_into_four_by_four(
+    registry: ide.Registry, tmp_path: Path
+) -> None:
+    await registry.start(str(tmp_path), [{"agent": "claude"} for _ in range(ide.MAX_TERMINALS)])
+    session = registry.session
+    assert session is not None
+    await registry.reorder_terminals(session.id, [term.history_id for term in session.terminals])
+    layout = session.layout
+    assert isinstance(layout, ide.layout_tree.Split) and layout.direction == "column"
+    assert len(layout.children) == ide.MAX_GRID_ROWS
+    assert all(len(ide.layout_tree.leaves(row)) == ide.MAX_GRID_COLUMNS for row in layout.children)
+    with pytest.raises(ide.SessionError):
+        await registry.add_terminal(agent="claude")

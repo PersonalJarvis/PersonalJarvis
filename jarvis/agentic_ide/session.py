@@ -217,8 +217,30 @@ def _unavailable(agent: str) -> str:
     return f"{pretty} cannot open: this machine has no shell Jarvis can start."
 
 
-# One workspace fits at most four columns and two rows of coding sessions.
-MAX_TERMINALS = 8
+# How many coding sessions one workspace may hold. Every pane is a full CLI
+# process with its own pseudo-terminal and socket, so this is a resource
+# ceiling, not a layout rule. It matches the largest grid the workspace draws
+# (MAX_GRID_COLUMNS x MAX_GRID_ROWS); past it, a second workspace tab is the
+# better home. Voice call-signs cover it (see `names._NUMBER_WORDS`). Mirrored
+# by the frontend's `workspaceDocking.ts`, which reads the count from the state.
+MAX_GRID_COLUMNS = 4
+MAX_GRID_ROWS = 4
+MAX_TERMINALS = MAX_GRID_COLUMNS * MAX_GRID_ROWS
+
+
+def balanced_columns(count: int) -> int:
+    """Columns of the even grid ``count`` panes are dealt into, row by row.
+
+    Two panes read best side by side; three to eight form two rows (six is
+    3 x 2); beyond that the grid grows a row per four panes, never wider than
+    MAX_GRID_COLUMNS. Mirrored by `balancedLayout` in ``workspaceDocking.ts``.
+    """
+    if count <= 2:
+        return max(1, count)
+    rows = 2 if count <= 2 * MAX_GRID_COLUMNS else -(-count // MAX_GRID_COLUMNS)
+    return min(MAX_GRID_COLUMNS, -(-count // rows))
+
+
 # How deep a wizard-opened column is filled before the next one is started.
 #
 # The workspace is exactly one screenful, so its columns share the window's
@@ -2657,10 +2679,7 @@ class Registry:
         """Keep legacy geometry consistent with the persistent terminal order."""
         # Rebuild the legacy split tree from the new order. Old geometry
         # must never sort the terminals back into their previous positions.
-        count = len(session.terminals)
-        # Two panes read best side by side. From three onward, balance the
-        # group into at most two rows and four columns (six becomes 3 x 2).
-        columns = 2 if count == 2 else min(4, (count + 1) // 2)
+        columns = balanced_columns(len(session.terminals))
         rows = [
             layout_tree.normalize(
                 layout_tree.Split(
@@ -5973,6 +5992,8 @@ __all__ = [
     "AGENT_BINARIES",
     "AGENT_DISPLAY",
     "MAX_PROMPT_CHARS",
+    "MAX_GRID_COLUMNS",
+    "MAX_GRID_ROWS",
     "MAX_TERMINALS",
     "MAX_WORKSPACES",
     "PLAIN_TERMINAL",
