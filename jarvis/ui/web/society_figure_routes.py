@@ -27,6 +27,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
 from jarvis.core.config import DATA_DIR
+from jarvis.core.path_safety import UnsafePathError, safe_child
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,21 @@ _SAFE_NAME = re.compile(r"[^a-z0-9]+")
 
 def figures_dir() -> Path:
     return DATA_DIR / "society" / "figures"
+
+
+def _figure_path(file_name: str) -> Path | None:
+    """The stored figure called *file_name*, or None when the name is not one.
+
+    Only a plain ``*.glb`` component inside :func:`figures_dir` qualifies, so a
+    request can never read or delete a file elsewhere (``..``, separators, or a
+    Windows drive-relative name such as ``C:x.glb``).
+    """
+    if not file_name.endswith(".glb"):
+        return None
+    try:
+        return safe_child(figures_dir(), file_name)
+    except UnsafePathError:
+        return None
 
 
 def _load_gate():
@@ -136,13 +152,8 @@ async def import_figure(request: Request, name: str = Query("figure")) -> dict[s
 
 @router.get("/{file_name}")
 def get_figure(file_name: str) -> FileResponse:
-    path = figures_dir() / file_name
-    if (
-        not file_name.endswith(".glb")
-        or "/" in file_name
-        or "\\" in file_name
-        or not path.is_file()
-    ):
+    path = _figure_path(file_name)
+    if path is None or not path.is_file():
         raise HTTPException(404, "no such figure")
     return FileResponse(
         path, media_type="model/gltf-binary", headers={"Cache-Control": "public, max-age=31536000"}
@@ -151,14 +162,8 @@ def get_figure(file_name: str) -> FileResponse:
 
 @router.delete("/{file_name}", openapi_extra={"x-jarvis-dangerous": True})
 async def delete_figure(file_name: str) -> dict[str, Any]:
-    path = figures_dir() / file_name
-    if (
-        not file_name.endswith(".glb")
-        or "/" in file_name
-        or "\\" in file_name
-        or not path.is_file()
-    ):
+    path = _figure_path(file_name)
+    if path is None or not path.is_file():
         raise HTTPException(404, "no such figure")
     await run_in_threadpool(path.unlink)
     return {"deleted": file_name}
-
