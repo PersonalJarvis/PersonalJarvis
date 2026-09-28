@@ -855,11 +855,11 @@ export function AgenticTerminal({
       // module exists to prevent.
       fontFamily: TERMINAL_FONT_STACK,
       fontSize: fontSizeRef.current,
-      // Roomier than a console default — the single biggest readability win for
-      // an agent that prints prose, diffs and file trees rather than log lines.
-      // Kept integral-friendly: fractional cell heights round differently per
-      // row and make a redrawn TUI box look ragged.
-      lineHeight: 1.3,
+      // A dense console line height, like a standalone terminal: at 1.3 a pane
+      // showed far fewer rows than the same window in a native terminal, which
+      // read as "zoomed in". Kept integral-friendly: fractional cell heights
+      // round differently per row and make a redrawn TUI box look ragged.
+      lineHeight: 1.2,
       // Zero, not 0.2: extra tracking is added per cell, so a box-drawing frame
       // and the text under it accumulate different sub-pixel offsets and the
       // frame visibly bends. Monospace legibility comes from the line height.
