@@ -47,8 +47,10 @@ produces one.
 ### Concurrency
 
 A pull request (or a branch run the merge train dispatched) keeps only its
-newest run. Pushes to main, the nightly run and manual full runs are never
-cancelled — every commit on main gets its own verdict.
+newest run. A run on main is never cancelled once it started; pushes to main
+share one queue slot, so a burst of pushes leaves one pending run that covers
+every commit before it instead of a backlog behind the organisation's
+concurrent-job limit. The nightly run and manual runs have their own slots.
 
 ## 2. Integrating several agents — `.github/workflows/merge-train.yml`
 
