@@ -5,7 +5,7 @@
  *
  * The workstation is a contemporary bench desk: a light-oak top on black
  * steel T-legs, a felt privacy screen, a slim monitor on an arm, a white
- * pedestal, and an ergonomic chair with a mesh back on a five-star base. The
+ * pedestal, and an ergonomic mesh-back task chair (OfficeChairs.tsx). The
  * felt screen and the seat fabric take the department's zone colour through
  * per-instance colours, so a department reads as one team at a glance. A
  * coding-floor studio passes a `tone` instead, which swaps whole materials by
@@ -17,6 +17,7 @@ import {
 } from "three";
 import { RoundedBoxGeometry } from "three-stdlib";
 import type { SocietyAgent } from "../data";
+import { CHAIR_MAT, TASK_CHAIR_PARTS, type ChairFinish } from "./OfficeChairs";
 import { GEO, MAT, screenMaterial } from "./OfficeFurniture";
 import type { DeskSlot } from "./officeLayout";
 import { DEPARTMENT_ZONES } from "./officePalette";
@@ -26,10 +27,14 @@ import type { ScreenFace } from "./screenTextures";
 type Tint = "panel" | "seat";
 
 /** Which surface of a workstation a part is; a desk tone recolours parts by role. */
-type PartRole = "top" | "body" | "leg" | "monitor" | "keyboard" | "chair" | "seat";
+type PartRole = "top" | "body" | "leg" | "monitor" | "keyboard" | "chair" | "seat" | "chrome" | "mesh";
 
-/** Per-department materials for the parts that carry a room's style (the monitor and keyboard stay). */
-export type DeskTone = Partial<Record<Exclude<PartRole, "monitor" | "keyboard">, MeshStandardMaterial>>;
+/** Parts every room keeps as they are: the monitor, keyboard, and the chair's polished base and mesh back. */
+type FixedRole = "monitor" | "keyboard" | "chrome" | "mesh";
+const FIXED_ROLES: ReadonlySet<PartRole> = new Set<FixedRole>(["monitor", "keyboard", "chrome", "mesh"]);
+
+/** Per-department materials for the parts that carry a room's style. */
+export type DeskTone = Partial<Record<Exclude<PartRole, FixedRole>, MeshStandardMaterial>>;
 
 interface Part {
   role: PartRole;
@@ -46,8 +51,9 @@ interface Part {
 const CHAIR_Z = 0.62;
 const rounded = (w: number, h: number, d: number, r: number) => new RoundedBoxGeometry(w, h, d, 2, r);
 
-/** Five spokes of the chair's star base, and a caster at the end of each. */
-const STAR = Array.from({ length: 5 }, (_, i) => (i * 2 * Math.PI) / 5);
+/** The task chair's finishes as desk part roles: the frame and fabric follow a desk tone, metal and mesh stay. */
+const CHAIR_ROLE: Record<ChairFinish, PartRole> = { frame: "chair", fabric: "seat", metal: "chrome", mesh: "mesh" };
+const CHAIR_MATERIAL: Record<ChairFinish, Material> = { frame: MAT.chair, fabric: MAT.tinted, metal: CHAIR_MAT.aluminium, mesh: CHAIR_MAT.mesh };
 
 const PARTS: Part[] = [
   // Desk: top surface at 0.77 m, as before, so hands and keyboards line up with the seated pose.
@@ -71,17 +77,11 @@ const PARTS: Part[] = [
   { role: "keyboard", geometry: GEO.box, material: MAT.keyboard, position: [0, 0.777, 0.22], scale: [0.44, 0.014, 0.13], cast: true },
   { role: "keyboard", geometry: GEO.box, material: MAT.keyboard, position: [0.33, 0.78, 0.22], scale: [0.05, 0.02, 0.08], cast: false },
   { role: "keyboard", geometry: GEO.cyl, material: MAT.mug, position: [-0.52, 0.815, 0.02], scale: [0.035, 0.09, 0.035], cast: true },
-  // Chair: star base with casters, gas lift, fabric seat (seat top 0.52 m) and a mesh back.
-  ...STAR.flatMap((a): Part[] => [
-    { role: "chair", geometry: GEO.box, material: MAT.chair, position: [Math.sin(a) * 0.15, 0.06, CHAIR_Z + Math.cos(a) * 0.15], scale: [0.045, 0.035, 0.3], rotY: a, cast: true },
-    { role: "chair", geometry: GEO.cyl, material: MAT.chair, position: [Math.sin(a) * 0.29, 0.025, CHAIR_Z + Math.cos(a) * 0.29], scale: [0.028, 0.05, 0.028], cast: false },
-  ]),
-  { role: "chair", geometry: GEO.cyl, material: MAT.monitorArm, position: [0, 0.27, CHAIR_Z], scale: [0.025, 0.4, 0.025], cast: false },
-  { role: "seat", geometry: rounded(0.5, 0.07, 0.48, 0.03), material: MAT.tinted, position: [0, 0.485, CHAIR_Z], tint: "seat", cast: true },
-  { role: "chair", geometry: GEO.box, material: MAT.chair, position: [0, 0.62, CHAIR_Z + 0.27], scale: [0.05, 0.3, 0.03], cast: false },
-  { role: "chair", geometry: rounded(0.46, 0.52, 0.06, 0.03), material: MAT.chairMesh, position: [0, 0.87, CHAIR_Z + 0.25], cast: true },
-  // Lumbar band in the seat fabric, so the mesh back reads as an ergonomic chair.
-  { role: "seat", geometry: rounded(0.4, 0.07, 0.02, 0.01), material: MAT.tinted, position: [0, 0.74, CHAIR_Z + 0.215], tint: "seat", cast: false },
+  // Chair: the ergonomic task chair (seat top 0.52 m) from OfficeChairs, behind the desk.
+  ...TASK_CHAIR_PARTS.map((part): Part => ({
+    role: CHAIR_ROLE[part.finish], geometry: part.geometry, material: CHAIR_MATERIAL[part.finish], position: [0, 0, CHAIR_Z],
+    tint: part.finish === "fabric" ? "seat" : undefined, cast: part.cast,
+  })),
 ];
 
 const SCREEN_GEOMETRY = new PlaneGeometry(0.66, 0.38);
@@ -150,7 +150,7 @@ export function DeskInstances({ desks, agents, zones = NO_ZONES, tone }: {
   return (
     <group>
       {PARTS.map((part, i) => {
-        const override = part.role !== "monitor" && part.role !== "keyboard" ? tone?.[part.role] : undefined;
+        const override = FIXED_ROLES.has(part.role) ? undefined : tone?.[part.role as Exclude<PartRole, FixedRole>];
         const material = override ?? part.material;
         return <PartInstances key={`${i}:${desks.length}:${material.uuid}`} part={part} desks={desks} zones={zones}
           material={material} tinted={!override} />;

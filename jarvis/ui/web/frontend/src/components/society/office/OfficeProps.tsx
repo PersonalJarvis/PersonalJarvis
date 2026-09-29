@@ -15,6 +15,7 @@ import { LEAD_RENDERERS } from "./LeadSuite";
 import { COMMAND_RENDERERS } from "./CommandOffice";
 import { SERVER_RENDERERS } from "./ServerRoom";
 import { TEAM_RENDERERS } from "./TeamRoomDecor";
+import { MeetingChair } from "./OfficeChairs";
 import { Bookshelf, Box, Couch, GEO, MAT, matte, Plant, Rounded, Rug } from "./OfficeFurniture";
 import { FURNITURE_SIZE, type Furniture, type FurnitureKind } from "./officeLayout";
 import { PROP_COLOURS as P } from "./officePalette";
@@ -337,18 +338,6 @@ function Panel({ size, position, material, rotation }: {
 // ---------------------------------------------------------------------------
 // Props (local space: centred on the origin, front faces +z)
 // ---------------------------------------------------------------------------
-
-/** A meeting chair centred on its seat, facing +z (backrest on the -z side). */
-function MeetingChair() {
-  return (
-    <group>
-      <Cyl radius={0.26} height={0.04} position={[0, 0.02, 0]} material={MAT.chair} />
-      <Cyl radius={0.03} height={0.4} position={[0, 0.24, 0]} material={MAT.chair} cast={false} />
-      <Rounded size={[0.48, 0.08, 0.46]} radius={0.03} position={[0, 0.46, 0]} material={MAT.chairSeat} />
-      <Rounded size={[0.46, 0.46, 0.07]} radius={0.03} position={[0, 0.74, -0.21]} material={MAT.chairSeat} />
-    </group>
-  );
-}
 
 /**
  * Six chairs around a meeting table: three per long side at local x = -1.1, 0,
