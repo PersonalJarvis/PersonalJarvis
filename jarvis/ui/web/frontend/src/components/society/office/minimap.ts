@@ -12,7 +12,7 @@
  */
 import { CHECKPOINT_GOLD, DEPARTMENT_TINTS, ROOM_FLOOR_COLOURS } from "./officePalette";
 import {
-  DESK_SIZE, FURNITURE_SIZE, allDesks, footprint, roomAt,
+  FURNITURE_SIZE, allDesks, deskRect, footprint, roomAt,
   type CheckpointKind, type FurnitureKind, type OfficeLayout, type Point, type Rect, type RoomKind,
 } from "./officeLayout";
 
@@ -313,6 +313,10 @@ const FURNITURE_PAINT: Partial<Record<FurnitureKind, string>> = {
   couch: "#4a5366", coffeeTable: "#c89f74", meetingTable: "#c89f74", teamBoard: "#f4f4f0", receptionDesk: "#f2eee6",
   kiosk: "#3a3f4b", lockers: "#5fa8a0", mirror: "#d6ecf8", coffeeBar: "#8a6240", waterCooler: "#6fb7ea", arcade: "#6a58b0",
   beanbag: "#e27d60", bookshelf: "#8a6240", plant: MAP_PAINT.plant, rug: MAP_PAINT.rug, elevator: "#c9ced6",
+  leadWall: "#3a2416", executiveRug: "#26335a", guestChair: "#a9683c", chesterfield: "#7a2c22", loungeTable: "#d8ae52",
+  executiveBar: "#5b3a25", globe: "#5f8f96", floorLamp: "#d8ae52", commandWall: "#3a2a20", commandDesk: "#c9b79c",
+  serverRack: "#23272e", coldAisle: "#b3bac3", nocConsole: "#2b3038", statusWall: "#1a1d22", ups: "#2b3038", fireSuppression: "#c8262b",
+  teamWall: "#6a4631", credenza: "#6a4631", designerPlant: MAP_PAINT.plant, teamRug: "#e6dccb",
 };
 
 export const STATE_RING: Record<MinimapAgentState, string> = {
@@ -320,8 +324,8 @@ export const STATE_RING: Record<MinimapAgentState, string> = {
 };
 
 /** Checkpoint icon per checkpoint kind; the same pictures as the 3D tokens (CheckpointMarker). */
-export const CHECKPOINT_ICON_KEYS: Record<CheckpointKind, "plus" | "list" | "team" | "shirt" | "star" | "coffee"> = {
-  create: "plus", manage: "list", team: "team", wardrobe: "shirt", lead: "star", break: "coffee",
+export const CHECKPOINT_ICON_KEYS: Record<CheckpointKind, "plus" | "list" | "team" | "shirt" | "star" | "coffee" | "elevator" | "target"> = {
+  create: "plus", manage: "list", team: "team", wardrobe: "shirt", lead: "star", break: "coffee", elevator: "elevator", mission: "target",
 };
 
 /** Stroke-only icons in a 24 × 24 box; kept in sync with CheckpointMarker's paths. */
@@ -332,6 +336,8 @@ const ICON_PATHS: Record<(typeof CHECKPOINT_ICON_KEYS)[CheckpointKind], string> 
   shirt: "M8 3L3 6l2 4 2.5-1v12h9V9l2.5 1 2-4-5-3c-.5 1.5-2 2.5-4 2.5S8.5 4.5 8 3z",
   star: "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z",
   coffee: "M4 9h12v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9zM16 10h1.5a2.5 2.5 0 0 1 0 5H16M8 3.5c0 1 1 1 1 2M12 3.5c0 1 1 1 1 2",
+  elevator: "M5 3h14v18H5zM9 10l3-3 3 3M9 14l3 3 3-3",
+  target: "M12 3a9 9 0 1 1 0 18a9 9 0 1 1 0-18zM12 8a4 4 0 1 1 0 8a4 4 0 1 1 0-8zM12 1v4M12 19v4M1 12h4M19 12h4",
 };
 
 // ------------------------------------------------------------------ drawing
@@ -459,11 +465,11 @@ export function drawFloorArt(ctx: Ctx, layout: OfficeLayout, t: MapTransform, ar
   // Furniture: rugs first, then solid pieces; plants and beanbags are round.
   for (const pass of ["rug", "solid"] as const) {
     for (const item of layout.furniture) {
-      const isRug = item.kind === "rug";
+      const isRug = item.kind === "rug" || item.kind === "executiveRug" || item.kind === "teamRug";
       if ((pass === "rug") !== isRug) continue;
       const colour = FURNITURE_PAINT[item.kind] ?? MAP_PAINT.furniture;
       const fp = footprint(item);
-      if (item.kind === "plant" || item.kind === "beanbag") {
+      if (item.kind === "plant" || item.kind === "designerPlant" || item.kind === "beanbag") {
         const c = worldToMap(t, item);
         ctx.beginPath();
         ctx.arc(c.x, c.y, Math.max(1.2, (FURNITURE_SIZE[item.kind].w / 2) * t.scale * 0.85), 0, Math.PI * 2);
@@ -481,10 +487,11 @@ export function drawFloorArt(ctx: Ctx, layout: OfficeLayout, t: MapTransform, ar
   }
 
   // Desks: tiny light blocks with the monitor on the far side from the chair.
-  const deskW = DESK_SIZE.w * t.scale;
-  const deskD = DESK_SIZE.d * t.scale;
   for (const desk of allDesks(layout)) {
     const c = worldToMap(t, desk);
+    const rect = deskRect(desk);
+    const deskW = (rect.maxX - rect.minX) * t.scale;
+    const deskD = (rect.maxZ - rect.minZ) * t.scale;
     roundRectPath(ctx, c.x - deskW / 2, c.y - deskD / 2, deskW, deskD, Math.min(2, deskD * 0.2));
     ctx.fillStyle = MAP_PAINT.deskTop;
     ctx.fill();

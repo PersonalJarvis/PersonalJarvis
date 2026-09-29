@@ -15,7 +15,7 @@ import {
 } from "three";
 import { CompanionModel } from "../companion/AgentFollower";
 import { defaultCompanion } from "../companion/appearance";
-import { createGigiFlight, createGigiPose, stepGigiFlight, type GigiFlightMode } from "./gigiFlight";
+import { createGigiFlight, createGigiPose, followAnchor, stepGigiFlight, type GigiFlightMode } from "./gigiFlight";
 
 /** Gigi's on-screen height in the office. */
 export const GIGI_OFFICE_SIZE_M = 0.5;
@@ -95,13 +95,15 @@ function nextRandom(seed: { value: number }): number {
   return seed.value / 4294967296;
 }
 
-export function GigiFlyer({ owner, mode, speaking, paused, reduced }: {
-  /** The walker's mover: ground position and facing (0 = +z). */
+export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
+  /** The walker's mover (or, in "follow" mode, the person's character): ground position and facing (0 = +z). */
   owner: { current: { x: number; z: number; heading: number } };
   mode: GigiFlightMode;
   speaking: boolean;
   paused: boolean;
   reduced: boolean;
+  /** Free airspace test; "follow" mode keeps Gigi out of walls with it. */
+  clear?: (x: number, z: number) => boolean;
 }) {
   const root = useRef<Group>(null);
   const body = useRef<Group>(null);
@@ -117,6 +119,7 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced }: {
   const last = useRef({ x: owner.current.x, z: owner.current.z });
   const emitDebt = useRef(0);
   const seed = useRef({ value: 0x9e3779b9 });
+  const side = useRef<1 | -1>(1);
   const tint = useMemo(() => new Color(), []);
   const appearance = useMemo(() => ({ ...defaultCompanion("jarvis"), sizeM: GIGI_OFFICE_SIZE_M }), []);
 
@@ -142,8 +145,14 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced }: {
     const travelled = Math.hypot(m.x - last.current.x, m.z - last.current.z);
     const moving = dt > 0 && travelled / dt > MOVING_SPEED && travelled < 4;
     last.current.x = m.x; last.current.z = m.z;
+    let targetX = m.x, targetZ = m.z;
+    if (mode === "follow") {
+      const anchor = followAnchor(m.x, m.z, m.heading, side.current, clear);
+      side.current = anchor.side;
+      targetX = anchor.x; targetZ = anchor.z;
+    }
     stepGigiFlight(flight.current, {
-      targetX: m.x, targetZ: m.z, moving, mode, speaking, t: clock.current, dt, heading: m.heading, reduced,
+      targetX, targetZ, moving, mode, speaking, t: clock.current, dt, heading: m.heading, reduced, clear,
     }, pose);
 
     if (root.current) root.current.position.set(pose.x, pose.y, pose.z);

@@ -579,8 +579,66 @@ def _async_key_is_down(vk: int) -> bool | None:
         return None
 
 
+_VK_RMENU = 0xA5
+# Characters that sit on AltGr on every common AltGr layout (German ``@ € { \``,
+# French ``@ # {``, Nordic ``@ $ {`` …). A US layout types all of them without
+# Ctrl+Alt, so none of them reports that shift state there.
+_ALTGR_PROBE_CHARS = "@€{[]}\|~"
+_altgr_layout_cache: dict[int, bool] = {}
+
+
+def _layout_has_altgr(hkl: int) -> bool:
+    """Does keyboard layout ``hkl`` type any probe character through AltGr?"""
+    cached = _altgr_layout_cache.get(hkl)
+    if cached is not None:
+        return cached
+    import ctypes  # noqa: PLC0415 - Windows-only path
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.VkKeyScanExW.restype = ctypes.c_short
+    user32.VkKeyScanExW.argtypes = (ctypes.c_wchar, ctypes.c_void_p)
+    found = False
+    for ch in _ALTGR_PROBE_CHARS:
+        scan = int(user32.VkKeyScanExW(ch, ctypes.c_void_p(hkl)))
+        # High byte = shift state; 2 = Ctrl, 4 = Alt. -1 = not on this layout.
+        if scan != -1 and (scan >> 8) & 0x06 == 0x06:
+            found = True
+            break
+    _altgr_layout_cache[hkl] = found
+    return found
+
+
+def altgr_is_down() -> bool:
+    """Is AltGr held right now on the foreground window's keyboard layout?
+
+    On an AltGr layout Windows reports the right Alt key as Ctrl+Alt: the
+    driver raises a phantom ``VK_CONTROL`` with ``VK_RMENU``. A modifier-only
+    ``ctrl+alt`` chord then fires on every ``@``/``€`` typed and on the
+    both-Alt appshot gesture. ``False`` whenever it cannot tell (non-Windows,
+    probe failure), so a caller only ever drops an edge on positive evidence.
+    """
+    if _async_key_is_down(_VK_RMENU) is not True:
+        return False
+    try:
+        import ctypes  # noqa: PLC0415 - Windows-only path
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetForegroundWindow.restype = ctypes.c_void_p
+        user32.GetWindowThreadProcessId.restype = ctypes.c_ulong
+        user32.GetWindowThreadProcessId.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
+        user32.GetKeyboardLayout.restype = ctypes.c_void_p
+        user32.GetKeyboardLayout.argtypes = (ctypes.c_ulong,)
+        thread_id = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
+        hkl = user32.GetKeyboardLayout(thread_id) or 0
+        return _layout_has_altgr(int(hkl))
+    except Exception:  # noqa: BLE001 - an unknown layout must never drop a hotkey
+        log.debug("AltGr layout probe failed", exc_info=True)
+        return False
+
+
 __all__ = [
     "MOUSE_BUTTON_TOKENS",
+    "altgr_is_down",
     "GlobalHotkeysBackend",
     "_KEY_MAP",
     "_canonical_token",

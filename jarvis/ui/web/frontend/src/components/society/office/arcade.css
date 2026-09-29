@@ -1,0 +1,32 @@
+/* The playable break-room arcade (ArcadeCabinet). The game screen is deep
+   space and stays dark in both themes; the dimmed backdrop follows the theme. */
+.office-arcade-backdrop { position:absolute; inset:0; z-index:70; display:flex; align-items:center; justify-content:center; padding:16px; background:hsl(var(--background) / .6); }
+.office-arcade { width:min(1100px, 100%, calc((100vh - 80px) * 16 / 9)); outline:none; }
+.office-arcade-screen { position:relative; width:100%; aspect-ratio:16 / 9; border-radius:14px; overflow:hidden; background:#0b0a14; border:1px solid hsl(var(--border)); box-shadow:0 18px 60px rgb(0 0 0 / .45); }
+.office-arcade-screen canvas { display:block; }
+.office-arcade-fallback { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; margin:0; color:#c9d4ff; font-size:13px; }
+
+/* HUD: small caps in the top-left corner, like an arcade overlay. */
+.office-arcade-hud { position:absolute; left:18px; top:14px; pointer-events:none; color:#e6ebff; font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; font-variant-numeric:tabular-nums; text-shadow:0 1px 3px rgb(0 0 0 / .8); }
+.office-arcade-hud-line { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.office-arcade-shields { display:inline-flex; gap:3px; vertical-align:middle; }
+.office-arcade-shields i { width:8px; height:8px; transform:rotate(45deg); background:#e6ebff; }
+.office-arcade-shields i[data-on="false"] { background:transparent; box-shadow:inset 0 0 0 1px rgb(230 235 255 / .35); }
+.office-arcade-missiles { display:inline-flex; gap:3px; vertical-align:middle; }
+.office-arcade-missiles i { width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; border-bottom:9px solid #ff6b57; }
+.office-arcade-missiles i[data-on="false"] { border-bottom-color:rgb(255 107 87 / .25); }
+.office-arcade-screen canvas { cursor:crosshair; }
+.office-arcade-boost-label[data-active="true"] { color:#7dd3fc; }
+.office-arcade-rapid { color:#facc15; }
+.office-arcade-bar { width:130px; height:4px; margin-top:6px; border-radius:2px; background:rgb(255 255 255 / .12); overflow:hidden; }
+.office-arcade-bar i { display:block; height:100%; background:#facc15; transition:width .08s linear; }
+.office-arcade-hud-sub { margin-top:6px; font-size:10px; color:rgb(230 235 255 / .65); }
+.office-arcade-keys { position:absolute; left:0; right:0; bottom:10px; margin:0; text-align:center; pointer-events:none; font-size:10px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:rgb(230 235 255 / .55); }
+
+.office-arcade-close { position:absolute; right:10px; top:8px; border:0; background:rgb(255 255 255 / .08); color:#e6ebff; width:28px; height:28px; border-radius:8px; font-size:18px; line-height:1; cursor:pointer; }
+.office-arcade-close:hover { background:rgb(255 255 255 / .16); }
+.office-arcade-close:focus-visible, .office-arcade-message:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
+.office-arcade-message { position:absolute; left:50%; top:50%; transform:translate(-50%, -50%); display:flex; flex-direction:column; align-items:center; gap:8px; max-width:80%; border:1px solid rgb(250 204 21 / .6); border-radius:12px; padding:16px 26px; background:rgb(11 10 20 / .78); color:#facc15; cursor:pointer; text-align:center; backdrop-filter:blur(4px); }
+.office-arcade-message strong { font-size:26px; letter-spacing:.12em; text-transform:uppercase; color:#e6ebff; }
+.office-arcade-message span { font-size:13px; font-weight:600; letter-spacing:.06em; }
+@media (max-width:600px) { .office-arcade-hud { left:10px; top:8px; font-size:10px; } .office-arcade-message strong { font-size:18px; } }

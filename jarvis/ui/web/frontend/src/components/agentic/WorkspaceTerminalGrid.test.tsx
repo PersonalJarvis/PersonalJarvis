@@ -19,6 +19,7 @@ vi.mock("./AgenticTerminal", () => ({ AgenticTerminal: (props: {
 vi.mock("@/hooks/useTheme", () => ({ useThemeValue: () => "dark" }));
 import { WorkspaceTerminalGrid } from "./WorkspaceTerminalGrid";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { useIdeChatStore } from "@/store/ideChat";
 import { balancedLayout, previewDock } from "./workspaceDocking";
 
 class ResizeObserverStub { observe() {} disconnect() {} }
@@ -218,6 +219,23 @@ it("drags the seam between two panes to resize them and saves the new sizes", as
     await act(async () => { vi.advanceTimersByTime(1000); });
     expect(api.weights).toHaveBeenCalledTimes(1);
   } finally { vi.useRealTimers(); }
+});
+
+it("maximizes the pane the office asked for, once, and only in its own workspace", () => {
+  act(() => useIdeChatStore.setState({ paneRequest: { workspaceId: "w2", pane: "T3", nonce: 7, maximize: true } }));
+  const { unmount } = render(<WorkspaceTerminalGrid {...props} session={makeSession()} />);
+  expect(screen.getAllByRole("separator").length).toBe(3);
+  unmount();
+
+  act(() => useIdeChatStore.setState({ paneRequest: { workspaceId: "w1", pane: "T3", nonce: 8, maximize: true } }));
+  render(<WorkspaceTerminalGrid {...props} session={makeSession()} />);
+  expect(screen.queryAllByRole("separator")).toHaveLength(0);
+  const hidden = [...document.querySelectorAll<HTMLElement>("[data-session-id]")]
+    .filter((node) => node.className.split(/\s+/).includes("hidden"))
+    .map((node) => node.dataset.sessionId);
+  expect(hidden).toEqual(["T1", "T2", "T4"]);
+  expect(useIdeChatStore.getState().paneRequest).toMatchObject({ nonce: 8, maximize: false });
+  act(() => useIdeChatStore.setState({ paneRequest: null }));
 });
 
 it("hides the seams while a pane is maximized", () => {

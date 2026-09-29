@@ -2576,6 +2576,38 @@ class ScreenContextConfig(BaseModel):
     ocr_enabled: bool = False
 
 
+class AppshotConfig(BaseModel):
+    """Top-level ``[appshot]`` config — show the assistant the front window.
+
+    An appshot is one capture of the window the user is working in, taken on
+    a global shortcut or when the user asks for one, and handed to the
+    conversation as context (``jarvis/appshot/``). It runs through the Screen
+    Context capture engine, so every ``[screen_context]`` privacy rule applies.
+
+    The master switch is ``[screen_context].enabled``: an appshot and a spoken
+    "what do you see?" are the same look, so one switch governs both. Every
+    key below is read by ``jarvis.appshot`` (AP-31).
+    """
+
+    model_config = {"extra": "allow"}
+
+    #: Global shortcut. ``alt+alt`` means both Alt keys pressed together (read
+    #: by ``jarvis.appshot.gesture``); any other value is an ordinary combo in
+    #: the shared hotkey syntax; an empty string switches the shortcut off.
+    hotkey: str = "alt+alt"
+
+    #: Where a shortcut appshot goes. ``auto``: into the running voice call,
+    #: otherwise onto the next message. ``message``: always onto the next
+    #: message. ``voice``: only into a running voice call.
+    target: Literal["auto", "message", "voice"] = "auto"
+
+    #: Shutter sound on every appshot (also gated by ``[ui].sound_effects``).
+    sound: bool = True
+
+    #: Flash and thumbnail animation on the captured window.
+    effect: bool = True
+
+
 class ComputerUseConfig(BaseModel):
     """Top-level ``[computer_use]`` config for the Computer-Use harness.
 
@@ -4367,6 +4399,9 @@ class JarvisConfig(BaseModel):
     # One-shot, intent-driven screen look (jarvis/screen_context/). Distinct
     # from ``[vision]`` above, which governs the always-on observation path.
     screen_context: ScreenContextConfig = Field(default_factory=ScreenContextConfig)
+    # Appshots: the front window as conversation context, on a shortcut or on
+    # request (jarvis/appshot/). Captures through Screen Context above.
+    appshot: AppshotConfig = Field(default_factory=AppshotConfig)
     # Phase 5/6 — Computer-Use-POAV-Harness (ADR-0008).
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     # Low-latency local-action gate. Hidden tools only; never exposed in the
@@ -4578,6 +4613,16 @@ _PERSISTED_PROVIDER_ENV_KEYS: tuple[str, ...] = (
     "JARVIS__GOOGLE__VERTEX_PROJECT",
     "JARVIS__GOOGLE__VERTEX_LOCATION",
     "JARVIS__GOOGLE__SERVICE_ACCOUNT_PATH",
+    # GPT-Live profile. Forensic 2026-09-29: the user switched the thinking
+    # model to a ~20x cheaper one, jarvis.toml and the registry both held it,
+    # yet a restart inherited the old model from an ancestor env and every
+    # voice turn kept billing the expensive one.
+    "JARVIS__LIVE__MODEL",
+    "JARVIS__LIVE__VOICE",
+    "JARVIS__LIVE__BACKEND_MODEL",
+    "JARVIS__LIVE__REASONING_EFFORT",
+    "JARVIS__LIVE__WEB_SEARCH",
+    "JARVIS__LIVE__CONFIGURED",
 )
 
 

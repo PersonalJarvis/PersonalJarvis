@@ -170,6 +170,13 @@ describe("ComputersView", () => {
     fireEvent.change(screen.getByTestId("cx-password"), { target: { value: "hunter2" } });
     fireEvent.click(connect);
 
+    // The check is visible: every step resolves, the machine's facts prove it.
+    expect(await screen.findByTestId("cx-facts")).toBeTruthy();
+    for (const step of ["reach", "login", "probe", "save"]) {
+      expect(screen.getByTestId(`cx-step-${step}`).getAttribute("data-state")).toBe("ok");
+    }
+    expect(screen.getByText("srv17923")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("cx-open"));
     expect(await screen.findByTestId("computer-detail")).toBeTruthy();
     const post = calls.find((c) => c.method === "POST" && c.url === "/api/computers");
     expect(post?.body).toMatchObject({
@@ -208,8 +215,11 @@ describe("ComputersView", () => {
 
     expect(screen.queryByTestId("cx-password")).toBeNull();
     expect(screen.getByTestId("cx-detected").textContent).toContain("dev@192.0.2.10");
+    // A pasted key switches the login to "SSH key" by itself.
+    expect(screen.getByTestId("cx-method-key").getAttribute("aria-selected")).toBe("true");
     fireEvent.click(screen.getByTestId("cx-connect"));
 
+    fireEvent.click(await screen.findByTestId("cx-open"));
     expect(await screen.findByTestId("computer-detail")).toBeTruthy();
     const post = calls.find((c) => c.method === "POST" && c.url === "/api/computers");
     expect(post?.body).toMatchObject({ host: "192.0.2.10", username: "dev", auth: "private_key" });
@@ -251,7 +261,39 @@ describe("ComputersView", () => {
     fireEvent.click(screen.getByTestId("cx-connect"));
 
     expect(await screen.findByText(/refused the login/)).toBeTruthy();
+    // The server was reached; the login step is the one that failed.
+    expect(screen.getByTestId("cx-step-reach").getAttribute("data-state")).toBe("ok");
+    expect(screen.getByTestId("cx-step-login").getAttribute("data-state")).toBe("fail");
     expect(calls.some((c) => c.method === "POST" && c.url === "/api/computers")).toBe(false);
+    // "Change details" returns to the form with everything kept.
+    fireEvent.click(screen.getByTestId("cx-edit"));
+    expect((screen.getByTestId("cx-password") as HTMLInputElement).value).toBe("wrong");
+  });
+
+  it("shows every way in as a visible choice", async () => {
+    installFetch({
+      "GET /api/computers": () => ({ computers: [] }),
+      "GET /api/computers/providers": () => ({ providers: PROVIDERS }),
+      "GET /api/computers/identity": () => IDENTITY,
+    });
+    renderView();
+
+    fireEvent.click(await screen.findByTestId("computers-add-first"));
+    fireEvent.change(await screen.findByTestId("cx-address"), { target: { value: "192.168.1.20" } });
+
+    fireEvent.click(screen.getByTestId("cx-method-key"));
+    expect(screen.getByTestId("cx-private-key")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("cx-key-assistant"));
+    expect((await screen.findByTestId("cx-assistant-key")).textContent).toContain(IDENTITY.public_key);
+    // The assistant's key needs nothing typed: Connect is ready.
+    expect((screen.getByTestId("cx-connect") as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(screen.getByTestId("cx-method-agent"));
+    expect(screen.getByTestId("cx-copy-prompt")).toBeTruthy();
+    fireEvent.change(screen.getByTestId("cx-address"), {
+      target: { value: "Done.\nJARVIS-CONNECT ruben@192.168.1.20:22" },
+    });
+    expect(screen.getByTestId("cx-agent").textContent).toMatch(/key is on that computer/);
   });
 
   it("lists a machine, opens it and runs a console command", async () => {

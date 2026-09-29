@@ -5888,7 +5888,7 @@ class Registry:
                 # The recap cache is keyed by pane, and pane keys are reused
                 # (a new "Mika" in the same workspace). Dropping it here is what
                 # stops a fresh pane opening under the last one's sentence.
-                recap_engine.forget(term.key)
+                recap_engine.forget(recap_engine.pane_id(term))
                 opening.forget(term.key)
                 # Its bell entries go the same way and for the same reason.
                 # Each one is a "jump to this pane" button, and the pane has

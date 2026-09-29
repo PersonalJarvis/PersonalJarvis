@@ -9,13 +9,11 @@
   <a href="https://x.com/PersonalJarvis"><img src="https://img.shields.io/badge/follow-%40PersonalJarvis-000000?logo=x&logoColor=white" alt="follow @PersonalJarvis on X" /></a>
 </p>
 
-**Personal Jarvis is an open-source AI assistant that lives on your desktop and gets real work done.**
+Personal Jarvis is an open-source AI assistant that runs on your own computer and that you simply talk to. Say your wake phrase and it answers out loud, works your browser and desktop apps, and runs your coding agents for you: Claude Code, Codex, OpenCode, Kimi and others sit side by side in one workspace, and you can tell any of them what to do by voice ("tell T1 to run the tests"). Longer jobs go to persistent agents that keep working in the background. One app for Windows, macOS and Linux, or headless on a server.
 
-The idea is simple: one place on your computer where you say what you need, and it happens. You talk to Jarvis or type to it, and it works out whether to just answer, do something on your computer for you, or pass the job to an agent that keeps at it while you get on with your day. You can always see what it's doing, and it asks before it touches anything that matters.
+**It conducts your tools instead of replacing them.** Most AI apps want you to move into their chat and their subscription. Jarvis sits on top of what you already have: your Claude Code or Codex plan, one API key from any provider, or a local model through Ollama. It turns them into a single assistant you can talk to, and you can swap any of them without touching anything else.
 
-It runs on your own machine with whichever model you like, local ones included, and it's free. There's no account to create, and nothing sends your data anywhere you didn't connect yourself.
-
-It's built in the open by a very small team, and it still has rough edges. If something breaks for you, please open an issue. That really is how it gets better.
+**How it's built.** A Python core and a React desktop app, both running locally. A small router only decides where a request goes (answer, tool, or agent) and every action passes through one executor with a risk policy (safe, monitor, ask, block), so nothing that could change your system happens without your approval, and every run is recorded. Voice streams end to end, so Jarvis starts answering before it has finished thinking. State, memory and keys stay on your machine; there is no account, no paid tier and no analytics. The whole design is in the [architecture overview](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/architecture-overview.md).
 
 [Website](https://personaljarvis.ai) · [Docs](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/welcome-to-personal-jarvis.md) · [Getting started](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/first-run-setup.md) · [How it works](#how-it-works) · [Discord](https://discord.gg/x7USduHxbc) · [X](https://x.com/PersonalJarvis)
 

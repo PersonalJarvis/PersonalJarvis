@@ -1,9 +1,10 @@
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
-import { useLayoutEffect, useMemo } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AudioLines, Mic } from "lucide-react";
 
 import { useEventStore, type ChatMessage } from "@/store/events";
 import { useHomeStore } from "@/store/home";
+import { ChatsApiError, speakInConversation } from "@/lib/chatsApi";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ScrollToEndButton } from "@/components/ui/scroll-to-end-button";
 import { useStickToBottom } from "@/hooks/useStickToBottom";
@@ -24,8 +25,11 @@ import { cn } from "@/lib/utils";
  * screen: the words were loaded into a store the stage did not read.
  *
  * "Continue by voice" hands the thread to the voice stage with its words
- * already in the lane — the same seeding the sidebar does when you open a
- * voice session while standing on that stage.
+ * already in the lane AND starts the call: the backend re-seeds the brain
+ * with this thread and arms the microphone (POST .../speak). Switching the
+ * screen alone left the user in front of a silent orb, and whatever had
+ * happened since the row was opened (a new-run reset after a hangup, another
+ * call) had already spent the one-shot seed from opening it.
  */
 export function VoiceThreadStage({ onContinueByVoice }: { onContinueByVoice?: () => void } = {}) {
   const t = useT();
@@ -34,6 +38,10 @@ export function VoiceThreadStage({ onContinueByVoice }: { onContinueByVoice?: ()
   const conversations = useEventStore((s) => s.conversations);
   const setSurface = useHomeStore((s) => s.setSurface);
   const seedTranscript = useHomeStore((s) => s.seedTranscript);
+  const setJarvisCardMode = useHomeStore((s) => s.setJarvisCardMode);
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [starting, setStarting] = useState(false);
+  const startingRef = useRef(false);
 
   const title = useMemo(
     () => conversations.find((c) => c.kind === "voice" && c.id === activeThreadId)?.title ?? "",
@@ -46,16 +54,34 @@ export function VoiceThreadStage({ onContinueByVoice }: { onContinueByVoice?: ()
   const { rootRef, contentRef, atEnd, jumpToEnd, follow } = useStickToBottom();
   useLayoutEffect(follow, [follow, activeThreadId, messages.length]);
 
-  const continueByVoice = () => {
+  const continueByVoice = async () => {
+    if (startingRef.current) return;
+    const threadId = activeThreadId;
     // Inside the Jarvis agent card the caller owns the Voice | Chat half, so
-    // it takes over (seeding the lane and showing the voice stage itself);
-    // everywhere else this is the front page's own surface switch.
+    // it takes over the display (seeding the lane and showing the voice
+    // stage itself); everywhere else this is the front page's surface switch.
     if (onContinueByVoice) {
       onContinueByVoice();
-      return;
+    } else {
+      seedTranscript(transcriptFromMessages(messages));
+      setSurface("voice");
+      setJarvisCardMode("voice");
     }
-    seedTranscript(transcriptFromMessages(messages));
-    setSurface("voice");
+    if (!threadId) return;
+    startingRef.current = true;
+    setStarting(true);
+    try {
+      const { armed } = await speakInConversation("voice", threadId);
+      // Not armed: a call is still running or the window is hidden. The
+      // backend seeds nothing then, so say so instead of a silent orb.
+      if (!armed) pushToast("warning", t("voice_thread.continue_busy"));
+    } catch (error) {
+      const unavailable = error instanceof ChatsApiError && error.status === 503;
+      pushToast(unavailable ? "warning" : "error", t("chats_view.speak_unavailable"));
+    } finally {
+      startingRef.current = false;
+      setStarting(false);
+    }
   };
 
   return (
@@ -101,12 +127,14 @@ export function VoiceThreadStage({ onContinueByVoice }: { onContinueByVoice?: ()
           </p>
           <button
             type="button"
-            onClick={continueByVoice}
+            onClick={() => void continueByVoice()}
+            disabled={starting}
             data-testid="continue-by-voice"
             className={cn(
               "flex shrink-0 items-center gap-2 rounded-xl border border-primary/40 bg-primary/10 px-3 py-1.5",
               "text-xs font-medium text-primary transition-colors hover:bg-primary/20",
               "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+              "disabled:cursor-default disabled:opacity-60",
             )}
           >
             <AudioLines aria-hidden className="h-3.5 w-3.5" />

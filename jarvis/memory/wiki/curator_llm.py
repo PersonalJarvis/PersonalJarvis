@@ -533,9 +533,9 @@ class WikiCuratorLLM:
 
         start_ns = time.time_ns()
         from jarvis.memory.wiki.provider_chain import (
+            background_wiki_providers,
             build_wiki_provider_chain,
             complete_with_fallback,
-            credential_ready_wiki_providers,
         )
 
         # Key-aware fallback (AP-22/23): cross to a reachable family instead of
@@ -546,7 +546,7 @@ class WikiCuratorLLM:
             model_override=self._cfg.model,
             available=available,
             credential_ready=(
-                credential_ready_wiki_providers(
+                background_wiki_providers(
                     available=available,
                     config=self._config,
                 )

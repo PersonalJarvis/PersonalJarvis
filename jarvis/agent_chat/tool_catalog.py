@@ -189,7 +189,7 @@ def live_catalog(brain: Any, *, cwd: str = "", stance: str = "ask") -> list[Tool
     from jarvis.agent_chat.folder_tools import folder_tools, plan_filter
     from jarvis.agent_chat.typeahead import jarvis_skills
     from jarvis.marketplace.catalog_data import load_catalog
-    from jarvis.marketplace.token_store import TokenStore
+    from jarvis.marketplace.connect_helpers import usable_plugin_ids
     from jarvis.society.browser.tool import lead_browser_tools
 
     tools = dict(getattr(brain, "_tools", {}) or {})
@@ -198,17 +198,7 @@ def live_catalog(brain: Any, *, cwd: str = "", stance: str = "ask") -> list[Tool
     if stance == "plan":
         tools = plan_filter(tools)
     plugins = load_catalog().plugins
-    store = TokenStore()
-    connected: set[str] = set()
-    for spec in plugins:
-        try:
-            tokens = store.load(spec.id)
-            if tokens is not None and not tokens.needs_reauth:
-                connected.add(spec.id)
-            elif getattr(spec.auth, "mode", "") == "none":
-                connected.add(spec.id)
-        except Exception:  # noqa: BLE001 — an unreadable credential disables just this row
-            log.warning("Composer could not read connection state for %s", spec.id, exc_info=True)
+    connected = usable_plugin_ids()
     rows = build_catalog(tools, plugins, jarvis_skills(), connected)
     from jarvis.core.runtime_refs import get_mcp_registry
 

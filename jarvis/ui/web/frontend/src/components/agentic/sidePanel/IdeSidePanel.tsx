@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, MoveHorizontal, PanelRightClose, Plus, X } from "lucide-react";
+import { Check, Maximize2, Minimize2, MoveHorizontal, PanelRightClose, Plus, X } from "lucide-react";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useResizablePane } from "@/hooks/useResizablePane";
@@ -16,6 +16,8 @@ const WIDTH_KEY = "jarvis.agenticIde.sidePanelWidth.v1";
 const DEFAULT_PX = 340;
 const MIN_PX = 260;
 const MAX_PX = 720;
+/** The office map needs room to walk around in: its tab opens the panel at least this wide. */
+const OFFICE_MIN_PX = 520;
 /** Terminal canvas kept visible while the panel is open. */
 const GRID_RESERVED_PX = 320;
 
@@ -37,6 +39,8 @@ const HEADER_BTN =
 export function IdeSidePanelFrame({ children }: { children: ReactNode }) {
   const t = useT();
   const open = useIdeSidePanelStore((state) => state.open);
+  const active = useIdeSidePanelStore((state) => state.active);
+  const maximized = useIdeSidePanelStore((state) => state.maximized);
   // Ctrl+click on a path in any terminal opens it in the Explorer tab.
   useExplorerPathRouting();
   // A click on a pane in the grid counts as reviewing that agent.
@@ -65,13 +69,28 @@ export function IdeSidePanelFrame({ children }: { children: ReactNode }) {
   // Keep a wider stored preference intact while the window is narrow.
   const width = Math.min(pane.size, max);
 
+  // Bringing the office forward widens a narrow panel once; the user can drag
+  // it back and it stays where they left it until the office is picked again.
+  const officeInFront = open && active === "office";
+  const paneRef = useRef(pane);
+  paneRef.current = pane;
+  useEffect(() => {
+    if (officeInFront && paneRef.current.size < OFFICE_MIN_PX) paneRef.current.resize(OFFICE_MIN_PX);
+  }, [officeInFront]);
+
   return (
-    <div ref={frame} className="flex h-full min-h-0 w-full">
-      <div className="h-full min-h-0 min-w-0 flex-1">{children}</div>
+    <div ref={frame} className="relative flex h-full min-h-0 w-full">
+      {/* Hidden, not removed, under a maximized panel: the glass theme's panel is
+          see-through, and the live terminals keep their size and sockets. */}
+      <div data-testid="ide-side-panel-grid" className={cn("h-full min-h-0 min-w-0 flex-1", maximized && "invisible")}>{children}</div>
+      {/* Maximized, the host keeps its width in the row so the terminals behind
+          it never resize, and stops being the positioning box: the panel then
+          anchors to the frame and covers the whole view. */}
       <div
         data-testid="ide-side-panel-host"
         className={cn(
-          "relative h-full shrink-0",
+          "h-full shrink-0",
+          !maximized && "relative",
           !pane.isResizing && "transition-[width] duration-200 motion-reduce:transition-none",
         )}
         style={{ width: open ? width : 0 }}
@@ -79,32 +98,37 @@ export function IdeSidePanelFrame({ children }: { children: ReactNode }) {
       >
         {open && (
           <>
-            <div className="group absolute inset-y-0 left-0 z-20 flex -translate-x-1/2">
-              <PaneResizer
-                testId="ide-side-panel-resizer"
-                orientation="vertical"
-                active={pane.isResizing}
-                title={t("ide_side_panel.resize")}
-                onPointerDown={pane.startResize}
-                onDoubleClick={pane.reset}
-                // A start-edge grip: Left grows the panel, so the delta flips.
-                onNudge={(delta) => pane.nudge(-delta)}
-                valueNow={width}
-                valueMin={MIN_PX}
-                valueMax={max}
-                controls={SIDE_PANEL_ID}
-                className="h-full"
-                showLine={false}
-              />
-              <MoveHorizontal
-                aria-hidden
-                className={cn(
-                  "pointer-events-none absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-secondary p-0.5 text-foreground transition-opacity",
-                  pane.isResizing ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-                )}
-              />
+            {!maximized && (
+              <div className="group absolute inset-y-0 left-0 z-20 flex -translate-x-1/2">
+                <PaneResizer
+                  testId="ide-side-panel-resizer"
+                  orientation="vertical"
+                  active={pane.isResizing}
+                  title={t("ide_side_panel.resize")}
+                  onPointerDown={pane.startResize}
+                  onDoubleClick={pane.reset}
+                  // A start-edge grip: Left grows the panel, so the delta flips.
+                  onNudge={(delta) => pane.nudge(-delta)}
+                  valueNow={width}
+                  valueMin={MIN_PX}
+                  valueMax={max}
+                  controls={SIDE_PANEL_ID}
+                  className="h-full"
+                  showLine={false}
+                />
+                <MoveHorizontal
+                  aria-hidden
+                  className={cn(
+                    "pointer-events-none absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-secondary p-0.5 text-foreground transition-opacity",
+                    pane.isResizing ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+                  )}
+                />
+              </div>
+            )}
+            {/* Same element either way, so the live office scene is never remounted. */}
+            <div data-testid="ide-side-panel-body" className={maximized ? "absolute inset-0 z-30" : "h-full"}>
+              <IdeSidePanel />
             </div>
-            <IdeSidePanel />
           </>
         )}
       </div>
@@ -171,6 +195,8 @@ export function IdeSidePanel() {
   const openTab = useIdeSidePanelStore((state) => state.openTab);
   const closeTab = useIdeSidePanelStore((state) => state.closeTab);
   const setOpen = useIdeSidePanelStore((state) => state.setOpen);
+  const maximized = useIdeSidePanelStore((state) => state.maximized);
+  const setMaximized = useIdeSidePanelStore((state) => state.setMaximized);
   const [menuOpen, setMenuOpen] = useState(false);
   const menu = useRef<HTMLDivElement>(null);
   const current = sidePanelTab(active);
@@ -275,6 +301,17 @@ export function IdeSidePanel() {
             </div>
           )}
         </div>
+        <button
+          type="button"
+          data-testid="ide-side-panel-maximize"
+          aria-label={t(maximized ? "ide_side_panel.restore" : "ide_side_panel.maximize")}
+          title={t(maximized ? "ide_side_panel.restore" : "ide_side_panel.maximize")}
+          aria-pressed={maximized}
+          onClick={() => setMaximized(!maximized)}
+          className={HEADER_BTN}
+        >
+          {maximized ? <Minimize2 className="h-4 w-4" aria-hidden /> : <Maximize2 className="h-4 w-4" aria-hidden />}
+        </button>
         <button
           type="button"
           data-testid="ide-side-panel-collapse"

@@ -23,9 +23,9 @@ export const ZOOM_SECONDS = 1.15;
 const SCREEN_W = 0.66, SCREEN_H = 0.38;
 
 /** How far in front of a screen the camera must stand for the screen to fill the view. */
-export function screenFillDistance(fovDeg: number, aspect: number): number {
+export function screenFillDistance(fovDeg: number, aspect: number, width = SCREEN_W, height = SCREEN_H): number {
   const v = Math.tan((fovDeg * Math.PI) / 360);
-  return Math.max(SCREEN_H / 2 / v, SCREEN_W / 2 / (v * Math.max(0.2, aspect)));
+  return Math.max(height / 2 / v, width / 2 / (v * Math.max(0.2, aspect)));
 }
 
 export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; overview: number }) {
@@ -119,7 +119,7 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
       flight.current = null;
       // End squarely in front of the screen, far enough back that it exactly fills the view.
       const lens = camera as unknown as { fov: number; aspect: number };
-      const reach = screenFillDistance(lens.fov ?? 35, lens.aspect ?? 1.6) * 1.02;
+      const reach = screenFillDistance(lens.fov ?? 35, lens.aspect ?? 1.6, ...(store.zoom.size ?? [SCREEN_W, SCREEN_H])) * 1.02;
       const [tx, ty, tz] = store.zoom.target;
       preDive.current = { position: camera.position.toArray() as [number, number, number], target: c.target.toArray() as [number, number, number] };
       dive.current = { fromEye: camera.position.clone(),

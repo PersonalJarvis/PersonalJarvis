@@ -16,7 +16,7 @@ function targetsOf(layout: OfficeLayout): { name: string; p: Point }[] {
   return [
     ...allDesks(layout).flatMap((d) => [{ name: `seat ${d.id}`, p: seatOf(d) }, { name: `stand ${d.id}`, p: standOf(d) }]),
     ...layout.spots.map((s) => ({ name: `spot ${s.id}`, p: s })),
-    ...layout.checkpoints.map((c) => ({ name: `checkpoint ${c.id}`, p: c })),
+    ...layout.checkpoints.map((c) => ({ name: `checkpoint ${c.id}`, p: c.approach ?? c })),
   ];
 }
 
@@ -46,29 +46,35 @@ function assertClearPath(grid: NavGrid, from: Point, to: Point, path: Point[], n
 }
 
 describe("office navigation", () => {
-  for (const count of [0, 10, 40]) {
-    it(`reaches every seat, spot and checkpoint from the spawn (${count} agents)`, () => {
-      const layout = buildOfficeLayout(roster(count));
+  for (const variant of ["agents", "coding"] as const) {
+    for (const count of [0, 10, 40]) {
+      it(`reaches every seat, spot and checkpoint from the spawn and the elevator (${variant}, ${count} agents)`, () => {
+        const layout = buildOfficeLayout(roster(count), { variant });
+        const grid = buildNavGrid(layout);
+        const elevator = layout.checkpoints.find((c) => c.id === "elevator")!;
+        for (const start of [layout.spawn, elevator]) {
+          expect(isWalkable(grid, start)).toBe(true);
+          for (const { name, p } of targetsOf(layout)) {
+            const path = findPath(grid, start, p);
+            if (!path) throw new Error(`${name} at ${p.x.toFixed(2)},${p.z.toFixed(2)} is unreachable`);
+            if (path.length === 0) continue; // already standing on it
+            assertClearPath(grid, start, p, path, name);
+          }
+        }
+      });
+    }
+
+    it(`walks back from every target to the spawn, starting inside furniture if need be (${variant})`, () => {
+      const layout = buildOfficeLayout(roster(10), { variant });
       const grid = buildNavGrid(layout);
-      expect(isWalkable(grid, layout.spawn)).toBe(true);
       for (const { name, p } of targetsOf(layout)) {
-        const path = findPath(grid, layout.spawn, p);
-        if (!path) throw new Error(`${name} at ${p.x.toFixed(2)},${p.z.toFixed(2)} is unreachable`);
-        assertClearPath(grid, layout.spawn, p, path, name);
+        const path = findPath(grid, p, layout.spawn);
+        expect(path, name).not.toBeNull();
+        const tail = path!.at(-1)!;
+        expect(tail).toEqual(layout.spawn);
       }
     });
   }
-
-  it("walks back from every target to the spawn, starting inside furniture if need be", () => {
-    const layout = buildOfficeLayout(roster(10));
-    const grid = buildNavGrid(layout);
-    for (const { name, p } of targetsOf(layout)) {
-      const path = findPath(grid, p, layout.spawn);
-      expect(path, name).not.toBeNull();
-      const tail = path!.at(-1)!;
-      expect(tail).toEqual(layout.spawn);
-    }
-  });
 
   it("blocks obstacles and everything outside the floor", () => {
     const layout = buildOfficeLayout(roster(4));

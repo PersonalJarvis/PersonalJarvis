@@ -13,10 +13,10 @@ Commands marked **requires confirmation** never run on a bare voice request — 
 
 ## `society-create-agent` — Create a persistent team agent
 
-Create an agent in the user's existing Agents team, only when requested. This creates a roster profile and starts no work. Responsibilities derive capabilities through the same service as the Agents UI. When a team agent creates a teammate, the new agent inherits that creator's model seat (provider, model, effort, subscription account) and permission setup (ceiling, grant mode, grants, denies) and cannot exceed them. Read the returned agent and created flag: an existing name is adopted, never duplicated. Use society-switch-agent-model only if a different provider is requested.
+Create an agent in the user's existing Agents team, only when requested. This creates a roster profile and starts no work. Responsibilities derive capabilities through the same service as the Agents UI. When a team agent creates a teammate, the new agent inherits that creator's model seat (provider, model, effort, subscription account) and permission setup (ceiling, grant mode, grants, denies) and cannot exceed them. Read the returned agent and created flag: an existing name is adopted, never duplicated. Use society-switch-agent-model only if a different provider is requested. Design the agent before calling: turn the user's words into a complete brief — mission, 3-6 responsibilities, working rules naming the data sources, output format and boundaries — inferring sensible defaults instead of copying the request verbatim. Read readback.not_connected and tell the user which services to connect. A requested schedule is a separate society-create-routine call.
 
 - **Endpoint:** `POST /api/society/agents`
-- **Arguments:** `name` (string; required); `title` (string; optional); `description` (string; optional); `tier` (one of: specialist, orchestrator; optional); `focus` (array; optional); `skills` (array; optional); `daily_budget_usd` (number; optional); `max_concurrent_runs` (integer; optional)
+- **Arguments:** `name` (string; required); `title` (string; optional); `description` (string; optional); `mission` (string; optional); `responsibilities` (array; optional); `working_rules` (array; optional); `output_format` (string; optional); `boundaries` (array; optional); `success_criteria` (string; optional); `tier` (one of: specialist, orchestrator; optional); `focus` (array; optional); `skills` (array; optional); `daily_budget_usd` (number; optional); `max_concurrent_runs` (integer; optional); `permission_ceiling` (one of: safe, monitor, ask; optional); `grant_mode` (one of: all, allowlist; optional); `grants` (array; optional); `denies` (array; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "create an agent for researching suppliers"
@@ -26,7 +26,7 @@ Create an agent in the user's existing Agents team, only when requested. This cr
 Change an existing agent's responsibilities, skills, focus, budget or paused/active state as requested by the user. Resolve its real id with society_status first. Only send requested fields. Existing learned focus and approval rules survive prose edits. Report the returned stored agent.
 
 - **Endpoint:** `PATCH /api/society/agents/{agent_id}`
-- **Arguments:** `agent_id` (string; required); `title` (string; optional); `description` (string; optional); `tier` (one of: specialist, orchestrator; optional); `focus` (array; optional); `skills` (array; optional); `daily_budget_usd` (number; optional); `max_concurrent_runs` (integer; optional); `state` (one of: active, paused; optional)
+- **Arguments:** `agent_id` (string; required); `title` (string; optional); `description` (string; optional); `mission` (string; optional); `responsibilities` (array; optional); `working_rules` (array; optional); `output_format` (string; optional); `boundaries` (array; optional); `success_criteria` (string; optional); `tier` (one of: specialist, orchestrator; optional); `focus` (array; optional); `skills` (array; optional); `daily_budget_usd` (number; optional); `max_concurrent_runs` (integer; optional); `permission_ceiling` (one of: safe, monitor, ask; optional); `grant_mode` (one of: all, allowlist; optional); `grants` (array; optional); `denies` (array; optional); `state` (one of: active, paused; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "update Scout's responsibilities"
@@ -60,6 +60,56 @@ Change one persistent agent's provider/model/effort only on user request. Use so
 - **Requires confirmation:** no
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "change Scout's model"
+
+## `society-archive-agent` — Archive a team agent
+
+Archive (remove from the team) one agent on explicit user request; its chat history is kept. Delete its routines first with society-routine-operation so none keeps firing.
+
+- **Endpoint:** `DELETE /api/society/agents/{agent_id}`
+- **Arguments:** `agent_id` (string; required)
+- **Requires confirmation:** yes
+- **Desktop UI section:** `agents`
+- **Voice example (EN):** "delete the agent Scout"
+
+## `society-list-routines` — List an agent's routines
+
+List one agent's scheduled routines with ids, schedules, state and next run.
+
+- **Endpoint:** `GET /api/society/agents/{agent_id}/routines`
+- **Arguments:** `agent_id` (string; required)
+- **Requires confirmation:** no
+- **Desktop UI section:** `agents`
+- **Voice example (EN):** "which routines does Scout have"
+
+## `society-create-routine` — Schedule a routine for an agent
+
+The ONLY way to make an agent do something on a schedule (daily briefing, weekly report, every morning at 8). Never use create-skill for this. The prompt is the complete task the agent runs each time: sources, steps, output. Speak the returned next_run; on timezone_required ask the user.
+
+- **Endpoint:** `POST /api/society/agents/{agent_id}/routines`
+- **Arguments:** `agent_id` (string; required); `title` (string; required); `prompt` (string; required); `schedule` (object; required); `announce_on_success` (string; optional)
+- **Requires confirmation:** yes
+- **Desktop UI section:** `agents`
+- **Voice example (EN):** "give me a briefing every morning at eight"
+
+## `society-update-routine` — Change an agent's routine
+
+Change a routine's title, prompt or schedule. Send all three: read the current values with society-list-routines and change only what was asked.
+
+- **Endpoint:** `PATCH /api/society/agents/{agent_id}/routines/{task_id}`
+- **Arguments:** `agent_id` (string; required); `task_id` (string; required); `title` (string; required); `prompt` (string; required); `schedule` (object; required)
+- **Requires confirmation:** no
+- **Desktop UI section:** `agents`
+- **Voice example (EN):** "move the briefing to seven"
+
+## `society-routine-operation` — Pause, resume, delete or run a routine
+
+Pause, resume, delete or run-now one agent routine on user request.
+
+- **Endpoint:** `POST /api/society/agents/{agent_id}/routines/{task_id}/operation`
+- **Arguments:** `agent_id` (string; required); `task_id` (string; required); `operation` (one of: pause, resume, delete, run; required)
+- **Requires confirmation:** yes
+- **Desktop UI section:** `agents`
+- **Voice example (EN):** "pause the morning briefing"
 
 ## `brain-switch` — Switch brain provider
 

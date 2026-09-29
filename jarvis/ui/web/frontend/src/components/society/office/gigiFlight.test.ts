@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  createGigiFlight, createGigiPose, GIGI_HOVER_M, GIGI_MAX_LEAN, GIGI_MAX_Y, GIGI_MIN_Y, GIGI_SLEEP_HOVER_M,
-  stepGigiFlight, type GigiFlightMode,
+  createGigiFlight, createGigiPose, followAnchor, GIGI_FOLLOW_BACK_M, GIGI_FOLLOW_HOVER_M, GIGI_FOLLOW_SIDE_M,
+  GIGI_HOVER_M, GIGI_MAX_LEAN, GIGI_MAX_Y, GIGI_MIN_Y, GIGI_SLEEP_HOVER_M, stepGigiFlight, type GigiFlightMode,
 } from "./gigiFlight";
 
-const MODES: GigiFlightMode[] = ["idle", "work", "talk", "wave", "sleep"];
+const MODES: GigiFlightMode[] = ["idle", "work", "talk", "wave", "sleep", "follow"];
 const DT = 1 / 60;
 
 describe("gigi flight", () => {
@@ -146,5 +146,71 @@ describe("gigi flight", () => {
       return trace;
     };
     expect(run()).toEqual(run());
+  });
+});
+
+describe("gigi follow mode", () => {
+  it("anchors behind and beside the walker, on the side it keeps to", () => {
+    // Facing +z: behind is -z, the walker's right is -x.
+    const right = followAnchor(0, 0, 0, 1);
+    expect(right.z).toBeCloseTo(-GIGI_FOLLOW_BACK_M);
+    expect(right.x).toBeCloseTo(-GIGI_FOLLOW_SIDE_M);
+    expect(right.side).toBe(1);
+    const left = followAnchor(0, 0, 0, -1);
+    expect(left.x).toBeCloseTo(GIGI_FOLLOW_SIDE_M);
+    // Facing +x: behind is -x.
+    const east = followAnchor(2, 3, Math.PI / 2, 1);
+    expect(east.x).toBeCloseTo(2 - GIGI_FOLLOW_BACK_M);
+  });
+
+  it("switches shoulders when its side is blocked, and falls back to right above the walker", () => {
+    const noWest = (x: number) => x > -0.1;
+    const flipped = followAnchor(0, 0, 0, 1, noWest);
+    expect(flipped.side).toBe(-1);
+    expect(flipped.x).toBeGreaterThan(0);
+    const behindOnly = followAnchor(0, 0, 0, 1, (x) => Math.abs(x) < 0.1);
+    expect(behindOnly.x).toBeCloseTo(0);
+    expect(behindOnly.z).toBeLessThan(0);
+    const boxedIn = followAnchor(1, 1, 0, 1, (x, z) => x === 1 && z === 1);
+    expect(boxedIn).toEqual({ x: 1, z: 1, side: 1 });
+  });
+
+  it("rejects an anchor with a wall between it and the walker", () => {
+    // A thin wall at x = -0.3: the anchor at x = -0.6 is clear, the midpoint is not.
+    const wall = (x: number) => Math.abs(x + 0.3) > 0.05;
+    const anchor = followAnchor(0, 0, 0, 1, wall);
+    expect(anchor.side).toBe(-1);
+  });
+
+  it("trails a walking person smoothly at shoulder height and never settles inside a wall", () => {
+    const state = createGigiFlight(0, 0);
+    const pose = createGigiPose();
+    const clear = (x: number) => x < 3;
+    let side: 1 | -1 = 1;
+    let previous = { x: 0, z: 0 };
+    let heights = 0, n = 0;
+    for (let t = 0; t < 12; t += DT) {
+      // Walk east at 2 m/s towards a wall at x = 3, then stand still.
+      const px = Math.min(2.8, t * 2), heading = Math.PI / 2;
+      const anchor = followAnchor(px, 0, heading, side, clear);
+      side = anchor.side;
+      stepGigiFlight(state, { targetX: anchor.x, targetZ: anchor.z, moving: px < 2.8, mode: "follow", speaking: false, t, dt: DT, heading, clear }, pose);
+      expect(clear(state.x)).toBe(true);
+      // No teleports: one frame never moves Gigi more than a sprint would.
+      expect(Math.hypot(state.x - previous.x, state.z - previous.z)).toBeLessThan(0.2);
+      previous = { x: state.x, z: state.z };
+      if (t > 8) { heights += pose.y; n++; }
+    }
+    expect(heights / n).toBeCloseTo(GIGI_FOLLOW_HOVER_M, 1);
+    // Resting behind the walker, not on it.
+    expect(Math.hypot(state.x - 2.8, state.z)).toBeGreaterThan(0.4);
+  });
+
+  it("snaps along when the person is placed elsewhere (an elevator ride)", () => {
+    const state = createGigiFlight(0, 0);
+    const anchor = followAnchor(40, 10, 0, 1);
+    stepGigiFlight(state, { targetX: anchor.x, targetZ: anchor.z, moving: false, mode: "follow", speaking: false, t: 0, dt: DT });
+    expect(state.x).toBeCloseTo(anchor.x);
+    expect(state.z).toBeCloseTo(anchor.z);
   });
 });

@@ -1,11 +1,20 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IdeSidePanelFrame } from "./IdeSidePanel";
 import { IdeSidePanelToggle } from "./IdeSidePanelToggle";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { resetWorkspacePanesPoll, useWorkspacePanesStore } from "@/store/workspacePanes";
+
+// The real stage is a WebGL scene; the tab only owes it the right props and a place to live.
+vi.mock("@/components/society/office/OfficeStage", () => ({
+  OfficeStage: ({ onOpenLedger, initialFloor, compact }: { onOpenLedger: () => void; initialFloor?: string; compact?: boolean }) => (
+    <div data-testid="office-stage" data-floor={initialFloor} data-compact={String(Boolean(compact))}>
+      <button type="button" onClick={onOpenLedger}>ledger</button>
+    </div>
+  ),
+}));
 
 function Harness() {
   return (
@@ -24,7 +33,7 @@ beforeEach(() => {
   useWorkspacePanesStore.setState({ panes: [], activeId: null, loaded: true, load: async () => {} });
   useIdeProjectsStore.setState({ activeWorkspaceId: null });
   useEventStore.setState({ activeSection: "agentic-ide" });
-  useIdeSidePanelStore.setState({ open: false, tabs: ["agents"], active: "agents" });
+  useIdeSidePanelStore.setState({ open: false, tabs: ["agents"], active: "agents", maximized: false });
 });
 
 afterEach(cleanup);
@@ -111,5 +120,67 @@ describe("IdeSidePanel", () => {
     fireEvent.click(screen.getByTestId("ide-side-panel-rail-files"));
     expect(useIdeSidePanelStore.getState()).toMatchObject({ open: true, active: "files" });
     expect(screen.queryByTestId("ide-side-panel-rail")).toBeNull();
+  });
+
+  it("adds the Office tab from + and shows the coding floor in a compact stage", async () => {
+    act(() => useIdeSidePanelStore.setState({ open: true, tabs: ["agents"], active: "agents" }));
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId("ide-side-panel-add"));
+    const item = screen.getByTestId("ide-side-panel-add-office");
+    expect(item.textContent).toContain("Office");
+    expect(item.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(item);
+    expect(useIdeSidePanelStore.getState()).toMatchObject({ active: "office", tabs: ["agents", "office"] });
+    expect(screen.getByTestId("ide-side-panel-tab-office").getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("ide-office-tab").className).toContain("h-full");
+    const stage = await screen.findByTestId("office-stage");
+    expect(stage.getAttribute("data-floor")).toBe("coding");
+    expect(stage.getAttribute("data-compact")).toBe("true");
+  });
+
+  it("widens a narrow panel for the office and sends the ledger action to Agents", async () => {
+    localStorage.setItem("jarvis.agenticIde.sidePanelWidth.v1", "300");
+    act(() => useIdeSidePanelStore.setState({ open: true, tabs: ["office"], active: "office" }));
+    render(<Harness />);
+    expect(screen.getByTestId("ide-side-panel-host").style.width).toBe("520px");
+    fireEvent.click(await screen.findByText("ledger"));
+    expect(useIdeSidePanelStore.getState()).toMatchObject({ active: "agents", tabs: ["office", "agents"] });
+  });
+
+  it("maximizes the office over the whole view without remounting it or resizing the grid", async () => {
+    localStorage.setItem("jarvis.agenticIde.sidePanelWidth.v1", "600");
+    act(() => useIdeSidePanelStore.setState({ open: true, tabs: ["office"], active: "office" }));
+    render(<Harness />);
+    const stage = await screen.findByTestId("office-stage");
+    const host = screen.getByTestId("ide-side-panel-host");
+
+    fireEvent.click(screen.getByTestId("ide-side-panel-maximize"));
+    expect(useIdeSidePanelStore.getState().maximized).toBe(true);
+    expect(screen.getByTestId("ide-side-panel-body").className).toContain("absolute inset-0");
+    expect(screen.getByTestId("ide-side-panel-grid").className).toContain("invisible");
+    expect(screen.getByTestId("grid")).toBeTruthy();
+    expect(host.className).not.toContain("relative");
+    expect(host.style.width).toBe("600px");
+    expect(screen.queryByTestId("ide-side-panel-resizer")).toBeNull();
+    expect(screen.getByTestId("office-stage")).toBe(stage);
+
+    fireEvent.click(screen.getByTestId("ide-side-panel-maximize"));
+    expect(screen.getByTestId("ide-side-panel-body").className).toBe("h-full");
+    expect(screen.getByTestId("ide-side-panel-grid").className).not.toContain("invisible");
+    expect(screen.getByTestId("office-stage")).toBe(stage);
+  });
+
+  it("drops the full view when the panel closes", () => {
+    act(() => useIdeSidePanelStore.setState({ open: true, tabs: ["agents"], active: "agents" }));
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId("ide-side-panel-maximize"));
+    fireEvent.click(screen.getByTestId("ide-side-panel-collapse"));
+    expect(useIdeSidePanelStore.getState().maximized).toBe(false);
+  });
+
+  it("lists Office on the closed panel's rail", () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId("ide-side-panel-rail-office"));
+    expect(useIdeSidePanelStore.getState()).toMatchObject({ open: true, active: "office" });
   });
 });

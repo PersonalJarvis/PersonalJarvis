@@ -21,6 +21,7 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { ViewErrorBoundary } from "@/components/ViewErrorBoundary";
 import { DetachedViewPlaceholder } from "@/components/layout/DetachedViewPlaceholder";
+import { SETTINGS_HUB_IDS } from "@/components/layout/navGroups";
 // Type-only, so the section's chunk stays split out of the entry bundle.
 import type { AgenticIdeViewProps } from "@/views/AgenticIdeView";
 // The default section is the one view that must be on screen the moment React
@@ -81,12 +82,12 @@ function lazyPropView<P>(
 // front-loads what the user reaches for first. Views are named exports, hence
 // the explicit unwrap into the { default } shape React.lazy expects.
 // The Settings hub — Profile, {name}.md, Contacts, Socials, API Keys, Local
-// models, Wallpaper, Spend and Feedback behind one left-nav page. The hub
+// models, Wallpaper, Spend and Feedback behind one left-nav dialog. The hub
 // statically owns only its shell; every tab stays its own lazy chunk (see
 // SettingsHubView), so this one import replaces the eleven per-view imports
 // below without merging their chunks back together.
-const SettingsHubView = lazyView(() =>
-  import("@/views/SettingsHubView").then((m) => ({ default: m.SettingsHubView })),
+const SettingsHubDialog = lazyPropView<{ onClose: () => void }>(() =>
+  import("@/views/SettingsHubView").then((m) => ({ default: m.SettingsHubDialog })),
 );
 // The Agents section is the society (MASTERPLAN §4.1): stage + agents rail +
 // model cards. The board it replaced is the society's stage until the island
@@ -102,6 +103,11 @@ const WikiView = lazyView(() =>
 type PluginArea = "plugins" | "mcps" | "skills";
 const isPluginArea = (section: string): section is PluginArea =>
   section === "plugins" || section === "mcps" || section === "skills";
+const isSettingsHub = (section: string) =>
+  (SETTINGS_HUB_IDS as readonly string[]).includes(section);
+// Sections that float as a dialog over the last regular section instead of
+// replacing it.
+const isOverlaySection = (section: string) => isPluginArea(section) || isSettingsHub(section);
 
 const PluginsDialog = lazyPropView<{ onClose: () => void; area: PluginArea; onAreaChange: (area: PluginArea) => void }>(() =>
   import("@/views/PluginsDialog").then((m) => ({ default: m.PluginsDialog })),
@@ -380,10 +386,10 @@ export function MainView() {
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
   const [backgroundSection, setBackgroundSection] = useState(
-    isPluginArea(active) ? "chats" : active,
+    isOverlaySection(active) ? "chats" : active,
   );
-  if (!isPluginArea(active) && backgroundSection !== active) setBackgroundSection(active);
-  const displayed = isPluginArea(active) ? backgroundSection : active;
+  if (!isOverlaySection(active) && backgroundSection !== active) setBackgroundSection(active);
+  const displayed = isOverlaySection(active) ? backgroundSection : active;
 
   useIdleViewPrefetch();
 
@@ -411,7 +417,7 @@ export function MainView() {
     if (codingDetached) setStickyMounted(false);
   }, [codingDetached]);
 
-  if (codingDetached && (CODING_SECTION_IDS as readonly string[]).includes(displayed) && !isPluginArea(active)) {
+  if (codingDetached && (CODING_SECTION_IDS as readonly string[]).includes(displayed) && !isOverlaySection(active)) {
     return <DetachedViewPlaceholder view={displayed} />;
   }
 
@@ -466,6 +472,13 @@ export function MainView() {
           </Suspense>
         </ViewErrorBoundary>
       )}
+      {isSettingsHub(active) && (
+        <ViewErrorBoundary viewName="settings" resetKey="settings" onRecover={() => setActive(backgroundSection)}>
+          <Suspense fallback={null}>
+            <SettingsHubDialog onClose={() => setActive(backgroundSection)} />
+          </Suspense>
+        </ViewErrorBoundary>
+      )}
     </>
   );
 }
@@ -492,29 +505,6 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <BoardView />;
     case "memory":
       return <WikiView />;
-    // The Settings hub: Profile, {name}.md, Contacts, Socials, API Keys (plus
-    // the merged-in "telephony" id and the "telephony-setup" page, which lives
-    // one button inside the telephony credentials card), Local models,
-    // Wallpaper, Spend and Feedback behind one left-nav page. The hub selects
-    // its tab from the active id, so every existing deep link, deck jump and
-    // voice alias ("go to telephony", "show languages", …) keeps landing
-    // on the right tab — only the stage around the content changed.
-    case "settings":
-    case "taskbar":
-    case "languages":
-    case "profile":
-    case "agent-instructions":
-    case "contacts":
-    case "socials":
-    case "apikeys":
-    case "telephony":
-    case "telephony-setup":
-    case "local-models":
-    case "computers":
-    case "wallpaper":
-    case "costs":
-    case "feedback":
-      return <SettingsHubView />;
     // The merged voice section: Dictation (default landing) + Dictionary +
     // Shortcuts + Language + the speech-to-text keys, behind one tab bar. The
     // active id doubles as the tab state, so a voice deep-link to any of them

@@ -89,7 +89,10 @@ vi.mock("@/views/feedback/FeedbackView", () => ({
   FeedbackView: stub("TAB_FEEDBACK"),
 }));
 
-import { SettingsHubView } from "@/views/SettingsHubView";
+import { SettingsHubDialog, SettingsHubView as HubView } from "@/views/SettingsHubView";
+
+const noop = () => {};
+const SettingsHubView = () => <HubView onClose={noop} />;
 
 const NAV_IDS = [
   "settings",
@@ -116,28 +119,37 @@ afterEach(() => {
 });
 
 describe("SettingsHubView header and navigation", () => {
-  it("separates the navigation from the content and returns to the app", async () => {
-    render(<SettingsHubView />);
+  it("separates the navigation from the content and closes through its X", async () => {
+    const onClose = vi.fn();
+    render(<HubView onClose={onClose} />);
     await screen.findByTestId("TAB_SETTINGS");
     expect(screen.getByTestId("settings-hub-sidebar").className).toContain("jarvis-nav-surface");
     expect(screen.getByTestId("settings-hub-content").parentElement?.className).toContain("jarvis-sheet");
-    fireEvent.click(screen.getByRole("button", { name: "settings_hub.back_to_app" }));
-    expect(mockState.setActiveSection).toHaveBeenCalledWith("chats");
+    fireEvent.click(screen.getByTestId("settings-hub-close"));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(mockState.setActiveSection).not.toHaveBeenCalled();
   });
 
-  it("renders exactly one header titled from nav.settings", async () => {
-    render(<SettingsHubView />);
-
-    expect(screen.getAllByTestId("view-header")).toHaveLength(1);
-    expect(screen.getByTestId("view-header-title").textContent).toBe("nav.settings");
-    expect(screen.getByTestId("view-header-subtitle").textContent).toBe(
-      "settings_hub.subtitle",
-    );
-    expect(
-      screen.getByPlaceholderText("settings_hub.search_placeholder"),
-    ).toBeTruthy();
-    // The default tab's chunk still has to arrive.
+  it("opens as a named dialog that Escape closes", async () => {
+    const onClose = vi.fn();
+    render(<SettingsHubDialog onClose={onClose} />);
+    const dialog = await screen.findByRole("dialog", { name: "nav.settings" });
+    expect(dialog.getAttribute("data-testid")).toBe("settings-hub-dialog");
+    expect(screen.getByPlaceholderText("settings_hub.search_placeholder")).toBeTruthy();
     await screen.findByTestId("TAB_SETTINGS");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("clears a filled search on Escape before closing", async () => {
+    const onClose = vi.fn();
+    render(<SettingsHubDialog onClose={onClose} />);
+    await screen.findByTestId("TAB_SETTINGS");
+    const search = screen.getByTestId("settings-hub-search");
+    fireEvent.change(search, { target: { value: "wall" } });
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect((search as HTMLInputElement).value).toBe("");
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("lists all ten entries in the left navigation", async () => {

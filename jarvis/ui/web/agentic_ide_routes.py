@@ -37,6 +37,7 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``POST   /fanout``                     → run ONE task across several agents
   (open the panes, divide the work, brief each one, report who was reached)
 * ``GET    /terminals/{name}/report``    → what one named terminal is doing
+* ``GET    /screens``                    → read-only screen snapshots of up to 8 panes
 * ``PATCH  /terminals/{terminal}``       → give that pane another call-sign
 * ``POST   /terminals/{name}/archive``   → hide or restore a chat in the session list
 * ``GET    /terminals/{name}/prompts``   → every prompt handed to that pane
@@ -62,13 +63,14 @@ import re
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Annotated, Any, Literal, get_args
 
 from fastapi import (
     APIRouter,
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
     WebSocket,
@@ -90,6 +92,7 @@ from jarvis.agentic_ide import (
     recap_engine,
     recents,
     resume_store,
+    screen_feed,
     workspace_catalog,
 )
 from jarvis.agentic_ide.activity import has_work_behind_it
@@ -3184,7 +3187,7 @@ def set_terminal_recap(
     it plainly means.
     """
     term, _session = _pane_for_recap(name, workspace_id)
-    summary = recap_engine.pin(term.key, payload.recap, payload.recap_detail)
+    summary = recap_engine.pin(recap_engine.pane_id(term), payload.recap, payload.recap_detail)
     if not summary.headline:
         # Cleared rather than written: answer with whatever the pane says now.
         summary = recap_engine.recap_for(term, lines=term.transcript.lines())
@@ -3204,7 +3207,7 @@ def clear_terminal_recap(name: str, workspace_id: str | None = None) -> Terminal
     window.
     """
     term, _session = _pane_for_recap(name, workspace_id)
-    recap_engine.unpin(term.key)
+    recap_engine.unpin(recap_engine.pane_id(term))
     return _recap_row(term, recap_engine.recap_for(term, lines=term.transcript.lines()))
 
 
@@ -3319,6 +3322,23 @@ def terminal_report(name: str, lines: int = 40) -> dict:
         return get_registry().report(name, lines)
     except SessionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/screens", summary="Read-only screen snapshots of several panes")
+async def pane_screens(
+    pane: Annotated[
+        list[str] | None,
+        Query(description="`<workspace_id>:<key>`, repeatable; at most 8 are read."),
+    ] = None,
+) -> dict:
+    """The visible rows of each requested pane — what the office's monitors draw.
+
+    Unknown panes are omitted rather than failing the whole poll. Async on
+    purpose: the screen buffers are written on the event loop, so reading them
+    there needs no lock (see :mod:`jarvis.agentic_ide.screen_feed`).
+    """
+    refs = screen_feed.parse_pane_refs(pane or [])
+    return {"screens": screen_feed.collect_screens(get_registry(), refs)}
 
 
 @router.get(

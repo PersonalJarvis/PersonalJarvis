@@ -31,6 +31,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from contextlib import contextmanager, suppress
 from typing import Any
 from uuid import UUID
@@ -51,6 +52,9 @@ _ESC_HINTS: dict[str, str] = {
 _QUIT_GRACE_S = 1.5
 _BLANK_ACK_TIMEOUT_S = 0.15
 _SHOW_ACK_TIMEOUT_S = 1.2
+#: How long the sidecar stays up for one appshot shutter effect (flash, rest
+#: in the corner, slide out — see ``renderer._SNAP_TOTAL_MS``) plus slack.
+_SNAP_LIFETIME_S = 3.4
 
 
 def screen_indicator_capability() -> tuple[bool, str]:
@@ -109,6 +113,9 @@ class CUIndicatorController:
         self._acks: queue.Queue[str] = queue.Queue()
         self._esc_task: asyncio.Task | None = None
         self._sidecar_warned = False
+        # Monotonic deadline until which an appshot effect owns the sidecar.
+        self._snap_until = 0.0
+        self._idle_quit_task: asyncio.Task | None = None
 
     # ------------------------------------------------------------------ wiring
     def wire(self) -> None:
@@ -229,6 +236,16 @@ class CUIndicatorController:
             protocol.CMD_HIDE,
             _SHOW_ACK_TIMEOUT_S,
         )
+        if time.monotonic() < self._snap_until:
+            # An appshot effect is still on screen; quit once it has played.
+            self._schedule_idle_quit()
+            return
+        await self._quit_sidecar()
+
+    async def _quit_sidecar(self) -> None:
+        capture_guard.unregister_hook()
+        if self._proc is None:
+            return
         await asyncio.to_thread(
             self._send_and_wait,
             protocol.CMD_QUIT,
@@ -238,6 +255,62 @@ class CUIndicatorController:
             proc, self._proc = self._proc, None
         if proc is not None:
             await asyncio.to_thread(self._reap, proc)
+
+    # ---------------------------------------------------------- appshot snap
+    def hold_for_snap(self) -> None:
+        """Keep the sidecar alive for an effect that is about to be sent.
+
+        Called synchronously at the shutter, BEFORE the capture's own border
+        dismissal can quit the sidecar — the thumbnail is encoded a moment
+        later, and a respawn would cost the effect a second of Qt start-up.
+        """
+        self._snap_until = max(self._snap_until, time.monotonic() + _SNAP_LIFETIME_S)
+
+    async def snap(self, *, monitor: list[int], rect: list[float], thumb_b64: str) -> bool:
+        """Play the appshot shutter effect. ``False`` when it cannot run here."""
+        ok, reason = self._border_capability()
+        if not ok:
+            log.debug("[appshot-effect] unavailable: %s", reason)
+            return False
+        async with self._lock:
+            self.hold_for_snap()
+            await asyncio.to_thread(self._spawn_sidecar)
+            if self._proc is None:
+                return False
+            # Without a border there was no guard yet: a later capture must
+            # blank the resting thumbnail before its grab on every OS.
+            capture_guard.register_hook(self._suppress_for_grab)
+            shown = await asyncio.to_thread(
+                self._send_and_wait,
+                protocol.CMD_SNAP,
+                _SHOW_ACK_TIMEOUT_S,
+                monitor=list(monitor),
+                rect=list(rect),
+                thumb=thumb_b64,
+            )
+            self._schedule_idle_quit()
+            return shown
+
+    def _schedule_idle_quit(self) -> None:
+        task = self._idle_quit_task
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # no loop = interpreter shutdown; the sidecar dies with us
+            return
+        self._idle_quit_task = loop.create_task(self._idle_quit(), name="appshot-effect-quit")
+
+    async def _idle_quit(self) -> None:
+        while True:
+            remaining = self._snap_until - time.monotonic()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(remaining + 0.05)
+        async with self._lock:
+            if self._active or self._screen_active or time.monotonic() < self._snap_until:
+                return
+            await self._quit_sidecar()
 
     @staticmethod
     def _border_capability() -> tuple[bool, str]:
@@ -463,6 +536,11 @@ class CUIndicatorController:
 _controller: CUIndicatorController | None = None
 
 
+def get_indicator_controller() -> CUIndicatorController | None:
+    """The wired controller, or ``None`` before boot wired one."""
+    return _controller
+
+
 def wire_cu_indicator(bus: Any) -> CUIndicatorController | None:
     """Idempotent boot hook: subscribe the indicator controller to ``bus``.
 
@@ -484,4 +562,4 @@ def wire_cu_indicator(bus: Any) -> CUIndicatorController | None:
     return controller
 
 
-__all__ = ["CUIndicatorController", "wire_cu_indicator"]
+__all__ = ["CUIndicatorController", "get_indicator_controller", "wire_cu_indicator"]

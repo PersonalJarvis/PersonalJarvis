@@ -138,6 +138,18 @@ def test_refresh_heals_stale_ack_brain_enabled(monkeypatch: pytest.MonkeyPatch) 
     assert changed["JARVIS__ACK_BRAIN__PROVIDER"] == "gemini"
 
 
+def test_refresh_heals_stale_live_thinking_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """2026-09-29: a restart inherited the old, ~20x pricier GPT-Live thinking
+    model although the registry already held the user's cheaper choice."""
+    monkeypatch.setenv("JARVIS__LIVE__BACKEND_MODEL", "expensive-model")  # stale inherited
+    reg = {"JARVIS__LIVE__BACKEND_MODEL": "cheap-model"}
+
+    changed = config.refresh_persisted_env_from_user_registry(read=reg.get)
+
+    assert os.environ["JARVIS__LIVE__BACKEND_MODEL"] == "cheap-model"
+    assert changed == {"JARVIS__LIVE__BACKEND_MODEL": "cheap-model"}
+
+
 def test_refresh_default_reader_is_noop_off_win32(monkeypatch: pytest.MonkeyPatch) -> None:
     """With no injected reader on a non-win32 platform the default reader yields
     None for every key, so nothing is changed (cloud-first / Linux VPS safe)."""

@@ -133,24 +133,10 @@ it("leaves Map on Escape without requesting native fullscreen in a browser", asy
   expect(screen.queryByTestId("map")).toBeNull();
 });
 
-it("keeps Mars station controls reachable without mounting a renderer", async () => {
-  window.history.replaceState(null, "", "?view=agents&world=mars");
-  render(<SocietyView />);
-  fireEvent.click(screen.getByRole("button", { name: "society.mars.station_title" }));
-  expect(await screen.findByRole("complementary", { name: "Mars station" })).toBeTruthy();
-  expect(screen.queryByTestId("map")).toBeNull();
-  expect(screen.getByTestId("workspace")).toBeTruthy();
-  fireEvent.click(screen.getByText("Close station"));
-  expect(screen.queryByRole("complementary", { name: "Mars station" })).toBeNull();
-});
-
-it("exposes the Mars station in dev without an opt-in URL", async () => {
-  app.instance = { name: "dev", isDev: true };
+it("shows no station shortcut in Agents mode", () => {
   window.history.replaceState(null, "", "?view=agents");
   render(<SocietyView />);
-  fireEvent.click(screen.getByRole("button", { name: "society.mars.station_title" }));
-  expect(await screen.findByRole("complementary", { name: "Mars station" })).toBeTruthy();
-  expect(screen.queryByTestId("map")).toBeNull();
+  expect(screen.queryByRole("button", { name: "society.mars.station_title" })).toBeNull();
 });
 
 it("does not discard a Mars form when Escape belongs to its input", async () => {

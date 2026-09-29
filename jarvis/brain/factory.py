@@ -20,6 +20,10 @@ from typing import Any, Literal
 
 log = logging.getLogger(__name__)
 
+# Deadline for one awareness summary on a subscription CLI: a CLI turn spends
+# seconds on process start before the model even answers.
+_VERDICHTER_SUBSCRIPTION_TIMEOUT_S = 60.0
+
 BrainCallback = Callable[[str], Awaitable[str]]
 
 # Router-tier: pure-dispatcher set (grown via documented ADR-0011 amendments;
@@ -1053,7 +1057,21 @@ def _phase2_full_brain(
                         )
 
                 v_registry = BrainProviderRegistry()
-                v_brain = v_registry.instantiate(v_provider, model=v_model)
+                from jarvis.brain.resolver import SubscriptionFirstBrain
+
+                # Episode summaries are background work: a connected
+                # subscription writes them, the keyed brain above only when
+                # none is signed in. A CLI turn takes seconds, so the call
+                # deadline is widened to the subscription budget.
+                v_brain = SubscriptionFirstBrain(
+                    config,
+                    v_registry.instantiate(v_provider, model=v_model),
+                    cli_timeout_s=_VERDICHTER_SUBSCRIPTION_TIMEOUT_S,
+                )
+                if v_cfg.timeout_s < _VERDICHTER_SUBSCRIPTION_TIMEOUT_S:
+                    v_cfg = v_cfg.model_copy(
+                        update={"timeout_s": _VERDICHTER_SUBSCRIPTION_TIMEOUT_S}
+                    )
                 awareness_manager._verdichter = Verdichter(    # noqa: SLF001
                     brain=v_brain, config=v_cfg,
                 )

@@ -532,6 +532,7 @@ implementations, not stubs.
 |---|---|
 | Computer-Use / desktop actions (click, type, hotkey, scroll, drag, windows, apps, screenshots, UI trees) | Full per-OS backends (Win32/UIA, Quartz/AX, xdotool/AT-SPI); honest degradation on Wayland/headless/missing TCC grants |
 | On-demand Screen Context | One-shot capture is wired into the production brain on Windows, macOS, and Linux/X11; UIA/AX/AT-SPI text is source-filtered, the indicator precedes capture, and Wayland/headless/missing grants refuse honestly |
+| Appshots (front-window capture on a shortcut, button or request) | Capture, privacy and delivery are OS-neutral (Screen Context engine, `jarvis/appshot`). The both-Alt shortcut reads key state per OS: Windows `GetAsyncKeyState`, macOS `CGEventSourceKeyState` (Input Monitoring grant), Linux/X11 `XQueryKeymap`; Wayland/headless report it unavailable on the Appshots page. The flash is the PySide6 overlay where one can run. Verified live on Windows only; see `docs/appshots.md` |
 | Voice / audio (capture, playback, VAD, wake, STT, TTS, realtime) | Clean; headless disables voice honestly; WASAPI logic is inert-by-data off Windows |
 | Core (launcher, config, keyring, restart, autostart, tray, elevation, paths) | Clean; per-OS autostart (Registry / LaunchAgent / XDG `.desktop`), keyring falls back to a 0600 file on headless hosts |
 | Data / agents (wiki, contacts, telephony, sessions, missions, skills, self-mod, channels, MCP) | Clean; mission workers run on POSIX with a real process-group reaper |

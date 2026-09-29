@@ -1,15 +1,18 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MainView } from "./MainView";
 import { useEventStore, type SectionId } from "@/store/events";
 
 // The hub's own tab behaviour is covered by SettingsHubView.test — here only
-// the ROUTING matters: every hub id must mount the hub, and nothing else may.
+// the ROUTING matters: every hub id must mount the hub as a dialog over the
+// last regular section, and nothing else may.
 vi.mock("@/views/ChatsSurface", () => ({
   ChatsSurface: () => <div data-testid="chats-surface" />,
 }));
 vi.mock("@/views/SettingsHubView", () => ({
-  SettingsHubView: () => <div data-testid="settings-hub" />,
+  SettingsHubDialog: ({ onClose }: { onClose: () => void }) => (
+    <button type="button" data-testid="settings-hub" onClick={onClose}>close</button>
+  ),
 }));
 
 beforeEach(() => {
@@ -42,7 +45,16 @@ describe("MainView — every settings-hub id mounts the hub", () => {
     render(<MainView />);
 
     expect(await screen.findByTestId("settings-hub")).toBeTruthy();
-    expect(screen.queryByTestId("chats-surface")).toBeNull();
+    // The section behind the dialog stays on screen.
+    expect(screen.getByTestId("chats-surface")).toBeTruthy();
+  });
+
+  it("closes back to the section it was opened from", async () => {
+    useEventStore.setState({ activeSection: "chats" });
+    render(<MainView />);
+    act(() => useEventStore.setState({ activeSection: "apikeys" }));
+    fireEvent.click(await screen.findByTestId("settings-hub"));
+    expect(useEventStore.getState().activeSection).toBe("chats");
   });
 
   it("keeps non-hub sections on their own views", async () => {

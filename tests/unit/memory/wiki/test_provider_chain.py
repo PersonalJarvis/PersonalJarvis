@@ -173,6 +173,40 @@ def test_credential_probe_uses_core_portable_storage_and_keeps_oauth(
     assert ready == {"nvidia", "future-oauth"}
 
 
+def test_background_work_skips_paid_keys_while_a_subscription_is_connected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jarvis.memory.wiki.provider_chain as chain_module
+
+    monkeypatch.setattr(
+        chain_module,
+        "credential_ready_wiki_providers",
+        lambda *, available, config: {"openai", "gemini", "codex", "ollama"},
+    )
+    ready = chain_module.background_wiki_providers(
+        available={"openai", "gemini", "codex", "ollama"},
+        config=object(),
+        is_subscription=lambda name: name == "codex",
+    )
+    assert ready == {"codex", "ollama"}  # subscription + keyless local only
+
+
+def test_background_work_keeps_keys_when_no_subscription_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jarvis.memory.wiki.provider_chain as chain_module
+
+    monkeypatch.setattr(
+        chain_module,
+        "credential_ready_wiki_providers",
+        lambda *, available, config: {"openai"},
+    )
+    ready = chain_module.background_wiki_providers(
+        available={"openai"}, config=object(), is_subscription=lambda _name: False
+    )
+    assert ready == {"openai"}  # a single-key install keeps a working wiki
+
+
 # --- the fallback loop -------------------------------------------------------
 
 

@@ -94,6 +94,14 @@ def _classify(exc: BaseException) -> SshError:
         return SshError("unreachable", "This address could not be found.")
     if isinstance(exc, ConnectionRefusedError):
         return SshError("unreachable", "The server refused the connection on this port.")
+    if isinstance(exc, (ConnectionResetError, ConnectionAbortedError)):
+        # The TCP connection was up, so the address is right: the SSH service
+        # itself hung up (a crashing sshd, a login rule, fail2ban-style blocks).
+        return SshError(
+            "protocol",
+            "The server answered, then its SSH service closed the connection. "
+            "Check that SSH login is allowed for this account on that computer.",
+        )
     if isinstance(exc, OSError):
         return SshError("unreachable", "The server could not be reached.")
     if isinstance(exc, asyncssh.Error):

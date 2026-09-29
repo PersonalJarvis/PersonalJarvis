@@ -1878,6 +1878,17 @@ _ACTION_UNFULFILLED_PHRASES: dict[str, dict[str, str]] = {
             "No se ejecutó la acción de guardarla."  # i18n-allow: runtime output
         ),
     },
+    "society-create-routine": {
+        "de": (
+            "Die Routine wurde nicht erstellt. "  # i18n-allow: runtime output
+            "Der Speichervorgang wurde nicht ausgeführt."  # i18n-allow: runtime output
+        ),
+        "en": "The routine was not created. The save action did not run.",
+        "es": (
+            "La rutina no se creó. "  # i18n-allow: runtime output
+            "No se ejecutó la acción de guardarla."  # i18n-allow: runtime output
+        ),
+    },
     "contact-upsert": {
         "de": (
             "Ich hab den Kontakt noch nicht gespeichert — sag mir die Angaben "  # i18n-allow: German TTS
@@ -2695,6 +2706,25 @@ _MID_ANSWER_ERROR_PHRASES: dict[str, str] = {
         "Vuelve a preguntarme en un momento."
     ),
 }
+
+
+#: Source layers that run without a person waiting on the reply. An appshot
+#: parked for "the next message" belongs to the user's next message, never to
+#: a scheduled task or a background worker that happens to run first.
+_AUTOMATED_LAYER_PREFIXES = (
+    "tasks",
+    "workflows",
+    "skills",
+    "missions",
+    "society",
+    "supervisor",
+    "tool.",
+)
+
+
+def _takes_pending_appshot(source_layer: str | None) -> bool:
+    layer = (source_layer or "").strip().lower()
+    return not layer.startswith(_AUTOMATED_LAYER_PREFIXES)
 
 
 class BrainManager:
@@ -5788,6 +5818,18 @@ class BrainManager:
                     skill=explicit_skill, fired=True,
                 )
                 return explicit_skill
+
+            # Channel 0.4 (2026-09-29): scheduled work for an agent ("a briefing
+            # every day at 8", "create a routine that …") is an agent routine.
+            # No skill captures it — neither the skill-creator (it wrote an
+            # inactive draft skill live) nor a briefing skill that would run
+            # once now instead of scheduling.
+            if "society-create-routine" in self._live_tool_names():
+                from jarvis.society.routine_intent import wants_agent_routine
+
+                if wants_agent_routine(user_text):
+                    log.info("scheduled agent work — society-create-routine owns this turn")
+                    return None
 
             # Channel 0.5 (2026-08-18): the user asked to CREATE a skill
             # ("erstell mir einen neuen Skill, der … mit YouTube Music …").
@@ -10028,6 +10070,7 @@ class BrainManager:
             locale=locale,
             bus=self._bus,
             trace_id=trace_id,
+            allow_pending_appshot=_takes_pending_appshot(source_layer),
         )
         if outcome.status == "clarify":
             pending_map[confirm_key] = _PendingScreenConfirm(
@@ -11627,6 +11670,31 @@ class BrainManager:
                 self._evidence_required_domain = "routine"
                 log.info("Society routine creation intent — mandating society_propose_change")
 
+        # Jarvis itself (voice and the lead chat) schedules an agent's
+        # recurring work through the society-create-routine app command. A
+        # request like "a briefing every day at 8" never says "routine" and
+        # used to end as an inactive draft skill (live 2026-09-29), so the
+        # recurrence alone makes the save mandatory.
+        if (
+            not self._evidence_required_tool
+            and "society-create-routine" in self._live_tool_names()
+        ):
+            from jarvis.society.routine_intent import wants_agent_routine
+
+            if wants_agent_routine(user_text):
+                self._evidence_directive = (
+                    "MANDATORY THIS TURN: the user wants work done on a schedule. "
+                    "If the agent does not exist yet, create it with society-create-agent "
+                    "first. Then call society-create-routine for that agent with a "
+                    "self-contained prompt and the schedule. Never use create-skill for "
+                    "scheduled work. Speak the returned next_run; if the tool fails, say "
+                    "the routine was not created."
+                )
+                self._evidence_required_tool = "society-create-routine"
+                self._evidence_required_is_write = True
+                self._evidence_required_domain = "routine"
+                log.info("Recurring-work intent — mandating society-create-routine")
+
         # Phase 5 / ADR-0006: pre-call budget gate. Block rather than request
         # when cooldown is active or the task/daily budget is exhausted.
         trace_uuid = turn_trace_id
@@ -12058,6 +12126,14 @@ class BrainManager:
                 _turn_tools = self._hide_run_skill_on_pc_control_turn(
                     _turn_tools, user_text
                 )
+            # Scheduled work for an agent is a routine, never a draft skill
+            # with a cron line (live 2026-09-29: "every day at 8" became an
+            # inactive skill while the routine was reported as set up).
+            if (
+                isinstance(_turn_tools, dict)
+                and self._evidence_required_tool == "society-create-routine"
+            ):
+                _turn_tools = {n: t for n, t in _turn_tools.items() if n != "create-skill"}
             # AI Pointer: on a deictic pointer turn the cursor crop is already the
             # only attached image, so drop the redundant ``inspect-pointer`` PULL
             # tool (calling it produced an empty spoken answer — observed live).
@@ -13488,6 +13564,14 @@ class BrainManager:
         """
         del prefer_api
         intent = "deep" if model_tier == "deep" else "fast"
+        # A routine whose prompt asks for its result as an artifact is granted
+        # the builder for that turn — the same explicit-word rule the chat gate
+        # applies, so "every morning at 8, my briefing as an artifact" works
+        # without the person knowing the tool has a grant of its own.
+        from jarvis.brain.artifact_gate import wants_artifact  # noqa: PLC0415
+
+        if wants_artifact(prompt) and _ARTIFACT_TOOL_NAME not in allowed_tools:
+            allowed_tools = (*allowed_tools, _ARTIFACT_TOOL_NAME)
         tools = self._select_task_tools(allowed_tools)
         from jarvis.core.model_selection import operation_model, worker_selection
         from jarvis.core.task_agent import run_selected, subscription_seat

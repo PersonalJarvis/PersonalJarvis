@@ -8,6 +8,7 @@ import { forkTerminal, moveTerminal, placeTerminal, renameTerminal, type PaneMov
 import { useComputerChoices } from "@/hooks/useComputers";
 import { useThemeValue } from "@/hooks/useTheme";
 import { useEventStore } from "@/store/events";
+import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { cn } from "@/lib/utils";
 import { PaneResizer } from "@/components/layout/PaneResizer";
@@ -121,6 +122,17 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
   useEffect(() => {
     if (maximized && !members.includes(maximized)) setMaximized(null);
   }, [maximized, members]);
+  // "Show me that terminal" from the office: the pane fills the grid, live. A
+  // request for another workspace waits for that workspace's own grid.
+  const paneRequest = useIdeChatStore((state) => state.paneRequest);
+  const settlePaneMaximize = useIdeChatStore((state) => state.settlePaneMaximize);
+  useEffect(() => {
+    if (!paneRequest?.maximize || paneRequest.workspaceId !== session.id) return;
+    const terminal = session.terminals.find((entry) => entry.name === paneRequest.pane);
+    if (!terminal) return;
+    settlePaneMaximize(paneRequest.nonce);
+    setMaximized(idOf(terminal));
+  }, [paneRequest, session.id, session.terminals, settlePaneMaximize]);
   useEffect(() => { if (disabled) dragCleanup.current?.(); }, [disabled]);
   useEffect(() => {
     const node = frame.current;
@@ -380,7 +392,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
         </div>;
       })}
       {/*
-        The boundaries between panes: drag one to give the panes on either side
+        The invisible boundaries between panes: drag one to give the panes on either side
         more or less room, double-click it to even them out, or focus it and
         use the arrow keys. Only the panes it divides change size.
       */}
@@ -389,6 +401,9 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
           ref={(node) => { if (node) seamNodes.current.set(seam.id, node); else seamNodes.current.delete(seam.id); }}
           testId={`pane-seam-${seam.id}`} orientation={seam.orientation} title={seam.label}
           active={sizes.dragging === seam.id}
+          // The gap itself is the grip: no drawn line or stub, only the
+          // resize cursor on hover (maintainer, 2026-09-29).
+          showLine={false}
           onPointerDown={(event) => { if (event.button === 0) sizes.startDrag(seam, event); }}
           onDoubleClick={() => sizes.even(seam)}
           // PaneResizer's vertical sign is written for a pane's own edge; here

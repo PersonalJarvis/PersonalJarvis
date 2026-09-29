@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import importlib.util
 import logging
 import re
 import secrets
@@ -468,6 +469,14 @@ class ComputerService:
         passphrase: str | None = None,
     ) -> dict[str, Any]:
         """Try a login WITHOUT saving anything; nothing is planted on the server."""
+        if importlib.util.find_spec("asyncssh") is None:
+            # A base dependency missing from an older install: say so in the
+            # form instead of failing the request with a bare 500.
+            return _test_result(
+                False,
+                "protocol",
+                "SSH support is missing from this installation. Update the app to install it.",
+            )
         try:
             base = SshTarget(host=_check_host(host), port=port, username=_check_user(username))
             if auth == "password":

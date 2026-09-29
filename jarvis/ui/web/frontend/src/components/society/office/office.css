@@ -28,7 +28,7 @@
 /* In-world name pills: part of the diorama, so they keep one dark look in both modes. */
 .office-plate { transform-origin:center bottom; display:inline-flex; align-items:center; gap:5px; padding:2px 8px 2px 2px; border:0; border-radius:999px; background:rgb(24 26 32 / .84); color:#f8fafc; cursor:pointer; font-family:inherit; white-space:nowrap; user-select:none; box-shadow:0 2px 8px rgb(0 0 0 / .35); }
 .office-plate:hover { background:rgb(36 39 48 / .95); }
-.office-plate-name { max-width:11em; overflow:hidden; text-overflow:ellipsis; font-size:12px; font-weight:700; }
+.office-plate-name { max-width:16em; overflow:hidden; text-overflow:ellipsis; font-size:12px; font-weight:700; }
 .office-plate-badge { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; font-size:10px; font-weight:800; color:#fff; clip-path:polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%); }
 .office-plate-state { display:inline-flex; align-items:center; gap:4px; font-size:10px; font-weight:600; color:#cbd5e1; }
 .office-plate-state em { font-style:normal; }
@@ -50,3 +50,6 @@
 @media (prefers-reduced-motion:reduce) { .office-checkpoint { transition:none; } }
 @media (max-width:900px) { .office-help { white-space:normal; text-align:center; border-radius:12px; } }
 @media (max-width:600px) { .office-help { display:none; } .office-counts { gap:8px; } }
+/* The executive chair's prompt: a wider pill with the E key and a short hint. */
+.office-seat-prompt { padding:4px 12px 4px 4px; gap:7px; font-size:12px; font-weight:600; cursor:default; }
+.office-seat-prompt kbd { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:6px; background:#f5b83d; color:#1f1300; font-family:inherit; font-size:11px; font-weight:800; }

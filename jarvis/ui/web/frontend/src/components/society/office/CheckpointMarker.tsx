@@ -13,11 +13,11 @@ import {
 } from "three";
 import { useT } from "@/i18n";
 import { plateScale } from "./OfficeAgents";
-import { cachedCanvasTexture } from "./OfficeProps";
-import type { Checkpoint } from "./officeLayout";
+import { cachedCanvasTexture } from "./canvasMaterials";
+import type { Checkpoint, CheckpointKind } from "./officeLayout";
 import { CHECKPOINT_GOLD } from "./officePalette";
 
-export type CheckpointIcon = "plus" | "list" | "team" | "shirt" | "star" | "coffee";
+export type CheckpointIcon = "plus" | "list" | "team" | "shirt" | "star" | "coffee" | "updown" | "target";
 
 /** Stroke-only icons in a 24 × 24 box (round caps and joins). */
 export const CHECKPOINT_ICON_PATHS: Record<CheckpointIcon, string> = {
@@ -27,6 +27,15 @@ export const CHECKPOINT_ICON_PATHS: Record<CheckpointIcon, string> = {
   shirt: "M8 3L3 6l2 4 2.5-1v12h9V9l2.5 1 2-4-5-3c-.5 1.5-2 2.5-4 2.5S8.5 4.5 8 3z",
   star: "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z",
   coffee: "M4 9h12v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9zM16 10h1.5a2.5 2.5 0 0 1 0 5H16M8 3.5c0 1 1 1 1 2M12 3.5c0 1 1 1 1 2",
+  // The elevator: an up arrow beside a down arrow.
+  updown: "M8 20V4M4 8l4-4 4 4M16 4v16M12 16l4 4 4-4",
+  // Mission Control: a target with crosshairs.
+  target: "M12 3a9 9 0 1 1 0 18a9 9 0 1 1 0-18zM12 8a4 4 0 1 1 0 8a4 4 0 1 1 0-8zM12 1v4M12 19v4M1 12h4M19 12h4",
+};
+
+/** The icon each checkpoint wears, on its floor token and in the reception's list of places. */
+export const CHECKPOINT_ICON: Record<CheckpointKind, CheckpointIcon> = {
+  create: "plus", manage: "list", team: "team", wardrobe: "shirt", lead: "star", break: "coffee", elevator: "updown", mission: "target",
 };
 
 const TOKEN_RADIUS = 0.36;
@@ -94,7 +103,7 @@ function faceMaterial(icon: CheckpointIcon): MeshStandardMaterial {
   return material;
 }
 
-function IconSvg({ icon }: { icon: CheckpointIcon }) {
+export function IconSvg({ icon }: { icon: CheckpointIcon }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d={CHECKPOINT_ICON_PATHS[icon]} />
@@ -122,6 +131,8 @@ export function CheckpointMarker({ checkpoint, label, icon, active, animate, onA
   const phase = useMemo(() => [...checkpoint.id].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 7, [checkpoint.id]);
   const t = useT();
   const hint = t(`society.office.cp_${checkpoint.id}_hint`);
+  // A checkpoint over a tall prop (the holo deck) floats its token above it.
+  const tokenY = checkpoint.tokenY ?? TOKEN_Y;
   const face = faceMaterial(icon);
   const ringOpacity = active ? 0.95 : 0.6;
   const fillOpacity = active ? 0.16 : 0.07;
@@ -133,14 +144,14 @@ export function CheckpointMarker({ checkpoint, label, icon, active, animate, onA
       // the time); animation only adds a gentle bob and sway around that.
       const toCamera = Math.atan2(camera.position.x - checkpoint.x, camera.position.z - checkpoint.z);
       if (animate) {
-        token.current.position.y = TOKEN_Y + Math.sin(time * 1.8) * 0.07;
+        token.current.position.y = tokenY + Math.sin(time * 1.8) * 0.07;
         const sway = Math.sin(time * (active ? 2.2 : 1.1)) * (active ? 0.45 : 0.3);
         const goal = toCamera + sway;
         // Ease towards the goal along the shorter way round, so orbiting never snaps it.
         const diff = Math.atan2(Math.sin(goal - token.current.rotation.y), Math.cos(goal - token.current.rotation.y));
         token.current.rotation.y += diff * Math.min(1, delta * 6);
       } else {
-        token.current.position.y = TOKEN_Y;
+        token.current.position.y = tokenY;
         token.current.rotation.y = toCamera;
       }
     }
@@ -199,14 +210,14 @@ export function CheckpointMarker({ checkpoint, label, icon, active, animate, onA
       </mesh>
 
       {/* Floating hexagon token with the icon on both faces. */}
-      <group ref={token} position={[0, TOKEN_Y, 0]} rotation={[0, Math.PI / 4, 0]} scale={active ? 1.15 : 1}
+      <group ref={token} position={[0, tokenY, 0]} rotation={[0, Math.PI / 4, 0]} scale={active ? 1.15 : 1}
         onClick={activate} onPointerOver={over} onPointerOut={out}>
         <mesh geometry={prismGeometry} material={rimMaterial} castShadow />
         <mesh geometry={faceGeometry} material={face} position={[0, 0, TOKEN_DEPTH / 2 + 0.002]} />
         <mesh geometry={faceGeometry} material={face} position={[0, 0, -TOKEN_DEPTH / 2 - 0.002]} rotation={[0, Math.PI, 0]} />
       </group>
 
-      <group ref={anchor} position={[0, LABEL_Y, 0]}>
+      <group ref={anchor} position={[0, tokenY - TOKEN_Y + LABEL_Y, 0]}>
         <Html center zIndexRange={[20, 0]}>
           <button ref={pill} type="button" data-office-ui className="office-checkpoint" data-active={active ? "true" : "false"}
             aria-label={hint ? `${label}: ${hint}` : label} title={hint || undefined}

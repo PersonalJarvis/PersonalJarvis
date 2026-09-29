@@ -24,7 +24,6 @@ const JarvisAgentsBoard = lazy(() =>
   import("@/views/JarvisAgentsView").then((m) => ({ default: m.JarvisAgentsView })),
 );
 
-const MarsStationPanel = lazy(() => import("@/components/society/mars/MarsStationPanel").then((m) => ({ default: m.MarsStationPanel })));
 
 function isProtectedMarsInteraction(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest("[data-mars-ui], [data-mars-mode=\'player\'], [data-mars-mode=\'follow\']"));
@@ -36,7 +35,6 @@ export function SocietyView() {
   const t = useT();
   useLocaleChunk("society");
   const [mode, setMode] = useState<"agents" | "world">("agents");
-  const [marsStationOpen, setMarsStationOpen] = useState(false);
   const roster = useSocietyRoster();
   const agents = useMemo(() => roster.data?.agents ?? [], [roster.data]);
   const sample = roster.data?.sample ?? true;
@@ -176,7 +174,7 @@ export function SocietyView() {
             modes — one switch, always centered, always a way back. */}
         {createPortal(
           <div className="pointer-events-none fixed inset-x-0 top-0 z-[140] flex h-8 items-center justify-center" data-testid="mode-switch">
-            <div className="pointer-events-auto flex items-center gap-2">{modeSwitch}{mode === "agents" && <button type="button" onClick={() => setMarsStationOpen(true)} className="rounded border border-border bg-background px-2 py-1 text-xs text-foreground">{t("society.mars.station_title")}</button>}</div>
+            <div className="pointer-events-auto flex items-center gap-2">{modeSwitch}</div>
           </div>,
           document.body,
         )}
@@ -223,7 +221,6 @@ export function SocietyView() {
           setCreating(true);
         }}
       />
-      {mode === "agents" && marsStationOpen && <div className="absolute right-4 top-14 z-40 max-h-[calc(100%-4rem)] w-[min(26rem,calc(100%-2rem))] overflow-auto" data-mars-ui><Suspense fallback={null}><MarsStationPanel onClose={() => setMarsStationOpen(false)} onOpenAgent={(id) => { selectAgent(id); setMarsStationOpen(false); }} /></Suspense></div>}
       <CreateAgentDialog open={creating} onClose={() => setCreating(false)} onCreated={onCreated} />
     </div>
   );

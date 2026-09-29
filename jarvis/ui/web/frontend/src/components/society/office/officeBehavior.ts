@@ -98,6 +98,8 @@ export interface PlanInput {
   calledTo: Point | null;
   /** Where the agent currently is; lets a called agent stop on its own side of the caller. */
   position?: Point | null;
+  /** A team meeting's chair for this agent (a `meeting-*` spot id); it sits there instead of standing by `calledTo`. */
+  calledSeat?: string | null;
 }
 
 /** Idle activities and their relative weights. */
@@ -212,7 +214,16 @@ export function planFor(input: PlanInput): Plan {
   book.release(agentId);
 
   // A working agent stays at its screen: the map mirrors real work and never interrupts it, not even visually.
-  if (input.calledTo && input.state !== "working") return calledPlan(input, input.calledTo);
+  if (input.calledTo && input.state !== "working") {
+    // A meeting seats its members: the assigned chair, else any free chair at the table, else standing by it.
+    if (input.calledSeat) {
+      const assigned = input.layout.spots.find((s) => s.id === input.calledSeat);
+      if (assigned && book.claim(assigned.id, agentId)) return spotPlan("meeting", assigned, "sit", Infinity);
+      const other = claimSpot(input, (s) => s.kind === "meeting");
+      if (other) return spotPlan("meeting", other, "sit", Infinity);
+    }
+    return calledPlan(input, input.calledTo);
+  }
 
   if (state === "working") {
     if (desk) {

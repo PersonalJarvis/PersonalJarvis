@@ -10,7 +10,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useT } from "@/i18n";
 import type { SocietyAgent } from "../data";
 import type { FigureRecipe } from "../figures/figureRecipe";
-import { playerLook, type PlayerProfile } from "./playerProfile";
+import { playerLook, playerRecipe, type PlayerProfile } from "./playerProfile";
 import { EYEWEAR, HAIR_STYLES, toyLookFor, type OutfitId } from "./toyFigureModel";
 import {
   colourwayIndexOf, dressIn, HAIR_COLOURS, OUTFITS, outfitById, randomLook, SKIN_TONES,
@@ -112,8 +112,8 @@ export function WardrobePanel({ profile, onProfile, agents, sample }: {
   const people = useMemo(() => dressable(agents), [agents]);
   const agent = people.find((a) => a.agentId === target) ?? null;
 
-  const playerRecipe: FigureRecipe = { ...profile.recipe, hairStyle: playerLook(profile).hairStyle };
-  const recipe = agent ? drafts[agent.agentId] ?? agent.figure! : playerRecipe;
+  const yours: FigureRecipe = { ...playerRecipe(profile), hairStyle: playerLook(profile).hairStyle };
+  const recipe = agent ? drafts[agent.agentId] ?? agent.figure! : yours;
   const dirty = agent ? Boolean(drafts[agent.agentId]) && JSON.stringify(drafts[agent.agentId]) !== JSON.stringify(agent.figure) : false;
 
   const change = (next: FigureRecipe) => {
