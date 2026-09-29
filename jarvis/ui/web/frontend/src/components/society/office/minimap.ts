@@ -315,6 +315,7 @@ const FURNITURE_PAINT: Partial<Record<FurnitureKind, string>> = {
   beanbag: "#e27d60", bookshelf: "#8a6240", plant: MAP_PAINT.plant, rug: MAP_PAINT.rug, elevator: "#c9ced6",
   leadWall: "#3a2416", executiveRug: "#26335a", guestChair: "#a9683c", chesterfield: "#7a2c22", loungeTable: "#d8ae52",
   executiveBar: "#5b3a25", globe: "#5f8f96", floorLamp: "#d8ae52", commandWall: "#3a2a20", commandDesk: "#c9b79c",
+  teamWall: "#6a4631", credenza: "#6a4631", designerPlant: MAP_PAINT.plant, teamRug: "#e6dccb",
 };
 
 export const STATE_RING: Record<MinimapAgentState, string> = {
@@ -463,11 +464,11 @@ export function drawFloorArt(ctx: Ctx, layout: OfficeLayout, t: MapTransform, ar
   // Furniture: rugs first, then solid pieces; plants and beanbags are round.
   for (const pass of ["rug", "solid"] as const) {
     for (const item of layout.furniture) {
-      const isRug = item.kind === "rug" || item.kind === "executiveRug";
+      const isRug = item.kind === "rug" || item.kind === "executiveRug" || item.kind === "teamRug";
       if ((pass === "rug") !== isRug) continue;
       const colour = FURNITURE_PAINT[item.kind] ?? MAP_PAINT.furniture;
       const fp = footprint(item);
-      if (item.kind === "plant" || item.kind === "beanbag") {
+      if (item.kind === "plant" || item.kind === "designerPlant" || item.kind === "beanbag") {
         const c = worldToMap(t, item);
         ctx.beginPath();
         ctx.arc(c.x, c.y, Math.max(1.2, (FURNITURE_SIZE[item.kind].w / 2) * t.scale * 0.85), 0, Math.PI * 2);

@@ -104,7 +104,9 @@ export type FurnitureKind =
   | "dogBed" | "treatJar"
   // Coding floor: Mission Control's console ring.
   // Coding floor: Mission Control's slat wall with the video wall, and its desk with three monitors and a chair.
-  | "commandWall" | "commandDesk";
+  | "commandWall" | "commandDesk"
+  // Team room: the slat wall behind the board, a credenza, fiddle-leaf figs and a wool rug.
+  | "teamWall" | "credenza" | "designerPlant" | "teamRug";
 
 /**
  * Footprint (x-extent × z-extent before rotation) and height of each piece.
@@ -112,7 +114,8 @@ export type FurnitureKind =
  * same numbers, so a prop larger than its footprint makes figures clip into it.
  */
 export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: number; solid: boolean }> = {
-  meetingTable: { w: 3.6, d: 1.6, h: 0.76, solid: true },
+  // The top is at 0.76 m; a carafe stands on it.
+  meetingTable: { w: 3.6, d: 1.6, h: 1.0, solid: true },
   teamBoard: { w: 2.6, d: 0.2, h: 1.9, solid: true },
   // The counter is 1.1 m; its slatted back wall with the help display rises to 2.2 m.
   receptionDesk: { w: 2.8, d: 0.9, h: 2.2, solid: true },
@@ -144,6 +147,12 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   commandWall: { w: 7.8, d: 0.3, h: 2.7, solid: true },
   // Desk and chair together; not a solid box, navigation walks round commandDeskObstacles.
   commandDesk: { w: 2.8, d: 2.1, h: 1.45, solid: false },
+  // Team room: the slat wall carries the board, felt panels and the video display.
+  teamWall: { w: 8.16, d: 0.12, h: 2.05, solid: true },
+  // The body is 0.61 m; books and a vase of branches stand on it.
+  credenza: { w: 2.2, d: 0.46, h: 1.1, solid: true },
+  designerPlant: { w: 0.8, d: 0.8, h: 2.0, solid: true },
+  teamRug: { w: 1, d: 1, h: 0.02, solid: false },
 };
 
 export interface Furniture extends Point {
@@ -152,7 +161,7 @@ export interface Furniture extends Point {
   /** Rotation about +y. 0 = the prop's front faces +z (south, towards the camera). */
   rotationY: number;
   room: RoomKind | "floor";
-  /** Only rugs (plain and executive) are sized per instance (w × d); everything else uses FURNITURE_SIZE. */
+  /** Only rugs (plain, executive and the team rug) are sized per instance (w × d); everything else uses FURNITURE_SIZE. */
   size?: { w: number; d: number };
 }
 
@@ -306,32 +315,6 @@ export function standOf(desk: Pick<DeskSlot, "x" | "z" | "facing">): Point & { f
 export function deskRect(desk: Pick<DeskSlot, "x" | "z" | "size">): Rect {
   const { w, d } = desk.size ?? DESK_SIZE;
   return { minX: desk.x - w / 2, maxX: desk.x + w / 2, minZ: desk.z - d / 2, maxZ: desk.z + d / 2 };
-}
-
-/** A planter box at each end of a coding-floor bench: its width, length and the gap to the end desk. */
-export const BENCH_PLANTER = { w: 0.36, d: 1.56, gap: 0.14 } as const;
-
-/**
- * The planter boxes closing off each bench of a department, west and east,
- * keyed "<deptId>:<bench>:w|e". They stand in the dead end between the two
- * desk rows, clear of the chairs and the walkway behind them.
- */
-export function benchPlanters(dept: Pick<Department, "id" | "desks">): { key: string; rect: Rect }[] {
-  const benches = new Map<string, DeskSlot[]>();
-  for (const desk of dept.desks) {
-    const bench = desk.id.split(":").at(-3) ?? "0";
-    benches.set(bench, [...(benches.get(bench) ?? []), desk]);
-  }
-  const half = DESK_SIZE.w / 2 + BENCH_PLANTER.gap;
-  return [...benches.entries()].flatMap(([bench, desks]) => {
-    const z = desks.reduce((sum, d) => sum + d.z, 0) / desks.length;
-    const west = Math.min(...desks.map((d) => d.x)) - half, east = Math.max(...desks.map((d) => d.x)) + half;
-    const zs = { minZ: z - BENCH_PLANTER.d / 2, maxZ: z + BENCH_PLANTER.d / 2 };
-    return [
-      { key: `${dept.id}:${bench}:w`, rect: { minX: west - BENCH_PLANTER.w, maxX: west, ...zs } },
-      { key: `${dept.id}:${bench}:e`, rect: { minX: east, maxX: east + BENCH_PLANTER.w, ...zs } },
-    ];
-  });
 }
 
 /** Half the width of the executive chair; unlike bench chairs it is solid, so nobody walks through it. */
@@ -548,10 +531,17 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
   const furniture: Furniture[] = [
     ...leadFurniture,
     ...commandFurniture,
-    // Team room: one long table, a board on the north wall.
+    // Team room: a walnut table on a wool rug, the board on a slat wall with
+    // felt panels and a video display, a credenza under the display and one
+    // along the west wall, fiddle-leaf figs in both corners by the door.
+    { id: "team-rug", kind: "teamRug", x: tcx, z: tcz + 0.4, rotationY: 0, room: "team", size: { w: 5.4, d: 4.0 } },
     { id: "team-table", kind: "meetingTable", x: tcx, z: tcz + 0.4, rotationY: 0, room: "team" },
+    { id: "team-wall", kind: "teamWall", x: tcx, z: topZ + 0.06 + FURNITURE_SIZE.teamWall.d / 2, rotationY: 0, room: "team" },
     { id: "team-board", kind: "teamBoard", x: tcx, z: topZ + 0.25, rotationY: 0, room: "team" },
-    { id: "team-plant", kind: "plant", x: teamRoom.maxX - 0.6, z: northMaxZ - 0.6, rotationY: 0, room: "team" },
+    { id: "team-credenza", kind: "credenza", x: tcx + 2.7, z: topZ + 0.19 + FURNITURE_SIZE.credenza.d / 2, rotationY: 0, room: "team" },
+    { id: "team-credenza-w", kind: "credenza", x: teamRoom.minX + 0.07 + FURNITURE_SIZE.credenza.d / 2, z: tcz + 0.4, rotationY: Math.PI / 2, room: "team" },
+    { id: "team-plant", kind: "designerPlant", x: teamRoom.maxX - 0.6, z: northMaxZ - 0.6, rotationY: 0, room: "team" },
+    { id: "team-plant-w", kind: "designerPlant", x: teamRoom.minX + 0.6, z: northMaxZ - 0.6, rotationY: Math.PI / 2, room: "team" },
     ...(coding ? [
       // Coding floor, east: a server room — a rack cabinet on the north wall and
       // console terminals along both side walls.
@@ -666,8 +656,6 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     ...departments.map((d) => ({ minX: d.minX + 0.2, maxX: d.maxX - 0.2, minZ: d.minZ + 0.02, maxZ: d.minZ + 0.2 })),
     ...furniture.filter((f) => FURNITURE_SIZE[f.kind].solid).map(footprint),
     ...(coding ? commandDeskObstacles(commandDeskAt) : []),
-    // Planter boxes at the bench ends on the coding floor.
-    ...(coding ? departments.flatMap(benchPlanters).map((p) => p.rect) : []),
     // The posts of an open room's name arch are solid too; nobody walks through them.
     ...rooms.filter((r) => !r.walled).flatMap(archPosts).map((p) => ({
       minX: p.x - ARCH.post / 2, maxX: p.x + ARCH.post / 2, minZ: p.z - ARCH.post / 2, maxZ: p.z + ARCH.post / 2,

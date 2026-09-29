@@ -13,6 +13,7 @@ import { CylinderGeometry, MeshStandardMaterial, SphereGeometry } from "three";
 import { canvasMaterial } from "./canvasMaterials";
 import { LEAD_RENDERERS } from "./LeadSuite";
 import { COMMAND_RENDERERS } from "./CommandOffice";
+import { TEAM_RENDERERS } from "./TeamRoomDecor";
 import { Bookshelf, Box, Couch, GEO, MAT, matte, Plant, Rounded, Rug } from "./OfficeFurniture";
 import { FURNITURE_SIZE, type Furniture, type FurnitureKind } from "./officeLayout";
 import { PROP_COLOURS as P } from "./officePalette";
@@ -27,56 +28,6 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.arcTo(x, y + h, x, y, r);
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
-}
-
-/** Team board: an org chart on the left, sticky notes on the right. */
-function drawTeamBoard(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-  ctx.fillStyle = P.boardWhite;
-  ctx.fillRect(0, 0, w, h);
-  // Org chart: one box on top, three below, joined by marker lines.
-  const node = (x: number, y: number, colour: string) => {
-    ctx.fillStyle = colour;
-    roundRect(ctx, x - 62, y - 26, 124, 52, 10);
-    ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,0.85)";
-    ctx.fillRect(x - 40, y - 5, 80, 10);
-  };
-  ctx.strokeStyle = "#3b4250";
-  ctx.lineWidth = 5;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(250, 120); ctx.lineTo(250, 200);
-  ctx.moveTo(90, 200); ctx.lineTo(410, 200);
-  for (const x of [90, 250, 410]) { ctx.moveTo(x, 200); ctx.lineTo(x, 262); }
-  ctx.stroke();
-  node(250, 100, "#4f7cac");
-  node(90, 288, "#5e9c76");
-  node(250, 288, "#c8553d");
-  node(410, 288, "#8d6cab");
-  // Marker scribbles under the chart.
-  ctx.strokeStyle = "#6b7280";
-  ctx.lineWidth = 4;
-  for (let i = 0; i < 3; i += 1) {
-    ctx.beginPath();
-    ctx.moveTo(40, 380 + i * 30);
-    ctx.lineTo(40 + 180 + ((i * 70) % 160), 380 + i * 30);
-    ctx.stroke();
-  }
-  // Sticky notes, slightly askew.
-  const notes = ["#fde68a", "#fbcfe8", "#bbf7d0", "#bfdbfe", "#fed7aa", "#fde68a"];
-  notes.forEach((colour, i) => {
-    const col = i % 3, row = Math.floor(i / 3);
-    ctx.save();
-    ctx.translate(620 + col * 135, 110 + row * 170);
-    ctx.rotate(((i * 37) % 9 - 4) * 0.02);
-    ctx.fillStyle = "rgba(0,0,0,0.12)";
-    ctx.fillRect(-52, -48, 110, 110);
-    ctx.fillStyle = colour;
-    ctx.fillRect(-55, -55, 110, 110);
-    ctx.fillStyle = "rgba(60,60,70,0.55)";
-    for (let line = 0; line < 3; line += 1) ctx.fillRect(-40, -30 + line * 22, 50 + ((i + line) * 17) % 30, 6);
-    ctx.restore();
-  });
 }
 
 /** Kiosk screen: a list of agents with a gold header and an add button. */
@@ -351,7 +302,6 @@ const PM = {
 };
 
 const lazy = {
-  board: () => canvasMaterial("prop:teamBoard", 1024, 478, drawTeamBoard, { fallback: P.boardWhite, roughness: 0.7 }),
   kiosk: () => canvasMaterial("prop:kiosk", 512, 360, drawKioskList, { glow: 0.85, fallback: "#1b2a44", roughness: 0.4 }),
   receptionHelp: () => canvasMaterial("prop:receptionHelp", 512, 192, drawReceptionHelp, { glow: 0.85, fallback: "#1a2742", roughness: 0.4 }),
   infoSign: () => canvasMaterial("prop:infoSign", 256, 256, drawInfoSign, { glow: 0.7, fallback: "#f5b83d", roughness: 0.4 }),
@@ -387,21 +337,6 @@ function Panel({ size, position, material, rotation }: {
 // Props (local space: centred on the origin, front faces +z)
 // ---------------------------------------------------------------------------
 
-/** Long light-wood meeting table on two white pedestals. Chairs are `MeetingChairs`. */
-function MeetingTable() {
-  return (
-    <group>
-      <Rounded size={[3.6, 0.07, 1.6]} radius={0.03} position={[0, 0.725, 0]} material={MAT.deskTop} />
-      <Rounded size={[0.22, 0.69, 1.1]} radius={0.03} position={[-1.3, 0.345, 0]} material={MAT.deskBody} />
-      <Rounded size={[0.22, 0.69, 1.1]} radius={0.03} position={[1.3, 0.345, 0]} material={MAT.deskBody} />
-      <Box size={[2.4, 0.06, 0.08]} position={[0, 0.3, 0]} material={MAT.deskLeg} />
-      <Box size={[0.3, 0.006, 0.42]} position={[-0.9, 0.763, 0.35]} material={PM.paper} cast={false} />
-      <Box size={[0.3, 0.006, 0.42]} position={[0.6, 0.763, -0.35]} material={PM.paper} cast={false} />
-      <Box size={[0.42, 0.02, 0.3]} position={[0.1, 0.77, 0.3]} material={MAT.monitor} />
-    </group>
-  );
-}
-
 /** A meeting chair centred on its seat, facing +z (backrest on the -z side). */
 function MeetingChair() {
   return (
@@ -427,26 +362,6 @@ export function MeetingChairs({ table }: { table: Furniture }) {
           <group position={[x, 0, -1.25]}><MeetingChair /></group>
           <group position={[x, 0, 1.25]} rotation={[0, Math.PI, 0]}><MeetingChair /></group>
         </group>
-      ))}
-    </group>
-  );
-}
-
-/** Mobile whiteboard (org chart + sticky notes) on two slim legs, board face towards +z. */
-function TeamBoard() {
-  return (
-    <group>
-      {[-1.26, 1.26].map((x) => (
-        <group key={x}>
-          <Box size={[0.05, 1.86, 0.05]} position={[x, 0.93, -0.04]} material={MAT.railing} />
-          <Box size={[0.06, 0.03, 0.2]} position={[x, 0.015, 0]} material={MAT.railing} />
-        </group>
-      ))}
-      <Rounded size={[2.5, 1.22, 0.05]} radius={0.02} position={[0, 1.25, -0.04]} material={PM.boardFrame} />
-      <Panel size={[2.4, 1.12]} position={[0, 1.25, -0.0135]} material={lazy.board()} />
-      <Box size={[2.1, 0.03, 0.08]} position={[0, 0.66, 0]} material={PM.boardFrame} />
-      {[PM.joystick, MAT.books[2], MAT.keyboard].map((material, i) => (
-        <Box key={i} size={[0.12, 0.02, 0.02]} position={[-0.3 + i * 0.18, 0.685, 0.01]} material={material} cast={false} />
       ))}
     </group>
   );
@@ -712,8 +627,6 @@ const COUCH_FIT_X = FURNITURE_SIZE.couch.w / 2.36;
 
 /** Every furniture kind maps to exactly one renderer (the Record type keeps this exhaustive). */
 export const PROP_RENDERERS: Record<FurnitureKind, (props: { item: Furniture }) => JSX.Element> = {
-  meetingTable: () => <MeetingTable />,
-  teamBoard: () => <TeamBoard />,
   receptionDesk: () => <ReceptionDesk />,
   kiosk: () => <Kiosk />,
   lockers: () => <Lockers />,
@@ -734,6 +647,7 @@ export const PROP_RENDERERS: Record<FurnitureKind, (props: { item: Furniture }) 
   elevator: () => <Elevator />,
   ...LEAD_RENDERERS,
   ...COMMAND_RENDERERS,
+  ...TEAM_RENDERERS,
 };
 
 /** One furniture item, placed at (x, 0, z) and turned by `rotationY` (0 = front faces +z). */
