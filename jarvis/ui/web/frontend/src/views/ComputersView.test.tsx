@@ -176,6 +176,41 @@ describe("ComputersView", () => {
     });
   });
 
+  it("takes a pasted agent answer with a key and needs no password", async () => {
+    let rows: Computer[] = [];
+    const calls = installFetch({
+      "GET /api/computers": () => ({ computers: rows }),
+      "GET /api/computers/providers": () => ({ providers: PROVIDERS }),
+      "GET /api/computers/identity": () => IDENTITY,
+      "POST /api/computers/test": () => ({
+        ok: true, kind: null, message: null, host_fingerprint: "SHA256:x", facts: VPS.facts, latency_ms: 9,
+      }),
+      "POST /api/computers": () => {
+        rows = [VPS];
+        return VPS;
+      },
+    });
+    renderView();
+
+    fireEvent.click(await screen.findByTestId("computers-add-first"));
+    const answer = [
+      "-----BEGIN OPENSSH PRIVATE KEY-----",
+      "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ",
+      "-----END OPENSSH PRIVATE KEY-----",
+      "ssh -i ~/.ssh/id_ed25519_grokbot Administrator@192.168.178.132",
+    ].join("\n");
+    fireEvent.change(await screen.findByTestId("cx-address"), { target: { value: answer } });
+
+    expect(screen.queryByTestId("cx-password")).toBeNull();
+    expect(screen.getByTestId("cx-detected").textContent).toContain("Administrator@192.168.178.132");
+    fireEvent.click(screen.getByTestId("cx-connect"));
+
+    expect(await screen.findByTestId("computer-detail")).toBeTruthy();
+    const post = calls.find((c) => c.method === "POST" && c.url === "/api/computers");
+    expect(post?.body).toMatchObject({ host: "192.168.178.132", username: "Administrator", auth: "private_key" });
+    expect((post?.body as { private_key: string }).private_key).toContain("BEGIN OPENSSH PRIVATE KEY");
+  });
+
   it("offers hosting accounts as an optional shortcut", async () => {
     installFetch({
       "GET /api/computers": () => ({ computers: [] }),

@@ -1,7 +1,11 @@
 /**
  * "Connect a computer" — one screen, because SSH needs only two things: where
- * the server is, and a way in (the password once, or an SSH key). Which
- * company runs the server does not matter for that.
+ * the server is, and a way in. The easiest way in is the copyable setup
+ * prompt: a coding agent on that computer installs the assistant's PUBLIC key
+ * and prints one line to paste back. The paste box also understands a bare IP,
+ * user@host, a whole ssh command or a block with a private key, so the user
+ * never has to split anything into fields. The password field appears only
+ * when nothing pasted says how to log in.
  *
  * Two optional doors sit below the form: connect a hosting account to pick
  * from all its servers (no IP to copy), or create a virtual machine here.
@@ -11,44 +15,23 @@
  * assistant's own key and is then forgotten, unless "keep" is ticked.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ChevronDown, KeyRound, Loader2, Lock, MonitorSmartphone, Plug, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, Copy, KeyRound, Loader2, MonitorSmartphone, Plug, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useIdentity, useProviderCatalog, useUpsertComputer } from "@/hooks/useComputers";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { robustCopy } from "@/lib/clipboard";
+import { useEventStore } from "@/store/events";
 import { computersApi, type AddServerInput, type Computer, type ProviderInfo } from "@/lib/computersApi";
-import { CopyField, Field, inputClass } from "./parts";
+import { parseConnection, setupPrompt } from "./connection";
+import { Field, inputClass } from "./parts";
 import { ApiImportStep } from "./wizard/ApiImportStep";
 import { LocalVmStep } from "./wizard/LocalVmStep";
 import { ErrorNote, errorText } from "./wizard/shared";
 
 type Screen = { kind: "form" } | { kind: "account"; provider: ProviderInfo } | { kind: "vm" };
 type Login = "password" | "private_key" | "key";
-
-/** "root@203.0.113.10:2222" → user, host, port (each optional in the input). */
-export function parseAddress(raw: string): { user: string | null; host: string; port: number | null } {
-  let rest = raw.trim().replace(/^ssh\s+/i, "");
-  let user: string | null = null;
-  const at = rest.lastIndexOf("@");
-  if (at > 0) {
-    user = rest.slice(0, at);
-    rest = rest.slice(at + 1);
-  }
-  let port: number | null = null;
-  const bracket = rest.match(/^\[(.+)\](?::(\d+))?$/);
-  if (bracket) {
-    rest = bracket[1];
-    port = bracket[2] ? Number(bracket[2]) : null;
-  } else if ((rest.match(/:/g) ?? []).length === 1) {
-    const [h, p] = rest.split(":");
-    if (/^\d+$/.test(p)) {
-      rest = h;
-      port = Number(p);
-    }
-  }
-  return { user, host: rest, port };
-}
 
 export function ConnectDialog({
   onClose,
@@ -62,8 +45,9 @@ export function ConnectDialog({
   const catalog = useProviderCatalog();
   const identity = useIdentity();
   const [screen, setScreen] = useState<Screen>({ kind: "form" });
-  const [address, setAddress] = useState("");
-  const [login, setLogin] = useState<Login>("password");
+  const assistantName = useEventStore((s) => s.assistantName) || "Jarvis";
+  const [pasted, setPasted] = useState("");
+  const [manualKey, setManualKey] = useState(false);
   const [password, setPassword] = useState("");
   const [privateKey, setPrivateKey] = useState("");
   const [passphrase, setPassphrase] = useState("");
@@ -74,6 +58,7 @@ export function ConnectDialog({
   const [keepPassword, setKeepPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [promptCopied, setPromptCopied] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -85,31 +70,45 @@ export function ConnectDialog({
   }, [onClose]);
 
   const accounts = useMemo(() => (catalog.data ?? []).filter((p) => p.api), [catalog.data]);
-  const parsed = parseAddress(address);
-  const effectiveUser = username.trim() || parsed.user || "root";
-  const effectivePort = Number(port) || parsed.port || 22;
+  // Everything the paste box understood: address, login, port, a key.
+  const detected = useMemo(() => parseConnection(pasted), [pasted]);
+  const pastedKey = detected.privateKey;
+  // The login follows what was pasted: a key block wins, then our own setup
+  // prompt's result (the assistant's key is installed), else the password.
+  const login: Login = pastedKey || manualKey ? "private_key" : detected.fromSetupPrompt ? "key" : "password";
+  const effectiveUser = username.trim() || detected.user || "root";
+  const effectivePort = Number(port) || detected.port || 22;
+  const keyText = pastedKey ?? privateKey;
   const ready =
-    parsed.host.length > 0 &&
-    (login === "key" || (login === "password" ? password.length > 0 : privateKey.trim().length > 0));
+    Boolean(detected.host) &&
+    (login === "key" || (login === "password" ? password.length > 0 : keyText.trim().length > 0));
 
   const finish = (computer: Computer) => {
     upsert(computer);
     onOpen(computer, "overview");
   };
 
+  async function copyPrompt() {
+    if (!identity.data) return;
+    const ok = await robustCopy(setupPrompt(assistantName, identity.data.public_key));
+    if (!ok) return;
+    setPromptCopied(true);
+    window.setTimeout(() => setPromptCopied(false), 2000);
+  }
+
   async function connect() {
-    if (!ready || busy) return;
+    if (!ready || busy || !detected.host) return;
     setBusy(true);
     setError(null);
     const input: AddServerInput = {
-      name: name.trim() || parsed.host,
-      host: parsed.host,
+      name: name.trim() || detected.host,
+      host: detected.host,
       port: effectivePort,
       username: effectiveUser,
       auth: login,
       password: login === "password" ? password : undefined,
       keep_password: login === "password" ? keepPassword : undefined,
-      private_key: login === "private_key" ? privateKey : undefined,
+      private_key: login === "private_key" ? keyText : undefined,
       passphrase: login === "private_key" && passphrase ? passphrase : undefined,
       provider: "generic",
     };
@@ -135,11 +134,6 @@ export function ConnectDialog({
     }
     setPrivateKey(await file.text());
   }
-
-  const loginTabs: { id: Login; label: string; icon: typeof Lock }[] = [
-    { id: "password", label: t("computers.cx_login_password"), icon: Lock },
-    { id: "private_key", label: t("computers.cx_login_key"), icon: KeyRound },
-  ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/50 p-4 backdrop-blur-sm">
@@ -202,12 +196,34 @@ export function ConnectDialog({
                 void connect();
               }}
             >
-              <Field label={t("computers.cx_address")} hint={t("computers.cx_address_hint")}>
-                <input
-                  className={cn(inputClass, "h-10 font-mono")}
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  placeholder="root@203.0.113.10"
+              <div className="rounded-lg border border-border bg-secondary/40 p-4" data-testid="cx-setup">
+                <div className="flex items-start gap-3">
+                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-foreground-strong">{t("computers.cx_setup_title")}</div>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{t("computers.cx_setup_body")}</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!identity.data}
+                    onClick={() => void copyPrompt()}
+                    data-testid="cx-copy-prompt"
+                  >
+                    {promptCopied ? <Check className="text-success" /> : <Copy />}
+                    {promptCopied ? t("computers.copied") : t("computers.cx_setup_copy")}
+                  </Button>
+                </div>
+              </div>
+
+              <Field label={t("computers.cx_paste")} hint={t("computers.cx_paste_hint")}>
+                <textarea
+                  className={cn(inputClass, "h-auto min-h-[40px] resize-none py-2 font-mono text-sm")}
+                  rows={pasted.includes("\n") ? 4 : 1}
+                  value={pasted}
+                  onChange={(e) => setPasted(e.target.value)}
+                  placeholder="203.0.113.10"
                   autoFocus
                   spellCheck={false}
                   autoComplete="off"
@@ -215,126 +231,112 @@ export function ConnectDialog({
                 />
               </Field>
 
-              <div>
-                <div role="tablist" aria-label={t("computers.cx_login")} className="flex gap-1 rounded-lg bg-secondary p-1">
-                  {loginTabs.map((tab) => {
-                    const Icon = tab.icon;
-                    const active = login === tab.id;
-                    return (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        role="tab"
-                        aria-selected={active}
-                        onClick={() => setLogin(tab.id)}
-                        className={cn(
-                          "flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md text-sm font-medium transition-colors",
-                          active ? "bg-popover text-foreground-strong shadow-sm" : "text-muted-foreground hover:text-foreground",
-                        )}
-                      >
-                        <Icon className="h-3.5 w-3.5" aria-hidden />
-                        {tab.label}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="mt-4">
-                  {login === "password" && (
-                    <Field label={t("computers.cx_password")} hint={t("computers.cx_password_hint")}>
-                      <input
-                        type="password"
-                        className={cn(inputClass, "h-10")}
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        autoComplete="new-password"
-                        data-testid="cx-password"
-                      />
-                    </Field>
-                  )}
+              {detected.host && (
+                <div className="flex flex-wrap items-center gap-1.5 text-xs" data-testid="cx-detected">
+                  <span className="text-muted-foreground">{t("computers.cx_detected")}</span>
+                  <span className="rounded bg-secondary px-1.5 py-0.5 font-mono text-foreground-secondary">
+                    {effectiveUser}@{detected.host}
+                    {effectivePort !== 22 ? `:${effectivePort}` : ""}
+                  </span>
                   {login === "private_key" && (
-                    <div className="space-y-3">
-                      <Field label={t("computers.cx_private_key")} hint={t("computers.cx_private_key_hint")}>
-                        <textarea
-                          className={cn(inputClass, "h-24 resize-none py-2 font-mono text-xs")}
-                          value={privateKey}
-                          onChange={(e) => setPrivateKey(e.target.value)}
-                          placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                          spellCheck={false}
-                          data-testid="cx-private-key"
-                        />
-                      </Field>
-                      <div className="flex items-center gap-3">
-                        <Button type="button" variant="outline" size="sm" onClick={() => fileInput.current?.click()}>
-                          {t("computers.cx_key_file")}
-                        </Button>
-                        <input
-                          ref={fileInput}
-                          type="file"
-                          className="hidden"
-                          onChange={(e) => void pickKeyFile(e.target.files?.[0])}
-                        />
-                        <input
-                          type="password"
-                          className={cn(inputClass, "h-8 flex-1 text-sm")}
-                          value={passphrase}
-                          onChange={(e) => setPassphrase(e.target.value)}
-                          placeholder={t("computers.cx_passphrase")}
-                          aria-label={t("computers.cx_passphrase")}
-                          autoComplete="off"
-                        />
-                      </div>
-                    </div>
+                    <span className="inline-flex items-center gap-1 rounded bg-success/15 px-1.5 py-0.5 text-success">
+                      <KeyRound className="h-3 w-3" aria-hidden />
+                      {t("computers.cx_key_found")}
+                    </span>
                   )}
-                  {login === "key" && identity.data && (
-                    <CopyField
-                      multiline
-                      label={t("computers.cx_own_key_hint")}
-                      value={identity.data.public_key}
-                      copyLabel={t("computers.copy")}
-                      copiedLabel={t("computers.copied")}
+                  {login === "key" && (
+                    <span className="inline-flex items-center gap-1 rounded bg-success/15 px-1.5 py-0.5 text-success">
+                      <Check className="h-3 w-3" aria-hidden />
+                      {t("computers.cx_setup_done")}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {login === "password" && (
+                <Field label={t("computers.cx_password")} hint={t("computers.cx_password_hint")}>
+                  <input
+                    type="password"
+                    className={cn(inputClass, "h-10")}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="new-password"
+                    data-testid="cx-password"
+                  />
+                </Field>
+              )}
+
+              {manualKey && login === "private_key" && !pastedKey && (
+                <div className="space-y-3">
+                  <Field label={t("computers.cx_private_key")} hint={t("computers.cx_private_key_hint")}>
+                    <textarea
+                      className={cn(inputClass, "h-24 resize-none py-2 font-mono text-xs")}
+                      value={privateKey}
+                      onChange={(e) => setPrivateKey(e.target.value)}
+                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                      spellCheck={false}
+                      data-testid="cx-private-key"
                     />
-                  )}
+                  </Field>
+                  <Button type="button" variant="outline" size="sm" onClick={() => fileInput.current?.click()}>
+                    {t("computers.cx_key_file")}
+                  </Button>
+                  <input ref={fileInput} type="file" className="hidden" onChange={(e) => void pickKeyFile(e.target.files?.[0])} />
+                </div>
+              )}
+
+              {login === "private_key" && (
+                <input
+                  type="password"
+                  className={cn(inputClass, "h-9 text-sm")}
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  placeholder={t("computers.cx_passphrase")}
+                  aria-label={t("computers.cx_passphrase")}
+                  autoComplete="off"
+                />
+              )}
+
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                {!pastedKey && !detected.fromSetupPrompt && (
                   <button
                     type="button"
-                    onClick={() => setLogin(login === "key" ? "password" : "key")}
-                    className="mt-2 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    onClick={() => setManualKey((v) => !v)}
+                    className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                   >
-                    {login === "key" ? t("computers.cx_use_password") : t("computers.cx_key_already_there")}
+                    {manualKey ? t("computers.cx_use_password") : t("computers.cx_have_key")}
                   </button>
-                </div>
-              </div>
-
-              <div>
+                )}
                 <button
                   type="button"
                   onClick={() => setMore((v) => !v)}
                   aria-expanded={more}
-                  className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+                  className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
                 >
-                  <ChevronDown className={cn("h-4 w-4 transition-transform", more && "rotate-180")} aria-hidden />
+                  <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", more && "rotate-180")} aria-hidden />
                   {t("computers.cx_more")}
                 </button>
-                {more && (
-                  <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_110px_80px]">
-                    <Field label={t("computers.field_name")}>
-                      <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder={parsed.host || t("computers.field_name_placeholder")} />
-                    </Field>
-                    <Field label={t("computers.field_username")}>
-                      <input className={cn(inputClass, "font-mono")} value={username} onChange={(e) => setUsername(e.target.value)} placeholder={parsed.user || "root"} spellCheck={false} />
-                    </Field>
-                    <Field label={t("computers.field_port")}>
-                      <input className={cn(inputClass, "font-mono")} value={port} inputMode="numeric" onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, ""))} placeholder={String(parsed.port ?? 22)} />
-                    </Field>
-                    {login === "password" && (
-                      <label className="col-span-full flex items-center gap-2 text-sm text-foreground-secondary">
-                        <input type="checkbox" checked={keepPassword} onChange={(e) => setKeepPassword(e.target.checked)} className="h-4 w-4" />
-                        {t("computers.cx_keep_password")}
-                      </label>
-                    )}
-                  </div>
-                )}
               </div>
+
+              {more && (
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_110px_80px]">
+                  <Field label={t("computers.field_name")}>
+                    <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder={detected.host || t("computers.field_name_placeholder")} />
+                  </Field>
+                  <Field label={t("computers.field_username")}>
+                    <input className={cn(inputClass, "font-mono")} value={username} onChange={(e) => setUsername(e.target.value)} placeholder={detected.user || "root"} spellCheck={false} />
+                  </Field>
+                  <Field label={t("computers.field_port")}>
+                    <input className={cn(inputClass, "font-mono")} value={port} inputMode="numeric" onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, ""))} placeholder={String(detected.port ?? 22)} />
+                  </Field>
+                  {login === "password" && (
+                    <label className="col-span-full flex items-center gap-2 text-sm text-foreground-secondary">
+                      <input type="checkbox" checked={keepPassword} onChange={(e) => setKeepPassword(e.target.checked)} className="h-4 w-4" />
+                      {t("computers.cx_keep_password")}
+                    </label>
+                  )}
+                </div>
+              )}
 
               <ErrorNote message={error} />
 

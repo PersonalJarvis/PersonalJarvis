@@ -298,7 +298,7 @@
     "cx_key_too_big": "Ese archivo es demasiado grande para ser una clave SSH.",
     "cx_own_key_hint": "Clave pública de {name}: ya debe estar en authorized_keys del servidor",
     "cx_key_already_there": "La clave de {name} ya está en el servidor",
-    "cx_use_password": "Entrar con contraseña o clave",
+    "cx_use_password": "Usar contraseña",
     "cx_more": "Más opciones",
     "cx_keep_password": "Seguir entrando con contraseña en lugar de clave",
     "cx_connect": "Conectar",
@@ -312,6 +312,15 @@
     "cx_fail_timeout": "El servidor no respondió a tiempo. Revisa la dirección y el cortafuegos.",
     "cx_fail_host_key_changed": "La identidad del servidor ha cambiado desde la última conexión.",
     "cx_fail_protocol": "La conexión SSH falló.",
-    "cx_fail_bad_key": "No parece una clave privada válida, o la frase de contraseña es incorrecta."
+    "cx_fail_bad_key": "No parece una clave privada válida, o la frase de contraseña es incorrecta.",
+    "cx_setup_title": "Lo más fácil: que un agente lo configure",
+    "cx_setup_body": "Copia este prompt en Claude Code, Codex u otro agente de código que se ejecute EN ese ordenador. Activa SSH, añade la clave de {name} y termina con una línea que pegas abajo.",
+    "cx_setup_copy": "Copiar prompt de configuración",
+    "cx_paste": "Servidor",
+    "cx_paste_hint": "Una IP, usuario@IP, un comando ssh completo, o pega el resultado del agente o un bloque con tu clave. {name} extrae lo que necesita.",
+    "cx_detected": "Detectado:",
+    "cx_key_found": "Clave privada",
+    "cx_setup_done": "La clave de {name} está configurada",
+    "cx_have_key": "Tengo una clave SSH"
   }
 }
