@@ -393,3 +393,24 @@ def test_passive_health_polls_reuse_the_cache_for_minutes() -> None:
     from jarvis.ui.web import provider_routes as pr
 
     assert pr._SECTION_HEALTH_TTL_S >= 15 * 60
+
+
+@pytest.mark.asyncio
+async def test_composer_health_does_not_spend_the_voice_key(monkeypatch) -> None:
+    """The agent-chat composer sweeps every API row; the GPT-Live key must be
+    reported from configuration, not probed on every sweep (2026-09-29)."""
+    from jarvis.ui.web import provider_routes as pr
+
+    probes: dict[str, bool] = {}
+
+    async def _tier(cfg, spec, *, probe=True, **kwargs):
+        probes[spec.id] = probe
+        return pr.SectionHealth(status=sh.OK, reason="ok", subject_id=spec.id)
+
+    monkeypatch.setattr(pr, "_tier_section_health", _tier)
+    cfg = _gpt_live_config()
+
+    await pr.provider_health(cfg, "openai", probe=True)
+    await pr.provider_health(cfg, "grok", probe=True)
+
+    assert probes == {"openai": False, "grok": True}

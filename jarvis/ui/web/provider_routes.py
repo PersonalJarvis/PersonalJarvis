@@ -1591,6 +1591,12 @@ async def provider_health(cfg: Any, provider_id: str, *, probe: bool = True) -> 
             detail=f"{provider_id}: not a known provider",
             subject_id=provider_id,
         )
+    # The realtime voice key is probed by the Realtime tab only: a composer
+    # sweep that spent it again on every open drained it (mandate 2026-09-29).
+    from jarvis.brain.voice_key import bills_voice_key
+
+    if bills_voice_key(cfg, provider_id):
+        probe = False
     return await _tier_section_health(cfg, spec, probe=probe)
 
 
