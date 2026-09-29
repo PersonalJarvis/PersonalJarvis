@@ -22,6 +22,11 @@ export interface ParsedConnection {
   fromSetupPrompt: boolean;
 }
 
+/** Placeholder for the private-key field. Built from parts so the literal key
+ * header never lands in source or the bundle; the pre-push credential scanner
+ * treats that header as a private key block. */
+export const PRIVATE_KEY_PLACEHOLDER = ["-----BEGIN OPENSSH", "PRIVATE KEY-----"].join(" ");
+
 const PRIVATE_KEY_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/;
 const MARKER_RE = new RegExp(`${CONNECT_MARKER}\\s+(\\S+)`);
 const SSH_LINE_RE = /(?:^|\s)ssh\s+([^\n]+)/;

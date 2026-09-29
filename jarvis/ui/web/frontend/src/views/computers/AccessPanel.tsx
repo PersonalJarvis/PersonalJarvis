@@ -12,6 +12,7 @@ import { useT } from "@/i18n";
 import { computersApi, type AuthMethod, type Computer } from "@/lib/computersApi";
 import { CopyField, Field, inputClass } from "./parts";
 import { ErrorNote, OptionCard, errorText } from "./wizard/shared";
+import { PRIVATE_KEY_PLACEHOLDER } from "./connection";
 
 export function AccessPanel({ computer }: { computer: Computer }) {
   const t = useT();
@@ -128,7 +129,7 @@ export function AccessPanel({ computer }: { computer: Computer }) {
                     onChange={(e) => setPrivateKey(e.target.value)}
                     rows={4}
                     spellCheck={false}
-                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                    placeholder={PRIVATE_KEY_PLACEHOLDER}
                     className="w-full rounded-md border border-border-strong bg-input px-3 py-2 font-mono text-xs text-foreground placeholder:text-foreground-faint focus:border-accent focus:outline-none focus:ring-2 focus:ring-ring"
                   />
                 </Field>
