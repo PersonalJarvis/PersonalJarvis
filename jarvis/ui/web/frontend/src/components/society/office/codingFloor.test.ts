@@ -10,7 +10,7 @@ import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
 import { resetWorkspacePanesPoll, useWorkspacePanesStore } from "@/store/workspacePanes";
 
 import {
-  isPaneAgentId, paneAgentId, paneFigure, paneLabel, paneOccupants, paneRunState, useCodingFloorOccupants,
+  isPaneAgentId, paneAgentId, paneFigure, paneLabel, paneOccupants, panePlateName, paneRunState, useCodingFloorOccupants,
 } from "./codingFloor";
 import { allDesks, buildOfficeLayout } from "./officeLayout";
 import { toyLookFor } from "./toyFigureModel";
@@ -68,11 +68,13 @@ describe("coding floor roster", () => {
       .toEqual(["Personal Jarvis/T3", "Personal Jarvis/T9", "Personal Jarvis/T10", "Website/T1"]);
   });
 
-  it("labels the plate with the CLI and call-sign, and keeps the recap as the title", () => {
+  it("labels the plate with the pane's topic, and keeps the CLI and call-sign as the title", () => {
     const [occupant] = paneOccupants([pane("T2", "w1", { display_name: "Gemini CLI", agent: "gemini" })]);
-    expect(occupant.agent.name).toBe("Gemini · T2");
-    expect(occupant.agent.title).toBe("Refactor the router");
+    expect(occupant.agent.name).toBe("Refactor the router");
+    expect(occupant.agent.title).toBe("Gemini · T2");
     expect(paneLabel({ display_name: "", agent: "codex", name: "", key: "T4" })).toBe("Codex · T4");
+    expect(panePlateName(pane("T3", "w1", { recap: "", last_prompt: "Fix the login test" }))).toBe("Fix the login test");
+    expect(panePlateName(pane("T3", "w1", { recap: "", last_prompt: "" }))).toBe("Claude · T3");
     expect(occupant.agent.providerLabel).toBe("Personal Jarvis");
     expect(occupant.agent.tier).toBe("specialist");
     expect(occupant.agent.chatSessionId).toBeNull();

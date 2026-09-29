@@ -18,6 +18,7 @@ import { useMemo, useRef } from "react";
 import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
 import { useWorkspacePanes, useWorkspacePanesStore } from "@/store/workspacePanes";
 import { dotKindFor, stateKeyFor, type AgentDotKind, type AgentStateKey } from "@/components/agentic/sidePanel/agentStatus";
+import { sessionTitle } from "@/components/agentic/sessionTitle";
 
 import type { AgentRunState, SocietyAgent } from "../data";
 import { resolvePalette, type FigureRecipe } from "../figures/figureRecipe";
@@ -76,9 +77,21 @@ export function shortAgentName(pane: Pick<WorkspacePaneRow, "display_name" | "ag
   return agent ? agent.charAt(0).toUpperCase() + agent.slice(1) : "Agent";
 }
 
-/** The name plate: the CLI and the pane's call-sign, "Claude · T2". */
+/** The CLI and the pane's call-sign, "Claude · T2". */
 export function paneLabel(pane: Pick<WorkspacePaneRow, "display_name" | "agent" | "name" | "key">): string {
   return `${shortAgentName(pane)} · ${pane.name || pane.key}`;
+}
+
+/**
+ * The name plate: what the pane is working ON — the same title the IDE draws
+ * in the pane's header — so a floor of figures reads as a list of jobs, not
+ * "T1, T2, T3". A pane asked nothing yet has no topic and keeps its call-sign.
+ */
+export function panePlateName(
+  pane: Pick<WorkspacePaneRow, "recap" | "last_prompt" | "display_name" | "agent" | "name" | "key">,
+): string {
+  const title = sessionTitle(pane);
+  return title && title !== pane.display_name && title !== pane.name ? title : paneLabel(pane);
 }
 
 function workspaceLabel(pane: WorkspacePaneRow): string {
@@ -107,8 +120,8 @@ function toAgent(pane: WorkspacePaneRow, department: string, dot: AgentDotKind):
   const palette = resolvePalette(figure);
   return {
     agentId: paneAgentId(pane),
-    name: paneLabel(pane),
-    title: pane.recap || pane.last_prompt || pane.display_name || pane.agent,
+    name: panePlateName(pane),
+    title: paneLabel(pane),
     description: pane.last_prompt,
     tier: "specialist",
     provider: pane.agent,

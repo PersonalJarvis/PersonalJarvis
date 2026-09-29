@@ -34,6 +34,7 @@ import type { ChatLine } from "./deskChat";
 import type { DeskChat } from "./useDeskChats";
 import { officeTalkChat, useOfficeTalk } from "./officeTalk";
 import { deliverySpot, ERRAND_SPEED, useErrandFeed, useGigiErrands } from "./gigiErrands";
+import { isPaneAgentId } from "./codingFloor";
 
 /** The agent's symbol walks behind it as a little pet, about a fifth of its height. */
 export const PET_SIZE_M = 0.26;
@@ -96,9 +97,9 @@ function Nameplate({ agent, activity, selected, onSelect, height = OFFICE_FIGURE
           onClick={(event) => { event.stopPropagation(); onSelect(agent.agentId); }}
           aria-label={t("society.office.open_agent").replace("{0}", agent.name)}>
           <span className="office-plate-badge" style={{ background: agent.palette.primary }} aria-hidden>
-            {agent.tier === "lead" ? "★" : agent.name.slice(0, 1).toUpperCase()}
+            {agent.tier === "lead" ? "★" : (isPaneAgentId(agent.agentId) ? agent.provider : agent.name).slice(0, 1).toUpperCase()}
           </span>
-          <span className="office-plate-name">{agent.name}</span>
+          <span className="office-plate-name" title={agent.name}>{agent.name}</span>
           <span className="office-plate-state" title={t(`society.office.state_${agent.state}`)}>
             <i aria-hidden />{detail ? <em>{detail}</em> : null}
           </span>
