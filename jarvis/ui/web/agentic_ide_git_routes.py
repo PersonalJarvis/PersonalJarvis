@@ -3,6 +3,7 @@
 Endpoints (all under ``/api/agentic-ide/git``)::
 
     GET  /inspect             Branch, changes, ahead/behind, branches, worktrees
+    GET  /overview            A workspace's branches with merged-into, PR and CI state
     POST /prepare             Git half of opening a workspace or an agent
     POST /commit              Stage everything and commit
     POST /push                Push the current branch (sets upstream once)
@@ -25,7 +26,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from jarvis.agentic_ide import git_ops
+from jarvis.agentic_ide import git_ops, git_overview
 from jarvis.agentic_ide.git_ops import GitError, PrepareMode
 from jarvis.agentic_ide.session import get_registry
 
@@ -71,6 +72,24 @@ def inspect_folder(folder: str = Query(..., min_length=1)) -> dict:
         return git_ops.inspect(folder).to_dict()
     except GitError as exc:
         raise _fail(exc) from exc
+
+
+@router.get("/overview", summary="Branches of a workspace's repository with PR and CI state")
+def workspace_overview(
+    workspace_id: str = Query(..., min_length=1),
+    refresh: bool = Query(False, description="Re-read GitHub now instead of the cached answer"),
+) -> dict:
+    """What the IDE's Git tab lists: every branch, what it is merged into, its
+    pull requests and its CI — local git always, GitHub through ``gh`` when it
+    is installed and signed in (cached per repository, see ``git_overview``).
+
+    Workspace-scoped on purpose: the folder comes from the open workspace, so
+    this cannot be pointed at an arbitrary path on the machine.
+    """
+    session = get_registry().get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    return git_overview.overview(session.folder, refresh=refresh).to_dict()
 
 
 @router.post("/prepare", summary="Prepare a checkout for a new workspace or agent")
