@@ -16,8 +16,8 @@ wrapped.
 
 from __future__ import annotations
 
+import queue
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 _LOCK = threading.Lock()
@@ -26,16 +26,44 @@ _LOCK = threading.Lock()
 # (KaldiRecognizer.__del__) is a native call measured at 15 s on a cold, paging
 # box (2026-08-30 "Event loop STALLED" stack) — and it runs on WHICHEVER thread
 # drops the last reference, which was the asyncio loop during wake teardown.
-_RELEASE_POOL: ThreadPoolExecutor | None = None
-_RELEASE_POOL_LOCK = threading.Lock()
+#
+# The hand-off is a ``SimpleQueue`` fed by a plain daemon thread, never a
+# ``ThreadPoolExecutor``: the proxy's ``__del__`` runs wherever the garbage
+# collector fires, including INSIDE another ``ThreadPoolExecutor.submit`` that
+# already holds ``concurrent.futures``' process-wide, non-reentrant
+# ``_global_shutdown_lock`` (it allocates a Thread, which can trigger a GC).
+# A second ``submit`` from that ``__del__`` wanted the same lock on the same
+# thread and froze the asyncio loop forever (BUG-221: wake word, API and every
+# window dead, 0 % CPU). ``SimpleQueue.put`` is documented reentrant and safe in
+# destructors; nothing on the ``__del__`` path may take any other lock.
+_RELEASE_QUEUE: queue.SimpleQueue[list[Any]] = queue.SimpleQueue()
+_RELEASE_WORKER: threading.Thread | None = None
+_RELEASE_WORKER_LOCK = threading.Lock()
 
 
-def _release_pool() -> ThreadPoolExecutor:
-    global _RELEASE_POOL
-    with _RELEASE_POOL_LOCK:
-        if _RELEASE_POOL is None:
-            _RELEASE_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vosk-release")
-        return _RELEASE_POOL
+def _release_worker_loop() -> None:
+    while True:
+        box = _RELEASE_QUEUE.get()
+        with _LOCK:
+            box.clear()
+        del box
+
+
+def _ensure_release_worker() -> None:
+    """Start the release worker. Never call this from ``__del__`` (it locks)."""
+    global _RELEASE_WORKER
+    if _RELEASE_WORKER is not None:
+        return
+    with _RELEASE_WORKER_LOCK:
+        if _RELEASE_WORKER is None:
+            worker = threading.Thread(target=_release_worker_loop, name="vosk-release", daemon=True)
+            worker.start()
+            _RELEASE_WORKER = worker
+
+
+def _enqueue_release(box: list[Any]) -> None:
+    """Lock-free hand-off of a boxed last reference — safe inside ``__del__``."""
+    _RELEASE_QUEUE.put(box)
 
 
 def release_recognizer(rec: Any) -> None:
@@ -43,24 +71,16 @@ def release_recognizer(rec: Any) -> None:
 
     The last reference is moved into a box and cleared on the worker under the
     same process-wide lock every other native call holds (BUG-151 — the free is
-    a native call too). Never raises: during interpreter shutdown the executor
-    refuses new work, and the box is then cleared inline — exactly the pre-fix
-    behaviour, which is acceptable on the one path where no loop is left to
-    stall.
+    a native call too). A daemon worker means a recognizer still queued at
+    interpreter exit is freed by the interpreter's own teardown, the one path
+    where no loop is left to stall.
     """
     if rec is None:
         return
+    _ensure_release_worker()
     box = [rec]
     del rec
-
-    def _drop() -> None:
-        with _LOCK:
-            box.clear()
-
-    try:
-        _release_pool().submit(_drop)
-    except Exception:  # noqa: BLE001 — shutdown fallback, see docstring
-        _drop()
+    _enqueue_release(box)
 
 
 def native_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
@@ -80,6 +100,10 @@ class LockedRecognizer:
 
     def __init__(self, rec: Any) -> None:
         self._rec = rec
+        if is_native_recognizer(rec):
+            # Start the worker HERE, in ordinary code: ``__del__`` below may only
+            # enqueue, because it can run inside a lock its own thread holds.
+            _ensure_release_worker()
 
     def AcceptWaveform(self, data: Any) -> Any:  # noqa: N802 — vosk API
         with _LOCK:
@@ -126,10 +150,13 @@ class LockedRecognizer:
         # discarded mid-loop, stage-1 recognizers replaced by _fresh_recs, a
         # cancelled wake task's closure. Hand the corpse to the release worker
         # so the 15 s native free never runs on the thread that dropped it.
+        # BUG-221: enqueue only — no executor, no lock (see _RELEASE_QUEUE). The
+        # reference goes straight into the box so no local on this frame can
+        # outlive the worker's clear and free the recognizer here after all.
         try:
-            rec = self.__dict__.pop("_rec", None)
-            if rec is not None and is_native_recognizer(rec):
-                release_recognizer(rec)
+            box = [self.__dict__.pop("_rec", None)]
+            if box[0] is not None and is_native_recognizer(box[0]):
+                _enqueue_release(box)
         except Exception:  # noqa: BLE001, S110 — __del__ must never raise; the
             # worst case is the pre-fix behaviour (free on this thread).
             pass

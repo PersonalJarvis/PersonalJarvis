@@ -15495,3 +15495,21 @@ Native window-only capture is now used only when a visible denylisted window
 intersects the rectangle, and a blank result there (`_is_flat_frame`: the
 middle 98 % of pixels within six luma levels) is refused.
 Guard: `tests/unit/screen_context/test_blank_window_capture.py`.
+
+## BUG-221: the whole app froze — wake word, chat and every window dead, 0 % CPU (CRITICAL, FIXED 2026-09-29)
+
+**Symptom.** The wake word never fired and no view reacted; `/api/health`
+timed out while the backend process sat at 0 % CPU.
+
+**Cause.** A self-deadlock on the asyncio loop thread. `asyncio.to_thread`
+called `ThreadPoolExecutor.submit`, which holds `concurrent.futures`'
+process-wide, non-reentrant `_global_shutdown_lock`. Allocating the worker
+thread triggered a GC pass that collected a `LockedRecognizer`; its `__del__`
+handed the native recognizer to the release pool with a second `submit` —
+which waited forever for the lock its own thread already held.
+
+**Fix.** `jarvis/plugins/wake/vosk_native.py` hands dead recognizers to a
+plain daemon worker through a `queue.SimpleQueue` (documented reentrant and
+safe in destructors); `__del__` only enqueues and takes no lock. The worker is
+started in ordinary code (`LockedRecognizer.__init__`, `release_recognizer`).
+Guard: `tests/unit/plugins/wake/test_vosk_native.py::test_dropping_the_proxy_inside_an_executor_submit_does_not_deadlock`.
