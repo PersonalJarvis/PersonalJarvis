@@ -123,32 +123,69 @@ function drawDeskScreen(ctx: CanvasRenderingContext2D, w: number, h: number): vo
   ctx.fillRect(w - 80, 44, 60, 90);
 }
 
-const INVADER = [
-  "..X.....X..", "...X...X...", "..XXXXXXX..", ".XX.XXX.XX.",
-  "XXXXXXXXXXX", "X.XXXXXXX.X", "X.X.....X.X", "...XX.XX...",
-];
-
-/** Arcade screen: two rows of pixel invaders, a ship and a score. */
+/** Arcade screen: the Asteroid Run attract screen, a rocket among faceted rocks. */
 function drawArcade(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-  ctx.fillStyle = "#07060f";
+  const sky = ctx.createLinearGradient(0, 0, 0, h);
+  sky.addColorStop(0, "#07060f");
+  sky.addColorStop(1, "#171133");
+  ctx.fillStyle = sky;
   ctx.fillRect(0, 0, w, h);
-  const px = 4;
-  for (let row = 0; row < 2; row += 1) {
-    for (let col = 0; col < 4; col += 1) {
-      ctx.fillStyle = row === 0 ? "#ff7ab8" : "#7cfc9a";
-      const ox = 22 + col * 58, oy = 34 + row * 44;
-      INVADER.forEach((line, y) => {
-        for (let x = 0; x < line.length; x += 1) if (line[x] === "X") ctx.fillRect(ox + x * px, oy + y * px, px, px);
-      });
-    }
+  // Warp streaks running out from the vanishing point.
+  const vx = w * 0.52, vy = h * 0.42;
+  ctx.lineCap = "round";
+  for (let i = 0; i < 46; i += 1) {
+    const a = (i * 2.399) % (Math.PI * 2), r0 = 14 + ((i * 37) % 60), len = 8 + ((i * 13) % 22);
+    ctx.strokeStyle = `rgba(201, 212, 255, ${0.25 + ((i * 7) % 10) / 20})`;
+    ctx.lineWidth = 1 + (i % 3) * 0.5;
+    ctx.beginPath();
+    ctx.moveTo(vx + Math.cos(a) * r0, vy + Math.sin(a) * r0);
+    ctx.lineTo(vx + Math.cos(a) * (r0 + len), vy + Math.sin(a) * (r0 + len));
+    ctx.stroke();
   }
-  ctx.fillStyle = "#7dd3fc";
-  ctx.fillRect(w / 2 - 18, h - 30, 36, 10);
-  ctx.fillRect(w / 2 - 4, h - 40, 8, 10);
-  ctx.fillStyle = "#fde68a";
-  ctx.fillRect(w / 2 - 1, h - 90, 3, 14);
-  ctx.fillStyle = "#ffffff";
-  for (let i = 0; i < 5; i += 1) ctx.fillRect(14 + i * 12, 10, 8, 10);
+  // Low-poly rocks: a fan of facets, each triangle shaded by its facing.
+  const rock = (cx: number, cy: number, r: number, seed: number) => {
+    const n = 7;
+    const pts = Array.from({ length: n }, (_, i) => {
+      const a = (i / n) * Math.PI * 2 + seed, k = 0.75 + (((seed * 31 + i * 17) % 10) / 10) * 0.4;
+      return [cx + Math.cos(a) * r * k, cy + Math.sin(a) * r * k] as const;
+    });
+    const hub = [cx - r * 0.15, cy - r * 0.2] as const;
+    pts.forEach((p, i) => {
+      const q = pts[(i + 1) % n];
+      const light = 0.45 + 0.4 * Math.max(0, Math.cos((i / n) * Math.PI * 2 + seed - 2.3));
+      ctx.fillStyle = `rgb(${Math.round(120 * light + 60)}, ${Math.round(128 * light + 62)}, ${Math.round(165 * light + 70)})`;
+      ctx.beginPath(); ctx.moveTo(hub[0], hub[1]); ctx.lineTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.closePath(); ctx.fill();
+    });
+  };
+  rock(w * 0.84, h * 0.2, 24, 1);
+  rock(w * 0.16, h * 0.3, 15, 2);
+  rock(w * 0.62, h * 0.24, 9, 3);
+  rock(w * 0.3, h * 0.62, 7, 4);
+  rock(w * 0.82, h * 0.7, 17, 5);
+  // The rocket, flying into the screen: exhaust, fins, body, nose, window.
+  const rx = w * 0.46, ry = h * 0.7;
+  ctx.save();
+  ctx.translate(rx, ry);
+  ctx.rotate(-0.5);
+  ctx.fillStyle = "#ffcc33";
+  ctx.beginPath(); ctx.moveTo(-7, 14); ctx.lineTo(0, 44); ctx.lineTo(7, 14); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#e0443e";
+  ctx.beginPath(); ctx.moveTo(-9, 2); ctx.lineTo(-20, 18); ctx.lineTo(-8, 14); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(9, 2); ctx.lineTo(20, 18); ctx.lineTo(8, 14); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#eef2f8";
+  ctx.fillRect(-9, -16, 18, 30);
+  ctx.fillStyle = "#3b82f6";
+  ctx.fillRect(-9, -6, 18, 5);
+  ctx.beginPath(); ctx.moveTo(-9, -16); ctx.lineTo(0, -32); ctx.lineTo(9, -16); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  // A laser bolt and the score line.
+  ctx.strokeStyle = "#ffe066";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(w * 0.55, h * 0.48); ctx.lineTo(w * 0.6, h * 0.36); ctx.stroke();
+  ctx.fillStyle = "#e6ebff";
+  for (let i = 0; i < 4; i += 1) ctx.fillRect(12 + i * 10, 10, 7, 7);
+  ctx.fillStyle = "#facc15";
+  ctx.fillRect(12, 22, 54, 3);
 }
 
 /** Elevator floor indicator: an amber "up" arrow and a dim "down" arrow. */

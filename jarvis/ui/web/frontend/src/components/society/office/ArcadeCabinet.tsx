@@ -1,25 +1,20 @@
 /**
  * The break-room arcade, playable: walking up to the cabinet and pressing E
- * opens this overlay with "Asteroid Run". The rules live in arcadeGame.ts;
- * this component feeds the keyboard in, runs a fixed-step loop and paints
- * the playfield. It is a modal dialog, so the office character stands still
- * while you play.
+ * opens this overlay with "Asteroid Run" in 3D. The rules live in
+ * arcadeGame.ts, the 3D view in ArcadeScene.tsx; this component owns the
+ * keyboard, the HUD and the WebGL surface. It is a modal dialog, so the
+ * office character stands still while you play.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Canvas } from "@react-three/fiber";
+import { useReducedMotion } from "framer-motion";
 import { useT } from "@/i18n";
-import {
-  ARCADE_H, ARCADE_W, RAPID_S, ROCK_RADIUS, SHIP_RADIUS, arcadeLevel, newArcade, stepArcade,
-  type ArcadeInput, type ArcadePhase, type ArcadeState, type PickupKind,
-} from "./arcadeGame";
+import { useWebglSurface } from "@/hooks/useWebglSurface";
+import { IDLE_INPUT, MAX_MISSILES, MAX_SHIELDS, arcadeLevel, newArcade, type ArcadeInput, type ArcadePhase, type ArcadeState } from "./arcadeGame";
+import { ArcadeScene } from "./ArcadeScene";
 import "./arcade.css";
 
 const BEST_KEY = "jarvis.office.arcade.asteroids.best";
-const STEP = 1 / 120;
-/** Canvas pixels per playfield unit; CSS scales the canvas to fit. */
-const SCALE = 3;
-
-const PICKUP_COLOUR: Record<PickupKind, string> = { shield: "#7dd3fc", rapid: "#fde68a", life: "#ff7ab8" };
-const ROCK_FILL = ["#8f7b66", "#7d6a57", "#6b5a4a"];
 
 function readBest(): number {
   try { return Number(window.localStorage.getItem(BEST_KEY)) || 0; } catch { return 0; }
@@ -29,142 +24,57 @@ function writeBest(score: number): void {
   try { window.localStorage.setItem(BEST_KEY, String(score)); } catch { /* not persisted this session */ }
 }
 
-function drawShip(ctx: CanvasRenderingContext2D, s: ArcadeState, now: number): void {
-  const { shipX: x, shipY: y } = s;
-  const tilt = Math.max(-0.35, Math.min(0.35, s.vx / 400));
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(tilt);
-  // Flame, flickering, longer while thrusting forward.
-  const flame = 7 + Math.sin(now / 30) * 2 + (s.vy < 0 ? 4 : 0);
-  ctx.fillStyle = "#ff7a59";
-  ctx.beginPath(); ctx.moveTo(-3, 7); ctx.lineTo(0, 7 + flame); ctx.lineTo(3, 7); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = "#ffd166";
-  ctx.beginPath(); ctx.moveTo(-1.6, 7); ctx.lineTo(0, 7 + flame * 0.6); ctx.lineTo(1.6, 7); ctx.closePath(); ctx.fill();
-  // Fins.
-  ctx.fillStyle = "#e0526b";
-  ctx.beginPath(); ctx.moveTo(-4, 2); ctx.lineTo(-8, 9); ctx.lineTo(-3, 7); ctx.closePath(); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(4, 2); ctx.lineTo(8, 9); ctx.lineTo(3, 7); ctx.closePath(); ctx.fill();
-  // Body.
-  ctx.fillStyle = "#eef2f7";
-  ctx.beginPath();
-  ctx.moveTo(0, -11);
-  ctx.quadraticCurveTo(5, -5, 4, 7);
-  ctx.lineTo(-4, 7);
-  ctx.quadraticCurveTo(-5, -5, 0, -11);
-  ctx.fill();
-  // Nose cone and window.
-  ctx.fillStyle = "#e0526b";
-  ctx.beginPath(); ctx.moveTo(0, -11); ctx.quadraticCurveTo(3.2, -7.5, 3.4, -5); ctx.lineTo(-3.4, -5); ctx.quadraticCurveTo(-3.2, -7.5, 0, -11); ctx.fill();
-  ctx.fillStyle = "#38bdf8";
-  ctx.beginPath(); ctx.arc(0, -1, 1.9, 0, Math.PI * 2); ctx.fill();
-  ctx.restore();
-  if (s.shield) {
-    ctx.strokeStyle = `rgba(125, 211, 252, ${0.55 + Math.sin(now / 150) * 0.25})`;
-    ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.arc(x, y, SHIP_RADIUS + 7, 0, Math.PI * 2); ctx.stroke();
-  }
-}
-
-function drawPickup(ctx: CanvasRenderingContext2D, kind: PickupKind, x: number, y: number, t: number): void {
-  const pulse = 1 + Math.sin(t * 6) * 0.12;
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(pulse, pulse);
-  ctx.strokeStyle = PICKUP_COLOUR[kind];
-  ctx.fillStyle = PICKUP_COLOUR[kind];
-  ctx.lineWidth = 1.2;
-  ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.stroke();
-  ctx.beginPath();
-  if (kind === "shield") { ctx.moveTo(0, -3.5); ctx.lineTo(3, -2); ctx.lineTo(2.4, 1.8); ctx.lineTo(0, 3.6); ctx.lineTo(-2.4, 1.8); ctx.lineTo(-3, -2); }
-  else if (kind === "rapid") { ctx.moveTo(0.8, -4); ctx.lineTo(-2.4, 0.6); ctx.lineTo(0, 0.6); ctx.lineTo(-0.8, 4); ctx.lineTo(2.4, -0.6); ctx.lineTo(0, -0.6); }
-  else { ctx.moveTo(0, 3.4); ctx.bezierCurveTo(-5, -0.5, -2.2, -4.5, 0, -1.6); ctx.bezierCurveTo(2.2, -4.5, 5, -0.5, 0, 3.4); }
-  ctx.closePath(); ctx.fill();
-  ctx.restore();
-}
-
-function paint(ctx: CanvasRenderingContext2D, s: ArcadeState, now: number): void {
-  const shake = s.shake * 10;
-  const ox = shake > 0 ? (Math.random() - 0.5) * shake : 0, oy = shake > 0 ? (Math.random() - 0.5) * shake : 0;
-  ctx.setTransform(SCALE, 0, 0, SCALE, ox * SCALE, oy * SCALE);
-  const sky = ctx.createLinearGradient(0, 0, 0, ARCADE_H);
-  sky.addColorStop(0, "#05040d");
-  sky.addColorStop(1, "#120b2a");
-  ctx.fillStyle = sky;
-  ctx.fillRect(-10, -10, ARCADE_W + 20, ARCADE_H + 20);
-  // Stars stretch into streaks as the run speeds up.
-  const streak = 1 + Math.min(6, s.time / 20);
-  for (const star of s.stars) {
-    ctx.fillStyle = `rgba(220, 225, 255, ${0.25 + star.depth * 0.6})`;
-    ctx.fillRect(star.x, star.y, star.depth > 0.7 ? 1.2 : 0.8, streak * star.depth);
-  }
-  for (const p of s.pickups) drawPickup(ctx, p.kind, p.x, p.y, p.t);
-  for (const rock of s.rocks) {
-    const r = ROCK_RADIUS[rock.size];
-    ctx.save();
-    ctx.translate(rock.x, rock.y);
-    ctx.rotate(rock.angle);
-    ctx.beginPath();
-    rock.shape.forEach((k, i) => {
-      const a = (i / rock.shape.length) * Math.PI * 2;
-      if (i === 0) ctx.moveTo(Math.cos(a) * r * k, Math.sin(a) * r * k); else ctx.lineTo(Math.cos(a) * r * k, Math.sin(a) * r * k);
-    });
-    ctx.closePath();
-    ctx.fillStyle = rock.flash > 0 ? "#ffffff" : ROCK_FILL[rock.size];
-    ctx.fill();
-    ctx.strokeStyle = "#b8a38a";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    // A couple of craters.
-    ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
-    ctx.beginPath(); ctx.arc(r * 0.3, -r * 0.2, r * 0.22, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(-r * 0.35, r * 0.3, r * 0.15, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-  }
-  ctx.fillStyle = "#fde68a";
-  for (const shot of s.shots) ctx.fillRect(shot.x - 0.7, shot.y - 3, 1.4, 6);
-  for (const p of s.particles) {
-    ctx.globalAlpha = Math.max(0, p.life / p.max);
-    ctx.fillStyle = p.colour;
-    ctx.fillRect(p.x - 0.8, p.y - 0.8, 1.6, 1.6);
-  }
-  ctx.globalAlpha = 1;
-  // The ship blinks while it is invulnerable after a hit.
-  if (s.phase !== "over" && (s.invulnerable <= 0 || Math.floor(now / 100) % 2 === 0)) drawShip(ctx, s, now);
-  // Rapid-fire time left, as a bar along the bottom.
-  if (s.rapid > 0) {
-    ctx.fillStyle = "#fde68a";
-    ctx.fillRect(4, ARCADE_H - 4, (ARCADE_W - 8) * (s.rapid / RAPID_S), 1.5);
-  }
+/** A scene that throws shows a quiet line instead of taking the office down with it. */
+class SceneBoundary extends Component<{ fallback: string; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error: unknown) { console.warn("[arcade] 3D scene failed", error); }
+  render() { return this.state.failed ? <p className="office-arcade-fallback" role="status">{this.props.fallback}</p> : this.props.children; }
 }
 
 const KEY_LEFT = new Set(["ArrowLeft", "KeyA"]);
 const KEY_RIGHT = new Set(["ArrowRight", "KeyD"]);
 const KEY_UP = new Set(["ArrowUp", "KeyW"]);
 const KEY_DOWN = new Set(["ArrowDown", "KeyS"]);
-const idleInput = (): ArcadeInput => ({ left: false, right: false, up: false, down: false, fire: false });
+const KEY_BOOST = new Set(["ShiftLeft", "ShiftRight"]);
+
+interface Hud { score: number; shields: number; missiles: number; level: number; boost: number; boosting: boolean; rapid: boolean; phase: ArcadePhase }
 
 export function ArcadeCabinet({ onClose }: { onClose: () => void }) {
   const t = useT();
-  const canvas = useRef<HTMLCanvasElement>(null);
+  const host = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
   const game = useRef<ArcadeState>(newArcade());
-  const input = useRef<ArcadeInput>(idleInput());
-  const [hud, setHud] = useState({ score: 0, lives: 3, level: 1, phase: "ready" as ArcadePhase });
+  const input = useRef<ArcadeInput>({ ...IDLE_INPUT });
+  const reduced = useReducedMotion() ?? false;
+  const { generation } = useWebglSurface(host);
+  const [hud, setHud] = useState<Hud>({ score: 0, shields: 3, missiles: MAX_MISSILES, level: 1, boost: 1, boosting: false, rapid: false, phase: "ready" });
   const [best, setBest] = useState(readBest);
   const bestRef = useRef(best);
   const lastPhase = useRef<ArcadePhase>("ready");
 
+  // The HUD follows the game at a relaxed pace; the scene itself runs every frame.
   const sync = useCallback(() => {
     const s = game.current;
-    const score = Math.floor(s.score), level = arcadeLevel(s);
-    setHud((h) => (h.score === score && h.lives === s.lives && h.level === level && h.phase === s.phase
-      ? h : { score, lives: s.lives, level, phase: s.phase }));
-    if (score > bestRef.current) { bestRef.current = score; setBest(score); }
+    const next: Hud = {
+      score: Math.floor(s.score), shields: s.shields, missiles: s.missileAmmo, level: arcadeLevel(s), boost: Math.round(s.boost * 50) / 50,
+      boosting: s.boosting, rapid: s.rapid > 0, phase: s.phase,
+    };
+    setHud((h) => (h.score === next.score && h.shields === next.shields && h.missiles === next.missiles && h.level === next.level && h.boost === next.boost
+      && h.boosting === next.boosting && h.rapid === next.rapid && h.phase === next.phase ? h : next));
+    if (next.score > bestRef.current) { bestRef.current = next.score; setBest(next.score); }
     // Store a new best once, when a run stops (game over or pause), not every frame.
     if (lastPhase.current === "playing" && s.phase !== "playing" && bestRef.current > readBest()) writeBest(bestRef.current);
     lastPhase.current = s.phase;
   }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(sync, 80);
+    return () => window.clearInterval(id);
+  }, [sync]);
+
+  // Closing mid-run still keeps a new best score.
+  useEffect(() => () => { if (bestRef.current > readBest()) writeBest(bestRef.current); }, []);
 
   const startOrResume = useCallback(() => {
     const s = game.current;
@@ -173,9 +83,6 @@ export function ArcadeCabinet({ onClose }: { onClose: () => void }) {
     input.current.fire = false;
     sync();
   }, [sync]);
-
-  // Closing mid-run still keeps a new best score.
-  useEffect(() => () => { if (bestRef.current > readBest()) writeBest(bestRef.current); }, []);
 
   // Keyboard: the dialog owns every key while it is open (capture phase, so
   // the office's own Escape and E handlers never see them).
@@ -197,6 +104,7 @@ export function ArcadeCabinet({ onClose }: { onClose: () => void }) {
       else if (KEY_RIGHT.has(code)) input.current.right = true;
       else if (KEY_UP.has(code)) input.current.up = true;
       else if (KEY_DOWN.has(code)) input.current.down = true;
+      else if (KEY_BOOST.has(code)) input.current.boost = true;
       else if (code === "Space" || code === "Enter") {
         if (s.phase === "playing") input.current.fire = code === "Space" || input.current.fire;
         else if (!event.repeat) startOrResume();
@@ -209,11 +117,12 @@ export function ArcadeCabinet({ onClose }: { onClose: () => void }) {
       else if (KEY_RIGHT.has(code)) input.current.right = false;
       else if (KEY_UP.has(code)) input.current.up = false;
       else if (KEY_DOWN.has(code)) input.current.down = false;
+      else if (KEY_BOOST.has(code)) input.current.boost = false;
       else if (code === "Space") input.current.fire = false;
     };
     // Losing window focus pauses the game and forgets held keys.
     const blur = () => {
-      input.current = idleInput();
+      input.current = { ...IDLE_INPUT };
       if (game.current.phase === "playing") { game.current.phase = "paused"; sync(); }
     };
     document.addEventListener("keydown", down, true);
@@ -226,25 +135,6 @@ export function ArcadeCabinet({ onClose }: { onClose: () => void }) {
     };
   }, [onClose, startOrResume, sync]);
 
-  // Fixed-step simulation, painted once per animation frame.
-  useEffect(() => {
-    const ctx = canvas.current?.getContext("2d") ?? null;
-    if (!ctx) return;
-    let raf = 0;
-    let last = performance.now();
-    let acc = 0;
-    const tick = (now: number) => {
-      acc += Math.min(0.1, (now - last) / 1000);
-      last = now;
-      while (acc >= STEP) { stepArcade(game.current, input.current, STEP); acc -= STEP; }
-      paint(ctx, game.current, now);
-      sync();
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [sync]);
-
   useEffect(() => { dialog.current?.focus({ preventScroll: true }); }, []);
 
   const message = hud.phase === "ready" ? t("society.office.arcade_start")
@@ -254,25 +144,50 @@ export function ArcadeCabinet({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="office-arcade-backdrop" data-office-ui onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div ref={dialog} className="office-card office-arcade" role="dialog" data-state="open" aria-modal="true"
+      <div ref={dialog} className="office-arcade" role="dialog" data-state="open" aria-modal="true"
         aria-label={t("society.office.arcade_title")} tabIndex={-1}>
-        <header className="office-arcade-head">
-          <h2>{t("society.office.arcade_title")}</h2>
-          <button type="button" className="office-icon-button" onClick={onClose} aria-label={t("society.office.close")}>×</button>
-        </header>
-        <div className="office-arcade-score" aria-live="polite">
-          <span>{t("society.office.arcade_score")} <b>{hud.score}</b></span>
-          <span>{t("society.office.arcade_level")} <b>{hud.level}</b></span>
-          <span>{t("society.office.arcade_lives")} <b>{hud.lives}</b></span>
-          <span>{t("society.office.arcade_best")} <b>{best}</b></span>
-        </div>
-        <div className="office-arcade-screen">
-          <canvas ref={canvas} width={ARCADE_W * SCALE} height={ARCADE_H * SCALE} aria-hidden />
+        <div ref={host} className="office-arcade-screen">
+          <SceneBoundary fallback={t("society.office.no_graphics")}>
+            <Canvas key={generation} dpr={[1, 1.75]} camera={{ fov: 62, near: 0.1, far: 220, position: [3.6, 3, 10.5] }}
+              gl={{ antialias: true, powerPreference: "high-performance" }}>
+              <ArcadeScene state={game} input={input} reduced={reduced} />
+            </Canvas>
+          </SceneBoundary>
+          <div className="office-arcade-hud" aria-live="polite">
+            <div className="office-arcade-hud-line">
+              <span>{t("society.office.arcade_score")} {hud.score}</span>
+              <span aria-hidden>·</span>
+              <span aria-label={`${t("society.office.arcade_shields")} ${hud.shields}`}>
+                {t("society.office.arcade_shields")}{" "}
+                <span className="office-arcade-shields">
+                  {Array.from({ length: MAX_SHIELDS }, (_, i) => <i key={i} data-on={i < hud.shields ? "true" : "false"} />)}
+                </span>
+              </span>
+              <span aria-hidden>·</span>
+              <span aria-label={`${t("society.office.arcade_missiles")} ${hud.missiles}`}>
+                {t("society.office.arcade_missiles")}{" "}
+                <span className="office-arcade-missiles">
+                  {Array.from({ length: MAX_MISSILES }, (_, i) => <i key={i} data-on={i < hud.missiles ? "true" : "false"} />)}
+                </span>
+              </span>
+              <span aria-hidden>·</span>
+              <span data-active={hud.boosting ? "true" : "false"} className="office-arcade-boost-label">{t("society.office.arcade_boost")}</span>
+              {hud.rapid && <><span aria-hidden>·</span><span className="office-arcade-rapid">{t("society.office.arcade_rapid")}</span></>}
+            </div>
+            <div className="office-arcade-bar" aria-hidden><i style={{ width: `${hud.boost * 100}%` }} /></div>
+            <div className="office-arcade-hud-sub">
+              {t("society.office.arcade_level")} {hud.level} · {t("society.office.arcade_best")} {best}
+            </div>
+          </div>
+          <button type="button" className="office-arcade-close" onClick={onClose} aria-label={t("society.office.close")}>×</button>
           {message && (
-            <button type="button" className="office-arcade-message" onClick={startOrResume}>{message}</button>
+            <button type="button" className="office-arcade-message" onClick={startOrResume}>
+              <strong>{t("society.office.arcade_title")}</strong>
+              <span>{message}</span>
+            </button>
           )}
+          <p className="office-arcade-keys">{t("society.office.arcade_keys")}</p>
         </div>
-        <p className="office-hint office-arcade-keys">{t("society.office.arcade_keys")}</p>
       </div>
     </div>
   );
