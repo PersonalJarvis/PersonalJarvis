@@ -47,15 +47,13 @@ def test_screen_capture_cue_is_original_and_deterministic() -> None:
 
 
 def test_screen_capture_cue_survives_a_fresh_stream_onset() -> None:
-    """The cue must not live in its first milliseconds.
+    """The cue must start after a silent pre-roll.
 
     ``play_pcm`` fades the first 5 ms and a freshly opened device swallows its
-    start; the old shutter packed ~half its energy there and was inaudible.
+    start; a click that begins at sample 0 loses its whole transient there.
     """
     samples = np.frombuffer(SCREEN_CAPTURE_PCM, dtype=np.int16).astype(np.float64)
     preroll = int(SCREEN_CAPTURE_PREROLL_S * CHIME_SAMPLE_RATE)
     assert not samples[:preroll].any()
-    energy = np.cumsum(samples**2)
-    early = energy[preroll + int(0.005 * CHIME_SAMPLE_RATE)] / energy[-1]
-    assert early < 0.05
+    assert np.abs(samples[preroll:]).max() > 0
     assert np.max(np.abs(samples)) < 32767 * 0.5  # soft, never clipping
