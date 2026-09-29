@@ -154,6 +154,9 @@ async def test_the_readback_is_phrased_from_the_agents_report(
     assert event.source_layer == voice_readback.SOURCE_LAYER
     assert event.kind == "completion"
     assert event.language == "de"
+    # The live model gets the whole report and the user's own words to think about.
+    assert "Fixed the **login** bug in `auth.py`." in (event.report or "")
+    assert "Behebe bitte den Login-Fehler" in (event.report or "")  # i18n-allow: user's words
     # The test composer is canned-only (root conftest): pane name + the
     # report's first sentences, markdown gone.
     spoken = (

@@ -65,6 +65,7 @@ from jarvis.core.turn_language import (
 )
 from jarvis.realtime.audio import StreamingPcm16Resampler
 from jarvis.realtime.protocol import RealtimeSessionConfig, RealtimeUnavailableError
+from jarvis.realtime.report_prompt import clip_report, report_update_prompt
 from jarvis.realtime.scrub_gate import ScrubHoldGate
 from jarvis.realtime.tools import canonical_tool_wire_name
 from jarvis.sessions.constants import (
@@ -4661,6 +4662,7 @@ class RealtimeVoiceSession:
         text: str,
         spoken_kind: str,
         detail: str | None = None,
+        report: str | None = None,
     ) -> bool:
         """Retain an owed background result for later delegated follow-ups.
 
@@ -4687,6 +4689,10 @@ class RealtimeVoiceSession:
         note = f"[{label}]\n{cleaned}".strip()
         if metadata:
             note = f"{note}\nResult metadata: {metadata}".strip()
+        material = str(report or "").strip()
+        if material:
+            # So "what exactly did it change?" is answerable next turn.
+            note = f"{note}\nFull report:\n{clip_report(material)}"
         self._remember_delegate_turn("", note)
         return True
 
@@ -4697,8 +4703,13 @@ class RealtimeVoiceSession:
         language: str,
         spoken_kind: str,
         detail: str | None = None,
+        report: str | None = None,
     ) -> bool:
         """Let an idle, healthy live model render one standardized readback.
+
+        With ``report`` the model is handed an agent's full report and asked to
+        reason over it (:mod:`jarvis.realtime.report_prompt`); ``text`` stays
+        the honest fallback that is spoken verbatim if the turn never renders.
 
         ``False`` means the caller must keep the classic TTS path. Refusing a
         busy session is load-bearing: Gemini text input interrupts generation,
@@ -4720,6 +4731,7 @@ class RealtimeVoiceSession:
             text=cleaned,
             spoken_kind=spoken_kind,
             detail=detail,
+            report=report,
         )
         send_text = getattr(self._session, "send_text", None)
         if (
@@ -4761,8 +4773,17 @@ class RealtimeVoiceSession:
         self._drop_provider_output_until_user_turn = False
         await self._ensure_turn_started()
         try:
+            material = str(report or "").strip()
             await send_text(
-                _external_update_prompt(
+                report_update_prompt(
+                    cleaned,
+                    material,
+                    language=resolved_language,
+                    kind=state.spoken_kind,
+                    opener=SPEAK_REQUEST_OPENER,
+                )
+                if material
+                else _external_update_prompt(
                     cleaned,
                     language=resolved_language,
                     kind=state.spoken_kind,

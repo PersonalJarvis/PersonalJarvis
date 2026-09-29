@@ -121,6 +121,17 @@ _LEAD_MESSAGE_SITUATION: dict[MsgType, str] = {
 }
 
 
+def _lead_report_material(name: str, env: Any, status: str, summary: str) -> str:
+    """What a live voice model gets to think about for a lead-assigned result."""
+    task = str(getattr(env, "text", "") or env.payload.get("text") or "").strip()
+    outcome = "finished" if status == "done" else "could not finish"
+    parts = [f"Agent: {name} ({outcome} the task)"]
+    if task:
+        parts.append(f"What the user asked for:\n{task}")
+    parts.append(f"The agent's report:\n{summary}")
+    return "\n\n".join(parts)
+
+
 async def _spoken_report(
     *, instruction: str, language: str, line: str, name: str, report: str
 ) -> str:
@@ -497,6 +508,8 @@ class SocietyRuntime:
                         f"trace={env.trace_id} "
                         f"msg={str(env.msg_type).lower()}"
                     ),
+                    # The live voice model thinks about the full message.
+                    report=f"Message from {sender.name} ({str(env.msg_type).lower()}):\n{summary}",
                 )
             )
             if asyncio.iscoroutine(maybe):
@@ -1046,6 +1059,8 @@ class SocietyRuntime:
                     language=lang if lang in _LEAD_DONE else "en",
                     kind="completion",
                     detail=f"agent={target.agent_id} trace={env.trace_id}",
+                    # The live voice model thinks about the full report.
+                    report=_lead_report_material(target.name, env, status, summary),
                 )
             )
             if asyncio.iscoroutine(maybe):

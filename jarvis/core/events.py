@@ -974,6 +974,11 @@ class AnnouncementRequested(Event):
     # with detail="exit 5 · <harness reason>" so the log shows the exit code
     # while the voice stays humanized. Mirrors ``SpeechSpoken.detail``.
     detail: str | None = None
+    # Optional raw material behind ``text`` — an agent's own report and the
+    # request it answers. A live (realtime) model is handed this and decides
+    # itself what the user needs to hear; the classic TTS path speaks ``text``,
+    # which stays the complete, deterministic fallback. Never spoken verbatim.
+    report: str | None = None
 
 
 # Mission completion — bridged from the per-mission MissionBus to drive When-Then rules
