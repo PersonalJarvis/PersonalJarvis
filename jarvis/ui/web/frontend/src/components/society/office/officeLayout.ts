@@ -109,7 +109,10 @@ export type FurnitureKind =
   // Coding floor: the server room — rack rows round a cold aisle, the NOC console and status wall, UPS, fire suppression.
   | "serverRack" | "coldAisle" | "nocConsole" | "statusWall" | "ups" | "fireSuppression"
   // Team room: the slat wall behind the board, a credenza, fiddle-leaf figs and a wool rug.
-  | "teamWall" | "credenza" | "designerPlant" | "teamRug";
+  | "teamWall" | "credenza" | "designerPlant" | "teamRug"
+  // Lobby (agents floor): the brand wall, the Agent board totem, the waiting lounge, olive trees, the award vitrine, the mat.
+  | "brandWall" | "agentTotem" | "lobbySofa" | "lobbyArmchair" | "lobbyTable" | "sideTable" | "lobbyLamp" | "oliveTree"
+  | "awardCase" | "entranceMat" | "lobbyRug";
 
 /**
  * Footprint (x-extent × z-extent before rotation) and height of each piece.
@@ -164,6 +167,19 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   credenza: { w: 2.2, d: 0.46, h: 1.1, solid: true },
   designerPlant: { w: 0.8, d: 0.8, h: 2.0, solid: true },
   teamRug: { w: 1, d: 1, h: 0.02, solid: false },
+  // Lobby: the ghost and the wordmark on the brand wall; the totem is the Agent board ("manage").
+  brandWall: { w: 3.2, d: 0.36, h: 2.9, solid: true },
+  agentTotem: { w: 0.9, d: 0.5, h: 2.1, solid: true },
+  lobbySofa: { w: 2.3, d: 0.95, h: 0.8, solid: true },
+  lobbyArmchair: { w: 0.8, d: 0.82, h: 0.82, solid: true },
+  // The top is at 0.4 m; magazines, a bowl and a sprig in a vase stand on it.
+  lobbyTable: { w: 1.2, d: 0.75, h: 0.6, solid: true },
+  sideTable: { w: 0.5, d: 0.5, h: 0.65, solid: true },
+  lobbyLamp: { w: 0.5, d: 0.5, h: 1.75, solid: true },
+  oliveTree: { w: 1.2, d: 1.2, h: 2.5, solid: true },
+  awardCase: { w: 1.3, d: 0.42, h: 1.95, solid: true },
+  entranceMat: { w: 1, d: 1, h: 0.02, solid: false },
+  lobbyRug: { w: 1, d: 1, h: 0.02, solid: false },
 };
 
 export interface Furniture extends Point {
@@ -172,7 +188,7 @@ export interface Furniture extends Point {
   /** Rotation about +y. 0 = the prop's front faces +z (south, towards the camera). */
   rotationY: number;
   room: RoomKind | "floor";
-  /** Only rugs (plain, executive and the team rug) are sized per instance (w × d); everything else uses FURNITURE_SIZE. */
+  /** Only rugs (plain, executive, team, lobby) and the entrance mat are sized per instance (w × d); everything else uses FURNITURE_SIZE. */
   size?: { w: number; d: number };
 }
 
@@ -607,9 +623,12 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     // Reception and lobby.
     { id: "elevator", kind: "elevator", x: rx0 + 0.25, z: bottomZ - 2.6, rotationY: Math.PI / 2, room: "reception" },
     { id: "reception-desk", kind: "receptionDesk", x: rx0 + 3.2, z: southMinZ + 2.6, rotationY: 0, room: "reception" },
-    { id: "kiosk", kind: "kiosk", x: receptionRoom.maxX - 2.2, z: southMinZ + 2.2, rotationY: 0, room: "reception" },
-    { id: "lobby-plant-a", kind: "plant", x: rx0 + 0.6, z: southMinZ + 0.8, rotationY: 0, room: "reception" },
-    { id: "lobby-plant-b", kind: "plant", x: receptionRoom.maxX - 0.8, z: bottomZ - 0.7, rotationY: 0, room: "reception" },
+    // The agents floor's Agent board is a touch-screen totem in the kiosk's place; the rest of its lobby is lobbyFurniture.
+    { id: "kiosk", kind: coding ? "kiosk" : "agentTotem", x: receptionRoom.maxX - 2.2, z: southMinZ + 2.2, rotationY: 0, room: "reception" },
+    ...(coding ? [
+      { id: "lobby-plant-a", kind: "plant", x: rx0 + 0.6, z: southMinZ + 0.8, rotationY: 0, room: "reception" },
+      { id: "lobby-plant-b", kind: "plant", x: receptionRoom.maxX - 0.8, z: bottomZ - 0.7, rotationY: 0, room: "reception" },
+    ] satisfies Furniture[] : lobbyFurniture(receptionRoom)),
     // Break room: couches around a table, coffee bar, water cooler, arcade, beanbags.
     { id: "break-rug", kind: "rug", x: bx0 + 3.6, z: bz0 + 4.6, rotationY: 0, room: "break", size: { w: 5.6, d: 4.2 } },
     { id: "break-couch-a", kind: "couch", x: bx0 + 3.6, z: bz0 + 6.3, rotationY: Math.PI, room: "break" },
@@ -653,6 +672,7 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     ] satisfies Spot[] : [
       // In front of the feature wall's east bookcase.
       { id: "shelf-lead", kind: "shelf", pose: "stand", x: leadRoom.maxX - 1.45, z: topZ + 1.05, facing: Math.PI, room: "lead" },
+      ...lobbySpots(receptionRoom),
     ] satisfies Spot[]),
     { id: "board", kind: "board", pose: "stand", x: tcx - 0.6, z: topZ + 1.2, facing: Math.PI, room: "team" },
   ];
@@ -728,6 +748,51 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     floor,
     bounds: { minX: minX - EDGE, maxX: maxX + EDGE, minZ: topZ - EDGE, maxZ: bottomZ + EDGE },
   };
+}
+
+/** The lobby lounge's sofa, relative to the reception room's west and north edges. */
+const LOBBY_LOUNGE = { dx: 6.0, dz: 5.35 };
+
+/**
+ * The agents floor's lobby round the reception desk and the elevator: the
+ * brand wall on the west edge north of the elevator, an olive tree at each
+ * end of the room and one by the lounge, the award vitrine south of the
+ * elevator with the mat in front of its doors, and the waiting lounge — a
+ * sofa facing south, armchairs either side of the coffee table on a rug. The
+ * walk from the elevator north past the desk and east to the break room
+ * stays clear.
+ */
+function lobbyFurniture(room: Rect): Furniture[] {
+  const x0 = room.minX, z0 = room.minZ;
+  const lx = x0 + LOBBY_LOUNGE.dx, lz = z0 + LOBBY_LOUNGE.dz;
+  const piece = (id: string, kind: FurnitureKind, x: number, z: number, rotationY = 0, size?: { w: number; d: number }): Furniture =>
+    ({ id, kind, x, z, rotationY, room: "reception", ...(size ? { size } : {}) });
+  return [
+    piece("lobby-brand-wall", "brandWall", x0 + 0.22, z0 + 2.55, Math.PI / 2),
+    piece("lobby-olive-nw", "oliveTree", x0 + 0.65, z0 + 0.35),
+    piece("lobby-olive-se", "oliveTree", room.maxX - 0.75, room.maxZ - 0.7),
+    piece("lobby-olive-s", "oliveTree", x0 + 2.7, room.maxZ - 0.55),
+    piece("lobby-awards", "awardCase", x0 + 0.26, room.maxZ - 0.62, Math.PI / 2),
+    piece("lobby-mat", "entranceMat", x0 + 1.3, room.maxZ - 2.6, 0, { w: 1.1, d: 1.9 }),
+    piece("lobby-rug", "lobbyRug", lx, lz + 0.75, 0, { w: 4.8, d: 2.9 }),
+    piece("lobby-sofa", "lobbySofa", lx, lz),
+    piece("lobby-table", "lobbyTable", lx, lz + 1.05),
+    piece("lobby-chair-w", "lobbyArmchair", lx - 1.8, lz + 1.1, Math.PI / 2),
+    piece("lobby-chair-e", "lobbyArmchair", lx + 1.8, lz + 1.1, -Math.PI / 2),
+    piece("lobby-side-table", "sideTable", lx - 1.5, lz - 0.05),
+    piece("lobby-lamp", "lobbyLamp", lx + 1.5, lz - 0.1),
+  ];
+}
+
+/** Seats in the lobby lounge: two on the sofa (facing south), one in each armchair (facing the table). */
+function lobbySpots(room: Rect): Spot[] {
+  const lx = room.minX + LOBBY_LOUNGE.dx, lz = room.minZ + LOBBY_LOUNGE.dz;
+  return [
+    { id: "couch-lobby-1", kind: "couch", pose: "sit", x: lx - 0.55, z: lz + 0.15, facing: 0, room: "reception" },
+    { id: "couch-lobby-2", kind: "couch", pose: "sit", x: lx + 0.55, z: lz + 0.15, facing: 0, room: "reception" },
+    { id: "couch-lobby-w", kind: "couch", pose: "sit", x: lx - 1.78, z: lz + 1.1, facing: Math.PI / 2, room: "reception" },
+    { id: "couch-lobby-e", kind: "couch", pose: "sit", x: lx + 1.78, z: lz + 1.1, facing: -Math.PI / 2, room: "reception" },
+  ];
 }
 
 /** Every desk on the floor, lead office first. */

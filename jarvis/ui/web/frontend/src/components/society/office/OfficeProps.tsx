@@ -15,6 +15,7 @@ import { LEAD_RENDERERS } from "./LeadSuite";
 import { COMMAND_RENDERERS } from "./CommandOffice";
 import { SERVER_RENDERERS } from "./ServerRoom";
 import { TEAM_RENDERERS } from "./TeamRoomDecor";
+import { LOBBY_RENDERERS } from "./LobbyDecor";
 import { MeetingChair } from "./OfficeChairs";
 import { Bookshelf, Box, Couch, GEO, MAT, matte, Plant, Rounded, Rug } from "./OfficeFurniture";
 import { FURNITURE_SIZE, type Furniture, type FurnitureKind } from "./officeLayout";
@@ -639,6 +640,7 @@ export const PROP_RENDERERS: Record<FurnitureKind, (props: { item: Furniture }) 
   ...COMMAND_RENDERERS,
   ...SERVER_RENDERERS,
   ...TEAM_RENDERERS,
+  ...LOBBY_RENDERERS,
 };
 
 /** One furniture item, placed at (x, 0, z) and turned by `rotationY` (0 = front faces +z). */
