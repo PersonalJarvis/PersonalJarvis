@@ -2050,7 +2050,7 @@
     "cat_computer_use_desc": "The Tool Model runs your actions: it routes spoken commands, plans Computer-Use on your screen, starts background agents, and drives app controls — independent of your chat Brain.",
     "cat_dictation_desc": "The fast model that tidies up dictated text — punctuation, filler words and sentence breaks. Optional: with no key here your dictation is delivered exactly as it was recognized.",
     "cat_subagents_title": "{name}-Agents",
-    "cat_subagents_desc": "This provider runs text chat, memory and background tasks. A subscription here costs nothing extra; your voice key stays reserved for the voice call.",
+    "cat_subagents_desc": "Runs chat, memory and background tasks — not your voice key.",
     "advanced_title": "Access & Integrations",
     "advanced_desc": "Optional extras: the team key proxy, telephony, and the knowledge Wiki provider.",
     "no_providers_in_tier": "No providers available in this category.",

@@ -2017,7 +2017,7 @@
     "cat_computer_use_desc": "Das Tool Model führt deine Aktionen aus: Es routet Sprachbefehle, plant Computer-Use auf deinem Bildschirm, startet Hintergrund-Agenten und steuert die App — unabhängig von deinem Chat-Brain.",
     "cat_dictation_desc": "Das schnelle Modell, das diktierten Text aufräumt — Satzzeichen, Füllwörter und Satzgrenzen. Optional: Ohne Schlüssel hier kommt dein Diktat genau so an, wie es erkannt wurde.",
     "cat_subagents_title": "{name}-Agents",
-    "cat_subagents_desc": "Dieser Provider übernimmt Textchat, Gedächtnis und Hintergrundaufgaben. Ein Abo kostet hier nichts extra; dein Voice-Key bleibt für das Sprachgespräch reserviert.",
+    "cat_subagents_desc": "Übernimmt Chat, Gedächtnis und Hintergrundarbeit — nicht dein Voice-Key.",
     "advanced_title": "Zugang & Integrationen",
     "advanced_desc": "Optionale Extras: der Team-Key-Proxy, Telefonie und der Wissens-Wiki-Provider.",
     "no_providers_in_tier": "In dieser Kategorie sind keine Provider verfügbar.",
