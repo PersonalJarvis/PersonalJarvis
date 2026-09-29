@@ -719,6 +719,16 @@ def _resolve_chain(config: JarvisConfig) -> list[tuple[str, str | None]]:
         )
         if has_reachable_alternative:
             deduped = [entry for entry in deduped if entry[0] != "claude-api"]
+
+    # The realtime voice call owns its key (user mandate 2026-09-29). Families
+    # that bill it move to the end, so skill drafting, bios and other
+    # background resolves reach it only when nothing else can answer — a
+    # single-key install still works, a multi-key one stops draining the voice.
+    from jarvis.brain.voice_key import bills_voice_key
+
+    on_voice_key = [entry for entry in deduped if bills_voice_key(config, entry[0])]
+    if on_voice_key and len(on_voice_key) < len(deduped):
+        deduped = [entry for entry in deduped if entry not in on_voice_key] + on_voice_key
     return deduped
 
 
