@@ -43,7 +43,7 @@ anything that could change your system.
 <tr><td><b>Hands on your computer</b></td><td><a href="#computer-use-and-connected-channels">Computer use</a> in the browser and on the desktop, with approvals before anything risky.</td></tr>
 <tr><td><b>Any model, or none in the cloud</b></td><td>Bring one key from any supported provider, or run <a href="#local-models">local models</a> through Ollama with local speech recognition.</td></tr>
 <tr><td><b>Connected to your tools</b></td><td><a href="#plugins-skills-and-mcp">Plugins, skills, and MCP</a>, a <a href="#memory-and-knowledge">local Markdown wiki</a> as memory, <a href="#scheduled-work-and-workflows">routines</a> on a schedule, and <a href="#artifacts-and-run-history">artifacts</a> you can open and keep.</td></tr>
-<tr><td><b>Runs beyond your laptop</b></td><td>Run the whole app <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md">headless on a server</a> and use it from the browser.</td></tr>
+<tr><td><b>Runs beyond your laptop</b></td><td>Connect a VPS or a local VM once under <b>Settings › Computers</b>, then choose which computer each IDE pane or Jarvis agent runs on. Or run the whole app <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md">headless on a server</a>.</td></tr>
 </table>
 
 <p align="center">
