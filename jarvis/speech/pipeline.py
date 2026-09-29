@@ -396,6 +396,9 @@ _READBACK_KINDS: frozenset[str] = frozenset(
 _HELD_FOR_CALL_SOURCES: frozenset[str] = frozenset(
     {
         "society.lead",
+        # A pane finishing a job Jarvis handed it (jarvis/agentic_ide/
+        # voice_readback.py): spoken inside the call, else at the next one.
+        "agentic_ide.readback",
         "tasks.runner",
         "workflows.runner",
         "workflows.scheduler",

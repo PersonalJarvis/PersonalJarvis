@@ -90,6 +90,53 @@ _LEAD_MESSAGE: dict[str, str] = {
     "es": "{name} informa: {text}",
 }
 
+#: The situation the readback composer is told about, per case. The agent's own
+#: text is the only content it may use; the spoken line is Jarvis passing it on
+#: in one short sentence, not the raw text clipped at a character count.
+_LEAD_DONE_SITUATION = (
+    "The user's Jarvis agent named {name} finished a task the user gave it through "
+    "you. Tell the user what it did or found, based only on its report. Name the agent."
+)
+_LEAD_BLOCKED_SITUATION = (
+    "The user's Jarvis agent named {name} could not finish a task the user gave it "
+    "through you. Tell the user what stopped it, based only on its report. Name the agent."
+)
+_LEAD_MESSAGE_SITUATION: dict[MsgType, str] = {
+    MsgType.SAY: (
+        "The user's Jarvis agent named {name} sent a message. Pass it on to the "
+        "user in your own words. Name the agent."
+    ),
+    MsgType.QUERY: (
+        "The user's Jarvis agent named {name} is asking the user a question. Pass "
+        "the question on in your own words, keeping what exactly it asks. Name the agent."
+    ),
+    MsgType.ANSWER: (
+        "The user's Jarvis agent named {name} answered. Tell the user its answer in "
+        "your own words. Name the agent."
+    ),
+    MsgType.PROPOSE: (
+        "The user's Jarvis agent named {name} proposes something. Tell the user what "
+        "it proposes in your own words. Name the agent."
+    ),
+}
+
+
+async def _spoken_report(
+    *, instruction: str, language: str, line: str, name: str, report: str
+) -> str:
+    """The agent's report as one short spoken sentence; ``line`` is the fallback."""
+    from jarvis.voice.report_readback import compose_report, plain_excerpt
+
+    excerpt = plain_excerpt(report, max_words=40)
+    return await compose_report(
+        instruction=instruction,
+        language=language,
+        canned=lambda: line.format(name=name, text=excerpt),
+        report=report,
+        facts={"agent": name},
+    )
+
+
 #: Board types that are somebody TALKING to the lead. RESULT stays out: chat
 #: runs announce it via report_to_lead and mission runs via MissionAnnouncer —
 #: announcing it here as well would speak every completion twice.
@@ -399,7 +446,6 @@ class SocietyRuntime:
             return
         lang = await self._lead_message_lang(env)
         line = _LEAD_MESSAGE.get(lang, _LEAD_MESSAGE["en"])
-        text = line.format(name=sender.name, text=summary[:400])
         svc = self._get_chat()
         post = getattr(svc, "post_notice", None)
         if svc is not None and post is not None:
@@ -425,6 +471,17 @@ class SocietyRuntime:
                 )
         if self._publish_event is None:
             return
+        # Phrased after the chat notice: the notice carries the full text
+        # and must not wait on the composer.
+        text = await _spoken_report(
+            instruction=_LEAD_MESSAGE_SITUATION.get(
+                env.msg_type, _LEAD_MESSAGE_SITUATION[MsgType.SAY]
+            ).format(name=sender.name),
+            language=lang,
+            line=line,
+            name=sender.name,
+            report=summary,
+        )
         try:
             from jarvis.core.events import AnnouncementRequested
 
@@ -945,7 +1002,6 @@ class SocietyRuntime:
         line = (_LEAD_DONE if status == "done" else _LEAD_BLOCKED).get(
             lang, (_LEAD_DONE if status == "done" else _LEAD_BLOCKED)["en"]
         )
-        text = line.format(name=target.name, text=" ".join(summary.split())[:400])
         svc = self._get_chat()
         post = getattr(svc, "post_notice", None)
         if svc is not None and post is not None:
@@ -968,6 +1024,17 @@ class SocietyRuntime:
                 log.warning("society: result notice for the lead chat failed", exc_info=True)
         if self._publish_event is None:
             return
+        # Phrased after the chat notice: the notice carries the full text
+        # and must not wait on the composer.
+        text = await _spoken_report(
+            instruction=(
+                _LEAD_DONE_SITUATION if status == "done" else _LEAD_BLOCKED_SITUATION
+            ).format(name=target.name),
+            language=lang if lang in _LEAD_DONE else "en",
+            line=line,
+            name=target.name,
+            report=summary,
+        )
         try:
             from jarvis.core.events import AnnouncementRequested
 
