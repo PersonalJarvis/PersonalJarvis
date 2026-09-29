@@ -1,8 +1,9 @@
 <p align="center">
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/personal-jarvis-hero.mp4">
-    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/personal-jarvis-hero.gif" alt="Personal Jarvis in 30 seconds: talk to it, run coding agents side by side, hand off longer work, and choose local models or any provider" width="1000" />
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/personal-jarvis-walkthrough.mp4">
+    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/personal-jarvis-walkthrough.gif" alt="A real click-through of Personal Jarvis: creating an agent, chatting with it, walking the agent office map, and running Claude Code, Codex and OpenCode side by side in the Agentic IDE" width="1000" />
   </a>
 </p>
+<p align="center"><sub>A real, unedited click-through of the app, sped up where agents are thinking. Click for the full video.</sub></p>
 
 <h3 align="center">Your personal AI ecosystem. One desktop, connected by voice.</h3>
 
