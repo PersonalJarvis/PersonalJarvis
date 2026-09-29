@@ -23,7 +23,7 @@ import { Box, MAT, matte, Rounded } from "./OfficeFurniture";
 import { paneOccupants } from "./codingFloor";
 import { TaskChair } from "./OfficeChairs";
 import { COMMAND_DESK, COMMAND_DESK_OFFSET, type Furniture, type FurnitureKind } from "./officeLayout";
-import { MissionLiveScreen } from "./MissionScreens";
+import { MissionLiveScreen, preloadMissionScreens } from "./MissionScreens";
 import { useOfficeStore, type MonitorSection } from "./officeStore";
 
 // ---------------------------------------------------------------------------
@@ -339,8 +339,8 @@ function ExecutiveChair() {
 }
 
 /** Run the live sections within this camera distance of the desk, stop beyond the second (no flicker at the edge). */
-const LIVE_NEAR_M = 12;
-const LIVE_FAR_M = 15;
+const LIVE_NEAR_M = 22;
+const LIVE_FAR_M = 26;
 
 /** Should the desk run its live sections, given the camera distance and whether it already does? Pure. */
 export function deskLive(distance: number, live: boolean): boolean {
@@ -403,6 +403,8 @@ export function CommandDesk() {
   const open = useOpenMission();
   const anchor = useRef<Group>(null);
   const live = useNearCamera(anchor);
+  // The floor is open: fetch the sections' code now, not when the camera arrives.
+  useEffect(() => { preloadMissionScreens(); }, []);
   const { w, d } = COMMAND_DESK;
   const agentCount = `${data.counts.total} ${labels.agents}`;
   return (

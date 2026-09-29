@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SocietyAgent } from "../data";
 import type { PaneOccupant } from "./codingFloor";
 import { deskLive } from "./CommandOffice";
-import { ideGrid, idePanes, pickShownAgent } from "./MissionScreens";
+import { ideGrid, idePanes, ideTree, pickShownAgent } from "./MissionScreens";
 import { screenFillDistance } from "./OfficeCameraRig";
 import { useOfficeStore } from "./officeStore";
 
@@ -30,18 +30,27 @@ describe("mission control desk monitors", () => {
     expect(idePanes([]).tiles).toEqual([]);
   });
 
+  it("groups the IDE sidebar by project folder, then workspace", () => {
+    const pane = (workspace: string, folder: string, state: "working" | "idle") =>
+      ({ pane: { workspace_id: workspace, workspace_name: workspace, folder }, agent: { state } } as PaneOccupant);
+    const tree = ideTree([pane("a", "/p/jarvis", "idle"), pane("a", "/p/jarvis", "working"), pane("b", "C:\\x\\web", "idle")]);
+    expect(tree.map((p) => p.name)).toEqual(["jarvis", "web"]);
+    expect(tree[0].workspaces).toEqual([{ id: "a", name: "a", count: 2, working: true }]);
+  });
+
   it("splits the IDE monitor like the IDE grid", () => {
     expect(ideGrid(1)).toEqual({ cols: 1, rows: 1 });
     expect(ideGrid(2)).toEqual({ cols: 2, rows: 1 });
+    expect(ideGrid(3)).toEqual({ cols: 3, rows: 1 });
     expect(ideGrid(4)).toEqual({ cols: 2, rows: 2 });
     expect(ideGrid(6)).toEqual({ cols: 3, rows: 2 });
   });
 
   it("runs the live sections only near the desk, with no flicker at the edge", () => {
-    expect(deskLive(8, false)).toBe(true);
-    expect(deskLive(13, false)).toBe(false);
-    expect(deskLive(13, true)).toBe(true);
-    expect(deskLive(16, true)).toBe(false);
+    expect(deskLive(20, false)).toBe(true);
+    expect(deskLive(24, false)).toBe(false);
+    expect(deskLive(24, true)).toBe(true);
+    expect(deskLive(27, true)).toBe(false);
   });
 
   it("dives into a larger monitor from further back, so it still fills the view", () => {

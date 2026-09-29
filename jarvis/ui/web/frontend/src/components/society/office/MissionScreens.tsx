@@ -24,7 +24,9 @@ import { createAgentChatStore } from "@/store/agentChat";
 import { useWorkspacePanesStore } from "@/store/workspacePanes";
 import { fetchPaneScreens, MAX_PANE_SCREENS, type PaneScreen } from "@/lib/paneScreensApi";
 import { PANE_BRAND, PANE_CHROME, PANE_SOLID, storedTerminalAppearance, themeFor } from "@/components/agentic/terminalThemes";
-import { AgentMark } from "@/components/agentic/AgentMark";
+import { Folder } from "lucide-react";
+import { WorkspaceTerminalHeader } from "@/components/agentic/WorkspaceTerminalHeader";
+import type { PaneEdgeState } from "@/components/agentic/terminalThemes";
 import { RosterRail } from "@/components/society/roster/RosterRail";
 import { useSocietyRoster, type SocietyAgent } from "../data";
 import { useSocietyChatGroups } from "@/lib/societyChatGroups";
@@ -35,8 +37,19 @@ import type { MonitorSection } from "./officeStore";
 import "./paneCommand.css";
 import "./missionScreens.css";
 
-const CostsView = lazy(() => import("@/views/CostsView").then((m) => ({ default: m.CostsView })));
-const AgentChatPanel = lazy(() => import("../chat/AgentChatPanel").then((m) => ({ default: m.AgentChatPanel })));
+const loadCosts = () => import("@/views/CostsView");
+const loadChat = () => import("../chat/AgentChatPanel");
+const CostsView = lazy(() => loadCosts().then((m) => ({ default: m.CostsView })));
+const AgentChatPanel = lazy(() => loadChat().then((m) => ({ default: m.AgentChatPanel })));
+
+/**
+ * Fetch the sections' code before the camera gets close, so walking up to the
+ * desk shows the screens at once instead of a blank glass while chunks load.
+ */
+export function preloadMissionScreens(): void {
+  void loadCosts().catch((err) => console.warn("Mission Control: Spend preload failed", err));
+  void loadChat().catch((err) => console.warn("Mission Control: chat preload failed", err));
+}
 
 /** The sections are laid out at this window size, then scaled onto the monitor. */
 export const MISSION_SCREEN_PX = { w: 1240, h: 723 } as const;
@@ -98,13 +111,30 @@ export function idePanes(occupants: readonly PaneOccupant[]): { workspace: strin
   return { workspace: front.pane.workspace_id, tiles };
 }
 
-/** Columns × rows for `n` tiles, the way the IDE grid splits a workspace. Pure. */
+/** Columns × rows for `n` tiles, the way the IDE splits a workspace: side by side up to three, then two rows. Pure. */
 export function ideGrid(n: number): { cols: number; rows: number } {
-  if (n <= 1) return { cols: 1, rows: 1 };
-  if (n === 2) return { cols: 2, rows: 1 };
-  if (n <= 4) return { cols: 2, rows: 2 };
+  if (n <= 3) return { cols: Math.max(1, n), rows: 1 };
+  if (n === 4) return { cols: 2, rows: 2 };
   return { cols: 3, rows: 2 };
 }
+
+/** The IDE sidebar's tree: each project folder with its workspaces, their pane counts and whether one works. Pure. */
+export function ideTree(occupants: readonly PaneOccupant[]): { folder: string; name: string; workspaces: { id: string; name: string; count: number; working: boolean }[] }[] {
+  const projects = new Map<string, { folder: string; name: string; workspaces: Map<string, { id: string; name: string; count: number; working: boolean }> }>();
+  for (const { pane, agent } of occupants) {
+    const folder = pane.folder || pane.workspace_name;
+    const project = projects.get(folder) ?? { folder, name: folder.split(/[\\/]/).filter(Boolean).pop() ?? folder, workspaces: new Map() };
+    const ws = project.workspaces.get(pane.workspace_id) ?? { id: pane.workspace_id, name: pane.workspace_name, count: 0, working: false };
+    ws.count += 1;
+    ws.working ||= agent.state === "working";
+    project.workspaces.set(pane.workspace_id, ws);
+    projects.set(folder, project);
+  }
+  return [...projects.values()].map((p) => ({ folder: p.folder, name: p.name, workspaces: [...p.workspaces.values()] }));
+}
+
+const EDGE: Record<string, PaneEdgeState> = { pending: "connecting", live: "live", exited: "exited", error: "error" };
+const noop = () => undefined;
 
 function usePaneScreenBatch(panes: { workspaceId: string; key: string }[]): Map<string, PaneScreen> | null {
   const [screens, setScreens] = useState<Map<string, PaneScreen> | null>(null);
@@ -143,11 +173,7 @@ function IdeScreen() {
   const panes = useWorkspacePanesStore((s) => s.panes);
   const occupants = useMemo(() => paneOccupants(panes), [panes]);
   const { workspace, tiles } = idePanes(occupants);
-  const workspaces = useMemo(() => {
-    const seen = new Map<string, string>();
-    for (const o of occupants) if (!seen.has(o.pane.workspace_id)) seen.set(o.pane.workspace_id, o.pane.workspace_name);
-    return [...seen];
-  }, [occupants]);
+  const tree = useMemo(() => ideTree(occupants), [occupants]);
   const screens = usePaneScreenBatch(tiles.map((o) => ({ workspaceId: o.pane.workspace_id, key: o.pane.key })));
   const appTheme = useThemeValue();
   // The IDE's pane appearance: the reader's stored choice, else the app's theme.
@@ -155,33 +181,42 @@ function IdeScreen() {
   const brand = PANE_BRAND[appearance], chrome = PANE_CHROME[appearance], ansi = themeFor(appearance);
   const vars = {
     "--pane-ink": brand.ink, "--pane-ink-muted": brand.inkMuted, "--pane-ink-faint": brand.inkFaint,
-    "--pane-chip": brand.chip, "--pane-rule": chrome.border, "--pane-edge": chrome.edge.live,
+    "--pane-chip": brand.chip, "--pane-rule": chrome.border,
     "--pane-ground": PANE_SOLID[appearance], "--pane-caret": ansi.cursor ?? brand.ink,
   } as CSSProperties;
   const { cols, rows } = ideGrid(tiles.length);
   return (
-    <div className="office-ide-monitor" style={vars}>
-      <header className="office-ide-tabs">
-        {workspaces.map(([id, name]) => <span key={id} data-active={id === workspace || undefined}>{name}</span>)}
-      </header>
+    <div className="office-ide-monitor jarvis-nav-surface" style={vars}>
+      {/* The IDE's sidebar: every project folder with its workspaces, the front one highlighted. */}
+      <aside className="office-ide-side">
+        <div className="office-ide-side-title">{t("nav.agentic_ide")}</div>
+        {tree.map((project) => (
+          <div key={project.folder}>
+            <div className="office-ide-project"><Folder aria-hidden />{project.name}</div>
+            {project.workspaces.map((ws) => (
+              <div key={ws.id} className="office-ide-ws" data-active={ws.id === workspace || undefined}>
+                <i style={{ background: ws.working ? ansi.green : brand.inkFaint }} />
+                <span>{ws.name}</span>
+                <b>{ws.count}</b>
+              </div>
+            ))}
+          </div>
+        ))}
+      </aside>
       {tiles.length === 0 ? (
         <p className="office-ide-empty">{t("society.office.mission_screen_none")}</p>
       ) : (
         <div className="office-ide-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}>
           {tiles.map((o) => {
-            const dot = o.dot === "working" ? ansi.green : o.dot === "waiting" ? ansi.yellow : o.dot === "error" ? ansi.red : brand.inkFaint;
             const key = `${o.pane.workspace_id}:${o.pane.key}`;
-            const title = o.pane.recap.trim() || o.pane.last_prompt.trim() || paneLabel(o.pane);
+            const edge = EDGE[o.pane.status] ?? "live";
             return (
-              <article key={key} className="office-ide-tile">
-                <header className="office-pane-head">
-                  <span className="office-pane-dot" style={{ background: dot }} />
-                  <AgentMark agent={o.pane.agent} label={o.pane.display_name || o.pane.agent} variant="plain" size="sm"
-                    className="!text-[color:var(--pane-ink)] [&>.bg-foreground]:!bg-[color:var(--pane-ink)]" />
-                  <h2>{title}</h2>
-                  <span className="office-pane-meta">{t(`society.office.pane_state_${o.stateKey}`)}</span>
-                </header>
-                <PaneScreenView screen={screens ? (screens.get(key) ?? null) : undefined} label={title}
+              // The IDE's own pane: its header component, its edge colour, the live terminal under it.
+              <article key={key} className="office-ide-tile" style={{ borderColor: chrome.edge[edge === "connecting" ? "live" : edge] }}>
+                <WorkspaceTerminalHeader name={o.pane.name} workspaceId={o.pane.workspace_id} agent={o.pane.agent}
+                  displayName={o.pane.display_name || o.pane.agent} status={edge} appearance={appearance}
+                  onToggleMaximize={noop} onAdd={noop} onClose={noop} onFork={noop} />
+                <PaneScreenView screen={screens ? (screens.get(key) ?? null) : undefined} label={paneLabel(o.pane)}
                   loadingText={t("society.office.cmd_screen_loading")} emptyText={t("society.office.cmd_screen_empty")}
                   className="office-pane-screen office-ide-screen" />
               </article>
