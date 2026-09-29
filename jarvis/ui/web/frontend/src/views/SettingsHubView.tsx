@@ -1,5 +1,6 @@
-import { lazy, Suspense, useMemo, useState, type ComponentType, type LazyExoticComponent } from "react";
-import { ArrowLeft, Loader2, Search, Settings as SettingsIcon, X } from "lucide-react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { lazy, Suspense, useMemo, useRef, useState, type ComponentType, type LazyExoticComponent } from "react";
+import { Loader2, Search, X } from "lucide-react";
 import {
   NAV_FOOTER_ITEMS,
   NAV_GROUPS,
@@ -10,14 +11,14 @@ import {
 import { useEventStore } from "@/store/events";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { useT, useUiLanguage } from "@/i18n";
-import { ViewHeader } from "@/views/ChatsView";
+import { isComboboxPanelEvent } from "@/components/ui/combobox";
 import { searchSettingsOptions, searchSettingsPages } from "@/views/settings/settingsSearch";
 import { cn } from "@/lib/utils";
 
 /**
- * The Settings hub — every personal/system section behind one page, with a
- * searchable left navigation (Personal · System · Activity) and the selected
- * section on the right:
+ * The Settings hub — every personal/system section behind one dialog that
+ * floats over the user's current section, with a searchable left navigation
+ * (General · System · Activity) and the selected section on the right:
  *
  *   General: Settings, Appshots, Profile, {name}.md, Contacts, Socials
  *   System: Computers, API Keys, Local models, Wallpaper
@@ -204,7 +205,7 @@ function HubLoadingFallback() {
   );
 }
 
-export function SettingsHubView() {
+export function SettingsHubView({ onClose }: { onClose: () => void }) {
   const t = useT();
   const language = useUiLanguage();
   const active = useEventStore((s) => s.activeSection);
@@ -304,19 +305,12 @@ export function SettingsHubView() {
     <div data-testid="settings-hub" className="flex h-full min-h-0 flex-col md:flex-row">
       <aside
         data-testid="settings-hub-sidebar"
-        className="jarvis-nav-surface flex max-h-72 w-full shrink-0 flex-col border-b border-border md:max-h-none md:w-72 md:border-b-0"
+        className="jarvis-nav-surface flex max-h-72 w-full shrink-0 flex-col border-b border-border md:max-h-none md:w-60 md:border-b-0 md:border-r"
       >
-        <div className="border-b border-border px-3 py-3">
-          <button type="button" onClick={() => setActive("chats")}
-            className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-base font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden />
-            {t("settings_hub.back_to_app")}
-          </button>
-        </div>
         <div className="px-3 pb-2 pt-3">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-            <input type="text" role="searchbox" value={query} onChange={(event) => setQuery(event.target.value)}
+            <input type="text" role="searchbox" data-testid="settings-hub-search" value={query} onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => { if (event.key === "Escape") setQuery(""); }}
               placeholder={t("settings_hub.search_placeholder")}
               aria-label={t("settings_hub.search_placeholder")}
@@ -394,12 +388,12 @@ export function SettingsHubView() {
           )}
         </nav>
       </aside>
-      <div className="jarvis-sheet flex min-h-0 min-w-0 flex-1 flex-col">
-        <ViewHeader
-          icon={<SettingsIcon className="h-4 w-4 text-foreground" />}
-          title={t("nav.settings")}
-          subtitle={t("settings_hub.subtitle")}
-        />
+      <div className="jarvis-sheet relative flex min-h-0 min-w-0 flex-1 flex-col">
+        <button type="button" onClick={onClose} aria-label={t("common.close")}
+          data-testid="settings-hub-close"
+          className="absolute right-3 top-3 z-10 grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <X className="h-4 w-4" aria-hidden />
+        </button>
         <div data-testid="settings-hub-content" className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis">
           <div className="h-full w-full max-w-[2000px]">
             <Suspense fallback={<HubLoadingFallback />}>
@@ -411,5 +405,68 @@ export function SettingsHubView() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The hub as a centred window over the current section (the way desktop apps
+ * open their preferences), not a page that replaces the whole app. Closing it
+ * — the X, Escape or a click on the scrim — returns to the section behind it.
+ *
+ * Centred with `inset-0` + `m-auto` rather than a translate: a transform would
+ * turn the dialog into the containing block of every `position: fixed` layer a
+ * tab renders inline (the wallpaper preview, view-level dialogs) and trap them
+ * inside the window instead of covering the screen.
+ */
+export function SettingsHubDialog({ onClose }: { onClose: () => void }) {
+  const t = useT();
+  const content = useRef<HTMLDivElement>(null);
+  const opener = useRef(document.activeElement);
+  // A nested modal inside a tab (credential dialogs, pickers) owns outside
+  // clicks and Escape while it is open; so does an open combobox panel.
+  const nestedOwnsEvent = (event: Event) =>
+    isComboboxPanelEvent(event) || content.current?.querySelector('[aria-modal="true"]') != null;
+  return (
+    <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-scrim/65 backdrop-blur-[2px]" />
+        <Dialog.Content
+          data-testid="settings-hub-dialog"
+          ref={content}
+          aria-describedby={undefined}
+          onCloseAutoFocus={(event) => {
+            const previous = opener.current;
+            const target = previous instanceof HTMLElement && previous.isConnected && previous !== document.body
+              ? previous
+              : document.querySelector<HTMLElement>("main");
+            if (!target) return;
+            // This route-driven dialog has no Radix Trigger to restore focus to.
+            event.preventDefault();
+            const needsTabIndex = target.tagName === "MAIN" && !target.hasAttribute("tabindex");
+            if (needsTabIndex) target.setAttribute("tabindex", "-1");
+            target.focus({ preventScroll: true });
+            if (needsTabIndex) target.removeAttribute("tabindex");
+          }}
+          onPointerDownOutside={(event) => { if (nestedOwnsEvent(event)) event.preventDefault(); }}
+          onFocusOutside={(event) => { if (nestedOwnsEvent(event)) event.preventDefault(); }}
+          onInteractOutside={(event) => { if (nestedOwnsEvent(event)) event.preventDefault(); }}
+          onEscapeKeyDown={(event) => {
+            if (content.current?.querySelector('[aria-modal="true"]')) {
+              event.preventDefault();
+              return;
+            }
+            // Escape in a filled search box clears the search first.
+            const target = event.target;
+            if (target instanceof HTMLInputElement && target.dataset.testid === "settings-hub-search" && target.value) {
+              event.preventDefault();
+            }
+          }}
+          className="fixed inset-0 z-40 m-auto flex h-[min(86dvh,820px)] w-[min(1040px,calc(100vw-32px))] flex-col overflow-hidden rounded-2xl border border-border bg-popover text-foreground shadow-float outline-none"
+        >
+          <Dialog.Title className="sr-only">{t("nav.settings")}</Dialog.Title>
+          <SettingsHubView onClose={onClose} />
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
