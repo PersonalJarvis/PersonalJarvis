@@ -1,30 +1,29 @@
 /**
- * A small live window onto one coding session's terminal, for the session's
- * command panel: a title bar with the run state and a "Live" beat, and below
- * it the bottom of the real screen, cursor included, with the font fitted to
- * the pane's own column count so a narrow TUI fills the window instead of
- * hugging its left edge.
+ * The live terminal of one coding session, drawn the way the Agentic IDE
+ * draws a pane: the pane's own font, weight and ink, the bottom of the real
+ * screen with its cursor, and the font fitted to the pane's column count so a
+ * narrow TUI fills the window instead of hugging its left edge.
  *
  * It reads the same in-memory screen feed as the desk monitors, at their
  * near-live rate, jittered (AP-33); an unchanged screen never re-renders.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { Maximize2 } from "lucide-react";
-import { useT } from "@/i18n";
 import { fetchPaneScreens, type PaneScreen } from "@/lib/paneScreensApi";
+import { TERMINAL_FONT_STACK, TERMINAL_FONT_WEIGHT } from "@/lib/terminalFont";
 import { screenChanged, visibleRows } from "./terminalScreen";
 
 const POLL_MIN_MS = 450;
 const POLL_JITTER_MS = 250;
 /** Font bounds in CSS pixels: a wide TUI shrinks the text, a narrow one never blows it up. */
-const MIN_FONT = 10, MAX_FONT = 14;
+const MIN_FONT = 10, MAX_FONT = 15;
 /** Wider terminals than this are cut on the right rather than shrunk further. */
 const MAX_FIT_COLS = 120;
 /** A monospace glyph is about this wide per pixel of font size. */
 const CHAR_RATIO = 0.6;
-const LINE_RATIO = 1.3;
-/** Inner padding of the screen, matching `.office-live-body` in the CSS. */
-const PAD = 10;
+/** The panes draw at line height 1.0; a touch more keeps the small window airy. */
+const LINE_RATIO = 1.15;
+/** Horizontal padding of the screen, matching `.office-pane-screen` in the CSS. */
+const PAD = 12;
 
 export interface LiveGrid { font: number; lineH: number; cols: number; fit: number }
 
@@ -38,7 +37,7 @@ export function liveGrid(cols: number, width: number, height: number): LiveGrid 
     font,
     lineH,
     cols: Math.max(1, Math.floor(inner / (font * CHAR_RATIO))),
-    fit: Math.max(1, Math.floor((height - 2 * PAD) / lineH)),
+    fit: Math.max(1, Math.floor(height / lineH)),
   };
 }
 
@@ -87,62 +86,45 @@ function useBoxSize(ref: RefObject<HTMLElement | null>): { width: number; height
   return size;
 }
 
-export function PaneLiveScreen({ workspaceId, paneKey, title, dot, stateLabel, agentName, onOpen }: {
+export function PaneLiveScreen({ workspaceId, paneKey, label, loadingText, emptyText, onOpen }: {
   workspaceId: string;
   paneKey: string;
-  title: string;
-  /** The IDE's dot reading of the pane: working / waiting / idle / error. */
-  dot: string;
-  stateLabel: string;
-  agentName: string;
+  label: string;
+  loadingText: string;
+  emptyText: string;
   onOpen: () => void;
 }) {
-  const t = useT();
-  const body = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement>(null);
   const screen = useLiveScreen(workspaceId, paneKey);
-  const { width, height } = useBoxSize(body);
+  const { width, height } = useBoxSize(box);
   const grid = liveGrid(screen?.cols ?? 80, width, height);
   const view = screen ? visibleRows(screen.lines, grid.fit, screen.cursor) : null;
   const cursor = screen?.cursor && view ? [screen.cursor[0] - view.first, screen.cursor[1]] as const : null;
-  const working = dot === "working";
   const empty = !view || view.rows.every((row) => !row.trim());
 
   return (
-    <section className="office-live" data-dot={dot} aria-label={t("society.office.cmd_screen").replace("{0}", agentName)}>
-      <header className="office-live-bar">
-        <i className="office-dot" data-dot={dot} aria-hidden />
-        <span className="office-live-title" title={title}>{title}</span>
-        <span className="office-live-state">{stateLabel}</span>
-        {working && <span className="office-live-beat">{t("society.office.cmd_live")}</span>}
-        {screen && <span className="office-live-size">{screen.cols}×{screen.rows}</span>}
-        <button type="button" className="office-live-open" onClick={onOpen}
-          title={t("society.office.cmd_screen_open")} aria-label={t("society.office.cmd_screen_open")}>
-          <Maximize2 aria-hidden />
-        </button>
-      </header>
-      <div ref={body} className="office-live-body" onDoubleClick={onOpen}>
-        {empty ? (
-          <p className="office-live-empty">
-            {screen === undefined ? t("society.office.cmd_screen_loading") : t("society.office.cmd_screen_empty")}
-          </p>
-        ) : (
-          <pre className="office-live-rows" aria-live="off" style={{ fontSize: grid.font, lineHeight: `${grid.lineH}px` }}>
-            {view!.rows.map((row, i) => {
-              const line = row.length > grid.cols ? `${row.slice(0, grid.cols - 1)}…` : row;
-              if (!cursor || cursor[0] !== i || cursor[1] >= grid.cols) return <div key={i}>{line || " "}</div>;
-              const col = cursor[1];
-              const padded = line.padEnd(col + 1, " ");
-              return (
-                <div key={i}>
-                  {padded.slice(0, col)}
-                  <span className="office-live-cursor">{padded[col]}</span>
-                  {padded.slice(col + 1)}
-                </div>
-              );
-            })}
-          </pre>
-        )}
-      </div>
-    </section>
+    <div ref={box} className="office-pane-screen" role="img" aria-label={label} onDoubleClick={onOpen}>
+      {empty ? (
+        <p className="office-pane-empty">{screen === undefined ? loadingText : emptyText}</p>
+      ) : (
+        <pre aria-hidden style={{
+          fontFamily: TERMINAL_FONT_STACK, fontWeight: TERMINAL_FONT_WEIGHT, fontSize: grid.font, lineHeight: `${grid.lineH}px`,
+        }}>
+          {view!.rows.map((row, i) => {
+            const line = row.length > grid.cols ? `${row.slice(0, grid.cols - 1)}…` : row;
+            if (!cursor || cursor[0] !== i || cursor[1] >= grid.cols) return <div key={i}>{line || " "}</div>;
+            const col = cursor[1];
+            const padded = line.padEnd(col + 1, " ");
+            return (
+              <div key={i}>
+                {padded.slice(0, col)}
+                <span className="office-pane-cursor">{padded[col]}</span>
+                {padded.slice(col + 1)}
+              </div>
+            );
+          })}
+        </pre>
+      )}
+    </div>
   );
 }

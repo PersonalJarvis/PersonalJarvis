@@ -44,7 +44,7 @@ import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useEventStore, type VoiceState } from "@/store/events";
 import { AgenticTerminal, type SplitDirection } from "./AgenticTerminal";
 import { AgentPickerMenu, offersAgentChoice, type SplitAgentChoice } from "./AgentPicker";
-import type { TerminalAppearance } from "./terminalThemes";
+import { TERMINAL_APPEARANCE_KEY, type TerminalAppearance } from "./terminalThemes";
 import { installZoomKeyBridge, type ZoomIntent } from "./terminalZoom";
 import {
   FONT_DEFAULT,
@@ -488,7 +488,7 @@ function writePosition(node: HTMLElement, style: React.CSSProperties): void {
  * working. Its localStorage entry stays as the first-paint cache so the panes
  * open at the remembered size instead of visibly resizing a moment later.
  */
-const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
+const APPEARANCE_KEY = TERMINAL_APPEARANCE_KEY;
 
 /**
  * The two ways of looking at one workspace.
