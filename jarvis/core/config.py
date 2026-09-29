@@ -4612,6 +4612,16 @@ _PERSISTED_PROVIDER_ENV_KEYS: tuple[str, ...] = (
     "JARVIS__GOOGLE__VERTEX_PROJECT",
     "JARVIS__GOOGLE__VERTEX_LOCATION",
     "JARVIS__GOOGLE__SERVICE_ACCOUNT_PATH",
+    # GPT-Live profile. Forensic 2026-09-29: the user switched the thinking
+    # model to a ~20x cheaper one, jarvis.toml and the registry both held it,
+    # yet a restart inherited the old model from an ancestor env and every
+    # voice turn kept billing the expensive one.
+    "JARVIS__LIVE__MODEL",
+    "JARVIS__LIVE__VOICE",
+    "JARVIS__LIVE__BACKEND_MODEL",
+    "JARVIS__LIVE__REASONING_EFFORT",
+    "JARVIS__LIVE__WEB_SEARCH",
+    "JARVIS__LIVE__CONFIGURED",
 )
 
 
