@@ -380,7 +380,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
         </div>;
       })}
       {/*
-        The boundaries between panes: drag one to give the panes on either side
+        The invisible boundaries between panes: drag one to give the panes on either side
         more or less room, double-click it to even them out, or focus it and
         use the arrow keys. Only the panes it divides change size.
       */}
@@ -389,6 +389,9 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
           ref={(node) => { if (node) seamNodes.current.set(seam.id, node); else seamNodes.current.delete(seam.id); }}
           testId={`pane-seam-${seam.id}`} orientation={seam.orientation} title={seam.label}
           active={sizes.dragging === seam.id}
+          // The gap itself is the grip: no drawn line or stub, only the
+          // resize cursor on hover (maintainer, 2026-09-29).
+          showLine={false}
           onPointerDown={(event) => { if (event.button === 0) sizes.startDrag(seam, event); }}
           onDoubleClick={() => sizes.even(seam)}
           // PaneResizer's vertical sign is written for a pane's own edge; here
