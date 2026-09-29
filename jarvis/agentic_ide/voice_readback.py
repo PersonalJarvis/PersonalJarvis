@@ -128,6 +128,9 @@ async def readback(kind: ReadbackKind, term: Any, publish: Publisher) -> None:
                 # A readback kind: the answer to something the user asked for.
                 kind="completion",
                 detail=f"agentic_ide pane={name} outcome={kind}",
+                # A live voice model reasons over this itself; ``text`` is
+                # what classic TTS speaks.
+                report=_report_material(name, request, report, screen),
             )
         )
         if inspect.isawaitable(result):
@@ -161,6 +164,18 @@ async def _compose(
         report=report,
         facts=facts,
     )
+
+
+def _report_material(name: str, request: str, report: str, screen: str) -> str:
+    """Everything the live model gets to think about, labelled."""
+    parts = [f"Terminal: {name}"]
+    if request:
+        parts.append(f"What the user asked for:\n{request}")
+    if report:
+        parts.append(f"The coding agent's final message:\n{report}")
+    elif screen:
+        parts.append(f"No transcript is readable; the terminal's screen shows:\n{screen}")
+    return "\n\n".join(parts)
 
 
 def final_report(term: Any) -> str:

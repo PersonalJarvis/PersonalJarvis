@@ -4961,10 +4961,14 @@ class SpeechPipeline:
             remember = getattr(session, "remember_announcement_context", None)
             if callable(remember):
                 try:
+                    # The full report too, so "what exactly did it change?"
+                    # can be answered on the next turn.
+                    report = str(getattr(event, "report", None) or "").strip()
                     remember(
                         text=event.text,
                         spoken_kind=event_kind,
                         detail=getattr(event, "detail", None),
+                        **({"report": report} if report else {}),
                     )
                 except Exception:  # noqa: BLE001 -- memory mirror is best-effort
                     log.debug(
@@ -5454,6 +5458,10 @@ class SpeechPipeline:
             self._agent_reply_inflight = event
             self._agent_reply_inflight_text = text
         accepted = False
+        # The raw report goes to the live model as data to reason over; only
+        # sessions that understand it are handed the keyword.
+        report = str(getattr(event, "report", None) or "").strip()
+        extra: dict[str, Any] = {"report": report} if report else {}
         try:
             accepted = bool(
                 await deliver(
@@ -5463,6 +5471,7 @@ class SpeechPipeline:
                         getattr(event, "kind", None)
                     ),
                     detail=getattr(event, "detail", None),
+                    **extra,
                 )
             )
         except Exception as exc:  # noqa: BLE001 -- classic path is load-bearing
