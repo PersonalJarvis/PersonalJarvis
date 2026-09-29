@@ -131,6 +131,8 @@ export function CheckpointMarker({ checkpoint, label, icon, active, animate, onA
   const phase = useMemo(() => [...checkpoint.id].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 7, [checkpoint.id]);
   const t = useT();
   const hint = t(`society.office.cp_${checkpoint.id}_hint`);
+  // A checkpoint over a tall prop (the holo deck) floats its token above it.
+  const tokenY = checkpoint.tokenY ?? TOKEN_Y;
   const face = faceMaterial(icon);
   const ringOpacity = active ? 0.95 : 0.6;
   const fillOpacity = active ? 0.16 : 0.07;
@@ -142,14 +144,14 @@ export function CheckpointMarker({ checkpoint, label, icon, active, animate, onA
       // the time); animation only adds a gentle bob and sway around that.
       const toCamera = Math.atan2(camera.position.x - checkpoint.x, camera.position.z - checkpoint.z);
       if (animate) {
-        token.current.position.y = TOKEN_Y + Math.sin(time * 1.8) * 0.07;
+        token.current.position.y = tokenY + Math.sin(time * 1.8) * 0.07;
         const sway = Math.sin(time * (active ? 2.2 : 1.1)) * (active ? 0.45 : 0.3);
         const goal = toCamera + sway;
         // Ease towards the goal along the shorter way round, so orbiting never snaps it.
         const diff = Math.atan2(Math.sin(goal - token.current.rotation.y), Math.cos(goal - token.current.rotation.y));
         token.current.rotation.y += diff * Math.min(1, delta * 6);
       } else {
-        token.current.position.y = TOKEN_Y;
+        token.current.position.y = tokenY;
         token.current.rotation.y = toCamera;
       }
     }
@@ -208,14 +210,14 @@ export function CheckpointMarker({ checkpoint, label, icon, active, animate, onA
       </mesh>
 
       {/* Floating hexagon token with the icon on both faces. */}
-      <group ref={token} position={[0, TOKEN_Y, 0]} rotation={[0, Math.PI / 4, 0]} scale={active ? 1.15 : 1}
+      <group ref={token} position={[0, tokenY, 0]} rotation={[0, Math.PI / 4, 0]} scale={active ? 1.15 : 1}
         onClick={activate} onPointerOver={over} onPointerOut={out}>
         <mesh geometry={prismGeometry} material={rimMaterial} castShadow />
         <mesh geometry={faceGeometry} material={face} position={[0, 0, TOKEN_DEPTH / 2 + 0.002]} />
         <mesh geometry={faceGeometry} material={face} position={[0, 0, -TOKEN_DEPTH / 2 - 0.002]} rotation={[0, Math.PI, 0]} />
       </group>
 
-      <group ref={anchor} position={[0, LABEL_Y, 0]}>
+      <group ref={anchor} position={[0, tokenY - TOKEN_Y + LABEL_Y, 0]}>
         <Html center zIndexRange={[20, 0]}>
           <button ref={pill} type="button" data-office-ui className="office-checkpoint" data-active={active ? "true" : "false"}
             aria-label={hint ? `${label}: ${hint}` : label} title={hint || undefined}

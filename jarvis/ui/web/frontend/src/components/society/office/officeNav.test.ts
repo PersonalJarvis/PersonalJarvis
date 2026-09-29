@@ -16,7 +16,7 @@ function targetsOf(layout: OfficeLayout): { name: string; p: Point }[] {
   return [
     ...allDesks(layout).flatMap((d) => [{ name: `seat ${d.id}`, p: seatOf(d) }, { name: `stand ${d.id}`, p: standOf(d) }]),
     ...layout.spots.map((s) => ({ name: `spot ${s.id}`, p: s })),
-    ...layout.checkpoints.map((c) => ({ name: `checkpoint ${c.id}`, p: c })),
+    ...layout.checkpoints.map((c) => ({ name: `checkpoint ${c.id}`, p: c.approach ?? c })),
   ];
 }
 

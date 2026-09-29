@@ -164,7 +164,10 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
     // Click-to-move / "walk there" requests.
     if (store.walkTo && store.walkTo.seq !== lastWalk.current) {
       lastWalk.current = store.walkTo.seq;
-      player.path = findPath(grid, player, store.walkTo.point) ?? [];
+      // A target inside something solid (the middle of the holo deck) walks to the nearest free spot instead.
+      const goal = store.walkTo.point;
+      const free = isWalkable(grid, goal) ? null : nearestWalkable(grid, goal);
+      player.path = findPath(grid, player, goal) ?? (free ? findPath(grid, player, free) : null) ?? [];
     }
     // Keyboard movement, relative to where the camera looks.
     let ix = 0, iz = 0;

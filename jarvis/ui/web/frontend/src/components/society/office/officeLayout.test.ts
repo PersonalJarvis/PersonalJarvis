@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   allDesks, archPosts, buildOfficeLayout, countStates, departmentKey, FURNITURE_SIZE, footprint, groupDepartments,
-  MAX_DEPARTMENTS, MIN_DEPARTMENTS, type OfficeAgentInput,
+  MAX_DEPARTMENTS, MIN_DEPARTMENTS, MISSION_DECK_RADIUS, MISSION_REACH, missionDeckObstacles, type OfficeAgentInput,
 } from "./officeLayout";
+import { buildNavGrid, isWalkable } from "./officeNav";
 import { cameraHome, fitDistance, focusBounds } from "./officeCamera";
 
 const agent = (id: string, provider: string, extra: Partial<OfficeAgentInput> = {}): OfficeAgentInput => ({
@@ -141,12 +142,36 @@ describe("office layout", () => {
     expect(hub.x).toBe(0);
     const depts = layout.departments;
     expect(hub.z).toBeCloseTo((Math.min(...depts.map((d) => d.minZ)) + Math.max(...depts.map((d) => d.maxZ))) / 2);
-    const box = footprint(hub);
-    for (const dept of depts) expect(box.maxX < dept.minX || box.minX > dept.maxX).toBe(true);
-    // The stop is in front of the console (south, towards the camera), outside its footprint.
-    expect(stop.x).toBe(0);
-    expect(stop.z - stop.radius).toBeGreaterThan(box.maxZ - 0.5);
+    // The whole ring the person can use from stays out of the departments.
+    for (const dept of depts) expect(stop.radius < Math.abs(dept.minX) && stop.radius < Math.abs(dept.maxX)).toBe(true);
     expect(buildOfficeLayout([agent("a1", "codex")]).furniture.some((f) => f.kind === "missionConsole")).toBe(false);
+  });
+
+  it("makes the holo deck usable from every side, with a round collision and no invisible walls", () => {
+    const layout = buildOfficeLayout([agent("p1", "Personal Jarvis")], { variant: "coding" });
+    const hub = layout.furniture.find((f) => f.kind === "missionConsole")!;
+    const stop = layout.checkpoints.find((c) => c.id === "mission")!;
+    // The interaction ring is centred on the deck and reaches past its edge.
+    expect([stop.x, stop.z]).toEqual([hub.x, hub.z]);
+    expect(stop.radius).toBe(MISSION_DECK_RADIUS + MISSION_REACH);
+    // Collision never reaches beyond the lit deck (only the table is solid).
+    for (const r of missionDeckObstacles(hub)) {
+      for (const [x, z] of [[r.minX, r.minZ], [r.maxX, r.minZ], [r.minX, r.maxZ], [r.maxX, r.maxZ]]) {
+        expect(Math.hypot(x - hub.x, z - hub.z)).toBeLessThan(MISSION_DECK_RADIUS);
+      }
+    }
+    expect(FURNITURE_SIZE.missionConsole.solid).toBe(false);
+    // Standing on the deck's edge works all the way round, and each of those spots is inside the ring.
+    const grid = buildNavGrid(layout);
+    for (let i = 0; i < 16; i += 1) {
+      const a = (i / 16) * Math.PI * 2;
+      const p = { x: hub.x + Math.cos(a) * (MISSION_DECK_RADIUS + 0.2), z: hub.z + Math.sin(a) * (MISSION_DECK_RADIUS + 0.2) };
+      expect(isWalkable(grid, p)).toBe(true);
+      expect(Math.hypot(p.x - stop.x, p.z - stop.z)).toBeLessThanOrEqual(stop.radius);
+    }
+    // The table itself is solid; "walk there" goes to a free spot on the deck's edge.
+    expect(isWalkable(grid, { x: hub.x, z: hub.z })).toBe(false);
+    expect(isWalkable(grid, stop.approach!)).toBe(true);
   });
 
   it("counts states", () => {
