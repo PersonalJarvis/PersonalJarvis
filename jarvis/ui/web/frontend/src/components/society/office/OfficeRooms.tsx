@@ -4,7 +4,7 @@
  * Pattern textures and sign textures are drawn once and cached.
  */
 import { useEffect, useMemo } from "react";
-import { MeshStandardMaterial, RepeatWrapping, type Texture } from "three";
+import { DoubleSide, MeshStandardMaterial, RepeatWrapping, type Texture } from "three";
 import { Box, MAT, Rounded } from "./OfficeFurniture";
 import { cachedCanvasTexture } from "./canvasMaterials";
 import { ARCH, archPosts, type Door, type Room, type RoomKind, type WallSegment } from "./officeLayout";
@@ -163,7 +163,16 @@ export const WALL_HEIGHT = 2.1;
 const BASE_HEIGHT = 0.12;
 const POST_SPACING = 1.8;
 
-/** One glass wall run: slim black steel base, mullions and top rail around a clear pane. */
+/** Frosted manifestation on the glass at eye level: a broad band and a pinstripe above it. */
+const FROST = { y: 1.05, h: 0.18, stripeY: 1.22, stripeH: 0.025 } as const;
+const frostMaterial = new MeshStandardMaterial({
+  color: "#f4f1ec", transparent: true, opacity: 0.55, roughness: 0.95, side: DoubleSide, depthWrite: false,
+});
+
+/**
+ * One glass wall run: slim black steel base, mullions and top rail around a
+ * clear pane with a frosted band at eye level, so the glass reads as glass.
+ */
 function GlassWall({ wall }: { wall: WallSegment }) {
   // The lead office is framed in brass on a walnut base, behind warm-tinted glass.
   const lead = wall.room === "lead";
@@ -174,12 +183,16 @@ function GlassWall({ wall }: { wall: WallSegment }) {
   if (length < 0.05) return null;
   const angle = Math.atan2(wall.z2 - wall.z1, wall.x2 - wall.x1);
   const posts = Math.max(2, Math.ceil(length / POST_SPACING) + 1);
-  const post = lead ? 0.05 : 0.035;
+  const post = lead ? 0.05 : 0.03;
   return (
     <group position={[(wall.x1 + wall.x2) / 2, 0, (wall.z1 + wall.z2) / 2]} rotation={[0, -angle, 0]}>
       <Box size={[length, lead ? BASE_HEIGHT : 0.06, lead ? 0.1 : 0.06]} position={[0, lead ? BASE_HEIGHT / 2 : 0.03, 0]} material={base} />
       <Box size={[length, WALL_HEIGHT - BASE_HEIGHT - 0.04, 0.02]} position={[0, (WALL_HEIGHT + BASE_HEIGHT - 0.04) / 2, 0]}
         material={glass} cast={false} />
+      {!lead && <>
+        <Box size={[length, FROST.h, 0.024]} position={[0, FROST.y, 0]} material={frostMaterial} cast={false} />
+        <Box size={[length, FROST.stripeH, 0.024]} position={[0, FROST.stripeY, 0]} material={frostMaterial} cast={false} />
+      </>}
       <Box size={[length, 0.04, lead ? 0.07 : 0.05]} position={[0, WALL_HEIGHT - 0.02, 0]} material={frame} />
       {Array.from({ length: posts }, (_, i) => (
         <Box key={i} size={[post, WALL_HEIGHT, lead ? 0.07 : 0.05]} position={[-length / 2 + (length * i) / (posts - 1), WALL_HEIGHT / 2, 0]}

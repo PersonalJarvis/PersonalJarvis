@@ -14,6 +14,7 @@ import { Railing, SignWall } from "./OfficeFurniture";
 import { DeskInstances } from "./DeskInstances";
 import { DeskDressing } from "./DeskDressing";
 import { CodingSlab, CodingStudio } from "./CodingFloorLook";
+import { CodingFloorAmbience } from "./CodingFloorAmbience";
 import { ExecutiveDesks, LeadOfficeLight } from "./LeadSuite";
 import { LiveMonitors } from "./LiveMonitors";
 import { TerminalMonitors } from "./TerminalMonitors";
@@ -254,6 +255,7 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
         shadow-camera-left={-span * 0.7} shadow-camera-right={span * 0.7}
         shadow-camera-top={span * 0.7} shadow-camera-bottom={-span * 0.7} shadow-camera-far={120} />
       {coding ? <CodingSlab layout={layout} onFloorClick={onFloorClick} /> : <Slab layout={layout} onFloorClick={onFloorClick} />}
+      {coding && <CodingFloorAmbience layout={layout} />}
       <RoomFloors rooms={layout.rooms} />
       <RoomWalls walls={layout.walls} />
       {layout.rooms.map((room) => <RoomSign key={room.id} room={room} label={t(`society.office.room_${room.kind}`)} />)}

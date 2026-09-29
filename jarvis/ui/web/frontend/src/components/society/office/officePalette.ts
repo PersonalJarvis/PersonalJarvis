@@ -69,16 +69,24 @@ export const DEPARTMENT_TINTS = DEPARTMENT_ZONES.map((z) => z.rug);
 
 /**
  * The coding floor's own look, so the two floors never read as copies: a
- * violet night instead of navy, cool terrazzo instead of warm planks, a glowing
- * rim around the slab, and a studio style per department.
+ * plum night instead of navy, honey-oak herringbone instead of microcement,
+ * a warm amber rim round the slab, and a studio style per department.
  */
 export const CODING_SCENE = {
-  space: "#140e2e",
-  slabEdge: "#2a2542",
-  rim: "#5eead4",
-  sky: "#d9e2ff",
-  ground: "#4d4868",
-  terrazzo: { base: "#dde1e8", seam: "rgba(120,128,145,0.3)", chips: ["#c3c9d4", "#efcdbf", "#c2dcd5", "#d2cae6", "#a6adbb", "#f6f7f9"] },
+  space: "#170f2a",
+  slabEdge: "#2b2233",
+  rim: "#f3b16b",
+  sky: "#fff1de",
+  ground: "#5e4c44",
+  /** Herringbone oak: the seam between blocks and the block tones. */
+  oak: { seam: "#8a6848", planks: ["#cfab80", "#c7a176", "#d6b58b", "#c09a6f", "#dcbb92", "#caa47a"] },
+  /** The polished concrete band along the windows, and its brass inlay. */
+  concrete: { base: "#cfc6ba", cloud: ["#c6bcaf", "#d8d0c5", "#c9c0b4"], brass: "#c9a24a" },
+  /** Walnut slat walls behind each studio, with brass lettering. */
+  walnut: { slat: "#5d3d28", gap: "#2e1d13", cap: "#1f1a17" },
+  brass: "#d8ae52",
+  /** Linear pendants over the desks: body, lit underside and the pool of light below. */
+  pendant: { body: "#1d1b1a", glow: "#ffd9a0", pool: "#ffcf8f" },
 } as const;
 
 export type CarpetPattern = "grid" | "stripes" | "checker" | "dots" | "diagonal" | "zigzag";
@@ -89,8 +97,7 @@ export interface StudioStyle {
   carpet: string;
   weave: string;
   border: string;
-  /** The department's back wall and its acoustic felt panel. */
-  wall: string;
+  /** The studio's accent: the kick band along its walnut wall. */
   slat: string;
   /** Desk top, cabinet, leg, chair base and seat. */
   deskTop: string;
@@ -107,17 +114,17 @@ export interface StudioStyle {
  * graphite chairs), so a studio reads as a team's corner, not a theme park.
  */
 export const CODING_STUDIOS: readonly StudioStyle[] = [
-  { pattern: "grid", carpet: "#39424f", weave: "#424c5a", border: "#5eead4", wall: "#2c333d", slat: "#3d4a58",
+  { pattern: "grid", carpet: "#4a403a", weave: "#544841", border: "#c77b58", slat: "#c77b58",
     deskTop: "#c9ab81", deskBody: "#2b2f36", deskLeg: "#1f2226", chair: "#1d2025", seat: "#3aa99a" },
-  { pattern: "stripes", carpet: "#b7c4ae", weave: "#aebba5", border: "#8aa391", wall: "#eef1ea", slat: "#8aa391",
+  { pattern: "stripes", carpet: "#b3bda2", weave: "#a9b398", border: "#7f9471", slat: "#7f9471",
     deskTop: "#dcc39d", deskBody: "#f3f2ef", deskLeg: "#1f2226", chair: "#1d2025", seat: "#6f8b77" },
-  { pattern: "checker", carpet: "#e0c7bb", weave: "#dac0b3", border: "#c48e7a", wall: "#f6efe9", slat: "#c48e7a",
+  { pattern: "checker", carpet: "#dcbfae", weave: "#d4b5a3", border: "#bf7a5e", slat: "#bf7a5e",
     deskTop: "#f2f0ec", deskBody: "#f3f2ef", deskLeg: "#1f2226", chair: "#1d2025", seat: "#b0705b" },
-  { pattern: "dots", carpet: "#c9c3d9", weave: "#bfb9cf", border: "#918aad", wall: "#f1eff6", slat: "#918aad",
+  { pattern: "dots", carpet: "#cbbfc6", weave: "#c0b3bb", border: "#8f7a8a", slat: "#8f7a8a",
     deskTop: "#dcc39d", deskBody: "#e9e7ef", deskLeg: "#e9e7ef", chair: "#2b2f36", seat: "#766e96" },
-  { pattern: "diagonal", carpet: "#bccadb", weave: "#b3c1d1", border: "#7b91ab", wall: "#eef2f6", slat: "#7b91ab",
+  { pattern: "diagonal", carpet: "#b9c3c9", weave: "#afb9c0", border: "#6f8694", slat: "#6f8694",
     deskTop: "#c9ab81", deskBody: "#f3f2ef", deskLeg: "#1f2226", chair: "#1d2025", seat: "#5f7894" },
-  { pattern: "zigzag", carpet: "#d9ccb3", weave: "#d1c3a9", border: "#bfa07a", wall: "#f5efe3", slat: "#bfa07a",
+  { pattern: "zigzag", carpet: "#dccaa6", weave: "#d3c09a", border: "#b8955e", slat: "#b8955e",
     deskTop: "#8a6446", deskBody: "#2b2f36", deskLeg: "#1f2226", chair: "#1d2025", seat: "#c79a3a" },
 ];
 

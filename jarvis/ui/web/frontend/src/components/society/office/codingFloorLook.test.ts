@@ -9,7 +9,7 @@ describe("coding floor look", () => {
     expect(new Set(styles).size).toBe(6);
     expect(new Set(styles.map((s) => s.pattern)).size).toBe(6);
     expect(new Set(styles.map((s) => s.carpet)).size).toBe(6);
-    expect(new Set(styles.map((s) => s.wall)).size).toBe(6);
+    expect(new Set(styles.map((s) => s.slat)).size).toBe(6);
   });
 
   it("cycles the studios for any tint index, never failing on one past the set", () => {
