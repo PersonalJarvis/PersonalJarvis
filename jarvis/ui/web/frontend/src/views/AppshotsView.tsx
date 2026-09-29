@@ -303,135 +303,137 @@ export function AppshotsView() {
 
   return (
     <div data-testid="appshots-view" className="flex h-full flex-col overflow-y-auto bg-background px-8 pb-10 scrollbar-jarvis">
-      <PageHeader
-        icon={<AppshotGlyph />}
-        title={t("appshots.title")}
-        description={t("appshots.subtitle")}
-      />
+      <div className="w-full max-w-[1400px]">
+        <PageHeader
+          icon={<AppshotGlyph />}
+          title={t("appshots.title")}
+          description={t("appshots.subtitle")}
+        />
 
-      <div className="flex items-start gap-4 rounded-xl border border-border bg-card p-5">
-        <AppshotGlyph className="mt-0.5 h-8 w-8 shrink-0 text-accent" />
-        <div className="min-w-0">
-          <p className="text-lg font-semibold text-foreground">{t("appshots.hero_title")}</p>
-          <p className="mt-1 text-base text-muted-foreground">{t("appshots.hero_body")}</p>
+        <div className="flex items-start gap-4 rounded-xl border border-border bg-card p-5">
+          <AppshotGlyph className="mt-0.5 h-8 w-8 shrink-0 text-accent" />
+          <div className="min-w-0">
+            <p className="text-lg font-semibold text-foreground">{t("appshots.hero_title")}</p>
+            <p className="mt-1 text-base text-muted-foreground">{t("appshots.hero_body")}</p>
+          </div>
         </div>
+
+        <div className="mt-5 grid gap-5 lg:grid-cols-2">
+          <div className="divide-y divide-border self-start rounded-xl border border-border bg-card">
+            {!settings ? (
+              <div className="flex h-40 items-center justify-center" role="status" aria-busy="true">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden />
+              </div>
+            ) : (
+              <>
+                <Row
+                  label={t("appshots.enabled_label")}
+                  hint={t("appshots.enabled_hint")}
+                  control={
+                    <Switch
+                      checked={settings.enabled}
+                      disabled={saving}
+                      aria-label={t("appshots.enabled_label")}
+                      data-testid="appshots-enabled"
+                      onCheckedChange={(enabled) => void save({ enabled })}
+                    />
+                  }
+                />
+                <Row
+                  label={t("appshots.shortcut_label")}
+                  hint={shortcutHint}
+                  control={
+                    <BrandedSelect
+                      value={settings.hotkey || "off"}
+                      options={hotkeyOptions}
+                      ariaLabel={t("appshots.shortcut_label")}
+                      disabled={disabled || saving}
+                      testId="appshots-hotkey"
+                      className="w-44"
+                      onValueChange={(value) => void save({ hotkey: value === "off" ? "" : value })}
+                    />
+                  }
+                />
+                <Row
+                  label={t("appshots.target_label")}
+                  hint={targetHint}
+                  control={
+                    <BrandedSelect
+                      value={settings.target}
+                      options={targetOptions}
+                      ariaLabel={t("appshots.target_label")}
+                      disabled={disabled || saving}
+                      testId="appshots-target"
+                      className="w-44"
+                      onValueChange={(value) =>
+                        void save({ target: value as AppshotSettings["target"] })
+                      }
+                    />
+                  }
+                />
+                <Row
+                  label={t("appshots.sound_label")}
+                  hint={settings.sound_effects_master ? undefined : t("appshots.sound_master_off")}
+                  control={
+                    <Switch
+                      checked={settings.sound}
+                      disabled={disabled || saving}
+                      aria-label={t("appshots.sound_label")}
+                      data-testid="appshots-sound"
+                      onCheckedChange={(sound) => void save({ sound })}
+                    />
+                  }
+                />
+                <Row
+                  label={t("appshots.effect_label")}
+                  hint={
+                    settings.readiness.effect
+                      ? t("appshots.effect_hint")
+                      : t("appshots.effect_unavailable").replace("{0}", settings.readiness.effect_detail)
+                  }
+                  control={
+                    <Switch
+                      checked={settings.effect}
+                      disabled={disabled || saving}
+                      aria-label={t("appshots.effect_label")}
+                      data-testid="appshots-effect"
+                      onCheckedChange={(effect) => void save({ effect })}
+                    />
+                  }
+                />
+                <Row
+                  label={t("appshots.try_label")}
+                  hint={
+                    countdown !== null
+                      ? t("appshots.try_counting").replace("{0}", String(countdown))
+                      : t("appshots.try_hint")
+                  }
+                  control={
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={disabled || countdown !== null}
+                      onClick={() => void tryIt()}
+                      data-testid="appshots-try"
+                    >
+                      {countdown !== null && <Loader2 className="animate-spin" aria-hidden />}
+                      {t("appshots.try_button")}
+                    </Button>
+                  }
+                />
+              </>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-border bg-card p-5">
+            <p className="mb-3 text-base font-medium text-foreground">{t("appshots.preview_title")}</p>
+            {latest ? <LatestPreview shot={latest} onForget={() => void forget()} /> : <PreviewDemo />}
+          </div>
+        </div>
+
+        <p className="mt-5 text-sm text-muted-foreground">{t("appshots.voice_hint")}</p>
       </div>
-
-      <div className="mt-5 grid gap-5 lg:grid-cols-2">
-        <div className="divide-y divide-border self-start rounded-xl border border-border bg-card">
-          {!settings ? (
-            <div className="flex h-40 items-center justify-center" role="status" aria-busy="true">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden />
-            </div>
-          ) : (
-            <>
-              <Row
-                label={t("appshots.enabled_label")}
-                hint={t("appshots.enabled_hint")}
-                control={
-                  <Switch
-                    checked={settings.enabled}
-                    disabled={saving}
-                    aria-label={t("appshots.enabled_label")}
-                    data-testid="appshots-enabled"
-                    onCheckedChange={(enabled) => void save({ enabled })}
-                  />
-                }
-              />
-              <Row
-                label={t("appshots.shortcut_label")}
-                hint={shortcutHint}
-                control={
-                  <BrandedSelect
-                    value={settings.hotkey || "off"}
-                    options={hotkeyOptions}
-                    ariaLabel={t("appshots.shortcut_label")}
-                    disabled={disabled || saving}
-                    testId="appshots-hotkey"
-                    className="w-44"
-                    onValueChange={(value) => void save({ hotkey: value === "off" ? "" : value })}
-                  />
-                }
-              />
-              <Row
-                label={t("appshots.target_label")}
-                hint={targetHint}
-                control={
-                  <BrandedSelect
-                    value={settings.target}
-                    options={targetOptions}
-                    ariaLabel={t("appshots.target_label")}
-                    disabled={disabled || saving}
-                    testId="appshots-target"
-                    className="w-44"
-                    onValueChange={(value) =>
-                      void save({ target: value as AppshotSettings["target"] })
-                    }
-                  />
-                }
-              />
-              <Row
-                label={t("appshots.sound_label")}
-                hint={settings.sound_effects_master ? undefined : t("appshots.sound_master_off")}
-                control={
-                  <Switch
-                    checked={settings.sound}
-                    disabled={disabled || saving}
-                    aria-label={t("appshots.sound_label")}
-                    data-testid="appshots-sound"
-                    onCheckedChange={(sound) => void save({ sound })}
-                  />
-                }
-              />
-              <Row
-                label={t("appshots.effect_label")}
-                hint={
-                  settings.readiness.effect
-                    ? t("appshots.effect_hint")
-                    : t("appshots.effect_unavailable").replace("{0}", settings.readiness.effect_detail)
-                }
-                control={
-                  <Switch
-                    checked={settings.effect}
-                    disabled={disabled || saving}
-                    aria-label={t("appshots.effect_label")}
-                    data-testid="appshots-effect"
-                    onCheckedChange={(effect) => void save({ effect })}
-                  />
-                }
-              />
-              <Row
-                label={t("appshots.try_label")}
-                hint={
-                  countdown !== null
-                    ? t("appshots.try_counting").replace("{0}", String(countdown))
-                    : t("appshots.try_hint")
-                }
-                control={
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    disabled={disabled || countdown !== null}
-                    onClick={() => void tryIt()}
-                    data-testid="appshots-try"
-                  >
-                    {countdown !== null && <Loader2 className="animate-spin" aria-hidden />}
-                    {t("appshots.try_button")}
-                  </Button>
-                }
-              />
-            </>
-          )}
-        </div>
-
-        <div className="rounded-xl border border-border bg-card p-5">
-          <p className="mb-3 text-base font-medium text-foreground">{t("appshots.preview_title")}</p>
-          {latest ? <LatestPreview shot={latest} onForget={() => void forget()} /> : <PreviewDemo />}
-        </div>
-      </div>
-
-      <p className="mt-5 text-sm text-muted-foreground">{t("appshots.voice_hint")}</p>
     </div>
   );
 }

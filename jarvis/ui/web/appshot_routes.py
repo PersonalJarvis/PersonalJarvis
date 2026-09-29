@@ -81,7 +81,7 @@ def _settings_payload() -> dict[str, Any]:
     status = (
         shortcut.status.to_json()
         if shortcut is not None
-        else {"hotkey": normalize_hotkey(block.hotkey), "armed": False, "detail": "Starting."}
+        else {"hotkey": normalize_hotkey(block.hotkey), "armed": False, "detail": ""}
     )
     return {
         "enabled": bool(config.screen_context.enabled),
