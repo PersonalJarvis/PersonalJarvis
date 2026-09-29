@@ -252,3 +252,25 @@ async def test_update_keeps_the_pin_unless_the_seat_moves(agent):
         "effort": "",
         "account_id": "",
     }
+
+
+async def test_an_artifact_routine_names_the_builder(agent):
+    """ "Every day at 8, my morning briefing as an artifact": the routine's
+    prompt tells the agent to call create_artifact, which is also what opens
+    the artifact gate for that unattended turn."""
+    from jarvis.brain.artifact_gate import wants_artifact
+    from jarvis.society.routines import ARTIFACT_DELIVERY
+
+    spec = build_task_spec(
+        agent,
+        title="Morning brief",
+        prompt="Give me my morning briefing as an artifact.",
+        schedule={"kind": "every", "interval_seconds": 86400},
+    )
+    assert ARTIFACT_DELIVERY in spec.action.prompt
+    assert wants_artifact(spec.action.prompt)
+
+    plain = build_task_spec(
+        agent, title="Brief", prompt="Summarize new mail.", schedule={"kind": "every"}
+    )
+    assert ARTIFACT_DELIVERY not in plain.action.prompt

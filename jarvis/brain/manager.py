@@ -13508,6 +13508,14 @@ class BrainManager:
         """
         del prefer_api
         intent = "deep" if model_tier == "deep" else "fast"
+        # A routine whose prompt asks for its result as an artifact is granted
+        # the builder for that turn — the same explicit-word rule the chat gate
+        # applies, so "every morning at 8, my briefing as an artifact" works
+        # without the person knowing the tool has a grant of its own.
+        from jarvis.brain.artifact_gate import wants_artifact  # noqa: PLC0415
+
+        if wants_artifact(prompt) and _ARTIFACT_TOOL_NAME not in allowed_tools:
+            allowed_tools = (*allowed_tools, _ARTIFACT_TOOL_NAME)
         tools = self._select_task_tools(allowed_tools)
         from jarvis.core.model_selection import operation_model, worker_selection
         from jarvis.core.task_agent import run_selected, subscription_seat

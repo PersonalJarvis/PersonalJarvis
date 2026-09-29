@@ -389,3 +389,14 @@ describe("groupMentions / mentionsInText / mentionToken", () => {
     expect(mentionToken("mail a@b.c", 10)).toBeNull();
   });
 });
+
+it("tags the artifact builder as @artifact and pins its capability", () => {
+  const catalog = buildMentionCatalog(
+    [],
+    [cap({ id: "plugin:create_artifact", label: "Artifact / Artefakt", tool_name: "create_artifact" })],
+  );
+  const item = catalog.find((row) => row.key === "plugin:create_artifact");
+  expect(item?.value).toBe("artifact");
+  expect(filterMentions(catalog, "artefakt").map((row) => row.key)).toContain("plugin:create_artifact");
+  expect(mentionsInText("@artifact morning brief", catalog).pinIds).toEqual(["plugin:create_artifact"]);
+});

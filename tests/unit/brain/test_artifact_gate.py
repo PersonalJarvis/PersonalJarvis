@@ -126,3 +126,20 @@ def test_a_visual_noun_alone_is_not_a_request() -> None:
     assert wants_artifact("die webseite") is False  # i18n-allow: input vocab
     assert wants_artifact("visualisier mir das") is False  # i18n-allow: input vocab
     assert wants_artifact("mach mir ein dashboard") is False  # i18n-allow: input vocab
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Prepare the weekly numbers [tools: plugin:create_artifact]",
+        "Routine: what is new today?\n\nDeliver it as an artifact: call create_artifact once.",
+    ],
+)
+def test_a_pin_by_tool_name_is_an_explicit_ask(text: str) -> None:
+    """An agent chat's @mention and an artifact routine name the tool itself —
+    a person's explicit choice, so it opens the gate even past a question."""
+    assert wants_artifact(text) is True
+
+
+def test_a_similar_tool_name_is_no_pin() -> None:
+    assert wants_artifact("call my_create_artifact_helper") is False

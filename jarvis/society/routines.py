@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from typing import Any, Final
 from uuid import UUID
 
+from jarvis.brain.artifact_gate import wants_artifact
 from jarvis.tasks.schema import (
     AgentAction,
     PluginGrant,
@@ -35,7 +36,17 @@ from jarvis.tasks.schema import (
 
 from .roster import AgentRecord
 
+#: Appended to a routine whose prompt asks for an artifact. The build runs in
+#: the background; the routine's own reply only says it was started.
+ARTIFACT_DELIVERY: Final[str] = (
+    "Deliver the result as an artifact: gather what the routine needs first, then "
+    "call create_artifact exactly once with a short title and a self-contained "
+    "request carrying every fact, number and item the page must show. Your reply "
+    "then says in one sentence that the page is being built."
+)
+
 __all__ = [
+    "ARTIFACT_DELIVERY",
     "ROUTINE_TAG",
     "agent_tag",
     "build_task_spec",
@@ -120,6 +131,11 @@ def _routine_prompt(agent: AgentRecord, prompt: str) -> str:
     if agent.focus:
         lines += ["", "Reach for these capabilities first: " + ", ".join(agent.focus)]
     lines += ["", "Routine:", prompt.strip()]
+    if wants_artifact(prompt):
+        # The person asked for the result as an artifact. Naming the tool pins
+        # it through the artifact gate (rule 0) even when the standing
+        # instructions above read like a question.
+        lines += ["", ARTIFACT_DELIVERY]
     return "\n".join(lines)
 
 
