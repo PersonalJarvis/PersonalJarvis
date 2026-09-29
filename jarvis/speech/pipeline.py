@@ -399,6 +399,7 @@ _HELD_FOR_CALL_SOURCES: frozenset[str] = frozenset(
         "workflows.runner",
         "workflows.scheduler",
         "desktop_app.conductor",
+        "skills.cron",
     }
 )
 
@@ -4764,8 +4765,9 @@ class SpeechPipeline:
 
         The brain receives a synthetic scheduled-run turn with the skill
         noted (``note_skill_trigger`` → instruction injection + SkillInvoked
-        source="cron"); the reply is announced via ``AnnouncementRequested``
-        (scrubbed TTS path). Falls back to the legacy macro runner when the
+        source="cron"); the reply is queued as a held ``AnnouncementRequested``
+        and spoken at the next call, and a total provider failure stays
+        silent. Falls back to the legacy macro runner when the
         wired brain cannot take the handoff (echo/mock brains).
         """
         from jarvis.skills.schema import SkillLifecycleState
@@ -4821,14 +4823,29 @@ class SpeechPipeline:
             _prompts.get(lang, _prompts["en"]).format(name=skill.name)
         )
         text = (reply or "").strip()
+        if self._brain_turn_failed():
+            # Nobody called Jarvis for this turn: a provider-chain failure on a
+            # scheduled run is not news worth speaking into an idle room (live
+            # 2026-09-29 08:00: the daily triage skill failed on every provider
+            # and Jarvis announced "my stored API key is being rejected" out of
+            # nowhere). The API-keys view shows the broken key; the log keeps
+            # the chain diagnostic.
+            log.warning(
+                "Cron skill '%s' failed on every provider; staying silent", skill.name
+            )
+            return
         if text and self._bus is not None:
             try:
+                # Held for the next call like every other background result
+                # (_HELD_FOR_CALL_SOURCES): a scheduled run never speaks
+                # into a room where nobody called Jarvis.
                 await self._bus.publish(
                     AnnouncementRequested(
-                        source_layer="speech.pipeline",
+                        source_layer="skills.cron",
                         text=text,
                         language=lang,
                         priority="normal",
+                        kind=SPOKEN_KIND_COMPLETION,
                     )
                 )
             except Exception as exc:  # noqa: BLE001
