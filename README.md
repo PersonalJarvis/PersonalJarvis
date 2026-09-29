@@ -1,54 +1,38 @@
+# Personal Jarvis
+
+<p align="center">
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/icons/jarvis-gigi-256.png" alt="Personal Jarvis" width="100" />
+</p>
+
+<p align="center">
+  <a href="https://personaljarvis.ai">personaljarvis.ai</a> · <a href="#install">install</a> · <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/first-run-setup.md">quick start</a> · <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/welcome-to-personal-jarvis.md">docs</a> · <a href="https://discord.gg/x7USduHxbc">discord</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-666666?labelColor=333333" alt="Apache 2.0 license" /></a>
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/releases/latest"><img src="https://img.shields.io/github/v/release/PersonalJarvis/PersonalJarvis?label=release&labelColor=333333&color=666666" alt="latest release" /></a>
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/stargazers"><img src="https://img.shields.io/github/stars/PersonalJarvis/PersonalJarvis?labelColor=333333&color=666666&logo=github" alt="GitHub stars" /></a>
+  <a href="https://x.com/PersonalJarvis"><img src="https://img.shields.io/badge/follow-%40PersonalJarvis-000000?logo=x&logoColor=white" alt="follow @PersonalJarvis on X" /></a>
+</p>
+
+---
+
 https://github.com/user-attachments/assets/bd2d5f3c-c601-475e-a37e-f532ea6ef6ea
 
-<p align="center"><sub>A real, unedited click-through of the app, sped up only where agents are thinking.</sub></p>
+**Your computer becomes an AI agent.** One desktop app you talk to. It answers, uses your computer, and runs your coding agents and a team of AI helpers for you.
 
-<h3 align="center">Your personal AI ecosystem. One desktop, connected by voice.</h3>
+- **talk instead of type**: say your own wake phrase and have a real conversation, or dictate into any app. [voice →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/voice-conversations.md)
+- **every coding agent in one window**: Claude Code, Codex, Gemini CLI, OpenCode and more, side by side, each in its own pane and optional git worktree. Ask Jarvis what T2 is doing. [agentic IDE →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/agentic-ide.md)
+- **a team that keeps working**: persistent agents with their own instructions, routines and memory, in an office you can walk through. [agents →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/jarvis-agents.md)
+- **hands on your computer**: it uses the browser and your apps, and asks before anything risky. [safety →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/safety-and-approvals.md)
+- **any model, or no cloud at all**: one key from any supported provider, or local models through Ollama. [providers →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/providers-and-api-keys.md)
+- **plugs into your tools**: plugins, skills, MCP, and a local Markdown wiki as memory. [plugins →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/plugins.md)
+- **runs beyond your laptop**: put agents on a VPS or a local VM over SSH, or run the whole app on a server. [headless →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md)
+- **yours, no catch**: free under Apache 2.0, no account with us, no analytics. Keys stay in your system keychain. [privacy →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/privacy-and-local-data.md)
 
-<p align="center">
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/PersonalJarvis/PersonalJarvis?style=flat-square&amp;labelColor=0A0A0A&amp;color=E8B931&amp;label=release" /></a>
-  <a href="https://pypi.org/project/personal-jarvis/"><img alt="PyPI" src="https://img.shields.io/pypi/v/personal-jarvis?style=flat-square&amp;labelColor=0A0A0A&amp;color=F7F7F4&amp;label=pypi" /></a>
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE"><img alt="Apache 2.0" src="https://img.shields.io/badge/license-Apache_2.0-F7F7F4?style=flat-square&amp;labelColor=0A0A0A" /></a>
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/os-parity.md"><img alt="Windows, macOS, Linux" src="https://img.shields.io/badge/runs_on-Windows_·_macOS_·_Linux-F7F7F4?style=flat-square&amp;labelColor=0A0A0A" /></a>
-  <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/discord-join-5865F2?style=flat-square&amp;logo=discord&amp;logoColor=white&amp;labelColor=0A0A0A" /></a>
-</p>
+---
 
-<p align="center">
-  <a href="https://personaljarvis.ai">Website</a> ·
-  <a href="#install">Install</a> ·
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#documentation">Docs</a> ·
-  <a href="https://discord.gg/x7USduHxbc">Discord</a> ·
-  <a href="https://www.youtube.com/@PersonalJarvis">YouTube</a> ·
-  <a href="https://x.com/PersonalJarvis">X</a>
-</p>
-
-**Personal Jarvis is an open-source AI agent that lives on your desktop.** Talk to
-it or type. It answers, runs your coding agents side by side, uses the browser
-and your apps, remembers what matters, and hands longer work to agents that keep
-going while you do something else. One app for Windows, macOS, and Linux.
-
-**Yours, with no catch.** Free under Apache 2.0, with no paid tier, no account
-with us, and no analytics SDK in the code. Keys live in your operating system's
-credential store. The wake word is detected on your machine. Your prompts go only
-to the model providers you connect, and with [local models](#local-models) they
-never leave your computer. Every tool call passes a risk policy, and you approve
-anything that could change your system.
-
-<table>
-<tr><td><b>Talk instead of type</b></td><td><a href="#jarvis-your-voice-orchestrator">Voice chat</a> with your own wake phrase, interruptions, and live answers. <a href="#jarvis-voice-dictation">Dictation</a> types what you say into any app.</td></tr>
-<tr><td><b>A coding command center</b></td><td>The <a href="#coding-workspace">Agentic IDE</a> runs Claude Code, Codex, Gemini CLI, OpenCode and more side by side, each in its own terminal pane, optionally in its own git worktree. Ask Jarvis what T2 is doing.</td></tr>
-<tr><td><b>Agents that keep working</b></td><td><a href="#jarvis-agents">Jarvis Agents</a> are persistent specialists with their own instructions, routines, memory, and review.</td></tr>
-<tr><td><b>Hands on your computer</b></td><td><a href="#computer-use-and-connected-channels">Computer use</a> in the browser and on the desktop, with approvals before anything risky.</td></tr>
-<tr><td><b>Any model, or none in the cloud</b></td><td>Bring one key from any supported provider, or run <a href="#local-models">local models</a> through Ollama with local speech recognition.</td></tr>
-<tr><td><b>Connected to your tools</b></td><td><a href="#plugins-skills-and-mcp">Plugins, skills, and MCP</a>, a <a href="#memory-and-knowledge">local Markdown wiki</a> as memory, <a href="#scheduled-work-and-workflows">routines</a> on a schedule, and <a href="#artifacts-and-run-history">artifacts</a> you can open and keep.</td></tr>
-<tr><td><b>Runs beyond your laptop</b></td><td>Connect a VPS or a local VM once under <b>Settings › Computers</b>, then choose which computer each IDE pane or Jarvis agent runs on. Or run the whole app <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md">headless on a server</a>.</td></tr>
-</table>
-
-<p align="center">
-  If Personal Jarvis is useful to you, a star helps other people find it.
-</p>
-
-## Install
+## install
 
 **Windows (PowerShell)**
 
@@ -62,367 +46,21 @@ irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install
 curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
 ```
 
-The installer checks for Python 3.11+ and Git, offers to install what is missing,
-installs the desktop app, and opens it. Running it again updates in place.
-[Requirements, manual install, headless servers, and uninstall](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/install/README.md).
+The installer sets everything up and opens the app. Pick a wake phrase, add one provider key, and say hello. Run it again to update. [install options →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/install/README.md)
 
-## Quick start
+## docs
 
-1. **Finish the one-time setup in the app.** Pick your language, a wake phrase
-   or shortcut, and grant microphone and desktop permissions.
-2. **Connect one model.** Open **API Keys & Providers** and add any supported
-   provider key, or set up a local model under **Local models**.
-3. **Say your wake phrase or open New chat.** Try *"Help me plan a small project.
-   Ask me what you need to know."*
+[quick start](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/first-run-setup.md) · [voice](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/voice-conversations.md) · [dictation](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/dictation.md) · [agentic IDE](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/agentic-ide.md) · [agents](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/jarvis-agents.md) · [providers](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/providers-and-api-keys.md) · [local models](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/local-ai-providers.md) · [plugins](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/plugins.md) · [MCP](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/mcp-connections.md) · [CLI](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/jarvis-cli.md) · [server](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md) · [architecture](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/architecture-overview.md) · [troubleshooting](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/troubleshooting.md)
 
-From a terminal, the `jarvis` CLI reaches the same app:
+## contribute
 
-```bash
-jarvis                    # open the desktop app
-jarvis serve              # headless API and browser UI on a server
-jarvis system status      # is Jarvis up?
-jarvis missions list      # what your agents are working on
-jarvis local-models roles # which local model does which job
-jarvis --help             # everything else
-```
+Start with a [good first issue](https://github.com/PersonalJarvis/PersonalJarvis/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) and [your first contribution in 10 minutes](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md#your-first-contribution-in-10-minutes). Questions and ideas go to [discussions](https://github.com/PersonalJarvis/PersonalJarvis/discussions), security reports to [SECURITY.md](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SECURITY.md).
 
-[First-run setup](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/first-run-setup.md) ·
-[First voice conversation](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/start-your-first-voice-conversation.md) ·
-[Desktop tour](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/desktop-app-tour.md) ·
-[CLI guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/jarvis-cli.md)
+If you are an AI agent helping with this repository, read [`AGENTS.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/AGENTS.md) first.
 
-## Tour
+## thanks
 
-A closer look at each part of the app. The demo clips are recreations of the
-interface with example conversations, not live recordings.
-
-### Jarvis: your voice orchestrator
-
-Start a **Voice Chat**, tap the voice bar, or use your configured wake phrase.
-Your speech and Jarvis's replies appear in the conversation. Start a normal
-**Chat** when you prefer a keyboard.
-
-Jarvis brings the workspace into reach: ask an agent to research a topic, work
-with a coding session, find something in memory, or use a connected tool.
-Available actions depend on your providers, installed tools, and permissions.
-Computer use needs a desktop and the required OS permissions.
-
-Choose your voice and model access in the app. The voice path can use realtime
-audio or a speech-recognition, model, and speech-output pipeline. Your selected
-provider determines the available capabilities; execution and approvals remain
-under Jarvis's control.
-
-<br />
-
-<p align="center">
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.mp4">
-    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.gif" alt="Illustrative desktop conversation: the app window and sidebar stay visible as Hey George activates listening, followed by a project-planning exchange" width="1000" />
-  </a>
-</p>
-
-<p align="center">
-  <sub>“Hey George” → listening → conversation. Click for the 60 fps video.</sub>
-</p>
-
-Click a GIF for its sharper 60 fps video, or see the
-[still previews and reproducible source](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/scripts/readme-video/README.md).
-
-[Voice conversations](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/voice-conversations.md) ·
-[Wake phrase and audio](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/audio-and-wake-word.md) ·
-[Models and providers](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/providers-and-api-keys.md)
-
-<br />
-
-### Jarvis Agents
-
-Build a team you can return to. Each agent has an identity, a direct conversation,
-standing instructions, and access to the tools you grant it. Pick a connected
-model or supported agent account for the work, and keep the conversations in
-one workspace.
-
-<br />
-
-<p align="center">
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-agents-v4.mp4">
-    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/jarvis-agents-v4.gif" alt="Agents workspace recreation: send a brief, watch the live thinking trace, then read the streaming reply and completed plan" width="1000" />
-  </a>
-</p>
-
-<p align="center">
-  <sub>An illustrative agent conversation, from brief to draft. The GIF plays once and holds the reply; click to replay the video.</sub>
-</p>
-
-<br />
-
-- **Talk directly to a specialist.** Select an agent from the roster and continue its chat.
-- **Give it a standing brief.** Configure its instructions, model access, and tools.
-- **Set up recurring work.** Per-agent routines expose instructions, scheduling, and execution history.
-- **Inspect its work.** Read messages and tool activity, and open produced files in Artifacts.
-- **Explore the world view.** The workspace also has a visual map of the team.
-
-Persistent agents and isolated coding missions have different lifecycles.
-Coding missions can use worktree isolation and critic review; an ordinary
-agent chat is not a new isolated worktree on every message.
-
-[Agent guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/jarvis-agents.md) ·
-[Agent learning](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/agent-society/self-learning.md) · [Routines](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/routines.md)
-
-### Jarvis Voice Dictation
-
-**Speak into the app you already use.** Hold your dictation shortcut or toggle
-hands-free recording, then insert the transcript into the focused text field.
-Dictation is speech-to-text; Voice Chat is a conversation with Jarvis.
-
-The **Jarvis Voice** section brings together dictation history, your dictionary,
-shortcuts, language settings, and speech-provider setup. Optional cleanup improves
-the transcript, translation writes into a selected language, and Prompt Mode can
-turn a dictation into a structured prompt. Review and recover entries in history
-when you need to revisit a transcript.
-
-Choose local speech recognition to process audio on your machine. Provider-backed
-cleanup or translation can still send text to the configured provider.
-
-[Dictation guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/dictation.md) ·
-[Speech dictionary](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/speech-dictionary.md) ·
-[Languages and voices](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/languages-and-voices.md)
-
-### Local models
-
-Use local models, hosted providers, or a mixture. **Local models** helps you
-discover the local server, see available models, configure their roles, and
-check readiness. Text generation, tools, and image input have different model
-requirements.
-
-| Part | Local option |
-|---|---|
-| Model and tools | Ollama or a compatible local OpenAI-style endpoint. Tool support depends on the model. |
-| Speech recognition | On-device Whisper or Nemotron, with the corresponding engine and model installed. |
-| Speech output | On-device Piper voices. |
-| Realtime conversation | A compatible self-hosted realtime server; experimental, with its own hardware requirements. |
-
-Downloads, hardware needs, languages, and capabilities vary by model.
-External APIs, hosted coding accounts, connected services, and telephony still
-send the relevant work to those services.
-
-[Local AI setup](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/local-ai-providers.md) ·
-[Provider setup](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/providers-and-api-keys.md)
-
-### Coding workspace
-
-Bring supported coding CLIs into **Agentic IDE** with a project folder and live
-terminal panes. Work with tools such as Claude Code or Codex using the access
-supported by that tool, and keep their sessions visible alongside the rest of
-Jarvis. Terminal and chat views provide different ways to follow the work.
-
-Panes have call signs so you can address a particular session through Jarvis:
-*"Tell T1 to run the tests"* or *"What is T2 working on?"* Return to the workspace
-to inspect output, respond to a prompt, or take over manually. A terminal becoming
-idle is not proof that its result is correct; inspect its changes and validation.
-
-Ordinary command-line connections are managed separately from interactive coding
-panes. **CLIs & CLI Test Hub** helps discover, configure, and test those tools
-before you ask Jarvis to use them.
-
-[Agentic IDE](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/agentic-ide.md) ·
-[CLI connections](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/cli-connections.md)
-
-### Plugins, skills, and MCP
-
-Connect the workspace to the tools you already use, and extend how Jarvis works
-without replacing the assistant. The **Plugins / Skills / MCP** hub separates
-three complementary kinds of extension:
-
-| Extension | What it adds | Learn more |
-|---|---|---|
-| **Plugins** | Connections to supported services and their tools, with their own setup and connection state. | [Plugin guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/plugins.md) |
-| **Skills** | Reusable instructions for a task or workflow, with explicit activation and configuration. | [Skill guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/skills.md) |
-| **MCP servers** | Tools supplied by local or remote Model Context Protocol servers, according to granted access. | [MCP connections](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/mcp-connections.md) |
-
-Connect the services you need and inspect their status in the app. A tool being
-listed does not establish that its account is connected or that a particular
-action will succeed. Authentication requirements and permissions vary by
-integration. For a self-hosted example, see
-[connecting Home Assistant](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/connect-home-assistant.md).
-
-### Memory and knowledge
-
-Keep reusable knowledge in the **Knowledge Wiki**, a local Markdown vault with
-pages, links, and a visual memory map. It gives facts and notes a place beyond a
-single conversation, and lets you browse the material that later work can use.
-You can also connect the vault to Obsidian.
-
-Profile information, contacts, and standing instructions add different kinds of
-context. Use them to describe preferences and people, and shape the assistant's
-behavior. They are editable parts of your workspace, so you do not need to repeat
-the same background in every prompt.
-
-[Wiki and memory](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/knowledge-and-sharing/wiki-and-memory.md) ·
-[Obsidian](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/knowledge-and-sharing/connect-obsidian.md) ·
-[Profile and contacts](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/profile-and-contacts.md) ·
-[Instructions and persona](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/instructions-and-persona.md)
-
-### Scheduled work and workflows
-
-Recurring work belongs in a schedule. Use agent routines for a specialist's
-recurring brief and the scheduling views to manage tasks and inspect their run
-history. Instructions, timing, and previous executions stay visible so you can
-change the work as your needs change.
-
-Workflows and app commands provide additional ways to trigger supported actions.
-Scheduling depends on the relevant Jarvis runtime being available and the required
-providers and connections being ready; saving a schedule is not a completed run.
-
-[Routines](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/routines.md) ·
-[Tasks and reminders](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/tasks-and-reminders.md) ·
-[Workflows and commands](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/workflows-and-commands.md)
-
-### Computer use and connected channels
-
-Jarvis can interact with desktop applications through the configured computer-use
-path. Screen context supplies visual information; computer use goes further and
-can act through the mouse and keyboard. Desktop access and the required OS
-permissions are necessary, and actions pass through the configured safety policy.
-
-Optional messaging channels and Twilio calling extend the ways requests and
-conversations reach the system. These need their own supported accounts and setup.
-Calling is a hosted-service capability, not an offline feature; the
-[phone-call guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/phone-calls.md) covers
-numbers, credentials, and webhooks.
-
-[Computer use](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/computer-use.md) ·
-[Screen context](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/screen-context.md) ·
-[Permissions](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/permissions.md)
-
-### Artifacts and run history
-
-A conversation can produce something you keep. **Artifacts** brings generated
-reports, documents, pages, images, and other files together for preview and
-download. Follow the output back to the work that produced it, then open or reuse
-it outside Jarvis.
-
-Session history and **Run Inspector** help explain what happened: recorded turns,
-tool activity, timing, and errors. **Spend** shows recorded provider usage and
-available cost information, including supported coding-session usage. Coverage
-depends on what each provider and execution path reports.
-
-[Outputs and files](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/outputs-and-files.md) ·
-[Sessions and Run Inspector](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/sessions-and-run-inspector.md)
-
-### How it works
-
-The desktop is a **React/TypeScript interface inside a pywebview window**, backed
-by a **Python/FastAPI application**. REST endpoints handle application operations;
-WebSockets deliver live state and activity. Headless mode exposes the API and
-browser interface without the native desktop shell.
-
-<p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/how-personal-jarvis-works-v2.png" alt="Desktop, browser, voice, CLI, and channels feed the Jarvis core. It routes requests to model responses, protected tools, or delegated work, which feed live events, history, memory, and artifacts." width="1000" />
-</p>
-
-The execution path follows the request and available capabilities. A simple
-answer can stay in the conversation; a service action needs an available tool;
-longer work can run through an agent or mission lifecycle. Persistent agent chats
-and worktree-isolated missions remain distinct.
-
-| Boundary | Technical role |
-|---|---|
-| **Protocols** | Shared contracts in `jarvis/core/protocols.py` separate orchestration from provider and platform implementations. |
-| **Event bus** | Typed, immutable events carry trace IDs so components exchange activity without direct coupling. |
-| **Streaming providers** | Brain, speech, and harness interfaces stream output; realtime sessions handle live audio through their selected provider. |
-| **Tool executor** | A central execution path applies the risk policy and approval requirements before an action runs. |
-| **Mission lifecycle** | Coding missions can use isolated Git worktrees, progress events, critic review, cancellation, and retained output. |
-| **Extension points** | Provider plugins use Python entry points; MCP servers and connected services contribute tools through their adapters. |
-| **Persistence** | Conversations and run records use dedicated stores, the Knowledge Wiki uses local Markdown, and credentials use the secret-storage layer. |
-
-For the current live-voice path, see [GPT-Live](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/gpt-live.md). For deeper
-engineering detail, read the [architecture overview](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/architecture-overview.md),
-[architecture decisions](https://github.com/PersonalJarvis/PersonalJarvis/tree/main/docs/adr/), and [OS parity](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/os-parity.md).
-
-## Security and privacy
-
-Configure providers and credentials in the app. Keys use the operating system's
-credential store when available, with supported environment/file fallback for
-other setups. Keep secrets out of chat, `jarvis.toml`, and version control.
-The [configuration example](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/jarvis.toml.example) documents advanced settings.
-
-Wake-word listening runs locally. Your speech and model providers determine
-where subsequent audio, text, and tool context are processed. The Knowledge
-Wiki stays in local files; integrations receive the information needed for the
-actions you ask them to perform.
-
-Tool execution uses a risk policy with **safe, monitor, ask, and block** tiers.
-Permissions, approvals, and run history let you inspect and control actions.
-
-For scripts and other agents, the CLI reaches the same application API:
-
-```bash
-jarvis system status
-jarvis --json brain status
-jarvis api <tag> <op>
-```
-
-[CLI guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/jarvis-cli.md) ·
-[Control API](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/reference/control-api-reference.md) ·
-[Safety and approvals](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/safety-and-approvals.md) ·
-[Privacy](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/privacy-and-local-data.md) ·
-[Security policy](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SECURITY.md)
-
-## Documentation
-
-Open **Docs** in the app for searchable product guides, or follow the topics here.
-
-| Guide | Contents |
-|---|---|
-| [Getting started](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/welcome-to-personal-jarvis.md) | Installation, first conversation, and desktop tour. |
-| [Dictation](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/dictation.md) | Shortcuts, history, cleanup, and speech input. |
-| [Plugins](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/plugins.md) | Connect services and inspect their status. |
-| [Skills](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/skills.md) | Reusable instructions and workflows. |
-| [MCP](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/mcp-connections.md) | Local and remote tool servers. |
-| [Local AI](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/local-ai-providers.md) | Model setup and capability checks. |
-| [Troubleshooting](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/troubleshooting.md) | Setup, connection, and device problems. |
-| [Architecture](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/architecture-overview.md) | Components, data flow, and provider boundaries. |
-| [GPT-Live](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/gpt-live.md) | The native live-voice path and tool execution. |
-| [Agent learning](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/agent-society/self-learning.md) | Private, evidence-backed learning for persistent agents. |
-| [Routines](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/routines.md) | Scheduling and recurring work. |
-| [OS parity](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/os-parity.md) | Platform coverage and limitations. |
-| [Contributor guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md) | Development setup and pull requests. |
-| [Architecture decisions](https://github.com/PersonalJarvis/PersonalJarvis/tree/main/docs/adr/) | Design decisions and their context. |
-| [README media source](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/scripts/readme-video/README.md) | Provenance, example data, still previews, and rendering commands. |
-
-## Build with us
-
-Contributions are useful across desktop accessibility, platform support,
-voice reliability, provider integrations, tests, and documentation. The
-[contributor guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md)
-maps those areas to code, a development setup, and review expectations. A small,
-reproducible improvement is a good place to begin; you do not need to understand
-the entire application first.
-
-Use [issues](https://github.com/PersonalJarvis/PersonalJarvis/issues) for bugs
-and scoped work, and [Discussions](https://github.com/PersonalJarvis/PersonalJarvis/discussions)
-to agree on a larger design or offer sustained help in a subsystem. AI-assisted
-contributions are welcome when the author can explain and verify the result.
-Repository contributions are written in English. Report vulnerabilities
-privately through the [security policy](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SECURITY.md).
-
-**Start here:** pick an issue labelled
-[good first issue](https://github.com/PersonalJarvis/PersonalJarvis/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22),
-follow [your first contribution in 10 minutes](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md#your-first-contribution-in-10-minutes),
-and say hello in the [welcome discussion](https://github.com/PersonalJarvis/PersonalJarvis/discussions/230).
-
-## Community
-
-- **Questions and ideas:** [Discussions](https://github.com/PersonalJarvis/PersonalJarvis/discussions), and say hello in the [welcome thread](https://github.com/PersonalJarvis/PersonalJarvis/discussions/230)
-- **Chat:** [Discord](https://discord.gg/x7USduHxbc)
-- **Bugs and feature requests:** [Issues](https://github.com/PersonalJarvis/PersonalJarvis/issues/new/choose)
-- **Updates:** [X](https://x.com/PersonalJarvis) · [YouTube](https://www.youtube.com/@PersonalJarvis) · [Instagram](https://www.instagram.com/personaljarvis/) · [Website](https://personaljarvis.ai)
-- **Vulnerabilities:** privately through the [security policy](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SECURITY.md)
-- **Sponsoring and everything else:** [contact@personaljarvis.ai](mailto:contact@personaljarvis.ai) · [how sponsoring works](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SPONSORS.md)
-
-Personal Jarvis is built in public. Follow along with the
-[star history](https://www.star-history.com/#PersonalJarvis/PersonalJarvis&type=date&legend=top-left).
-
-## Contributors
+If Personal Jarvis is useful to you, a star helps other people find it. Sponsors are listed in [SPONSORS.md](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SPONSORS.md).
 
 <!-- contributors:start -->
 
@@ -430,11 +68,6 @@ Personal Jarvis is built in public. Follow along with the
 
 <!-- contributors:end -->
 
-Thank you to everyone who contributes. This wall is updated from commit history.
+## license
 
-## License
-
-[Apache 2.0](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE): free to use, modify, and distribute, including commercially.
-See [NOTICE](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/NOTICE), [licensing details](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/licensing.md), and
-[trademark guidance](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/TRADEMARK.md). Releases through version 1.6.0 retain their
-original MIT license.
+[Apache 2.0](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE). Releases through 1.6.0 keep their original MIT license. See [NOTICE](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/NOTICE) and [trademark guidance](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/TRADEMARK.md).
