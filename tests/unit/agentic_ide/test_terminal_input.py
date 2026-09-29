@@ -21,7 +21,7 @@ FG_QUERY = "\x1b]10;?\x1b\\"
 BG_QUERY = "\x1b]11;?\x07"
 
 #: The replies, as a browser's xterm would produce them a round trip later.
-REPORTS = "\x1b]10;rgb:e8e8/e8e8/ecec\x1b\\\x1b]11;rgb:1212/1414/1a1a\x1b\\\x1b[?1;2c"
+REPORTS = "\x1b]10;rgb:f4f4/f4f4/f6f6\x1b\\\x1b]11;rgb:1212/1414/1a1a\x1b\\\x1b[?1;2c"
 
 
 def test_a_startup_query_is_answered_from_the_pty_side() -> None:
@@ -30,7 +30,7 @@ def test_a_startup_query_is_answered_from_the_pty_side() -> None:
     replies = responder.feed(f"{DA_QUERY}{FG_QUERY}{BG_QUERY}")
 
     assert replies == (
-        f"{DEVICE_ATTRIBUTES}\x1b]10;rgb:e8e8/e8e8/ecec\x1b\\\x1b]11;rgb:1212/1414/1a1a\x07"
+        f"{DEVICE_ATTRIBUTES}\x1b]10;rgb:f4f4/f4f4/f6f6\x1b\\\x1b]11;rgb:1212/1414/1a1a\x07"
     )
 
 

@@ -685,7 +685,11 @@ def _bring_window_to_front_by_title(title: str) -> bool:
         import ctypes
         from ctypes import wintypes
 
-        user32 = ctypes.windll.user32
+        # A private WinDLL instance, not ctypes.windll.user32: setting
+        # pointer-sized argtypes on the shared object corrupts every other
+        # caller in the process — including pywebview's own SetWindowPos
+        # calls, which rely on it staying argtypes-free.
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
         user32.FindWindowW.restype = wintypes.HWND
         user32.GetForegroundWindow.restype = wintypes.HWND
         user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
@@ -2863,6 +2867,14 @@ class DesktopApp:
                 # mission/wiki/session/channel init. TTI forensic 2026-07-02:
                 # the window served at 1.2 s but set_app happened at +16 s,
                 # which is the "Getting ready" wall the user actually sees.
+                # BEFORE the UI can reach the API: the grid restores and
+                # attaches panes the moment it can, and each of them must
+                # re-join the agent the PTY host kept running instead of
+                # starting it again in this process (RUB-102). A bare flag —
+                # the registry and the reattach pass come after server.start.
+                from jarvis.agentic_ide import host_mode
+
+                host_mode.enable()
                 bootstrap.set_app(server.app)
                 _db_mark("app_interactive")
                 if _bp:
@@ -2880,6 +2892,11 @@ class DesktopApp:
                 try:
                     await server.start(start_serving=False)
                     _db_mark("server_start")
+                    # Reattach to coding agents that kept running while the app
+                    # was closed, and reopen the workspaces in their layout.
+                    from jarvis.agentic_ide.session import schedule_boot_restore
+
+                    schedule_boot_restore()
                 except Exception as exc:  # noqa: BLE001 — never kill the backend loop
                     from loguru import logger as _slog
 
@@ -4720,7 +4737,14 @@ class DesktopApp:
 
                 hwnd = native_hwnd(window)
                 if hwnd:
-                    install_resize_frame(hwnd)
+                    # pywebview's WinForms form flags its own fullscreen mode;
+                    # only then may the window cover the taskbar.
+                    install_resize_frame(
+                        hwnd,
+                        is_fullscreen=lambda: bool(
+                            getattr(getattr(window, "native", None), "is_fullscreen", False)
+                        ),
+                    )
             except Exception:  # noqa: BLE001
                 from loguru import logger
 
@@ -6230,6 +6254,22 @@ class DesktopApp:
                     # Bounded by the 2 s timeout on purpose: a wedged cleanup
                     # must not hold the whole quit open.
                     pass
+
+            # Keep working when this PC closes (opt-in, Computers section):
+            # running IDE panes move to the chosen computer before we exit.
+            async def _offload_panes() -> None:
+                from jarvis.agentic_ide import offload_on_quit
+                from jarvis.agentic_ide.session import get_registry
+
+                if offload_on_quit.target():
+                    await offload_on_quit.offload_before_quit(get_registry())
+
+            try:
+                asyncio.run_coroutine_threadsafe(_offload_panes(), loop).result(timeout=180.0)
+            except Exception as exc:  # noqa: BLE001 - quitting must go on
+                from loguru import logger as _logger
+
+                _logger.warning("Offload before quit did not finish: {}", exc)
 
             # Cleanly close PTY sessions — otherwise zombies remain
             async def _pty_cleanup() -> None:

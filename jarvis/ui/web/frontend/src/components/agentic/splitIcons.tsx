@@ -52,3 +52,42 @@ export function SplitBelowIcon(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+/** Divided pane; the arrow in the left half points where the new pane opens. */
+export function SplitLeftIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="24"
+      height="24"
+      aria-hidden="true"
+      {...strokeProps}
+      {...props}
+    >
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M14 4v16" />
+      <path d="M11 12H6" />
+      <path d="m8.5 9.5-2.5 2.5 2.5 2.5" />
+    </svg>
+  );
+}
+
+/** Divided pane; the arrow in the upper half points where the new pane opens. */
+export function SplitAboveIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="24"
+      height="24"
+      aria-hidden="true"
+      {...strokeProps}
+      {...props}
+    >
+      <rect x="4" y="3" width="16" height="18" rx="2" />
+      <path d="M4 14h16" />
+      <path d="M12 11V6" />
+      <path d="m9.5 8.5 2.5-2.5 2.5 2.5" />
+    </svg>
+  );
+}
+

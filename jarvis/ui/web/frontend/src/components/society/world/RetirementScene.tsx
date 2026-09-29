@@ -35,6 +35,7 @@ import { buildIsland, groundY } from "./islandLayout";
 import * as R from "./retirement";
 import {
   attachRetirement,
+  registerRetirementStage,
   buryRetired,
   poseAt,
   releaseRetirementPose,
@@ -96,6 +97,10 @@ interface Run {
 
 export function RetirementScene({ paused }: { paused: boolean }) {
   const ceremony = useRetireStore((s) => s.ceremony);
+
+  // Announce the stage while it is mounted: without one a retirement skips
+  // the ceremony and the row leaves the roster at once.
+  useEffect(() => registerRetirementStage(), []);
 
   // Tell the store a stage exists, so its "nobody picked this up" watchdog
   // stands down and the ceremony is actually played.

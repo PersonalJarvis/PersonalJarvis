@@ -333,6 +333,7 @@ class WebServer:
         from .agent_accounts_routes import router as agent_accounts_router
         from .agent_chat_routes import router as agent_chat_router
         from .agent_mcp_routes import router as agent_mcp_router
+        from .agentic_ide_git_routes import router as agentic_ide_git_router
         from .agentic_ide_routes import router as agentic_ide_router
         from .antigravity_routes import router as antigravity_router
         from .board_routes import (
@@ -348,6 +349,7 @@ class WebServer:
         from .clipboard_routes import router as clipboard_router
         from .commands_routes import router as commands_router
         from .computer_use_routes import router as computer_use_router
+        from .computers_routes import router as computers_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
         from .costs_routes import router as costs_router
@@ -525,6 +527,8 @@ class WebServer:
         # doing?") and promptable from Jarvis. Reuses the same PTY stack as the
         # workspace above; adds the folder picker, call-signs, transcripts, and
         # the focused coding mode.
+        # Before the IDE router, so its /{…} paths never shadow /git/….
+        app.include_router(agentic_ide_git_router)
         app.include_router(agentic_ide_router)
         # The pane-activity sweep has no bus of its own (the registry is a plain
         # holder by design); this is the one place that holds one, so the sweep
@@ -539,6 +543,8 @@ class WebServer:
         app.include_router(chat_library_router)
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
+        # Settings -> Computers: the user's own servers and local VMs over SSH.
+        app.include_router(computers_router)
         app.include_router(dictionary_router)
         # Dictation mode — hold to speak, text lands in the focused field.
         # Mounted so every action is also `jarvis api dictation <op>`, which is

@@ -526,11 +526,20 @@ class ActivityWatcher:
             # working, and claims nothing that was not observed.
             settled_at = now - STILL_S - 1.0
             activity = read_activity(term, now=now, still_since=settled_at)
+            # The one exception: an agent that kept working while the app was
+            # closed (the PTY host held it) and was working at the last
+            # checkpoint. Its finish happened with nobody watching, so it is
+            # seeded as a job in progress — the next still sweep reports it
+            # "completed", exactly as if the app had stayed open (RUB-102).
+            detached_work = bool(getattr(term, "worked_while_detached", False))
+            if detached_work:
+                term.worked_while_detached = False
             watch = _PaneWatch(
-                activity=activity,
+                activity="working" if detached_work else activity,
                 since=now,
-                announced=True,
-                tasked=_tasked(term),
+                announced=not detached_work,
+                worked=detached_work,
+                tasked=_tasked(term) or detached_work,
                 resume_needed=bool(getattr(term, "resume_continuation_needed", False)),
                 digest=digest,
                 changed_at=settled_at,
@@ -722,30 +731,21 @@ class ActivityWatcher:
         Entering ``working`` arms the checkpoint immediately. A plain prompt
         must remain stable for the same settle window as completion notices,
         because coding TUIs briefly remove their busy row between tool steps.
-        Questions clear immediately: they need the user's answer, never a blind
-        continuation prompt. A resumed pane that is still offering Continue is
-        preserved while it waits at its prompt.
+        Questions clear immediately: a pane waiting for the user's answer was
+        not interrupted mid-work. The evidence is only ever read — by the bell
+        after an app restart — never acted on by typing into a pane.
         """
         if activity == "working":
-            # `read_activity` reaches this state only after a submission stamped
-            # for the live process. The offer to continue is therefore spent.
-            term.continuation_pending = False
             self._set_resume_needed(term, watch, True)
             return
         if activity in {"asking", "failed"}:
-            term.continuation_pending = False
             self._set_resume_needed(term, watch, False)
             return
         if activity == "exited":
             if getattr(term, "exit_code", None) in (0, None):
-                term.continuation_pending = False
                 self._set_resume_needed(term, watch, False)
             return
-        if (
-            activity == "waiting"
-            and not getattr(term, "continuation_pending", False)
-            and now - watch.since >= SETTLE_S
-        ):
+        if activity == "waiting" and now - watch.since >= SETTLE_S:
             self._set_resume_needed(term, watch, False)
 
     def _set_resume_needed(self, term: Any, watch: _PaneWatch, needed: bool) -> None:

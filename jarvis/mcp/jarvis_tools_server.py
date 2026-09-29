@@ -266,7 +266,6 @@ def build_server() -> Any:
                     trace_id=trace_id,
                     origin=CHAT_ORIGIN,
                     user_utterance=turn.user_text if turn else "",
-                    rationale="agent chat tool call",
                     config_snapshot=approval_snapshot(),
                 )
                 result = await gateway.execute(name, dict(arguments or {}), request)

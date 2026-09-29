@@ -5,6 +5,8 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, Maximize2, Minimize2, RotateCw } from "lucide-react";
 import { useLocaleChunk, useT } from "@/i18n";
+import { societyDisplayName } from "@/lib/societyDisplayName";
+import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { BrandedSelect } from "@/components/ui/select";
 import type { SocietyAgent } from "../data";
@@ -16,6 +18,8 @@ import "./agentCard.css";
 export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
   const t = useT();
   useLocaleChunk("society");
+  const assistantName = useEventStore((s) => s.assistantName);
+  const displayName = societyDisplayName(agent, assistantName);
   const { canvas, state, control, approve } = useBrowserView(agent.agentId);
   const install = useBrowserInstallStatus();
   const [expanded, setExpanded] = useState(false);
@@ -36,7 +40,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
     )}>
       <div className="mb-1 flex items-center justify-between gap-1 text-[10px] text-muted-foreground">
         <div className="min-w-0">
-          <div className="truncate">{agent.name} · {status}</div>
+          <div className="truncate">{displayName} · {status}</div>
         </div>
         <button className={buttonClass} onClick={() => setExpanded((v) => !v)}
           aria-label={t(expanded ? "society.browser_live.collapse" : "society.browser_live.expand")}>
@@ -61,7 +65,7 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
       <div className={cn("relative flex items-center justify-center overflow-hidden rounded-lg bg-muted",
         expanded ? "min-h-0 flex-1" : "aspect-[16/10]")}>
         <canvas ref={canvas} width={1280} height={800} tabIndex={state.manual ? 0 : -1}
-          aria-label={t("society.browser_live.screen").replace("{0}", agent.name)}
+          aria-label={t("society.browser_live.screen").replace("{0}", displayName)}
           className="block max-h-full max-w-full object-contain focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
           style={{ aspectRatio: "16/10", width: "100%", height: "100%", objectFit: "contain" }}
           onClick={(e) => {

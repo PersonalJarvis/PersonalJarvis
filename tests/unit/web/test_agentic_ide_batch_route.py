@@ -6,6 +6,7 @@ second one is why the route publishes an event at all — the workspace view
 fetches its state once when it mounts, so panes it did not create itself are
 invisible to it until something tells it to look again.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -31,9 +32,7 @@ def _request(bus: object | None) -> SimpleNamespace:
 
 
 def _terminal(name: str, agent: str = "claude") -> SimpleNamespace:
-    return SimpleNamespace(
-        name=name, agent=agent, to_dict=lambda: {"name": name, "agent": agent}
-    )
+    return SimpleNamespace(name=name, agent=agent, to_dict=lambda: {"name": name, "agent": agent})
 
 
 class FakeRegistry:
@@ -42,13 +41,22 @@ class FakeRegistry:
     def __init__(self, created: list[object], capped: bool, folder: Path) -> None:
         self._created = created
         self._capped = capped
-        self.calls: list[tuple[int, str | None, str | None]] = []
+        self.calls: list[tuple[int, str | None, str | None, str | None]] = []
         self.session = SimpleNamespace(id="ide_test", folder=str(folder))
+        self.active_id = self.session.id
+
+    def get(self, workspace_id: str | None):
+        return self.session if workspace_id == self.active_id else None
 
     async def add_terminals(
-        self, count: int, *, agent: str | None = None, account: str | None = None
+        self,
+        count: int,
+        *,
+        agent: str | None = None,
+        account: str | None = None,
+        workspace_id: str | None = None,
     ):
-        self.calls.append((count, agent, account))
+        self.calls.append((count, agent, account, workspace_id))
         return self._created, self._capped
 
     def state(self) -> dict:
@@ -73,7 +81,7 @@ async def test_a_batch_opens_the_panes_and_tells_the_clients(
     assert [t["name"] for t in result["terminals"]] == ["Juno", "Milo"]
     # No account named — the registry then opens every pane of the batch on the
     # workspace's active subscription (see Registry.add_terminal).
-    assert registry.calls == [(2, "claude", None)]
+    assert registry.calls == [(2, "claude", None, "ide_test")]
 
     # Exactly one event for the batch, naming every pane — five panes must not
     # make the open view refetch five times.
@@ -90,9 +98,7 @@ async def test_the_cap_is_reported_not_hidden(
     registry = FakeRegistry([_terminal("Zara")], capped=True, folder=tmp_path)
     monkeypatch.setattr(routes, "get_registry", lambda: registry)
 
-    result = await routes.add_terminals(
-        _request(FakeBus()), routes.AddTerminalsRequest(count=5)
-    )
+    result = await routes.add_terminals(_request(FakeBus()), routes.AddTerminalsRequest(count=5))
 
     assert result["capped"] is True
     assert result["requested"] == 5
@@ -106,11 +112,17 @@ async def test_a_refusal_becomes_a_conflict_with_the_reason(
 
     class Refusing:
         session = None
+        active_id = None
 
         async def add_terminals(
-            self, count: int, *, agent: str | None = None, account: str | None = None
+            self,
+            count: int,
+            *,
+            agent: str | None = None,
+            account: str | None = None,
+            workspace_id: str | None = None,
         ):
-            raise SessionError("This workspace already has the maximum of 12 terminals.")
+            raise SessionError("This workspace already has the maximum of 8 terminals.")
 
         def state(self) -> dict:
             return {}
@@ -118,9 +130,7 @@ async def test_a_refusal_becomes_a_conflict_with_the_reason(
     monkeypatch.setattr(routes, "get_registry", lambda: Refusing())
 
     with pytest.raises(routes.HTTPException) as caught:
-        await routes.add_terminals(
-            _request(None), routes.AddTerminalsRequest(count=3)
-        )
+        await routes.add_terminals(_request(None), routes.AddTerminalsRequest(count=3))
     assert caught.value.status_code == 409
     assert "maximum" in caught.value.detail
 
@@ -132,9 +142,7 @@ async def test_no_bus_still_opens_the_panes(
     registry = FakeRegistry([_terminal("Juno")], capped=False, folder=tmp_path)
     monkeypatch.setattr(routes, "get_registry", lambda: registry)
 
-    result = await routes.add_terminals(
-        _request(None), routes.AddTerminalsRequest(count=1)
-    )
+    result = await routes.add_terminals(_request(None), routes.AddTerminalsRequest(count=1))
     assert result["ok"] is True
     assert len(result["terminals"]) == 1
 

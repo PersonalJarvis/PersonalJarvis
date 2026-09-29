@@ -67,7 +67,6 @@ import {
   hasLayoutViolations,
   type MeasuredPane,
 } from "./paneLayoutGuard";
-import { ContinueInterrupted } from "./ContinueInterrupted";
 import { PaneNotifications } from "./PaneNotifications";
 import { isVoiceActive } from "./useVoiceCall";
 // One strip of chips, one drop handler and one paste handler for every
@@ -2267,18 +2266,8 @@ export function AgenticGrid({
           onFontSize={setFontSize}
         />
 
-        {/* Which terminals stopped while you were looking at another one.
-            Before "Continue" rather than after it, because the two answer the
-            same question at different scales — this one is "what happened",
-            that one is "what should start again" — and reading them in that
-            order is how somebody decides they need the second at all. */}
+        {/* Which terminals stopped while you were looking at another one. */}
         <PaneNotifications onJump={jumpToNotification} onScreen={onScreen} />
-
-        {/* Work a restart stopped: which panes came back holding a conversation
-            and were never told to carry on, and the one click that tells them.
-            The pane headers catch up on their own — a continued agent starts
-            printing, and the recap poll above is already watching for that. */}
-        <ContinueInterrupted busy={busy || working} onScreen={onScreen} />
 
         {/* Which subscription the next terminal spends, and the way to change
             it without leaving the workspace. */}

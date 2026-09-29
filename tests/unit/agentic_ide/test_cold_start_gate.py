@@ -88,12 +88,12 @@ async def test_a_full_workspace_starts_in_waves(
     pool.hold_s = 0.05
     registry = ide.Registry(pty_manager=pool)
     session = await registry.start(
-        str(tmp_path), [{"agent": "claude"} for _ in range(12)]
+        str(tmp_path), [{"agent": "claude"} for _ in range(ide.MAX_TERMINALS)]
     )
 
     await _attach_all(registry, session)
 
-    assert len(pool.spawns) == 12, "every pane still gets its agent"
+    assert len(pool.spawns) == ide.MAX_TERMINALS, "every pane still gets its agent"
     assert pool.peak <= 3, f"{pool.peak} agents were starting at once"
 
 
@@ -115,9 +115,7 @@ async def test_codex_shared_store_starts_are_serial_until_the_input_line(
     )
     monkeypatch.setattr(ide, "has_conversation", lambda *_args, **_kwargs: True)
     for index, term in enumerate(session.terminals):
-        term.resume = ide.ResumeHandle(
-            kind="codex_rollout", id=f"resume-{index}", captured_at=0.0
-        )
+        term.resume = ide.ResumeHandle(kind="codex_rollout", id=f"resume-{index}", captured_at=0.0)
 
     mounting = asyncio.create_task(_attach_all(registry, session))
     for _ in range(50):
@@ -156,9 +154,7 @@ async def test_rejoining_a_running_agent_never_waits_for_a_starting_one(
     monkeypatch.setattr(ide, "COLD_START_SETTLE_S", 0.0)
     monkeypatch.setattr(ide, "COLD_START_HOLD_MAX_S", 0.0)
     registry = ide.Registry(pty_manager=pool)
-    session = await registry.start(
-        str(tmp_path), [{"agent": "claude"}, {"agent": "claude"}]
-    )
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}, {"agent": "claude"}])
     first, second = session.terminals
 
     async def sink(_text: str) -> None:
@@ -194,9 +190,7 @@ async def test_a_failed_start_hands_its_slot_back_at_once(
     monkeypatch.setattr(ide, "COLD_START_SETTLE_S", 30.0)
     pool.spawn_error = "no pseudo-terminal on this host"
     registry = ide.Registry(pty_manager=pool)
-    session = await registry.start(
-        str(tmp_path), [{"agent": "claude"}, {"agent": "claude"}]
-    )
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}, {"agent": "claude"}])
 
     async def sink(_text: str) -> None:
         return None

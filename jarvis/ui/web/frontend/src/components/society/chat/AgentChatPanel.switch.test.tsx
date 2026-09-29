@@ -33,7 +33,7 @@ vi.mock("../data", async (original) => ({
 vi.mock("@/components/agentchat/useComposerDictation", () => ({
   useComposerDictation: () => ({ dictating: false, stop() {}, toggle() {} }),
 }));
-vi.mock("@/components/agentchat/DictationStatus", () => ({ DictationStatus: () => null }));
+vi.mock("@/components/agentchat/DictationButton", () => ({ DictationButton: () => null }));
 vi.mock("@/components/agentchat/useChatAttachments", () => ({
   useChatAttachments: () => ({
     attachments: [],

@@ -146,6 +146,7 @@
     "wiki": "Wiki",
     "apikeys": "Claves API",
     "local_models": "Modelos locales",
+    "computers": "Ordenadores",
     "settings": "Ajustes",
     "dictionary": "Diccionario",
     "dictation": "Dictado",
@@ -4396,27 +4397,6 @@
       "more_controls": "Más controles del espacio de trabajo",
       "close_controls": "Cerrar controles del espacio de trabajo"
     },
-    "continue": {
-      "button": "Continuar",
-      "hint": "Comprueba qué sesiones de programación se interrumpieron y pídeles que sigan.",
-      "title": "Sesiones de programación interrumpidas",
-      "description": "Estos paneles volvieron con su conversación pero nunca supieron qué hacer a continuación: reiniciar la aplicación detiene a un agente a mitad de tarea, y una CLI reanudada espera en su línea de entrada.",
-      "none": "No se interrumpió nada: todos los paneles han recibido una instrucción desde que arrancaron.",
-      "one": "Continuar",
-      "all": "Continuar todos ({0})",
-      "close": "Cerrar",
-      "last_task": "Última petición: {0}",
-      "no_task": "Su última instrucción se escribió directamente en el panel, así que aquí no hay copia.",
-      "summary_one": "Se pedirá a 1 panel que continúe.",
-      "summary_many": "Se pedirá a {0} paneles que continúen.",
-      "summary_blocked": "{0} no se pueden continuar hasta que sus agentes vuelvan a ejecutarse.",
-      "result_continued": "{0} panel(es) continúan: {1}.",
-      "result_unconfirmed": "Revisa estos paneles tú mismo: la instrucción se escribió pero no se vio enviarse: {0}.",
-      "result_failed": "No se pudieron continuar: {0}.",
-      "sending": "Enviando …",
-      "starting": "Su agente todavía está arrancando: continuará en cuanto esté listo.",
-      "result_queued": "{0} aún arrancan; seguirán en cuanto estén listos: {1}."
-    },
     "even": {
       "label": "Igualar el tamaño de los terminales",
       "hint": "Da a cada terminal el mismo tamaño. No se mueve nada: los bordes se igualan donde ya están.",
@@ -5176,6 +5156,11 @@
     "mode_pipeline": "voz de entrada y salida"
   },
   "society": {
+    "groups": {
+      "create": "Nuevo equipo de agentes", "edit": "Editar equipo de agentes", "description": "Agrupa agentes en una entrada lateral. Cada agente conserva su propio chat.",
+      "name": "Nombre del equipo", "members": "Miembros", "cancel": "Cancelar", "save": "Guardar equipo", "delete": "Desagrupar", "delete_confirm": "¿Desagrupar estos agentes? Sus chats individuales permanecerán.",
+      "left_chat": "Chat izquierdo", "right_chat": "Chat derecho", "open": "Abrir", "open_individual": "Abrir el chat individual de {0}", "missing_member": "Selecciona un agente disponible para este chat.", "hold_to_group": "Mantén para agrupar", "release_to_group": "Suelta para agrupar"
+    },
     "chat": {
       "placeholder": "Mensaje a {0}",
       "more": "Más",
@@ -5363,7 +5348,9 @@
       "delete_confirm": "¿Eliminar a {0}? El agente dejará de aparecer en el equipo activo.",
       "delete_error": "No se pudo eliminar al agente. Inténtalo de nuevo.",
       "cancel": "Cancelar",
-      "save": "Guardar"
+      "save": "Guardar",
+      "reorder": "Arrastra para reordenar",
+      "reorder_keys": "Alt + flecha arriba / abajo mueve el agente"
     },
     "tier": {
       "lead": "Líder",
@@ -5402,6 +5389,8 @@
       "hub:models": "Sala de Calderas"
     },
     "card": {
+      "runs_on_saving": "Moviendo…",
+      "runs_on_badge": "Se ejecuta en {computer}",
       "brain_shared_hint": "El cerebro del chat escrito, elegido en la píldora de modelo del chat. La voz usa el cerebro en tiempo real de los ajustes de voz.",
       "instructions_file": "Instrucciones permanentes ({0})",
       "instructions_empty": "Aún no hay instrucciones permanentes; la plantilla está a un clic.",
@@ -5555,6 +5544,12 @@
       "shoes": "Zapatos"
     },
     "create": {
+      "runs_on": "Se ejecuta en",
+      "runs_on_here": "Este ordenador",
+      "runs_on_here_hint": "El agente trabaja en este ordenador.",
+      "runs_on_remote_hint": "Los comandos y la CLI de programación del agente se ejecutan en ese ordenador por SSH; {name} mantiene el chat aquí.",
+      "runs_on_offline_hint": "Ese ordenador no está accesible ahora; las ejecuciones del agente fallarán hasta que vuelva a estar en línea.",
+      "runs_on_connect": "Conectar un ordenador",
       "import": "Importar .glb",
       "importing": "Comprobando…",
       "import_hint": "Trae tu propia figura: un glTF binario que cumpla el contrato de personajes (docs/agent-society/character-pipeline.md).",
@@ -5645,7 +5640,27 @@
     "hint": "Elige herramientas para el próximo mensaje. Se siguen aplicando los permisos.",
     "done": "Listo"
   },
+  "question_card": {
+    "aria": "Pregunta del agente",
+    "title_one": "{agent} tiene una pregunta",
+    "title_many": "{agent} tiene {count} preguntas",
+    "fallback_agent": "Tu agente",
+    "step": "Pregunta {current} de {total}",
+    "recommended": "Recomendada",
+    "why": "Recomendada porque: {reason}",
+    "own_answer": "Escribir tu propia respuesta…",
+    "own_placeholder": "Tu respuesta",
+    "send": "Enviar",
+    "close": "Cerrar y dejar que decida el agente",
+    "countdown": "Sin respuesta en {time}, se eligen automáticamente las opciones recomendadas.",
+    "choosing": "Eligiendo las opciones recomendadas…",
+    "auto_picked": "elegida automáticamente (sin respuesta en 5 minutos)",
+    "left_to_agent": "decidida por el agente",
+    "own_words": "tu propia respuesta",
+    "unanswered": "Sin responder: el turno terminó."
+  },
   "work_trace": {
+    "question": "Esperando tu respuesta",
     "integration_used": "Usó {service}",
     "activity_command": "Ejecutó comandos",
     "activity_edit": "Editó archivos",
@@ -5755,5 +5770,84 @@
     "build_active": "Modo de trabajo",
     "control_turn": "Trabajo del agente",
     "verifying": "Ejecución finalizada; verificando el resultado."
+  },
+  "ide_side_panel": {
+    "aria": "Panel lateral",
+    "tabs_aria": "Pestañas del panel lateral",
+    "expand": "Abrir panel lateral",
+    "collapse": "Cerrar panel lateral",
+    "resize": "Cambiar el ancho del panel lateral",
+    "add_tab": "Añadir una pestaña",
+    "all_open": "Todas las pestañas ya están abiertas",
+    "close_tab": "Cerrar pestaña",
+    "rail_aria": "Pestañas del panel lateral",
+    "rail_waiting": "{n} esperan tu respuesta",
+    "explorer": {
+      "aria": "Archivos y cambios del espacio de trabajo",
+      "no_workspace": "Selecciona un espacio de trabajo para ver sus archivos.",
+      "refresh": "Actualizar",
+      "views": "Vistas del explorador",
+      "view_changes": "Cambios",
+      "view_files": "Archivos",
+      "changed_by": "Cambiado por {who}",
+      "filter": "Filtrar archivos",
+      "clear_filter": "Borrar filtro",
+      "loading": "Cargando…",
+      "no_git": "Esta carpeta no es un repositorio git, así que no hay vista de cambios.",
+      "no_match": "Ningún archivo coincide con el filtro.",
+      "clean": "Sin cambios desde el último commit.",
+      "changes_error": "No se pudieron cargar los cambios ({error}). Tras una actualización puede hacer falta reiniciar la app.",
+      "drag_hint": "Arrástralo a una terminal para referenciarlo",
+      "truncated": "La lista se acortó; abre la carpeta para ver el resto.",
+      "reference_in": "Referenciar en {pane}",
+      "open_externally": "Abrir en este equipo",
+      "back": "Volver",
+      "binary": "Este archivo no se puede mostrar como texto.",
+      "unchanged": "Sin cambios desde el último commit."
+    },
+    "tabs": {
+      "agents": "Agentes",
+      "files": "Carpeta",
+      "changes": "Cambios"
+    },
+    "agents": {
+      "aria": "Agentes de este espacio de trabajo",
+      "count_one": "{n} agente",
+      "count_other": "{n} agentes",
+      "no_workspace": "Selecciona un espacio de trabajo para ver sus agentes.",
+      "empty": "No hay agentes en este espacio de trabajo.",
+      "columns": {
+        "done": "Terminado",
+        "working": "Trabajando",
+        "reviewed": "Revisado"
+      },
+      "column_empty": {
+        "done": "No ha terminado nada nuevo.",
+        "working": "Ningún agente está trabajando ahora.",
+        "reviewed": "Haz clic en un agente terminado para moverlo aquí."
+      },
+      "last_output": "Última salida hace {time}",
+      "runtime_note": "Los agentes siguen funcionando cuando cierras la app.",
+      "stop_all": "Detener todos los agentes",
+      "stop_confirm": "¿Detener todos los agentes de todos los espacios de trabajo? Sus conversaciones se conservan.",
+      "stop_confirm_yes": "Detener todos",
+      "stop_cancel": "Cancelar",
+      "summary": {
+        "waiting": "{n} esperan tu respuesta",
+        "working": "{n} trabajando",
+        "error": "{n} con error",
+        "idle": "{n} listos o inactivos"
+      },
+      "state": {
+        "starting": "Iniciando",
+        "working": "Trabajando",
+        "needs_input": "Espera tu respuesta",
+        "failed": "Falló",
+        "error": "Error",
+        "exited": "Terminado",
+        "done": "Listo",
+        "idle": "Inactivo"
+      }
+    }
   }
 }

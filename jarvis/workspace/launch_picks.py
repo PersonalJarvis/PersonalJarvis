@@ -27,6 +27,7 @@ instruction.
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 from collections.abc import Mapping
@@ -246,35 +247,126 @@ async def live_models() -> dict[str, list[dict[str, Any]]]:
     )
 
     out: dict[str, list[dict[str, Any]]] = {}
-    if _installed("agy-cli"):
+    if _installed("claude-cli"):
+        # A plan login publishes no model list; the public discovery feed is
+        # what brings a new Claude release into the picker (claude_code_models).
+        from jarvis.brain.model_catalog import shared_catalog
+
         try:
-            out["agy-cli"] = await asyncio.wait_for(asyncio.to_thread(read_agy_models), 10.0)
-        except Exception as exc:  # noqa: BLE001 — the fallback list stands in
-            _log.debug("launch picks: agy model list unavailable: %s", exc)
-    if _installed("codex-cli"):
-        try:
-            rows = await asyncio.to_thread(read_codex_models)
-        except Exception as exc:  # noqa: BLE001 — the fallback list stands in
-            _log.debug("launch picks: codex model list unavailable: %s", exc)
-            rows = None
-        out["codex-cli"] = rows or []
-    if _installed("grok-cli"):
-        try:
-            rows = await asyncio.to_thread(read_grok_models)
-        except Exception as exc:  # noqa: BLE001 — the fallback list stands in
-            _log.debug("launch picks: grok model list unavailable: %s", exc)
-            rows = None
-        if rows:
-            out["grok-cli"] = rows
-    if _installed("opencode-cli"):
-        # ``opencode models`` — the providers this install configured.
-        try:
-            rows = await asyncio.wait_for(asyncio.to_thread(read_opencode_models), 25.0)
-        except Exception as exc:  # noqa: BLE001 — no list is an empty picker, not an error
-            _log.debug("launch picks: opencode model list unavailable: %s", exc)
-            rows = []
-        out["opencode-cli"] = rows
+            await asyncio.wait_for(shared_catalog().refresh_discovery(), 3.0)
+        except Exception as exc:  # noqa: BLE001 — the cached/curated list stands in
+            _log.debug("launch picks: model discovery unavailable: %s", exc)
+    # Every reader runs at once, and the answer waits at most
+    # ``_LIVE_MODELS_BUDGET_S``: a cold ``agy models`` has taken well over a
+    # minute on a real box, and summing the readers one after another kept the
+    # picker empty for ten seconds and more. A reader still running when the
+    # budget ends keeps going in its thread and fills its runner-module cache,
+    # so the next catalog request answers from it; this one leaves that
+    # runner's curated fallback standing (its key stays absent, never an empty
+    # list that would blank the picker).
+    readers = {
+        "agy-cli": read_agy_models,
+        "codex-cli": read_codex_models,
+        "grok-cli": read_grok_models,
+        "opencode-cli": read_opencode_models,
+    }
+    installed = await _off_loop(lambda: [r for r in readers if _installed(r)])
+    reads = {runner: _shared_read(runner, readers[runner]) for runner in installed}
+    tasks = {runner: task for runner, (task, _) in reads.items()}
+    # A read an EARLIER request started (still running past its budget) is not
+    # waited for again: otherwise every picker open pays the full budget until
+    # a minute-long ``agy models`` finally ends.
+    fresh = [task for task, started_here in reads.values() if started_here]
+    if fresh:
+        await asyncio.wait(fresh, timeout=_LIVE_MODELS_BUDGET_S)
+    done = {task for task in tasks.values() if task.done()}
+    pending = {task for task, started_here in reads.values() if started_here and not task.done()}
+    for task in pending:
+        # Nobody awaits it any more; keep it referenced until it finishes and
+        # log its failure instead of letting asyncio warn about it.
+        _BACKGROUND_READS.add(task)
+        task.add_done_callback(_finish_background_read)
+    for runner, task in tasks.items():
+        if task not in done:
+            _log.debug("launch picks: %s model list still loading; fallback stands", runner)
+            continue
+        failure = task.exception()
+        if failure is not None:
+            _log.debug("launch picks: %s model list unavailable: %s", runner, failure)
+        rows = None if failure is not None else task.result()
+        if runner == "codex-cli":
+            # Codex answered: an empty list means "nothing confirmed" for it.
+            out[runner] = rows or []
+        elif runner == "opencode-cli":
+            # No list is an empty picker, not an error.
+            out[runner] = rows or []
+        elif rows:
+            out[runner] = rows
     return out
+
+
+#: How long a catalog request waits for the CLIs' own model lists.
+_LIVE_MODELS_BUDGET_S: Final = 3.0
+
+#: Model-list reads that outlived their request, kept alive until they finish.
+_BACKGROUND_READS: set[Any] = set()
+
+
+#: One in-flight read per runner and catalog scope: a second request arriving
+#: while ``agy models`` still runs joins that read instead of starting another.
+_IN_FLIGHT: dict[tuple[Any, ...], Any] = {}
+
+
+def _shared_read(runner: str, read: Any) -> tuple[Any, bool]:
+    """The in-flight read for ``runner`` in this scope, and whether this call started it."""
+    import asyncio
+
+    from jarvis.agent_chat import runner_cli
+
+    key = (
+        runner,
+        runner_cli.ACCOUNT_OVERRIDE.get(),
+        runner_cli._CATALOG_CWD.get(),
+        runner_cli._CATALOG_IGNORE_CONFIG.get(),
+    )
+    task = _IN_FLIGHT.get(key)
+    if task is not None and not task.done():
+        return task, False
+    task = asyncio.ensure_future(_off_loop(read))
+    _IN_FLIGHT[key] = task
+    task.add_done_callback(functools.partial(_forget_read, key))
+    return task, True
+
+
+#: The CLI model-list reads get their own threads. A cold ``agy models`` can
+#: run for over a minute, and in the loop's shared default pool a few of them
+#: left every other ``to_thread`` caller in the app queueing behind them —
+#: including this module's own installed-check, which runs before the budget.
+_READ_POOL: Any = None
+
+
+def _off_loop(fn: Any) -> Any:
+    """Run ``fn`` on the model-list pool, carrying the catalog scope's context."""
+    import asyncio
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor
+
+    global _READ_POOL
+    if _READ_POOL is None:
+        _READ_POOL = ThreadPoolExecutor(max_workers=6, thread_name_prefix="cli-model-list")
+    ctx = contextvars.copy_context()
+    return asyncio.get_running_loop().run_in_executor(_READ_POOL, ctx.run, fn)
+
+
+def _forget_read(key: tuple[Any, ...], task: Any) -> None:
+    if _IN_FLIGHT.get(key) is task:
+        del _IN_FLIGHT[key]
+
+
+def _finish_background_read(task: Any) -> None:
+    _BACKGROUND_READS.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        _log.debug("launch picks: background model list failed: %s", task.exception())
 
 
 def _installed(runner: str) -> bool:
@@ -308,7 +400,7 @@ def offered_models(
     picks = picks_for(agent)
     if picks is None or not picks.model_args or not picks.provider:
         return []
-    from jarvis.agent_chat.catalog import CLAUDE_CODE_MODELS, provider_row
+    from jarvis.agent_chat.catalog import claude_code_models, provider_row
 
     row = provider_row(picks.provider)
     if row is None:
@@ -319,7 +411,7 @@ def offered_models(
     # Claude Code takes its own ids and aliases rather than the Anthropic
     # API's catalog — the same exception the chat catalog route makes.
     if picks.provider == "claude-api":
-        return [m.to_dict() for m in CLAUDE_CODE_MODELS]
+        return [m.to_dict() for m in claude_code_models()]
     return [m.to_dict() for m in row.curated_models]
 
 

@@ -350,9 +350,7 @@ def _workspace(folder: Path) -> resume_store.SnapshotWorkspace:
                 resume=ResumeHandle(kind="claude_session", id="t4-conv", captured_at=1.0),
                 prompts_sent=2,
             ),
-            resume_store.SnapshotTerminal(
-                key="t1", name="T1", agent="claude", column=0, slot=0
-            ),
+            resume_store.SnapshotTerminal(key="t1", name="T1", agent="claude", column=0, slot=0),
         ],
     )
 
@@ -604,9 +602,7 @@ async def test_closing_workspaces_one_by_one_keeps_all_of_them_on_offer(
         folder = tmp_path / f"repo{index}"
         folder.mkdir()
         folders.append(folder)
-        await registry.start(
-            str(folder), [{"agent": "claude", "name": f"Pane{index}"}]
-        )
+        await registry.start(str(folder), [{"agent": "claude", "name": f"Pane{index}"}])
 
     # One at a time, the way a person closes tabs.
     while await registry.end():
@@ -622,8 +618,8 @@ async def test_a_new_workspace_does_not_erase_the_folders_you_closed(
 ) -> None:
     """The reported loss, in miniature.
 
-    Work twelve panes in one folder, close them, then open a single pane
-    somewhere to check one thing — and the twelve used to be gone for good,
+    Work eight panes in one folder, close them, then open a single pane
+    somewhere to check one thing — and the eight used to be gone for good,
     because a save replaced the file outright. A save UPDATES: the folder that is
     open now overwrites its own record, every other remembered folder is left
     alone.
@@ -631,9 +627,7 @@ async def test_a_new_workspace_does_not_erase_the_folders_you_closed(
     big, quick = tmp_path / "big", tmp_path / "quick"
     big.mkdir()
     quick.mkdir()
-    await registry.start(
-        str(big), [{"agent": "claude"} for _ in range(12)]
-    )
+    await registry.start(str(big), [{"agent": "claude"} for _ in range(ide.MAX_TERMINALS)])
     await registry.end()
 
     await registry.start(str(quick), [{"agent": "claude", "name": "Solo"}])
@@ -641,13 +635,13 @@ async def test_a_new_workspace_does_not_erase_the_folders_you_closed(
     saved = resume_store.load()
     assert saved is not None
     folders = {w.folder: len(w.terminals) for w in saved.workspaces}
-    assert folders == {str(quick): 1, str(big): 12}
+    assert folders == {str(quick): 1, str(big): ide.MAX_TERMINALS}
 
 
-async def test_reopening_the_same_folder_replaces_its_own_record(
+async def test_reopening_the_same_folder_preserves_independent_workspace_records(
     registry: ide.Registry, tmp_path: Path
 ) -> None:
-    """The newest arrangement of a folder is the truth about that folder."""
+    """Independent workspace groups in one project each keep their restore point."""
     await registry.start(str(tmp_path), [{"agent": "claude"} for _ in range(5)])
     await registry.end()
 
@@ -655,7 +649,7 @@ async def test_reopening_the_same_folder_replaces_its_own_record(
 
     saved = resume_store.load()
     assert saved is not None
-    assert [len(w.terminals) for w in saved.workspaces] == [1]
+    assert [len(w.terminals) for w in saved.workspaces] == [1, 5]
 
 
 async def test_the_closed_workspace_history_stays_bounded(

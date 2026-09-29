@@ -37,6 +37,7 @@ import { Switch } from "@/components/ui/switch";
 import { Combobox, isComboboxPanelEvent, type ComboboxGroup } from "@/components/ui/combobox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/i18n";
+import { ComputerPicker } from "./ComputerPicker";
 import {
   fetchAgentChatCatalog,
   fetchAgentConnections,
@@ -128,6 +129,8 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("");
   const [accountId, setAccountId] = useState("");
+  // "" = this computer; otherwise a connected computer (VPS / local VM) id.
+  const [computerId, setComputerId] = useState("");
   const [ceiling, setCeiling] = useState<PermissionCeiling>("monitor");
   const [budget, setBudget] = useState("2");
   // A cap is the default because an agent that can spend without one is the
@@ -147,7 +150,12 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   // joined with the Agents tab's credential truth exactly as the chat's
   // composer joins it, plus the subscription logins stored per CLI.
   const catalog = useQuery({
-    queryKey: ["agent-chat", "catalog", "society", accountId],
+    // Without an account this is the very query the Agents view prepared on
+    // mount (`useModelMenuData`, seeded from the saved snapshot), so the
+    // picker fills the instant the dialog opens instead of refetching.
+    queryKey: accountId
+      ? ["agent-chat", "catalog", "society", accountId]
+      : ["agent-chat", "catalog", "society"],
     queryFn: () => fetchAgentChatCatalog("society", { accountId }),
     enabled: open,
     staleTime: 60_000,
@@ -165,8 +173,10 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     staleTime: 60_000,
   });
   // A keyless row (Ollama, a local server) is listed only when it answers
-  // with models, so those lists are fetched before the picker fills; a keyed
-  // row's live list is fetched once it is picked, like the composer does.
+  // with models. The picker does not wait for them: the other seats show at
+  // once and a local row joins when its server answers (each list is capped
+  // by `MODEL_LIST_TIMEOUT_MS`). A keyed row's live list is fetched once it
+  // is picked, like the composer does.
   const keylessIds = useMemo(
     () => (catalog.data?.providers ?? []).filter((p) => p.keyless && p.models_source === "live").map((p) => p.id),
     [catalog.data],
@@ -191,8 +201,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     [keylessModels.data, pickedModels.data],
   );
 
-  const seatsLoading =
-    catalog.isLoading || connections.isLoading || societyProviders.isLoading || keylessModels.isLoading;
+  const seatsLoading = catalog.isLoading || connections.isLoading || societyProviders.isLoading;
   // Joined only once every answer is in (each query settles to [] on a
   // failure): a join over a catalog without the credential rows would call
   // every API seat unconnected, list the local rows alone, and the default
@@ -200,14 +209,14 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const defaultModelLabel = t("agent_chat.model_default");
   const seats = useMemo<BrainSeat[]>(() => {
     const providers = catalog.data?.providers ?? [];
-    if (!providers.length || !connections.data || !societyProviders.data || !keylessModels.data) return [];
+    if (!providers.length || !connections.data || !societyProviders.data) return [];
     return modelSeats(
       joinProviderOptions(providers, connections.data),
       societyProviders.data,
       liveModels,
       defaultModelLabel,
     );
-  }, [catalog.data, connections.data, societyProviders.data, keylessModels.data, liveModels, defaultModelLabel]);
+  }, [catalog.data, connections.data, societyProviders.data, liveModels, defaultModelLabel]);
   const seat = seats.find((s) => s.provider.id === providerId) ?? null;
   const accounts = accountChoice(seat);
   const efforts = effortsFor(seat, model);
@@ -366,6 +375,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
         model,
         effort,
         accountId,
+        computerId,
         // Every tool Jarvis has connected; what the agent reaches for first
         // is settled in its own chat afterwards (maintainer, 2026-09-02).
         grantMode: "all",
@@ -568,6 +578,8 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                   )}
                   <p className="mt-1 text-xs text-muted-foreground">{t("society.create.brain_hint")}</p>
                 </div>
+
+                <ComputerPicker value={computerId} onChange={setComputerId} labelClass={labelClass} />
 
                 <Collapsible.Root open={advanced} onOpenChange={setAdvanced}>
                   <Collapsible.Trigger asChild>
@@ -883,10 +895,18 @@ function seatGroups(seats: BrainSeat[], t: (key: string) => string): ComboboxGro
  * The live model lists of `ids`, fetched together; a provider that answers
  * nothing (not running, nothing installed, route missing) maps to [].
  */
+/** A provider's model list that has not answered in this long counts as empty. */
+const MODEL_LIST_TIMEOUT_MS = 4_000;
+
 async function fetchModelLists(ids: string[]): Promise<Record<string, CuratedModel[]>> {
   const lists = await Promise.all(
     ids.map(async (id) => {
-      const rows = await fetchProviderModels(id).catch(() => []);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<[]>((resolve) => {
+        timer = setTimeout(() => resolve([]), MODEL_LIST_TIMEOUT_MS);
+      });
+      const rows = await Promise.race([fetchProviderModels(id).catch(() => []), timeout]);
+      clearTimeout(timer);
       return [id, rows.map((m) => ({ id: m.id, label: m.label ?? m.name ?? m.id }))] as const;
     }),
   );

@@ -8,6 +8,7 @@ and none of this may show up in the user's ``git status``.
 """
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import pytest
@@ -75,13 +76,42 @@ def test_two_drops_of_the_same_name_keep_both(workspace: Path) -> None:
     assert Path(second[0].absolute_path).read_bytes() == b"two"
 
 
-def test_oversized_drops_are_refused_with_a_readable_message(
-    workspace: Path,
-) -> None:
-    big = b"x" * (drops.MAX_FILE_BYTES + 1)
-    with pytest.raises(drops.DropError, match="too large"):
-        drops.store(workspace, [("huge.bin", big)])
+def test_a_large_file_is_not_refused_for_its_size(workspace: Path) -> None:
+    """A screen recording is exactly what people drop on an agent."""
+    big = b"x" * (drops.MAX_ANALYSIS_BYTES + 1)
+    [item] = drops.store(workspace, [("recording.mp4", big)])
+    assert item.size == len(big)
+    assert (workspace / item.relative_path).stat().st_size == len(big)
 
+
+def test_path_and_file_sources_stream_to_disk(workspace: Path, tmp_path: Path) -> None:
+    """A dragged path or a spooled upload is copied, not read into memory."""
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.mp4"
+    outside.write_bytes(b"from-disk")
+    upload = io.BytesIO(b"from-upload")
+    upload.seek(4)  # a caller may hand over a file mid-read
+    stored = drops.store(workspace, [("a.mp4", outside), ("b.mp4", upload)])
+    assert [(workspace / s.relative_path).read_bytes() for s in stored] == [
+        b"from-disk",
+        b"from-upload",
+    ]
+    outside.unlink()
+
+
+def test_analysis_reads_only_files_small_enough_to_describe() -> None:
+    assert drops.read_for_analysis(b"abc") == b"abc"
+    assert drops.read_for_analysis(io.BytesIO(b"abcd"), limit=3) is None
+
+
+def test_a_drop_that_would_fill_the_disk_is_refused(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(drops, "DISK_RESERVE_BYTES", 1 << 62)
+    with pytest.raises(drops.DropError, match="free disk space"):
+        drops.store(workspace, [("recording.mp4", b"x")])
+
+
+def test_bad_drops_are_refused_with_a_readable_message(workspace: Path) -> None:
     with pytest.raises(drops.DropError, match="Too many files"):
         drops.store(workspace, [(f"f{i}.txt", b"x") for i in range(drops.MAX_FILES + 1)])
 

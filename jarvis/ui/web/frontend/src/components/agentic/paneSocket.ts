@@ -205,8 +205,14 @@ export interface PaneSocketHandlers {
    * The implementation therefore has exactly one obligation — reset the
    * terminal before writing this — and it is required rather than optional so
    * that a new pane cannot quietly forget it.
+   *
+   * `awaitRepaint` means the replay cannot rebuild the screen by itself (its
+   * front was cut, or it belongs to another geometry) and the server has asked
+   * the full-screen agent to repaint: that repaint starts with a whole-screen
+   * erase on the ordinary output channel, and the pane should stay hidden
+   * until it arrives.
    */
-  onReplay: (text: string) => void;
+  onReplay: (text: string, awaitRepaint?: boolean) => void;
   /**
    * The agent is attached — freshly started, resumed, or re-joined.
    *
@@ -497,6 +503,7 @@ export function openPaneSocket(
         last_prompt_preview?: string;
         cols?: number;
         rows?: number;
+        repaint?: boolean;
       };
       try {
         msg = JSON.parse((ev as MessageEvent).data as string);
@@ -506,7 +513,7 @@ export function openPaneSocket(
       if (msg.t === "o") {
         handlers.onOutput(msg.d ?? "");
       } else if (msg.t === "replay") {
-        handlers.onReplay(msg.d ?? "");
+        handlers.onReplay(msg.d ?? "", msg.repaint === true);
       } else if (msg.t === "ready") {
         // A live handshake also clears the auth streak: whatever credential
         // this attempt used, it worked.

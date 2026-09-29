@@ -375,17 +375,31 @@ class AgentChatStore:
         if row is None:
             return None
         return {
-            "seq": int(row["seq"]), "ts_ms": int(row["ts_ms"]), "kind": row["kind"],
+            "seq": int(row["seq"]),
+            "ts_ms": int(row["ts_ms"]),
+            "kind": row["kind"],
             "payload": json.loads(row["payload"]),
         }
 
-    def list_events(self, session_id: str, *, after_seq: int = 0) -> list[dict[str, Any]]:
+    def list_events(
+        self, session_id: str, *, after_seq: int = 0, tail: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Events in order; ``tail`` keeps only the newest N (still oldest first)."""
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT seq, ts_ms, kind, payload FROM agent_chat_events "
-                "WHERE session_id = ? AND seq > ? ORDER BY seq ASC",
-                (session_id, int(after_seq)),
-            ).fetchall()
+            if tail is not None:
+                rows = self._conn.execute(
+                    "SELECT seq, ts_ms, kind, payload FROM ("
+                    "SELECT seq, ts_ms, kind, payload FROM agent_chat_events "
+                    "WHERE session_id = ? AND seq > ? ORDER BY seq DESC LIMIT ?"
+                    ") ORDER BY seq ASC",
+                    (session_id, int(after_seq), max(0, int(tail))),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT seq, ts_ms, kind, payload FROM agent_chat_events "
+                    "WHERE session_id = ? AND seq > ? ORDER BY seq ASC",
+                    (session_id, int(after_seq)),
+                ).fetchall()
         out: list[dict[str, Any]] = []
         for r in rows:
             try:

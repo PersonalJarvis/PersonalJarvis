@@ -89,6 +89,9 @@ def test_store_round_trips_sessions_and_events(tmp_path: Path):
     events = store.list_events(s.session_id)
     assert [e["kind"] for e in events] == ["user_message", "assistant_text"]
     assert store.list_events(s.session_id, after_seq=1)[0]["kind"] == "assistant_text"
+    # A live preview asks for the newest events only, still oldest first.
+    assert [e["kind"] for e in store.list_events(s.session_id, tail=1)] == ["assistant_text"]
+    assert [e["seq"] for e in store.list_events(s.session_id, tail=5)] == [1, 2]
 
     # The store keeps whatever id the route validated against the runner's
     # ladder (jarvis/agent_chat/permissions.py); it does not judge it.

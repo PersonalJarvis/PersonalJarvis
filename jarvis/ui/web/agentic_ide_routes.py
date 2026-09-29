@@ -14,6 +14,7 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``POST   /folders/create``             → make one new folder inside an existing one
 * ``POST   /terminal-target/open``       → open a path printed by one terminal
 * ``GET    /workspaces``                 → every open workspace, in tab order
+* ``PUT    /workspaces/order``           → reorder workspace tabs via drag and drop
 * ``GET    /workspaces/{id}/files``      → browse that workspace's file tree
 * ``GET    /workspaces/{id}/file``       → stream one workspace file in-app
 * ``GET    /workspaces/{id}/file-preview`` → readable text or a binary preview
@@ -25,8 +26,6 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``GET    /resume``                     → the last workspace, offered back
 * ``POST   /resume``                     → reopen it (same panes, same places)
 * ``DELETE /resume``                     → forget it and start fresh
-* ``GET    /interrupted``                → panes that came back and were never restarted
-* ``POST   /interrupted/continue``       → tell them to carry on ("continue")
 * ``PUT    /mode``                       → focused coding mode on/off
 * ``GET    /ui-preferences``             → remembered terminal text size
 * ``PUT    /ui-preferences``             → remember another one (survives restarts)
@@ -80,9 +79,10 @@ from pydantic import BaseModel, Field
 
 from jarvis.agentic_ide import (
     agent_transcript,
+    change_authors,
     drop_analysis,
     drops,
-    interrupted,
+    git_changes,
     native_picker,
     notifications,
     prompt_attachments,
@@ -90,6 +90,7 @@ from jarvis.agentic_ide import (
     recap_engine,
     recents,
     resume_store,
+    workspace_catalog,
 )
 from jarvis.agentic_ide.activity import has_work_behind_it
 from jarvis.agentic_ide.agent_sessions import has_conversation
@@ -255,13 +256,49 @@ class TerminalRequest(BaseModel):
 
 class StartSessionRequest(BaseModel):
     folder: str = Field(description="Absolute path of the folder to work in.")
+    project_id: str | None = Field(
+        default=None, description="Owning project from the project library."
+    )
+    name: str | None = Field(default=None, max_length=120, description="Optional workspace name.")
     terminals: list[TerminalRequest] = Field(
         default_factory=list,
         description="One entry per terminal, in grid order.",
     )
+    computer_id: str | None = Field(
+        default=None,
+        description=(
+            "Run every terminal on this connected computer (Computers) instead of "
+            "this machine; the folder is copied there first."
+        ),
+    )
+
+
+class PlaceRequest(BaseModel):
+    workspace_id: str | None = Field(default=None, description="Workspace the pane is in.")
+    computer_id: str | None = Field(
+        default=None,
+        description="Connected computer to run on; null brings the work back to this machine.",
+    )
+
+
+class ForkTerminalRequest(BaseModel):
+    workspace_id: str | None = Field(default=None, description="Workspace the pane is in.")
+    worktree: bool = Field(
+        default=False,
+        description=(
+            "False copies the chat into a new pane in the same folder; true first "
+            "creates a git worktree on a new branch and runs the copy there."
+        ),
+    )
+    name: str | None = Field(
+        default=None,
+        description="Branch and worktree name (worktree forks only); suggested when omitted.",
+    )
+    direction: str = Field(default="right", description="Where the fork opens beside the pane.")
 
 
 class AddTerminalRequest(BaseModel):
+    workspace_id: str | None = Field(default=None, description="Workspace to add the session to.")
     agent: str | None = Field(
         default=None,
         description="Coding agent to run; defaults to the anchor terminal's.",
@@ -277,8 +314,9 @@ class AddTerminalRequest(BaseModel):
     direction: str = Field(
         default="right",
         description=(
-            "'right' opens a new column beside the anchor, 'down' splits the "
-            "anchor's own column and stacks the new pane under it."
+            "'right' opens a new pane beside the anchor, 'down' splits the "
+            "anchor's own column under it, 'left' places it to the left, and "
+            "'up' / 'above' places it above the anchor."
         ),
     )
     account: str | None = Field(
@@ -326,6 +364,7 @@ class AddTerminalsRequest(BaseModel):
         description="Coding agent to run in all of them; defaults to the last pane's.",
     )
     account: str | None = Field(default=None, description=_ACCOUNT_FIELD_DESCRIPTION)
+    workspace_id: str | None = Field(default=None, description="Workspace to add the sessions to.")
 
 
 class MoveTerminalRequest(BaseModel):
@@ -505,6 +544,7 @@ class WorkspaceCard(BaseModel):
     """One open workspace, as the workspace bar shows it."""
 
     id: str
+    project_id: str = ""
     folder: str
     name: str
     branch: str | None = None
@@ -522,6 +562,18 @@ class WorkspacesResponse(BaseModel):
     workspaces: list[WorkspaceCard]
     active_id: str | None = None
     max_workspaces: int | None
+
+
+class TerminalOrderRequest(BaseModel):
+    terminal_ids: list[str] = Field(
+        description="Every terminal history_id exactly once, in row-major grid order.",
+    )
+
+
+class WorkspaceOrderRequest(BaseModel):
+    workspace_ids: list[str] = Field(
+        description="Every open workspace id exactly once, in left-to-right tab order.",
+    )
 
 
 class SpawnGroupRequest(BaseModel):
@@ -790,6 +842,66 @@ class WorkspaceFilesResponse(BaseModel):
     error: str | None = None
 
 
+class ChangeAuthorItem(BaseModel):
+    """A pane whose coding agent wrote a changed file, by its own record."""
+
+    pane: str = Field(description="The pane's call-sign, e.g. 'T3'.")
+    history_id: str
+    agent: str
+    display_name: str
+    last_edit_ms: int = Field(default=0, description="When it last wrote the file; 0 if unknown.")
+
+
+class ChangedFileItem(BaseModel):
+    """One path an agent changed, relative to the workspace root."""
+
+    path: str
+    status: str = Field(description="'modified', 'added', 'deleted', 'untracked' or 'conflicted'.")
+    added: int | None = Field(default=None, description="Lines added; null when unknown.")
+    removed: int | None = Field(default=None, description="Lines removed; null when unknown.")
+    is_directory: bool = False
+    authors: list[ChangeAuthorItem] = Field(
+        default_factory=list,
+        description="Panes whose agent wrote this file, newest first; empty when unknown.",
+    )
+
+
+class WorkspaceChangesResponse(BaseModel):
+    """What git reports as changed under the workspace folder."""
+
+    workspace_id: str
+    available: bool = Field(description="False when git or the repository is not usable.")
+    branch: str = ""
+    files: list[ChangedFileItem] = Field(default_factory=list)
+    truncated: bool = False
+    reason: str = ""
+
+
+class DiffLineItem(BaseModel):
+    kind: str = Field(description="'add', 'del' or 'ctx'.")
+    text: str
+    old_no: int | None = None
+    new_no: int | None = None
+
+
+class DiffHunkItem(BaseModel):
+    header: str
+    lines: list[DiffLineItem] = Field(default_factory=list)
+
+
+class WorkspaceFileDiffResponse(BaseModel):
+    """One file's difference from the last commit; an untracked file is all new."""
+
+    workspace_id: str
+    path: str
+    status: str
+    binary: bool = False
+    added: int = 0
+    removed: int = 0
+    hunks: list[DiffHunkItem] = Field(default_factory=list)
+    truncated: bool = False
+
+
 class WorkspaceFilePreviewResponse(BaseModel):
     """A bounded in-app preview without exposing an absolute host path."""
 
@@ -981,51 +1093,6 @@ class ResumeOffer(BaseModel):
     workspaces: list[ResumeWorkspace] = Field(default_factory=list)
 
 
-class InterruptedPane(BaseModel):
-    """One pane that came back with its conversation and was never restarted."""
-
-    workspace_id: str = ""
-    workspace: str = Field(default="", description="The workspace tab this pane belongs to.")
-    folder: str = ""
-    key: str
-    name: str
-    agent: str
-    display_name: str
-    status: str
-    continuable: bool = Field(
-        description=(
-            "Will a 'continue' reach it? False only when its agent is DEAD — an "
-            "instruction cannot be typed into a terminal that exited. A pane "
-            "that is merely still starting IS continuable; see 'starting'."
-        )
-    )
-    starting: bool = Field(
-        default=False,
-        description=(
-            "Its agent is still coming up (cold starts are staggered). Continuing "
-            "it is a promise kept a few seconds later, not a refusal."
-        ),
-    )
-    queued: bool = Field(
-        default=False,
-        description="A 'continue' is already waiting to be delivered to this pane.",
-    )
-    blocked_reason: str = Field(
-        default="", description="Why not, in one sentence. Empty when it can."
-    )
-    last_task: str = Field(
-        default="",
-        description=(
-            "What this pane was last asked to do, shortened. Empty when its last "
-            "instruction was typed into the pane directly rather than sent by Jarvis."
-        ),
-    )
-    prompts_sent: int = 0
-    started_at: float | None = Field(
-        default=None, description="When the resumed agent process started."
-    )
-
-
 class PaneNotification(BaseModel):
     """One thing that happened in one pane, as the bell lists it."""
 
@@ -1097,62 +1164,6 @@ class NotificationsChangedResponse(BaseModel):
     ok: bool = True
     changed: int = Field(default=0, description="How many entries this call actually altered.")
     unread: int = 0
-
-
-class InterruptedResponse(BaseModel):
-    """Every pane, in every open workspace, that is waiting to be told to carry on."""
-
-    count: int = 0
-    continuable_count: int = Field(
-        default=0, description="How many of them can be continued right now."
-    )
-    prompt: str = Field(default="", description="The instruction the continue action would send.")
-    panes: list[InterruptedPane] = Field(default_factory=list)
-
-
-class ContinueInterruptedRequest(BaseModel):
-    names: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Call-signs to continue. Empty continues every interrupted pane in "
-            "every open workspace. A name that is not waiting to be continued is "
-            "reported in 'failed' rather than silently ignored."
-        ),
-    )
-    prompt: str = Field(
-        default="",
-        description=(
-            "What to send instead of the default 'continue'. The agent still "
-            "holds its whole conversation, so short beats elaborate."
-        ),
-    )
-
-
-class ContinueInterruptedResponse(BaseModel):
-    ok: bool = True
-    continued: list[str] = Field(
-        default_factory=list, description="Panes that accepted the instruction and started."
-    )
-    queued: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Panes whose agent had not started yet. The instruction is held and "
-            "delivered the moment each one comes up — say 'shortly', not 'done'."
-        ),
-    )
-    unconfirmed: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Panes the text was typed into without a confirmed submit. Their prompt "
-            "may be sitting in the input box — say so rather than claiming they ran."
-        ),
-    )
-    failed: list[dict] = Field(
-        default_factory=list, description="Panes that could not be continued, with the reason."
-    )
-    remaining: int = Field(
-        default=0, description="Interrupted panes still waiting after this call."
-    )
 
 
 class TerminalActivity(BaseModel):
@@ -1337,6 +1348,28 @@ def get_state() -> dict:
     return get_registry().state()
 
 
+@router.get("/runtime", summary="Where the Agentic-IDE agents run")
+def get_runtime() -> dict:
+    """``host`` when the agents live in the PTY host and survive closing the app.
+
+    ``in_process`` when they run inside the app and end with it (the host is
+    unavailable on this install), ``idle`` before any agent was started.
+    """
+    return get_registry().runtime_status()
+
+
+@router.post("/runtime/stop", summary="Stop every Agentic-IDE agent and its runtime")
+async def stop_runtime() -> dict:
+    """End every agent in every open workspace.
+
+    Closing the app never does this — it only detaches. The workspaces stay on
+    offer for a deliberate reopen, and none of them is reopened automatically
+    at the next start.
+    """
+    closed = await get_registry().stop_runtime()
+    return {"ok": True, "closed_workspaces": closed}
+
+
 @router.get("/panes", summary="Every coding session running in any open workspace")
 def get_panes() -> dict:
     """One row per pane, across ALL open workspaces — not just the front one.
@@ -1377,7 +1410,7 @@ def get_state_brief() -> dict:
 
 
 @router.get("/agents", response_model=AgentsResponse, summary="Coding agents available")
-async def get_agents() -> AgentsResponse:
+async def get_agents(quick: bool = False) -> AgentsResponse:
     """What this machine can open in a terminal, and how to install it.
 
     Every registered entry (``jarvis.workspace.agents``): the coding-agent CLIs
@@ -1386,9 +1419,16 @@ async def get_agents() -> AgentsResponse:
     resolvable the way the PTY will resolve it — a GUI process starts with a
     minimal PATH, so "installed" and "launchable from here" are not the same
     question.
+
+    ``quick`` is the workspace launch picker: check executable resolution and
+    static capabilities without running CLI versions or live model catalogs.
+    The full catalog remains available to settings and model-selection views.
     """
     from jarvis.workspace import launch_picks
     from jarvis.workspace.agents import detect_agents, pty_available
+
+    if quick:
+        return await asyncio.to_thread(_quick_agent_catalog)
 
     infos = await detect_agents()
     # Asked once for the whole list rather than per entry: two of these lists
@@ -1413,6 +1453,35 @@ async def get_agents() -> AgentsResponse:
     ]
     return AgentsResponse(
         terminal_available=pty_available(),
+        max_terminals=MAX_TERMINALS,
+        suggested_names=default_names(MAX_TERMINALS),
+        agents=agents,
+    )
+
+
+def _quick_agent_catalog() -> AgentsResponse:
+    """Resolve launchable coding agents without executing any CLI probe."""
+    from jarvis.workspace import agents as workspace_agents
+    from jarvis.workspace import launch_picks
+
+    agents = [
+        AgentStatus(
+            name=spec.name,
+            display_name=spec.display_name,
+            installed=agent_argv(spec.name) is not None,
+            version=None,
+            install_command=workspace_agents.install_command(spec.name),
+            kind=spec.kind,
+            description=spec.description,
+            custom=spec.custom,
+            logo_url=spec.logo_url,
+            accepts_prompts=accepts_prompts(spec.name),
+            **launch_picks.offered(spec.name),
+        )
+        for spec in workspace_agents.coding_agents()
+    ]
+    return AgentsResponse(
+        terminal_available=workspace_agents.pty_available(),
         max_terminals=MAX_TERMINALS,
         suggested_names=default_names(MAX_TERMINALS),
         agents=agents,
@@ -1474,6 +1543,78 @@ async def get_workspace_files(workspace_id: str, path: str = "") -> WorkspaceFil
         truncated=listing.truncated,
         error=listing.error,
     )
+
+
+@router.get(
+    "/workspaces/{workspace_id}/changes",
+    response_model=WorkspaceChangesResponse,
+    summary="Files the agents changed in an open workspace",
+)
+async def get_workspace_changes(workspace_id: str) -> WorkspaceChangesResponse:
+    """Git's view of what changed under the workspace folder.
+
+    Paths are relative to the workspace, like the file tree's. A folder that is
+    not a repository, or a machine without git, answers ``available=false`` with
+    the reason rather than an error: the explorer still works without it.
+    """
+    session = get_registry().get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    changes = await asyncio.to_thread(git_changes.workspace_changes, session.folder)
+    authors: dict[str, list[change_authors.ChangeAuthor]] = {}
+    if changes.files:
+        records = [
+            change_authors.PaneRecord(
+                pane=term.name,
+                history_id=term.history_id,
+                agent=term.agent,
+                display_name=term.display_name,
+                session_id=term.resume.id,
+                home=account_home(term.agent, term.account),
+                folder=term.folder or session.folder,
+            )
+            for term in session.terminals
+            if term.resume is not None and agent_transcript.can_read(term.agent)
+        ]
+        authors = await asyncio.to_thread(change_authors.change_authors, session.folder, records)
+    return WorkspaceChangesResponse(
+        workspace_id=workspace_id,
+        available=changes.available,
+        branch=changes.branch,
+        files=[
+            ChangedFileItem(
+                **asdict(item),
+                authors=[
+                    ChangeAuthorItem(**asdict(a))
+                    for a in change_authors.authors_for(item.path, item.is_directory, authors)
+                ],
+            )
+            for item in changes.files
+        ],
+        truncated=changes.truncated,
+        reason=changes.reason,
+    )
+
+
+@router.get(
+    "/workspaces/{workspace_id}/diff",
+    response_model=WorkspaceFileDiffResponse,
+    summary="How one workspace file differs from the last commit",
+)
+async def get_workspace_file_diff(workspace_id: str, path: str) -> WorkspaceFileDiffResponse:
+    """Removed and added lines of one file, for the explorer's diff view.
+
+    ``path`` may be workspace-relative or an absolute path inside the workspace
+    (what a terminal printed). Anything outside the workspace is refused.
+    """
+    session = get_registry().get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    try:
+        diff = await asyncio.to_thread(git_changes.file_diff, session.folder, path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return WorkspaceFileDiffResponse(workspace_id=workspace_id, **asdict(diff))
 
 
 @router.get("/folders/search", response_model=SearchResponse, summary="Search folders by name")
@@ -1873,6 +2014,51 @@ def _unwrap_file_uri(value: str) -> str:
     return path
 
 
+@router.get("/projects", summary="Projects with open and saved coding workspaces")
+def get_project_workspaces() -> dict:
+    """Return the sidebar hierarchy without starting any coding session."""
+    return workspace_catalog.project_graph(get_registry())
+
+
+@router.put("/workspaces/order", summary="Reorder workspace tabs")
+async def reorder_workspaces(request: Request, req: WorkspaceOrderRequest) -> dict:
+    """Persist a drag-and-drop tab order without touching panes or agents."""
+    registry = get_registry()
+    try:
+        await registry.reorder_workspaces(req.workspace_ids)
+    except SessionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await _announce_workspace(request, registry.session, "reordered")
+    return {"ok": True, "state": registry.state()}
+
+
+@router.put("/workspaces/{workspace_id}/terminal-order", summary="Reorder workspace terminals")
+async def reorder_workspace_terminals(
+    request: Request,
+    workspace_id: str,
+    req: TerminalOrderRequest,
+) -> dict:
+    registry = get_registry()
+    try:
+        session = await registry.reorder_terminals(workspace_id, req.terminal_ids)
+    except SessionError as exc:
+        status = 404 if registry.get(workspace_id) is None else 422
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    await _announce_workspace(request, session, "reordered")
+    return {"ok": True, "workspace": session.to_dict(), "state": registry.state()}
+
+
+@router.post("/workspaces/{workspace_id}/restore", summary="Reopen one saved workspace")
+async def restore_saved_workspace(request: Request, workspace_id: str) -> dict:
+    registry = get_registry()
+    try:
+        session = await registry.restore_workspace(workspace_id)
+    except SessionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await _announce_workspace(request, session, "restored")
+    return {"ok": True, "session": session.to_dict(), "state": registry.state()}
+
+
 @router.get(
     "/workspaces",
     response_model=WorkspacesResponse,
@@ -1957,9 +2143,22 @@ async def start_session(request: Request, req: StartSessionRequest) -> dict:
     history with folders the user never selected.
     """
     try:
-        session = await get_registry().start(req.folder, [t.model_dump() for t in req.terminals])
+        session = await get_registry().start(
+            req.folder,
+            [t.model_dump() for t in req.terminals],
+            project_id=req.project_id,
+            name=req.name,
+        )
     except SessionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if req.computer_id:
+        # Placed BEFORE anyone is told the workspace exists: a pane that
+        # attached first would start its agent on this machine instead.
+        try:
+            await get_registry().place_workspace(session.id, computer_id=req.computer_id)
+        except SessionError as exc:
+            await get_registry().end(session.id)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     split: dict[str, int] = {}
     for terminal in session.terminals:
@@ -2022,6 +2221,28 @@ async def close_workspace(request: Request, workspace_id: str) -> dict:
     await _announce_coding_mode(request)
     await _announce_workspace(request, registry.session, "closed")
     return {"ok": True, "closed": workspace_id, "state": registry.state()}
+
+
+@router.delete(
+    "/workspaces/{workspace_id}/record",
+    summary="Remove one workspace from the sidebar",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def remove_workspace(request: Request, workspace_id: str) -> dict:
+    """Stop the workspace's agents if it is open and forget it for good.
+
+    Unlike ``DELETE /workspaces/{workspace_id}``, which keeps a closed,
+    restorable row, this makes the row disappear. Works on open and remembered
+    (closed) workspaces. The folder on disk is never touched.
+
+    ``404`` when the id is neither open nor remembered.
+    """
+    registry = get_registry()
+    if not await registry.remove_workspace(workspace_id):
+        raise HTTPException(status_code=404, detail="That workspace no longer exists.")
+    await _announce_coding_mode(request)
+    await _announce_workspace(request, registry.session, "closed")
+    return {"ok": True, "removed": workspace_id, "state": registry.state()}
 
 
 async def _installed_agents() -> set[str]:
@@ -2148,68 +2369,6 @@ async def resume_workspace(request: Request) -> dict:
         # Workspaces that could not come back, with the reason for each.
         "skipped": [{"folder": folder, "detail": detail} for folder, detail in result.skipped],
     }
-
-
-@router.get(
-    "/interrupted",
-    response_model=InterruptedResponse,
-    summary="Coding sessions that were interrupted and never restarted",
-)
-def get_interrupted() -> InterruptedResponse:
-    """Which panes came back holding a conversation and have been told nothing since.
-
-    The state a restart leaves behind. Resuming reconnects each pane to the
-    conversation it was having, but a coding CLI launched on an old transcript
-    reads it and then waits — so an agent that was halfway through a job comes
-    back knowing everything about it and doing nothing, looking exactly like a
-    pane that finished.
-
-    ``continuable`` is per pane and answered against the machine as it is now: a
-    pane whose agent is not running cannot be typed into, and ``blocked_reason``
-    says why. An empty list is the normal answer — nothing was interrupted.
-    """
-    panes = interrupted.scan(get_registry())
-    return InterruptedResponse(
-        count=len(panes),
-        continuable_count=sum(1 for pane in panes if pane.continuable),
-        prompt=interrupted.CONTINUE_PROMPT,
-        panes=[InterruptedPane(**pane.to_dict()) for pane in panes],
-    )
-
-
-@router.post(
-    "/interrupted/continue",
-    response_model=ContinueInterruptedResponse,
-    summary="Tell interrupted coding sessions to carry on",
-)
-async def continue_interrupted(req: ContinueInterruptedRequest) -> ContinueInterruptedResponse:
-    """Type ``continue`` into the panes a restart left standing still.
-
-    With no ``names``, every interrupted pane in every open workspace — which is
-    the shape of the problem, since a restart interrupts them all at once. The
-    instruction goes through the ordinary prompt path, so the same guarantees
-    hold: control characters stripped, the submit verified against the pane's own
-    screen, and three honest outcomes rather than two.
-
-    **Read ``unconfirmed``.** Those panes were typed into without a confirmed
-    submit: the text may be sitting in the input box waiting for a keypress.
-    Reporting them as running is the one wrong thing to do with this answer.
-
-    ``409`` only when no workspace is open at all. Nothing to continue is a
-    normal, empty success.
-    """
-    registry = get_registry()
-    if not registry.sessions:
-        raise HTTPException(status_code=409, detail="No Agentic-IDE session is running.")
-    report = await interrupted.continue_panes(
-        registry, names=req.names, prompt=req.prompt or interrupted.CONTINUE_PROMPT
-    )
-    return ContinueInterruptedResponse(
-        **report.to_dict(),
-        # Re-scanned rather than subtracted: a pane the user drove themselves
-        # while this call was in flight has left the list too.
-        remaining=len(interrupted.scan(registry)),
-    )
 
 
 @router.get(
@@ -2369,7 +2528,7 @@ async def set_mode(request: Request, req: ModeRequest) -> dict:
 
 
 @router.put("/surface-context", summary="Report the visible Agentic-IDE terminal")
-def set_surface_context(req: SurfaceContextRequest) -> dict:
+async def set_surface_context(req: SurfaceContextRequest) -> dict:
     """Keep deictic voice/chat references aligned with the visible pane.
 
     The state is ephemeral and active-workspace scoped. Grid view clears it,
@@ -2381,13 +2540,17 @@ def set_surface_context(req: SurfaceContextRequest) -> dict:
     view that promises the least — see `workspace_view.VIEW_DEFAULT`.
     """
     view = req.view if req.view is not None else view_from_legacy_chat_flag(req.chat_view)
-    accepted = get_registry().set_surface_context(
+    registry = get_registry()
+    accepted = registry.set_surface_context(
         workspace_id=req.workspace_id,
         view=view,
         on_screen=req.on_screen,
         terminal=req.terminal,
         prompt_target=req.prompt_target,
     )
+    if accepted and registry.take_focus_dirty():
+        # The selected pane is part of what a reopened app restores (RUB-102).
+        await registry.persist_resume_activity()
     return {"ok": True, "accepted": accepted}
 
 
@@ -2488,6 +2651,7 @@ async def add_terminal(req: AddTerminalRequest) -> dict:
     """
     try:
         term = await get_registry().add_terminal(
+            workspace_id=req.workspace_id,
             agent=req.agent,
             name=req.name,
             anchor=req.anchor,
@@ -2502,22 +2666,132 @@ async def add_terminal(req: AddTerminalRequest) -> dict:
     return {"ok": True, "terminal": term.to_dict(), "state": get_registry().state()}
 
 
+@router.get("/terminals/{name}/fork", summary="What a fork of a terminal would be called")
+async def fork_suggestion(name: str, workspace_id: str | None = None) -> dict:
+    """The worktree name the fork dialog pre-fills, and whether a fork can copy the chat.
+
+    ``in_repo`` is false outside a git checkout — the dialog then offers only
+    the chat fork. ``can_fork`` is false for a CLI without a fork of its own,
+    whose "fork" is a fresh chat of the same CLI.
+    """
+    try:
+        suggestion = await asyncio.to_thread(get_registry().fork_suggestion, name, workspace_id)
+    except SessionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True, **suggestion}
+
+
+@router.post(
+    "/terminals/{name}/place",
+    summary="Run a terminal on a connected computer, or bring it back",
+)
+async def place_terminal(request: Request, name: str, req: PlaceRequest) -> dict:
+    """Move one pane's agent to a computer (a VPS, a local VM) or back here.
+
+    The folder travels with its uncommitted edits, the conversation is carried
+    so the agent continues, and on the computer the agent runs inside tmux,
+    so it keeps working while this app is closed. ``computer_id: null`` brings
+    it back; the server's work returns (never overwriting local changes).
+    """
+    registry = get_registry()
+    try:
+        result = await registry.place_terminal(
+            name, workspace_id=req.workspace_id, computer_id=req.computer_id
+        )
+    except SessionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    session = registry.get(req.workspace_id) if req.workspace_id else None
+    if session is not None:
+        await _announce_workspace(request, session, "updated")
+    return {"ok": True, **result, "state": registry.state()}
+
+
+class OffloadOnQuitRequest(BaseModel):
+    computer_id: str | None = Field(
+        default=None, description="Computer to move running panes to on quit; null turns it off."
+    )
+
+
+@router.get("/offload-on-quit", summary="Where running panes move when the app quits")
+def get_offload_on_quit() -> dict:
+    from jarvis.agentic_ide import offload_on_quit
+
+    return {"computer_id": offload_on_quit.target()}
+
+
+@router.put("/offload-on-quit", summary="Move running panes to a computer when the app quits")
+def put_offload_on_quit(req: OffloadOnQuitRequest) -> dict:
+    """Opt in (a computer id) or out (null) of keeping agents working after quit."""
+    from jarvis.agentic_ide import offload_on_quit
+    from jarvis.computers.service import ComputerError, get_service
+
+    if req.computer_id:
+        try:
+            get_service().get(req.computer_id)
+        except ComputerError as exc:
+            raise HTTPException(status_code=404, detail=exc.message) from exc
+    offload_on_quit.set_target(req.computer_id)
+    return {"computer_id": offload_on_quit.target()}
+
+
+@router.post(
+    "/workspaces/{workspace_id}/place",
+    summary="Run a whole workspace on a connected computer, or bring it back",
+)
+async def place_workspace(request: Request, workspace_id: str, req: PlaceRequest) -> dict:
+    """Every pane of the workspace, moved in one go (one folder transfer)."""
+    registry = get_registry()
+    try:
+        result = await registry.place_workspace(workspace_id, computer_id=req.computer_id)
+    except SessionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    session = registry.get(workspace_id)
+    if session is not None:
+        await _announce_workspace(request, session, "updated")
+    return {"ok": True, **result, "state": registry.state()}
+
+
+@router.post("/terminals/{name}/fork", summary="Fork a terminal's chat into a new terminal")
+async def fork_terminal(name: str, req: ForkTerminalRequest) -> dict:
+    """Open a new pane that continues a copy of this pane's conversation.
+
+    Same CLI, account, model, effort and permission stance, opened beside the
+    original. With ``worktree`` the copy runs in a new git worktree on branch
+    ``name``, so both agents can edit files without colliding.
+    """
+    try:
+        term = await get_registry().fork_terminal(
+            name,
+            workspace_id=req.workspace_id,
+            worktree=req.worktree,
+            name=req.name,
+            direction=req.direction,
+        )
+    except SessionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "terminal": term.to_dict(), "state": get_registry().state()}
+
+
 @router.post("/terminals/batch", summary="Open several terminals at once")
 async def add_terminals(request: Request, req: AddTerminalsRequest) -> dict:
     """Open ``count`` more terminals in the running workspace.
 
     The batch behind a spoken "open five more Claude Code terminals", and the
-    same call the CLI makes. Placement, call-signs and the agent default are the
-    single-terminal endpoint's — this only repeats it and reports honestly when
-    the pane cap within that workspace cut the request short.
+    same call the CLI makes. Oversized requests are rejected before creating a
+    pane. A concurrent addition or unavailable agent can still stop a batch,
+    which the response reports as a partial result.
 
     ``capped`` is true when fewer panes were opened than asked for. A client MUST
     surface that: five requested with three opened is not a plain success.
     """
     registry = get_registry()
+    selected_id = req.workspace_id or registry.active_id
     try:
         created, capped = await registry.add_terminals(
-            req.count, agent=req.agent, account=req.account
+            req.count,
+            agent=req.agent,
+            account=req.account,
+            workspace_id=selected_id,
         )
     except SessionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -2525,7 +2799,7 @@ async def add_terminals(request: Request, req: AddTerminalsRequest) -> dict:
     # Tell every connected client, so a workspace view that is already open shows
     # the new panes instead of a stale grid. Best-effort: the panes exist whether
     # or not a bus is attached (it is not, in tests).
-    session = registry.session
+    session = registry.get(selected_id) if selected_id else None
     bus = getattr(request.app.state, "bus", None)
     if session is not None and bus is not None and created:
         try:
@@ -3438,8 +3712,10 @@ async def terminal_attach(
     readable: list[tuple[str, bytes, str]] = []
 
     # 1. Paths that came with the drag. A path already inside the workspace is
-    #    used as it lies; anything else is copied in.
-    to_copy: list[tuple[str, bytes]] = []
+    #    used as it lies; anything else is copied in. Sources stay paths or
+    #    open files rather than bytes, so a screen recording streams to disk
+    #    instead of being held in memory whole.
+    to_copy: list[tuple[str, drops.DropSource]] = []
     for raw in (paths or "").splitlines():
         candidate = raw.strip()
         if not candidate:
@@ -3454,45 +3730,36 @@ async def terminal_attach(
                 # here to be described. A failure is not fatal: the reference
                 # still ships, the file simply goes undescribed.
                 try:
-                    body = await asyncio.to_thread((Path(session.folder) / inside).read_bytes)
+                    body = await asyncio.to_thread(
+                        drops.read_for_analysis, Path(session.folder) / inside
+                    )
                 except OSError as exc:
                     log.info("Agentic IDE attach: %r not readable for analysis (%s)", inside, exc)
                 else:
-                    readable.append((Path(inside).name, body, reference))
+                    if body is not None:
+                        readable.append((Path(inside).name, body, reference))
             continue
-        # expanduser() is string/env work, not a filesystem call; the read
+        # expanduser() is string/env work, not a filesystem call; the stat
         # itself goes to a worker thread (a dropped file may live on a slow
         # network share).
         resolved = Path(candidate).expanduser()  # noqa: ASYNC240
-        try:
-            data = await asyncio.to_thread(resolved.read_bytes)
-        except OSError as exc:
-            log.info("Agentic IDE attach: unreadable dropped path %r (%s)", candidate, exc)
+        if not await asyncio.to_thread(resolved.is_file):
+            log.info("Agentic IDE attach: unreadable dropped path %r", candidate)
             continue
-        to_copy.append((resolved.name, data))
+        to_copy.append((resolved.name, resolved))
 
-    # 2. Bytes the browser handed over directly.
-    total = 0
+    # 2. Bytes the browser handed over directly. The web server has already
+    #    spooled each upload to a temporary file; it is copied from there.
     for upload in files or []:
-        data = await upload.read()
-        total += len(data)
-        if total > drops.MAX_TOTAL_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=(
-                    f"That drop is too large (max "
-                    f"{drops.MAX_TOTAL_BYTES // (1024 * 1024)} MB in total)."
-                ),
-            )
-        if data:
-            to_copy.append((upload.filename or "file", data))
+        to_copy.append((upload.filename or "file", upload.file))
 
     # ``store`` silently skips empty entries, so they are dropped HERE instead —
     # that keeps ``stored[i]`` paired with ``to_copy[i]`` positionally. Pairing
     # by name would be wrong: two files that sanitize to the same name are
     # stored as two distinct files but would collapse into one key, and one drop
     # would be referenced twice while the other went missing.
-    to_copy = [(name, data) for name, data in to_copy if data]
+    sizes = await asyncio.to_thread(lambda: [drops.size_of(src) for _n, src in to_copy])
+    to_copy = [pair for pair, size in zip(to_copy, sizes, strict=True) if size != 0]
 
     if to_copy:
         try:
@@ -3500,12 +3767,15 @@ async def terminal_attach(
         except drops.DropError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         copied = len(stored)
-        for item, (_original, data) in zip(stored, to_copy, strict=True):
+        for item, (_original, source) in zip(stored, to_copy, strict=True):
             reference = drops.reference(item.relative_path, agent=term.agent)
             references.append(reference)
             stored_names.append(item.name)
             if analyze:
-                readable.append((item.name, data, reference))
+                # A file too large to analyse still ships; it goes undescribed.
+                body = await asyncio.to_thread(drops.read_for_analysis, source)
+                if body is not None:
+                    readable.append((item.name, body, reference))
 
     if not references:
         raise HTTPException(
@@ -4096,7 +4366,7 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
             except Exception:  # noqa: BLE001, S110 - viewer gone; transcript keeps filling
                 pass
 
-    async def on_replay(text: str) -> None:
+    async def on_replay(text: str, repaint: bool = False) -> None:
         """The screen this pane is re-joining, as the bytes that drew it.
 
         Its own frame type rather than a large ``o``, because the viewer has to
@@ -4109,10 +4379,17 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
         A viewer that does not know this frame simply ignores it and comes back
         blank rather than scrambled, which is the better of the two failures and
         only reachable by a client older than this server.
+
+        ``repaint`` says a whole-screen repaint has been requested and will
+        follow on the ordinary output channel; the viewer keeps the pane hidden
+        until it lands (older viewers ignore the extra field).
         """
+        frame: dict[str, object] = {"t": "replay", "d": text}
+        if repaint:
+            frame["repaint"] = True
         async with send_lock:
             try:
-                await ws.send_json({"t": "replay", "d": text})
+                await ws.send_json(frame)
             except Exception:  # noqa: BLE001, S110 - viewer gone; transcript keeps filling
                 pass
 

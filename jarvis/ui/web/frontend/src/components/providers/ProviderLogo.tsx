@@ -28,17 +28,28 @@ interface FamilyLogo {
 
 const PROVIDER_FAMILY_LOGOS: Record<string, FamilyLogo> = {
   antigravity: { file: "antigravity.svg", render: "colour" },
+  aws: { file: "aws.svg", render: "mono" },
   cartesia: { file: "cartesia.svg", render: "own" },
+  digitalocean: { file: "digitalocean.svg", render: "mono" },
   claude: { file: "claude.svg", render: "colour" },
+  contabo: { file: "contabo.svg", render: "mono" },
   elevenlabs: { file: "elevenlabs.svg", render: "mono" },
   gemini: { file: "gemini.svg", render: "colour" },
   "google-cloud": { file: "google-cloud.svg", render: "colour" },
   groq: { file: "groq.svg", render: "mono" },
+  hetzner: { file: "hetzner.svg", render: "mono" },
+  hostinger: { file: "hostinger.svg", render: "mono" },
   inworld: { file: "inworld.png", render: "own" },
+  ionos: { file: "ionos.svg", render: "mono" },
+  linode: { file: "linode.svg", render: "mono" },
   nvidia: { file: "nvidia.svg", render: "colour" },
   ollama: { file: "ollama.svg", render: "mono" },
   openai: { file: "openai.svg", render: "mono" },
   openrouter: { file: "openrouter.svg", render: "mono" },
+  oracle: { file: "oracle.svg", render: "mono" },
+  ovhcloud: { file: "ovhcloud.svg", render: "mono" },
+  raspberrypi: { file: "raspberrypi.svg", render: "mono" },
+  vultr: { file: "vultr.svg", render: "mono" },
   xai: { file: "xai.svg", render: "mono" },
 };
 
@@ -79,13 +90,31 @@ export function providerFamily(providerId: string): string | null {
   if (id.includes("cartesia")) return "cartesia";
   if (id.includes("inworld")) return "inworld";
   if (id.includes("nvidia") || id.includes("nemotron")) return "nvidia";
+  // Hosting providers (Settings -> Computers cloud import).
+  if (id.includes("hostinger")) return "hostinger";
+  if (id.includes("hetzner")) return "hetzner";
+  if (id.includes("digitalocean")) return "digitalocean";
+  // Exact ids from the Computers provider catalog: plain words like "oracle"
+  // or "aws" must not claim an unrelated provider id by substring.
+  const hosting: Record<string, string> = {
+    vultr: "vultr",
+    linode: "linode",
+    aws_lightsail: "aws",
+    contabo: "contabo",
+    ionos: "ionos",
+    ovhcloud: "ovhcloud",
+    oracle_cloud: "oracle",
+    raspberry_pi: "raspberrypi",
+  };
+  if (id in hosting) return hosting[id];
   return null;
 }
 
 /** An on-device engine or a self-hosted server: a capability, not a brand. */
 function localGlyph(providerId: string): "device" | "server" | null {
   const id = providerId.toLowerCase();
-  if (id.startsWith("local-")) return "server";
+  if (id.startsWith("local-") || id === "generic" || id === "home_server" || id === "strato") return "server";
+  if (id === "multipass") return "device";
   if (id.includes("faster-whisper") || id.includes("piper")) return "device";
   return null;
 }

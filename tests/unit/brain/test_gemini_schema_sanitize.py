@@ -178,3 +178,36 @@ def test_the_sanitized_schema_passes_googles_own_validator():
     types.Schema.model_validate(clean)  # must not raise
     # The exclusive bound was converted, not merely dropped.
     assert clean["properties"]["page"]["minimum"] == 0
+
+
+def test_tuple_array_without_items_gets_typed_items():
+    """Live 2026-09-29: ``transform.scale`` (a tuple → ``prefixItems``, no
+    ``items``) failed the whole request with "items: missing field"."""
+    bad = {
+        "type": "object",
+        "properties": {
+            "transform": {
+                "type": "object",
+                "properties": {
+                    "scale": {
+                        "type": "array",
+                        "prefixItems": [{"type": "number"}] * 3,
+                        "minItems": 3,
+                        "maxItems": 3,
+                    },
+                    "rotation": {"type": "array", "items": {}},
+                    "tags": {"type": "array"},
+                },
+            }
+        },
+    }
+    clean = _sanitize_for_gemini(bad)
+    props = clean["properties"]["transform"]["properties"]
+    assert props["scale"]["items"] == {"type": "number"}
+    assert props["rotation"]["items"]["type"] == "string"
+    assert props["tags"]["items"]["type"] == "string"
+
+
+def test_typed_array_items_are_left_alone():
+    schema = {"type": "array", "items": {"type": "integer", "minimum": 0}}
+    assert _sanitize_for_gemini(schema)["items"] == {"type": "integer", "minimum": 0}

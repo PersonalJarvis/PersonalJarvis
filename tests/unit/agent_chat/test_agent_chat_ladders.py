@@ -316,6 +316,15 @@ def test_agy_model_args_respects_the_strict_pairing():
     assert agy_model_args("", "medium") == ["--effort", "medium"]
     # A suffixed id is passed through untouched (no --effort next to it).
     assert agy_model_args("gemini-3.5-flash-low", "high") == ["--model", "gemini-3.5-flash-low"]
+    # A Gemini release newer than the catalog still gets the level agy
+    # demands ("requires --effort"): the chosen one, else the default.
+    assert agy_model_args("gemini-9.9-flash", "") == [
+        "--model",
+        "gemini-9.9-flash",
+        "--effort",
+        "high",
+    ]
+    assert agy_model_args("gemini-9.9-flash", "low")[-1] == "low"
 
 
 def test_agy_model_catalog_folds_suffixed_ids():

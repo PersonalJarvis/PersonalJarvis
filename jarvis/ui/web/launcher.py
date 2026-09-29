@@ -807,6 +807,11 @@ async def _run_headless(args) -> int:
 
     await server.start(start_serving=False)
     _lx_mark("server_start_total")
+    # Reattach to coding agents that kept running while the app was closed,
+    # and reopen the Agentic IDE workspaces in their layout.
+    from jarvis.agentic_ide.session import schedule_boot_restore
+
+    schedule_boot_restore()
 
     # The full app's init chain is done and the chat handler is subscribed — hand
     # the real ASGI app to the already-listening bootstrap server, which now

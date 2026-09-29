@@ -19,8 +19,12 @@
 
 export const FONT_MIN = 10;
 export const FONT_MAX = 20;
-/** Where a fresh install starts, and where Ctrl/Cmd+0 lands. */
-export const FONT_DEFAULT = 13;
+/**
+ * Where a fresh install starts, and where Ctrl/Cmd+0 lands. 15, not 13: a
+ * native terminal's default (Windows Terminal, 12pt) draws the same text about
+ * 15 % larger, and 13 read as small next to it (maintainer, 2026-09-29).
+ */
+export const FONT_DEFAULT = 15;
 
 export const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
 

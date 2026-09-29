@@ -912,8 +912,6 @@ _AGENTIC_IDE_WORKSPACE_TOOL_NAMES: frozenset[str] = frozenset({
     "agentic-ide-move-terminal",
     "agentic-ide-close-agent-terminals",
     "agentic-ide-focus",
-    "agentic-ide-interrupted",
-    "agentic-ide-continue-interrupted",
 })
 
 # Consequential action tools a signalless turn must never INHERIT from the
@@ -6761,7 +6759,11 @@ class BrainManager:
             window = int(getattr(brain, "context_window", 0) or 0)
         except (TypeError, ValueError):
             window = 0
-        if window <= 0:
+        try:
+            max_tools = int(getattr(brain, "max_tools", 0) or 0)
+        except (TypeError, ValueError):
+            max_tools = 0
+        if window <= 0 and max_tools <= 0:
             return tools
         used = (
             _approx_tokens(system_prompt)
@@ -6775,17 +6777,18 @@ class BrainManager:
         if getattr(self, "_skill_turn_match", None) is not None:
             keep.add("run-skill")
         fitted, dropped = _fit_tools_to_context_window(
-            tools, context_window=window, used_tokens=used, keep=keep
+            tools, context_window=window, used_tokens=used, keep=keep, max_tools=max_tools
         )
         if dropped:
             log.warning(
                 "Tool surface trimmed for %s: %d of %d tools hidden this turn so "
-                "the request fits the model's %d-token window (prompt+history "
-                "~%d tokens, budget for tools %d). First hidden: %s",
+                "the request fits the model's %d-token window and %s-tool cap "
+                "(prompt+history ~%d tokens, budget for tools %d). First hidden: %s",
                 getattr(brain, "name", type(brain).__name__),
                 len(dropped),
                 len(tools),
                 window,
+                max_tools or "no",
                 used,
                 max(window - used, 0),
                 ", ".join(dropped[:5]),
@@ -13872,13 +13875,14 @@ def _fit_tools_to_context_window(
     context_window: int,
     used_tokens: int,
     keep: Iterable[str] = (),
+    max_tools: int = 0,
 ) -> tuple[dict[str, Tool], list[str]]:
-    """Shrink a tool surface until it fits ``context_window``.
+    """Shrink a tool surface until it fits ``context_window`` and ``max_tools``.
 
-    Returns ``(surviving tools, dropped names in drop order)``. A window of
-    ``0`` or less means the brain declared none, and the surface comes back
-    untouched. ``used_tokens`` is everything else the request carries (system
-    prompt, history, reserve); what remains is the budget for tools.
+    Returns ``(surviving tools, dropped names in drop order)``. A window or a
+    tool cap of ``0`` or less means the brain declared none. ``used_tokens``
+    is everything else the request carries (system prompt, history,
+    reserve); what remains is the budget for tools.
 
     Drop order, deliberately: connected-server tools first — they are
     additions to Jarvis's own surface, each one a full JSON schema, and on a
@@ -13888,12 +13892,13 @@ def _fit_tools_to_context_window(
     When even the prompt alone exceeds the window every droppable tool goes
     and the caller's log says so; the request still fails, but honestly.
     """
-    if context_window <= 0 or not tools:
+    if (context_window <= 0 and max_tools <= 0) or not tools:
         return tools, []
     costs = {name: _tool_surface_tokens(name, tool) for name, tool in tools.items()}
-    budget = context_window - used_tokens
+    budget = context_window - used_tokens if context_window > 0 else sum(costs.values())
     total = sum(costs.values())
-    if total <= budget:
+    count_cap = max_tools if max_tools > 0 else len(tools)
+    if total <= budget and len(tools) <= count_cap:
         return tools, []
     kept = set(keep)
     droppable = [name for name in tools if name not in kept]
@@ -13905,10 +13910,12 @@ def _fit_tools_to_context_window(
         )
     )
     dropped: list[str] = []
+    remaining = len(tools)
     for name in droppable:
-        if total <= budget:
+        if total <= budget and remaining <= count_cap:
             break
         total -= costs[name]
+        remaining -= 1
         dropped.append(name)
     gone = set(dropped)
     return {name: tool for name, tool in tools.items() if name not in gone}, dropped

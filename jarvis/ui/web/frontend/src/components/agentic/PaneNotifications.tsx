@@ -59,11 +59,10 @@ import { useEventStore } from "@/store/events";
 /**
  * How often the bell asks.
  *
- * Faster than the interrupted-panes poll (15 s) because this one is about
- * REACTION: an agent finishing is the moment the user is waiting for, and a
- * quarter-minute of silence after it is a quarter-minute of them still
- * watching the wall. The backend's own sweep runs every 2 s, so this is the
- * slower half of the pair either way.
+ * Five seconds because this one is about REACTION: an agent finishing is the
+ * moment the user is waiting for, and a quarter-minute of silence after it is
+ * a quarter-minute of them still watching the wall. The backend's own sweep
+ * runs every 2 s, so this is the slower half of the pair either way.
  */
 export const POLL_MS = 5_000;
 

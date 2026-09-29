@@ -49,6 +49,20 @@ beforeEach(() => {
 });
 
 describe("PromptHistoryButton", () => {
+  it("keeps history open when its overflow trigger becomes hidden", async () => {
+    const onOpen = vi.fn();
+    const restoreFocus = vi.fn();
+    const { rerender } = render(<div><PromptHistoryButton terminal="Nova" workspaceId="ide_alpha" count={2} triggerMode="menu-item" onOpen={onOpen} restoreFocus={restoreFocus} /></div>);
+    fireEvent.click(screen.getByRole("menuitem"));
+    expect(onOpen).toHaveBeenCalledOnce();
+    rerender(<div hidden><PromptHistoryButton terminal="Nova" workspaceId="ide_alpha" count={2} triggerMode="menu-item" onOpen={onOpen} restoreFocus={restoreFocus} /></div>);
+    await waitFor(() => expect(screen.getByTestId("prompt-history-dialog")).toBeTruthy());
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("Nova", "ide_alpha"));
+    fireEvent.keyDown(screen.getByTestId("prompt-history-dialog"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("prompt-history-dialog")).toBeNull());
+    expect(restoreFocus).toHaveBeenCalledOnce();
+  });
+
   it("puts a small, counted history control in the pane header", () => {
     render(
       <PromptHistoryButton

@@ -9,17 +9,24 @@ import { X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { useLocaleChunk, useT } from "@/i18n";
+import { societyDisplayName } from "@/lib/societyDisplayName";
+import { useEventStore } from "@/store/events";
 
 import { AgentSwatch } from "../AgentSwatch";
 import type { SocietyAgent } from "../data";
 import { AgentChatPanel } from "../chat/AgentChatPanel";
 import { RosterRail } from "../roster/RosterRail";
+import type { SocietyChatGroup } from "@/lib/societyChatGroups";
 import { OptionsRail } from "./OptionsRail";
 
 export interface AgentCardOverlayProps {
   agent: SocietyAgent | null;
   /** Every agent — the rail lists them, the chat @mentions them. */
   roster: SocietyAgent[];
+  groups?: SocietyChatGroup[];
+  onSelectGroup?: (groupId: string) => void;
+  onGroupAgents?: (sourceId: string, targetId: string) => void;
+  onAddAgentToGroup?: (agentId: string, groupId: string) => void;
   /** True while the roster is still loading; the rail says so. */
   rosterLoading?: boolean;
   /** True while rows come from the sample roster rather than society.db. */
@@ -38,6 +45,10 @@ export interface AgentCardOverlayProps {
 export function AgentCardOverlay({
   agent,
   roster,
+  groups = [],
+  onSelectGroup,
+  onGroupAgents,
+  onAddAgentToGroup,
   rosterLoading = false,
   sample = false,
   onSelectAgent,
@@ -48,6 +59,8 @@ export function AgentCardOverlay({
 }: AgentCardOverlayProps) {
   const t = useT();
   useLocaleChunk("society");
+  const assistantName = useEventStore((s) => s.assistantName);
+  const displayName = agent ? societyDisplayName(agent, assistantName) : "";
   // The modal keeps a real dialog title plus its close control. The embedded
   // workspace hides this row entirely: the left rail already marks the active
   // agent and the right rail names it, so the row was a second, boring band.
@@ -63,7 +76,7 @@ export function AgentCardOverlay({
               <AgentSwatch agent={agent} size={32} />
               <div className="min-w-0 flex-1">
                 <Title className="truncate font-display text-base font-semibold tracking-tight text-foreground">
-                  {agent.name}
+                  {displayName}
                 </Title>
                 <Description className="truncate text-xs text-muted-foreground">
                   {agent.title}
@@ -80,6 +93,10 @@ export function AgentCardOverlay({
           <div className="grid min-h-0 flex-1 grid-cols-[minmax(240px,300px)_minmax(0,1fr)]">
             <RosterRail
               agents={roster}
+              groups={groups}
+              onOpenGroup={onSelectGroup}
+              onGroupAgents={onGroupAgents}
+              onAddAgentToGroup={onAddAgentToGroup}
               loading={rosterLoading}
               sample={sample}
               activeAgentId={agent.agentId}

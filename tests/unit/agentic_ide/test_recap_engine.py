@@ -319,6 +319,29 @@ def test_scheduling_outside_an_event_loop_is_a_no_op() -> None:
     assert recap_engine.recap_for(_pane(lines=40), lines=[]).source == recap_engine.BY_RULES
 
 
+def test_a_poll_from_a_worker_thread_still_reaches_the_model(monkeypatch) -> None:
+    """``/recaps`` is a plain ``def`` served from the threadpool, with no loop
+    of its own; the summary must still start on the app's loop. Before this,
+    every poll returned early there and no pane was ever summarized."""
+    import anyio.to_thread
+
+    monkeypatch.setattr(recap_engine, "_enabled", lambda: True)
+
+    async def answer(*_args: object, **_kwargs: object) -> recap_engine.SmartRecap:
+        return recap_engine.SmartRecap("Login tests — three failing", "Three fail.")
+
+    monkeypatch.setattr(recap_engine, "summarize_with_model", answer)
+    term = _pane(lines=40)
+
+    async def scenario() -> None:
+        await anyio.to_thread.run_sync(lambda: recap_engine.refresh_soon(term, lines=_rows(40)))
+        # The fake answers at once, so the task may already be done here.
+        await asyncio.gather(*list(recap_engine._tasks))  # noqa: SLF001
+
+    asyncio.run(scenario())
+    assert recap_engine.recap_for(term, lines=[]).headline == "Login tests — three failing"
+
+
 def test_scheduling_never_raises(monkeypatch) -> None:
     """A recap must never be the thing that breaks a workspace read."""
 
@@ -364,7 +387,7 @@ def test_the_headline_prompt_front_loads_the_first_two_words() -> None:
     system = recap_engine._SYSTEM  # noqa: SLF001 - the contract under test
 
     assert "FIRST TWO WORDS" in system
-    assert "about 5 words" in system
+    assert "3 to 5 words" in system
     assert '"Code Review"' in system  # named as a banned opener
     assert "Pane titles review — 6 findings" in system  # ...and its repair
 

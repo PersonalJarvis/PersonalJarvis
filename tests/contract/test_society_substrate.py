@@ -19,6 +19,45 @@ class FakeManager:
         return "m-1"
 
 
+def test_persistent_group_membership_headless(tmp_path: Path) -> None:
+    runtime = SocietyRuntime(
+        tmp_path, seed_starter_team=False, mission_manager=lambda: FakeManager()
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.state.society_factory = lambda: runtime
+    with TestClient(app) as client:
+        for name in ("Scout", "Writer"):
+            assert client.post("/api/society/agents", json={"name": name}).status_code == 200
+        group = client.post(
+            "/api/society/chat-groups",
+            json={"name": "Research", "members": ["scout", "writer"]},
+        ).json()["group"]
+        group_id = group["group_id"]
+        sessions = {
+            agent["agent_id"]: agent["session_id"]
+            for agent in client.get("/api/society/agents").json()["agents"]
+        }
+        assert client.get("/api/society/chat-groups").json()["groups"][0]["members"] == [
+            "scout",
+            "writer",
+        ]
+        assert client.portal is not None
+        client.portal.call(runtime.close)
+
+    restarted = SocietyRuntime(tmp_path, seed_starter_team=False)
+    app2 = FastAPI()
+    app2.include_router(router)
+    app2.state.society_factory = lambda: restarted
+    with TestClient(app2) as client:
+        assert client.get("/api/society/chat-groups").json()["groups"][0]["group_id"] == group_id
+        after = {
+            agent["agent_id"]: agent["session_id"]
+            for agent in client.get("/api/society/agents").json()["agents"]
+        }
+        assert after == sessions
+
+
 def test_two_agents_exchange_typed_messages_headless(tmp_path: Path) -> None:
     manager = FakeManager()
     runtime = SocietyRuntime(tmp_path, seed_starter_team=False, mission_manager=lambda: manager)
@@ -111,7 +150,7 @@ def test_roster_rename_and_archive_keep_identity_headless(tmp_path: Path) -> Non
         assert client.delete(f"/api/society/agents/{created['agent_id']}").status_code == 200
         visible = client.get("/api/society/agents").json()["agents"]
         assert all(agent["agent_id"] != created["agent_id"] for agent in visible)
-        archived = client.get(
-            "/api/society/agents", params={"include_archived": "true"}
-        ).json()["agents"]
+        archived = client.get("/api/society/agents", params={"include_archived": "true"}).json()[
+            "agents"
+        ]
         assert any(agent["agent_id"] == created["agent_id"] for agent in archived)

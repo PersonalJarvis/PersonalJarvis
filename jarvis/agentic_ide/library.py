@@ -94,6 +94,10 @@ class Project:
     #: UI always has one and the user never has to pick.
     color: str | None = None
     pinned: bool = False
+    #: Manual sidebar position, set by drag and drop. Files written before this
+    #: existed read as 0.0, which ties and falls through to ``last_opened_at`` —
+    #: so the order nobody arranged stays exactly the order they already see.
+    position: float = 0.0
     archived: bool = False
     created_at: float = 0.0
     last_opened_at: float = 0.0
@@ -269,6 +273,7 @@ def _load_projects() -> list[Project]:
                 name=str(item.get("name") or Path(path).name or path),
                 color=(str(item["color"]) if item.get("color") else None),
                 pinned=bool(item.get("pinned")),
+                position=float(item.get("position") or 0.0),
                 archived=bool(item.get("archived")),
                 created_at=float(item.get("created_at") or 0.0),
                 last_opened_at=float(item.get("last_opened_at") or 0.0),
@@ -286,7 +291,7 @@ def _save_projects(projects: list[Project]) -> bool:
 
 
 def list_projects(*, include_archived: bool = False) -> list[Project]:
-    """Every project, pinned first, then most recently opened.
+    """Every project, pinned first, then in the user's own order.
 
     Folders that no longer exist are kept rather than dropped. An unplugged
     external drive or a repo on a network share is a normal, temporary state,
@@ -298,7 +303,7 @@ def list_projects(*, include_archived: bool = False) -> list[Project]:
         projects = _load_projects()
     if not include_archived:
         projects = [p for p in projects if not p.archived]
-    projects.sort(key=lambda p: (not p.pinned, -p.last_opened_at, p.name.lower()))
+    projects.sort(key=lambda p: (not p.pinned, p.position, -p.last_opened_at, p.name.lower()))
     return projects
 
 
@@ -308,6 +313,11 @@ def get_project(project_id: str) -> Project | None:
             if project.id == project_id:
                 return project
     return None
+
+
+def _next_position(projects: list[Project]) -> float:
+    """Where a project nobody arranged goes: behind every arranged one."""
+    return max((p.position for p in projects), default=0.0) + 1.0
 
 
 def ensure_project(path: str | Path, *, name: str | None = None) -> Project:
@@ -335,6 +345,7 @@ def ensure_project(path: str | Path, *, name: str | None = None) -> Project:
             id=pid,
             path=resolved,
             name=(name or Path(resolved).name or resolved)[:TITLE_MAX],
+            position=_next_position(projects),
             created_at=now,
             last_opened_at=now,
         )
@@ -386,6 +397,7 @@ def ensure_scratch() -> Project:
             id=pid,
             path=resolved,
             name=SCRATCH_NAME,
+            position=_next_position(projects),
             created_at=now,
             last_opened_at=now,
             scratch=True,
@@ -433,6 +445,31 @@ def touch_project(project_id: str) -> None:
                 project.last_opened_at = time.time()
                 _save_projects(projects)
                 return
+
+
+def reorder_projects(project_ids: list[str]) -> list[Project]:
+    """Persist a drag-and-drop sidebar order.
+
+    ``project_ids`` carries the visible projects front to back. It may be a
+    subset — archived projects and the scratch holder are never on screen, so
+    they keep their positions. Unknown ids and duplicates are rejected without
+    moving anything.
+    """
+    with _WRITE_LOCK:
+        projects = _load_projects()
+        known = {p.id for p in projects}
+        if len(set(project_ids)) != len(project_ids):
+            raise ValueError("Project order must contain every project exactly once.")
+        unknown = [pid for pid in project_ids if pid not in known]
+        if unknown:
+            raise ValueError(f"Unknown project: {unknown[0]}")
+        rank = {pid: index for index, pid in enumerate(project_ids)}
+        for project in projects:
+            if project.id in rank:
+                project.position = float(rank[project.id])
+        _save_projects(projects)
+        projects.sort(key=lambda p: (not p.pinned, p.position, -p.last_opened_at, p.name.lower()))
+        return projects
 
 
 def delete_project(project_id: str) -> bool:

@@ -9,6 +9,14 @@ from uuid import uuid4
 from .chat_binding import SURFACE, _workspace, pair_for
 from .routines import agent_id_from_tags, routine_seat
 
+#: Marks a per-execution routine chat: ``society:<agent>:routine:<task>:<run>``.
+ROUTINE_SESSION_MARKER = ":routine:"
+
+
+def is_routine_session(session_id: str) -> bool:
+    """Whether ``session_id`` is an unattended routine execution's own chat."""
+    return ROUTINE_SESSION_MARKER in (session_id or "")
+
 
 async def guard_owned_routine(runtime: Any, tags: tuple[str, ...]) -> Any:
     """Check live owner availability for both chat and native workflow actions."""
@@ -133,7 +141,7 @@ async def run_owned_routine(
     cfg = runtime.config()
     provider, model, effort, account_id = await _seat_for_run(runtime, agent, task_id)
     session = service.store.create_session(
-        session_id=f"{agent.session_id}:routine:{task_id}:{uuid4().hex}",
+        session_id=f"{agent.session_id}{ROUTINE_SESSION_MARKER}{task_id}:{uuid4().hex}",
         surface=SURFACE,
         provider=provider,
         model=model,

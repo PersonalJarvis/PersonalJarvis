@@ -593,12 +593,13 @@ class ShellTool:
     def __init__(
         self, runtime: Any, agent_id: str, *, workspace: Path, backend: Any = None
     ) -> None:
-        from .shell import default_backend
-
         self._runtime = runtime
         self._agent_id = agent_id
         self._workspace = Path(workspace)
-        self._backend = backend or default_backend()
+        #: An explicit backend (tests, a future container) wins; otherwise the
+        #: agent's placement picks one per call — a move to another computer
+        #: applies from the very next command.
+        self._backend = backend
 
     @staticmethod
     def _level(command: str) -> str:
@@ -666,13 +667,16 @@ class ShellTool:
             timeout = float(args.get("timeout_s") or DEFAULT_TIMEOUT_S)
         except (TypeError, ValueError):  # Invalid optional timeouts use the bounded default.
             timeout = DEFAULT_TIMEOUT_S
-        result = await self._backend.run(command, cwd=cwd, timeout_s=timeout)
+        from .remote import backend_for
+
+        backend = self._backend or backend_for(caller, self._workspace)
+        result = await backend.run(command, cwd=cwd, timeout_s=timeout)
         body = {
             "output": result.output,
             "exit_code": result.exit_code,
             "seconds": round(result.seconds, 2),
             "folder": str(cwd),
-            "backend": getattr(self._backend, "name", "local"),
+            "backend": getattr(backend, "name", "local"),
         }
         if result.timed_out:
             return ToolResult(success=False, output=body, error="command timed out")

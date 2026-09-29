@@ -205,3 +205,37 @@ async def test_real_desktop_callbacks_confirm_only_a_completed_readback(monkeypa
     assert getattr(pipe, "_agent_reply_retries", []) == (
         [] if ending in {"complete", "surface"} else [event]
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source", ["tasks.runner", "workflows.runner", "workflows.scheduler", "desktop_app.conductor"]
+)
+async def test_background_news_waits_for_a_call_instead_of_speaking_unasked(source):
+    """A routine result, an automation, a scheduled job recovering: none of
+    them may speak into an idle machine. They are held and delivered at the
+    next call."""
+    pipe, tts, player, realtime = _pipeline(accepted=True)
+    event = AnnouncementRequested(
+        source_layer=source,
+        kind="subagent",
+        language="en",
+        text="The scheduled job X is working again.",
+    )
+    pipe._turn_state = TurnTakingState.IDLE
+    await pipe._on_announcement(event)
+    assert pipe._deferred_announcements == [event]
+    assert not realtime.calls and not tts.calls and not player.plays
+    await pipe._set_turn_state(TurnTakingState.LISTENING)
+    await asyncio.sleep(0.02)
+    assert len(realtime.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_mission_readback_still_punches_through_after_hangup():
+    """What the user asked for in this conversation is not background news."""
+    pipe, _, _, _ = _pipeline(accepted=True)
+    event = AnnouncementRequested(
+        source_layer="missions.voice", kind="completion", language="en", text="Done."
+    )
+    assert not pipe._is_agent_reply(event)

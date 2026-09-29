@@ -935,7 +935,6 @@ class RealtimeToolBridge:
                     trace_id=trace_id,
                     origin="realtime",
                     user_utterance=self._last_user_text,
-                    rationale="Realtime model requested an available Jarvis tool.",
                     config_snapshot={
                         "output_language": self._language,
                         "voice_confirm": True,
@@ -952,7 +951,6 @@ class RealtimeToolBridge:
                 "voice_confirm": True,
             },
             trace_id=trace_id,
-            rationale="Realtime model requested an available Jarvis tool.",
         )
 
     async def _execute_confirmed(self, trace_id: UUID) -> Any:

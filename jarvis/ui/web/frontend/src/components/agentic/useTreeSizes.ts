@@ -146,89 +146,98 @@ export function useTreeSizes(
   const previewRef = useRef(onPreview);
   previewRef.current = onPreview;
 
-  const startDrag = useCallback((seam: PaneSeam, event: React.PointerEvent) => {
-    const from = treeRef.current;
-    if (!from) return;
-    event.preventDefault();
-    const at = seam.orientation === "vertical" ? event.clientX : event.clientY;
-    active.current = { seam, point: at, from };
-    point.current = at;
-    live.current = null;
-    setDragging(seam.id);
-  }, []);
+  /** Tears down the gesture in flight, if any; set while a drag runs. */
+  const stopDrag = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
-    if (!dragging) return;
-
-    const axisPx = (seam: PaneSeam) => {
-      const size = extentRef.current();
-      return seam.orientation === "vertical" ? size.width : size.height;
-    };
-
-    // One computation and one paint per FRAME, however many moves the pointer
-    // delivered in it.
-    let frame: number | undefined;
-    const apply = () => {
-      frame = undefined;
-      const drag = active.current;
-      if (!drag) return;
-      const next = dragSeam(
-        drag.from,
-        drag.seam,
-        point.current - drag.point,
-        axisPx(drag.seam),
-      );
-      live.current = next;
-      if (previewRef.current) previewRef.current(next);
-      else commit(next);
-    };
-
-    const onMove = (event: PointerEvent) => {
-      const drag = active.current;
-      if (!drag) return;
-      point.current =
-        drag.seam.orientation === "vertical" ? event.clientX : event.clientY;
-      if (frame === undefined) frame = requestAnimationFrame(apply);
-    };
-    const settle = () => {
-      // Land the last move before committing, so the sizes React is told
-      // about are the ones already on screen.
-      if (frame !== undefined) {
-        cancelAnimationFrame(frame);
-        apply();
-      }
-      const settled = live.current;
-      active.current = null;
+  /*
+   * The window listeners are attached HERE, synchronously, not in an effect
+   * that runs after the next render. A quick gesture — or a pointer driven by
+   * automation — can deliver its moves and its release before that render,
+   * and a listener that arrives late misses the whole drag and leaves the seam
+   * stuck "dragging" until some unrelated release somewhere else.
+   */
+  const startDrag = useCallback(
+    (seam: PaneSeam, event: React.PointerEvent) => {
+      const from = treeRef.current;
+      if (!from) return;
+      event.preventDefault();
+      stopDrag.current?.();
+      const at = seam.orientation === "vertical" ? event.clientX : event.clientY;
+      active.current = { seam, point: at, from };
+      point.current = at;
       live.current = null;
-      setDragging(null);
-      if (settled) commit(settled);
-    };
-    const onUp = () => settle();
-    // A cancelled pointer (a touch taken over by the browser, a window that
-    // lost the device) must commit too: the boxes are already painted at the
-    // dragged sizes.
-    const onCancel = () => settle();
+      setDragging(seam.id);
 
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onCancel);
-    // Lock the cursor and suppress text selection for the whole drag, so the
-    // pointer can wander off the 6px grip without the drag looking broken.
-    const previousCursor = document.body.style.cursor;
-    const previousSelect = document.body.style.userSelect;
-    document.body.style.cursor =
-      active.current?.seam.orientation === "vertical" ? "col-resize" : "row-resize";
-    document.body.style.userSelect = "none";
+      const axisPx = () => {
+        const size = extentRef.current();
+        return seam.orientation === "vertical" ? size.width : size.height;
+      };
 
-    return () => {
-      if (frame !== undefined) cancelAnimationFrame(frame);
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onCancel);
-      document.body.style.cursor = previousCursor;
-      document.body.style.userSelect = previousSelect;
-    };
-  }, [commit, dragging]);
+      // One computation and one paint per FRAME, however many moves the
+      // pointer delivered in it.
+      let frame: number | undefined;
+      const apply = () => {
+        frame = undefined;
+        const drag = active.current;
+        if (!drag) return;
+        const next = dragSeam(drag.from, drag.seam, point.current - drag.point, axisPx());
+        live.current = next;
+        if (previewRef.current) previewRef.current(next);
+        else commit(next);
+      };
+
+      const onMove = (move: PointerEvent) => {
+        if (!active.current) return;
+        point.current = seam.orientation === "vertical" ? move.clientX : move.clientY;
+        if (frame === undefined) frame = requestAnimationFrame(apply);
+      };
+
+      // Lock the cursor and suppress text selection for the whole drag, so the
+      // pointer can wander off the thin grip without the drag looking broken.
+      const previousCursor = document.body.style.cursor;
+      const previousSelect = document.body.style.userSelect;
+      document.body.style.cursor =
+        seam.orientation === "vertical" ? "col-resize" : "row-resize";
+      document.body.style.userSelect = "none";
+
+      const detach = () => {
+        if (frame !== undefined) cancelAnimationFrame(frame);
+        frame = undefined;
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", settle);
+        window.removeEventListener("pointercancel", settle);
+        document.body.style.cursor = previousCursor;
+        document.body.style.userSelect = previousSelect;
+        stopDrag.current = null;
+      };
+      // A release commits; so does a cancelled pointer (a touch taken over by
+      // the browser, a window that lost the device), because the boxes are
+      // already painted at the dragged sizes.
+      function settle() {
+        // Land the last move before committing, so the sizes React is told
+        // about are the ones already on screen.
+        if (frame !== undefined) {
+          cancelAnimationFrame(frame);
+          apply();
+        }
+        detach();
+        const settled = live.current;
+        active.current = null;
+        live.current = null;
+        setDragging(null);
+        if (settled) commit(settled);
+      }
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", settle);
+      window.addEventListener("pointercancel", settle);
+      stopDrag.current = detach;
+    },
+    [commit],
+  );
+
+  // A grid unmounted mid-drag must not leave listeners or a locked cursor.
+  useEffect(() => () => stopDrag.current?.(), []);
 
   const nudge = useCallback(
     (seam: PaneSeam, deltaPx: number) => {

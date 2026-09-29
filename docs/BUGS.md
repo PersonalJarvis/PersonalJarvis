@@ -15445,3 +15445,31 @@ nothing; only `sudo mdutil -E /` repairs it. The installer now proves the stall
 finishing silently on an app search cannot find. Launchpad listed the app all
 along. Guards: `tests/unit/setup/test_macos_dock.py`,
 `tests/unit/install/test_installer_flow.py`.
+
+## BUG-219: after a restart the desktop app booted an agent's stale branch — onboarding again, settings and IDE panes "gone" (HIGH, FIXED 2026-09-28)
+
+**Symptom.** The app was closed and restarted and came back on day-old code,
+walking the user through onboarding as if nothing had ever been configured.
+Every Agentic IDE workspace was closed.
+
+**Cause.** A coding agent ran `scripts/preflight.ps1` inside its own linked
+git worktree. Check 2 ran `pip install -e .` there, which repins the ONE
+editable install in the user's site-packages — the same pin the installed
+desktop app imports `jarvis` through. Nothing changed while the app kept
+running (its code was already in memory); the next launch, a day later,
+imported the worktree's branch and pinned the working directory to that
+worktree, so it read the worktree's empty `data/` folder: no setup state
+(onboarding), default settings, and the autostart shortcut rewritten to the
+worktree. The user's real `data/` was never touched.
+
+**Fix.** `preflight.ps1` detects a linked worktree (`--git-dir` differs from
+`--git-common-dir`) and leaves the shared pin alone there; its import check
+runs with the worktree root on `PYTHONPATH`, the way pytest
+(`pythonpath = ["."]`) sees it. The primary checkout still self-heals the pin.
+The rulebook's restore-trap bullet now forbids `pip install -e` from a linked
+worktree.
+
+**Recovery.** `pip install -e . --no-deps` from the primary checkout, restart
+the app; the IDE workspaces come back from `last_session.json` via
+`POST /api/agentic-ide/workspaces/{id}/restore`, each pane resuming its CLI
+session.
