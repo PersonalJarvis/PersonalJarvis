@@ -411,31 +411,39 @@ def eligible(pr: dict) -> bool:
 
 
 _ACTIVE = {"queued", "in_progress", "waiting", "pending", "requested"}
-# A pull_request run a bot push triggers waits for approval and never runs;
-# it says nothing about the commit.
-_NO_VERDICT = {"action_required", "skipped", "stale", "neutral"}
 
 
-def run_state(runs: list[dict]) -> str:
-    """success | failure | pending | missing from the CI workflow runs of one commit.
+def run_state(runs: list[dict]) -> tuple[str, int | None]:
+    """(state, run id) for a pull request's head commit, from its ci.yml runs.
+
+    Only ``pull_request`` runs count: GitHub attaches the `CI gate` check of a
+    workflow_dispatch run to the commit but NOT to the pull request, so branch
+    protection never sees it. A pull_request run triggered by the train's own
+    GITHUB_TOKEN push parks in ``action_required``; the train approves it.
 
     Read from the workflow RUNS, not the `CI gate` check: the gate is the last
-    job, so while CI is still running it has no check yet — reading that as
-    "missing" re-dispatched CI and cancelled the run in flight, forever.
+    job, so a running CI has no gate check yet.
+
+    States: pending | success | failure | approve | rerun | missing.
     """
-    if any(r.get("status") in _ACTIVE for r in runs):
-        return "pending"
-    done = [r for r in runs if r.get("conclusion") not in _NO_VERDICT]
-    if not done:
-        return "missing"
-    latest = max(done, key=lambda r: r.get("created_at") or "")
+    pr_runs = [r for r in runs if r.get("event") == "pull_request"]
+    if any(r.get("status") in _ACTIVE for r in pr_runs):
+        return "pending", None
+    if not pr_runs:
+        return "missing", None
+    latest = max(pr_runs, key=lambda r: r.get("created_at") or "")
     conclusion = latest.get("conclusion")
+    run_id = latest.get("id")
     if conclusion == "success":
-        return "success"
-    return "missing" if conclusion == "cancelled" else "failure"
+        return "success", run_id
+    if conclusion == "action_required":
+        return "approve", run_id
+    if conclusion in ("cancelled", "stale", "skipped", "neutral", None):
+        return "rerun", run_id
+    return "failure", run_id
 
 
-def gate_state(repo: str, sha: str) -> str:
+def gate_state(repo: str, sha: str) -> tuple[str, int | None]:
     data = gh_json("api", f"repos/{repo}/actions/workflows/ci.yml/runs?head_sha={sha}&per_page=50")
     runs = (data or {}).get("workflow_runs", []) if isinstance(data, dict) else []
     return run_state(runs)
@@ -462,8 +470,8 @@ def decide(mergeable: str, state: str, behind: bool) -> str:
         return "wait"  # GitHub is still computing mergeability
     if state == "success":
         return "merge"
-    if state == "missing":
-        return "dispatch"
+    if state in ("approve", "rerun"):
+        return state
     if state == "failure" and behind:
         return "update"
     return "wait"
@@ -496,7 +504,7 @@ def train(repo: str, max_updates: int, resolver_cmd: str, dry_run: bool, token_i
         number, branch, sha = pr["number"], pr["headRefName"], pr["headRefOid"]
         git("fetch", "--quiet", "origin", "main", branch)
         behind = git("merge-base", "--is-ancestor", "origin/main", sha, check=False).returncode != 0
-        state = gate_state(repo, sha)
+        state, run_id = gate_state(repo, sha)
         action = decide(pr.get("mergeable") or "", state, behind)
         if action == "merge" and merged:
             action = "wait"  # one landing per tick; the next tick sees the new main
@@ -528,10 +536,21 @@ def train(repo: str, max_updates: int, resolver_cmd: str, dry_run: bool, token_i
                     dispatch_ci("main")  # a GITHUB_TOKEN merge fires no push event
             else:
                 summary.append(f"#{number}: merge refused (protection or conflict)")
-        elif action == "dispatch":
-            summary.append(f"#{number}: no CI on {sha[:8]}, dispatching")
-            if not dry_run:
-                dispatch_ci(branch)
+        elif action in ("approve", "rerun"):
+            if dry_run:
+                summary.append(f"#{number}: would {action} CI run {run_id}")
+                continue
+            if action == "approve":
+                code = gh("api", "-X", "POST", f"repos/{repo}/actions/runs/{run_id}/approve")
+            else:
+                code = gh("run", "rerun", str(run_id), "--repo", repo)
+            if code == 0:
+                summary.append(f"#{number}: CI run {run_id} {action}d")
+            else:
+                summary.append(
+                    f"#{number}: could not {action} CI run {run_id} - approve it in the "
+                    "Actions tab or set the INTEGRATION_TOKEN secret"
+                )
         else:
             summary.append(f"#{number}: waiting (CI {state}, {pr.get('mergeable') or 'unknown'})")
     lines = ["## Merge train", "", *[f"- {line}" for line in summary]]
@@ -581,8 +600,8 @@ def update_pr(pr: dict, resolver_cmd: str, dry_run: bool, token_is_bot: bool) ->
             f"Merge train: conflicts in {listing} were resolved by the configured AI "
             "resolver. CI re-runs on the result before anything lands; please skim them.",
         )
-    if token_is_bot:
-        dispatch_ci(branch)  # a GITHUB_TOKEN push fires no pull_request event
+    # A GITHUB_TOKEN push parks the pull_request run in action_required; the
+    # next tick approves it (a dispatched run would never reach the PR).
     return f"updated with main ({len(report.get('resolved', []))} conflicts auto-resolved)"  # type: ignore[arg-type]
 
 
