@@ -8,7 +8,6 @@ import {
   FolderOpen,
   Gauge,
   Hammer,
-  Mic,
   NotebookPen,
   Paperclip,
   ShieldCheck,
@@ -31,7 +30,7 @@ import { usePasteRescue } from "@/components/agentchat/usePasteRescue";
 import { useComposerTypeahead } from "@/components/agentchat/useComposerTypeahead";
 import { ComposerTypeahead } from "@/components/agentchat/ComposerTypeahead";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
-import { DictationStatus } from "@/components/agentchat/DictationStatus";
+import { DictationButton } from "@/components/agentchat/DictationButton";
 import { ComposerAddMenu } from "@/components/agentchat/ComposerAddMenu";
 import { ComposerChipField, type ComposerChipFieldHandle } from "@/components/agentchat/ComposerChipField";
 import type { ToolChoice } from "@/components/agentchat/toolChoices";
@@ -439,7 +438,9 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     (!running || commands.canSteer) &&
     (!busy || commands.canSteer) &&
     Boolean(provider?.connected);
-  const placeholder = connected
+  const placeholder = dictating
+    ? t("chats_view.dictation_listening")
+    : connected
     ? t("agent_chat.placeholder")
     : wsWarming
       ? t("voice_state.booting")
@@ -469,9 +470,6 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           {t("agent_chat.attach_drop_hint")}
         </div>
       )}
-      {/* The blue variant of this strip lived here; a running microphone is a
-          live state, not the accent, so it now shares the one green strip. */}
-      <DictationStatus onStop={stopDictation} />
       <ChatCommandPanel control={commands} anchorRef={cardRef} />
       <ChatAttachmentStrip
         attachments={files.attachments}
@@ -693,22 +691,13 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         >
           <Paperclip className="h-4 w-4" />
         </button>
-        <button
-          type="button"
-          data-jarvis-dictation-trigger
-          onClick={toggleDictation}
+        <DictationButton
+          dictating={dictating}
+          onToggle={toggleDictation}
           disabled={!connected}
-          aria-label={dictating ? t("chats_view.dictation_stop") : t("chats_view.dictation_start")}
-          title={dictating ? t("chats_view.dictation_stop") : t("chats_view.dictation_start")}
-          className={cn(
-            "inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors disabled:opacity-50",
-            dictating
-              ? "border-success/40 bg-success/10 text-success motion-safe:animate-jarvis-pulse"
-              : "border-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
-          )}
-        >
-          {dictating ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-        </button>
+          startLabel={t("chats_view.dictation_start")}
+          stopLabel={t("chats_view.dictation_stop")}
+        />
         {live && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
           <button
             type="button"
