@@ -1187,7 +1187,26 @@ def _phase2_full_brain(
     startup_override: str | None = None
     tier_cfg_startup = getattr(config.brain, "router", None)
     tier_provider = tier_cfg_startup.provider if tier_cfg_startup else None
-    if config.brain.primary and config.brain.primary != tier_provider:
+    # The realtime voice call owns its key (user mandate 2026-09-29: the GPT-Live
+    # key pays for the voice call and its thinking model only). While voice runs
+    # realtime the Brain tab is hidden, so a ``brain.primary`` left on that
+    # key's family is not a choice anyone can see — it must not pull text turns
+    # onto the voice budget when the router tier names another provider. A
+    # single-key install (no other router provider) keeps working on the key.
+    from jarvis.brain.voice_key import bills_voice_key
+
+    primary_on_voice_key = bills_voice_key(config, config.brain.primary)
+    if (
+        primary_on_voice_key
+        and tier_provider
+        and not bills_voice_key(config, tier_provider)
+    ):
+        log.info(
+            "Router stays on [brain.router].provider=%s: brain.primary=%s bills "
+            "the realtime voice key.",
+            tier_provider, config.brain.primary,
+        )
+    elif config.brain.primary and config.brain.primary != tier_provider:
         startup_override = config.brain.primary
         log.info(
             "Startup override: brain.primary=%s overrides [brain.router].provider=%s",
@@ -2029,14 +2048,18 @@ def _build_flash_provider(jcfg: Any, ack_cfg: Any) -> Any:
     if provider_name == "follow_brain":
         brain_cfg = getattr(jcfg, "brain", None)
         primary = getattr(brain_cfg, "primary", None) if brain_cfg else None
-        if primary and primary in REGISTRY:
+        # A primary on the realtime voice key does not pull flash composition
+        # onto that key; the keyed fallback below picks another family first.
+        from jarvis.brain.voice_key import bills_voice_key
+
+        if primary and primary in REGISTRY and not bills_voice_key(jcfg, primary):
             log.info(
                 "Flash-Brain: follow_brain -> %s (from brain.primary).",
                 primary,
             )
             provider_name = primary
         else:
-            fallback = _pick_keyed_flash_fallback(ack_cfg)
+            fallback = _pick_keyed_flash_fallback(ack_cfg, jcfg)
             if fallback is None:
                 log.warning(
                     "Flash-Brain: brain.primary=%r has no Flash adapter "
@@ -2064,7 +2087,7 @@ def _build_flash_provider(jcfg: Any, ack_cfg: Any) -> Any:
     return provider_cls(provider_cfg)
 
 
-def _pick_keyed_flash_fallback(ack_cfg: Any) -> str | None:
+def _pick_keyed_flash_fallback(ack_cfg: Any, jcfg: Any = None) -> str | None:
     """First REGISTRY provider family with a usable credential, or ``None``.
 
     AP-21/AP-22: never hardcode a literal provider name as the fallback — a
@@ -2075,9 +2098,14 @@ def _pick_keyed_flash_fallback(ack_cfg: Any) -> str | None:
     (local Ollama) needs no credential and is always considered usable.
     """
     from jarvis.brain.ack_brain.providers import REGISTRY
+    from jarvis.brain.voice_key import bills_voice_key
     from jarvis.core.config import get_provider_secret, get_secret
 
-    for name in REGISTRY:
+    # Families on the realtime voice key are tried last (mandate 2026-09-29),
+    # so a single-key install still resolves while a multi-key one keeps the
+    # voice budget for the voice call.
+    names = sorted(REGISTRY, key=lambda name: bills_voice_key(jcfg, name))
+    for name in names:
         provider_cfg = getattr(ack_cfg.providers, name, None)
         if provider_cfg is None:
             continue

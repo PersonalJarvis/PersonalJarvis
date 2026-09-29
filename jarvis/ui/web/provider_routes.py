@@ -1410,10 +1410,14 @@ assert set(get_args(SectionHealthStatusLiteral)) == set(_section_health.SECTION_
     "section-health status vocabulary drift (Pydantic Literal vs SSOT)"
 )
 
-# Cache the rollup briefly so opening the API-Keys page / switching tabs does not
-# re-run the REAL connectivity tests on every render. ``?refresh=true`` (used by
-# the UI after a key save / provider switch) bypasses it.
-_SECTION_HEALTH_TTL_S = 45.0
+# Cache the rollup so opening the API-Keys page / switching tabs does not re-run
+# the REAL connectivity tests on every render. ``?refresh=true`` (used by the UI
+# after a key save / provider switch) bypasses it. The sidebar and dock mount
+# this poll in every window, and every frontend build reloads every window, so a
+# short TTL turned into a paid probe per provider about once a minute (live
+# 2026-09-29: the voice key ran dry on health checks). Selection changes still
+# re-check at once through the fingerprint and the explicit refresh.
+_SECTION_HEALTH_TTL_S = 30 * 60.0
 _SECTION_HEALTH_KEYS = (
     "brain",
     "computer-use",
@@ -2031,10 +2035,16 @@ async def _compute_section_health(
             )
 
     binary_path = _codex_binary_path(request)
+    # The realtime section already probes the voice key. A brain on that same
+    # key would spend it a second time for the same answer, so it reports from
+    # configuration only.
+    from jarvis.brain.voice_key import bills_voice_key
+
     checks = {
         "brain": _tier_section_health(
             cfg,
             get_spec(subjects["brain"] or ""),
+            probe=not bills_voice_key(cfg, subjects["brain"]),
             binary_path=binary_path,
         ),
         # The Tool Model tier has its own model pin (tool_model → cu_model);
