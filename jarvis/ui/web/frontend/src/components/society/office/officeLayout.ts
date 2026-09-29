@@ -203,14 +203,15 @@ const DEPT_HEADER_Z = 1.8;
 const DEPT_FOOTER_Z = 0.8;
 const AISLE = 3.2;
 /**
- * Mission Control's desk, in its own space (origin = desk centre, +z = south,
- * where the chair stands): the desk top and the chair the person works from.
- * The renderer and navigation both read these numbers.
+ * Mission Control's desk, in its own space (origin = desk centre, +z = the
+ * side where the chair stands): the desk top and the chair the person works
+ * from. On the floor the desk is turned round, so the chair stands between
+ * it and the wall. The renderer and navigation both read these numbers.
  */
 export const COMMAND_DESK = { w: 2.6, d: 0.86, chairZ: 0.72 } as const;
 /** How far round Mission Control's desk the person can use it, from the desk's centre. */
 export const COMMAND_REACH = 1.9;
-/** The desk piece's origin sits this far south of the desk's centre: its box covers desk and chair. */
+/** The desk piece's origin sits this far from the desk's centre, towards the chair: its box covers desk and chair. */
 export const COMMAND_DESK_OFFSET = 0.5;
 const EDGE = 1.6;
 /**
@@ -329,7 +330,8 @@ export function commandDeskObstacles(desk: Point): Rect[] {
   const { w, d, chairZ } = COMMAND_DESK;
   return [
     { minX: desk.x - w / 2, maxX: desk.x + w / 2, minZ: desk.z - d / 2, maxZ: desk.z + d / 2 },
-    chairRect({ x: desk.x, z: desk.z + chairZ }),
+    // The desk is turned round on the floor: its chair stands north of it, towards the wall.
+    chairRect({ x: desk.x, z: desk.z - chairZ }),
   ];
 }
 
@@ -499,14 +501,15 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     { id: "break-treats", kind: "treatJar", x: breakRoom.minX + 9.95, z: breakRoom.minZ + 0.5, rotationY: 0, room: "break" },
   ];
   // Coding floor, west: Mission Control. The slat wall with the video wall
-  // along the north side, the desk in front of it facing the wall (the person
-  // works with their back to the door, so the screens face the camera), a
-  // lounge corner with a sofa facing east, an open shelf on the east wall.
-  const commandDeskAt = { x: lx0 + leadW / 2, z: lz0 + 2.35 };
+  // along the north side, the desk in front of it turned towards the door:
+  // the person sits between desk and wall, facing into the room, and the
+  // monitors face them. A lounge corner with a sofa facing east, an open
+  // shelf on the east wall.
+  const commandDeskAt = { x: lx0 + leadW / 2, z: lz0 + 2.75 };
   const commandFurniture: Furniture[] = coding ? [
     { id: "command-wall", kind: "commandWall", x: lx0 + leadW / 2, z: lz0 + 0.1 + FURNITURE_SIZE.commandWall.d / 2, rotationY: 0, room: "command" },
     // The piece's box is desk + chair; its origin sits between them.
-    { id: "command-desk", kind: "commandDesk", x: commandDeskAt.x, z: commandDeskAt.z + COMMAND_DESK_OFFSET, rotationY: 0, room: "command" },
+    { id: "command-desk", kind: "commandDesk", x: commandDeskAt.x, z: commandDeskAt.z - COMMAND_DESK_OFFSET, rotationY: Math.PI, room: "command" },
     { id: "command-rug", kind: "rug", x: lx0 + 1.55, z: lz0 + 5.1, rotationY: 0, room: "command", size: { w: 2.7, d: 2.6 } },
     { id: "command-sofa", kind: "couch", x: lx0 + 0.6, z: lz0 + 5.1, rotationY: Math.PI / 2, room: "command" },
     { id: "command-table", kind: "coffeeTable", x: lx0 + 1.9, z: lz0 + 5.1, rotationY: 0, room: "command" },
@@ -611,9 +614,9 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
   // The elevator's doors face east into the lobby; its checkpoint is the floor in front of them.
   const elevatorStop: Checkpoint = { id: "elevator", room: "reception", x: elevator.x + 0.95, z: elevator.z, radius: 1.0 };
   const breakStop: Checkpoint = { id: "break", room: "break", x: bx0 + 5.6, z: bz0 + 2.6, radius: 1.8 };
-  // Mission Control's stop is a ring round the desk, usable from every side; "walk there" ends behind the chair.
-  const missionStop: Checkpoint = { id: "mission", room: "command", x: commandDeskAt.x, z: commandDeskAt.z + 0.3, radius: COMMAND_REACH,
-    tokenY: 2.25, approach: { x: commandDeskAt.x, z: commandDeskAt.z + COMMAND_DESK.chairZ + 0.65 } };
+  // Mission Control's stop is a ring round the desk, usable from every side; "walk there" ends in front of the desk.
+  const missionStop: Checkpoint = { id: "mission", room: "command", x: commandDeskAt.x, z: commandDeskAt.z - 0.3, radius: COMMAND_REACH,
+    tokenY: 2.25, approach: { x: commandDeskAt.x, z: commandDeskAt.z + COMMAND_DESK.d / 2 + 0.55 } };
   const checkpoints: Checkpoint[] = coding ? [missionStop, elevatorStop, breakStop] : [
     { id: "create", room: "reception", x: reception.x, z: reception.z + 1.7, radius: 1.2 },
     { id: "manage", room: "reception", x: kiosk.x, z: kiosk.z + 1.4, radius: 1.1 },

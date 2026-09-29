@@ -168,8 +168,9 @@ describe("office layout", () => {
       expect(Math.hypot(p.x - stop.x, p.z - stop.z)).toBeLessThanOrEqual(stop.radius);
     }
     // Only the desk top and the chair are solid: right beside the chair is open floor.
-    const deskZ = stop.z - 0.3;
-    const chairZ = deskZ + COMMAND_DESK.chairZ;
+    // The desk faces the door; its chair stands between it and the wall.
+    const deskZ = stop.z + 0.3;
+    const chairZ = deskZ - COMMAND_DESK.chairZ;
     expect(isWalkable(grid, { x: stop.x, z: deskZ })).toBe(false);
     expect(isWalkable(grid, { x: stop.x, z: chairZ })).toBe(false);
     expect(isWalkable(grid, { x: stop.x + 0.75, z: chairZ })).toBe(true);
