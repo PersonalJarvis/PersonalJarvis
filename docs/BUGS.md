@@ -15486,8 +15486,12 @@ windows — WebView2 apps, the desktop app itself among them — it returns a
 frame that is a single colour (measured: every pixel luma 10) instead of
 failing, and the service handed that frame on as a successful capture.
 
-**Fix.** `ScreenContextService._grab` detects a flat frame
-(`_is_flat_frame`) or a failed window-only grab and uses the window's screen
-rectangle instead, under the rule monitor captures already follow: allowed
-with no denylist, refused when a visible denylisted window intersects that
-rectangle. Guard: `tests/unit/screen_context/test_blank_window_capture.py`.
+**Fix.** A window target is always the window in front, so
+`ScreenContextService._grab` grabs the window's screen rectangle first —
+exactly what the user sees. The first fix (same morning) only fell back when
+the native frame was perfectly flat; the live frame had darker anti-aliased
+corners (luma 0-13), passed as "content", and the appshot was black again.
+Native window-only capture is now used only when a visible denylisted window
+intersects the rectangle, and a blank result there (`_is_flat_frame`: the
+middle 98 % of pixels within six luma levels) is refused.
+Guard: `tests/unit/screen_context/test_blank_window_capture.py`.
