@@ -8,7 +8,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useT } from "@/i18n";
 import type { SocietyAgent } from "../data";
 import type { CheckpointKind, OfficeLayout, Point } from "./officeLayout";
-import { otherFloor, player, useOfficeStore, type OfficeFloor } from "./officeStore";
+import { player, useOfficeStore, type OfficeFloor } from "./officeStore";
 import type { PaneOccupant } from "./codingFloor";
 import { agentPositions } from "./walkerRegistry";
 import { AgentTalkPanel, CALL_MS } from "./AgentTalkPanel";
@@ -113,28 +113,6 @@ export function PaneAgentPanel({ occupant, onOpen, onClose }: { occupant: PaneOc
   );
 }
 
-/** Counts of both floors shown in the elevator; `null` = not known yet. */
-export interface ElevatorInfo { jarvis: number; coding: number | null; onRide: (to: OfficeFloor) => void }
-
-function ElevatorPanel({ floor, info }: { floor: OfficeFloor; info: ElevatorInfo }) {
-  const t = useT();
-  const to = otherFloor(floor);
-  const count = to === "coding" ? info.coding : info.jarvis;
-  return (
-    <>
-      <p>{t(to === "coding" ? "society.office.elevator_up_body" : "society.office.elevator_down_body")}</p>
-      {count !== null && (
-        <p className="office-hint" role="status">
-          {t(to === "coding" ? "society.office.elevator_up_count" : "society.office.elevator_down_count").replace("{0}", String(count))}
-        </p>
-      )}
-      <button type="button" className="office-action office-action-primary" onClick={() => info.onRide(to)}>
-        {t(to === "coding" ? "society.office.elevator_up" : "society.office.elevator_down")}
-      </button>
-    </>
-  );
-}
-
 function ManagePanel({ agents, actions }: { agents: SocietyAgent[]; actions: OfficeActions }) {
   const t = useT();
   const store = useOfficeStore();
@@ -215,10 +193,9 @@ function BreakPanel({ agents, layout }: { agents: SocietyAgent[]; layout: Office
   );
 }
 
-export function CheckpointPanel({ id, floor = "agents", agents, layout, sample, profile, onProfile, actions, onClose, elevator }: {
+export function CheckpointPanel({ id, floor = "agents", agents, layout, sample, profile, onProfile, actions, onClose }: {
   id: CheckpointKind; floor?: OfficeFloor; agents: SocietyAgent[]; layout: OfficeLayout; sample: boolean;
   profile: PlayerProfile; onProfile: (next: PlayerProfile) => void; actions: OfficeActions; onClose: () => void;
-  elevator?: ElevatorInfo;
 }) {
   const t = useT();
   return (
@@ -229,7 +206,6 @@ export function CheckpointPanel({ id, floor = "agents", agents, layout, sample, 
       {id === "wardrobe" && <WardrobePanel profile={profile} onProfile={onProfile} agents={agents} sample={sample} />}
       {id === "lead" && <LeadPanel agents={agents} actions={actions} />}
       {id === "break" && <BreakPanel agents={agents} layout={layout} />}
-      {id === "elevator" && elevator && <ElevatorPanel floor={floor} info={elevator} />}
     </PanelShell>
   );
 }

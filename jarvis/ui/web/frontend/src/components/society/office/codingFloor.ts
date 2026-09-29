@@ -138,7 +138,6 @@ function toAgent(pane: WorkspacePaneRow, department: string, dot: AgentDotKind):
     denies: [],
     approvalRules: { requireApproval: [], alwaysAllow: [] },
     permissionCeiling: "ask",
-    approvalMode: null,
     dailyBudgetUsd: 0,
     checkpoint: "idle",
     state: paneRunState(pane, dot),

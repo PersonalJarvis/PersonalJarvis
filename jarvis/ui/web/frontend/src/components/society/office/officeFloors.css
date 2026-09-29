@@ -19,6 +19,11 @@
   .office-elevator-sign { transition:none; }
 }
 
+/* The pill over the elevator's call button. Like the name pills it is part of the diorama, which keeps one palette in both modes. */
+.office-call-pill { display:inline-flex; flex-direction:column; align-items:center; gap:1px; padding:4px 10px; border-radius:10px; background:rgb(24 26 32 / .86); color:#f8fafc; white-space:nowrap; user-select:none; pointer-events:none; box-shadow:0 2px 8px rgb(0 0 0 / .35); }
+.office-call-pill b { font-size:12px; font-weight:700; }
+.office-call-pill small { font-size:10px; color:#f5b83d; font-weight:600; }
+
 /* A coding session's facts in its panel. */
 .office-facts { display:grid; grid-template-columns:auto 1fr; gap:3px 10px; margin:0; }
 .office-facts dt { color:hsl(var(--muted-foreground)); font-size:11px; }

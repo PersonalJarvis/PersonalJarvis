@@ -24,6 +24,7 @@ import { FurniturePiece, MeetingChairs } from "./OfficeProps";
 import { TeamBoardFace } from "./TeamBoardFace";
 import { RoomFloors, RoomSign, RoomWalls } from "./OfficeRooms";
 import { CHECKPOINT_ICON, CheckpointMarker } from "./CheckpointMarker";
+import { ElevatorCallButton } from "./ElevatorCallButton";
 import { OFFICE_FIGURE_HEIGHT_M, OfficeAgents, type WalkerContext } from "./OfficeAgents";
 import { OfficePlayer } from "./OfficePlayer";
 import { PlayerBubble } from "./OfficeBubbles";
@@ -162,11 +163,15 @@ export interface OfficeSceneProps {
   nearby: Selection | null;
   chats: ReadonlyMap<string, DeskChat>;
   onOpenScreen: (agentId: string, screen: Point & { y: number }, facing: number) => void;
+  /** The elevator's call button: lit after a press, how many work on the other floor, and the press itself. */
+  elevatorCall: { lit: boolean; count: number | null; onPress: () => void };
 }
 
-export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, agents, newcomers, awake, reduced, overview, player, selection, nearby, chats, onOpenScreen }: OfficeSceneProps) {
+export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, agents, newcomers, awake, reduced, overview, player, selection, nearby, chats, onOpenScreen, elevatorCall }: OfficeSceneProps) {
   const t = useT();
   const desks = useMemo(() => allDesks(layout), [layout]);
+  const shaft = layout.furniture.find((f) => f.kind === "elevator");
+  const atLift = nearby?.kind === "checkpoint" && nearby.id === "elevator";
   // Lead desks carry their own size and are built as executive desks, not bench instances.
   const benchDesks = useMemo(() => desks.filter((d) => !d.size), [desks]);
   const leadRoom = layout.rooms.find((r) => r.kind === "lead");
@@ -214,11 +219,16 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
       {layout.furniture.map((item) => <FurniturePiece key={item.id} item={item} />)}
       {table && <MeetingChairs table={table} />}
       {board && <TeamBoardFace board={board} enabled={floor === "agents"} />}
-      {layout.checkpoints.map((cp) => (
+      {/* At the elevator its call button takes over from the floating token, which would hide it. */}
+      {layout.checkpoints.filter((cp) => cp.id !== "elevator" || !atLift).map((cp) => (
         <CheckpointMarker key={cp.id} checkpoint={cp} label={t(`society.office.cp_${cp.id}`)} icon={CHECKPOINT_ICON[cp.id]}
           active={(nearby?.kind === "checkpoint" && nearby.id === cp.id) || (selection?.kind === "checkpoint" && selection.id === cp.id)}
           animate={awake && !reduced} onActivate={() => select({ kind: "checkpoint", id: cp.id })} />
       ))}
+      {shaft && (
+        <ElevatorCallButton shaft={shaft} floor={floor} lit={elevatorCall.lit} count={elevatorCall.count} animate={awake && !reduced}
+          near={atLift} onPress={elevatorCall.onPress} />
+      )}
       <FloorArrival floor={floor} layout={layout} grid={grid} ready={ready} />
       <OfficePlayer layout={layout} grid={grid} look={player.look} name={player.name} awake={awake} reduced={reduced} />
       <PlayerBubble height={OFFICE_FIGURE_HEIGHT_M + 0.49} />

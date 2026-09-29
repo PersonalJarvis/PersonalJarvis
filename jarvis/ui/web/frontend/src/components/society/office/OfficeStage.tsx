@@ -30,6 +30,7 @@ import { useCodingFloorOccupants, type PaneOccupant } from "./codingFloor";
 import { openPaneSession } from "./codingNavigate";
 import { useDprBudget } from "./useDprBudget";
 import { knownOnFloor, noteArrivals } from "./officeFloors";
+import { atElevator, CALL_PRESS_MS } from "./elevatorCall";
 import { loadProfile, playerLook, saveProfile, type PlayerProfile } from "./playerProfile";
 import { AgentPanel, CheckpointPanel, PaneAgentPanel, type OfficeActions } from "./OfficePanels";
 import type { WalkerContext } from "./OfficeAgents";
@@ -133,9 +134,9 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   const follow = useOfficeStore((s) => s.follow);
   const select = useOfficeStore((s) => s.select);
 
-  // The elevator panel tells how many are upstairs, so it wakes the coding roster too.
-  const elevatorOpen = selection?.kind === "checkpoint" && selection.id === "elevator";
-  const codingFloor = useCodingFloorOccupants(coding || elevatorOpen);
+  // The call button tells how many are upstairs, so standing at the elevator wakes the coding roster too.
+  const atLift = nearby?.kind === "checkpoint" && nearby.id === "elevator";
+  const codingFloor = useCodingFloorOccupants(coding || atLift);
   const jarvisAgents = useMemo(() => (roster.data?.agents ?? []).filter((a) => a.lifecycle !== "archived"), [roster.data]);
   const codingAgents = useMemo(() => codingFloor.occupants.map((o) => o.agent), [codingFloor.occupants]);
   const active = coding ? codingAgents : jarvisAgents;
@@ -211,6 +212,28 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
       rideTimer.current = setTimeout(() => setRide((r) => (r?.phase === "riding" ? { to, phase: "opening" } : r)), RIDE_MAX_MS);
     }, DOORS_MS);
   }, [reduced, ride]);
+  // Riding takes a press of the call button beside the doors, standing at the
+  // elevator. A press from afar (a click on the button, the floor token or E
+  // anywhere) walks the character over instead; it never rides from a distance.
+  const [callLit, setCallLit] = useState(false);
+  const callTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(callTimer.current), []);
+  const pressCall = useCallback(() => {
+    if (ride || callLit) return;
+    const lift = layout.checkpoints.find((cp) => cp.id === "elevator");
+    if (!atElevator(player, lift)) {
+      if (lift) useOfficeStore.getState().requestWalk({ x: lift.x, z: lift.z });
+      return;
+    }
+    setCallLit(true);
+    callTimer.current = setTimeout(() => { setCallLit(false); takeElevator(otherFloor(useOfficeStore.getState().floor)); }, CALL_PRESS_MS);
+  }, [ride, callLit, layout, takeElevator]);
+  // E at the elevator, or a click on its floor token, presses the button instead of opening a panel.
+  useEffect(() => {
+    if (selection?.kind !== "checkpoint" || selection.id !== "elevator") return;
+    select(null);
+    pressCall();
+  }, [selection, select, pressCall]);
   useEffect(() => {
     if (ride?.phase === "riding" && floor === ride.to && ready) {
       clearTimeout(rideTimer.current);
@@ -308,7 +331,9 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
                 onPointerMissed={() => select(null)}>
                 <OfficeScene floor={floor} occupants={occupants} ready={ready} layout={layout} grid={grid} walkers={walkers} agents={agents} newcomers={newcomers}
                   awake={awake} reduced={reduced} overview={overview} player={{ look: playerLook(profile), name: playerName }}
-                  selection={selection} nearby={nearby} chats={chats} onOpenScreen={openScreen} />
+                  selection={selection} nearby={nearby} chats={chats} onOpenScreen={openScreen}
+                  elevatorCall={{ lit: callLit, onPress: pressCall,
+                    count: coding ? jarvisAgents.length : codingFloor.loaded ? codingFloor.occupants.length : null }} />
               </Canvas>
             </Suspense>
           </RenderBoundary>
@@ -339,8 +364,6 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
           onClick={toggleGuide}>
           {t("society.office.guide.hud_button")}
         </button>
-        <button type="button" className="office-button" data-office-floor-switch disabled={!!ride}
-          onClick={() => takeElevator(otherFloor(floor))}>{t(coding ? "society.office.floor_down" : "society.office.floor_up")}</button>
         {(!coding || !compact || onOpenLedger) && (
           <button type="button" className="office-button" onClick={openList}>
             {t(coding ? (compact ? "society.office.ledger_coding" : "society.office.open_ide") : "society.office.ledger")}
@@ -356,8 +379,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
             : <AgentPanel agent={selectedAgent} actions={actions} onClose={() => select(null)} />)}
           {selection.kind === "checkpoint" && (
             <CheckpointPanel id={selection.id} floor={floor} agents={active} layout={layout} sample={!coding && (roster.data?.sample ?? false)}
-              profile={profile} onProfile={updateProfile} actions={actions} onClose={() => select(null)}
-              elevator={{ jarvis: jarvisAgents.length, coding: codingFloor.loaded ? codingFloor.occupants.length : null, onRide: takeElevator }} />
+              profile={profile} onProfile={updateProfile} actions={actions} onClose={() => select(null)} />
           )}
         </div>
       )}

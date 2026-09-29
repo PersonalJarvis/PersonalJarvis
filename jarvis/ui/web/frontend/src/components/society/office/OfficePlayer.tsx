@@ -207,7 +207,8 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
     const chair = chairInReach(layout.lead.desks, player);
     if (useLeadSeat.getState().near !== (chair?.id ?? null)) useLeadSeat.getState().set({ near: chair?.id ?? null });
     const nearby = chair ? null : nearestInteractable(layout);
-    if (!sameSelection(nearby, nearbyRef.current)) { nearbyRef.current = nearby; store.setNearby(nearby); }
+    // Compared with the store too: a floor switch clears the store's reading while the character still stands at the elevator.
+    if (!sameSelection(nearby, nearbyRef.current) || !sameSelection(nearby, store.nearby)) { nearbyRef.current = nearby; store.setNearby(nearby); }
   });
 
   return (
