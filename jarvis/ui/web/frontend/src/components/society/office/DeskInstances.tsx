@@ -1,16 +1,29 @@
 /**
  * Every workstation on the floor, drawn as instanced meshes: one draw call
- * per desk part instead of one per part per desk. Same parts and local
- * placement as `Desk` in OfficeFurniture (the agent sits at local +z and looks
- * north at its monitor); a desk facing south is rotated half a turn.
+ * per desk part instead of one per part per desk. The agent sits at local +z
+ * and looks north at its monitor; a desk facing south is rotated half a turn.
+ *
+ * The workstation is a contemporary bench desk: a light-oak top on black
+ * steel T-legs, a felt privacy screen, a slim monitor on an arm, a white
+ * pedestal, and an ergonomic chair with a mesh back on a five-star base. The
+ * felt screen and the seat fabric take the department's zone colour through
+ * per-instance colours, so a department reads as one team at a glance. A
+ * coding-floor studio passes a `tone` instead, which swaps whole materials by
+ * part role.
  */
 import { useLayoutEffect, useMemo, useRef } from "react";
-import { BufferGeometry, Euler, InstancedMesh, Matrix4, PlaneGeometry, Quaternion, Vector3, type Material, type MeshStandardMaterial } from "three";
+import {
+  BufferGeometry, Color, Euler, InstancedMesh, Matrix4, PlaneGeometry, Quaternion, Vector3, type Material, type MeshStandardMaterial,
+} from "three";
 import { RoundedBoxGeometry } from "three-stdlib";
 import type { SocietyAgent } from "../data";
 import { GEO, MAT, screenMaterial } from "./OfficeFurniture";
 import type { DeskSlot } from "./officeLayout";
+import { DEPARTMENT_ZONES } from "./officePalette";
 import type { ScreenFace } from "./screenTextures";
+
+/** Which zone colour a tinted part takes: the felt screen's panel tone or the seat fabric. */
+type Tint = "panel" | "seat";
 
 /** Which surface of a workstation a part is; a desk tone recolours parts by role. */
 type PartRole = "top" | "body" | "leg" | "monitor" | "keyboard" | "chair" | "seat";
@@ -18,47 +31,88 @@ type PartRole = "top" | "body" | "leg" | "monitor" | "keyboard" | "chair" | "sea
 /** Per-department materials for the parts that carry a room's style (the monitor and keyboard stay). */
 export type DeskTone = Partial<Record<Exclude<PartRole, "monitor" | "keyboard">, MeshStandardMaterial>>;
 
-interface Part { role: PartRole; geometry: BufferGeometry; material: Material; position: [number, number, number]; scale?: [number, number, number]; cast: boolean }
+interface Part {
+  role: PartRole;
+  geometry: BufferGeometry;
+  material: Material;
+  position: [number, number, number];
+  scale?: [number, number, number];
+  /** Turn about the part's own vertical axis (radians). */
+  rotY?: number;
+  tint?: Tint;
+  cast: boolean;
+}
 
 const CHAIR_Z = 0.62;
 const rounded = (w: number, h: number, d: number, r: number) => new RoundedBoxGeometry(w, h, d, 2, r);
 
+/** Five spokes of the chair's star base, and a caster at the end of each. */
+const STAR = Array.from({ length: 5 }, (_, i) => (i * 2 * Math.PI) / 5);
+
 const PARTS: Part[] = [
-  { role: "top", geometry: rounded(1.5, 0.06, 0.8, 0.02), material: MAT.deskTop, position: [0, 0.74, 0], cast: true },
-  { role: "body", geometry: GEO.box, material: MAT.deskBody, position: [0.53, 0.36, 0], scale: [0.36, 0.7, 0.72], cast: true },
-  { role: "leg", geometry: GEO.box, material: MAT.deskLeg, position: [-0.7, 0.36, 0], scale: [0.05, 0.7, 0.7], cast: true },
-  { role: "body", geometry: GEO.box, material: MAT.deskBody, position: [0, 0.94, -0.41], scale: [1.5, 0.34, 0.03], cast: true },
-  { role: "monitor", geometry: GEO.box, material: MAT.monitor, position: [0, 0.87, -0.22], scale: [0.08, 0.2, 0.08], cast: true },
-  { role: "monitor", geometry: GEO.box, material: MAT.monitor, position: [0, 0.78, -0.22], scale: [0.24, 0.02, 0.16], cast: true },
-  { role: "monitor", geometry: rounded(0.72, 0.44, 0.05, 0.02), material: MAT.monitor, position: [0, 1.18, -0.24], cast: true },
-  { role: "keyboard", geometry: GEO.box, material: MAT.keyboard, position: [0, 0.78, 0.24], scale: [0.42, 0.02, 0.14], cast: true },
-  { role: "chair", geometry: GEO.cyl, material: MAT.chair, position: [0, 0.03, CHAIR_Z], scale: [0.3, 0.04, 0.3], cast: true },
-  { role: "chair", geometry: GEO.cyl, material: MAT.chair, position: [0, 0.25, CHAIR_Z], scale: [0.03, 0.42, 0.03], cast: false },
-  { role: "seat", geometry: rounded(0.5, 0.08, 0.48, 0.03), material: MAT.chairSeat, position: [0, 0.48, CHAIR_Z], cast: true },
-  { role: "seat", geometry: rounded(0.48, 0.5, 0.07, 0.03), material: MAT.chairSeat, position: [0, 0.78, CHAIR_Z + 0.24], cast: true },
+  // Desk: top surface at 0.77 m, as before, so hands and keyboards line up with the seated pose.
+  { role: "top", geometry: rounded(1.5, 0.035, 0.8, 0.015), material: MAT.deskTop, position: [0, 0.7525, 0], cast: true },
+  ...[-0.64, 0.64].flatMap((x): Part[] => [
+    { role: "leg", geometry: GEO.box, material: MAT.deskLeg, position: [x, 0.36, 0], scale: [0.06, 0.72, 0.05], cast: true },
+    { role: "leg", geometry: GEO.box, material: MAT.deskLeg, position: [x, 0.015, 0], scale: [0.06, 0.03, 0.72], cast: false },
+    { role: "leg", geometry: GEO.box, material: MAT.deskLeg, position: [x, 0.72, 0], scale: [0.05, 0.03, 0.68], cast: false },
+  ]),
+  { role: "leg", geometry: GEO.box, material: MAT.deskLeg, position: [0, 0.68, -0.2], scale: [1.24, 0.05, 0.04], cast: false },
+  // Mobile pedestal under the desk's right side.
+  { role: "body", geometry: rounded(0.4, 0.56, 0.5, 0.03), material: MAT.deskBody, position: [0.44, 0.3, -0.12], cast: true },
+  // Felt privacy screen between the back-to-back pair.
+  { role: "body", geometry: rounded(1.46, 0.36, 0.03, 0.012), material: MAT.tinted, position: [0, 0.95, -0.41], tint: "panel", cast: true },
+  // Slim monitor on an arm clamped to the back edge.
+  { role: "monitor", geometry: GEO.box, material: MAT.monitorArm, position: [0, 0.795, -0.33], scale: [0.08, 0.05, 0.06], cast: false },
+  { role: "monitor", geometry: GEO.cyl, material: MAT.monitorArm, position: [0, 0.95, -0.33], scale: [0.018, 0.32, 0.018], cast: true },
+  { role: "monitor", geometry: GEO.box, material: MAT.monitorArm, position: [0, 1.1, -0.28], scale: [0.04, 0.03, 0.1], cast: false },
+  { role: "monitor", geometry: rounded(0.72, 0.43, 0.022, 0.012), material: MAT.monitor, position: [0, 1.18, -0.224], cast: true },
+  // Keyboard, mouse and a mug.
+  { role: "keyboard", geometry: GEO.box, material: MAT.keyboard, position: [0, 0.777, 0.22], scale: [0.44, 0.014, 0.13], cast: true },
+  { role: "keyboard", geometry: GEO.box, material: MAT.keyboard, position: [0.33, 0.78, 0.22], scale: [0.05, 0.02, 0.08], cast: false },
+  { role: "keyboard", geometry: GEO.cyl, material: MAT.mug, position: [-0.52, 0.815, 0.02], scale: [0.035, 0.09, 0.035], cast: true },
+  // Chair: star base with casters, gas lift, fabric seat (seat top 0.52 m) and a mesh back.
+  ...STAR.flatMap((a): Part[] => [
+    { role: "chair", geometry: GEO.box, material: MAT.chair, position: [Math.sin(a) * 0.15, 0.06, CHAIR_Z + Math.cos(a) * 0.15], scale: [0.045, 0.035, 0.3], rotY: a, cast: true },
+    { role: "chair", geometry: GEO.cyl, material: MAT.chair, position: [Math.sin(a) * 0.29, 0.025, CHAIR_Z + Math.cos(a) * 0.29], scale: [0.028, 0.05, 0.028], cast: false },
+  ]),
+  { role: "chair", geometry: GEO.cyl, material: MAT.monitorArm, position: [0, 0.27, CHAIR_Z], scale: [0.025, 0.4, 0.025], cast: false },
+  { role: "seat", geometry: rounded(0.5, 0.07, 0.48, 0.03), material: MAT.tinted, position: [0, 0.485, CHAIR_Z], tint: "seat", cast: true },
+  { role: "chair", geometry: GEO.box, material: MAT.chair, position: [0, 0.62, CHAIR_Z + 0.27], scale: [0.05, 0.3, 0.03], cast: false },
+  { role: "chair", geometry: rounded(0.46, 0.52, 0.06, 0.03), material: MAT.chairMesh, position: [0, 0.87, CHAIR_Z + 0.25], cast: true },
+  // Lumbar band in the seat fabric, so the mesh back reads as an ergonomic chair.
+  { role: "seat", geometry: rounded(0.4, 0.07, 0.02, 0.01), material: MAT.tinted, position: [0, 0.74, CHAIR_Z + 0.215], tint: "seat", cast: false },
 ];
 
 const SCREEN_GEOMETRY = new PlaneGeometry(0.66, 0.38);
 const SCREEN_LOCAL: [number, number, number] = [0, 1.18, -0.212];
 const FACES: ScreenFace[] = ["working", "idle", "waiting", "paused", "empty"];
 
-function deskMatrix(desk: DeskSlot, local: [number, number, number], scale: [number, number, number] = [1, 1, 1]): Matrix4 {
+function deskMatrix(desk: DeskSlot, local: [number, number, number], scale: [number, number, number] = [1, 1, 1], rotY = 0): Matrix4 {
   const turn = desk.facing === "north" ? 0 : Math.PI;
   const world = new Matrix4().compose(new Vector3(desk.x, 0, desk.z), new Quaternion().setFromEuler(new Euler(0, turn, 0)), new Vector3(1, 1, 1));
-  const part = new Matrix4().compose(new Vector3(...local), new Quaternion(), new Vector3(...scale));
+  const part = new Matrix4().compose(new Vector3(...local), new Quaternion().setFromEuler(new Euler(0, rotY, 0)), new Vector3(...scale));
   return world.multiply(part);
 }
 
-function PartInstances({ part, desks, material }: { part: Part; desks: DeskSlot[]; material: Material }) {
+const zoneColours = DEPARTMENT_ZONES.map((z) => ({ panel: new Color(z.panel), seat: new Color(z.seat) }));
+
+function PartInstances({ part, desks, zones, material, tinted }: {
+  part: Part; desks: DeskSlot[]; zones: ReadonlyMap<string, number>; material: Material; tinted: boolean;
+}) {
   const ref = useRef<InstancedMesh>(null);
   useLayoutEffect(() => {
     const mesh = ref.current;
     if (!mesh) return;
-    desks.forEach((desk, i) => mesh.setMatrixAt(i, deskMatrix(desk, part.position, part.scale)));
+    desks.forEach((desk, i) => {
+      mesh.setMatrixAt(i, deskMatrix(desk, part.position, part.scale, part.rotY));
+      if (tinted && part.tint) mesh.setColorAt(i, zoneColours[(zones.get(desk.id) ?? 0) % zoneColours.length][part.tint]);
+    });
     mesh.count = desks.length;
     mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.computeBoundingSphere();
-  }, [desks, part]);
+  }, [desks, part, zones, tinted]);
   return <instancedMesh ref={ref} args={[part.geometry, material, Math.max(1, desks.length)]} castShadow={part.cast} receiveShadow frustumCulled={false} />;
 }
 
@@ -75,8 +129,16 @@ function ScreenInstances({ face, desks }: { face: ScreenFace; desks: DeskSlot[] 
   return <instancedMesh key={Math.max(1, desks.length)} ref={ref} args={[SCREEN_GEOMETRY, screenMaterial(face), Math.max(1, desks.length)]} frustumCulled={false} />;
 }
 
-/** All desks with the monitor face each one's agent state calls for; `tone` restyles the desk and chair. */
-export function DeskInstances({ desks, agents, tone }: { desks: DeskSlot[]; agents: ReadonlyMap<string, SocietyAgent>; tone?: DeskTone }) {
+const NO_ZONES: ReadonlyMap<string, number> = new Map();
+
+/**
+ * All desks with the monitor face each one's agent state calls for; `zones`
+ * maps a desk id to its department's zone colour (desks without one take the
+ * first), and `tone` swaps the desk and chair materials by role instead.
+ */
+export function DeskInstances({ desks, agents, zones = NO_ZONES, tone }: {
+  desks: DeskSlot[]; agents: ReadonlyMap<string, SocietyAgent>; zones?: ReadonlyMap<string, number>; tone?: DeskTone;
+}) {
   const byFace = useMemo(() => {
     const groups = new Map<ScreenFace, DeskSlot[]>(FACES.map((f) => [f, []]));
     for (const desk of desks) {
@@ -88,8 +150,10 @@ export function DeskInstances({ desks, agents, tone }: { desks: DeskSlot[]; agen
   return (
     <group>
       {PARTS.map((part, i) => {
-        const material = (part.role !== "monitor" && part.role !== "keyboard" && tone?.[part.role]) || part.material;
-        return <PartInstances key={`${i}:${desks.length}:${material.uuid}`} part={part} desks={desks} material={material} />;
+        const override = part.role !== "monitor" && part.role !== "keyboard" ? tone?.[part.role] : undefined;
+        const material = override ?? part.material;
+        return <PartInstances key={`${i}:${desks.length}:${material.uuid}`} part={part} desks={desks} zones={zones}
+          material={material} tinted={!override} />;
       })}
       {FACES.map((face) => (byFace.get(face)!.length > 0 ? <ScreenInstances key={face} face={face} desks={byFace.get(face)!} /> : null))}
     </group>

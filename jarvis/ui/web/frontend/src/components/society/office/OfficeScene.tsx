@@ -1,12 +1,12 @@
 /**
- * The office floor: a wood-plank plate floating in a starry night, glass
- * railings around it, walled rooms in the north and south, one carpeted
+ * The office floor: a microcement plate floating in a starry night behind
+ * frameless glass, walled rooms in the north and south, one felt-zoned
  * department per provider family in between — and everybody in it.
  */
 import { useLayoutEffect, useMemo } from "react";
 import { Stars } from "@react-three/drei";
 import type { ThreeEvent } from "@react-three/fiber";
-import { CanvasTexture, Color, RepeatWrapping, SRGBColorSpace, type Texture } from "three";
+import { CanvasTexture, Color, RepeatWrapping, Shape, SRGBColorSpace, type Texture } from "three";
 import { useT } from "@/i18n";
 import type { SocietyAgent } from "../data";
 import type { ToyLook } from "./toyFigureModel";
@@ -32,7 +32,7 @@ import { PlayerBubble } from "./OfficeBubbles";
 import { OfficeCameraRig } from "./OfficeCameraRig";
 import { allDesks, type Department, type OfficeLayout, type Point } from "./officeLayout";
 import { isWalkable, nearestWalkable, type NavGrid } from "./officeNav";
-import { CODING_SCENE, DEPARTMENT_TINTS, OFFICE } from "./officePalette";
+import { CODING_SCENE, DEPARTMENT_ZONES, OFFICE } from "./officePalette";
 import { officeSession, player as playerBody, useOfficeStore, type OfficeFloor, type Selection } from "./officeStore";
 import { arrivalPose } from "./officeFloors";
 
@@ -66,48 +66,69 @@ function GigiCompanion({ grid, awake, reduced }: { grid: NavGrid; awake: boolean
   return <GigiFlyer owner={PLAYER_OWNER} mode="follow" speaking={speaking} paused={!awake} reduced={reduced} clear={clear} />;
 }
 
-/** Warm planks drawn once; repeated across the floor. */
-let plankTexture: Texture | null | undefined;
-function planks(): Texture | null {
-  if (plankTexture !== undefined) return plankTexture;
+/** Metres covered by one repeat of the floor texture (one poured panel). */
+const FLOOR_PANEL_M = 4;
+
+/** Microcement drawn once: soft clouds of tone and faint panel seams; repeated across the floor. */
+let floorTexture: Texture | null | undefined;
+function microcement(): Texture | null {
+  if (floorTexture !== undefined) return floorTexture;
   const canvas = typeof document !== "undefined" ? document.createElement("canvas") : null;
-  const ctx = canvas?.getContext("2d") ?? null;
-  plankTexture = null;
+  let ctx: CanvasRenderingContext2D | null = null;
+  try {
+    ctx = canvas?.getContext("2d") ?? null;
+  } catch {
+    // jsdom without the canvas package: no texture, the flat floor colour is the right fallback.
+    ctx = null;
+  }
+  floorTexture = null;
   if (canvas && ctx) {
-    canvas.width = 256;
-    canvas.height = 256;
-    const tones = ["#c9a27a", "#c29a71", "#cfa983", "#bf966c"];
-    ctx.fillStyle = tones[0];
-    ctx.fillRect(0, 0, 256, 256);
-    for (let row = 0; row < 8; row += 1) {
-      // Staggered joints; segments run past both edges so the tile wraps seamlessly.
-      const offset = ((row % 2) * 64 + ((row * 53) % 64)) - 128;
-      for (let seg = 0; seg < 4; seg += 1) {
-        ctx.fillStyle = tones[(row + seg + 4) % tones.length];
-        ctx.fillRect(offset + seg * 128, row * 32, 128, 32);
-        ctx.fillStyle = "rgba(90,60,35,0.35)";
-        ctx.fillRect(offset + seg * 128, row * 32, 2, 32);
+    const size = 512;
+    canvas.width = size;
+    canvas.height = size;
+    ctx.fillStyle = OFFICE.floor;
+    ctx.fillRect(0, 0, size, size);
+    // Deterministic clouds, drawn at every wrapped offset so the tile repeats seamlessly.
+    let seed = 0x2f6e2b1;
+    const rand = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 0x1_0000_0000);
+    for (let i = 0; i < 70; i += 1) {
+      const x = rand() * size, y = rand() * size, r = 30 + rand() * 90;
+      const tone = OFFICE.floorCloud[i % OFFICE.floorCloud.length];
+      for (const dx of [-size, 0, size]) {
+        for (const dy of [-size, 0, size]) {
+          const g = ctx.createRadialGradient(x + dx, y + dy, 0, x + dx, y + dy, r);
+          g.addColorStop(0, `${tone}66`);
+          g.addColorStop(1, `${tone}00`);
+          ctx.fillStyle = g;
+          ctx.fillRect(x + dx - r, y + dy - r, r * 2, r * 2);
+        }
       }
-      ctx.fillStyle = "rgba(90,60,35,0.3)";
-      ctx.fillRect(0, row * 32, 256, 2);
     }
+    // Fine grain, then the panel seams on two edges (they meet the next tile's).
+    for (let i = 0; i < 5000; i += 1) {
+      ctx.fillStyle = rand() > 0.5 ? "rgba(255,255,255,0.10)" : "rgba(90,84,76,0.07)";
+      ctx.fillRect(Math.floor(rand() * size), Math.floor(rand() * size), 1, 1);
+    }
+    ctx.fillStyle = OFFICE.floorSeam;
+    ctx.fillRect(0, 0, size, 2);
+    ctx.fillRect(0, 0, 2, size);
     const texture = new CanvasTexture(canvas);
     texture.colorSpace = SRGBColorSpace;
     texture.wrapS = texture.wrapT = RepeatWrapping;
     texture.anisotropy = 8;
-    plankTexture = texture;
+    floorTexture = texture;
   }
-  return plankTexture;
+  return floorTexture;
 }
 
 function Slab({ layout, onFloorClick }: { layout: OfficeLayout; onFloorClick: (event: ThreeEvent<MouseEvent>) => void }) {
   const { minX, maxX, minZ, maxZ } = layout.bounds;
   const w = maxX - minX, d = maxZ - minZ, cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
   const floorMap = useMemo(() => {
-    const base = planks();
+    const base = microcement();
     if (!base) return null;
     const map = base.clone();
-    map.repeat.set(w / 3, d / 3);
+    map.repeat.set(w / FLOOR_PANEL_M, d / FLOOR_PANEL_M);
     map.needsUpdate = true;
     return map;
   }, [w, d]);
@@ -119,7 +140,7 @@ function Slab({ layout, onFloorClick }: { layout: OfficeLayout; onFloorClick: (e
       </mesh>
       <mesh position={[cx, 0.001, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow onClick={onFloorClick}>
         <planeGeometry args={[w, d]} />
-        <meshStandardMaterial color={floorMap ? "#ffffff" : OFFICE.walkway} map={floorMap} roughness={0.8} />
+        <meshStandardMaterial color={floorMap ? "#ffffff" : OFFICE.walkway} map={floorMap} roughness={0.55} />
       </mesh>
       <Railing from={[minX + 0.2, minZ + 0.2]} to={[maxX - 0.2, minZ + 0.2]} />
       <Railing from={[maxX - 0.2, minZ + 0.2]} to={[maxX - 0.2, maxZ - 0.2]} />
@@ -129,18 +150,41 @@ function Slab({ layout, onFloorClick }: { layout: OfficeLayout; onFloorClick: (e
   );
 }
 
+/** A flat rounded rectangle in the XY plane, laid on the floor by its mesh's rotation. */
+function roundedRect(w: number, d: number, r: number): Shape {
+  const x = -w / 2, y = -d / 2;
+  const shape = new Shape();
+  shape.moveTo(x + r, y);
+  shape.lineTo(x + w - r, y);
+  shape.quadraticCurveTo(x + w, y, x + w, y + r);
+  shape.lineTo(x + w, y + d - r);
+  shape.quadraticCurveTo(x + w, y + d, x + w - r, y + d);
+  shape.lineTo(x + r, y + d);
+  shape.quadraticCurveTo(x, y + d, x, y + d - r);
+  shape.lineTo(x, y + r);
+  shape.quadraticCurveTo(x, y, x + r, y);
+  return shape;
+}
+
+/** A department zone: a rounded felt rug with a darker border band, and its fluted back wall. */
 function DepartmentArea({ dept }: { dept: Department }) {
   const t = useT();
   const w = dept.maxX - dept.minX, d = dept.maxZ - dept.minZ;
   const cx = (dept.minX + dept.maxX) / 2, cz = (dept.minZ + dept.maxZ) / 2;
-  const tint = DEPARTMENT_TINTS[dept.tint % DEPARTMENT_TINTS.length];
+  const zone = DEPARTMENT_ZONES[dept.tint % DEPARTMENT_ZONES.length];
+  const outer = useMemo(() => roundedRect(w - 0.1, d - 0.1, 0.45), [w, d]);
+  const inner = useMemo(() => roundedRect(w - 0.4, d - 0.4, 0.32), [w, d]);
   return (
     <group>
-      <mesh position={[cx, 0.006, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[w, d]} />
-        <meshStandardMaterial color={tint} roughness={0.95} />
+      <mesh position={[cx, 0.005, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <shapeGeometry args={[outer, 6]} />
+        <meshStandardMaterial color={zone.panel} roughness={1} />
       </mesh>
-      <SignWall label={dept.label || t("society.office.open_space")} width={w - 0.4} position={[cx, 0, dept.minZ + 0.1]} />
+      <mesh position={[cx, 0.007, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <shapeGeometry args={[inner, 6]} />
+        <meshStandardMaterial color={zone.rug} roughness={1} />
+      </mesh>
+      <SignWall label={dept.label || t("society.office.open_space")} width={w - 0.4} position={[cx, 0, dept.minZ + 0.1]} zone={dept.tint} />
     </group>
   );
 }
@@ -175,6 +219,8 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
   const atLift = nearby?.kind === "checkpoint" && nearby.id === "elevator";
   // Lead desks carry their own size and are built as executive desks, not bench instances.
   const benchDesks = useMemo(() => desks.filter((d) => !d.size), [desks]);
+  // Each desk takes its department's zone colour for the felt screen and the seat fabric.
+  const zones = useMemo(() => new Map(layout.departments.flatMap((dept) => dept.desks.map((desk) => [desk.id, dept.tint] as const))), [layout]);
   const leadRoom = layout.rooms.find((r) => r.kind === "lead");
   const dogBed = layout.furniture.find((f) => f.kind === "dogBed");
   const coding = floor === "coding";
@@ -197,9 +243,9 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
       <primitive attach="background" object={background} />
       <fog attach="fog" args={[space, span * 2.2, span * 4.5]} />
       <Stars radius={span * 3} depth={span} count={2500} factor={4} saturation={0} fade speed={reduced ? 0 : 0.3} />
-      <hemisphereLight args={coding ? [CODING_SCENE.sky, CODING_SCENE.ground, 0.95] : ["#dfe9ff", "#6b5a48", 0.9]} />
+      <hemisphereLight args={coding ? [CODING_SCENE.sky, CODING_SCENE.ground, 0.95] : ["#eef2ff", "#8a8279", 0.95]} />
       <ambientLight intensity={0.25} />
-      <directionalLight position={[maxX + 10, 26, maxZ + 6]} intensity={1.6} castShadow
+      <directionalLight position={[maxX + 10, 26, maxZ + 6]} intensity={1.55} color="#fff7ec" castShadow
         shadow-mapSize={[2048, 2048]} shadow-bias={-0.0004} shadow-normalBias={0.03}
         shadow-camera-left={-span * 0.7} shadow-camera-right={span * 0.7}
         shadow-camera-top={span * 0.7} shadow-camera-bottom={-span * 0.7} shadow-camera-far={120} />
@@ -211,7 +257,7 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
         ? layout.departments.map((dept) => <CodingStudio key={dept.id} dept={dept} agents={agents} />)
         : <>
           {layout.departments.map((dept) => <DepartmentArea key={dept.id} dept={dept} />)}
-          <DeskInstances desks={benchDesks} agents={agents} />
+          <DeskInstances desks={benchDesks} agents={agents} zones={zones} />
         </>}
       <ExecutiveDesks desks={desks} agents={agents} onOpenScreen={onOpenScreen} />
       {leadRoom && <LeadOfficeLight room={leadRoom} />}

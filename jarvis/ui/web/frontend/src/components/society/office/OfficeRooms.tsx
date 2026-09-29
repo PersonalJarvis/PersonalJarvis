@@ -25,7 +25,7 @@ function lcg(seed: number): () => number {
 }
 
 /** Metres covered by one repeat of each floor pattern. */
-const PATTERN_METRES: Record<RoomKind, number> = { lead: 2.6, team: 2, wardrobe: 2, reception: 2.4, break: 2, focus: 2, server: 2 };
+const PATTERN_METRES: Record<RoomKind, number> = { lead: 2.6, team: 2, wardrobe: 2, reception: 3.2, break: 2.4, focus: 2, server: 2 };
 
 function drawFloor(kind: RoomKind, ctx: CanvasRenderingContext2D, w: number, h: number): void {
   const { base, accents } = ROOM_FLOOR_COLOURS[kind];
@@ -54,7 +54,27 @@ function drawFloor(kind: RoomKind, ctx: CanvasRenderingContext2D, w: number, h: 
       }
     }
     ctx.putImageData(image, 0, 0);
-  } else if (kind === "team" || kind === "break" || kind === "focus") {
+  } else if (kind === "break") {
+    // Light-oak planks, staggered; segments run past both edges so the tile wraps.
+    for (let row = 0; row < 8; row += 1) {
+      const offset = ((row % 2) * 64 + ((row * 53) % 64)) - 128;
+      for (let seg = 0; seg < 4; seg += 1) {
+        ctx.fillStyle = accents[(row + seg * 3) % accents.length];
+        ctx.fillRect(offset + seg * 128, row * 32, 128, 32);
+        ctx.fillStyle = "rgba(110,84,56,0.22)";
+        ctx.fillRect(offset + seg * 128, row * 32, 1.5, 32);
+      }
+      ctx.fillStyle = "rgba(110,84,56,0.18)";
+      ctx.fillRect(0, row * 32, w, 1.5);
+    }
+  } else if (kind === "wardrobe") {
+    // Terrazzo: a pale ground with small stone chips in the accent tones.
+    for (let i = 0; i < 900; i += 1) {
+      ctx.fillStyle = accents[Math.floor(rand() * accents.length)];
+      const s = 2 + rand() * 4;
+      ctx.fillRect(Math.floor(rand() * w), Math.floor(rand() * h), s, s * (0.6 + rand() * 0.6));
+    }
+  } else if (kind === "team" || kind === "focus") {
     // Carpet grain: fine speckles in the accent tones, plus a faint weave.
     for (let i = 0; i < 2600; i += 1) {
       ctx.fillStyle = accents[Math.floor(rand() * accents.length)];
@@ -63,8 +83,8 @@ function drawFloor(kind: RoomKind, ctx: CanvasRenderingContext2D, w: number, h: 
     ctx.fillStyle = "rgba(0,0,0,0.035)";
     for (let y = 0; y < h; y += 8) ctx.fillRect(0, y, w, 1);
   } else {
-    // Tiles: wardrobe small square tiles, reception large stone slabs.
-    const tiles = kind === "wardrobe" || kind === "server" ? 4 : 2;
+    // Tiles: the server room's raised-floor grid, reception's large pale stone slabs.
+    const tiles = kind === "server" ? 4 : 2;
     const size = w / tiles;
     for (let ty = 0; ty < tiles; ty += 1) {
       for (let tx = 0; tx < tiles; tx += 1) {
@@ -78,7 +98,7 @@ function drawFloor(kind: RoomKind, ctx: CanvasRenderingContext2D, w: number, h: 
         }
       }
     }
-    ctx.fillStyle = kind === "wardrobe" ? "rgba(120,100,150,0.35)" : "rgba(140,130,115,0.45)";
+    ctx.fillStyle = kind === "server" ? "rgba(110,118,130,0.45)" : "rgba(150,142,130,0.28)";
     for (let i = 0; i < tiles; i += 1) {
       ctx.fillRect(i * size, 0, 3, h);
       ctx.fillRect(0, i * size, w, 3);
@@ -118,7 +138,7 @@ function RoomFloor({ room }: { room: Room }) {
   );
 }
 
-/** A floor overlay per room: walnut chevron (lead), teal carpet (team), lilac tile (wardrobe), stone (reception), coral carpet (break). */
+/** A floor overlay per room: walnut chevron (lead), slate felt (team), terrazzo (wardrobe), pale stone (reception), light oak (break). */
 export function RoomFloors({ rooms }: { rooms: Room[] }) {
   return <group>{rooms.map((room) => <RoomFloor key={room.id} room={room} />)}</group>;
 }
@@ -129,27 +149,28 @@ export function RoomFloors({ rooms }: { rooms: Room[] }) {
 
 export const WALL_HEIGHT = 2.1;
 const BASE_HEIGHT = 0.12;
-const POST_SPACING = 1.5;
+const POST_SPACING = 1.8;
 
-/** One glass wall run: white base strip, glass pane, metal posts and a top rail. */
+/** One glass wall run: slim black steel base, mullions and top rail around a clear pane. */
 function GlassWall({ wall }: { wall: WallSegment }) {
   // The lead office is framed in brass on a walnut base, behind warm-tinted glass.
   const lead = wall.room === "lead";
   const frame = lead ? LEAD_MAT.brass : MAT.railing;
-  const base = lead ? LEAD_MAT.walnutDark : MAT.wall;
+  const base = lead ? LEAD_MAT.walnutDark : MAT.railing;
   const glass = lead ? LEAD_MAT.wallGlass : MAT.glass;
   const length = Math.hypot(wall.x2 - wall.x1, wall.z2 - wall.z1);
   if (length < 0.05) return null;
   const angle = Math.atan2(wall.z2 - wall.z1, wall.x2 - wall.x1);
   const posts = Math.max(2, Math.ceil(length / POST_SPACING) + 1);
+  const post = lead ? 0.05 : 0.035;
   return (
     <group position={[(wall.x1 + wall.x2) / 2, 0, (wall.z1 + wall.z2) / 2]} rotation={[0, -angle, 0]}>
-      <Box size={[length, BASE_HEIGHT, 0.1]} position={[0, BASE_HEIGHT / 2, 0]} material={base} />
+      <Box size={[length, lead ? BASE_HEIGHT : 0.06, lead ? 0.1 : 0.06]} position={[0, lead ? BASE_HEIGHT / 2 : 0.03, 0]} material={base} />
       <Box size={[length, WALL_HEIGHT - BASE_HEIGHT - 0.04, 0.02]} position={[0, (WALL_HEIGHT + BASE_HEIGHT - 0.04) / 2, 0]}
         material={glass} cast={false} />
-      <Box size={[length, 0.05, 0.07]} position={[0, WALL_HEIGHT - 0.025, 0]} material={frame} />
+      <Box size={[length, 0.04, lead ? 0.07 : 0.05]} position={[0, WALL_HEIGHT - 0.02, 0]} material={frame} />
       {Array.from({ length: posts }, (_, i) => (
-        <Box key={i} size={[0.05, WALL_HEIGHT, 0.07]} position={[-length / 2 + (length * i) / (posts - 1), WALL_HEIGHT / 2, 0]}
+        <Box key={i} size={[post, WALL_HEIGHT, lead ? 0.07 : 0.05]} position={[-length / 2 + (length * i) / (posts - 1), WALL_HEIGHT / 2, 0]}
           material={frame} />
       ))}
     </group>
@@ -214,7 +235,7 @@ function signMaterial(label: string, lead = false): MeshStandardMaterial {
   return material;
 }
 
-/** Dark-wood board with the label on both faces, centred on its local origin. */
+/** Charcoal wayfinding board with the label on both faces, centred on its local origin. */
 function SignBoard({ label, lead = false }: { label: string; lead?: boolean }) {
   const material = signMaterial(label, lead);
   const textH = (SIGN_TEXT_W * SIGN_CANVAS.h) / SIGN_CANVAS.w;
@@ -260,9 +281,9 @@ export function RoomSign({ room, label }: { room: Room; label: string }) {
   const cx = (west.x + east.x) / 2;
   return (
     <group position={[cx, 0, west.z]}>
-      <Box size={[ARCH.post, postH, ARCH.post]} position={[west.x - cx, postH / 2, 0]} material={MAT.woodDark} />
-      <Box size={[ARCH.post, postH, ARCH.post]} position={[east.x - cx, postH / 2, 0]} material={MAT.woodDark} />
-      <Box size={[east.x - west.x + ARCH.post, 0.06, ARCH.post]} position={[0, archY - SIGN_H / 2 - 0.03, 0]} material={MAT.woodDark} />
+      <Box size={[ARCH.post, postH, ARCH.post]} position={[west.x - cx, postH / 2, 0]} material={MAT.railing} />
+      <Box size={[ARCH.post, postH, ARCH.post]} position={[east.x - cx, postH / 2, 0]} material={MAT.railing} />
+      <Box size={[east.x - west.x + ARCH.post, 0.04, ARCH.post]} position={[0, archY - SIGN_H / 2 - 0.02, 0]} material={MAT.railing} />
       <group position={[0, archY, 0]}><SignBoard label={label} /></group>
     </group>
   );

@@ -1,43 +1,71 @@
 /**
- * The office's own colours ("cosy toy office", docs/agent-society/office-map.md §2).
+ * The office's own colours: a contemporary workplace (docs/agent-society/office-map.md §2)
+ * — light microcement floor, light-oak tops on black steel, graphite screens,
+ * felt zone rugs, charcoal wayfinding with white type and lots of green.
  * Like the earlier worlds, nothing inside the canvas reads a theme token: the
  * scene is a lit diorama that looks the same in light and dark mode.
  */
 export const OFFICE = {
-  space: "#0b1024",
-  slab: "#3a3f4b",
-  slabEdge: "#2b2f38",
-  wood: "#b98a5e",
-  woodDark: "#8a6240",
-  walkway: "#c9a27a",
-  deskTop: "#e8d3b0",
-  deskBody: "#f2f0ec",
-  deskLeg: "#d9d6cf",
-  chair: "#2c2f36",
-  chairSeat: "#3b3f48",
-  monitor: "#23262d",
-  keyboard: "#3a3d44",
-  railing: "#b7bcc4",
-  glass: "#bfe3ff",
-  wallWhite: "#f1efe9",
-  signBoard: "#3d2c22",
-  signText: "#fff7ec",
-  couch: "#2f3542",
-  couchCushion: "#3d4556",
-  plantPot: "#f4f1ea",
-  leaf: "#5fa35a",
-  leafDark: "#3f7f45",
-  trunk: "#6b4a2e",
-  book: ["#c8553d", "#f2a541", "#4f7cac", "#5e9c76", "#8d6cab"],
-  rug: "#d8c8ae",
+  space: "#0d1320",
+  slab: "#2a2e35",
+  slabEdge: "#1c2027",
+  /** Microcement floor: base plus the soft cloud tones and panel seams drawn over it. */
+  floor: "#dcd8d1",
+  floorCloud: ["#d4d0c8", "#e2ded8", "#d8d4cd", "#e6e3dd"],
+  floorSeam: "rgba(120,114,104,0.22)",
+  wood: "#d8bc94",
+  woodDark: "#a88460",
+  walkway: "#dcd8d1",
+  deskTop: "#dcc39d",
+  deskEdge: "#c9ab81",
+  deskBody: "#f3f2ef",
+  deskLeg: "#1f2226",
+  steel: "#1f2226",
+  chair: "#1d2025",
+  chairSeat: "#3a3f47",
+  chairMesh: "#40454e",
+  monitor: "#16181c",
+  monitorArm: "#b8bdc5",
+  keyboard: "#e4e5e8",
+  mug: "#f7f5f1",
+  railing: "#23262b",
+  glass: "#d6ecff",
+  wallWhite: "#f6f5f2",
+  signBoard: "#23262c",
+  signText: "#ffffff",
+  couch: "#bdb6aa",
+  couchCushion: "#d8d1c4",
+  couchAccent: ["#7f9a86", "#c98f6f", "#7c8fa8"],
+  plantPot: "#34373d",
+  planterLight: "#ebe6de",
+  leaf: "#4f8f52",
+  leafDark: "#2f6b3f",
+  leafLight: "#77ad64",
+  trunk: "#6b5440",
+  book: ["#c8553d", "#e9b44c", "#4f7cac", "#5e9c76", "#8d6cab", "#e7e2d8"],
+  rug: "#cfc7ba",
   ringWorking: "#4ade80",
   ringIdle: "#e8ecf2",
   ringWaiting: "#fbbf24",
   ringPaused: "#94a3b8",
 } as const;
 
-/** Carpet tints per department — soft, desaturated, readable next to wood. */
-export const DEPARTMENT_TINTS = ["#9aa6b8", "#a9b59a", "#b8a39a", "#a39ab8", "#9ab5b1", "#b8b19a"] as const;
+/**
+ * Department zones: a felt rug, the matching acoustic wall panel and the seat
+ * fabric of every chair in it — muted, contemporary tones that read on the
+ * light floor without shouting.
+ */
+export const DEPARTMENT_ZONES = [
+  { rug: "#bccab6", panel: "#8aa391", seat: "#6f8b77" },
+  { rug: "#b9c6d4", panel: "#7b91ab", seat: "#5f7894" },
+  { rug: "#ddd1bb", panel: "#bfa07a", seat: "#a8845a" },
+  { rug: "#e2cbc0", panel: "#c48e7a", seat: "#b0705b" },
+  { rug: "#c6c1d5", panel: "#918aad", seat: "#766e96" },
+  { rug: "#b8d0c9", panel: "#6f9f94", seat: "#528579" },
+] as const;
+
+/** Rug tints per department (kept for callers that only need the floor colour). */
+export const DEPARTMENT_TINTS = DEPARTMENT_ZONES.map((z) => z.rug);
 
 /**
  * The coding floor's own look, so the two floors never read as copies: a
@@ -61,7 +89,7 @@ export interface StudioStyle {
   carpet: string;
   weave: string;
   border: string;
-  /** The department's back wall and its slats. */
+  /** The department's back wall and its acoustic felt panel. */
   wall: string;
   slat: string;
   /** Desk top, cabinet, leg, chair base and seat. */
@@ -72,20 +100,25 @@ export interface StudioStyle {
   seat: string;
 }
 
-/** One studio per workspace department, cycled; every one differs in pattern, colours and furniture. */
+/**
+ * One studio per workspace department, cycled; every one differs in pattern
+ * and colours. The patterns are woven tone-on-tone and the furniture stays in
+ * the office's contemporary kit (oak or walnut tops, black or white steel,
+ * graphite chairs), so a studio reads as a team's corner, not a theme park.
+ */
 export const CODING_STUDIOS: readonly StudioStyle[] = [
-  { pattern: "grid", carpet: "#3b4a6b", weave: "#4d5e82", border: "#5eead4", wall: "#2f3b57", slat: "#5eead4",
-    deskTop: "#6b4a33", deskBody: "#23262d", deskLeg: "#3a3d44", chair: "#23262d", seat: "#3aa99a" },
-  { pattern: "stripes", carpet: "#a7b98f", weave: "#95a87e", border: "#e8d9a8", wall: "#e9efe0", slat: "#7c9a5e",
-    deskTop: "#e6d2ad", deskBody: "#fbfaf6", deskLeg: "#c9c4b8", chair: "#4b5a3a", seat: "#7c9a5e" },
-  { pattern: "checker", carpet: "#d99a7b", weave: "#c9876a", border: "#f3e3cf", wall: "#f5e6d8", slat: "#b5654a",
-    deskTop: "#f0e2cb", deskBody: "#fdf8f0", deskLeg: "#d8cbb8", chair: "#6b3a2a", seat: "#c46a4c" },
-  { pattern: "dots", carpet: "#b9aed6", weave: "#d6cdee", border: "#7d6bb0", wall: "#ece6f7", slat: "#8b79c0",
-    deskTop: "#fbfbfb", deskBody: "#d9d7e2", deskLeg: "#a9a6b8", chair: "#3a3350", seat: "#7a4f8f" },
-  { pattern: "diagonal", carpet: "#7fb9b8", weave: "#6aa6a5", border: "#1f5f6b", wall: "#dcefee", slat: "#2e7c85",
-    deskTop: "#d9b98f", deskBody: "#e7eeee", deskLeg: "#9fb3b5", chair: "#1f3b4d", seat: "#2d5f86" },
-  { pattern: "zigzag", carpet: "#e2c070", weave: "#d0aa55", border: "#3a3024", wall: "#fbf1d6", slat: "#b8862e",
-    deskTop: "#5b3a25", deskBody: "#2c2a28", deskLeg: "#46423d", chair: "#2c2a28", seat: "#e0a93a" },
+  { pattern: "grid", carpet: "#39424f", weave: "#424c5a", border: "#5eead4", wall: "#2c333d", slat: "#3d4a58",
+    deskTop: "#c9ab81", deskBody: "#2b2f36", deskLeg: "#1f2226", chair: "#1d2025", seat: "#3aa99a" },
+  { pattern: "stripes", carpet: "#b7c4ae", weave: "#aebba5", border: "#8aa391", wall: "#eef1ea", slat: "#8aa391",
+    deskTop: "#dcc39d", deskBody: "#f3f2ef", deskLeg: "#1f2226", chair: "#1d2025", seat: "#6f8b77" },
+  { pattern: "checker", carpet: "#e0c7bb", weave: "#dac0b3", border: "#c48e7a", wall: "#f6efe9", slat: "#c48e7a",
+    deskTop: "#f2f0ec", deskBody: "#f3f2ef", deskLeg: "#1f2226", chair: "#1d2025", seat: "#b0705b" },
+  { pattern: "dots", carpet: "#c9c3d9", weave: "#bfb9cf", border: "#918aad", wall: "#f1eff6", slat: "#918aad",
+    deskTop: "#dcc39d", deskBody: "#e9e7ef", deskLeg: "#e9e7ef", chair: "#2b2f36", seat: "#766e96" },
+  { pattern: "diagonal", carpet: "#bccadb", weave: "#b3c1d1", border: "#7b91ab", wall: "#eef2f6", slat: "#7b91ab",
+    deskTop: "#c9ab81", deskBody: "#f3f2ef", deskLeg: "#1f2226", chair: "#1d2025", seat: "#5f7894" },
+  { pattern: "zigzag", carpet: "#d9ccb3", weave: "#d1c3a9", border: "#bfa07a", wall: "#f5efe3", slat: "#bfa07a",
+    deskTop: "#8a6446", deskBody: "#2b2f36", deskLeg: "#1f2226", chair: "#1d2025", seat: "#c79a3a" },
 ];
 
 /** Colours of the room props (lobby, team room, wardrobe, break room). */
@@ -121,13 +154,14 @@ export const PROP_COLOURS = {
 /** Floor overlays per room kind: base colour plus the pattern's accent tones. */
 export const ROOM_FLOOR_COLOURS = {
   lead: { base: "#6a432a", accents: ["#74492d", "#5e3a24", "#6c4429", "#7d5133", "#553420"] },
-  team: { base: "#7fb3ad", accents: ["#8bbdb7", "#74a7a1", "#86b8b2"] },
-  wardrobe: { base: "#ddd3ea", accents: ["#cfc3e0", "#e6ddf1"] },
-  reception: { base: "#e7e2d9", accents: ["#ece8e0", "#e0dacf", "#e9e4dc"] },
-  break: { base: "#d98b6e", accents: ["#e0967a", "#d08065", "#dc9074"] },
-  // Coding floor: a calm sage carpet in the focus zone, cool raised-floor tiles in the server room.
-  focus: { base: "#9fb08c", accents: ["#a9ba96", "#94a582", "#a3b491"] },
-  server: { base: "#b9c0cb", accents: ["#c3cad4", "#aeb5c0"] },
+  // Contemporary rooms: slate felt (team), light terrazzo (wardrobe), large pale stone (reception),
+  // light-oak planks (break room); on the coding floor a soft sage felt and a raised-floor grid.
+  team: { base: "#b4bec6", accents: ["#aab4bd", "#bcc6cd", "#b0bac2"] },
+  wardrobe: { base: "#ece8e2", accents: ["#c9c2b8", "#9aa4ad", "#d9b8aa", "#aebcaa"] },
+  reception: { base: "#e9e6e1", accents: ["#ece9e4", "#e5e2dc", "#efece8"] },
+  break: { base: "#d9c09b", accents: ["#dcc39f", "#d2b791", "#e0c8a6", "#cfb48c"] },
+  focus: { base: "#b3c0ab", accents: ["#aebba6", "#b9c6b1", "#b0bda8"] },
+  server: { base: "#c3c8cf", accents: ["#c9ced4", "#bcc2c9"] },
 } as const;
 
 /** Checkpoint gold: floor ring, hexagon token and the label badge. */
