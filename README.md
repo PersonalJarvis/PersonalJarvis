@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/bd2d5f3c-c601-475e-a37e-f532ea6ef6ea
 **Your computer becomes an AI agent.** One desktop app you talk to. It answers, uses your computer, and runs your coding agents and a team of AI helpers for you.
 
 - **talk instead of type**: say your own wake phrase and have a real conversation, or dictate into any app. [voice →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/voice-conversations.md)
-- **every coding agent in one window**: Claude Code, Codex, Gemini CLI, OpenCode and more, side by side, each in its own pane and optional git worktree. Ask Jarvis what T2 is doing. [agentic IDE →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/agentic-ide.md)
+- **every coding agent in one window**: Claude Code, Codex, OpenCode, Kimi, GLM and more, side by side, each in its own pane and optional git worktree. Ask Jarvis what T2 is doing. [agentic IDE →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/agentic-ide.md)
 - **a team that keeps working**: persistent agents with their own instructions, routines and memory, in an office you can walk through. [agents →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/jarvis-agents.md)
 - **hands on your computer**: it uses the browser and your apps, and asks before anything risky. [safety →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/safety-and-approvals.md)
 - **any model, or no cloud at all**: one key from any supported provider, or local models through Ollama. [providers →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/providers-and-api-keys.md)
@@ -46,7 +46,28 @@ irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install
 curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
 ```
 
-The installer sets everything up and opens the app. Pick a wake phrase, add one provider key, and say hello. Run it again to update. [install options →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/install/README.md)
+The installer checks for Python 3.11+ and Git, offers to install what is missing, sets up the app and opens it. Run it again to update. [install options →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/install/README.md)
+
+**what you need**: Windows, macOS or Linux, and one API key from a supported provider, or a local model. A microphone for voice. No GPU needed; speech recognition and local models can still run on your own machine.
+
+## first steps
+
+1. **finish the one-time setup**: pick a language and a wake phrase of your own, like "Hey Nova", or a keyboard shortcut.
+2. **connect one model**: add a provider key under **Settings › API Keys**, or set up a model under **Local models**.
+3. **say your wake phrase**: try *"Plan a small project with me and ask what you need to know."* Then open **Agentic IDE** with a project folder, or create your first agent under **Agents**.
+
+## works with
+
+- **models**: OpenAI, Anthropic Claude, Google Gemini and Vertex AI, OpenRouter, NVIDIA, Ollama and any OpenAI-compatible local server, plus your Claude Code and Codex subscriptions.
+- **speech**: local Whisper, OpenAI, Gemini, Groq, Deepgram and OpenRouter for listening; Piper (local), ElevenLabs, Cartesia, Inworld, Gemini and OpenRouter voices for speaking.
+- **coding agents**: Claude Code, Codex, OpenCode, Kimi Code, GLM, Grok Build and Antigravity.
+
+## how it works
+
+- Personal Jarvis is a desktop app with a local server behind it. Your conversations, agents, memory and history are stored on your computer.
+- Each request goes to the model you chose. Jarvis then decides whether to answer, use a tool, or hand the work to an agent.
+- Every tool call passes a risk policy (safe, monitor, ask, block). You approve anything that could change your system, and every run is recorded so you can see what happened.
+- Scripts and other agents reach the same app through the `jarvis` CLI and a local API. [CLI →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/jarvis-cli.md) · [architecture →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/architecture-overview.md)
 
 ## docs
 
