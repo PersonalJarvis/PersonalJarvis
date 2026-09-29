@@ -24,3 +24,9 @@ in one line at the very bottom of the README, for the Galaxy tier
 For a custom arrangement, start a thread in
 [Discussions](https://github.com/PersonalJarvis/PersonalJarvis/discussions)
 before sponsoring.
+
+## Contact
+
+For sponsorship questions, a custom arrangement or anything you would rather
+not post in public, email
+[contact@personaljarvis.ai](mailto:contact@personaljarvis.ai).
