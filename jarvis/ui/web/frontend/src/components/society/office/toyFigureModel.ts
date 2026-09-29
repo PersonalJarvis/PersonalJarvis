@@ -19,6 +19,7 @@
 
 import { recipeKey, type FigureRecipe, type Palette } from "../figures/figureRecipe";
 import type { FigureMode } from "../figures/FigureRig";
+import { OUTFITS, type Colourway } from "./outfitCatalog";
 
 // ---------------------------------------------------------------------------
 // Look
@@ -130,11 +131,6 @@ function naturalSkinFor(hex: string): string {
   return best;
 }
 
-/**
- * The toy look for one agent: colours from the recipe palette (skin, hair,
- * primary → shirt, accent → shirt accent, secondary → trousers, shoes), with a
- * stable hash of `identity` choosing the hair style, blush and any missing colour.
- */
 /** Every hair style the figure can draw; the hash wheel above only picks from the original eight. */
 export const HAIR_STYLES: readonly HairStyle[] = [
   "short", "slick", "sidepart", "buzz", "spiky", "curly", "long", "ponytail", "bun", "beanie", "cap", "bald",
@@ -146,9 +142,21 @@ function chosenHair(recipe: FigureRecipe | null): HairStyle | null {
   return typeof value === "string" && (HAIR_STYLES as readonly string[]).includes(value) ? (value as HairStyle) : null;
 }
 
-function chosenOutfit(recipe: FigureRecipe | null): OutfitId {
+function chosenOutfit(recipe: FigureRecipe | null): OutfitId | null {
   const value = recipe?.outfit;
-  return typeof value === "string" && (OUTFIT_IDS as readonly string[]).includes(value) ? (value as OutfitId) : "tee";
+  return typeof value === "string" && (OUTFIT_IDS as readonly string[]).includes(value) ? (value as OutfitId) : null;
+}
+
+/** Office styles for a figure nobody dressed yet; weighted so a plain T-shirt stays rare. */
+const OFFICE_OUTFIT_WHEEL: readonly OutfitId[] = [
+  "suit", "suit", "blazer", "blazer", "vest", "vest", "quarterzip", "quarterzip", "turtleneck", "leather", "hoodie", "tee",
+];
+
+/** The default office look for an undressed recipe: an outfit and one of its colourways. */
+function officeLook(seed: number): { outfit: OutfitId; way: Colourway } {
+  const outfit = pick(OFFICE_OUTFIT_WHEEL, seed, 0x5e);
+  const ways = OUTFITS.find((o) => o.id === outfit)!.colourways;
+  return { outfit, way: pick(ways, seed, 0x6f) };
 }
 
 function chosenEyewear(recipe: FigureRecipe | null): Eyewear {
@@ -160,26 +168,33 @@ function chosenEyewear(recipe: FigureRecipe | null): Eyewear {
 const DEFAULT_INNER = "#f2f2ee";
 
 /**
- * The toy look for a stored figure. Hair comes from the recipe itself (its own
- * field, else a hash of the recipe), never from the agent id, so the creator's
- * preview and the office always draw the same person.
+ * The toy look for a stored figure. Hair and the default office outfit come
+ * from the recipe itself (its own fields, else a hash of the recipe), never
+ * from the agent id, so the creator's preview and the office always draw the
+ * same person. A recipe that names an outfit wears it in its palette colours
+ * (primary → garment, accent → tie / trim, secondary → trousers, shoes); one
+ * that names none wears an office outfit in a curated colourway. `identity`
+ * only fills blush and colours a missing recipe leaves open.
  */
 export function toyLookFor(recipe: FigureRecipe | null, identity: string): ToyLook {
   const hash = hashString(identity || "toy");
   const palette: Partial<Palette> = recipe?.palette ?? {};
   const rawSkin = validColour(palette.skin);
   const skin = rawSkin ? (isNaturalSkin(rawSkin) ? rawSkin : naturalSkinFor(rawSkin)) : pick(SKIN_TONES, hash, 0x51);
+  const seed = recipe ? hashString(recipeKey({ ...recipe, hairStyle: undefined, outfit: undefined, inner: undefined, eyewear: undefined })) : hash;
+  const explicit = chosenOutfit(recipe);
+  const office = explicit ? null : officeLook(seed);
   return {
     skin,
     hair: validColour(palette.hair) ?? pick(HAIR_COLOURS, hash, 0x7a),
-    hairStyle: chosenHair(recipe) ?? pick(HAIR_STYLE_WHEEL, recipe ? hashString(recipeKey({ ...recipe, hairStyle: undefined, outfit: undefined, inner: undefined, eyewear: undefined })) : hash, 0x3c),
-    shirt: validColour(palette.primary) ?? pick(SHIRT_COLOURS, hash, 0x19),
-    shirtAccent: validColour(palette.accent) ?? pick(SHIRT_COLOURS, hash, 0x2d),
-    pants: validColour(palette.secondary) ?? pick(PANTS_COLOURS, hash, 0x44),
-    inner: validColour(recipe?.inner) ?? DEFAULT_INNER,
-    shoes: validColour(palette.shoes) ?? DEFAULT_SHOES,
+    hairStyle: chosenHair(recipe) ?? pick(HAIR_STYLE_WHEEL, seed, 0x3c),
+    shirt: office?.way.primary ?? validColour(palette.primary) ?? pick(SHIRT_COLOURS, hash, 0x19),
+    shirtAccent: office?.way.accent ?? validColour(palette.accent) ?? pick(SHIRT_COLOURS, hash, 0x2d),
+    pants: office?.way.secondary ?? validColour(palette.secondary) ?? pick(PANTS_COLOURS, hash, 0x44),
+    inner: office?.way.inner ?? validColour(recipe?.inner) ?? DEFAULT_INNER,
+    shoes: office?.way.shoes ?? validColour(palette.shoes) ?? DEFAULT_SHOES,
     blush: (hash & 0x3) !== 0,
-    outfit: chosenOutfit(recipe),
+    outfit: explicit ?? office!.outfit,
     eyewear: chosenEyewear(recipe),
   };
 }

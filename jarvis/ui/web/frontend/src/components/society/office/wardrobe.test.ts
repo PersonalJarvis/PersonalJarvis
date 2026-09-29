@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { recipeKey, type FigureRecipe } from "../figures/figureRecipe";
 import { HAIR_STYLES, OUTFIT_IDS, toyLookFor } from "./toyFigureModel";
-import { colourwayIndexOf, dressIn, OUTFITS, randomLook, withEyewear, withHairColour, withSkin } from "./wardrobe";
+import { colourwayIndexOf, dressIn, OUTFITS, pinLook, randomLook, withEyewear, withHair, withHairColour, withSkin } from "./wardrobe";
 
 const BASE: FigureRecipe = { contract: 1, archetype: "biped", base: "toon", parts: {}, palette: { primary: "#3f9d5a", secondary: "#2b4a8b" } };
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -41,7 +41,17 @@ describe("dressing a recipe", () => {
 
   it("reads eyewear and falls back safely on unknown values", () => {
     expect(toyLookFor(withEyewear(BASE, "shades"), "").eyewear).toBe("shades");
-    expect(toyLookFor({ ...BASE, eyewear: "monocle", outfit: "cape" }, "")).toMatchObject({ eyewear: "none", outfit: "tee" });
+    const unknown = toyLookFor({ ...BASE, eyewear: "monocle", outfit: "cape" }, "");
+    expect(unknown.eyewear).toBe("none");
+    expect(unknown.outfit).toBe(toyLookFor(BASE, "").outfit);
+  });
+
+  it("keeps an undressed agent's default outfit when only skin, hair or glasses change", () => {
+    const before = toyLookFor(BASE, "");
+    for (const edited of [withSkin(BASE, "#6b4430"), withHairColour(BASE, "#c0392b"), withHair(BASE, "buzz"), withEyewear(BASE, "glasses")]) {
+      expect(toyLookFor(edited, "")).toMatchObject({ outfit: before.outfit, shirt: before.shirt, pants: before.pants, inner: before.inner });
+    }
+    expect(pinLook(BASE).outfit).toBe(before.outfit);
   });
 
   it("produces complete random looks from the catalogue", () => {

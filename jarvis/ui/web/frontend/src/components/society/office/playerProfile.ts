@@ -20,10 +20,16 @@ export interface PlayerProfile {
 
 export { HAIR_STYLES };
 
+/** The person's recipe as the wardrobe edits it: an undressed character wears the T-shirt. */
+export function playerRecipe(profile: PlayerProfile): FigureRecipe {
+  const recipe = { ...profile.recipe, outfit: profile.recipe.outfit ?? "tee" };
+  return profile.hairStyle ? { ...recipe, hairStyle: profile.hairStyle } : recipe;
+}
+
 /** The look the office draws for the person. */
 export function playerLook(profile: PlayerProfile): ToyLook {
-  const look = toyLookFor(profile.recipe, "office-player");
-  return profile.hairStyle ? { ...look, hairStyle: profile.hairStyle } : look;
+  // Agents get a default office outfit; the person keeps the T-shirt until they pick one.
+  return toyLookFor(playerRecipe(profile), "office-player");
 }
 
 /** Bodies offered in the wardrobe: two-legged, first-party, not reserved. */

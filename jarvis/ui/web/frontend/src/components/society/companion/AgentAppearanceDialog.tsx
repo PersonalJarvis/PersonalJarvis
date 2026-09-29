@@ -11,6 +11,7 @@ import { AgentSwatch } from "../AgentSwatch";
 import { defaultRecipe, EDITABLE_CELLS, resolvePalette, type FigureRecipe } from "../figures/figureRecipe";
 import { HAIR_STYLES } from "../office/playerProfile";
 import { toyLookFor } from "../office/toyFigureModel";
+import { pinLook, withHair } from "../office/wardrobe";
 import { CompanionEditor } from "./CompanionEditor";
 import { resolveCompanion } from "./appearance";
 
@@ -19,20 +20,24 @@ const AgentFigureViewer = lazy(() => import("../figures/AgentFigureViewer").then
 /** The toy figure's look: hair or hat, and the six colours it wears. */
 function CharacterEditor({ value, onChange, disabled }: { value: FigureRecipe; onChange: (r: FigureRecipe) => void; disabled: boolean }) {
   const t = useT();
-  const colors = resolvePalette(value);
-  const hair = toyLookFor(value, "").hairStyle;
+  // The colours the figure actually wears: an undressed recipe shows its default office outfit.
+  const look = toyLookFor(value, "");
+  const colors = { ...resolvePalette(value), skin: look.skin, hair: look.hair, primary: look.shirt, secondary: look.pants, accent: look.shirtAccent, shoes: look.shoes };
+  const hair = look.hairStyle;
+  // Pin the shown look first, so changing one colour never swaps the whole outfit.
+  const setCell = (cell: string, color: string) => { const pinned = pinLook(value); onChange({ ...pinned, palette: { ...pinned.palette, [cell]: color } }); };
   return <fieldset disabled={disabled} className="grid gap-4 p-4" data-testid="character-editor">
     <div className="h-60"><Suspense fallback={null}><AgentFigureViewer recipe={value} quiet /></Suspense></div>
     <div className="grid gap-2 text-sm">
       <span>{t("society.office.hair_label")}</span>
       <div className="flex flex-wrap gap-1.5" role="group" aria-label={t("society.office.hair_label")}>
-        {HAIR_STYLES.map(style => <button key={style} type="button" aria-pressed={hair === style} onClick={() => onChange({ ...value, hairStyle: style })}
+        {HAIR_STYLES.map(style => <button key={style} type="button" aria-pressed={hair === style} onClick={() => onChange(withHair(value, style))}
           className={`rounded-full border px-2.5 py-1 text-xs ${hair === style ? "border-transparent bg-primary text-primary-foreground" : "border-border bg-background text-foreground hover:bg-secondary"}`}>
           {t(`society.office.hair_${style}`)}
         </button>)}
       </div>
     </div>
-    <div className="grid grid-cols-2 gap-3">{EDITABLE_CELLS.map(cell => <label key={cell} className="flex items-center justify-between gap-2 text-sm">{t(`society.cell.${cell}`)}<input type="color" value={colors[cell]} onChange={e => onChange({ ...value, palette: { ...value.palette, [cell]: e.target.value } })} className="h-8 w-10 rounded border border-border bg-background" /></label>)}</div>
+    <div className="grid grid-cols-2 gap-3">{EDITABLE_CELLS.map(cell => <label key={cell} className="flex items-center justify-between gap-2 text-sm">{t(`society.cell.${cell}`)}<input type="color" value={colors[cell]} onChange={e => setCell(cell, e.target.value)} className="h-8 w-10 rounded border border-border bg-background" /></label>)}</div>
   </fieldset>;
 }
 

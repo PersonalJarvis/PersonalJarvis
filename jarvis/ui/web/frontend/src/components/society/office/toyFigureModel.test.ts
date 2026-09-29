@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { FigureRecipe } from "../figures/figureRecipe";
+import { OUTFITS } from "./outfitCatalog";
 import {
   blendPose, createPose, isNaturalSkin, KEYBOARD, lowestSoleY, poseFor, SEAT_BACK_CLEARANCE, SEAT_HEIGHT,
   TOY_HEIGHT, toyLookFor, toyPoints, type ToyMode,
@@ -112,9 +113,24 @@ describe("toyLookFor", () => {
     expect(toyLookFor(null, "agent-7")).toEqual(toyLookFor(null, "agent-7"));
   });
 
-  it("uses the recipe colours", () => {
+  it("wears a chosen outfit in the recipe colours", () => {
+    const look = toyLookFor({ ...recipe, outfit: "suit" }, "agent-7");
+    expect(look).toMatchObject({ outfit: "suit", skin: "#d8a37c", hair: "#123456", shirt: "#6fbf5a", pants: "#2f4a7a", shirtAccent: "#f2c14e", shoes: "#ffffff" });
+  });
+
+  it("dresses an undressed recipe in an office outfit and colourway, keeping skin and hair", () => {
     const look = toyLookFor(recipe, "agent-7");
-    expect(look).toMatchObject({ skin: "#d8a37c", hair: "#123456", shirt: "#6fbf5a", pants: "#2f4a7a", shirtAccent: "#f2c14e", shoes: "#ffffff" });
+    expect(look).toMatchObject({ skin: "#d8a37c", hair: "#123456" });
+    const way = OUTFITS.find((o) => o.id === look.outfit)!.colourways.find((w) => w.primary === look.shirt);
+    expect(way).toMatchObject({ secondary: look.pants, accent: look.shirtAccent, inner: look.inner, shoes: look.shoes });
+    // The same recipe looks the same everywhere, whoever asks.
+    expect(toyLookFor(recipe, "")).toMatchObject({ outfit: look.outfit, shirt: look.shirt });
+  });
+
+  it("gives a crowd of agents varied office outfits", () => {
+    const outfits = new Set(Array.from({ length: 60 }, (_, i) =>
+      toyLookFor({ ...recipe, palette: { ...recipe.palette, primary: `#${(i * 40503).toString(16).padStart(6, "0").slice(-6)}` } }, "").outfit));
+    expect(outfits.size).toBeGreaterThanOrEqual(5);
   });
 
   it("keeps skin natural and varies hair styles across identities", () => {
