@@ -21,6 +21,7 @@
  * checkpoints there.
  */
 import type { AgentRunState, AgentTier } from "../data";
+import { agentsAmbience } from "./agentsAmbience";
 import { codingAmbience } from "./codingAmbience";
 
 export interface OfficeAgentInput {
@@ -747,6 +748,8 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     ...departments.flatMap(benchPlanters).map((p) => p.rect),
     // The coding floor's tree planters, bookcases and troughs along the windows.
     ...(coding ? codingAmbience({ departments, rooms }) : []).map(({ minX, maxX, minZ, maxZ }) => ({ minX, maxX, minZ, maxZ })),
+    // The agents floor's olive trees, window benches and planters along the windows.
+    ...(coding ? [] : agentsAmbience({ departments, rooms })).map(({ minX, maxX, minZ, maxZ }) => ({ minX, maxX, minZ, maxZ })),
     // The posts of an open room's name arch are solid too; nobody walks through them.
     ...rooms.filter((r) => !r.walled).flatMap(archPosts).map((p) => ({
       minX: p.x - ARCH.post / 2, maxX: p.x + ARCH.post / 2, minZ: p.z - ARCH.post / 2, maxZ: p.z + ARCH.post / 2,
