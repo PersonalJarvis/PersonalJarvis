@@ -108,3 +108,62 @@ def test_does_not_change_ack_behavior_when_primary_has_a_flash_adapter(
     assert ack_cfg.provider == "openai"
     assert type(provider).__name__ == "OpenAIMiniAck"
     assert called is False
+
+
+def _live_jcfg(*, brain_primary: str) -> SimpleNamespace:
+    """GPT-Live is the voice: the OpenAI key belongs to the voice call."""
+    return SimpleNamespace(
+        voice=SimpleNamespace(mode="realtime"),
+        brain=SimpleNamespace(
+            primary=brain_primary,
+            realtime=SimpleNamespace(provider="openai-live"),
+        ),
+    )
+
+
+def test_primary_on_the_voice_key_hands_flash_work_to_another_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mandate 2026-09-29: the GPT-Live key pays for the voice call only."""
+    keys = {"openai_api_key": "sk-test", "gemini_api_key": "gk-test"}
+    monkeypatch.setattr(
+        "jarvis.core.config.get_secret", lambda key, env_fallback=None: keys.get(key)
+    )
+
+    ack_cfg = make_ack_config(provider="follow_brain")
+    provider = _build_flash_provider(_live_jcfg(brain_primary="openai"), ack_cfg)
+
+    assert ack_cfg.provider == "gemini"
+    assert type(provider).__name__ == "GeminiFlashAck"
+
+
+def test_single_voice_key_install_still_gets_a_flash_tier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the voice key as the only credential, flash work stays on it
+    rather than on a local server that may not exist (AP-22)."""
+    monkeypatch.setattr(
+        "jarvis.core.config.get_secret",
+        lambda key, env_fallback=None: "sk-test" if key == "openai_api_key" else None,
+    )
+
+    ack_cfg = make_ack_config(provider="follow_brain")
+    _build_flash_provider(_live_jcfg(brain_primary="openai"), ack_cfg)
+
+    assert ack_cfg.provider == "openai"
+
+
+def test_pipeline_voice_keeps_following_an_openai_primary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a realtime voice the key is an ordinary brain key."""
+    monkeypatch.setattr(
+        "jarvis.core.config.get_secret", lambda key, env_fallback=None: "sk-test"
+    )
+    jcfg = _live_jcfg(brain_primary="openai")
+    jcfg.voice.mode = "pipeline"
+
+    ack_cfg = make_ack_config(provider="follow_brain")
+    _build_flash_provider(jcfg, ack_cfg)
+
+    assert ack_cfg.provider == "openai"

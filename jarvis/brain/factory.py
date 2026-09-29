@@ -1179,39 +1179,9 @@ def _phase2_full_brain(
         config=config,
     )
 
-    # Provider-override logic: if the user has switched to a different provider
-    # via voice/UI ("switch to gemini" -> brain.primary="gemini" persisted in
-    # jarvis.toml) while [brain.router].provider still points to "claude-api",
-    # we prefer brain.primary. That is the global master selection that should
-    # apply to all tiers.
-    startup_override: str | None = None
-    tier_cfg_startup = getattr(config.brain, "router", None)
-    tier_provider = tier_cfg_startup.provider if tier_cfg_startup else None
-    # The realtime voice call owns its key (user mandate 2026-09-29: the GPT-Live
-    # key pays for the voice call and its thinking model only). While voice runs
-    # realtime the Brain tab is hidden, so a ``brain.primary`` left on that
-    # key's family is not a choice anyone can see — it must not pull text turns
-    # onto the voice budget when the router tier names another provider. A
-    # single-key install (no other router provider) keeps working on the key.
-    from jarvis.brain.voice_key import bills_voice_key
-
-    primary_on_voice_key = bills_voice_key(config, config.brain.primary)
-    if (
-        primary_on_voice_key
-        and tier_provider
-        and not bills_voice_key(config, tier_provider)
-    ):
-        log.info(
-            "Router stays on [brain.router].provider=%s: brain.primary=%s bills "
-            "the realtime voice key.",
-            tier_provider, config.brain.primary,
-        )
-    elif config.brain.primary and config.brain.primary != tier_provider:
-        startup_override = config.brain.primary
-        log.info(
-            "Startup override: brain.primary=%s overrides [brain.router].provider=%s",
-            config.brain.primary, tier_provider,
-        )
+    # brain.primary normally overrides [brain.router].provider — except when it
+    # would put text turns on the realtime voice key (see the helper).
+    startup_override = _router_provider_override(config)
 
     # Build the router-tier BrainManager via from_tier_config
     manager = BrainManager.from_tier_config(
@@ -2101,26 +2071,27 @@ def _pick_keyed_flash_fallback(ack_cfg: Any, jcfg: Any = None) -> str | None:
     from jarvis.brain.voice_key import bills_voice_key
     from jarvis.core.config import get_provider_secret, get_secret
 
-    # Families on the realtime voice key are tried last (mandate 2026-09-29),
-    # so a single-key install still resolves while a multi-key one keeps the
-    # voice budget for the voice call.
-    names = sorted(REGISTRY, key=lambda name: bills_voice_key(jcfg, name))
-    for name in names:
+    # A family on the realtime voice key is deferred (mandate 2026-09-29): the
+    # next keyed family in REGISTRY order answers instead. It still comes back
+    # before a keyless local provider, so a single-key install without a local
+    # server keeps a working flash tier (AP-22).
+    deferred: str | None = None
+    for name in REGISTRY:
         provider_cfg = getattr(ack_cfg.providers, name, None)
         if provider_cfg is None:
             continue
         secret_name = getattr(provider_cfg, "api_key_secret", None)
+        if secret_name is None:
+            return deferred or name
         # The family resolver is the second probe so a credential that lives
         # only in a scoped slot of the same family (e.g. the Realtime card's
         # key) still marks the provider usable — the adapters resolve their
         # key through the same two-step lookup.
-        if (
-            secret_name is None
-            or get_secret(secret_name)
-            or get_provider_secret(name)
-        ):
-            return name
-    return None
+        if get_secret(secret_name) or get_provider_secret(name):
+            if not bills_voice_key(jcfg, name):
+                return name
+            deferred = deferred or name
+    return deferred
 
 
 def _build_ack_fallback(ack_cfg: Any, preferences_provider: Any = None) -> Any:
@@ -2365,3 +2336,44 @@ def build_readback_composer(jcfg: Any | None = None) -> Any:
             "build_readback_composer() failed: %s — fallback-only mode.", exc
         )
         return ReadbackComposer()
+
+
+def _router_provider_override(config: Any) -> str | None:
+    """The provider that overrides ``[brain.router].provider`` at boot, or None.
+
+    Provider-override logic: if the user has switched to a different provider
+    via voice/UI ("switch to gemini" -> brain.primary="gemini" persisted in
+    jarvis.toml) while [brain.router].provider still points elsewhere, we
+    prefer brain.primary. That is the global master selection that should
+    apply to all tiers.
+
+    The realtime voice call owns its key (user mandate 2026-09-29: the GPT-Live
+    key pays for the voice call and its thinking model only). While voice runs
+    realtime the Brain tab is hidden, so a ``brain.primary`` left on that key's
+    family is not a choice anyone can see; it must not pull text turns onto the
+    voice budget when the router tier names another provider. A single-key
+    install (no other router provider) keeps working on the key.
+    """
+    from jarvis.brain.voice_key import bills_voice_key
+
+    primary = config.brain.primary
+    tier_cfg = getattr(config.brain, "router", None)
+    tier_provider = tier_cfg.provider if tier_cfg else None
+    if (
+        bills_voice_key(config, primary)
+        and tier_provider
+        and not bills_voice_key(config, tier_provider)
+    ):
+        log.info(
+            "Router stays on [brain.router].provider=%s: brain.primary=%s bills "
+            "the realtime voice key.",
+            tier_provider, primary,
+        )
+        return None
+    if primary and primary != tier_provider:
+        log.info(
+            "Startup override: brain.primary=%s overrides [brain.router].provider=%s",
+            primary, tier_provider,
+        )
+        return primary
+    return None
