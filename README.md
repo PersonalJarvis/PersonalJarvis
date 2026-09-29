@@ -9,9 +9,13 @@
   <a href="https://x.com/PersonalJarvis"><img src="https://img.shields.io/badge/follow-%40PersonalJarvis-000000?logo=x&logoColor=white" alt="follow @PersonalJarvis on X" /></a>
 </p>
 
-**Personal Jarvis is an open-source AI assistant that lives on your desktop and gets real work done.** You call it with a wake phrase of your own or type to it, and it answers, uses your browser and your apps, and hands longer jobs to AI agents that keep working while you do something else. It is also where your coding agents live: Claude Code, Codex, OpenCode and others run side by side in one workspace that Jarvis can see and steer. One app for Windows, macOS and Linux, on your laptop or on a server.
+**Personal Jarvis is an open-source AI assistant that lives on your desktop and gets real work done.**
 
-**Yours, with no catch.** Conversations, memory, agents and history stay on your computer, and your keys sit in the system keychain. Models are swappable: one key from any supported provider, your Claude Code or Codex subscription, or local models through Ollama. Your prompts go only to the providers you connect. There is no account with us, no paid tier and no analytics in the code. Every tool call passes a risk policy, and anything that could change your system waits for your approval.
+The idea is simple: one place on your computer where you say what you need, and it happens. You talk to Jarvis or type to it, and it works out whether to just answer, do something on your computer for you, or pass the job to an agent that keeps at it while you get on with your day. You can always see what it's doing, and it asks before it touches anything that matters.
+
+It runs on your own machine with whichever model you like, local ones included, and it's free. There's no account to create, and nothing sends your data anywhere you didn't connect yourself.
+
+It's built in the open by a very small team, and it still has rough edges. If something breaks for you, please open an issue. That really is how it gets better.
 
 [Website](https://personaljarvis.ai) · [Docs](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/welcome-to-personal-jarvis.md) · [Getting started](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/first-run-setup.md) · [How it works](#how-it-works) · [Discord](https://discord.gg/x7USduHxbc) · [X](https://x.com/PersonalJarvis)
 
@@ -35,19 +39,19 @@ curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/
 
 The installer checks for Python 3.11+ and Git, offers to install what is missing, sets up the app and opens it. Run it again to update. [install options →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/install/README.md)
 
-**what you need**: Windows, macOS or Linux, and one API key from a supported provider, or a local model. A microphone for voice. No GPU needed; speech recognition and local models can still run on your own machine.
+You need Windows, macOS or Linux, plus one API key from a supported provider or a local model. A microphone helps if you want to talk to it. You don't need a GPU; speech recognition and local models run fine on a normal machine, just slower.
 
 ## first steps
 
-1. **finish the one-time setup**: pick a language and a wake phrase of your own, like "Hey Nova", or a keyboard shortcut.
-2. **connect one model**: add a provider key under **Settings › API Keys**, or set up a model under **Local models**.
-3. **say your wake phrase**: try *"Plan a small project with me and ask what you need to know."* Then open **Agentic IDE** with a project folder, or create your first agent under **Agents**.
+1. Go through the short setup in the app. Pick a language and a wake phrase of your own, like "Hey Nova", or use a keyboard shortcut instead.
+2. Connect a model. Add a key under Settings › API Keys, or set up a local one under Local models.
+3. Say your wake phrase and ask for something, for example "Plan a small project with me and ask what you need to know." After that, open a project folder in the Agentic IDE or create your first agent.
 
 ## works with
 
-- **models**: OpenAI, Anthropic Claude, Google Gemini and Vertex AI, OpenRouter, NVIDIA, Ollama and any OpenAI-compatible local server, plus your Claude Code and Codex subscriptions.
-- **speech**: local Whisper, OpenAI, Gemini, Groq, Deepgram and OpenRouter for listening; Piper (local), ElevenLabs, Cartesia, Inworld, Gemini and OpenRouter voices for speaking.
-- **coding agents**: Claude Code, Codex, OpenCode, Kimi Code, GLM, Grok Build and Antigravity.
+- Models: OpenAI, Anthropic Claude, Google Gemini and Vertex AI, OpenRouter, NVIDIA, Ollama and any OpenAI-compatible local server, plus your Claude Code and Codex subscriptions.
+- Speech: local Whisper, OpenAI, Gemini, Groq, Deepgram and OpenRouter for listening; Piper (local), ElevenLabs, Cartesia, Inworld, Gemini and OpenRouter voices for speaking.
+- Coding agents: Claude Code, Codex, OpenCode, Kimi Code, GLM, Grok Build and Antigravity.
 
 ## how it works
 
