@@ -225,6 +225,12 @@ export function missionDeckObstacles(centre: Point, strips = 24): Rect[] {
   return out;
 }
 const EDGE = 1.6;
+/**
+ * How far a figure's centre stays from the slab edge. The railing stands 0.2 m
+ * in and the toy head is ~0.31 m wide each side (plus hair), so anything less
+ * lets the head poke through the glass and the handrail cap.
+ */
+const RAIL_CLEARANCE = 0.65;
 const NORTH_DEPTH = 7;
 const SOUTH_DEPTH = 8;
 const COLUMNS = 2;
@@ -627,7 +633,10 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     })),
   ];
 
-  const floor = { minX: minX - EDGE + 0.35, maxX: maxX + EDGE - 0.35, minZ: topZ - EDGE + 0.35, maxZ: bottomZ + EDGE - 0.35 };
+  const floor = {
+    minX: minX - EDGE + RAIL_CLEARANCE, maxX: maxX + EDGE - RAIL_CLEARANCE,
+    minZ: topZ - EDGE + RAIL_CLEARANCE, maxZ: bottomZ + EDGE - RAIL_CLEARANCE,
+  };
   return {
     variant, departments, lead, rooms, walls, furniture, spots, checkpoints, obstacles,
     spawn: { x: rx0 + 1.4, z: bottomZ - 2.6 },
