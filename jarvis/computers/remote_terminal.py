@@ -29,6 +29,7 @@ import shlex
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 from jarvis.computers.service import ComputerError, get_service
 from jarvis.computers.ssh import Session, close
@@ -41,6 +42,8 @@ ProbeCallback = Callable[[str], str]
 
 #: Reconnect delays after a dropped connection; jittered, then given up.
 RECONNECT_DELAYS_S = (1.0, 2.0, 4.0, 8.0, 15.0, 30.0)
+#: How long opening one pane's channel may take before it counts as failed.
+OPEN_TIMEOUT_S = 30.0
 _NAME_RE = re.compile(r"[^A-Za-z0-9_-]")
 
 
@@ -90,6 +93,9 @@ class _Pane:
     on_closed: ClosedCallback
     on_probe: ProbeCallback | None
     process: Any = None
+    #: The connection ``process`` runs on — so a pane that lost it closes THAT
+    #: one only, never a fresh connection a sibling pane already re-opened.
+    session: Session | None = None
     pump: asyncio.Task[None] | None = None
     closing: bool = False
     exit_status: int | None = field(default=None)
@@ -162,11 +168,18 @@ class SshPtyPool:
         on_probe: ProbeCallback | None = None,
         meta: dict[str, Any] | None = None,
     ) -> RemoteSpawn:
-        """Start (or re-join) the pane's tmux session and stream it."""
+        """Start (or re-join) the pane's tmux session and stream it.
+
+        Every spawn gets its own terminal id, like the local pool's. The caller's
+        ``shell_id`` is built from the pane's call-sign, and call-signs restart
+        at T1 in every workspace — keyed on it, the second workspace's T1 on the
+        same server displaced the first one's channel, and its keystrokes went
+        to the other workspace's agent.
+        """
         identity = str((meta or {}).get("history_id") or shell_id)
         name = tmux_session_name(identity)
         pane = _Pane(
-            terminal_id=shell_id,
+            terminal_id=uuid4().hex,
             tmux_name=name,
             command=login_shell(tmux_command(name, tuple(shell_argv), cwd, cols, rows)),
             cols=cols,
@@ -183,13 +196,17 @@ class SshPtyPool:
                     status=409,
                 )
             self._tmux_checked = True
-        previous = self._panes.pop(shell_id, None)
-        if previous is not None:
-            self._drop(previous)
+        # A new viewer of the SAME tmux session replaces the old channel; the
+        # agent inside is untouched (``tmux new-session -A`` re-joins it).
+        for other_id, other in list(self._panes.items()):
+            if other.tmux_name == name:
+                self._panes.pop(other_id, None)
+                other.closing = True
+                self._drop(other)
         await self._open(pane)
-        self._panes[shell_id] = pane
+        self._panes[pane.terminal_id] = pane
         pane.pump = asyncio.create_task(self._pump(pane), name=f"ssh-pty-{name}")
-        return RemoteSpawn(terminal_id=shell_id)
+        return RemoteSpawn(terminal_id=pane.terminal_id)
 
     def has(self, terminal_id: str) -> bool:
         pane = self._panes.get(terminal_id)
@@ -260,12 +277,16 @@ class SshPtyPool:
 
     async def _open(self, pane: _Pane) -> None:
         session = await self.connection()
-        pane.process = await session.conn.create_process(
-            pane.command,
-            term_type="xterm-256color",
-            term_size=(pane.cols, pane.rows),
-            encoding="utf-8",
-            errors="replace",
+        pane.session = session
+        pane.process = await asyncio.wait_for(
+            session.conn.create_process(
+                pane.command,
+                term_type="xterm-256color",
+                term_size=(pane.cols, pane.rows),
+                encoding="utf-8",
+                errors="replace",
+            ),
+            timeout=OPEN_TIMEOUT_S,
         )
 
     def _drop(self, pane: _Pane) -> None:
@@ -276,8 +297,10 @@ class SshPtyPool:
                 pane.process.close()
 
     async def _kill_session(self, name: str) -> None:
-        with contextlib.suppress(Exception):
+        try:
             await self.run(f"tmux kill-session -t {shlex.quote(name)}", timeout_s=15)
+        except Exception as exc:  # noqa: BLE001 — logged: an agent may still be running there
+            log.warning("computers: could not end tmux session %s: %s", name, exc)
 
     async def _session_alive(self, name: str) -> bool | None:
         """True/False from the server; None when the server cannot be asked."""
@@ -319,7 +342,7 @@ class SshPtyPool:
             if lost:
                 # The connection itself is gone; asking the server anything on
                 # it would hang until a timeout. Start the next call afresh.
-                await self._forget_connection()
+                await self._forget_connection(pane.session)
             with contextlib.suppress(Exception):
                 pane.exit_status = pane.process.exit_status
             alive = await self._session_alive(pane.tmux_name)
@@ -333,25 +356,39 @@ class SshPtyPool:
                 return
 
     async def _reattach(self, pane: _Pane) -> bool:
+        """Re-open the pane's channel on whatever connection is current.
+
+        Never closes a connection up front: with several panes on one server,
+        each pane doing so cut the channels its siblings had just re-opened,
+        and the pool reconnected in circles (dozens of logins a minute for six
+        panes). ``connection()`` opens a new one only when the shared one is
+        really closed, one caller at a time.
+        """
         for delay in RECONNECT_DELAYS_S:
             if pane.closing:
                 return False
             await asyncio.sleep(delay * random.uniform(0.7, 1.3))  # noqa: S311 — jitter, not crypto
-            await self._forget_connection()
             try:
                 await self._open(pane)
             except Exception as exc:  # noqa: BLE001 — retried with backoff
                 log.info("computers: re-attaching %s failed: %s", pane.tmux_name, exc)
+                # The connection it tried may be half-dead; the next try opens
+                # a new one unless a sibling already did.
+                await self._forget_connection(pane.session)
                 continue
             log.info("computers: re-attached remote pane %s", pane.tmux_name)
             return True
         return False
 
-    async def _forget_connection(self) -> None:
+    async def _forget_connection(self, expected: Session | None = None) -> None:
+        """Drop the shared connection — only while it is still ``expected``."""
         async with self._lock:
-            if self._session is not None:
-                close(self._session)
-                self._session = None
+            if self._session is None:
+                return
+            if expected is not None and self._session is not expected:
+                return
+            close(self._session)
+            self._session = None
 
     async def _finish(self, pane: _Pane, code: int) -> None:
         if self._panes.get(pane.terminal_id) is pane:
