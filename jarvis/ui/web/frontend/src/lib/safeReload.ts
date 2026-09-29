@@ -147,7 +147,16 @@ export function browserSafeReloadDeps(): SafeReloadDeps {
       fetch(url, { method: "HEAD", cache: "no-store" })
         .then((response) => response.ok)
         .catch(() => false),
-    reload: () => window.location.reload(),
+    reload: () => {
+      // A rebuilt frontend reloads the document, not the assistant process.
+      // Tell the dependency-free splash which transition brought it back.
+      try {
+        sessionStorage.setItem("jarvis:interface-update", "1");
+      } catch {
+        // Storage can be disabled; the navigation still works.
+      }
+      window.location.reload();
+    },
     defer: (fn, ms) => {
       window.setTimeout(fn, ms);
     },

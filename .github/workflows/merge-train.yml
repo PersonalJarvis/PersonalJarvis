@@ -19,9 +19,10 @@
 #
 # Tokens: with the optional INTEGRATION_TOKEN secret (a fine-grained PAT or App
 # token with contents + pull-requests write), pushes and merges fire the normal
-# pull_request / push events. Without it the train uses GITHUB_TOKEN, whose
-# pushes fire no events, so it dispatches ci.yml itself for every branch it
-# updates and for main after every merge.
+# pull_request / push events. Without it the train uses GITHUB_TOKEN: the
+# pull_request run its own push triggers parks in "action_required" and the
+# train approves it on the next tick (a dispatched run would never count for
+# the pull request), and it dispatches ci.yml for main after every merge.
 #
 # AI conflict resolution is optional: set ANTHROPIC_API_KEY (Claude Code) or
 # OPENAI_API_KEY (Codex CLI). Without a key, semantic conflicts are reported.
