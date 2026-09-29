@@ -5181,7 +5181,8 @@
     "subtitle": "Spoken conversation · {count} turns",
     "empty": "Nothing was recorded in this session.",
     "read_only": "A spoken conversation. Continue it by talking.",
-    "continue": "Continue by voice"
+    "continue": "Continue by voice",
+    "continue_busy": "The call could not start. End the running call or bring the app to the front, then try again."
   },
   "ready_note": {
     "title": "All lights green.",

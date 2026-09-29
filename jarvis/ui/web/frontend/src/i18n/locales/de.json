@@ -5148,7 +5148,8 @@
     "subtitle": "Gesprochene Unterhaltung · {count} Beiträge",
     "empty": "In dieser Sitzung wurde nichts aufgezeichnet.",
     "read_only": "Eine gesprochene Unterhaltung. Sprich weiter, um sie fortzusetzen.",
-    "continue": "Per Sprache fortsetzen"
+    "continue": "Per Sprache fortsetzen",
+    "continue_busy": "Der Anruf konnte nicht starten. Beende den laufenden Anruf oder hol die App nach vorne und versuch es erneut."
   },
   "ready_note": {
     "title": "Alle Lichter grün.",
