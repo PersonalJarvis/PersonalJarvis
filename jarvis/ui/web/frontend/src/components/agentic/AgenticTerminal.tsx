@@ -493,8 +493,12 @@ interface AgenticTerminalProps {
   workspaceId?: string;
   /** Agent label shown in the pane header ("Claude Code"). */
   displayName: string;
-  /** Compact workspace chrome is opt-in; legacy grids retain their existing header. */
-  headerMode?: "legacy" | "compact";
+  /**
+   * Compact workspace chrome is opt-in; legacy grids retain their existing
+   * header. "none" draws the bare terminal for a host that brings its own
+   * title bar (the office's pane panel) — no header, no border of its own.
+   */
+  headerMode?: "legacy" | "compact" | "none";
   /** Compact header only: opens the fork dialog for this pane. */
   onFork?: () => void;
   /** Compact header only: the worktree branch this pane runs on, if any. */
@@ -2531,8 +2535,9 @@ export function AgenticTerminal({
         // click landed, and the ring around it faded in over the next 150 ms.
         // On a grid where the focused pane is the one standing accent, that
         // read as a flicker rather than as a pane taking focus.
-        "relative flex h-full w-full flex-col overflow-hidden border backdrop-blur-[4px]",
-        headerMode === "compact" ? "rounded-2xl" : "rounded-lg",
+        "relative flex h-full w-full flex-col overflow-hidden backdrop-blur-[4px]",
+        headerMode === "none" ? "border-0" : "border",
+        headerMode === "compact" ? "rounded-2xl" : headerMode === "none" ? "rounded-none" : "rounded-lg",
         "transition-[box-shadow,border-color,opacity] duration-150 ease-out motion-reduce:transition-none",
         // Focus steps the RIM one notch, from the structural hairline to
         // `--border-strong`, and stops there. It used to add a translucent
@@ -2604,7 +2609,7 @@ export function AgenticTerminal({
         branch={branch}
         computerName={computerName}
         placementItems={placementItems}
-      /> : <PaneHeader
+      /> : headerMode === "none" ? null : <PaneHeader
         workspaceId={workspaceId}
         status={visibleStatus}
         statusDetail={statusDetail}

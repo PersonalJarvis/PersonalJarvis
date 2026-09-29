@@ -1,5 +1,5 @@
 /* A coding session's panel on the office map, drawn as an Agentic IDE pane:
-   36 px title bar, the live terminal, a prompt line inside the terminal.
+   36 px title bar over the IDE's own live terminal.
    Every colour is a --pane-* variable the component sets from the pane
    appearance tables (terminalThemes.ts), so it follows light and dark panes. */
 .office-panel-slot:has(> .office-pane) { width:min(560px, calc(100% - 28px)); }
@@ -29,11 +29,11 @@
 .office-pane-cursor { background:var(--pane-caret); color:var(--pane-ground); }
 .office-pane-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; margin:0; font-size:12px; color:var(--pane-ink-faint); }
 
-.office-pane-prompt { display:flex; align-items:flex-start; gap:8px; margin:6px 12px 0; padding:9px 0 4px; border-top:1px solid var(--pane-rule); cursor:text; }
-.office-pane-prompt[data-disabled] { cursor:default; opacity:.6; }
-.office-pane-caret { flex:none; font:600 14px/20px ui-monospace, 'Cascadia Mono', SFMono-Regular, Menlo, Consolas, monospace; color:var(--pane-ok); }
-.office-pane-prompt textarea { flex:1; min-width:0; min-height:20px; max-height:120px; margin:0; padding:0; border:0; outline:none; resize:none; background:transparent; color:var(--pane-ink); caret-color:var(--pane-caret); font:500 13px/20px ui-monospace, 'Cascadia Mono', SFMono-Regular, Menlo, Consolas, monospace; field-sizing:content; }
-.office-pane-prompt textarea::placeholder { color:var(--pane-ink-faint); }
-.office-pane-status { margin:0; padding:2px 12px 8px 30px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; color:var(--pane-ink-faint); }
+/* The IDE's own terminal, attached to the same PTY. The box keeps the panel's
+   size (the old screen plus the prompt line it replaces); the terminal fills
+   it absolutely, so xterm's canvas can never feed back into the box's height. */
+.office-pane-term { position:relative; flex:1 1 clamp(260px, calc(38vh + 60px), 480px); min-height:160px; }
+.office-pane-term > * { position:absolute; inset:0; }
+.office-pane-status { margin:0; padding:4px 12px 8px; border-top:1px solid var(--pane-rule); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; color:var(--pane-ink-faint); }
 .office-pane-status[data-tone="ok"] { color:var(--pane-ok); }
 .office-pane-status[data-tone="error"] { color:var(--pane-fault); white-space:normal; }
