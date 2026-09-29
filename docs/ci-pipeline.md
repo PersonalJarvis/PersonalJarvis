@@ -46,7 +46,7 @@ produces one.
 
 ### Concurrency
 
-A pull request (or a branch run the merge train dispatched) keeps only its
+A pull request keeps only its
 newest run. A run on main is never cancelled once it started; pushes to main
 share one queue slot, so a burst of pushes leaves one pending run that covers
 every commit before it instead of a backlog behind the organisation's
@@ -84,9 +84,10 @@ the train.
 
 **Token.** With the optional `INTEGRATION_TOKEN` secret (a fine-grained token
 with contents and pull-request write access), the train's pushes and merges
-fire the normal events. Without it the train uses `GITHUB_TOKEN`, whose pushes
-fire no events, and dispatches `ci.yml` itself for each updated branch and for
-main after each merge.
+fire the normal events. Without it the train uses `GITHUB_TOKEN`: the
+pull-request run its own push triggers waits in "action required" and the
+train approves it on the next tick, because GitHub never counts a dispatched
+run for a pull request. After each merge it dispatches `ci.yml` for main.
 
 ### Locally: `scripts/agent_land.py`
 
