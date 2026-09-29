@@ -3759,6 +3759,12 @@ class WebServer:
             lambda: _service_from_state(state),
             lambda: self.cfg,
         )
+        def _society_plugin_state() -> tuple[list[str], set[str]]:
+            from jarvis.marketplace.catalog_data import load_catalog
+            from jarvis.marketplace.connect_helpers import usable_plugin_ids
+
+            return [spec.id for spec in load_catalog().plugins], usable_plugin_ids()
+
         state.society = SocietyRuntime(
             data_dir,
             mission_manager=_manager,
@@ -3771,6 +3777,7 @@ class WebServer:
             cfg=lambda: self.cfg,
             # The island learns of a figure's new place through the app bus the
             # WebSocket forwards (SocietyCheckpointChanged).
+            plugin_state=_society_plugin_state,
             event_publish=self.bus.publish,
             app_bus=self.bus,
             task_services=lambda: (

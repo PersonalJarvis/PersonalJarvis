@@ -19,7 +19,7 @@ def _tool(name: str, desc: str) -> SimpleNamespace:
 
 TOOLS = {
     "gmail": _tool("gmail", "Read and send mail."),
-    "google-calendar": _tool("google-calendar", "Read the calendar."),
+    "google_calendar": _tool("google_calendar", "Read the calendar."),
     "cli_gh": _tool("cli_gh", "GitHub CLI."),
 }
 
@@ -55,7 +55,7 @@ def test_a_description_patch_keeps_the_focus_and_rules_the_agent_earned(tmp_path
             },
         ).json()["agent"]
         assert patched["focus"][:2] == ["cli:gh", "plugin:gmail"]
-        assert "plugin:google-calendar" in patched["focus"]
+        assert "plugin:google_calendar" in patched["focus"]
         assert patched["approval_rules"] == {
             "require_approval": [],
             "always_allow": ["plugin:gmail:send"],
