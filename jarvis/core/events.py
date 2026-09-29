@@ -2226,7 +2226,7 @@ class SocietyMessageSent(Event):
     #: Server-assigned board sequence, monotonic. The client drops anything
     #: it has already drawn, so an overlapping subscription is harmless.
     seq: int = 0
-    #: ``MsgType``: SAY | QUERY | ANSWER | PROPOSE.
+    #: ``MsgType``: SAY | QUERY | ANSWER | PROPOSE | ASSIGN.
     msg_type: str = ""
     from_agent: str = ""
     #: "" means the line went into a room rather than to one teammate.

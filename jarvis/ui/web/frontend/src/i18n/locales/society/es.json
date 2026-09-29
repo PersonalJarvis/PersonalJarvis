@@ -925,7 +925,10 @@
       "hair_slick": "Hacia atrás",
       "hair_sidepart": "Raya al lado",
       "hair_buzz": "Rapado",
-      "hair_ponytail": "Coleta"
+      "hair_ponytail": "Coleta",
+      "errand_flying": "Lleva una tarea a {0}",
+      "errand_task": "Aquí tienes una tarea nueva.",
+      "errand_ack": "¡Entendido, voy!"
     }
   }
 }

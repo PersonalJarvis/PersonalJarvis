@@ -925,7 +925,10 @@
       "hair_slick": "Zurückgegelt",
       "hair_sidepart": "Seitenscheitel",
       "hair_buzz": "Buzz Cut",
-      "hair_ponytail": "Pferdeschwanz"
+      "hair_ponytail": "Pferdeschwanz",
+      "errand_flying": "Bringt {0} eine Aufgabe",
+      "errand_task": "Hier ist eine neue Aufgabe für dich.",
+      "errand_ack": "Verstanden, bin dran!"
     }
   }
 }

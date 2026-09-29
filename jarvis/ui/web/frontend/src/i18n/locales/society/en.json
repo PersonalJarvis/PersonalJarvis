@@ -925,7 +925,10 @@
       "hair_slick": "Slicked back",
       "hair_sidepart": "Side part",
       "hair_buzz": "Buzz cut",
-      "hair_ponytail": "Ponytail"
+      "hair_ponytail": "Ponytail",
+      "errand_flying": "Taking {0} a task",
+      "errand_task": "Here is a new task for you.",
+      "errand_ack": "Got it, on it!"
     }
   }
 }

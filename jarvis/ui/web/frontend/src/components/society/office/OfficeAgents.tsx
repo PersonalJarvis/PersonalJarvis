@@ -7,7 +7,7 @@
  * everything else is client-side choreography that costs no tokens and never
  * starts or stops work.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Html } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { DoubleSide, Vector3, type Group, type Mesh, type MeshBasicMaterial } from "three";
@@ -33,6 +33,7 @@ import { AgentBubble } from "./OfficeBubbles";
 import type { ChatLine } from "./deskChat";
 import type { DeskChat } from "./useDeskChats";
 import { officeTalkChat, useOfficeTalk } from "./officeTalk";
+import { deliverySpot, ERRAND_SPEED, useErrandFeed, useGigiErrands } from "./gigiErrands";
 
 /** The agent's symbol walks behind it as a little pet, about a fifth of its height. */
 export const PET_SIZE_M = 0.26;
@@ -102,6 +103,33 @@ function Nameplate({ agent, activity, selected, onSelect, height = OFFICE_FIGURE
   );
 }
 
+/** The sealed envelope Gigi carries on an errand, bobbing under it. */
+function ErrandEnvelope({ owner }: { owner: RefObject<Group | null> }) {
+  const env = useRef<Group>(null);
+  useFrame(({ clock }) => {
+    if (!env.current || !owner.current) return;
+    const p = owner.current.position;
+    env.current.position.set(p.x, 0.62 + Math.sin(clock.elapsedTime * 5) * 0.04, p.z);
+    env.current.rotation.y = clock.elapsedTime * 1.6;
+  });
+  return (
+    <group ref={env}>
+      <mesh castShadow>
+        <boxGeometry args={[0.26, 0.17, 0.02]} />
+        <meshStandardMaterial color="#fffaf0" roughness={0.6} />
+      </mesh>
+      <mesh position={[0, 0.02, 0.012]} rotation={[0, 0, Math.PI / 4]}>
+        <boxGeometry args={[0.13, 0.13, 0.004]} />
+        <meshStandardMaterial color="#efe3c8" roughness={0.7} />
+      </mesh>
+      <mesh position={[0, -0.01, 0.016]}>
+        <circleGeometry args={[0.03, 16]} />
+        <meshStandardMaterial color="#c0392b" roughness={0.4} />
+      </mesh>
+    </group>
+  );
+}
+
 export interface WalkerContext {
   layout: OfficeLayout;
   grid: NavGrid;
@@ -133,6 +161,8 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
   const isGigi = agent.tier === "lead";
   const [gigiPose, setGigiPose] = useState<{ pose: Pose | null; travelling: boolean }>({ pose: null, travelling: false });
   const speaking = useEventStore((s) => isGigi && s.voiceState === "speaking");
+  const errandKey = useRef("");
+  const carrying = useGigiErrands((s) => isGigi && s.current?.phase === "fly");
 
   // Leaving the office releases the agent's spot and its registry entry.
   useEffect(() => () => {
@@ -150,6 +180,35 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
     const dt = Math.min(rawDt, 0.1);
     const now = Date.now();
     const m = mover.current;
+    // Gigi on an errand: fly straight to the recipient, hover and deliver, then back to its day.
+    const errand = isGigi ? useGigiErrands.getState().current : null;
+    const recipient = errand ? agentPositions.get(errand.to) : undefined;
+    if (errand && !recipient) useGigiErrands.getState().finish(errand.id);
+    if (errand && recipient) {
+      const key = `${errand.id}:${errand.phase}`;
+      if (errand.phase === "fly") {
+        const spot = deliverySpot(recipient, m);
+        const end = m.path[m.path.length - 1];
+        if (errandKey.current !== key || !end || Math.hypot(end.x - spot.x, end.z - spot.z) > 0.4) m.path = [spot];
+        if (reduced) { m.x = spot.x; m.z = spot.z; m.path = []; }
+        const { arrived } = stepMover(m, ERRAND_SPEED, dt);
+        if (arrived) useGigiErrands.getState().arrive(errand.id);
+      } else {
+        m.heading = turnToward(m.heading, Math.atan2(recipient.x - m.x, recipient.z - m.z), 8 * dt);
+        if (now >= errand.untilMs) useGigiErrands.getState().finish(errand.id);
+      }
+      if (errandKey.current !== key) {
+        errandKey.current = key;
+        setGigiPose({ pose: errand.phase === "deliver" ? "talk" : null, travelling: errand.phase === "fly" });
+      }
+      // The day resumes from wherever the errand ended.
+      plan.current = null;
+      agentPositions.set(agent.agentId, { x: m.x, z: m.z });
+      seatedAtDesk.delete(agent.agentId);
+      if (group.current) group.current.position.set(m.x, 0, m.z);
+      return;
+    }
+    errandKey.current = "";
     const summon = useOfficeStore.getState().summons[agent.agentId];
     const calledTo = summon && summon.untilMs > now ? summon.target : null;
     const sKey = calledTo ? `${calledTo.x.toFixed(2)},${calledTo.z.toFixed(2)}` : "";
@@ -174,6 +233,8 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
         dwellUntil.current = now + next.dwellMs;
       } else {
         m.path = findPath(ctx.grid, m, next.target) ?? [];
+        // Gigi flies: after an errand it may hover over a desk, where no floor path starts.
+        if (m.path.length === 0 && isGigi && Math.hypot(next.target.x - m.x, next.target.z - m.z) > 0.05) m.path = [next.target];
         if (m.path.length === 0) { m.x = next.target.x; m.z = next.target.z; }
         phase.current = m.path.length > 0 ? "travel" : "dwell";
         if (phase.current === "dwell") dwellUntil.current = now + next.dwellMs;
@@ -230,6 +291,7 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
       <AgentBubble agent={agent} lines={lines} selected={selected} onSelect={onSelect}
         height={(isGigi ? 1.75 : OFFICE_FIGURE_HEIGHT_M + 0.35) + 0.14} />
     </group>
+    {carrying && <ErrandEnvelope owner={group} />}
     {isGigi
       ? <GigiFlyer owner={mover} mode={gigiModeFor(gigiPose.pose, gigiPose.travelling)} speaking={speaking} paused={!awake} reduced={reduced} />
       : <AgentFollower owner={group} appearance={pet} paused={!awake || reduced} clear={petClear} />}
@@ -242,6 +304,7 @@ export function OfficeAgents({ desks, agents, ctx, newcomers, awake, reduced, se
   awake: boolean; reduced: boolean; selectedId: string | null; chats?: ReadonlyMap<string, DeskChat>; onSelect: (id: string) => void;
 }) {
   const deskOf = useMemo(() => new Map(desks.filter((d) => d.agentId).map((d) => [d.agentId as string, d])), [desks]);
+  useErrandFeed(agents, awake);
   // Leaving the office hangs up: the talk socket closes, the chat keeps running on the server.
   useEffect(() => () => { officeTalkChat.getState().disconnect(); useOfficeTalk.getState().setAgent(null); }, []);
   return (

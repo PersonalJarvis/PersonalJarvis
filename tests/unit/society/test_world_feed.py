@@ -88,9 +88,9 @@ async def test_a_message_between_two_agents_reaches_the_island_once(rt):
 
 async def test_every_talking_type_is_forwarded(rt):
     runtime, pushed = rt
-    for kind in (MsgType.QUERY, MsgType.ANSWER, MsgType.PROPOSE):
+    for kind in (MsgType.QUERY, MsgType.ANSWER, MsgType.PROPOSE, MsgType.ASSIGN):
         await runtime.say(from_agent="scout", to_agent="archivist", text="ping", msg_type=kind)
-    assert [e.msg_type for e in _messages(pushed)] == ["QUERY", "ANSWER", "PROPOSE"]
+    assert [e.msg_type for e in _messages(pushed)] == ["QUERY", "ANSWER", "PROPOSE", "ASSIGN"]
 
 
 async def test_a_body_is_never_broadcast_in_full(rt):

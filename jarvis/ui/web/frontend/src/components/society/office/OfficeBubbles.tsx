@@ -17,8 +17,9 @@ import type { SocietyAgent } from "../data";
 import type { ChatLine } from "./deskChat";
 import { player } from "./officeStore";
 import { plateScale } from "./OfficeAgents";
+import { useGigiErrands } from "./gigiErrands";
 import {
-  ambientBubble, conversationBubble, itemsFor, PLAYER_LINE_MS, REPLY_LINGER_MS, talkStoreFor, useOfficeTalk,
+  ambientBubble, bubbleText, conversationBubble, itemsFor, PLAYER_LINE_MS, REPLY_LINGER_MS, talkStoreFor, useOfficeTalk,
   type Bubble, type BubbleLabels,
 } from "./officeTalk";
 
@@ -36,6 +37,22 @@ export function useBubbleLabels(): BubbleLabels {
     approval: t("society.office.bubble_approval"),
     waiting: t("society.office.bubble_waiting"),
   }), [t]);
+}
+
+/** Gigi's side of an errand ("on my way to Nora", then the task) and the recipient's "Got it". */
+function useErrandBubble(agent: SocietyAgent): Bubble | null {
+  const t = useT();
+  const errand = useGigiErrands((s) => s.current);
+  if (!errand) return null;
+  if (agent.tier === "lead") {
+    return errand.phase === "fly"
+      ? { kind: "thought", text: t("society.office.errand_flying").replace("{0}", errand.toName || "…"), live: true, atMs: 0 }
+      : { kind: "speech", text: bubbleText(errand.text || t("society.office.errand_task"), 180), live: false, atMs: 0 };
+  }
+  if (agent.agentId === errand.to && errand.phase === "deliver") {
+    return { kind: "speech", text: t("society.office.errand_ack"), live: false, atMs: 0 };
+  }
+  return null;
 }
 
 /** Re-renders once a second while `active`, so a settled bubble can expire. */
@@ -105,6 +122,8 @@ export function AgentBubble({ agent, lines, selected, height, onSelect }: {
   const lingering = !!talk && !talk.live && !selected;
   const now = useClock(lingering);
   const open = () => onSelect(agent.agentId);
+  const errand = useErrandBubble(agent);
+  if (errand) return <BubbleView bubble={errand} height={height} onClick={open} />;
   if (talk && (talk.live || selected || now - talk.atMs < REPLY_LINGER_MS)) {
     return <BubbleView bubble={talk} height={height} onClick={open} />;
   }
