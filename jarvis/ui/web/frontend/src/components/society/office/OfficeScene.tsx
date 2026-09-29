@@ -267,6 +267,7 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
         : <>
           {layout.departments.map((dept) => <DepartmentArea key={dept.id} dept={dept} />)}
           <DeskInstances desks={benchDesks} agents={agents} zones={zones} />
+          <DeskDressing desks={benchDesks} departments={layout.departments} floor="agents" />
         </>}
       <ExecutiveDesks desks={desks} agents={agents} onOpenScreen={onOpenScreen} />
       {leadRoom && <LeadOfficeLight room={leadRoom} />}

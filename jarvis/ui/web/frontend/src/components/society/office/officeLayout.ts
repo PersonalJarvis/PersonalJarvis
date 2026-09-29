@@ -328,7 +328,7 @@ export function deskRect(desk: Pick<DeskSlot, "x" | "z" | "size">): Rect {
   return { minX: desk.x - w / 2, maxX: desk.x + w / 2, minZ: desk.z - d / 2, maxZ: desk.z + d / 2 };
 }
 
-/** A planter box at each end of a coding-floor bench: its width, length and the gap to the end desk. */
+/** A planter box at each end of a bench (both floors): its width, length and the gap to the end desk. */
 export const BENCH_PLANTER = { w: 0.36, d: 1.56, gap: 0.14 } as const;
 
 /**
@@ -701,8 +701,8 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     ...departments.map((d) => ({ minX: d.minX + 0.2, maxX: d.maxX - 0.2, minZ: d.minZ + 0.02, maxZ: d.minZ + 0.2 })),
     ...furniture.filter((f) => FURNITURE_SIZE[f.kind].solid).map(footprint),
     ...(coding ? commandDeskObstacles(commandDeskAt) : []),
-    // Planter boxes at the bench ends on the coding floor.
-    ...(coding ? departments.flatMap(benchPlanters).map((p) => p.rect) : []),
+    // Planter boxes at the bench ends (walnut on the coding floor, oak on the agents floor).
+    ...departments.flatMap(benchPlanters).map((p) => p.rect),
     // The coding floor's tree planters, bookcases and troughs along the windows.
     ...(coding ? codingAmbience({ departments, rooms }) : []).map(({ minX, maxX, minZ, maxZ }) => ({ minX, maxX, minZ, maxZ })),
     // The posts of an open room's name arch are solid too; nobody walks through them.
