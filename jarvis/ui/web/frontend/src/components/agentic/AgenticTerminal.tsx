@@ -361,6 +361,15 @@ const MIN_REAL_ROWS = 4;
  * is shown and measured. Zero would not do: the server reads it as absent and
  * substitutes 80x24, which is precisely a size no tile had.
  */
+/**
+ * The least time between two gesture reclaims of one displaced pane.
+ *
+ * Long enough that two windows in use at the same moment do not hand the
+ * agent's size back and forth on every mouse move (each hand-over is a full
+ * repaint of the agent's screen), short enough to feel immediate.
+ */
+export const GESTURE_RECLAIM_MS = 2_000;
+
 export const UNMEASURED_SIZE = { cols: 1, rows: 1 } as const;
 
 /*
@@ -1549,6 +1558,8 @@ export function AgenticTerminal({
      * not ask for.
      */
     let owned = false;
+    /** Is this pane showing a geometry another viewer chose? See reclaimOnGesture. */
+    let displaced = false;
 
     /*
      * May this pane take the shared size without being asked to?
@@ -1665,7 +1676,10 @@ export function AgenticTerminal({
       }
       if (socket?.send({ t: claimOwner ? "claim" : "r", ...size })) {
         sentSize = size;
-        if (claimOwner) owned = true;
+        if (claimOwner) {
+          owned = true;
+          displaced = false;
+        }
       }
     };
 
@@ -1768,6 +1782,32 @@ export function AgenticTerminal({
       if (activeRef.current) sendResize(true);
     };
     takeOwnershipRef.current = takeOwnership;
+    /**
+     * Any gesture in this WINDOW takes back every pane another viewer sized.
+     *
+     * A click inside one pane only ever repaired that pane, and the window
+     * `focus` event is exactly what the desktop shell does not reliably
+     * deliver. So a browser tab some tool had opened on the same workspace
+     * left all eight panes of the app drawing in the tab's geometry — text
+     * cut mid-word on the right, rows of empty space below the agent's
+     * status line (reported 2026-09-29) — until each pane was clicked.
+     * Pointer or keyboard activity here is proof the user is in front of this
+     * window. Only a displaced pane reacts, at most once per
+     * {@link GESTURE_RECLAIM_MS}, so an owning pane pays one boolean check
+     * and two windows being used at once cannot trade the size on every
+     * mouse move.
+     */
+    let lastGestureReclaimAt = 0;
+    const reclaimOnGesture = () => {
+      if (!displaced || !activeRef.current) return;
+      const now = Date.now();
+      if (now - lastGestureReclaimAt < GESTURE_RECLAIM_MS) return;
+      lastGestureReclaimAt = now;
+      sendResize(true);
+    };
+    window.addEventListener("pointermove", reclaimOnGesture, { passive: true });
+    window.addEventListener("pointerdown", reclaimOnGesture, true);
+    window.addEventListener("keydown", reclaimOnGesture, true);
 
     const openedWithClaim = viewerMayOwn();
     socket = openPaneSocket(
@@ -1841,6 +1881,7 @@ export function AgenticTerminal({
           // here claims instead of repeating a request that was turned down.
           owned = false;
           if (term.cols === cols && term.rows === rows) return;
+          displaced = true;
           try {
             term.resize(cols, rows);
           } catch {
@@ -2096,6 +2137,9 @@ export function AgenticTerminal({
       cancelPaneReflow(reflow);
       window.removeEventListener("resize", scheduleResize);
       window.removeEventListener("focus", claimResize);
+      window.removeEventListener("pointermove", reclaimOnGesture);
+      window.removeEventListener("pointerdown", reclaimOnGesture, true);
+      window.removeEventListener("keydown", reclaimOnGesture, true);
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onDocumentVisible);
       }

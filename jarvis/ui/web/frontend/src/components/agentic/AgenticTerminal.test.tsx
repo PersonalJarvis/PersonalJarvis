@@ -1585,6 +1585,33 @@ describe("pane refit", () => {
     });
   });
 
+  it("takes every displaced pane back on a gesture anywhere in the window", () => {
+    // A tab another tool opened on the workspace took the size, and the
+    // desktop shell never fired `focus`: all panes drew in the tab's geometry
+    // until each one was clicked (2026-09-29). Moving the mouse over the app
+    // is enough — and a pane that holds its size stays quiet.
+    render(pane(false));
+    settle();
+    terminalHarness.send.mockClear();
+    fireEvent.pointerMove(document.body);
+    settle();
+    expect(terminalHarness.send).not.toHaveBeenCalledWith(
+      expect.objectContaining({ t: "claim" }),
+    );
+
+    displacedBy(30, 10);
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    fireEvent.pointerMove(document.body);
+    settle();
+    fireEvent.keyDown(document.body, { key: "a" });
+    settle();
+
+    const claims = terminalHarness.send.mock.calls.filter(
+      ([frame]) => (frame as { t: string }).t === "claim",
+    );
+    expect(claims).toEqual([[{ t: "claim", cols: 80, rows: 24 }]]);
+  });
+
   it("does not take a pane it is only watching from a window without focus", () => {
     // The browser tab beside the app, not in front: it follows the owner's
     // grid and stays quiet, whatever its own layout does.
