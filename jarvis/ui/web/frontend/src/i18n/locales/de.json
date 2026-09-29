@@ -5817,7 +5817,9 @@
     },
     "git": {
       "aria": "Branches, Pull Requests und CI",
-      "needs_restart": "Starte Jarvis einmal neu, damit der Git-Tab geladen wird.",
+      "needs_restart": "Jarvis braucht dafür einmal einen Neustart. Danach wählst du einmal das Repository für diesen Ordner.",
+      "connect_repo_title": "GitHub-Repository verbinden",
+      "restart_button": "Jarvis neu starten",
       "connect_title": "Verbinde GitHub, um Pull Requests und CI zu sehen",
       "connect_body": "Die Branches dieses Ordners erscheinen auch ohne. Das Verbinden ist eine Bestätigung im Browser.",
       "connect_button": "GitHub verbinden",

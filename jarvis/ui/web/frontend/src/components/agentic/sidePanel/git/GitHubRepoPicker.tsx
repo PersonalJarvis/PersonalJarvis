@@ -96,7 +96,7 @@ export function GitHubRepoPicker({
       <div className="shrink-0 space-y-2 px-3 pb-2 pt-3">
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <p className="text-[12.5px] font-medium text-foreground">{t("ide_side_panel.git.pick_title")}</p>
+            <p className="text-[12.5px] font-medium text-foreground">{t("ide_side_panel.git.connect_repo_title")}</p>
             <p className="text-[11.5px] text-muted-foreground">
               {list?.login
                 ? fill(t("ide_side_panel.git.pick_body_login"), { login: list.login })

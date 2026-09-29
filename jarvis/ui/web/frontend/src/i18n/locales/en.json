@@ -5850,7 +5850,9 @@
     },
     "git": {
       "aria": "Branches, pull requests and CI",
-      "needs_restart": "Restart Jarvis once to load the Git tab.",
+      "needs_restart": "Jarvis needs one restart to turn this on. After that you pick this folder's repository once.",
+      "connect_repo_title": "Connect a GitHub repository",
+      "restart_button": "Restart Jarvis",
       "connect_title": "Connect GitHub to see pull requests and CI",
       "connect_body": "Branches from this folder show without it. Connecting takes one approval in the browser.",
       "connect_button": "Connect GitHub",

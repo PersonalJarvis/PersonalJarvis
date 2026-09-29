@@ -5817,7 +5817,9 @@
     },
     "git": {
       "aria": "Ramas, pull requests y CI",
-      "needs_restart": "Reinicia Jarvis una vez para cargar la pestaña Git.",
+      "needs_restart": "Jarvis necesita reiniciarse una vez para activarlo. Después eliges una sola vez el repositorio de esta carpeta.",
+      "connect_repo_title": "Conectar un repositorio de GitHub",
+      "restart_button": "Reiniciar Jarvis",
       "connect_title": "Conecta GitHub para ver pull requests y CI",
       "connect_body": "Las ramas de esta carpeta se ven igualmente. Conectar es una sola aprobación en el navegador.",
       "connect_button": "Conectar GitHub",

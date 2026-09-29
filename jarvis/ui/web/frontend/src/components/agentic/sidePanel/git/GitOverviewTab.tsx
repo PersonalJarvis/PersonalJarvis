@@ -347,6 +347,50 @@ function Legend() {
   );
 }
 
+/**
+ * The running backend predates this tab: the one thing to do is restart, so
+ * the card says what the tab is for and restarts on a click. A click in the
+ * app is the person asking; control clients can never restart it.
+ */
+function RestartToConnectCard() {
+  const t = useT();
+  const pushToast = useEventStore((state) => state.pushToast);
+  const [restarting, setRestarting] = useState(false);
+  const restart = async () => {
+    if (restarting) return;
+    setRestarting(true);
+    try {
+      const response = await fetch("/api/settings/restart-app", { method: "POST" });
+      if (response.status === 409) {
+        pushToast("warning", t("topbar.restart_missions_running"));
+        setRestarting(false);
+        return;
+      }
+      if (!response.ok) throw new Error(`restart-failed:${response.status}`);
+      // The window closes and relaunches; the button stays busy until then.
+    } catch {
+      pushToast("error", t("permissions.restart_failed"));
+      setRestarting(false);
+    }
+  };
+  return (
+    <div data-testid="git-error" className="mx-3 my-3 space-y-2 rounded-lg border border-border/60 bg-muted/30 p-3">
+      <p className="text-[12.5px] font-medium text-foreground">{t("ide_side_panel.git.connect_repo_title")}</p>
+      <p className="text-[11.5px] text-muted-foreground">{t("ide_side_panel.git.needs_restart")}</p>
+      <button
+        type="button"
+        data-testid="git-restart"
+        disabled={restarting}
+        onClick={() => void restart()}
+        className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+      >
+        {restarting ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <RefreshCw className="h-3.5 w-3.5" aria-hidden />}
+        {t("ide_side_panel.git.restart_button")}
+      </button>
+    </div>
+  );
+}
+
 function sinceLabel(t: (key: string) => string, fetchedAt: number): string {
   const seconds = Math.max(0, Math.round(Date.now() / 1000 - fetchedAt));
   if (seconds < 60) return fill(t("ide_side_panel.git.seconds_ago"), { n: seconds });
@@ -467,9 +511,13 @@ export function GitOverviewTab() {
         {github?.code === "not_connected" && <ConnectGitHubCard />}
         {!data ? (
           error ? (
-            <p data-testid="git-error" className="px-4 py-6 text-center text-xs text-muted-foreground">
-              {routeMissing ? t("ide_side_panel.git.needs_restart") : error}
-            </p>
+            routeMissing ? (
+              <RestartToConnectCard />
+            ) : (
+              <p data-testid="git-error" className="px-4 py-6 text-center text-xs text-destructive">
+                {error}
+              </p>
+            )
           ) : (
             <p className="flex items-center justify-center gap-2 px-4 py-6 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />

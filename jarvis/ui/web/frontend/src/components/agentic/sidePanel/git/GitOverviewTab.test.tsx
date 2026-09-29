@@ -219,6 +219,7 @@ describe("GitOverviewTab", () => {
     const choices = screen.getAllByTestId("git-repo-choice");
     expect(choices.map((el) => el.dataset.repo)).toEqual(["o/r", "octo/other"]);
     expect(choices[0].textContent).toContain("Recommended");
+    expect(screen.getByTestId("git-repo-picker").textContent).toContain("Connect a GitHub repository");
     fireEvent.click(choices[0]);
     await vi.waitFor(() => expect(puts).toEqual([JSON.stringify({ workspace_id: "w1", repo: "o/r" })]));
     expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(6);
@@ -246,6 +247,8 @@ describe("GitOverviewTab", () => {
     answer = { detail: "Not Found" };
     status = 404;
     render(<GitOverviewTab />);
-    expect((await screen.findByTestId("git-error")).textContent).toContain("Restart Jarvis once");
+    expect((await screen.findByTestId("git-error")).textContent).toContain("Connect a GitHub repository");
+    fireEvent.click(screen.getByTestId("git-restart"));
+    await vi.waitFor(() => expect(calls).toContain("/api/settings/restart-app"));
   });
 });
