@@ -1,5 +1,7 @@
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/banner.png" alt="Personal Jarvis" width="860" />
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/personal-jarvis-hero.mp4">
+    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/personal-jarvis-hero.gif" alt="Personal Jarvis in 30 seconds: talk to it, run coding agents side by side, hand off longer work, and choose local models or any provider" width="1000" />
+  </a>
 </p>
 
 <h3 align="center">Your personal AI ecosystem. One desktop, connected by voice.</h3>
@@ -20,12 +22,6 @@
   <a href="https://discord.gg/x7USduHxbc">Discord</a> ·
   <a href="https://www.youtube.com/@PersonalJarvis">YouTube</a> ·
   <a href="https://x.com/PersonalJarvis">X</a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/personal-jarvis-hero.mp4">
-    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/personal-jarvis-hero.gif" alt="Personal Jarvis in 30 seconds: talk to it, run coding agents side by side, hand off longer work, and choose local models or any provider" width="1000" />
-  </a>
 </p>
 
 **Personal Jarvis is an open-source AI agent that lives on your desktop.** Talk to
