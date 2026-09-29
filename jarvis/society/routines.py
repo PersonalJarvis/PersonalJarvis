@@ -66,6 +66,51 @@ def agent_tag(agent_id: str) -> str:
     return f"agent:{agent_id}"
 
 
+_WEEKDAYS: Final[dict[str, int]] = {
+    name: index
+    for index, names in enumerate(
+        (
+            ("mon", "monday"),
+            ("tue", "tuesday"),
+            ("wed", "wednesday"),
+            ("thu", "thursday"),
+            ("fri", "friday"),
+            ("sat", "saturday"),
+            ("sun", "sunday"),
+        )
+    )
+    for name in names
+}
+
+
+def _without_blanks(schedule: dict[str, Any]) -> dict[str, Any]:
+    """Drop the empty optionals a tool-calling model fills in (None, "", [])."""
+    return {k: v for k, v in schedule.items() if v not in (None, "", [], ())}
+
+
+def _spoken_calendar(schedule: dict[str, Any]) -> dict[str, Any]:
+    """Accept the voice command's shape: ``days`` as weekday names and
+    ``local_time`` without a leading zero ("8:00")."""
+    values = dict(schedule)
+    days = values.pop("days", None)
+    if days:
+        weekdays = []
+        for day in days:
+            key = str(day).strip().lower()
+            if key.isdigit() and int(key) in range(7):
+                weekdays.append(int(key))
+            elif key in _WEEKDAYS:
+                weekdays.append(_WEEKDAYS[key])
+            else:
+                raise ValueError(f"unknown weekday {day!r}; use mon..sun")
+        values["weekdays"] = sorted(set(weekdays))
+    local_time = str(values.get("local_time") or "")
+    hour, sep, minute = local_time.partition(":")
+    if sep and hour.isdigit() and len(hour) == 1:
+        values["local_time"] = f"0{hour}:{minute}"
+    return values
+
+
 def _trigger(schedule: dict[str, Any]) -> Any:
     from jarvis.tasks.calendar import absolute_timestamp
     from jarvis.tasks.context import turn_timezone
@@ -75,6 +120,7 @@ def _trigger(schedule: dict[str, Any]) -> Any:
         return TriggerSource.model_validate(
             {"type": kind, **{k: v for k, v in schedule.items() if k not in ("kind", "type")}}
         )
+    schedule = _without_blanks(schedule)
     if kind == "cron":
         values = dict(schedule)
         values.setdefault("timezone", turn_timezone())
@@ -87,7 +133,7 @@ def _trigger(schedule: dict[str, Any]) -> Any:
             {"type": kind, **{k: v for k, v in schedule.items() if k not in ("kind", "type")}}
         )
     if kind == "calendar":
-        schedule = dict(schedule)
+        schedule = _spoken_calendar(schedule)
         schedule.setdefault("timezone", turn_timezone())
         return TriggerCalendar.model_validate(
             {"type": kind, **{k: v for k, v in schedule.items() if k not in ("kind", "type")}}

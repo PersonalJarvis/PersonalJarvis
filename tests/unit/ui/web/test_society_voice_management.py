@@ -153,3 +153,25 @@ def test_ui_timezone_route_validates_the_zone(tmp_path: Path, monkeypatch) -> No
         )
         assert c.post("/api/tasks/client-timezone", json={"timezone": "Europe/Berlin"}).json()["ok"]
     assert task_context.turn_timezone() == "Europe/Berlin"
+
+
+def test_a_spoken_schedule_with_day_names_and_blank_fields_is_accepted(client) -> None:
+    client.post("/api/society/agents", json={"name": "Briefer"})
+    created = client.post(
+        "/api/society/agents/briefer/routines",
+        json={
+            "title": "Weekday brief",
+            "prompt": "Brief me.",
+            "schedule": {
+                "kind": "calendar",
+                "local_time": "8:00",
+                "days": ["mon", "Friday"],
+                "timezone": "",
+                "expression": None,
+            },
+        },
+        headers={CLIENT_TIMEZONE_HEADER: "Europe/Berlin"},
+    )
+    assert created.status_code == 200, created.text
+    spec = client.app.state.task_store.rows[0]["spec_json"]
+    assert '"weekdays":[0,4]' in spec and '"local_time":"08:00"' in spec
