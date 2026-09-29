@@ -71,7 +71,7 @@ export const PROP_COLOURS = {
 
 /** Floor overlays per room kind: base colour plus the pattern's accent tones. */
 export const ROOM_FLOOR_COLOURS = {
-  lead: { base: "#a9774d", accents: ["#b3825a", "#9e6d45", "#ad7b52", "#a47249"] },
+  lead: { base: "#6a432a", accents: ["#74492d", "#5e3a24", "#6c4429", "#7d5133", "#553420"] },
   team: { base: "#7fb3ad", accents: ["#8bbdb7", "#74a7a1", "#86b8b2"] },
   wardrobe: { base: "#ddd3ea", accents: ["#cfc3e0", "#e6ddf1"] },
   reception: { base: "#e7e2d9", accents: ["#ece8e0", "#e0dacf", "#e9e4dc"] },
@@ -80,3 +80,31 @@ export const ROOM_FLOOR_COLOURS = {
 
 /** Checkpoint gold: floor ring, hexagon token and the label badge. */
 export const CHECKPOINT_GOLD = { ring: "#f5b83d", rim: "#e0a02a", face: "#f7c65a", faceDeep: "#e39b1f", icon: "#ffffff" } as const;
+
+/**
+ * The lead office's executive suite: dark walnut, brass, oxblood leather and a
+ * navy rug. Brass is the one deliberately metallic material outside the
+ * railings, so the boss's room reads as the most precious place on the floor.
+ */
+export const LEAD_SUITE = {
+  walnut: "#5b3a25",
+  walnutDark: "#3a2416",
+  walnutLight: "#80583a",
+  brass: "#d8ae52",
+  leather: "#7a2c22",
+  leatherDark: "#4e1a14",
+  leatherTan: "#a9683c",
+  velvetGold: "#d9a441",
+  chrome: "#c9ced6",
+  blackGlass: "#12141a",
+  marble: "#eeeae3",
+  led: "#ffd08a",
+  lampGlass: "#2f7a4f",
+  shade: "#fff0d2",
+  backlight: "#8a5a36",
+  glass: "#e8d3a8",
+  rug: { field: "#1d2744", inner: "#26335a", border: "#c9a24a", accent: "#8f2f3a" },
+  globe: { ocean: "#5f8f96", land: "#e2cd98", line: "#3d5c61" },
+  bottles: ["#b8661e", "#4f7a3a", "#d9e6ea", "#8c2a2a", "#c79a3a"],
+  trophy: "#e8b949",
+} as const;

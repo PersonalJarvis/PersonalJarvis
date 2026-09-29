@@ -117,6 +117,30 @@ target runs WebGL.
 - **Pace**: the person walks at 2.0 m/s and sprints at 4.4 m/s (Shift).
   Working agents stay at their screen even when called.
 
+## 5c. Lead office as an executive suite (2026-09-29)
+
+The lead office is the one room that breaks the plain toy-office palette on
+purpose, so the boss's room reads as the most precious place on the floor
+(`LeadSuite.tsx`, colours in `LEAD_SUITE`):
+
+- **Shell:** dark walnut chevron floor, brass-framed walls with warm-tinted
+  glass, a gold-on-black door sign.
+- **Feature wall (north, 2.9 m):** walnut slats around a backlit black-glass
+  star emblem, two lit bookcases with books, trophies and vases, warm LED coves.
+- **Executive desk:** 2.4 m walnut desk with a brass edge, three monitors, a
+  banker's lamp, a star plaque on the visitor side and a high-back oxblood
+  leather chair. Seat distance and height match every other desk, so the
+  seating and figure-pose contracts are unchanged. A second lead gets a
+  partner desk; there is never an empty lead desk.
+- **Furnishing:** navy rug with a gold border and medallion, two tan club
+  armchairs for visitors, a bar cabinet and a chesterfield lounge with a glass
+  coffee table along the west wall (fronts towards the camera), a floor globe,
+  two floor lamps and palms. Two warm point lights make the room glow.
+- Every piece stays inside its `FURNITURE_SIZE` footprint (props test) and the
+  navigation tests still reach every seat, spot and checkpoint.
+
+Awaiting the maintainer's visual review like the rest of the office.
+
 ## 6. Plan
 
 1. First map (done 2026-09-28).

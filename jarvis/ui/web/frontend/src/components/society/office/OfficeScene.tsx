@@ -12,6 +12,7 @@ import type { SocietyAgent } from "../data";
 import type { ToyLook } from "./toyFigureModel";
 import { Railing, SignWall } from "./OfficeFurniture";
 import { DeskInstances } from "./DeskInstances";
+import { ExecutiveDesks, LeadOfficeLight } from "./LeadSuite";
 import { LiveMonitors } from "./LiveMonitors";
 import type { DeskChat } from "./useDeskChats";
 import { FurniturePiece, MeetingChairs } from "./OfficeProps";
@@ -128,6 +129,9 @@ export interface OfficeSceneProps {
 export function OfficeScene({ layout, grid, walkers, agents, newcomers, awake, reduced, overview, player, selection, nearby, chats, onOpenScreen }: OfficeSceneProps) {
   const t = useT();
   const desks = useMemo(() => allDesks(layout), [layout]);
+  // Lead desks carry their own size and are built as executive desks, not bench instances.
+  const benchDesks = useMemo(() => desks.filter((d) => !d.size), [desks]);
+  const leadRoom = layout.rooms.find((r) => r.kind === "lead");
   const background = useMemo(() => new Color(OFFICE.space), []);
   const { minX, maxX, minZ, maxZ } = layout.bounds;
   const span = Math.max(maxX - minX, maxZ - minZ);
@@ -155,7 +159,9 @@ export function OfficeScene({ layout, grid, walkers, agents, newcomers, awake, r
       <RoomWalls walls={layout.walls} />
       {layout.rooms.map((room) => <RoomSign key={room.id} room={room} label={t(`society.office.room_${room.kind}`)} />)}
       {layout.departments.map((dept) => <DepartmentArea key={dept.id} dept={dept} />)}
-      <DeskInstances desks={desks} agents={agents} />
+      <DeskInstances desks={benchDesks} agents={agents} />
+      <ExecutiveDesks desks={desks} agents={agents} />
+      {leadRoom && <LeadOfficeLight room={leadRoom} />}
       <LiveMonitors desks={desks} agents={agents} chats={chats} onOpen={onOpenScreen} />
       {layout.furniture.map((item) => <FurniturePiece key={item.id} item={item} />)}
       {table && <MeetingChairs table={table} />}

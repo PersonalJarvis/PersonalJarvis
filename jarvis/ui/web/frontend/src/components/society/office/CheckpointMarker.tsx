@@ -13,7 +13,7 @@ import {
 } from "three";
 import { useT } from "@/i18n";
 import { plateScale } from "./OfficeAgents";
-import { cachedCanvasTexture } from "./OfficeProps";
+import { cachedCanvasTexture } from "./canvasMaterials";
 import type { Checkpoint } from "./officeLayout";
 import { CHECKPOINT_GOLD } from "./officePalette";
 

@@ -35,6 +35,8 @@ export interface DeskSlot {
   /** The direction the seated agent looks (towards its monitor). */
   facing: Facing;
   agentId: string | null;
+  /** The lead office's executive desk is larger than a bench desk; absent means DESK_SIZE. */
+  size?: { w: number; d: number };
 }
 
 export interface Department extends Rect {
@@ -68,7 +70,9 @@ export interface Checkpoint extends Point { id: CheckpointKind; room: RoomKind; 
 export type FurnitureKind =
   | "meetingTable" | "teamBoard" | "receptionDesk" | "kiosk" | "lockers" | "mirror"
   | "coffeeBar" | "waterCooler" | "couch" | "coffeeTable" | "arcade" | "beanbag"
-  | "bookshelf" | "plant" | "rug" | "elevator";
+  | "bookshelf" | "plant" | "rug" | "elevator"
+  // Lead office: the executive suite.
+  | "leadWall" | "executiveRug" | "guestChair" | "chesterfield" | "loungeTable" | "executiveBar" | "globe" | "floorLamp";
 
 /**
  * Footprint (x-extent × z-extent before rotation) and height of each piece.
@@ -92,6 +96,15 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   plant: { w: 0.6, d: 0.6, h: 1.3, solid: true },
   rug: { w: 1, d: 1, h: 0.02, solid: false },
   elevator: { w: 2.2, d: 0.4, h: 2.4, solid: true },
+  leadWall: { w: 7.9, d: 0.38, h: 2.9, solid: true },
+  executiveRug: { w: 1, d: 1, h: 0.02, solid: false },
+  guestChair: { w: 0.74, d: 0.74, h: 0.92, solid: true },
+  chesterfield: { w: 2.2, d: 0.95, h: 0.86, solid: true },
+  loungeTable: { w: 1.1, d: 0.64, h: 0.62, solid: true },
+  executiveBar: { w: 1.9, d: 0.52, h: 1.9, solid: true },
+  // The tilted meridian ring reaches further east-west than the stand.
+  globe: { w: 0.92, d: 0.72, h: 1.2, solid: true },
+  floorLamp: { w: 0.46, d: 0.46, h: 1.8, solid: true },
 };
 
 export interface Furniture extends Point {
@@ -100,7 +113,7 @@ export interface Furniture extends Point {
   /** Rotation about +y. 0 = the prop's front faces +z (south, towards the camera). */
   rotationY: number;
   room: RoomKind | "floor";
-  /** Only rugs are sized per instance (w × d); everything else uses FURNITURE_SIZE. */
+  /** Only rugs (plain and executive) are sized per instance (w × d); everything else uses FURNITURE_SIZE. */
   size?: { w: number; d: number };
 }
 
@@ -135,6 +148,10 @@ export const BENCH_DEPTH_Z = 4.2;
 /** Half the gap between the two monitors of a back-to-back pair. */
 export const DESK_HALF_GAP = 0.45;
 export const DESK_SIZE = { w: 1.5, d: 0.8 } as const;
+/** The lead's executive desk: wider and a little deeper, same seat distance and height. */
+export const EXECUTIVE_DESK_SIZE = { w: 2.4, d: 0.9 } as const;
+/** A second lead's partner desk beside the executive desk. */
+export const PARTNER_DESK_SIZE = { w: 1.7, d: 0.84 } as const;
 /** Chair centre behind a desk, along the agent's back direction. */
 export const SEAT_OFFSET = 0.62;
 export const DESKS_PER_ROW = 4;
@@ -226,6 +243,12 @@ export function seatOf(desk: Pick<DeskSlot, "x" | "z" | "facing">): Point & { fa
 export function standOf(desk: Pick<DeskSlot, "x" | "z" | "facing">): Point & { facing: number } {
   const seat = seatOf(desk);
   return { x: seat.x + 0.55, z: seat.z, facing: seat.facing };
+}
+
+/** The footprint of a desk top (bench desks share DESK_SIZE; lead desks carry their own). */
+export function deskRect(desk: Pick<DeskSlot, "x" | "z" | "size">): Rect {
+  const { w, d } = desk.size ?? DESK_SIZE;
+  return { minX: desk.x - w / 2, maxX: desk.x + w / 2, minZ: desk.z - d / 2, maxZ: desk.z + d / 2 };
 }
 
 /** Axis-aligned footprint of a rotated piece (rotations are multiples of 90°). */
@@ -337,13 +360,17 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[]): OfficeLa
     doors: [{ side: "north", at: maxX - breakW / 2, width: 2.2 }, { side: "west", at: southMinZ + SOUTH_DEPTH / 2, width: 2 }] };
   const rooms = [leadRoom, teamRoom, wardrobeRoom, receptionRoom, breakRoom];
 
-  // Lead desks face south, towards the door and the office.
+  // The lead's executive desk faces south, towards the door and the office. A
+  // second lead gets a partner desk to its east; there is never an empty one.
   const leadAgents = agents.filter((a) => a.tier === "lead").sort(byArrival).slice(0, 2);
+  const lx0 = leadRoom.minX, lz0 = leadRoom.minZ;
+  const leadDeskZ = lz0 + 2.6;
   const lead = {
     minX: leadRoom.minX, maxX: leadRoom.maxX, minZ: leadRoom.minZ, maxZ: leadRoom.maxZ,
-    desks: [0, 1].map((i): DeskSlot => ({
-      id: `lead:${i}`, x: minX + leadW * (i === 0 ? 0.3 : 0.7), z: topZ + 2.6, facing: "south", agentId: leadAgents[i]?.agentId ?? null,
-    })),
+    desks: [
+      { id: "lead:0", x: lx0 + leadW / 2, z: leadDeskZ, facing: "south", agentId: leadAgents[0]?.agentId ?? null, size: EXECUTIVE_DESK_SIZE },
+      ...(leadAgents[1] ? [{ id: "lead:1", x: lx0 + 6.75, z: leadDeskZ, facing: "south" as const, agentId: leadAgents[1].agentId, size: PARTNER_DESK_SIZE }] : []),
+    ] satisfies DeskSlot[],
   };
 
   const tcx = (teamRoom.minX + teamRoom.maxX) / 2, tcz = (teamRoom.minZ + teamRoom.maxZ) / 2;
@@ -351,9 +378,22 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[]): OfficeLa
   const bx0 = breakRoom.minX, bz0 = breakRoom.minZ;
   const rx0 = receptionRoom.minX;
   const furniture: Furniture[] = [
-    // Lead office.
-    { id: "lead-shelf", kind: "bookshelf", x: leadRoom.maxX - 1.3, z: topZ + 0.35, rotationY: 0, room: "lead" },
-    { id: "lead-plant", kind: "plant", x: minX + 0.6, z: northMaxZ - 0.6, rotationY: 0, room: "lead" },
+    // Lead office: a panelled feature wall with lit bookcases and the star emblem,
+    // a rug under the executive desk, guest armchairs, the bar and a leather
+    // lounge along the west wall (their fronts face the camera), a globe and a
+    // lamp in the east, palms beside the door.
+    { id: "lead-wall", kind: "leadWall", x: lx0 + leadW / 2, z: lz0 + 0.1 + FURNITURE_SIZE.leadWall.d / 2, rotationY: 0, room: "lead" },
+    { id: "lead-rug", kind: "executiveRug", x: lx0 + leadW / 2, z: lz0 + 3.55, rotationY: 0, room: "lead", size: { w: 4.6, d: 3.9 } },
+    { id: "lead-guest-w", kind: "guestChair", x: lx0 + leadW / 2 - 0.72, z: leadDeskZ + 1.2, rotationY: Math.PI, room: "lead" },
+    { id: "lead-guest-e", kind: "guestChair", x: lx0 + leadW / 2 + 0.72, z: leadDeskZ + 1.2, rotationY: Math.PI, room: "lead" },
+    { id: "lead-sofa", kind: "chesterfield", x: lx0 + 0.6, z: lz0 + 4.55, rotationY: Math.PI / 2, room: "lead" },
+    { id: "lead-table", kind: "loungeTable", x: lx0 + 1.62, z: lz0 + 4.55, rotationY: Math.PI / 2, room: "lead" },
+    { id: "lead-lamp", kind: "floorLamp", x: lx0 + 0.4, z: lz0 + 3.1, rotationY: 0, room: "lead" },
+    { id: "lead-bar", kind: "executiveBar", x: lx0 + 0.36, z: lz0 + 1.85, rotationY: Math.PI / 2, room: "lead" },
+    { id: "lead-globe", kind: "globe", x: leadRoom.maxX - 0.75, z: lz0 + 4.3, rotationY: 0, room: "lead" },
+    { id: "lead-lamp-e", kind: "floorLamp", x: leadRoom.maxX - 0.34, z: lz0 + 2.9, rotationY: 0, room: "lead" },
+    { id: "lead-plant", kind: "plant", x: lx0 + 0.55, z: northMaxZ - 0.55, rotationY: 0, room: "lead" },
+    { id: "lead-plant-e", kind: "plant", x: leadRoom.maxX - 0.55, z: northMaxZ - 0.55, rotationY: 0, room: "lead" },
     // Team room: one long table, a board on the north wall.
     { id: "team-table", kind: "meetingTable", x: tcx, z: tcz + 0.4, rotationY: 0, room: "team" },
     { id: "team-board", kind: "teamBoard", x: tcx, z: topZ + 0.25, rotationY: 0, room: "team" },
@@ -399,7 +439,8 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[]): OfficeLa
     { id: "beanbag-a", kind: "beanbag", pose: "sit", x: bx0 + 7.2, z: bz0 + 5.4, facing: Math.PI * 1.25, room: "break" },
     { id: "beanbag-b", kind: "beanbag", pose: "sit", x: bx0 + 8.4, z: bz0 + 6.3, facing: Math.PI * 1.25, room: "break" },
     { id: "shelf-break", kind: "shelf", pose: "stand", x: bx0 + 2.2, z: bz0 + 1.1, facing: Math.PI, room: "break" },
-    { id: "shelf-lead", kind: "shelf", pose: "stand", x: leadRoom.maxX - 1.3, z: topZ + 1.2, facing: Math.PI, room: "lead" },
+    // In front of the feature wall's east bookcase.
+    { id: "shelf-lead", kind: "shelf", pose: "stand", x: leadRoom.maxX - 1.45, z: topZ + 1.05, facing: Math.PI, room: "lead" },
     { id: "board", kind: "board", pose: "stand", x: tcx - 0.6, z: topZ + 1.2, facing: Math.PI, room: "team" },
   ];
   // Meeting chairs: three per long side of the team table.
@@ -434,7 +475,7 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[]): OfficeLa
   const desks = [...lead.desks, ...departments.flatMap((d) => d.desks)];
   const obstacles: Rect[] = [
     ...walls.map(wallRect),
-    ...desks.map((d) => ({ minX: d.x - DESK_SIZE.w / 2, maxX: d.x + DESK_SIZE.w / 2, minZ: d.z - DESK_SIZE.d / 2, maxZ: d.z + DESK_SIZE.d / 2 })),
+    ...desks.map(deskRect),
     // Department sign walls along each department's north edge.
     ...departments.map((d) => ({ minX: d.minX + 0.2, maxX: d.maxX - 0.2, minZ: d.minZ + 0.02, maxZ: d.minZ + 0.2 })),
     ...furniture.filter((f) => FURNITURE_SIZE[f.kind].solid).map(footprint),

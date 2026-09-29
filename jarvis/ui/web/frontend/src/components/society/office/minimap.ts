@@ -12,7 +12,7 @@
  */
 import { CHECKPOINT_GOLD, DEPARTMENT_TINTS, ROOM_FLOOR_COLOURS } from "./officePalette";
 import {
-  DESK_SIZE, FURNITURE_SIZE, allDesks, footprint, roomAt,
+  FURNITURE_SIZE, allDesks, deskRect, footprint, roomAt,
   type CheckpointKind, type FurnitureKind, type OfficeLayout, type Point, type Rect, type RoomKind,
 } from "./officeLayout";
 
@@ -313,6 +313,8 @@ const FURNITURE_PAINT: Partial<Record<FurnitureKind, string>> = {
   couch: "#4a5366", coffeeTable: "#c89f74", meetingTable: "#c89f74", teamBoard: "#f4f4f0", receptionDesk: "#f2eee6",
   kiosk: "#3a3f4b", lockers: "#5fa8a0", mirror: "#d6ecf8", coffeeBar: "#8a6240", waterCooler: "#6fb7ea", arcade: "#6a58b0",
   beanbag: "#e27d60", bookshelf: "#8a6240", plant: MAP_PAINT.plant, rug: MAP_PAINT.rug, elevator: "#c9ced6",
+  leadWall: "#3a2416", executiveRug: "#26335a", guestChair: "#a9683c", chesterfield: "#7a2c22", loungeTable: "#d8ae52",
+  executiveBar: "#5b3a25", globe: "#5f8f96", floorLamp: "#d8ae52",
 };
 
 export const STATE_RING: Record<MinimapAgentState, string> = {
@@ -459,7 +461,7 @@ export function drawFloorArt(ctx: Ctx, layout: OfficeLayout, t: MapTransform, ar
   // Furniture: rugs first, then solid pieces; plants and beanbags are round.
   for (const pass of ["rug", "solid"] as const) {
     for (const item of layout.furniture) {
-      const isRug = item.kind === "rug";
+      const isRug = item.kind === "rug" || item.kind === "executiveRug";
       if ((pass === "rug") !== isRug) continue;
       const colour = FURNITURE_PAINT[item.kind] ?? MAP_PAINT.furniture;
       const fp = footprint(item);
@@ -481,10 +483,11 @@ export function drawFloorArt(ctx: Ctx, layout: OfficeLayout, t: MapTransform, ar
   }
 
   // Desks: tiny light blocks with the monitor on the far side from the chair.
-  const deskW = DESK_SIZE.w * t.scale;
-  const deskD = DESK_SIZE.d * t.scale;
   for (const desk of allDesks(layout)) {
     const c = worldToMap(t, desk);
+    const rect = deskRect(desk);
+    const deskW = (rect.maxX - rect.minX) * t.scale;
+    const deskD = (rect.maxZ - rect.minZ) * t.scale;
     roundRectPath(ctx, c.x - deskW / 2, c.y - deskD / 2, deskW, deskD, Math.min(2, deskD * 0.2));
     ctx.fillStyle = MAP_PAINT.deskTop;
     ctx.fill();
