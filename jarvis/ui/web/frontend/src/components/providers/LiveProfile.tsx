@@ -97,7 +97,16 @@ export function LiveProfile({ onSaved }: { onSaved?: () => void } = {}) {
     window.dispatchEvent(new CustomEvent("jarvis:realtime-switched"));
     onSaved?.();
   }
-  async function save() {
+  // Once Live is set up, a picker change applies at once: a changed dropdown
+  // that silently reverts when the page closes left users billed for a model
+  // they believed they had replaced. Free-text prompts still use the button.
+  const choose = (patch: Partial<LiveProfileValue>) => {
+    const next = { ...value, ...patch };
+    setDraft(next);
+    if (ready) void save(next);
+  };
+  async function save(next?: LiveProfileValue) {
+    const chosen = next ?? value;
     setSaving(true);
     setMessage("");
     setError("");
@@ -105,7 +114,7 @@ export function LiveProfile({ onSaved }: { onSaved?: () => void } = {}) {
       const response = await fetch("/api/live/profile", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...value, configured: true }),
+        body: JSON.stringify({ ...chosen, configured: true }),
       });
       if (!response.ok)
         throw new Error(
@@ -166,7 +175,7 @@ export function LiveProfile({ onSaved }: { onSaved?: () => void } = {}) {
             <BrandedSelect
               className={field}
               value={value.voice}
-              onValueChange={(voice) => update({ voice })}
+              onValueChange={(voice) => choose({ voice })}
               ariaLabel={t("live.voice")}
               options={(options.data?.voices ?? [value.voice]).map((voice) => ({
                 value: voice,
@@ -188,7 +197,7 @@ export function LiveProfile({ onSaved }: { onSaved?: () => void } = {}) {
             <BrandedSelect
               className={field}
               value={value.backend_model}
-              onValueChange={(backend_model) => update({ backend_model })}
+              onValueChange={(backend_model) => choose({ backend_model })}
               ariaLabel={t("live.thinking_model")}
               placeholder={t("live.choose_model")}
               searchPlaceholder={t("live.search_models")}
@@ -200,7 +209,7 @@ export function LiveProfile({ onSaved }: { onSaved?: () => void } = {}) {
             <BrandedSelect
               className={field}
               value={value.reasoning_effort}
-              onValueChange={(reasoning_effort) => update({ reasoning_effort })}
+              onValueChange={(reasoning_effort) => choose({ reasoning_effort })}
               ariaLabel={t("live.reasoning")}
               options={(
                 options.data?.efforts ?? ["", value.reasoning_effort]
@@ -224,7 +233,7 @@ export function LiveProfile({ onSaved }: { onSaved?: () => void } = {}) {
         <Switch
           id="live-web-search"
           checked={value.web_search}
-          onCheckedChange={(web_search) => update({ web_search })}
+          onCheckedChange={(web_search) => choose({ web_search })}
           aria-label={t("live.web_search")}
         />
       </div>
