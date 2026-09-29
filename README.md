@@ -420,6 +420,7 @@ and say hello in the [welcome discussion](https://github.com/PersonalJarvis/Pers
 - **Bugs and feature requests:** [Issues](https://github.com/PersonalJarvis/PersonalJarvis/issues/new/choose)
 - **Updates:** [X](https://x.com/PersonalJarvis) · [YouTube](https://www.youtube.com/@PersonalJarvis) · [Instagram](https://www.instagram.com/personaljarvis/) · [Website](https://personaljarvis.ai)
 - **Vulnerabilities:** privately through the [security policy](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SECURITY.md)
+- **Sponsoring and everything else:** [contact@personaljarvis.ai](mailto:contact@personaljarvis.ai) · [how sponsoring works](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SPONSORS.md)
 
 Personal Jarvis is built in public. Follow along with the
 [star history](https://www.star-history.com/#PersonalJarvis/PersonalJarvis&type=date&legend=top-left).
