@@ -217,6 +217,12 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
       plan.current = null;
       agentPositions.set(agent.agentId, { x: m.x, z: m.z });
       seatedAtDesk.delete(agent.agentId);
+      if (group.current) group.current.position.set(m.x, 0, m.z);
+      return;
+    }
+    errandKey.current = "";
+    const summon = useOfficeStore.getState().summons[agent.agentId];
+    const calledTo = summon && summon.untilMs > now ? summon.target : null;
     if (isGigi && !calledTo) {
       // Gigi keeps the person company, as on the coding floor; an errand or a summons still takes it away.
       const anchor = followAnchor(player.x, player.z, player.heading, gigiSide.current, airClear);
@@ -248,12 +254,6 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
     }
     if (followingRef.current) { followingRef.current = false; setFollowing(false); }
     companions.delete(agent.agentId);
-      if (group.current) group.current.position.set(m.x, 0, m.z);
-      return;
-    }
-    errandKey.current = "";
-    const summon = useOfficeStore.getState().summons[agent.agentId];
-    const calledTo = summon && summon.untilMs > now ? summon.target : null;
     const sKey = calledTo ? `${calledTo.x.toFixed(2)},${calledTo.z.toFixed(2)}` : "";
     const needsPlan = !plan.current || planState.current !== agent.state || summonKey.current !== sKey
       || (phase.current === "dwell" && now >= dwellUntil.current);
