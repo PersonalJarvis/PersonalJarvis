@@ -7,8 +7,8 @@
 .office-arcade-head h2 { margin:0; font-size:14px; font-weight:700; }
 .office-arcade-score { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 12px; font-size:12px; color:hsl(var(--muted-foreground)); font-variant-numeric:tabular-nums; }
 .office-arcade-score b { color:hsl(var(--foreground)); }
-.office-arcade-screen { position:relative; align-self:center; width:min(100%, calc((100vh - 170px) * 224 / 256)); aspect-ratio:224 / 256; border-radius:10px; overflow:hidden; border:6px solid hsl(var(--border)); background:#07060f; }
-.office-arcade-screen canvas { display:block; width:100%; height:100%; image-rendering:pixelated; }
+.office-arcade-screen { position:relative; align-self:center; width:min(100%, calc((100vh - 170px) * 240 / 320)); aspect-ratio:240 / 320; border-radius:10px; overflow:hidden; border:6px solid hsl(var(--border)); background:#07060f; }
+.office-arcade-screen canvas { display:block; width:100%; height:100%; }
 .office-arcade-message { position:absolute; left:50%; top:58%; transform:translate(-50%, -50%); max-width:86%; border:1px solid #fde68a; border-radius:8px; padding:8px 14px; background:rgb(7 6 15 / .85); color:#fde68a; font-size:13px; font-weight:600; letter-spacing:.02em; cursor:pointer; text-align:center; }
 .office-arcade-message:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
 .office-arcade-keys { text-align:center; }
