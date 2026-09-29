@@ -328,7 +328,9 @@ async def test_window_scoped_request_captures_the_window() -> None:
     outcome = await service.capture_for_turn("look at this window", locale="en")
 
     assert outcome.context.target.kind is TargetKind.WINDOW
-    assert capturer.grabs[0] == ((10, 10, 800, 600), 7)
+    # The front window's own rectangle, grabbed as the user sees it (BUG-220).
+    assert capturer.grabs == [((10, 10, 800, 600), None)]
+    assert outcome.context.target.window_handle == 7
 
 
 async def test_window_facts_and_handle_come_from_one_atomic_snapshot() -> None:
@@ -355,7 +357,8 @@ async def test_window_facts_and_handle_come_from_one_atomic_snapshot() -> None:
     outcome = await service.capture_for_turn("look at this window", locale="en")
 
     assert outcome.status == "captured"
-    assert capturer.grabs[0] == ((20, 30, 640, 480), 99)
+    assert capturer.grabs[0] == ((20, 30, 640, 480), None)
+    assert outcome.context.target.window_handle == 99
 
 
 # --------------------------------------------------------------------------

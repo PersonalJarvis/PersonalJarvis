@@ -633,39 +633,31 @@ class ScreenContextService:
                 await self._dismiss_indicator(trace_id=event_trace_id)
 
     async def _grab(self, target: CaptureTarget) -> tuple[tuple[int, int], bytes]:
-        """Grab the target; rescue a window capture that came back empty.
+        """Grab the target the way the user sees it.
 
-        Native window-only capture returns a single flat colour for some
-        GPU-composited windows (WebView2 apps — Jarvis's own window among
-        them — measured 2026-09-29: every pixel luma 10; BUG-220). Handing that to a
-        model produces a confident description of a blank screen. When the
-        window is in front, the same rectangle of the desktop IS the window,
-        so the rect grab is used instead — but only under the rule monitor
-        captures already follow: no configured denylist, or no visible window
-        in that rectangle matching it.
+        A window target is always the window in FRONT, so its rectangle of the
+        desktop is exactly the window as the user sees it. That rect grab is
+        the first choice. Native window-only capture returned near-black
+        frames for GPU-composited windows (WebView2 apps, Jarvis's own window
+        among them — BUG-220: luma 0-13 across the whole frame, so a
+        flat-colour check missed it) and remains only the privacy path: when a
+        denylisted window intersects the rectangle, the window alone is
+        captured, and a blank result there is refused rather than described.
         """
         handle = target.window_handle
-        native_error: CaptureUnavailable | None = None
-        try:
-            size, rgb = await asyncio.to_thread(
-                self.capturer.grab, target.bbox, window_handle=handle
-            )
-        except CaptureUnavailable as exc:
-            if handle is None:
-                raise
-            native_error, size, rgb = exc, (0, 0), b""
         if handle is None:
-            return size, rgb
-        if native_error is None and not await asyncio.to_thread(_is_flat_frame, size, rgb):
-            return size, rgb
+            return await asyncio.to_thread(self.capturer.grab, target.bbox, window_handle=None)
         blocked = await asyncio.to_thread(self._rect_privacy_error, target.bbox)
-        if blocked:
-            raise CaptureUnavailable(blocked) from native_error
-        log.info(
-            "screen_context: window-only capture %s — using the window's screen rectangle",
-            "failed" if native_error is not None else "came back blank",
+        if not blocked:
+            return await asyncio.to_thread(self.capturer.grab, target.bbox, window_handle=None)
+        size, rgb = await asyncio.to_thread(
+            self.capturer.grab, target.bbox, window_handle=handle
         )
-        return await asyncio.to_thread(self.capturer.grab, target.bbox, window_handle=None)
+        if await asyncio.to_thread(_is_flat_frame, size, rgb):
+            raise CaptureUnavailable(
+                f"{blocked} The window alone could not be captured either."
+            )
+        return size, rgb
 
     def _rect_privacy_error(self, bbox: tuple[int, int, int, int]) -> str | None:
         """Refuse a desktop-rectangle grab a denylisted window could appear in."""
@@ -1156,20 +1148,37 @@ class ScreenContextService:
 
 
 def _is_flat_frame(size: tuple[int, int], rgb: bytes) -> bool:
-    """True when a frame is one flat colour — a capture that produced nothing.
+    """True when a frame carries no picture — a capture that produced nothing.
 
-    A real window always carries some contrast (text, borders, an icon); a
-    downscaled frame whose every channel spans at most two levels does not.
+    A real window has contrast somewhere (text, borders, an icon). A frame
+    whose middle 98 % of pixels spans at most a few luma levels does not, even
+    when anti-aliased corners or a one-pixel edge stray from the flat body.
     """
     width, height = size
     if width <= 0 or height <= 0 or len(rgb) < width * height * 3:
         return True
     from PIL import Image  # noqa: PLC0415
 
-    image = Image.frombytes("RGB", size, rgb)
-    factor = max(1, min(width, height) // 64)
-    sample = image.reduce(factor) if factor > 1 else image
-    return all(high - low <= 2 for low, high in sample.getextrema())
+    image = Image.frombytes("RGB", size, rgb).convert("L")
+    factor = max(1, min(width, height) // 128)
+    if factor > 1:
+        image = image.reduce(factor)
+    histogram = image.histogram()
+    total = sum(histogram)
+    cut = total * 0.01
+    seen, low = 0, 0
+    for level, count in enumerate(histogram):
+        seen += count
+        if seen > cut:
+            low = level
+            break
+    seen, high = 0, 255
+    for level in range(255, -1, -1):
+        seen += histogram[level]
+        if seen > cut:
+            high = level
+            break
+    return high - low <= 6
 
 
 def _safe_target_label(target: CaptureTarget) -> str:
