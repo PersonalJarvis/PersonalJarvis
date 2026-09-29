@@ -317,6 +317,8 @@ const FURNITURE_PAINT: Partial<Record<FurnitureKind, string>> = {
   executiveBar: "#5b3a25", globe: "#5f8f96", floorLamp: "#d8ae52", commandWall: "#3a2a20", commandDesk: "#c9b79c",
   serverRack: "#23272e", coldAisle: "#b3bac3", nocConsole: "#2b3038", statusWall: "#1a1d22", ups: "#2b3038", fireSuppression: "#c8262b",
   teamWall: "#6a4631", credenza: "#6a4631", designerPlant: MAP_PAINT.plant, teamRug: "#e6dccb",
+  brandWall: "#d2b286", agentTotem: "#2b2f33", lobbySofa: "#efe9de", lobbyArmchair: "#a8653a", lobbyTable: "#e7ddcc",
+  sideTable: "#f1eeea", lobbyLamp: "#c7a15e", oliveTree: MAP_PAINT.plant, awardCase: "#d2b286", entranceMat: "#3b3a37", lobbyRug: "#e8dfcf",
 };
 
 export const STATE_RING: Record<MinimapAgentState, string> = {
