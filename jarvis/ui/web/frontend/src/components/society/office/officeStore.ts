@@ -8,7 +8,8 @@
 import { create } from "zustand";
 import type { CheckpointKind, Point } from "./officeLayout";
 
-export type Selection = { kind: "agent"; id: string } | { kind: "checkpoint"; id: CheckpointKind };
+/** `arcade` is a playable arcade cabinet, by furniture id. */
+export type Selection = { kind: "agent"; id: string } | { kind: "checkpoint"; id: CheckpointKind } | { kind: "arcade"; id: string };
 
 export interface PlayerBody { x: number; z: number; heading: number; path: Point[]; moving: boolean }
 

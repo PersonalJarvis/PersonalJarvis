@@ -24,6 +24,9 @@ export const PLAYER_SPRINT_SPEED = 4.4;
 /** Talk range to an agent, in metres. */
 export const AGENT_TALK_RANGE = 1.8;
 
+/** Play range around the spot in front of an arcade screen, in metres. */
+export const ARCADE_PLAY_RANGE = 0.9;
+
 const MOVE_KEYS: Record<string, [number, number]> = {
   KeyW: [0, 1], ArrowUp: [0, 1], KeyS: [0, -1], ArrowDown: [0, -1],
   KeyA: [-1, 0], ArrowLeft: [-1, 0], KeyD: [1, 0], ArrowRight: [1, 0],
@@ -87,6 +90,13 @@ function nearestInteractable(layout: OfficeLayout): Selection | null {
   for (const [id, p] of agentPositions) {
     const d = Math.hypot(p.x - player.x, p.z - player.z);
     if (d <= AGENT_TALK_RANGE && d < bestDistance) { best = { kind: "agent", id }; bestDistance = d; }
+  }
+  for (const item of layout.furniture) {
+    if (item.kind !== "arcade") continue;
+    // The cabinet's screen faces its local +z; you play standing in front of it.
+    const fx = item.x + Math.sin(item.rotationY) * 0.85, fz = item.z + Math.cos(item.rotationY) * 0.85;
+    const d = Math.hypot(fx - player.x, fz - player.z);
+    if (d <= ARCADE_PLAY_RANGE && d < bestDistance) { best = { kind: "arcade", id: item.id }; bestDistance = d; }
   }
   return best;
 }

@@ -27,6 +27,7 @@ import { loadProfile, playerLook, saveProfile, type PlayerProfile } from "./play
 import { AgentPanel, CheckpointPanel, type OfficeActions } from "./OfficePanels";
 import type { WalkerContext } from "./OfficeAgents";
 import { ownsKeyboard } from "./OfficePlayer";
+import { ArcadeCabinet } from "./ArcadeCabinet";
 import "./office.css";
 import "./officeHud.css";
 import "./officeMinimap.css";
@@ -187,7 +188,9 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   const nearbyLabel = nearby
     ? nearby.kind === "agent"
       ? t("society.office.prompt_agent").replace("{0}", agents.get(nearby.id)?.name ?? "")
-      : t(`society.office.cp_${nearby.id}_hint`)
+      : nearby.kind === "arcade"
+        ? t("society.office.arcade_prompt")
+        : t(`society.office.cp_${nearby.id}_hint`)
     : null;
   const playerName = profile.name.trim() || t("society.office.you");
 
@@ -232,7 +235,8 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
         <button type="button" className="office-button" onClick={onOpenLedger}>{t("society.office.ledger")}</button>
       </div>
 
-      {selection && (
+      {selection?.kind === "arcade" && <ArcadeCabinet onClose={() => select(null)} />}
+      {selection && selection.kind !== "arcade" && (
         <div className="office-panel-slot">
           {selection.kind === "agent" && selectedAgent && (
             <AgentPanel agent={selectedAgent} actions={actions} onClose={() => select(null)} />
