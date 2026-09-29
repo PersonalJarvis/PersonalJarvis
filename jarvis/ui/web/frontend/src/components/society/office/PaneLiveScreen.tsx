@@ -94,8 +94,20 @@ export function PaneLiveScreen({ workspaceId, paneKey, label, loadingText, empty
   emptyText: string;
   onOpen: () => void;
 }) {
-  const box = useRef<HTMLDivElement>(null);
   const screen = useLiveScreen(workspaceId, paneKey);
+  return <PaneScreenView screen={screen} label={label} loadingText={loadingText} emptyText={emptyText} onOpen={onOpen} />;
+}
+
+/** One terminal screen, fitted to its box; `screen` undefined = still loading, null = unknown pane. */
+export function PaneScreenView({ screen, label, loadingText, emptyText, onOpen, className = "office-pane-screen" }: {
+  screen: PaneScreen | null | undefined;
+  label: string;
+  loadingText: string;
+  emptyText: string;
+  onOpen?: () => void;
+  className?: string;
+}) {
+  const box = useRef<HTMLDivElement>(null);
   const { width, height } = useBoxSize(box);
   const grid = liveGrid(screen?.cols ?? 80, width, height);
   const view = screen ? visibleRows(screen.lines, grid.fit, screen.cursor) : null;
@@ -103,7 +115,7 @@ export function PaneLiveScreen({ workspaceId, paneKey, label, loadingText, empty
   const empty = !view || view.rows.every((row) => !row.trim());
 
   return (
-    <div ref={box} className="office-pane-screen" role="img" aria-label={label} onDoubleClick={onOpen}>
+    <div ref={box} className={className} role="img" aria-label={label} onDoubleClick={onOpen}>
       {empty ? (
         <p className="office-pane-empty">{screen === undefined ? loadingText : emptyText}</p>
       ) : (

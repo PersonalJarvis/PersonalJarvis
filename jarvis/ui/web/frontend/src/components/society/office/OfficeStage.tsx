@@ -196,6 +196,24 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     setDiving(true);
     openTimer.current = setTimeout(() => { openAgent(agentId); setDiving(false); }, ZOOM_SECONDS * 1000 + 260);
   }, [openAgent, reduced, select]);
+  // A Mission Control monitor was clicked: the camera dives into its glass,
+  // then the section it shows opens. The Agents view hosting this map switches
+  // to its list; any other host navigates to the Agents section.
+  const sectionDive = useOfficeStore((s) => s.sectionDive);
+  const lastSectionDive = useRef(sectionDive?.seq ?? 0);
+  useEffect(() => {
+    if (!sectionDive || sectionDive.seq === lastSectionDive.current) return;
+    lastSectionDive.current = sectionDive.seq;
+    const { section } = sectionDive;
+    const go = () => {
+      if (section === "agents" && !compact && onOpenLedger) onOpenLedger();
+      else useEventStore.getState().setActiveSection(section);
+    };
+    clearTimeout(openTimer.current);
+    if (reduced) { go(); return; }
+    setDiving(true);
+    openTimer.current = setTimeout(() => { go(); setDiving(false); }, ZOOM_SECONDS * 1000 + 260);
+  }, [sectionDive, compact, onOpenLedger, reduced]);
 
   // The elevator: doors close, the floor switches behind them, doors open once
   // the new floor has loaded (capped). Reduced motion switches at once.

@@ -57,9 +57,13 @@ interface OfficeState {
   /** End the running meeting: its members go back to their day. */
   endMeeting: () => void;
   /** One-shot camera dive into a desk monitor (then the chat opens), consumed by the camera rig. */
-  zoom: { target: [number, number, number]; facing: number; seq: number } | null;
-  /** Dive into a monitor centred on `target`, whose screen faces yaw `facing`. */
-  zoomInto: (target: [number, number, number], facing: number) => void;
+  zoom: { target: [number, number, number]; facing: number; size?: [number, number]; seq: number } | null;
+  /** Dive into a monitor centred on `target`, whose screen faces yaw `facing`; `size` is the screen in metres (default: a desk monitor). */
+  zoomInto: (target: [number, number, number], facing: number, size?: [number, number]) => void;
+  /** One-shot: a Mission Control monitor was clicked; the stage dives in, then opens this app section. */
+  sectionDive: { section: MonitorSection; seq: number } | null;
+  /** Dive into a Mission Control monitor, then open the app section it shows. */
+  diveToSection: (section: MonitorSection, target: [number, number, number], facing: number, size: [number, number]) => void;
   /** Walk the character to this point (click-to-move / "walk there"), consumed by the player. */
   walkTo: { point: Point; seq: number } | null;
   /** Agents picked for a new team, carried from agent panels to the team room. */
@@ -75,12 +79,15 @@ interface OfficeState {
   requestWalk: (point: Point) => void;
 }
 
+/** The app sections Mission Control's desk monitors show live. */
+export type MonitorSection = "costs" | "agents" | "agentic-ide";
+
 let seq = 0;
 
 export const useOfficeStore = create<OfficeState>((set) => ({
   floor: "agents",
   setFloor: (floor) => set((s) => (s.floor === floor ? s : {
-    floor, selection: null, nearby: null, summons: {}, meeting: null, walkTo: null, zoom: null, focus: null, teamDraft: [], follow: true,
+    floor, selection: null, nearby: null, summons: {}, meeting: null, walkTo: null, zoom: null, sectionDive: null, focus: null, teamDraft: [], follow: true,
   })),
   selection: null,
   nearby: null,
@@ -102,7 +109,11 @@ export const useOfficeStore = create<OfficeState>((set) => ({
   }),
   walkTo: null,
   zoom: null,
-  zoomInto: (target, facing) => set({ zoom: { target, facing, seq: ++seq }, follow: false }),
+  zoomInto: (target, facing, size) => set({ zoom: { target, facing, size, seq: ++seq }, follow: false }),
+  sectionDive: null,
+  diveToSection: (section, target, facing, size) => set({
+    zoom: { target, facing, size, seq: ++seq }, sectionDive: { section, seq: ++seq }, follow: false, selection: null,
+  }),
   teamDraft: [],
   toggleDraft: (agentId) => set((s) => ({
     teamDraft: s.teamDraft.includes(agentId) ? s.teamDraft.filter((id) => id !== agentId) : [...s.teamDraft, agentId],

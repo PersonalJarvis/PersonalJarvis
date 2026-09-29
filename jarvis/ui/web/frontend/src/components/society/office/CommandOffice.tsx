@@ -1,20 +1,21 @@
 /**
  * Mission Control, the coding floor's own office: a walnut slat wall with a
  * live video wall, and a desk with three live monitors and an executive chair.
- * Working it (E in the room, or a click on any of its screens) opens the
- * Mission Control panel: start new coding agents, brief several at once.
+ * Working it (E in the room, or a click on the video wall or the desk) opens
+ * the Mission Control panel: start new coding agents, brief several at once.
  *
- * Every screen is a live board of the floor, drawn from the same shared pane
- * poll the figures ride: the video wall shows each agent as a tile; the desk
- * shows the workspaces (left), the floor's counts and a "New agent" button
- * (centre) and the latest prompts (right).
+ * The video wall is a live board of the floor, drawn from the same shared pane
+ * poll the figures ride: each agent as a tile. The desk's three monitors run
+ * real app sections live (MissionScreens): Spend (left), the Agents view
+ * (centre) and the Agentic IDE (right). A click on one dives the camera into
+ * its glass and opens that section; from afar each shows a quiet title card.
  *
  * Pieces are built in local space centred on the origin, front facing +z, and
  * stay inside their FURNITURE_SIZE box.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { ThreeEvent } from "@react-three/fiber";
-import { CanvasTexture, CylinderGeometry, MeshBasicMaterial, MeshStandardMaterial, SRGBColorSpace } from "three";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useFrame, type ThreeEvent } from "@react-three/fiber";
+import { CanvasTexture, CylinderGeometry, MeshBasicMaterial, MeshStandardMaterial, Quaternion, SRGBColorSpace, Vector3, type Group } from "three";
 import { useT } from "@/i18n";
 import { useWorkspacePanesStore } from "@/store/workspacePanes";
 import type { AgentRunState } from "../data";
@@ -22,7 +23,8 @@ import { Box, MAT, matte, Rounded } from "./OfficeFurniture";
 import { paneOccupants } from "./codingFloor";
 import { TaskChair } from "./OfficeChairs";
 import { COMMAND_DESK, COMMAND_DESK_OFFSET, type Furniture, type FurnitureKind } from "./officeLayout";
-import { useOfficeStore } from "./officeStore";
+import { MissionLiveScreen } from "./MissionScreens";
+import { useOfficeStore, type MonitorSection } from "./officeStore";
 
 // ---------------------------------------------------------------------------
 // Live data
@@ -71,7 +73,9 @@ function useFloorData(): FloorData {
 
 /** Everything the screens say, in the viewer's language. */
 export interface ScreenLabels {
-  title: string; agents: string; start: string; workspaces: string; activity: string; none: string;
+  title: string; agents: string; none: string;
+  /** The desk monitors' sections, named as the navigation names them. */
+  costs: string; agentsView: string; ide: string;
   working: string; waiting: string; idle: string;
   state: (key: string) => string;
   since: (at: number | null) => string;
@@ -82,9 +86,9 @@ function useScreenLabels(): ScreenLabels {
   return {
     title: t("society.office.cp_mission"),
     agents: t("society.office.mission_screen_agents"),
-    start: t("society.office.mission_screen_start"),
-    workspaces: t("society.office.mission_screen_workspaces"),
-    activity: t("society.office.mission_screen_activity"),
+    costs: t("nav.costs"),
+    agentsView: t("nav.agents"),
+    ide: t("nav.agentic_ide"),
     none: t("society.office.mission_screen_none"),
     working: t("society.office.state_working"),
     waiting: t("society.office.state_waiting"),
@@ -105,7 +109,7 @@ function useScreenLabels(): ScreenLabels {
 // Drawing: one quiet dark UI, white type, colour only for state.
 // ---------------------------------------------------------------------------
 
-const INK = "#f4f6f8", MUTED = "#8b929c", FAINT = "rgba(255,255,255,0.07)";
+const INK = "#f4f6f8", MUTED = "#8b929c";
 const FONT = "Inter, system-ui, -apple-system, 'Segoe UI', sans-serif";
 const STATE: Record<AgentRunState, string> = { working: "#4ade80", waiting: "#fbbf24", idle: "#8b929c", paused: "#8b929c" };
 
@@ -143,99 +147,14 @@ function heading(ctx: Ctx, text: string, x: number, y: number): void {
   ctx.fillText(text, x, y);
 }
 
-/** Centre monitor: the one big number, three state rows and the "New agent" button. */
-export function drawBoard(ctx: Ctx, w: number, h: number, data: FloorData, l: ScreenLabels): void {
-  ground(ctx, w, h);
-  const pad = 56, { counts } = data;
-  heading(ctx, l.title, pad, pad + 26);
-  dot(ctx, w - pad - 8, pad + 16, 8, STATE.working);
-  ctx.fillStyle = INK;
-  ctx.font = `700 200px ${FONT}`;
-  ctx.fillText(String(counts.total), pad - 8, pad + 250);
-  ctx.fillStyle = MUTED;
-  ctx.font = `500 30px ${FONT}`;
-  ctx.fillText(fit(ctx, l.agents, w * 0.5 - pad), pad, pad + 298);
-  const x0 = w * 0.55;
-  ([[l.working, counts.working, STATE.working], [l.waiting, counts.waiting, STATE.waiting], [l.idle, counts.idle, STATE.idle]] as const)
-    .forEach(([label, n, colour], i) => {
-      const y = pad + 90 + i * 78;
-      ctx.fillStyle = FAINT;
-      ctx.fillRect(x0, y - 50, w - pad - x0, 2);
-      dot(ctx, x0 + 10, y - 12, 9, colour);
-      ctx.fillStyle = INK;
-      ctx.font = `500 32px ${FONT}`;
-      ctx.fillText(fit(ctx, label, w - pad - x0 - 110), x0 + 36, y);
-      ctx.textAlign = "right";
-      ctx.font = `700 40px ${FONT}`;
-      ctx.fillText(String(n), w - pad, y + 2);
-      ctx.textAlign = "left";
-    });
-  const bw = 330, bh = 76, bx = pad, by = h - pad - bh;
-  ctx.fillStyle = INK;
-  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 18); ctx.fill();
-  ctx.strokeStyle = "#0b0d10";
-  ctx.lineWidth = 5;
-  ctx.lineCap = "round";
-  const px = bx + 44, py = by + bh / 2;
-  ctx.beginPath(); ctx.moveTo(px - 13, py); ctx.lineTo(px + 13, py); ctx.moveTo(px, py - 13); ctx.lineTo(px, py + 13); ctx.stroke();
-  ctx.fillStyle = "#0b0d10";
-  ctx.font = `600 32px ${FONT}`;
-  ctx.fillText(fit(ctx, l.start, bw - 100), bx + 80, py + 11);
-}
-
-/** Left monitor: every workspace with how many of its agents work. */
-export function drawWorkspaces(ctx: Ctx, w: number, h: number, data: FloorData, l: ScreenLabels): void {
+/** A desk monitor seen from afar: the section it runs, and one line of what it holds. */
+export function drawTitleCard(ctx: Ctx, w: number, h: number, title: string, detail: string): void {
   ground(ctx, w, h);
   const pad = 56;
-  heading(ctx, l.workspaces, pad, pad + 26);
-  if (data.workspaces.length === 0) { ctx.fillStyle = MUTED; ctx.font = `500 32px ${FONT}`; ctx.fillText(l.none, pad, pad + 120); return; }
-  const rows = data.workspaces.slice(0, 5), rowH = (h - pad * 2 - 60) / 5;
-  rows.forEach((ws, i) => {
-    const y = pad + 110 + i * rowH;
-    ctx.fillStyle = INK;
-    ctx.font = `600 34px ${FONT}`;
-    ctx.fillText(fit(ctx, ws.name, w * 0.5), pad, y);
-    ctx.textAlign = "right";
-    ctx.fillStyle = MUTED;
-    ctx.font = `500 30px ${FONT}`;
-    ctx.fillText(`${ws.working} / ${ws.total}`, w - pad, y);
-    ctx.textAlign = "left";
-    const bx = pad, by = y + 18, bw = w - pad * 2;
-    ctx.fillStyle = FAINT;
-    ctx.beginPath(); ctx.roundRect(bx, by, bw, 10, 5); ctx.fill();
-    if (ws.working > 0) {
-      ctx.fillStyle = STATE.working;
-      ctx.beginPath(); ctx.roundRect(bx, by, Math.max(10, (bw * ws.working) / ws.total), 10, 5); ctx.fill();
-    }
-  });
-}
-
-/** Right monitor: the latest prompts, newest first. */
-export function drawActivity(ctx: Ctx, w: number, h: number, data: FloorData, l: ScreenLabels): void {
-  ground(ctx, w, h);
-  const pad = 56;
-  heading(ctx, l.activity, pad, pad + 26);
-  const recent = data.agents.filter((a) => a.prompt).sort((a, b) => (b.promptAt ?? 0) - (a.promptAt ?? 0)).slice(0, 4);
-  if (recent.length === 0) { ctx.fillStyle = MUTED; ctx.font = `500 32px ${FONT}`; ctx.fillText(l.none, pad, pad + 120); return; }
-  const rowH = (h - pad * 2 - 50) / 4;
-  recent.forEach((a, i) => {
-    const y = pad + 100 + i * rowH;
-    if (i > 0) { ctx.fillStyle = FAINT; ctx.fillRect(pad, y - 44, w - pad * 2, 2); }
-    dot(ctx, pad + 8, y - 10, 8, STATE[a.state]);
-    const age = l.since(a.promptAt);
-    ctx.font = `500 26px ${FONT}`;
-    const ageW = ctx.measureText(age).width;
-    ctx.fillStyle = INK;
-    ctx.font = `600 30px ${FONT}`;
-    ctx.fillText(fit(ctx, a.name, w - pad * 2 - ageW - 60), pad + 30, y);
-    ctx.textAlign = "right";
-    ctx.fillStyle = MUTED;
-    ctx.font = `500 26px ${FONT}`;
-    ctx.fillText(age, w - pad, y);
-    ctx.textAlign = "left";
-    ctx.font = `400 26px ${FONT}`;
-    ctx.fillText(fit(ctx, a.prompt.replace(/\s+/g, " "), w - pad * 2 - 30), pad + 30, y + 36);
-  });
+  heading(ctx, detail, pad, pad + 26);
+  ctx.fillStyle = INK;
+  ctx.font = `700 96px ${FONT}`;
+  ctx.fillText(fit(ctx, title, w - pad * 2), pad, h - pad - 10);
 }
 
 /** The video wall: a header with the time, then one tile per agent on the floor. */
@@ -419,17 +338,75 @@ function ExecutiveChair() {
   );
 }
 
+/** Run the live sections within this camera distance of the desk, stop beyond the second (no flicker at the edge). */
+const LIVE_NEAR_M = 12;
+const LIVE_FAR_M = 15;
+
+/** Should the desk run its live sections, given the camera distance and whether it already does? Pure. */
+export function deskLive(distance: number, live: boolean): boolean {
+  return distance <= (live ? LIVE_FAR_M : LIVE_NEAR_M);
+}
+
+/** True while the camera is close enough to `anchor` to read the monitors. */
+function useNearCamera(anchor: RefObject<Group | null>): boolean {
+  const [near, setNear] = useState(false);
+  const nextCheck = useRef(0);
+  const at = useMemo(() => new Vector3(), []);
+  useFrame(({ camera, clock }) => {
+    if (!anchor.current || clock.elapsedTime < nextCheck.current) return;
+    nextCheck.current = clock.elapsedTime + 0.3;
+    anchor.current.getWorldPosition(at);
+    const next = deskLive(camera.position.distanceTo(at), near);
+    if (next !== near) setNear(next);
+  });
+  return near;
+}
+
+/** The glass sits this far in front of a monitor's centre (see Screen). */
+const GLASS_Z = 0.0145;
+
+/** A click on a desk monitor: dive into its glass, then open its section. */
+function useMonitorDive(section: MonitorSection) {
+  const hovered = useRef(false);
+  useEffect(() => () => { if (hovered.current) document.body.style.cursor = ""; }, []);
+  return {
+    onClick: (event: ThreeEvent<MouseEvent>) => {
+      if (event.delta > 6) return;
+      event.stopPropagation();
+      const monitor = event.eventObject;
+      const centre = monitor.getWorldPosition(new Vector3());
+      const normal = new Vector3(0, 0, 1).applyQuaternion(monitor.getWorldQuaternion(new Quaternion()));
+      const glass = centre.addScaledVector(normal, GLASS_Z);
+      useOfficeStore.getState().diveToSection(section, [glass.x, glass.y, glass.z], Math.atan2(normal.x, normal.z), [MONITOR.w, MONITOR.h]);
+    },
+    onPointerOver: (event: ThreeEvent<PointerEvent>) => { event.stopPropagation(); hovered.current = true; document.body.style.cursor = "zoom-in"; },
+    onPointerOut: (event: ThreeEvent<PointerEvent>) => { event.stopPropagation(); hovered.current = false; document.body.style.cursor = ""; },
+  };
+}
+
+function DeskMonitor({ section, title, detail, live, position, turn = 0 }: {
+  section: MonitorSection; title: string; detail: string; live: boolean; position: [number, number, number]; turn?: number;
+}) {
+  const card = useLiveScreen(MONITOR_CANVAS.w, MONITOR_CANVAS.h, `${title}|${detail}`, (ctx, w, h) => drawTitleCard(ctx, w, h, title, detail));
+  const dive = useMonitorDive(section);
+  return (
+    <group position={position} rotation={[0, turn, 0]} {...dive}>
+      <Screen w={MONITOR.w} h={MONITOR.h} material={card} />
+      {live && <MissionLiveScreen section={section} widthM={MONITOR.w} position={[0, 0, GLASS_Z + 0.002]} />}
+    </group>
+  );
+}
+
 export function CommandDesk() {
   const data = useFloorData();
   const labels = useScreenLabels();
-  const key = JSON.stringify([data, labels.title, labels.none]);
-  const board = useLiveScreen(MONITOR_CANVAS.w, MONITOR_CANVAS.h, key, (ctx, w, h) => drawBoard(ctx, w, h, data, labels));
-  const spaces = useLiveScreen(MONITOR_CANVAS.w, MONITOR_CANVAS.h, key, (ctx, w, h) => drawWorkspaces(ctx, w, h, data, labels));
-  const activity = useLiveScreen(MONITOR_CANVAS.w, MONITOR_CANVAS.h, key, (ctx, w, h) => drawActivity(ctx, w, h, data, labels));
   const open = useOpenMission();
+  const anchor = useRef<Group>(null);
+  const live = useNearCamera(anchor);
   const { w, d } = COMMAND_DESK;
+  const agentCount = `${data.counts.total} ${labels.agents}`;
   return (
-    <group>
+    <group ref={anchor}>
       <group {...open}>
         {/* Oak top on black steel sled legs, a cable panel at the back and a thin light under the front edge. */}
         <Rounded size={[w, 0.04, d]} radius={0.012} position={[0, 0.74, DESK_Z]} material={MAT.deskTop} />
@@ -444,15 +421,12 @@ export function CommandDesk() {
         {/* One triple arm: a post at the back and a bar carrying the three monitors, the outer two turned in. */}
         <Box size={[0.05, 0.38, 0.05]} position={[0, 0.94, DESK_Z - 0.32]} material={MAT.monitorArm} />
         <Box size={[1.7, 0.035, 0.035]} position={[0, MONITOR.y - 0.02, DESK_Z - 0.3]} material={MAT.monitorArm} />
-        <group position={[0, MONITOR.y, DESK_Z - 0.26]}>
-          <Screen w={MONITOR.w} h={MONITOR.h} material={board} />
-        </group>
-        <group position={[-0.76, MONITOR.y, DESK_Z - 0.17]} rotation={[0, 0.38, 0]}>
-          <Screen w={MONITOR.w} h={MONITOR.h} material={spaces} />
-        </group>
-        <group position={[0.76, MONITOR.y, DESK_Z - 0.17]} rotation={[0, -0.38, 0]}>
-          <Screen w={MONITOR.w} h={MONITOR.h} material={activity} />
-        </group>
+        <DeskMonitor section="agents" title={labels.agentsView} detail={labels.title} live={live}
+          position={[0, MONITOR.y, DESK_Z - 0.26]} />
+        <DeskMonitor section="costs" title={labels.costs} detail={labels.title} live={live}
+          position={[-0.76, MONITOR.y, DESK_Z - 0.17]} turn={0.38} />
+        <DeskMonitor section="agentic-ide" title={labels.ide} detail={agentCount} live={live}
+          position={[0.76, MONITOR.y, DESK_Z - 0.17]} turn={-0.38} />
         {/* On the desk: keyboard, mouse, a mug. */}
         <Rounded size={[0.46, 0.018, 0.15]} radius={0.006} position={[0, 0.769, DESK_Z + 0.18]} material={MAT.keyboard} />
         <Rounded size={[0.06, 0.022, 0.1]} radius={0.01} position={[0.36, 0.771, DESK_Z + 0.18]} material={MAT.keyboard} />
