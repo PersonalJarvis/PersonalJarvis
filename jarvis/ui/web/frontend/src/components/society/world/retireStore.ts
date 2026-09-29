@@ -180,6 +180,27 @@ export function beginRetirement(ceremony: Omit<Ceremony, "startedMs">): boolean 
   return useRetireStore.getState().begin(ceremony);
 }
 
+/** How many ceremony stages (the island's `RetirementScene`) are mounted. */
+let mountedStages = 0;
+
+/**
+ * Called by a stage on mount; returns its unmount cleanup. Only while one is
+ * mounted is a ceremony worth starting — anywhere else (the Agents ledger,
+ * the office) a retirement would sit out `ATTACH_GRACE_MS` for a show nobody
+ * can see before the row leaves.
+ */
+export function registerRetirementStage(): () => void {
+  mountedStages += 1;
+  return () => {
+    mountedStages = Math.max(0, mountedStages - 1);
+  };
+}
+
+/** True when a stage is mounted that can play a retirement ceremony. */
+export function retirementStageMounted(): boolean {
+  return mountedStages > 0;
+}
+
 /** Called by the stage the moment it takes the ceremony on. */
 export function attachRetirement(): void {
   useRetireStore.getState().attach();

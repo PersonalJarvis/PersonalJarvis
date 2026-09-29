@@ -99,7 +99,7 @@ export const DARK_TERMINAL_THEME: ITheme = {
   // #12141a at alpha 0 — the deep-slate ground the backend also reports to the
   // CLI (jarvis/agentic_ide/terminal_input.py); see the light theme's note.
   background: "rgba(18, 20, 26, 0)",
-  foreground: "#e8e8ec",
+  foreground: "#f4f4f6",
   cursor: "#ffffff",
   cursorAccent: "#12141a",
   selectionBackground: "#3a4252",
@@ -114,7 +114,7 @@ export const DARK_TERMINAL_THEME: ITheme = {
   blue: "#81a1c1",
   magenta: "#b48ead",
   cyan: "#88c0d0",
-  white: "#c8c8c8",
+  white: "#dcdcdc",
   brightBlack: "#8a8a8a",
   brightRed: "#ff8fa3",
   brightGreen: "#70b489",

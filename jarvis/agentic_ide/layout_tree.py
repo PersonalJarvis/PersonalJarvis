@@ -170,6 +170,23 @@ def leaves(node: LayoutNode | None) -> list[str]:
     return found
 
 
+def grid_span(node: LayoutNode | None) -> tuple[int, int]:
+    """How many columns and rows ``node`` occupies at its widest and tallest.
+
+    Siblings in a row add their columns and share the tallest row count;
+    siblings in a column the other way round. Mirrored by `layoutSpan` in the
+    frontend's ``workspaceDocking.ts``, which enforces the same grid bounds.
+    """
+    if node is None:
+        return (0, 0)
+    if isinstance(node, Leaf):
+        return (1, 1)
+    spans = [grid_span(child) for child in node.children]
+    if node.direction == "row":
+        return (sum(cols for cols, _ in spans), max(rows for _, rows in spans))
+    return (max(cols for cols, _ in spans), sum(rows for _, rows in spans))
+
+
 def contains(node: LayoutNode | None, pane: str) -> bool:
     return pane in leaves(node)
 
@@ -310,24 +327,26 @@ def split_pane(
     root: LayoutNode | None,
     anchor: str | None,
     added: str,
-    direction: Literal["right", "down"],
+    direction: Literal["right", "down", "left", "up", "above", "below"] = "right",
 ) -> LayoutNode:
     """The tree after ``added`` was split off ``anchor``.
 
-    ``"right"`` puts the new pane beside the anchor, ``"down"`` beneath it —
-    and in both cases the pair shares the room the anchor had, because that is
-    what splitting A pane means. Nothing outside the anchor's rectangle moves.
+    ``"right"`` or ``"left"`` puts the new pane beside the anchor, ``"down"``
+    or ``"up"`` / ``"above"`` beneath or above it — and in each case the pair
+    shares the room the anchor had, because that is what splitting A pane means.
+    Nothing outside the anchor's rectangle moves.
 
     Without an anchor (an empty tree, or a caller that named none) the pane
     joins the ROOT as a new full-height column on the far right — the shape
     "open one more terminal" has always produced, and the only honest reading
     of a request that named no pane to split.
     """
-    grown: Direction = "row" if direction == "right" else "column"
+    grown: Direction = "row" if direction in ("right", "left") else "column"
+    after = direction in ("right", "down", "below")
     if root is None:
         return Leaf(pane=added)
     if anchor is not None:
-        rewritten, found = _insert_beside(root, anchor, added, grown, after=True)
+        rewritten, found = _insert_beside(root, anchor, added, grown, after=after)
         if found:
             return _rows_outermost(normalize(rewritten))
     return append_pane(root, added)

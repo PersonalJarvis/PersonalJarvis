@@ -44,6 +44,9 @@ CREATE TABLE IF NOT EXISTS society_agents (
                         CHECK (browser_mode IN ('own', 'attach')),
     browser_allowed_domains_json TEXT NOT NULL DEFAULT '[]',
     max_concurrent_runs INTEGER NOT NULL DEFAULT 1,
+    -- Where the agent's work executes: NULL = this computer, else the id of a
+    -- connected machine in jarvis/computers (a VPS or a local VM, over SSH).
+    computer_id         TEXT DEFAULT NULL,
     created_ms          INTEGER NOT NULL,
     updated_ms          INTEGER NOT NULL
 );
@@ -70,6 +73,15 @@ CREATE TABLE IF NOT EXISTS society_events (
 CREATE INDEX IF NOT EXISTS idx_society_events_inbox ON society_events(to_agent, seq);
 CREATE INDEX IF NOT EXISTS idx_society_events_trace ON society_events(trace_id, seq);
 CREATE INDEX IF NOT EXISTS idx_society_events_from ON society_events(from_agent, seq);
+
+-- Persistent, user-owned groups of existing canonical agent chats.
+CREATE TABLE IF NOT EXISTS society_chat_groups (
+    group_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    members_json TEXT NOT NULL,
+    created_ms INTEGER NOT NULL,
+    updated_ms INTEGER NOT NULL
+);
 
 -- Bounded group discussions: state lives here, history in society_events
 -- (msg_type ROOM_OPEN / SAY / ROOM_SETTLE sharing the room's trace_id).

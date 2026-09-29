@@ -146,6 +146,7 @@
     "wiki": "Wiki",
     "apikeys": "API Keys",
     "local_models": "Local models",
+    "computers": "Computers",
     "settings": "Settings",
     "dictionary": "Dictionary",
     "dictation": "Dictation",
@@ -4429,27 +4430,6 @@
       "more_controls": "More workspace controls",
       "close_controls": "Close workspace controls"
     },
-    "continue": {
-      "button": "Continue",
-      "hint": "Check which coding sessions were interrupted and tell them to carry on.",
-      "title": "Interrupted coding sessions",
-      "description": "These panes came back holding their conversation and were never told what to do next — restarting the app stops an agent mid-task, and a resumed CLI waits at its prompt instead of carrying on.",
-      "none": "Nothing was interrupted — every pane has been given something to do since it started.",
-      "one": "Continue",
-      "all": "Continue all ({0})",
-      "close": "Close",
-      "last_task": "Last asked to: {0}",
-      "no_task": "Its last instruction was typed into the pane directly, so there is no copy of it here.",
-      "summary_one": "1 pane will be told to continue.",
-      "summary_many": "{0} panes will be told to continue.",
-      "summary_blocked": "{0} cannot be continued until their agents are running again.",
-      "result_continued": "{0} pane(s) carrying on: {1}.",
-      "result_unconfirmed": "Check these panes yourself — the instruction was typed in but never seen to submit: {0}.",
-      "result_failed": "Could not be continued: {0}.",
-      "sending": "Sending …",
-      "starting": "Its agent is still starting — it will be continued as soon as it is up.",
-      "result_queued": "{0} still starting; they carry on the moment they are up: {1}."
-    },
     "even": {
       "label": "Even out the terminal sizes",
       "hint": "Give every terminal the same size. Nothing is moved — the boundaries even out where they already are.",
@@ -5209,6 +5189,11 @@
     "mode_pipeline": "voice in and out"
   },
   "society": {
+    "groups": {
+      "create": "New agent team", "edit": "Edit agent team", "description": "Bundle agents in one sidebar entry. Each agent keeps its own conversation.",
+      "name": "Team name", "members": "Members", "cancel": "Cancel", "save": "Save team", "delete": "Ungroup", "delete_confirm": "Ungroup these agents? Their individual chats will remain.",
+      "left_chat": "Left chat", "right_chat": "Right chat", "open": "Open", "open_individual": "Open {0}'s individual chat", "missing_member": "Select an available agent to view this chat.", "hold_to_group": "Hold to group", "release_to_group": "Release to group"
+    },
     "chat": {
       "placeholder": "Message {0}",
       "more": "More",
@@ -5396,7 +5381,9 @@
       "delete_confirm": "Delete {0}? This removes the agent from your active team.",
       "delete_error": "Could not delete this agent. Try again.",
       "cancel": "Cancel",
-      "save": "Save"
+      "save": "Save",
+      "reorder": "Drag to reorder",
+      "reorder_keys": "Alt + Arrow Up / Down moves the agent"
     },
     "tier": {
       "lead": "Lead",
@@ -5435,6 +5422,8 @@
       "hub:models": "Boiler House"
     },
     "card": {
+      "runs_on_saving": "Moving…",
+      "runs_on_badge": "Runs on {computer}",
       "brain_shared_hint": "The brain of the typed chat, picked in the chat's model pill. Voice runs on the realtime brain from the voice settings.",
       "instructions_file": "Standing instructions ({0})",
       "instructions_empty": "No standing instructions yet — the template is a click away.",
@@ -5588,6 +5577,12 @@
       "shoes": "Shoes"
     },
     "create": {
+      "runs_on": "Runs on",
+      "runs_on_here": "This computer",
+      "runs_on_here_hint": "The agent works on this computer.",
+      "runs_on_remote_hint": "The agent’s commands and coding CLI run on that computer over SSH; {name} keeps the chat here.",
+      "runs_on_offline_hint": "That computer is not reachable right now; the agent’s runs fail until it is back online.",
+      "runs_on_connect": "Connect a computer",
       "import": "Import .glb",
       "importing": "Checking…",
       "import_hint": "Bring your own figure — a binary glTF that honours the character contract (docs/agent-society/character-pipeline.md).",
@@ -5678,7 +5673,27 @@
     "hint": "Pick tools for your next message. Permissions still apply.",
     "done": "Done"
   },
+  "question_card": {
+    "aria": "Question from the agent",
+    "title_one": "{agent} has a question",
+    "title_many": "{agent} has {count} questions",
+    "fallback_agent": "Your agent",
+    "step": "Question {current} of {total}",
+    "recommended": "Recommended",
+    "why": "Recommended because: {reason}",
+    "own_answer": "Type your own answer…",
+    "own_placeholder": "Your answer",
+    "send": "Send",
+    "close": "Close and let the agent decide",
+    "countdown": "No answer within {time} and the recommended options are chosen automatically.",
+    "choosing": "Choosing the recommended options…",
+    "auto_picked": "chosen automatically (no answer within 5 minutes)",
+    "left_to_agent": "left to the agent",
+    "own_words": "your own answer",
+    "unanswered": "Not answered — the turn ended."
+  },
   "work_trace": {
+    "question": "Waiting for your answer",
     "integration_used": "Used {service}",
     "activity_command": "Ran commands",
     "activity_edit": "Edited files",
@@ -5788,5 +5803,84 @@
     "build_active": "Build mode",
     "control_turn": "Agent work",
     "verifying": "Execution finished; verifying the result."
+  },
+  "ide_side_panel": {
+    "aria": "Side panel",
+    "tabs_aria": "Side panel tabs",
+    "expand": "Open side panel",
+    "collapse": "Close side panel",
+    "resize": "Resize side panel",
+    "add_tab": "Add a tab",
+    "all_open": "Every tab is already open",
+    "close_tab": "Close tab",
+    "rail_aria": "Side panel tabs",
+    "rail_waiting": "{n} waiting for you",
+    "explorer": {
+      "aria": "Workspace files and changes",
+      "no_workspace": "Select a workspace to see its files.",
+      "refresh": "Refresh",
+      "views": "Explorer views",
+      "view_changes": "Changes",
+      "view_files": "Files",
+      "changed_by": "Changed by {who}",
+      "filter": "Filter files",
+      "clear_filter": "Clear filter",
+      "loading": "Loading…",
+      "no_git": "This folder is not a git repository, so changes cannot be shown.",
+      "no_match": "No file matches the filter.",
+      "clean": "No changes since the last commit.",
+      "changes_error": "Changes could not be loaded ({error}). Restarting the app may be needed after an update.",
+      "drag_hint": "Drag onto a terminal to reference it",
+      "truncated": "The list was shortened; open the folder for the rest.",
+      "reference_in": "Reference in {pane}",
+      "open_externally": "Open on this computer",
+      "back": "Back",
+      "binary": "This file cannot be shown as text.",
+      "unchanged": "Unchanged since the last commit."
+    },
+    "tabs": {
+      "agents": "Agents",
+      "files": "Folder",
+      "changes": "Changes"
+    },
+    "agents": {
+      "aria": "Agents in this workspace",
+      "count_one": "{n} agent",
+      "count_other": "{n} agents",
+      "no_workspace": "Select a workspace to see its agents.",
+      "empty": "No agents running in this workspace.",
+      "columns": {
+        "done": "Done",
+        "working": "Working",
+        "reviewed": "Reviewed"
+      },
+      "column_empty": {
+        "done": "Nothing new has finished.",
+        "working": "No agent is working right now.",
+        "reviewed": "Click a finished agent to move it here."
+      },
+      "last_output": "Last output {time} ago",
+      "runtime_note": "Agents keep running when you close the app.",
+      "stop_all": "Stop all agents",
+      "stop_confirm": "Stop every agent in every workspace? Their conversations stay saved.",
+      "stop_confirm_yes": "Stop all",
+      "stop_cancel": "Cancel",
+      "summary": {
+        "waiting": "{n} need input",
+        "working": "{n} working",
+        "error": "{n} failed",
+        "idle": "{n} idle or done"
+      },
+      "state": {
+        "starting": "Starting",
+        "working": "Working",
+        "needs_input": "Needs input",
+        "failed": "Failed",
+        "error": "Error",
+        "exited": "Exited",
+        "done": "Done",
+        "idle": "Idle"
+      }
+    }
   }
 }

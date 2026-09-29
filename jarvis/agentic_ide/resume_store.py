@@ -34,14 +34,15 @@ import json
 import os
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from loguru import logger
 
 from .agent_sessions import ResumeHandle, has_conversation
+from .library import project_id_for
 
 # Saves arrive from more than one thread (see `save`), and the last one has to
 # be the one that lands rather than the one that happened to finish its rename
@@ -96,6 +97,28 @@ class SnapshotTerminal:
     model: str = ""
     effort: str = ""
     permission_mode: str = ""
+    # Where this pane runs when it is not the workspace folder — a git worktree
+    # a fork was opened in — and that worktree's branch. Empty on older
+    # snapshots and on every ordinary pane: the workspace folder, as before.
+    folder: str = ""
+    branch: str = ""
+    # The conversation a forked pane has yet to copy. Cleared once its first
+    # process started; kept here so a fork that never got to start before a
+    # restart still starts as the copy it was opened as.
+    fork_from: ResumeHandle | None = None
+    # A pane placed on a connected computer (Computers): that computer's id,
+    # the folder its agent runs in there, and the snapshot commit the code
+    # left this machine as (what "bring back" compares against). Empty on
+    # older snapshots and on every pane running on this machine.
+    computer_id: str = ""
+    remote_folder: str = ""
+    offload_snapshot: str = ""
+    # Was this pane's agent running when the snapshot was written? A reboot
+    # brings back exactly those (``Registry._resume_after_reboot``); an agent
+    # that ended by itself — ``/exit``, a finished one-shot — stays ended.
+    # Missing on older snapshots means True: before this field, every pane in
+    # an open workspace was one the user expected to come back.
+    running: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -114,6 +137,13 @@ class SnapshotTerminal:
             "model": self.model,
             "effort": self.effort,
             "permission_mode": self.permission_mode,
+            "folder": self.folder,
+            "branch": self.branch,
+            "fork_from": self.fork_from.to_dict() if self.fork_from else None,
+            "computer_id": self.computer_id,
+            "remote_folder": self.remote_folder,
+            "offload_snapshot": self.offload_snapshot,
+            "running": self.running,
         }
 
     @staticmethod
@@ -144,6 +174,13 @@ class SnapshotTerminal:
             model=str(data.get("model") or "").strip(),
             effort=str(data.get("effort") or "").strip(),
             permission_mode=str(data.get("permission_mode") or "").strip(),
+            folder=str(data.get("folder") or "").strip(),
+            branch=str(data.get("branch") or "").strip(),
+            fork_from=ResumeHandle.from_dict(data.get("fork_from")),
+            computer_id=str(data.get("computer_id") or "").strip(),
+            remote_folder=str(data.get("remote_folder") or "").strip(),
+            offload_snapshot=str(data.get("offload_snapshot") or "").strip(),
+            running=data.get("running") is not False,
         )
 
 
@@ -187,14 +224,20 @@ class SnapshotWorkspace:
     # file's, because the file holds workspaces that closed at different times
     # and the merge in `save` has to know which record is the newer one.
     saved_at: float = 0.0
+    project_id: str = ""
+    # The pane that had the focus, by name, so a reopened workspace lands on
+    # it instead of on its first pane. Empty on older snapshots.
+    focused: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "session_id": self.session_id,
+            "project_id": self.project_id or project_id_for(self.folder),
             "folder": self.folder,
             "name": self.name,
             "saved_at": self.saved_at,
             "layout": self.layout,
+            "focused": self.focused,
             "terminals": [t.to_dict() for t in self.terminals],
         }
 
@@ -222,12 +265,15 @@ class SnapshotWorkspace:
             saved_at = 0.0
         raw_layout = data.get("layout")
         return SnapshotWorkspace(
-            session_id=str(data.get("session_id") or ""),
+            session_id=str(data.get("session_id") or "")
+            or "ide_" + uuid5(NAMESPACE_URL, folder_key(folder)).hex[:12],
+            project_id=str(data.get("project_id") or "") or project_id_for(folder),
             folder=folder,
             name=str(data.get("name") or "").strip(),
             terminals=terminals,
             layout=raw_layout if isinstance(raw_layout, dict) else None,
             saved_at=saved_at,
+            focused=str(data.get("focused") or "").strip(),
         )
 
 
@@ -266,6 +312,33 @@ class Snapshot:
     # back in the arrangement it had, and the tab you were working in is not
     # necessarily the first one.
     active_session_id: str = ""
+
+    def __post_init__(self) -> None:
+        """Repair legacy ID collisions without reminting healthy workspace IDs.
+
+        Old/imported files can give two different folders the same session ID.
+        They must remain separate registry entries, and the repaired identity
+        must be deterministic so repeated reads and sidebar clicks agree.
+        Exact duplicate records for the same folder retain their ID and are
+        deduplicated by the registry's existing restore-set handling.
+        """
+        seen: dict[str, str] = {}
+        normalized: list[SnapshotWorkspace] = []
+        for workspace in self.workspaces:
+            folder = folder_key(workspace.folder)
+            identity = workspace.session_id
+            attempt = 0
+            while not identity or (identity in seen and seen[identity] != folder):
+                seed = f"{workspace.session_id}|{folder}|{attempt}"
+                identity = "ide_" + uuid5(NAMESPACE_URL, seed).hex[:12]
+                attempt += 1
+            seen[identity] = folder
+            normalized.append(
+                workspace
+                if identity == workspace.session_id
+                else replace(workspace, session_id=identity)
+            )
+        self.workspaces = normalized
 
     @property
     def terminal_count(self) -> int:
@@ -400,21 +473,71 @@ def save(snapshot: Snapshot) -> None:
         # would render as a card with no panes in it.
         clear()
         return
-    target = _store_path()
-    snapshot = _merged_with_stored(snapshot)
-    tmp = target.with_name(f"{target.name}.tmp-{os.getpid()}-{uuid4().hex[:8]}")
     with _WRITE_LOCK:
+        _write_locked(_merged_with_stored(snapshot))
+
+
+def _write_locked(snapshot: Snapshot) -> None:
+    """Replace the stored file with ``snapshot`` as-is. Caller holds ``_WRITE_LOCK``."""
+    target = _store_path()
+    tmp = target.with_name(f"{target.name}.tmp-{os.getpid()}-{uuid4().hex[:8]}")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(snapshot.to_dict(), indent=2), encoding="utf-8")
+        os.replace(tmp, target)
+    except OSError as exc:
+        logger.warning("Agentic IDE: could not persist the resume snapshot: {}", exc)
+        # Never leave a half-written temp file behind to be found later.
         try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(json.dumps(snapshot.to_dict(), indent=2), encoding="utf-8")
-            os.replace(tmp, target)
-        except OSError as exc:
-            logger.warning("Agentic IDE: could not persist the resume snapshot: {}", exc)
-            # Never leave a half-written temp file behind to be found later.
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:  # noqa: S110 - cleanup is best-effort
-                pass
+            tmp.unlink(missing_ok=True)
+        except OSError:  # noqa: S110 - cleanup is best-effort
+            pass
+
+
+def forget(*, session_ids: set[str] | None = None, project_id: str | None = None) -> int:
+    """Drop remembered workspaces for good. Returns how many were removed.
+
+    The sidebar lists every remembered workspace as a closed row, and a project
+    whose library entry is gone is re-derived from those rows — so removing a
+    workspace or deleting a project has to reach this file, or the row comes
+    straight back on the next refresh. Matches by workspace id, or by owning
+    project (the stored id, else the id derived from the folder). Only the
+    record goes; the folder on disk is never touched.
+
+    A later ``save`` cannot bring a forgotten record back: the merge only keeps
+    what is still stored plus what is open at that moment.
+    """
+    ids = session_ids or set()
+
+    def doomed(space: SnapshotWorkspace) -> bool:
+        if space.session_id in ids:
+            return True
+        if project_id is None:
+            return False
+        return project_id in (space.project_id, project_id_for(space.folder))
+
+    with _WRITE_LOCK:
+        stored = load()
+        if stored is None:
+            return 0
+        kept = [space for space in stored.workspaces if not doomed(space)]
+        removed = len(stored.workspaces) - len(kept)
+        if removed == 0:
+            return 0
+        if not kept:
+            clear()
+            return removed
+        kept_ids = {space.session_id for space in kept}
+        _write_locked(
+            Snapshot(
+                saved_at=stored.saved_at,
+                workspaces=kept,
+                active_session_id=(
+                    stored.active_session_id if stored.active_session_id in kept_ids else ""
+                ),
+            )
+        )
+        return removed
 
 
 # How many CLOSED workspaces one restore point may remember in addition to all
@@ -424,7 +547,7 @@ MAX_REMEMBERED_WORKSPACES = 20
 
 
 def _merged_with_stored(snapshot: Snapshot) -> Snapshot:
-    """Fold the live workspaces into what is already remembered, keyed by folder.
+    """Merge by workspace identity so closed siblings in one project survive.
 
     **The failure this exists for.** A save used to replace the file outright, so
     the restore point only ever held what happened to be open at that moment.
@@ -433,22 +556,23 @@ def _merged_with_stored(snapshot: Snapshot) -> Snapshot:
     to notice until the offer came back holding one pane. Reported as "it only
     resumed one".
 
-    So a save UPDATES rather than replaces: a folder that is open now overwrites
-    its own record (the newest arrangement of that folder is the truth), and
-    every other remembered folder is left exactly as it was. Only the user
+    So a save UPDATES rather than replaces: a workspace that is open overwrites
+    its own record, and every other remembered workspace is left intact.
+    Several independent workspaces may deliberately share one folder. Only the user
     asking to start fresh throws any of it away.
 
     Ordered newest-first and trimmed, so the file cannot grow without limit and
     the offer leads with what was most recently worked in.
     """
     stamped = [w if w.saved_at else _restamp(w, snapshot.saved_at) for w in snapshot.workspaces]
-    live_folders = {folder_key(w.folder) for w in stamped}
+    live_keys = {(w.session_id, folder_key(w.folder)) for w in stamped}
     try:
         stored = load()
-    except Exception:  # noqa: BLE001 - a broken file must not block the write
+    except Exception as exc:  # noqa: BLE001 - a broken file must not block the write
+        logger.warning("Agentic IDE: previous workspace snapshot could not be merged: {}", exc)
         stored = None
     kept = (
-        [w for w in stored.workspaces if folder_key(w.folder) not in live_folders]
+        [w for w in stored.workspaces if (w.session_id, folder_key(w.folder)) not in live_keys]
         if stored is not None
         else []
     )
@@ -468,10 +592,12 @@ def _restamp(workspace: SnapshotWorkspace, when: float) -> SnapshotWorkspace:
     return SnapshotWorkspace(
         session_id=workspace.session_id,
         folder=workspace.folder,
+        project_id=workspace.project_id or project_id_for(workspace.folder),
         name=workspace.name,
         terminals=workspace.terminals,
         layout=workspace.layout,
         saved_at=when,
+        focused=workspace.focused,
     )
 
 
@@ -495,10 +621,58 @@ def load() -> Snapshot | None:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
-    except (OSError, ValueError) as exc:
+    except ValueError as exc:
+        # Moved aside rather than ignored: the next save merges with what
+        # ``load`` returns, so a file read as "nothing" would be overwritten
+        # and every remembered workspace in it lost for good (RUB-102).
+        kept = _quarantine(path)
+        logger.warning(
+            "Agentic IDE: resume snapshot is damaged ({}) — kept as {} and starting without it",
+            exc,
+            kept or "nothing (could not be moved)",
+        )
+        return None
+    except OSError as exc:
         logger.warning("Agentic IDE: unreadable resume snapshot, ignoring it: {}", exc)
         return None
     return Snapshot.from_dict(data)
+
+
+def _quarantine(path: Path) -> Path | None:
+    """Move a damaged store out of the way, next to it, with a timestamp."""
+    target = path.with_name(f"{path.stem}.damaged-{int(time.time())}{path.suffix}")
+    try:
+        os.replace(path, target)
+    except OSError as exc:
+        logger.warning("Agentic IDE: damaged resume snapshot could not be moved: {}", exc)
+        return None
+    return target
+
+
+def _all_closed_path() -> Path:
+    """Sibling of the store: when the last open workspace was closed by hand."""
+    return _store_path().with_name(_store_path().stem + ".all_closed")
+
+
+def note_all_closed(when: float | None = None) -> None:
+    """Record that the user closed every workspace (not that the app quit).
+
+    Kept beside the snapshot rather than in it, so the snapshot keeps offering
+    those workspaces for a deliberate reopen (``Registry._close_locked`` says
+    why it must) while the app's startup restore can tell "closed for the day"
+    from "the app was shut with work open".
+    """
+    path = _all_closed_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(repr(time.time() if when is None else when), encoding="utf-8")
+
+
+def all_closed_at() -> float | None:
+    """When every workspace was last closed by hand, or None."""
+    try:
+        return float(_all_closed_path().read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):  # no marker (or a torn one) means "never closed by hand"
+        return None
 
 
 def clear() -> bool:
@@ -589,6 +763,7 @@ def offer(snapshot: Snapshot | None, *, installed: set[str]) -> dict[str, Any]:
         workspaces.append(
             {
                 "session_id": space.session_id,
+                "project_id": space.project_id or project_id_for(space.folder),
                 "folder": space.folder,
                 "folder_name": Path(space.folder).name or space.folder,
                 # The label the user gave the tab, empty when never renamed. Kept
@@ -656,6 +831,7 @@ __all__ = [
     "SnapshotWorkspace",
     "clear",
     "folder_key",
+    "forget",
     "load",
     "offer",
     "save",

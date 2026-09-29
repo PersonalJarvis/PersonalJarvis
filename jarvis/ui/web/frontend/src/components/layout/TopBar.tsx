@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
 import { SectionNavButtons } from "@/components/layout/SectionNavButtons";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
+import { IdeSidePanelToggle } from "@/components/agentic/sidePanel/IdeSidePanelToggle";
 import { useDesktopChrome, WindowControls } from "@/components/layout/WindowControls";
 import { hasEmbeddedDesktopBridge } from "@/components/voice/BrowserRealtimeControl";
 import { openExternalUrl } from "@/lib/openExternal";
@@ -117,6 +118,7 @@ export function TopBar({ settingsNavigation, navToggle }: {
       <div className="flex shrink-0 items-center">
         <CodingModeBadge />
         <TopBarActions />
+        <IdeSidePanelToggle />
         {controls === "trailing" && (
           <WindowControls controls={controls} maximized={chrome.maximized} onCommand={chrome.command} />
         )}

@@ -1,0 +1,43 @@
+/* Office minimap, compass bar and full map. The painted map art keeps one
+   palette in both modes; every piece of chrome here reads theme tokens. */
+
+/* Minimap: square card in the top-right corner, a thin light frame and a soft shadow. */
+.office-minimap { right:14px; top:14px; display:flex; flex-direction:column; gap:4px; user-select:none; }
+.office-minimap-map { position:relative; overflow:hidden; border-radius:14px; border:2px solid hsl(var(--popover) / .92); background:#121833; box-shadow:0 0 0 1px hsl(var(--border)), 0 6px 22px rgb(0 0 0 / .35); }
+/* Inner shadow / vignette over the picture, like a game minimap's lens. */
+.office-minimap-map::after { content:""; position:absolute; inset:0; border-radius:12px; pointer-events:none; box-shadow:inset 0 0 18px 4px rgb(0 0 0 / .38), inset 0 0 0 1px rgb(255 255 255 / .12); }
+.office-minimap-canvas { display:block; cursor:crosshair; touch-action:manipulation; }
+.office-minimap-north { position:absolute; z-index:1; top:3px; left:50%; transform:translateX(-50%); min-width:16px; padding:0 4px; border-radius:999px; background:hsl(var(--popover) / .92); color:hsl(var(--popover-foreground)); font-size:10px; font-weight:800; line-height:15px; text-align:center; pointer-events:none; box-shadow:0 1px 4px rgb(0 0 0 / .3); }
+.office-minimap-tooltip { position:absolute; z-index:2; transform:translateY(-100%); padding:2px 7px; border-radius:6px; border:1px solid hsl(var(--border)); background:hsl(var(--popover)); color:hsl(var(--popover-foreground)); font-size:11px; font-weight:600; white-space:nowrap; max-width:160px; overflow:hidden; text-overflow:ellipsis; pointer-events:none; box-shadow:0 2px 8px rgb(0 0 0 / .2); }
+.office-minimap-tooltip[data-side="left"] { transform:translate(-100%, -100%); }
+.office-minimap-bar { display:flex; align-items:center; gap:4px; padding:2px; border:1px solid hsl(var(--border)); border-radius:10px; background:hsl(var(--popover) / .92); color:hsl(var(--popover-foreground)); backdrop-filter:blur(6px); box-shadow:0 2px 10px rgb(0 0 0 / .2); }
+.office-minimap-btn { display:inline-flex; align-items:center; justify-content:center; gap:4px; height:22px; min-width:22px; padding:0 5px; border:0; border-radius:7px; background:none; color:hsl(var(--popover-foreground)); font-size:11px; font-weight:600; cursor:pointer; }
+.office-minimap-btn:hover:not(:disabled) { background:hsl(var(--secondary)); }
+.office-minimap-btn:disabled { opacity:.4; cursor:default; }
+.office-minimap-btn:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:1px; }
+.office-minimap-zoom { min-width:34px; text-align:center; font-size:10px; font-variant-numeric:tabular-nums; color:hsl(var(--muted-foreground)); }
+.office-minimap-open { margin-left:auto; padding:0 8px; border:1px solid hsl(var(--border)); }
+
+/* Compass bar: top centre, clear of the window caption above the stage and the side HUD. */
+.office-compass { left:50%; top:8px; transform:translateX(-50%); width:min(440px, calc(100% - 720px)); height:34px; border:1px solid hsl(var(--border)); border-radius:10px; background:hsl(var(--popover) / .88); box-shadow:0 4px 16px rgb(0 0 0 / .25); backdrop-filter:blur(6px); pointer-events:none; }
+.office-compass-canvas { display:block; width:100%; height:100%; -webkit-mask-image:linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent); mask-image:linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent); }
+.office-compass-readout { position:absolute; top:100%; left:50%; transform:translate(-50%, 3px); padding:0 6px; border-radius:6px; border:1px solid hsl(var(--border)); background:hsl(var(--popover) / .92); color:hsl(var(--popover-foreground)); font-size:10px; font-weight:700; line-height:16px; font-variant-numeric:tabular-nums; }
+.office-compass-readout:empty { display:none; }
+
+/* Full map: a dialog over most of the stage. */
+.office-fullmap-backdrop { position:absolute; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; padding:3%; background:hsl(var(--background) / .55); backdrop-filter:blur(3px); }
+.office-fullmap { display:flex; flex-direction:column; width:100%; height:100%; max-width:1200px; min-height:0; overflow:hidden; }
+.office-fullmap:focus { outline:none; }
+.office-fullmap-head { display:flex; align-items:center; gap:12px; padding:8px 10px 8px 14px; border-bottom:1px solid hsl(var(--border)); }
+.office-fullmap-heading { display:flex; flex-direction:column; min-width:0; }
+.office-fullmap-heading h2 { margin:0; font-size:14px; font-weight:700; }
+.office-fullmap-heading span { font-size:11px; color:hsl(var(--muted-foreground)); }
+.office-fullmap-readout { margin-left:auto; font-size:12px; font-weight:600; font-variant-numeric:tabular-nums; color:hsl(var(--muted-foreground)); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.office-fullmap-close { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; }
+.office-fullmap-body { position:relative; flex:1; min-height:0; overflow:hidden; background:hsl(var(--muted)); }
+.office-fullmap-canvas { display:block; cursor:crosshair; }
+.office-fullmap-axis { position:absolute; transform:translate(-50%, -50%); font-size:11px; font-weight:800; color:hsl(var(--foreground)); pointer-events:none; }
+
+@media (max-width:960px) { .office-compass { display:none; } }
+@media (max-height:520px), (max-width:600px) { .office-minimap { display:none; } }
+@media (prefers-reduced-motion:reduce) { .office-fullmap-backdrop { backdrop-filter:none; } }

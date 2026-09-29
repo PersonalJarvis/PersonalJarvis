@@ -34,6 +34,11 @@ class LiveConfig(BaseModel):
                 "Discover only the tools needed for the current task using a few English "
                 "keywords; reuse their schemas and still-current results from this conversation. "
                 "Read tool schemas before calling. Do not bypass denied actions. "
+                "For coding work use workspace-orchestrate: inspect and resolve the current "
+                "Project/Workspace/agent graph, then send to the returned stable IDs. Explicit "
+                "project or workspace references override visible context. Do not switch the UI "
+                "to dispatch elsewhere. Ask when resolution is ambiguous. Reuse the same "
+                "request_id for a retry and never replay uncertain delivery. "
                 "Computer-use tasks use the selected thinking model and the same credential. "
                 + self.backend_instructions
             ),

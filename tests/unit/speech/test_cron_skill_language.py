@@ -84,3 +84,27 @@ async def test_cron_skill_english_conversation_prompts_and_announces_english() -
     assert brain.prompt is not None and "scheduled run" in brain.prompt.lower()
     anns = [e for e in bus.published if isinstance(e, AnnouncementRequested)]
     assert anns and anns[-1].language == "en"
+
+
+@pytest.mark.asyncio
+async def test_cron_skill_result_is_held_for_the_next_call() -> None:
+    """A scheduled run never speaks into an idle room (mandate 2026-09-28)."""
+    from jarvis.speech.pipeline import _HELD_FOR_CALL_SOURCES, _READBACK_KINDS
+
+    pipe, _brain, bus = _pipe(reply_language="auto", conversation_language="en")
+    await pipe._handle_cron_skill(_skill())
+    anns = [e for e in bus.published if isinstance(e, AnnouncementRequested)]
+    assert anns
+    assert anns[-1].source_layer in _HELD_FOR_CALL_SOURCES
+    assert anns[-1].kind in _READBACK_KINDS
+    assert SpeechPipeline._is_agent_reply(anns[-1])
+
+
+@pytest.mark.asyncio
+async def test_cron_skill_total_provider_failure_stays_silent() -> None:
+    """Live 2026-09-29 08:00: the daily triage skill failed on every provider
+    and Jarvis said "my stored API key is being rejected" out of nowhere."""
+    pipe, brain, bus = _pipe(reply_language="auto", conversation_language="en")
+    brain._last_turn_all_failed = True  # type: ignore[attr-defined]
+    await pipe._handle_cron_skill(_skill())
+    assert not [e for e in bus.published if isinstance(e, AnnouncementRequested)]

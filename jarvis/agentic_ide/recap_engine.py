@@ -270,7 +270,7 @@ past all of that to the work itself.
 
 Answer with exactly two physical lines and nothing else:
 
-HEADLINE: <about 5 words, HARD MAXIMUM 48 characters. A self-contained \
+HEADLINE: <3 to 5 words, HARD MAXIMUM 48 characters. A self-contained \
 navigation label for the user's problem or desired outcome, normally \
 "subject — result". No pane name, agent name, quotation marks, or trailing \
 period.>
@@ -294,7 +294,7 @@ activity may follow after it if room remains.
 "Which generic engineering activity is happening?" Use the user's vocabulary \
 when the original request is visible; otherwise infer the outcome cautiously \
 from the work.
-- Aim for about 5 words. Shorter is acceptable only when the subject genuinely \
+- Aim for 3 to 5 words. Fewer is acceptable only when the subject genuinely \
 needs fewer; never pad, never exceed 48 characters.
 - Keep file paths, class names, commands and implementation mechanisms OUT of \
 the headline. Put useful technical evidence in DETAIL instead.
@@ -635,7 +635,6 @@ def refresh_soon(term: Any, *, lines: Sequence[str], folder: str = "") -> None:
     Never raises. Called on every pane of every poll, so a failure here would be
     a failure of the workspace view.
     """
-    global _inflight
     try:
         if not _enabled():
             return
@@ -670,19 +669,48 @@ def refresh_soon(term: Any, *, lines: Sequence[str], folder: str = "") -> None:
                 return
         except Exception:  # noqa: BLE001 - recap never blocks a composition
             logger.debug("Agentic IDE recap: compose-busy check failed", exc_info=True)
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # No event loop — a synchronous caller (a CLI state dump, a test).
-            # The deterministic recap is the whole answer there.
+        _spawn(term, key, rows, folder)
+    except Exception as exc:  # noqa: BLE001 - a recap must never break a state read
+        logger.debug("Agentic IDE recap: scheduling failed ({})", exc)
+
+
+def _spawn(term: Any, key: str, rows: list[str], folder: str) -> None:
+    """Start :func:`_run` on the app's event loop, from whichever thread asks.
+
+    The ``/recaps`` route is a plain ``def`` and runs in the server's worker
+    threadpool (it walks every pane's replay buffer, which must not block the
+    loop). A worker thread has no running loop of its own, so the old
+    ``get_running_loop()`` guard returned there on every poll and no pane was
+    ever summarized — every header stayed on the prompt's first words. anyio's
+    ``from_thread`` hands the start back to the loop that owns the worker; the
+    bookkeeping below then runs on that loop's thread, as it always did.
+    """
+
+    def start() -> None:
+        global _inflight
+        entry = _state(key)
+        if entry.inflight or _inflight >= MAX_CONCURRENT:
             return
         entry.inflight = True
         _inflight += 1
-        task = loop.create_task(_run(term, key, rows, folder))
+        task = asyncio.get_running_loop().create_task(_run(term, key, rows, folder))
         _tasks.add(task)
         task.add_done_callback(_tasks.discard)
-    except Exception as exc:  # noqa: BLE001 - a recap must never break a state read
-        logger.debug("Agentic IDE recap: scheduling failed ({})", exc)
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        try:
+            from anyio.from_thread import run_sync
+
+            # Raises RuntimeError outside an anyio worker thread.
+            run_sync(start)
+        except RuntimeError:
+            # No event loop anywhere — a synchronous caller (a CLI state dump,
+            # a test). The deterministic recap is the whole answer there.
+            return
+        return
+    start()
 
 
 async def _run(term: Any, key: str, rows: list[str], folder: str) -> None:

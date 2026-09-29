@@ -848,7 +848,19 @@ def _register_runtime_manager(manager: Any) -> None:
     """Publish one Brain Manager and its public tool gateway for all surfaces."""
     try:
         from jarvis.brain.tool_gateway import BrainSupervisorToolGateway
+        from jarvis.brain.workspace_tool import WorkspaceOrchestrationTool
         from jarvis.core import runtime_refs
+
+        class WorkspaceGateway:
+            async def run(self, args: dict[str, Any], *, trace_id: str = "") -> dict[str, Any]:
+                # Resolve lazily, off the boot path and event loop. The runtime
+                # keeps the durable receipt store; providers receive a protocol.
+                import asyncio
+
+                from jarvis.agentic_ide.orchestration import get_orchestrator
+
+                orchestrator = await asyncio.to_thread(get_orchestrator)
+                return await orchestrator.run(args, trace_id=trace_id)
 
         async def session_tool(session_id: str) -> Any:
             # Compose the optional society hand lazily; no society import at boot.
@@ -873,6 +885,7 @@ def _register_runtime_manager(manager: Any) -> None:
                 session_tool=session_tool,
                 browser_tool=browser_tool,
                 session_tools=session_tools,
+                workspace_tool=WorkspaceOrchestrationTool(WorkspaceGateway()),
             )
         )
     except Exception as exc:  # noqa: BLE001 - registration never blocks boot

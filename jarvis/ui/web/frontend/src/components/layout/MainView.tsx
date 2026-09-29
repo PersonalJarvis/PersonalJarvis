@@ -510,6 +510,7 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     case "telephony":
     case "telephony-setup":
     case "local-models":
+    case "computers":
     case "wallpaper":
     case "costs":
     case "feedback":

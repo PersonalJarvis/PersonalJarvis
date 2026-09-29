@@ -390,6 +390,21 @@ _READBACK_KINDS: frozenset[str] = frozenset(
 )
 
 
+#: Readback sources that never speak outside a call (see ``_is_agent_reply``).
+#: A mission the user just asked for is not here: its answer may still punch
+#: through the hangup gate (AD-OE5/OE6).
+_HELD_FOR_CALL_SOURCES: frozenset[str] = frozenset(
+    {
+        "society.lead",
+        "tasks.runner",
+        "workflows.runner",
+        "workflows.scheduler",
+        "desktop_app.conductor",
+        "skills.cron",
+    }
+)
+
+
 def _announcement_spoken_kind(kind: str | None) -> str:
     """Map an ``AnnouncementRequested.kind`` to a ``SpeechSpoken.spoken_kind``.
 
@@ -4751,8 +4766,9 @@ class SpeechPipeline:
 
         The brain receives a synthetic scheduled-run turn with the skill
         noted (``note_skill_trigger`` → instruction injection + SkillInvoked
-        source="cron"); the reply is announced via ``AnnouncementRequested``
-        (scrubbed TTS path). Falls back to the legacy macro runner when the
+        source="cron"); the reply is queued as a held ``AnnouncementRequested``
+        and spoken at the next call, and a total provider failure stays
+        silent. Falls back to the legacy macro runner when the
         wired brain cannot take the handoff (echo/mock brains).
         """
         from jarvis.skills.schema import SkillLifecycleState
@@ -4808,14 +4824,29 @@ class SpeechPipeline:
             _prompts.get(lang, _prompts["en"]).format(name=skill.name)
         )
         text = (reply or "").strip()
+        if self._brain_turn_failed():
+            # Nobody called Jarvis for this turn: a provider-chain failure on a
+            # scheduled run is not news worth speaking into an idle room (live
+            # 2026-09-29 08:00: the daily triage skill failed on every provider
+            # and Jarvis announced "my stored API key is being rejected" out of
+            # nowhere). The API-keys view shows the broken key; the log keeps
+            # the chain diagnostic.
+            log.warning(
+                "Cron skill '%s' failed on every provider; staying silent", skill.name
+            )
+            return
         if text and self._bus is not None:
             try:
+                # Held for the next call like every other background result
+                # (_HELD_FOR_CALL_SOURCES): a scheduled run never speaks
+                # into a room where nobody called Jarvis.
                 await self._bus.publish(
                     AnnouncementRequested(
-                        source_layer="speech.pipeline",
+                        source_layer="skills.cron",
                         text=text,
                         language=lang,
                         priority="normal",
+                        kind=SPOKEN_KIND_COMPLETION,
                     )
                 )
             except Exception as exc:  # noqa: BLE001
@@ -4824,7 +4855,15 @@ class SpeechPipeline:
 
     @staticmethod
     def _is_agent_reply(event: AnnouncementRequested) -> bool:
-        return event.source_layer == "society.lead" and event.kind in _READBACK_KINDS
+        """A readback that is owed to the user but must wait for an open call.
+
+        An agent's reply, and every piece of background news nobody asked for
+        in this conversation (a routine or automation result, a scheduled job
+        failing or recovering). Spoken into an idle machine it is Jarvis
+        talking without having been called; held here, it is delivered at the
+        next call, once, and only after the audio actually finished.
+        """
+        return event.source_layer in _HELD_FOR_CALL_SOURCES and event.kind in _READBACK_KINDS
 
     def _agent_reply_needs_session(self) -> bool:
         hangup = getattr(self, "_hangup_event", None)

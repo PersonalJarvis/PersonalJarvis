@@ -74,6 +74,12 @@ interface WorkspaceBarProps {
   onRename: (id: string, name: string) => Promise<boolean>;
   onClose: (id: string) => void;
   /**
+   * Persist a drag-and-drop tab order. Absent, tabs are not draggable.
+   *
+   * Receives every open workspace id exactly once, in left-to-right order.
+   */
+  onReorder?: (workspaceIds: string[]) => void | Promise<void>;
+  /**
    * A file was dropped on a workspace TAB. Left out, the tabs refuse drags and
    * the cursor says so rather than accepting a file nothing would do anything
    * with.
@@ -106,11 +112,13 @@ export function WorkspaceBar({
   onAdd,
   onRename,
   onClose,
+  onReorder,
   onDropFiles,
   busy = false,
   actions,
   embedded = false,
 }: WorkspaceBarProps) {
+  const WORKSPACE_TAB_MIME = "application/x-jarvis-workspace-tab";
   const t = useT();
   const barRef = useRef<HTMLDivElement>(null);
   // Which tab has its close button armed. One at a time, and cleared on every
@@ -121,6 +129,8 @@ export function WorkspaceBar({
   // Which tab a file drag is currently over. One at a time — a drag has one
   // position — so this is an id rather than a set.
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [draggedTab, setDraggedTab] = useState<string | null>(null);
+  const [tabDropTarget, setTabDropTarget] = useState<{ id: string; before: boolean } | null>(null);
   const [barWidth, setBarWidth] = useState<number | null>(null);
   const [rovingFocusId, setRovingFocusId] = useState(
     addingNew ? ADD_TAB_FOCUS_ID : (activeId ?? workspaces[0]?.id ?? ADD_TAB_FOCUS_ID),
@@ -135,6 +145,62 @@ export function WorkspaceBar({
   // ./dragSessionEnd, BUG-167).
   const clearDropTarget = useCallback(() => setDropTarget(null), []);
   useDragSessionEnd(dropTarget !== null, clearDropTarget);
+
+  const clearTabDrag = useCallback(() => { setDraggedTab(null); setTabDropTarget(null); }, []);
+  useDragSessionEnd(draggedTab !== null, clearTabDrag);
+
+  const moveTab = (sourceId: string, targetId: string, before: boolean) => {
+    if (!onReorder || sourceId === targetId) return;
+    const order = workspaces.map((workspace) => workspace.id);
+    const without = order.filter((id) => id !== sourceId);
+    const targetIndex = without.indexOf(targetId);
+    if (targetIndex < 0) return;
+    const insertAt = before ? targetIndex : targetIndex + 1;
+    const next = [...without.slice(0, insertAt), sourceId, ...without.slice(insertAt)];
+    if (next.join("\u0000") === order.join("\u0000")) return;
+    void onReorder(next);
+  };
+
+  /** Tab-reorder handlers. Empty when the owner does not persist an order. */
+  const tabDragHandlersFor = (workspace: WorkspaceCard) => {
+    if (!onReorder) return {};
+    const draggable = !busy && editing !== workspace.id;
+    return {
+      draggable,
+      onDragStart: (event: React.DragEvent) => {
+        if (!draggable) { event.preventDefault(); return; }
+        event.dataTransfer.setData(WORKSPACE_TAB_MIME, workspace.id);
+        event.dataTransfer.setData("text/plain", workspace.id);
+        event.dataTransfer.effectAllowed = "move";
+        setDraggedTab(workspace.id);
+      },
+      onDragEnd: clearTabDrag,
+      onDragOver: (event: React.DragEvent) => {
+        if (!draggedTab || draggedTab === workspace.id) return;
+        if (!event.dataTransfer.types.includes(WORKSPACE_TAB_MIME) && !event.dataTransfer.types.includes("text/plain")) return;
+        if (dragCarriesFiles(event.dataTransfer)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        const rect = event.currentTarget.getBoundingClientRect();
+        const before = (event.clientX - rect.left) < rect.width / 2;
+        setTabDropTarget((current) => current?.id === workspace.id && current.before === before ? current : { id: workspace.id, before });
+      },
+      onDragLeave: (event: React.DragEvent) => {
+        const next = event.relatedTarget as Node | null;
+        if (next && event.currentTarget.contains(next)) return;
+        setTabDropTarget((current) => current?.id === workspace.id ? null : current);
+      },
+      onDrop: (event: React.DragEvent) => {
+        if (!draggedTab || dragCarriesFiles(event.dataTransfer)) return;
+        event.preventDefault();
+        const sourceId = event.dataTransfer.getData(WORKSPACE_TAB_MIME) || draggedTab;
+        const rect = event.currentTarget.getBoundingClientRect();
+        const before = (event.clientX - rect.left) < rect.width / 2;
+        clearTabDrag();
+        moveTab(sourceId, workspace.id, before);
+      },
+    };
+  };
 
   /** Drag-drop handlers for one tab. Empty when the owner takes no drops. */
   const dropHandlersFor = (workspace: WorkspaceCard) => {
@@ -296,6 +362,9 @@ export function WorkspaceBar({
         const armed = confirming === workspace.id;
         const renaming = editing === workspace.id;
         const dropping = dropTarget === workspace.id;
+        const tabDragging = draggedTab === workspace.id;
+        const tabDropBefore = tabDropTarget?.id === workspace.id && tabDropTarget.before;
+        const tabDropAfter = tabDropTarget?.id === workspace.id && !tabDropTarget.before;
         const summary = t(
           workspace.terminals === 1
             ? "workspace_bar.workspace_summary_one"
@@ -327,10 +396,13 @@ export function WorkspaceBar({
             key={workspace.id}
             data-testid={`workspace-tab-drop-${workspace.id}`}
             {...dropHandlersFor(workspace)}
+            {...tabDragHandlersFor(workspace)}
             title={
               onDropFiles
                 ? `${workspace.folder} — drop a screenshot or document here to send it to this workspace`
-                : workspace.folder
+                : onReorder
+                  ? `${workspace.folder} — drag to reorder`
+                  : workspace.folder
             }
             /*
              * The selected tab is a RAISED tab, marked once.
@@ -357,6 +429,10 @@ export function WorkspaceBar({
                 : selected
                   ? "border-border bg-secondary"
                   : "border-transparent hover:bg-secondary",
+              tabDragging && "opacity-40",
+              tabDropBefore && "before:absolute before:-left-0.5 before:bottom-1 before:top-1 before:w-0.5 before:rounded-full before:bg-primary",
+              tabDropAfter && "after:absolute after:-right-0.5 after:bottom-1 after:top-1 after:w-0.5 after:rounded-full after:bg-primary",
+              onReorder && !busy && "cursor-grab active:cursor-grabbing",
             )}
           >
             {renaming ? (
@@ -425,6 +501,14 @@ export function WorkspaceBar({
                     if (!selected) onSelect(workspace.id);
                   }}
                   onFocus={() => setRovingFocusId(workspace.id)}
+                  onKeyDown={(event) => {
+                    if (!onReorder || !event.altKey) return;
+                    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                    event.preventDefault();
+                    const neighbour = event.key === "ArrowLeft" ? workspaces[index - 1] : workspaces[index + 1];
+                    if (!neighbour) return;
+                    moveTab(workspace.id, neighbour.id, event.key === "ArrowLeft");
+                  }}
                   className={cn(
                     "flex min-w-0 items-center text-left disabled:cursor-not-allowed disabled:opacity-60",
                     compact ? "flex-1 justify-center gap-1" : "gap-2",

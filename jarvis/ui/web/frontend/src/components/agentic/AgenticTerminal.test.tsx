@@ -189,8 +189,11 @@ vi.mock("@/lib/agenticIdeApi", () => ({ attachToTerminal: vi.fn() }));
 
 import {
   AgenticTerminal,
+  CURTAIN_MAX_MS,
   DRAG_REFIT_MS,
   REBUILD_QUIET_MS,
+  REBUILD_SETTLE_MAX_MS,
+  REPAINT_WAIT_MAX_MS,
   RESIZE_PARSE_WAIT_MS,
   UNMEASURED_SIZE,
 } from "./AgenticTerminal";
@@ -282,6 +285,30 @@ describe("AgenticTerminal layout", () => {
     expect(screen.getByTestId("pane-conversation-Dana")).toBeTruthy();
     expect(screen.queryByRole("scrollbar")).toBeNull();
     expect(screen.queryByTestId("pane-scroll-history-Dana")).toBeNull();
+  });
+
+  it("opts into compact chrome without recreating the terminal or exposing recap hover controls", () => {
+    const onFocus = vi.fn();
+    const props = { name: "Dana", displayName: "Codex", agent: "codex", appearance: "dark" as const, fontSize: 13, recap: "Detailed work summary", onFocus };
+    const { rerender } = render(<AgenticTerminal {...props} />);
+    const host = screen.getByTestId("agentic-terminal-host-Dana");
+    const instances = terminalHarness.instances.length;
+    expect(screen.getByTestId("pane-header-Dana")).toBeTruthy();
+    rerender(<AgenticTerminal {...props} headerMode="compact" />);
+    expect(screen.queryByTestId("pane-header-Dana")).toBeNull();
+    expect(screen.getByTestId("workspace-terminal-header-Dana")).toBeTruthy();
+    expect(screen.queryByTestId("pane-recap-Dana")).toBeNull();
+    expect(screen.queryByTestId("pane-header-tip-Dana")).toBeNull();
+    expect(screen.getByTestId("agentic-terminal-host-Dana")).toBe(host);
+    expect(terminalHarness.instances.length).toBe(instances);
+    expect(screen.getByTestId("agentic-pane-Dana").className).toContain("rounded-2xl");
+    const title = screen.getByTestId("pane-move-Dana");
+    title.focus();
+    const focuses = terminalHarness.focus.mock.calls.length;
+    fireEvent.click(title);
+    expect(onFocus).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(title);
+    expect(terminalHarness.focus.mock.calls.length).toBe(focuses);
   });
 
   it("keeps the wheel on terminal history even while the CLI tracks the mouse", () => {
@@ -541,6 +568,53 @@ describe("AgenticTerminal layout", () => {
     expect(region?.className).not.toContain("invisible");
   });
 
+  it("lifts a replay curtain even when the reveal frame never arrives", () => {
+    // A WebView that believes its window is hidden stops delivering animation
+    // frames, and the reveal is chained behind one. Before the watchdog that
+    // left the pane an empty black rectangle under a green "live" dot until
+    // something unrelated rebuilt it (reported 2026-09-28).
+    vi.useFakeTimers();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+    const host = screen.getByTestId("agentic-terminal-host-Dana");
+    act(() => {
+      vi.advanceTimersByTime(PAST_REBUILD);
+    });
+    expect(host.style.visibility).toBe("");
+
+    const starved = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation(() => 1);
+    try {
+      terminalHarness.deferWrite = true;
+      act(() => {
+        terminalHarness.handlers.current?.onReplay?.("the screen" as never);
+      });
+      act(() => {
+        terminalHarness.writeCallbacks.shift()?.();
+        vi.advanceTimersByTime(PAST_REBUILD);
+      });
+      // The honest path is stuck on its frame…
+      expect(host.style.visibility).toBe("hidden");
+
+      act(() => {
+        vi.advanceTimersByTime(CURTAIN_MAX_MS);
+      });
+      // …and the backstop shows the pane anyway.
+      expect(host.style.visibility).toBe("");
+      expect(host.parentElement?.className).not.toContain("invisible");
+    } finally {
+      starved.mockRestore();
+    }
+  });
+
   it("stays hidden while the post-replay repaint is still arriving", () => {
     // The replay is only half the rebuild: the server answers a truncated or
     // re-based one by nudging the agent into painting its whole screen again
@@ -578,6 +652,71 @@ describe("AgenticTerminal layout", () => {
     expect(region?.className).toContain("invisible");
 
     act(() => vi.advanceTimersByTime(PAST_REBUILD));
+    expect(region?.className).not.toContain("invisible");
+  });
+
+  it("waits for a promised repaint rather than showing the broken tail", () => {
+    // A replay the server marks as needing a repaint cannot rebuild the screen
+    // by itself. A busy agent may answer the repaint request late (the server
+    // repeats it after half a second), and revealing on quiet in between showed
+    // the cut-off tail — terminals badly formatted for a second after a reload.
+    vi.useFakeTimers();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+    const region = screen.getByTestId("agentic-terminal-host-Dana").parentElement;
+    act(() => vi.advanceTimersByTime(PAST_REBUILD));
+
+    terminalHarness.deferWrite = true;
+    act(() => {
+      // An older erase inside the replay itself is not the answer.
+      terminalHarness.handlers.current?.onReplay?.(
+        "\x1b[2Jcut-off tail" as never,
+        true as never,
+      );
+      terminalHarness.writeCallbacks.shift()?.();
+    });
+    act(() => vi.advanceTimersByTime(REBUILD_SETTLE_MAX_MS + 100));
+    expect(region?.className).toContain("invisible");
+
+    // The erase arrives split across two chunks; the quiet window follows it.
+    act(() => {
+      terminalHarness.handlers.current?.onOutput?.("\x1b[2" as never);
+      terminalHarness.handlers.current?.onOutput?.("Jthe repainted screen" as never);
+    });
+    expect(region?.className).toContain("invisible");
+    act(() => vi.advanceTimersByTime(PAST_REBUILD));
+    expect(region?.className).not.toContain("invisible");
+  });
+
+  it("shows the pane anyway when a promised repaint never comes", () => {
+    vi.useFakeTimers();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+    const region = screen.getByTestId("agentic-terminal-host-Dana").parentElement;
+    act(() => vi.advanceTimersByTime(PAST_REBUILD));
+
+    terminalHarness.deferWrite = true;
+    act(() => {
+      terminalHarness.handlers.current?.onReplay?.("cut-off tail" as never, true as never);
+      terminalHarness.writeCallbacks.shift()?.();
+    });
+    act(() => vi.advanceTimersByTime(REPAINT_WAIT_MAX_MS - 50));
+    expect(region?.className).toContain("invisible");
+    act(() => vi.advanceTimersByTime(100));
     expect(region?.className).not.toContain("invisible");
   });
 
@@ -973,6 +1112,16 @@ describe("pane header actions", () => {
     fireEvent.doubleClick(screen.getByTestId("pane-header-Dana"));
 
     expect(onToggleMaximize).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts a pane move from its explicit handle while leaving the recap clickable", () => {
+    const onArrangeStart = vi.fn();
+    render(<AgenticTerminal name="Dana" displayName="Claude Code" recap="Fix login"
+      appearance="dark" fontSize={13} onArrangeStart={onArrangeStart} showArrangeHandle />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Move Dana" }), { button: 0, clientX: 20, clientY: 20 });
+    expect(onArrangeStart).toHaveBeenCalledTimes(1);
+    fireEvent.pointerDown(screen.getByTestId("pane-recap-Dana"), { button: 0, clientX: 30, clientY: 20 });
+    expect(onArrangeStart).toHaveBeenCalledTimes(1);
   });
 
   it("explains the bar's gestures in its own card after a settled hover", () => {
@@ -1434,6 +1583,33 @@ describe("pane refit", () => {
       cols: 80,
       rows: 24,
     });
+  });
+
+  it("takes every displaced pane back on a gesture anywhere in the window", () => {
+    // A tab another tool opened on the workspace took the size, and the
+    // desktop shell never fired `focus`: all panes drew in the tab's geometry
+    // until each one was clicked (2026-09-29). Moving the mouse over the app
+    // is enough — and a pane that holds its size stays quiet.
+    render(pane(false));
+    settle();
+    terminalHarness.send.mockClear();
+    fireEvent.pointerMove(document.body);
+    settle();
+    expect(terminalHarness.send).not.toHaveBeenCalledWith(
+      expect.objectContaining({ t: "claim" }),
+    );
+
+    displacedBy(30, 10);
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    fireEvent.pointerMove(document.body);
+    settle();
+    fireEvent.keyDown(document.body, { key: "a" });
+    settle();
+
+    const claims = terminalHarness.send.mock.calls.filter(
+      ([frame]) => (frame as { t: string }).t === "claim",
+    );
+    expect(claims).toEqual([[{ t: "claim", cols: 80, rows: 24 }]]);
   });
 
   it("does not take a pane it is only watching from a window without focus", () => {

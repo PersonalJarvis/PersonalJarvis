@@ -4,6 +4,8 @@ import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import { useOpenPairConversation } from "@/components/agentchat/PairConversation";
 import type { InternalMessageItem } from "@/components/agentchat/reduce";
 import { useT } from "@/i18n";
+import { societyDisplayName } from "@/lib/societyDisplayName";
+import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { AgentSwatch } from "../AgentSwatch";
 import type { SocietyAgent } from "../data";
@@ -40,10 +42,11 @@ export function RoutineActivity({ task, original, onOpen }: { task: string; orig
 export function AgentMessageActivity({ item, roster }: { item: InternalMessageItem; roster: SocietyAgent[] }) {
   const t = useT();
   const openPair = useOpenPairConversation();
+  const assistantName = useEventStore((s) => s.assistantName);
   const outgoing = Boolean(item.outgoing);
   const id = item.outgoing?.recipientId ?? item.message.sender_id;
   const participant = roster.find(agent => agent.agentId === id);
-  const name = participant?.name || item.outgoing?.recipientName || item.message.sender_name;
+  const name = participant ? societyDisplayName(participant, assistantName) : (item.outgoing?.recipientName || item.message.sender_name);
   const status = item.message.status;
   const failed = status === "failed";
   const canOpenPair = Boolean(openPair && id && id !== "user" && item.message.sender_kind !== "user");

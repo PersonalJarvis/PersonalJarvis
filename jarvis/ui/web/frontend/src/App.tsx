@@ -424,7 +424,7 @@ export default function App() {
           open: settingsSidebarOpen,
           onToggle: () => setSettingsSidebarOpen((open) => !open),
         } : undefined} />
-        <VoiceWarmingBanner />
+        {!(["agentic-ide", "chat-workspace", "agentic-ide-classic"].includes(activeSection)) && <VoiceWarmingBanner />}
         {/* The one-time "all lights green" note — the first time every
             section of the active voice mode answers. Never again after. */}
         <ReadyCelebration />
@@ -447,7 +447,7 @@ export default function App() {
           as long as a cliConnectCoach is set in the store. */}
       <CliConnectPoller />
       {/* Blocking onboarding gate — overlays everything until first-run setup is complete. */}
-      <OnboardingGate />
+      <OnboardingGate activeSection={activeSection} />
       {/* `?` anywhere in the app opens this; the chunk loads on first use. */}
       {shortcutsOpen && (
         <Suspense fallback={null}>

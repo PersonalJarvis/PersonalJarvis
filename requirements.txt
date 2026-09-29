@@ -46,6 +46,14 @@ anyio==4.15.1 \
     #   openai
     #   sse-starlette
     #   starlette
+asyncssh==2.23.1 ; platform_machine == 'ARM64' and sys_platform == 'win32' \
+    --hash=sha256:d9dc3bc0206f3e4b5d80d1c0e6a24af2b4ad4beb556884c41fb2ad1c7ca3f44f \
+    --hash=sha256:f68e55476d41253d785bcac9a90834ae5fdea0f417bd6d7182608bda248de88e
+    # via -r requirements.in
+asyncssh==2.24.0 ; platform_machine != 'ARM64' or sys_platform != 'win32' \
+    --hash=sha256:4064c590e59ce2e8d82a2f66d35f3120d765828b4df5e3dbfb07b4a8c24686c9 \
+    --hash=sha256:9abd46300adcb6d4b73269b34c53cd0d17a138b9a22b5b38008ce7d5808734b7
+    # via -r requirements.in
 attrs==26.1.0 \
     --hash=sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309 \
     --hash=sha256:d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32
@@ -503,6 +511,7 @@ cryptography==46.0.3 ; platform_machine == 'ARM64' and sys_platform == 'win32' \
     --hash=sha256:f260d0d41e9b4da1ed1e0f1ce571f97fe370b152ab18778e9e8f67d6af432018
     # via
     #   -r requirements.in
+    #   asyncssh
     #   google-auth
     #   pyjwt
 cryptography==48.0.1 ; platform_machine == 'x86_64' and sys_platform == 'darwin' \
@@ -558,6 +567,7 @@ cryptography==48.0.1 ; platform_machine == 'x86_64' and sys_platform == 'darwin'
     # via
     #   -r requirements.in
     #   aiortc
+    #   asyncssh
     #   google-auth
     #   pyjwt
     #   pyopenssl
@@ -611,6 +621,7 @@ cryptography==50.0.0 ; (platform_machine != 'x86_64' and sys_platform == 'darwin
     # via
     #   -r requirements.in
     #   aiortc
+    #   asyncssh
     #   google-auth
     #   pyjwt
     #   pyopenssl
@@ -2247,6 +2258,7 @@ typing-extensions==4.16.0 \
     # via
     #   anthropic
     #   anyio
+    #   asyncssh
     #   elevenlabs
     #   fastapi
     #   google-genai

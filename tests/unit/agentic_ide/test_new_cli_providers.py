@@ -534,8 +534,9 @@ def test_a_configured_glm_pane_carries_the_endpoint_and_hides_a_stray_key(
     # Empty means "remove from the child": a host key would otherwise outrank
     # the token and the pane would quietly answer from the other vendor.
     assert overlay["ANTHROPIC_API_KEY"] == ""
-    # A plain Claude Code pane in the same workspace is untouched.
-    assert ide_session.agent_spawn_overlay("claude") == {}
+    # A plain Claude Code pane in the same workspace gets none of the vendor
+    # switch — only the pane setting every Claude Code pane carries.
+    assert ide_session.agent_spawn_overlay("claude") == {"CLAUDE_CODE_DISABLE_MOUSE_CLICKS": "1"}
 
 
 def _stub_pane(agent: str) -> Any:
@@ -587,7 +588,7 @@ def test_the_environment_reaches_a_pane_through_the_real_spawn_path(
     assert kimi_env is not None
     assert kimi_env["KIMI_CODE_NO_AUTO_UPDATE"] == "1"
 
-    # A CLI that declares nothing still inherits the machine's environment
+    # A CLI that declares nothing (a plain shell) still inherits the machine's environment
     # untouched — the behaviour every pane had before any of this existed. True of
     # an app started from a plain terminal; one started from a coding-agent
     # session strips that session's markers instead (test_parent_session_env), so
@@ -595,7 +596,7 @@ def test_the_environment_reaches_a_pane_through_the_real_spawn_path(
     # whether this passes.
     for marker in ide_session.PARENT_AGENT_SESSION_VARS:
         monkeypatch.delenv(marker, raising=False)
-    assert registry._prepare_spawn(_stub_pane("claude"), str(tmp_path)) is None
+    assert registry._prepare_spawn(_stub_pane("shell"), str(tmp_path)) is None
 
 
 def test_an_unconfigured_glm_pane_refuses_on_the_real_spawn_path(

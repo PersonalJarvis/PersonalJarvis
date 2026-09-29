@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLocaleChunk, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { societyDisplayName } from "@/lib/societyDisplayName";
+import { useEventStore } from "@/store/events";
 import { AgentSwatch } from "../AgentSwatch";
 import type { SocietyAgent } from "../data";
 import { AgentMemoryFiles, LearnedInstructions } from "./AgentKnowledge";
@@ -29,6 +31,8 @@ export function AgentProfileDialog({ agent, sample, onClose }: {
   const t = useT();
   useLocaleChunk("society");
   const client = useQueryClient();
+  const assistantName = useEventStore((s) => s.assistantName);
+  const displayName = societyDisplayName(agent, assistantName);
   const opener = useRef(document.activeElement instanceof HTMLElement ? document.activeElement : null);
   const lead = agent.tier === "lead";
   const [title, setTitle] = useState(agent.title);
@@ -82,7 +86,7 @@ export function AgentProfileDialog({ agent, sample, onClose }: {
           <header className="flex shrink-0 items-center gap-4 border-b border-border p-6">
             <AgentSwatch agent={agent} size={56} />
             <div className="min-w-0 flex-1">
-              <Dialog.Title className="truncate text-xl font-semibold">{agent.name}</Dialog.Title>
+              <Dialog.Title className="truncate text-xl font-semibold">{displayName}</Dialog.Title>
               <Dialog.Description className="mt-1 truncate text-sm text-muted-foreground">{agent.title || t("society.profile_card.subtitle")}</Dialog.Description>
               <div className="mt-2 flex flex-wrap gap-2">
                 <Badge variant="secondary">{t(`society.tier.${agent.tier}`)}</Badge>
@@ -99,7 +103,7 @@ export function AgentProfileDialog({ agent, sample, onClose }: {
             </TabsList>
             <TabsContent value="profile" className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
               <div className="grid gap-4 sm:grid-cols-2">
-                <label className="space-y-1.5 text-sm">{t("society.profile_card.name")}<input className={fieldClass} value={agent.name} readOnly /></label>
+                <label className="space-y-1.5 text-sm">{t("society.profile_card.name")}<input className={fieldClass} value={displayName} readOnly /></label>
                 <label className="space-y-1.5 text-sm">{t("society.profile_card.role")}<input className={fieldClass} value={title} onChange={(event) => setTitle(event.target.value)} disabled={lead || sample || save.isPending} /></label>
               </div>
               <div className="mt-5">

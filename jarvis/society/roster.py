@@ -119,6 +119,9 @@ class AgentRecord:
     created_ms: int
     updated_ms: int
     stats: dict[str, Any] = field(default_factory=dict)
+    #: Where the agent's work executes: ``None`` = this computer, else the id
+    #: of a connected machine (``jarvis.computers``) reached over SSH.
+    computer_id: str | None = None
 
     @property
     def session_id(self) -> str:
@@ -160,6 +163,7 @@ class AgentRecord:
             "max_concurrent_runs": self.max_concurrent_runs,
             "browser_mode": str(self.browser_mode),
             "browser_allowed_domains": list(self.browser_allowed_domains),
+            "computer_id": self.computer_id,
             "session_id": self.session_id,
             "created_ms": self.created_ms,
             "updated_ms": self.updated_ms,
@@ -207,6 +211,7 @@ class AgentRecord:
                 str(x) for x in _loads(row.get("browser_allowed_domains_json"), [])
             ],
             created_ms=int(row.get("created_ms") or 0),
+            computer_id=str(row["computer_id"]) if row.get("computer_id") else None,
             updated_ms=int(row.get("updated_ms") or 0),
         )
 
@@ -239,6 +244,7 @@ _EDITABLE: Final[frozenset[str]] = frozenset(
         "max_concurrent_runs",
         "browser_mode",
         "browser_allowed_domains",
+        "computer_id",
     }
 )
 
@@ -287,6 +293,20 @@ def _enum(kind: Any, value: Any, field_name: str) -> str:
         raise RosterError(
             FailureReason.BLOCKED_BY_POLICY, f"{field_name} must be one of: {allowed}"
         ) from exc
+
+
+def _validate_computer(value: Any) -> str | None:
+    """``None``/empty = this computer; otherwise a connected computer's id."""
+    if value is None or str(value).strip() == "":
+        return None
+    computer_id = str(value).strip()
+    from jarvis.computers.store import ComputerStore
+
+    if ComputerStore().get(computer_id) is None:
+        raise RosterError(
+            FailureReason.TARGET_UNKNOWN, f"computer {computer_id!r} is not connected"
+        )
+    return computer_id
 
 
 def _coerce(field_name: str, value: Any) -> Any:
@@ -372,6 +392,8 @@ def _coerce(field_name: str, value: Any) -> Any:
         return str(value or "")
     if field_name == "parent_agent_id":
         return str(value) if value else None
+    if field_name == "computer_id":
+        return _validate_computer(value)
     raise RosterError(FailureReason.BLOCKED_BY_POLICY, f"unknown field {field_name}")
 
 
@@ -423,6 +445,10 @@ class Roster:
             return await self._hydrate(existing), False
         tier_value = Tier(_enum(Tier, tier, "tier"))
         agent_id = slugify(clean_name)
+        if tier_value is Tier.LEAD and fields.get("computer_id"):
+            raise RosterError(
+                FailureReason.TIER_NOT_ALLOWED, "the lead always runs on this computer"
+            )
         if tier_value is Tier.LEAD and agent_id != LEAD_AGENT_ID:
             raise RosterError(
                 FailureReason.TIER_NOT_ALLOWED, "exactly one lead exists and it is Jarvis"
@@ -496,6 +522,10 @@ class Roster:
                 raise RosterError(FailureReason.BLOCKED_BY_POLICY, f"field {key!r} is not editable")
             if key == "tier" and agent_id == LEAD_AGENT_ID and str(value) != str(Tier.LEAD):
                 raise RosterError(FailureReason.TIER_NOT_ALLOWED, "Jarvis stays the lead")
+            if key == "computer_id" and agent_id == LEAD_AGENT_ID and value:
+                raise RosterError(
+                    FailureReason.TIER_NOT_ALLOWED, "the lead always runs on this computer"
+                )
             if key == "tier" and str(value) == str(Tier.LEAD) and agent_id != LEAD_AGENT_ID:
                 raise RosterError(FailureReason.TIER_NOT_ALLOWED, "only Jarvis is the lead")
             if key == "parent_agent_id" and value:

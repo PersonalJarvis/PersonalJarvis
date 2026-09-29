@@ -68,6 +68,44 @@ def test_lead_is_seeded_and_listed(client):
     assert body["agents"][0]["run_state"] == "idle"
 
 
+def test_group_membership_keeps_individual_agent_sessions(client):
+    c, _ = client
+    for name in ("Scout", "Planner", "Writer"):
+        assert c.post("/api/society/agents", json={"name": name}).status_code == 200
+    created = c.post(
+        "/api/society/chat-groups",
+        json={"name": "Launch team", "members": ["scout", "planner"]},
+    )
+    assert created.status_code == 200, created.text
+    group = created.json()["group"]
+    group_id = group["group_id"]
+    assert c.get("/api/society/chat-groups").json()["groups"] == [group]
+    assert (
+        c.post(
+            "/api/society/chat-groups", json={"name": "Too small", "members": ["scout"]}
+        ).status_code
+        == 422
+    )
+    before = {
+        agent["agent_id"]: agent["session_id"]
+        for agent in c.get("/api/society/agents").json()["agents"]
+    }
+    assert (
+        c.patch(
+            f"/api/society/chat-groups/{group_id}",
+            json={"name": "Delivery team", "members": ["scout", "writer"]},
+        ).status_code
+        == 200
+    )
+    assert c.delete(f"/api/society/chat-groups/{group_id}").status_code == 200
+    assert c.get("/api/society/chat-groups").json()["groups"] == []
+    after = {
+        agent["agent_id"]: agent["session_id"]
+        for agent in c.get("/api/society/agents").json()["agents"]
+    }
+    assert after == before
+
+
 def test_create_derives_focus_and_rules(client):
     c, _ = client
     res = c.post(

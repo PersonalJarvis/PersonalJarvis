@@ -39,7 +39,11 @@ def _user32() -> Any:
     import ctypes  # noqa: PLC0415
     from ctypes import wintypes  # noqa: PLC0415
 
-    user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+    # A private WinDLL instance, not ctypes.windll.user32: mutating argtypes
+    # on the shared object corrupts every other caller in the process,
+    # including pywebview's winforms SetWindowPos calls (see BUG-log 136x/day
+    # ArgumentError crash).
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
     _configure_user32(user32, ctypes, wintypes)
     return user32
 
