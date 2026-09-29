@@ -751,6 +751,10 @@ create-artifact = "jarvis.plugins.tool.create_artifact:CreateArtifactTool"
 # constrained + schema-validated; dangerous commands confirm (risk "ask").
 # Never a spawn (AP-5/AP-14). See ADR-0011 amendment "app-command tool".
 app-command = "jarvis.plugins.tool.app_command:AppCommandTool"
+# Every app action (2026-09-29): search + run any REST operation of the app
+# under the person's per-action policy. See ADR-0011 amendment "Every app action".
+find-app-action = "jarvis.plugins.tool.app_action:FindAppActionTool"
+run-app-action = "jarvis.plugins.tool.app_action:RunAppActionTool"
 # Phase A1 — Awareness layer L1 (synchronous state read for the router).
 awareness-snapshot = "jarvis.plugins.tool.awareness_snapshot:AwarenessSnapshotTool"
 # Phase A3 — Awareness-Layer L3 (BM25 search across recent episodes).

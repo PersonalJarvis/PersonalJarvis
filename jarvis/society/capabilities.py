@@ -68,6 +68,8 @@ NEVER_GRANTED: Final[frozenset[str]] = frozenset(
         "switch-provider",
         "manage-mcp-server",
         "app-command",
+        "find-app-action",
+        "run-app-action",
         "create-skill",
         "reveal-key-preview",
         "profile-update",

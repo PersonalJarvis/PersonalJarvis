@@ -2002,6 +2002,11 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             "delegate-to-agent",
             "society-status",
             "message-agent",
+            # Every app action (2026-09-29): catalog search + one gated REST
+            # operation under the person's policy - never a spawn, never in a
+            # worker set. See ADR-0011 amendment "Every app action".
+            "find-app-action",
+            "run-app-action",
         }
     )
     assert ROUTER_TOOLS == expected, (

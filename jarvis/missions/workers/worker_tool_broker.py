@@ -46,6 +46,10 @@ _FORBIDDEN_EXACT = frozenset(
     {
         "app-command",
         "app_command",
+        "find-app-action",
+        "find_app_action",
+        "run-app-action",
+        "run_app_action",
         "cli-jarvis",
         "cli-jarvisctl",
         "cli-jctl",

@@ -391,6 +391,7 @@ class WebServer:
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
         from .routine_hooks_routes import router as routine_hooks_router
+        from .app_actions_routes import router as app_actions_router
         from .appshot_routes import router as appshot_router
         from .screen_context_routes import router as screen_context_router
         from .self_mod_routes import router as self_mod_router
@@ -568,6 +569,7 @@ class WebServer:
         app.include_router(screen_context_router)
         # Appshots: the front window as conversation context, on a shortcut,
         # a button or a spoken request. Captures through Screen Context.
+        app.include_router(app_actions_router)
         app.include_router(appshot_router)
         # The mission deck's pictures: the last Screen-Context capture (one
         # frame, in memory, TTL) and Computer-Use frames by content hash.

@@ -201,6 +201,21 @@ def _report_readback_canned_only():
 
 
 @pytest.fixture(autouse=True)
+def _app_action_state_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
+    """Every registry-command or app-action call records its outcome for the
+    Jarvis-actions page; keep that, and the per-action policy, off the
+    developer's real ``data/state``."""
+    from jarvis.app_actions import history, policy
+
+    root = tmp_path_factory.mktemp("app-actions")
+    monkeypatch.setattr(policy, "policy_path", lambda: root / "policy.json")
+    monkeypatch.setattr(history, "history_path", lambda: root / "history.json")
+    history.reset_for_tests()
+    yield
+    history.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _reset_bus():
     """Reset the global default bus before and after each test."""
     reset_default_bus()
