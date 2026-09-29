@@ -1658,6 +1658,23 @@ export function AgenticTerminal({
        * narrow that will be, and how many panes to open stays the user's call.
        */
       const size = measured;
+      // A pane showing another viewer's geometry keeps showing it while its
+      // own tile has not changed since it last asked. Fitting it back to the
+      // tile here and then staying quiet (the request below would repeat one
+      // already turned down) left xterm at the tile's width while the agent
+      // went on drawing for the owner's: rows drawn over rows, word tails left
+      // at the end of other lines, worst on returning to the IDE, where every
+      // pane refits (2026-09-29). The geometry `onGeometry` applied is the one
+      // the agent really draws for, so it is the one this grid must hold.
+      if (
+        !claimOwner &&
+        displaced &&
+        sentSize &&
+        sentSize.cols === size.cols &&
+        sentSize.rows === size.rows
+      ) {
+        return;
+      }
       try {
         if (size.cols === proposed.cols && size.rows === proposed.rows) {
           fit.fit();
@@ -1667,6 +1684,8 @@ export function AgenticTerminal({
       } catch {
         return;
       }
+      // The grid now comes from a tile, so a reconnect may hand it over.
+      mountMeasured = true;
       // Already delivered and unchanged: the fit above was the whole job.
       // Re-announcing a size makes the agent on the other end redraw its
       // entire screen, and a pane refits several times per settling layout.
@@ -1815,29 +1834,59 @@ export function AgenticTerminal({
     window.addEventListener("pointerdown", reclaimOnGesture, true);
     window.addEventListener("keydown", reclaimOnGesture, true);
 
-    const openedWithClaim = viewerMayOwn();
+    /*
+     * The size this socket connects with. The tile's own measurement when there
+     * was one: the mount-time fit above already clamped the grid to the floors,
+     * so the terminal's geometry is safe to hand over as-is. When that fit
+     * could not run at all — a grid cell still mid-layout, a pane mounted
+     * hidden on the chat stage — the terminal still holds what it was
+     * constructed with, and THAT must not go out as if a tile had measured it:
+     * a running agent would be re-wrapped for 80 columns no tile has, and again
+     * for the real ones a moment later (ConPTY re-flows the whole screen on
+     * each). `UNMEASURED_SIZE` says so on the wire instead; the real size
+     * follows from `onOpen`'s fit as soon as the cell settles.
+     *
+     * Read on EVERY connect, not once at mount. The socket reconnects on its
+     * own (a backend restart, sleep and wake), and a handshake carrying the
+     * size the pane had when it mounted resized the agent to a grid the pane
+     * had long left — its frame drawn for that width into this one, until the
+     * next repaint happened to come (2026-09-29).
+     */
+    let openedWithClaim = viewerMayOwn();
+    const connectSize = () => {
+      if (!mountMeasured || !measurable()) return UNMEASURED_SIZE;
+      let proposed: { cols: number; rows: number } | undefined;
+      try {
+        proposed = fit.proposeDimensions();
+      } catch {
+        proposed = undefined;
+      }
+      const cols = proposed?.cols ?? term.cols;
+      const rows = proposed?.rows ?? term.rows;
+      if (!Number.isFinite(cols) || !Number.isFinite(rows)) return UNMEASURED_SIZE;
+      // The same floors `applyResize` puts on the grid.
+      return {
+        cols: Math.max(cols, MIN_REAL_COLS),
+        rows: Math.max(rows, MIN_REAL_ROWS),
+      };
+    };
     socket = openPaneSocket(
       {
         name,
         workspaceId,
-        // The connect-time size is the tile's own measurement when there was
-        // one. The mount-time fit above already clamped the grid to the
-        // floors, so the terminal's geometry is safe to hand over as-is.
-        // When that fit could not run at all — a grid cell still mid-layout,
-        // a pane mounted hidden on the chat stage — the terminal still holds
-        // what it was constructed with, and THAT must not go out as if a tile
-        // had measured it: a running agent would be re-wrapped for 80
-        // columns no tile has, and again for the real ones a moment later
-        // (ConPTY re-flows the whole screen on each). `UNMEASURED_SIZE` says
-        // so on the wire instead; the real size follows from `onOpen`'s fit
-        // as soon as the cell settles.
-        ...(mountMeasured &&
-        term.cols >= MIN_REAL_COLS &&
-        term.rows >= MIN_REAL_ROWS
-          ? { cols: term.cols, rows: term.rows }
-          : UNMEASURED_SIZE),
+        get cols() {
+          return connectSize().cols;
+        },
+        get rows() {
+          return connectSize().rows;
+        },
         appearance: appearanceRef.current,
-        claimOwner: openedWithClaim,
+        // Decided per connect as well, and remembered: `onOpen` settles
+        // ownership from what THIS handshake claimed.
+        get claimOwner() {
+          openedWithClaim = viewerMayOwn();
+          return openedWithClaim;
+        },
       },
       {
         onOpen: () => {

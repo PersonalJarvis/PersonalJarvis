@@ -1628,6 +1628,48 @@ describe("pane refit", () => {
     );
   });
 
+  it("keeps the owner's geometry on a refit while its own tile has not changed", () => {
+    // Refitting back to the tile and then staying quiet left xterm at the
+    // tile's width while the agent drew for the owner's — rows drawn over
+    // rows, worst on returning to the IDE, where every pane refits
+    // (2026-09-29). The grid holds what the agent really draws for.
+    render(pane(false));
+    settle();
+    displacedBy(30, 10);
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    terminalHarness.fit.mockClear();
+    terminalHarness.resize.mockClear();
+
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(terminalHarness.fit).not.toHaveBeenCalled();
+    expect(terminalHarness.resize).not.toHaveBeenCalled();
+    expect(terminalHarness.send).not.toHaveBeenCalled();
+  });
+
+  it("asks again when a displaced pane's tile really changes", () => {
+    render(pane(false));
+    settle();
+    displacedBy(30, 10);
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+
+    terminalHarness.size = { cols: 100, rows: 30 };
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+      vi.advanceTimersByTime(600);
+    });
+
+    // The server answers a refused request with the owner's size again.
+    expect(terminalHarness.send).toHaveBeenCalledWith({
+      t: "r",
+      cols: 100,
+      rows: 30,
+    });
+  });
+
   it("claims once, not on every pass of a settling layout", () => {
     // Three passes follow a maximize (see the effect). Holding the size after
     // the first, the pane has nothing to add on the next two.
@@ -1899,6 +1941,21 @@ describe("pane refit", () => {
     });
 
     expect(term?.options.fontSize).toBe(13);
+  });
+
+  it("reconnects with the size its tile has now, not the one it mounted with", () => {
+    // The socket reconnects on its own. A handshake carrying the mount-time
+    // size resized the agent to a grid the pane had long left (2026-09-29).
+    render(pane(false));
+    settle();
+    expect(terminalHarness.opened.current).toEqual(
+      expect.objectContaining({ cols: 80, rows: 24 }),
+    );
+
+    terminalHarness.size = { cols: 120, rows: 40 };
+
+    expect(terminalHarness.opened.current?.cols).toBe(120);
+    expect(terminalHarness.opened.current?.rows).toBe(40);
   });
 
   it("tells a fresh socket the pane's size whatever the last one heard", () => {
