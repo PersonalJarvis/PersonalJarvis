@@ -34,6 +34,7 @@ import { AgentPanel, CheckpointPanel, PaneAgentPanel, type OfficeActions } from 
 import type { WalkerContext } from "./OfficeAgents";
 import { ownsKeyboard } from "./OfficePlayer";
 import { ArcadeCabinet } from "./ArcadeCabinet";
+import { useOfficeSettings, useReceptionTab } from "./officeSettings";
 import "./office.css";
 import "./officeHud.css";
 import "./officeMinimap.css";
@@ -242,6 +243,24 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     return () => document.removeEventListener("keydown", onKey, true);
   }, [select]);
 
+  // H (or the HUD button) opens reception on the controls guide from anywhere, and closes it again.
+  const toggleGuide = useCallback(() => {
+    const current = useOfficeStore.getState().selection;
+    if (current?.kind === "checkpoint" && current.id === "create") { select(null); return; }
+    useReceptionTab.getState().setTab("controls");
+    select({ kind: "checkpoint", id: "create" });
+  }, [select]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.code !== "KeyH" || event.repeat || event.ctrlKey || event.metaKey || event.altKey || ownsKeyboard(event.target)) return;
+      if (useOfficeStore.getState().selection?.kind === "arcade") return;
+      event.preventDefault();
+      toggleGuide();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleGuide]);
+
   // Leaving the map forgets panels and calls; the office opens fresh next time.
   useEffect(() => () => {
     const store = useOfficeStore.getState();
@@ -266,6 +285,8 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     : null;
   const titleKey = coding ? "society.office.coding_title" : "society.office.title";
   const playerName = profile.name.trim() || t("society.office.you");
+  const showHintBar = useOfficeSettings((s) => s.showHintBar);
+  const receptionOpen = selection?.kind === "checkpoint" && selection.id === "create";
 
   return (
     <section className={compact ? "office-stage office-stage-compact" : "office-stage"} aria-label={t(titleKey)}
@@ -307,6 +328,10 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
         <button type="button" className="office-button" aria-pressed={follow} onClick={() => useOfficeStore.getState().setFollow(true)}>{t("society.office.me")}</button>
         <button type="button" className="office-button" onClick={() => setOverview((v) => v + 1)}>{t("society.office.overview")}</button>
         <button type="button" className="office-button" onClick={() => select({ kind: "checkpoint", id: "wardrobe" })}>{t("society.office.cp_wardrobe")}</button>
+        <button type="button" className="office-button" aria-pressed={receptionOpen} aria-keyshortcuts="H"
+          onClick={toggleGuide}>
+          {t("society.office.guide.hud_button")}
+        </button>
         <button type="button" className="office-button" data-office-floor-switch disabled={!!ride}
           onClick={() => takeElevator(otherFloor(floor))}>{t(coding ? "society.office.floor_down" : "society.office.floor_up")}</button>
         {(!coding || !compact || onOpenLedger) && (
@@ -318,7 +343,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
 
       {selection?.kind === "arcade" && <ArcadeCabinet onClose={() => select(null)} />}
       {selection && selection.kind !== "arcade" && (
-        <div className="office-panel-slot">
+        <div className="office-panel-slot" data-wide={receptionOpen || undefined}>
           {selection.kind === "agent" && selectedAgent && (selectedPane
             ? <PaneAgentPanel occupant={selectedPane} onOpen={() => openPaneSession(selectedPane.pane)} onClose={() => select(null)} />
             : <AgentPanel agent={selectedAgent} actions={actions} onClose={() => select(null)} />)}
@@ -348,7 +373,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
         onOpenMap={() => setMapOpen(true)} />}
       <OfficeFullMap open={mapOpen} onOpen={() => setMapOpen(true)} onClose={() => setMapOpen(false)}
         layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null} />
-      {!compact && <p className="office-hud office-help" data-office-ui>{t("society.office.help")}</p>}
+      {!compact && showHintBar && <p className="office-hud office-help" data-office-ui>{t("society.office.help")}</p>}
     </section>
   );
 }

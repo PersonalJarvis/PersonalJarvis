@@ -17,6 +17,7 @@ import { agentPositions, bodiesExcept } from "./walkerRegistry";
 import { OFFICE_FIGURE_HEIGHT_M } from "./OfficeAgents";
 import { seatOf, type OfficeLayout } from "./officeLayout";
 import { chairInReach, useLeadSeat } from "./leadSeat";
+import { isRunning, useOfficeSettings } from "./officeSettings";
 
 /** The person's pace: a brisk walk, and a sprint on Shift (m/s). */
 export const PLAYER_WALK_SPEED = 2.0;
@@ -165,7 +166,7 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
     // Keyboard movement, relative to where the camera looks.
     let ix = 0, iz = 0;
     for (const code of pressed.current) { ix += MOVE_KEYS[code][0]; iz += MOVE_KEYS[code][1]; }
-    const speed = run.current ? PLAYER_SPRINT_SPEED : PLAYER_WALK_SPEED;
+    const speed = isRunning(run.current, useOfficeSettings.getState().alwaysRun) ? PLAYER_SPRINT_SPEED : PLAYER_WALK_SPEED;
     let moved = 0;
     if (ix !== 0 || iz !== 0) {
       player.path = [];

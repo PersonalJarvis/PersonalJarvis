@@ -1,0 +1,64 @@
+/* Reception: the office's help centre. Theme tokens only, so light and dark mode both work. */
+.office-panel-slot[data-wide] { width:min(430px, calc(100% - 28px)); }
+.office-reception { display:flex; flex-direction:column; gap:10px; min-height:0; }
+
+/* Tabs: a segmented control. */
+.office-rx-tabs { display:grid; grid-template-columns:repeat(3, 1fr); gap:3px; padding:3px; border-radius:10px; background:hsl(var(--secondary) / .7); border:1px solid hsl(var(--border)); }
+.office-rx-tab { border:0; border-radius:7px; padding:6px 8px; background:transparent; color:hsl(var(--muted-foreground)); font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; transition:background .15s, color .15s; }
+.office-rx-tab:hover { color:hsl(var(--foreground)); }
+.office-rx-tab[aria-selected="true"] { background:hsl(var(--background)); color:hsl(var(--foreground)); box-shadow:0 1px 3px rgb(0 0 0 / .18); }
+.office-rx-tab:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:1px; }
+.office-rx-body { display:flex; flex-direction:column; gap:10px; }
+
+/* Icon tiles: a checkpoint's icon, as on its floor token. */
+.office-rx-icon { flex:none; display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:9px; background:hsl(var(--secondary)); color:hsl(var(--foreground)); border:1px solid hsl(var(--border)); }
+.office-rx-icon svg { width:16px; height:16px; }
+.office-rx-icon[data-tone="gold"] { background:#f5b83d; color:#1f1300; border-color:transparent; }
+
+/* Welcome: hiring first, then every place on the floor. */
+.office-rx-hero { display:flex; gap:11px; padding:11px; border-radius:11px; border:1px solid hsl(var(--border)); background:linear-gradient(135deg, hsl(var(--primary) / .1), hsl(var(--secondary) / .45)); }
+.office-rx-hero > div { display:flex; flex-direction:column; align-items:flex-start; gap:6px; min-width:0; }
+.office-rx-hero strong { font-size:13px; }
+.office-rx-hero p { color:hsl(var(--muted-foreground)); }
+.office-rx-heading { margin:2px 0 0; font-size:10.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:hsl(var(--muted-foreground)); }
+.office-rx-places { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; }
+.office-rx-places li { display:flex; align-items:center; gap:9px; padding:5px 6px; border-radius:9px; }
+.office-rx-places li:hover { background:hsl(var(--secondary) / .6); }
+.office-rx-place { flex:1; min-width:0; display:flex; flex-direction:column; }
+.office-rx-place strong { font-size:12px; }
+.office-rx-place span { font-size:11px; color:hsl(var(--muted-foreground)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.office-rx-places .office-mini { flex:none; }
+.office-rx-tip { display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:9px; border:1px dashed hsl(var(--border)); font-size:11px; color:hsl(var(--muted-foreground)); }
+
+/* Key caps: a raised key for keys, a softer pill for mouse gestures. */
+.office-rx-cap { display:inline-flex; align-items:center; justify-content:center; min-width:22px; height:22px; padding:0 6px; border-radius:6px; border:1px solid hsl(var(--border)); border-bottom-width:2px; background:hsl(var(--background)); color:hsl(var(--foreground)); font-family:inherit; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; }
+.office-rx-cap[data-mouse] { border-bottom-width:1px; border-radius:999px; font-weight:600; background:hsl(var(--secondary) / .8); }
+.office-rx-keys { display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:4px; }
+.office-rx-alt { display:inline-flex; align-items:center; gap:3px; }
+.office-rx-or { margin:0 3px 0 1px; font-size:10.5px; color:hsl(var(--muted-foreground)); }
+.office-rx-plus { font-size:11px; color:hsl(var(--muted-foreground)); }
+
+/* Controls: one card per group, a row per action. */
+.office-rx-groups { display:flex; flex-direction:column; gap:8px; }
+.office-rx-group { border:1px solid hsl(var(--border)); border-radius:11px; padding:8px 10px 4px; background:hsl(var(--background) / .5); }
+.office-rx-group h3 { margin:0 0 4px; font-size:10.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:hsl(var(--muted-foreground)); }
+.office-rx-group ul { list-style:none; margin:0; padding:0; }
+.office-rx-group li { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 0; border-top:1px solid hsl(var(--border) / .6); }
+.office-rx-group li:first-child { border-top:0; }
+.office-rx-what { min-width:0; }
+
+/* Settings: a row per setting with a switch. */
+.office-rx-settings { display:flex; flex-direction:column; border:1px solid hsl(var(--border)); border-radius:11px; overflow:hidden; }
+.office-rx-setting { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 11px; }
+.office-rx-setting + .office-rx-setting { border-top:1px solid hsl(var(--border)); }
+.office-rx-setting > div { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.office-rx-setting strong { font-size:12px; }
+.office-rx-setting span { font-size:11px; color:hsl(var(--muted-foreground)); }
+.office-rx-switch { flex:none; position:relative; width:36px; height:20px; border-radius:999px; border:1px solid hsl(var(--border)); background:hsl(var(--secondary)); cursor:pointer; padding:0; transition:background .15s; }
+.office-rx-switch i { position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:hsl(var(--muted-foreground)); transition:transform .15s, background .15s; }
+.office-rx-switch[aria-checked="true"] { background:hsl(var(--primary)); border-color:transparent; }
+.office-rx-switch[aria-checked="true"] i { transform:translateX(16px); background:hsl(var(--primary-foreground)); }
+.office-rx-switch:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
+.office-rx-reset { align-self:flex-start; }
+
+@media (prefers-reduced-motion: reduce) { .office-rx-tab, .office-rx-switch, .office-rx-switch i { transition:none; } }

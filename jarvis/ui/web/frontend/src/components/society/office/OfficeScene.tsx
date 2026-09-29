@@ -21,20 +21,16 @@ import { useEventStore } from "@/store/events";
 import type { DeskChat } from "./useDeskChats";
 import { FurniturePiece, MeetingChairs } from "./OfficeProps";
 import { RoomFloors, RoomSign, RoomWalls } from "./OfficeRooms";
-import { CheckpointMarker, type CheckpointIcon } from "./CheckpointMarker";
+import { CHECKPOINT_ICON, CheckpointMarker } from "./CheckpointMarker";
 import { OFFICE_FIGURE_HEIGHT_M, OfficeAgents, type WalkerContext } from "./OfficeAgents";
 import { OfficePlayer } from "./OfficePlayer";
 import { PlayerBubble } from "./OfficeBubbles";
 import { OfficeCameraRig } from "./OfficeCameraRig";
-import { allDesks, type CheckpointKind, type Department, type OfficeLayout, type Point } from "./officeLayout";
+import { allDesks, type Department, type OfficeLayout, type Point } from "./officeLayout";
 import { isWalkable, nearestWalkable, type NavGrid } from "./officeNav";
 import { DEPARTMENT_TINTS, OFFICE } from "./officePalette";
 import { officeSession, player as playerBody, useOfficeStore, type OfficeFloor, type Selection } from "./officeStore";
 import { arrivalPose } from "./officeFloors";
-
-const CHECKPOINT_ICON: Record<CheckpointKind, CheckpointIcon> = {
-  create: "plus", manage: "list", team: "team", wardrobe: "shirt", lead: "star", break: "coffee", elevator: "updown",
-};
 
 /** The person's character as a mover for Gigi to follow (the body object itself, mutated every frame). */
 const PLAYER_OWNER = { current: playerBody };

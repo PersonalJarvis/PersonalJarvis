@@ -14,7 +14,7 @@ import {
 import { useT } from "@/i18n";
 import { plateScale } from "./OfficeAgents";
 import { cachedCanvasTexture } from "./canvasMaterials";
-import type { Checkpoint } from "./officeLayout";
+import type { Checkpoint, CheckpointKind } from "./officeLayout";
 import { CHECKPOINT_GOLD } from "./officePalette";
 
 export type CheckpointIcon = "plus" | "list" | "team" | "shirt" | "star" | "coffee" | "updown";
@@ -29,6 +29,11 @@ export const CHECKPOINT_ICON_PATHS: Record<CheckpointIcon, string> = {
   coffee: "M4 9h12v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9zM16 10h1.5a2.5 2.5 0 0 1 0 5H16M8 3.5c0 1 1 1 1 2M12 3.5c0 1 1 1 1 2",
   // The elevator: an up arrow beside a down arrow.
   updown: "M8 20V4M4 8l4-4 4 4M16 4v16M12 16l4 4 4-4",
+};
+
+/** The icon each checkpoint wears, on its floor token and in the reception's list of places. */
+export const CHECKPOINT_ICON: Record<CheckpointKind, CheckpointIcon> = {
+  create: "plus", manage: "list", team: "team", wardrobe: "shirt", lead: "star", break: "coffee", elevator: "updown",
 };
 
 const TOKEN_RADIUS = 0.36;
@@ -96,7 +101,7 @@ function faceMaterial(icon: CheckpointIcon): MeshStandardMaterial {
   return material;
 }
 
-function IconSvg({ icon }: { icon: CheckpointIcon }) {
+export function IconSvg({ icon }: { icon: CheckpointIcon }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d={CHECKPOINT_ICON_PATHS[icon]} />

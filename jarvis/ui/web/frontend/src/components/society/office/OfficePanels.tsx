@@ -16,6 +16,7 @@ import { agentPositions } from "./walkerRegistry";
 import { AgentTalkPanel, CALL_MS } from "./AgentTalkPanel";
 import type { PlayerProfile } from "./playerProfile";
 import { WardrobePanel } from "./WardrobePanel";
+import { ReceptionPanel } from "./ReceptionPanel";
 
 
 export interface OfficeActions {
@@ -126,18 +127,6 @@ function ElevatorPanel({ floor, info }: { floor: OfficeFloor; info: ElevatorInfo
       )}
       <button type="button" className="office-action office-action-primary" onClick={() => info.onRide(to)}>
         {t(to === "coding" ? "society.office.elevator_up" : "society.office.elevator_down")}
-      </button>
-    </>
-  );
-}
-
-function CreatePanel({ actions }: { actions: OfficeActions }) {
-  const t = useT();
-  return (
-    <>
-      <p>{t("society.office.create_body")}</p>
-      <button type="button" className="office-action office-action-primary" disabled={!actions.onCreateAgent} onClick={() => actions.onCreateAgent?.()}>
-        {t("society.office.create_action")}
       </button>
     </>
   );
@@ -313,7 +302,7 @@ export function CheckpointPanel({ id, floor = "agents", agents, layout, sample, 
   const t = useT();
   return (
     <PanelShell title={t(`society.office.cp_${id}`)} subtitle={t(`society.office.cp_${id}_hint`)} onClose={onClose}>
-      {id === "create" && <CreatePanel actions={actions} />}
+      {id === "create" && <ReceptionPanel floor={floor} layout={layout} onCreateAgent={actions.onCreateAgent} />}
       {id === "manage" && <ManagePanel agents={agents} actions={actions} />}
       {id === "team" && <TeamPanel agents={agents} layout={layout} sample={sample} actions={actions} />}
       {id === "wardrobe" && <WardrobePanel profile={profile} onProfile={onProfile} agents={agents} sample={sample} />}
