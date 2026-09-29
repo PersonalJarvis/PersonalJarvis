@@ -4739,10 +4739,27 @@ class Registry:
         )
 
     async def _resize_there_and_back(self, term: Terminal, cols: int, rows: int) -> bool:
-        """One nudge: the height one row short, then back. False if it failed."""
+        """One nudge: the height one row short, then back. False if it failed.
+
+        "Back" means the size the pane holds WHEN the nudge ends, not the one
+        passed in. The sleep between the two resizes yields the loop, and a
+        viewer's resize landing inside it (a dragged seam, the IDE view shown
+        again after a tab switch) has already moved the PTY to the new size.
+        Restoring the captured size then put the agent back on the OLD grid
+        while ``pty_cols``, the transcript and every viewer's xterm said the
+        new one — and nothing ever corrected it, because each side believed
+        the sizes agreed. The agent kept formatting for a width nobody showed:
+        rows drawn over rows, word tails left behind (reported 2026-09-29).
+        """
         pty_id = term.pty_id
         if not pty_id:
             return False
+        # The same holds for the start: a nudge only ever varies the height of
+        # the size the agent already has. A re-joining viewer that does not own
+        # the pane passes ITS size, and nudging to that width would reflow the
+        # agent for a window that was never granted the pane.
+        cols = term.pty_cols or cols
+        rows = term.pty_rows or rows
         manager = self._pool(term)
         try:
             # The whole point of the nudge is a full repaint — which must read
@@ -4755,7 +4772,10 @@ class Registry:
             # into a single row and never recover the frame.
             manager.resize(pty_id, cols, max(rows - 1, 2))
             await asyncio.sleep(REPAINT_NUDGE_S)
-            manager.resize(pty_id, cols, rows)
+            if term.pty_id != pty_id:
+                # A new process owns the pane now and was sized on its own.
+                return False
+            manager.resize(pty_id, term.pty_cols or cols, term.pty_rows or rows)
             term.last_resize_at = time.time()
         except Exception as exc:  # noqa: BLE001 - a stale screen beats a failed reconnect
             logger.debug("Agentic IDE: could not nudge {} into a repaint: {}", term.name, exc)

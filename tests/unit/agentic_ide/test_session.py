@@ -460,6 +460,56 @@ async def test_a_viewer_resize_the_agent_ignored_is_nudged_again(
     assert not registry._repaint_check_by_pane
 
 
+async def test_a_resize_during_a_nudge_is_not_undone_by_its_restore(
+    registry: Registry,
+    fake_pty: FakePtyManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A nudge puts back the size the pane has NOW, not the one it started at.
+
+    Its restore used to write the captured size after the sleep, so a viewer
+    resize landing in between (a tab switch back, a dragged seam) left the agent
+    drawing for the old width while every xterm showed the new one: rows drawn
+    over rows, word tails left behind (2026-09-29).
+    """
+    monkeypatch.setattr(session_mod, "REPAINT_NUDGE_S", 0.05)
+    await _open(registry, tmp_path, [{"agent": "claude"}])
+    await registry.attach("T1", 80, 24, _noop_output, _noop_exit)
+    term = registry.session.terminals[0]
+    pty = term.pty_id
+    fake_pty.resizes.clear()
+
+    nudge = asyncio.create_task(registry._resize_there_and_back(term, 80, 24))
+    await asyncio.sleep(0.01)
+    # A viewer resizes while the nudge holds the pane a row short.
+    assert registry.resize(term.key, 120, 40) is True
+    assert await nudge
+
+    sizes = [(cols, rows) for tid, cols, rows in fake_pty.resizes if tid == pty]
+    assert sizes[0] == (80, 23)
+    assert sizes[-1] == (120, 40), "the nudge put the agent back on the old grid"
+    assert (term.pty_cols, term.pty_rows) == (120, 40)
+
+
+async def test_a_nudge_never_changes_the_width_the_agent_has(
+    registry: Registry,
+    fake_pty: FakePtyManager,
+    tmp_path: Path,
+) -> None:
+    """A re-joining viewer's own size must not reach the agent through a nudge."""
+    await _open(registry, tmp_path, [{"agent": "claude"}])
+    await registry.attach("T1", 80, 24, _noop_output, _noop_exit)
+    term = registry.session.terminals[0]
+    pty = term.pty_id
+    fake_pty.resizes.clear()
+
+    assert await registry._resize_there_and_back(term, 132, 50)
+
+    sizes = [(cols, rows) for tid, cols, rows in fake_pty.resizes if tid == pty]
+    assert sizes == [(80, 23), (80, 24)]
+
+
 async def test_a_line_mode_agent_is_nudged_once(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
