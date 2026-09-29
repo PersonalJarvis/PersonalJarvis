@@ -39,8 +39,8 @@ async def _workspace(tmp_path, panes: int = 3) -> Registry:
 async def _row(tmp_path, panes: int = 3) -> Registry:
     """``panes`` side by side — one column each, every slot 0.
 
-    A workspace no longer OPENS in this shape: the wizard fills columns two
-    deep (``WIZARD_COLUMN_HEIGHT``). So a row is built the way a user builds
+    A workspace no longer OPENS in this shape: the wizard deals panes into an
+    even row-major grid. So a row is built the way a user builds
     one, by splitting rightwards, and the split tests below say out loud which
     arrangement they are splitting rather than inheriting whichever one the
     wizard happens to produce.
@@ -58,23 +58,21 @@ def grid(registry: Registry) -> list[tuple[str, int, int]]:
     return [(t.name, t.column, t.slot) for t in session.terminals]
 
 
-async def test_wizard_opens_columns_of_two(tmp_path) -> None:
-    """Four terminals are two columns of two, not four columns of one.
+async def test_wizard_opens_rows_left_to_right(tmp_path) -> None:
+    """Four terminals are two rows of two, read the way a page is.
 
-    The workspace is one screenful, so a row of columns divides the window
-    between every pane: six terminals left each about 410 px on the
-    maintainer's display, under the width their agent needs to draw in, so
-    every pane was clipped at its tile edge and the six read as overlapping
-    one another (2026-08-11). Filling columns two deep halves the column count
-    and so doubles each pane's width.
+    The workspace is one screenful, so a single row divides the window between
+    every pane and each one ends up too narrow for its agent to draw in
+    (2026-08-11). Since the workspace redesign (b33cf38ad) panes are dealt
+    row-major, matching the order the prompt-bar chips and the sidebar use.
     """
     registry = await _workspace(tmp_path, 4)
-    assert [(c, s) for _, c, s in grid(registry)] == [(0, 0), (0, 1), (1, 0), (1, 1)]
+    assert [(c, s) for _, c, s in grid(registry)] == [(0, 0), (1, 0), (0, 1), (1, 1)]
 
 
-async def test_wizard_stands_an_odd_pane_in_a_column_of_its_own(tmp_path) -> None:
+async def test_wizard_gives_an_odd_pane_the_full_bottom_row(tmp_path) -> None:
     registry = await _workspace(tmp_path, 3)
-    assert [(c, s) for _, c, s in grid(registry)] == [(0, 0), (0, 1), (1, 0)]
+    assert [(c, s) for _, c, s in grid(registry)] == [(0, 0), (1, 0), (0, 1)]
 
 
 async def test_split_down_stacks_inside_the_anchors_own_column(tmp_path) -> None:
@@ -153,10 +151,12 @@ async def test_split_right_in_a_stack_keeps_the_other_pane_full_width(tmp_path) 
     panes and everything was squeezed. The tree answers locally: the top half
     holds two panes side by side, the bottom pane keeps the full width.
     """
-    registry = await _workspace(tmp_path, 2)
+    # The wizard opens two panes side by side, so the stack is built by hand.
+    registry = await _workspace(tmp_path, 1)
     session = registry.session
     assert session is not None
-    top, bottom = session.terminals[0], session.terminals[1]
+    top = session.terminals[0]
+    bottom = await registry.add_terminal(anchor=top.name, direction="down")
     added = await registry.add_terminal(anchor=top.name, direction="right")
 
     layout = session.layout
