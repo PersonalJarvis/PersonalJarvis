@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import en from "@/i18n/locales/society/en.json";
-import { CONTROL_GROUPS, controlsFor, mouseGesture, OFFICE_CONTROLS } from "./officeControls";
+import { arrowCap, CONTROL_GROUPS, controlsFor, mouseGesture, OFFICE_CONTROLS } from "./officeControls";
 import { isRunning } from "./officeSettings";
 
 const guide = (en as { society: { office: { guide: Record<string, string> } } }).society.office.guide;
@@ -30,7 +30,7 @@ describe("office controls guide", () => {
 
   it("lists the hotkeys the office handles", () => {
     const caps = new Set(OFFICE_CONTROLS.flatMap((c) => c.keys.flat()));
-    for (const key of ["W", "Shift", "E", "T", "M", "H", "Esc", "Space", "P"]) expect(caps.has(key), key).toBe(true);
+    for (const key of ["W", "ArrowUp", "Shift", "E", "T", "M", "H", "Esc", "Space", "P"]) expect(caps.has(key), key).toBe(true);
   });
 });
 
@@ -40,5 +40,14 @@ describe("always run", () => {
     expect(isRunning(true, false)).toBe(true);
     expect(isRunning(false, true)).toBe(true);
     expect(isRunning(true, true)).toBe(false);
+  });
+});
+
+describe("arrow caps", () => {
+  it("names each arrow's direction and nothing else", () => {
+    expect(arrowCap("ArrowUp")).toBe("up");
+    expect(arrowCap("ArrowRight")).toBe("right");
+    expect(arrowCap("W")).toBeNull();
+    for (const dir of ["up", "down", "left", "right"]) expect(guide[`key_${dir}`]).toBeTruthy();
   });
 });

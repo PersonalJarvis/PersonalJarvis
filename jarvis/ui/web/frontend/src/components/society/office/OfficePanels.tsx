@@ -17,6 +17,7 @@ import { AgentTalkPanel, CALL_MS } from "./AgentTalkPanel";
 import type { PlayerProfile } from "./playerProfile";
 import { WardrobePanel } from "./WardrobePanel";
 import { ReceptionPanel } from "./ReceptionPanel";
+import { CHECKPOINT_ICON, IconSvg, type CheckpointIcon } from "./CheckpointMarker";
 
 
 export interface OfficeActions {
@@ -30,7 +31,9 @@ function StateDot({ state }: { state: SocietyAgent["state"] }) {
   return <i className="office-dot" data-state={state} aria-hidden />;
 }
 
-function PanelShell({ title, subtitle, onClose, children }: { title: string; subtitle?: string; onClose: () => void; children: React.ReactNode }) {
+function PanelShell({ title, subtitle, icon, kind, onClose, children }: {
+  title: string; subtitle?: string; icon?: CheckpointIcon; kind?: string; onClose: () => void; children: React.ReactNode;
+}) {
   const t = useT();
   const headingId = useId();
   const panel = useRef<HTMLElement>(null);
@@ -38,8 +41,9 @@ function PanelShell({ title, subtitle, onClose, children }: { title: string; sub
   // land on it; walking keys keep working because they listen on the window.
   useEffect(() => { panel.current?.focus({ preventScroll: true }); }, [title]);
   return (
-    <aside ref={panel} className="office-card office-panel" data-office-ui aria-labelledby={headingId} tabIndex={-1}>
+    <aside ref={panel} className="office-card office-panel" data-office-ui data-panel={kind} aria-labelledby={headingId} tabIndex={-1}>
       <header className="office-panel-head">
+        {icon && <span className="office-panel-badge" aria-hidden><IconSvg icon={icon} /></span>}
         <div>
           <h2 id={headingId}>{title}</h2>
           {subtitle ? <span>{subtitle}</span> : null}
@@ -301,7 +305,7 @@ export function CheckpointPanel({ id, floor = "agents", agents, layout, sample, 
 }) {
   const t = useT();
   return (
-    <PanelShell title={t(`society.office.cp_${id}`)} subtitle={t(`society.office.cp_${id}_hint`)} onClose={onClose}>
+    <PanelShell title={t(`society.office.cp_${id}`)} subtitle={t(`society.office.cp_${id}_hint`)} icon={CHECKPOINT_ICON[id]} kind={id} onClose={onClose}>
       {id === "create" && <ReceptionPanel floor={floor} layout={layout} onCreateAgent={actions.onCreateAgent} />}
       {id === "manage" && <ManagePanel agents={agents} actions={actions} />}
       {id === "team" && <TeamPanel agents={agents} layout={layout} sample={sample} actions={actions} />}
