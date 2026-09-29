@@ -212,6 +212,21 @@ _HOSTAPI_PREFERENCE = {
 _FORBIDDEN_OUTPUT_HOSTAPIS = frozenset({"Windows WDM-KS"})
 
 
+def _drain_tail_samples(stream: Any, source_rate: int) -> int:
+    """Silence (in source samples) that pushes a one-shot through the buffer.
+
+    Covers the stream's reported output latency plus a 50 ms margin; a
+    malformed or missing latency falls back to ``DEFAULT_OUTPUT_BUFFER_S``.
+    """
+    try:
+        latency = float(getattr(stream, "latency", DEFAULT_OUTPUT_BUFFER_S))
+    except (TypeError, ValueError):
+        latency = DEFAULT_OUTPUT_BUFFER_S
+    if not 0.0 <= latency <= 2.0:
+        latency = DEFAULT_OUTPUT_BUFFER_S
+    return int(source_rate * (latency + 0.05))
+
+
 def _apply_edge_fades(pcm: bytes, sample_rate: int, fade_ms: int = 5) -> bytes:
     """Apply a linear fade-in + fade-out (each ``fade_ms``) to int16 mono PCM.
 
@@ -927,6 +942,13 @@ class AudioPlayer:
                 with state_lock:
                     self._unclean_stream = stream
             raise _PlaybackSuperseded
+        # WASAPI's blocking-mode stop() does NOT drain: it discards whatever
+        # still sits in the device buffer. A blob shorter than that buffer
+        # (every earcon vs. the 0.4 s default) was accepted instantly and then
+        # thrown away unheard. Trailing silence one buffer deep makes the last
+        # blocking write return only once the real audio has played out.
+        tail = np.zeros(_drain_tail_samples(stream, source_rate), dtype=np.int16)
+        arr = np.concatenate([arr, tail])
         try:
             self._write_samples(
                 stream,

@@ -390,6 +390,9 @@ async def test_ptt_ack_plays_chime_only_without_dead_zone(monkeypatch):
     monkeypatch.setattr("jarvis.speech.pipeline.asyncio.sleep", _fake_sleep)
 
     await pipe._play_ack(ptt=True)
+    # The chime plays in the background so the mic opens without waiting for
+    # it to finish playing out.
+    await asyncio.gather(*pipe._earcon_tasks)
     assert len(pipe._player.plays) == 1, "PTT must play the chime only"
     assert 0.4 not in slept, "PTT must NOT run the echo dead-zone"
 

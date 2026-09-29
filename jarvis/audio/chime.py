@@ -93,7 +93,7 @@ SCREEN_CAPTURE_PREROLL_S: float = 0.045
 
 def generate_screen_capture_pcm(
     sample_rate: int = 24_000,
-    amplitude: float = 0.45,
+    amplitude: float = 0.2,
 ) -> bytes:
     """Generate the appshot cue: a soft, rounded two-note "bloop".
 
@@ -103,6 +103,10 @@ def generate_screen_capture_pcm(
     plays the whole cue (the former noise-burst shutter packed half its
     energy into the first 5 ms and was inaudible). Synthesized in memory:
     portable and free of third-party recordings.
+
+    The peak stays low on purpose: the player's master volume adds up to 4x
+    makeup gain, and a louder source would ride the peak limiter instead of
+    staying soft.
     """
     preroll = int(SCREEN_CAPTURE_PREROLL_S * sample_rate)
     body_s = 0.34
