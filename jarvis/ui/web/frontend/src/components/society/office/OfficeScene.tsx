@@ -1,20 +1,23 @@
 /**
- * The office floor: a microcement plate floating in a starry night behind
- * frameless glass, walled rooms in the north and south, one felt-zoned
- * department per provider family in between — and everybody in it.
+ * The office floor: an oak-floored plate floating in a starry night behind
+ * frameless glass, walled rooms in the north and south, one rug-zoned
+ * department per provider family in between — and everybody in it. Each
+ * floor dresses the shared plan in its own look (AgentsFloorLook /
+ * CodingFloorLook).
  */
 import { useLayoutEffect, useMemo } from "react";
 import { Stars } from "@react-three/drei";
 import type { ThreeEvent } from "@react-three/fiber";
-import { CanvasTexture, Color, RepeatWrapping, Shape, SRGBColorSpace, type Texture } from "three";
+import { Color } from "three";
 import { useT } from "@/i18n";
 import type { SocietyAgent } from "../data";
 import type { ToyLook } from "./toyFigureModel";
-import { Railing, SignWall } from "./OfficeFurniture";
 import { DeskInstances } from "./DeskInstances";
 import { DeskDressing } from "./DeskDressing";
 import { CodingSlab, CodingStudio } from "./CodingFloorLook";
 import { CodingFloorAmbience } from "./CodingFloorAmbience";
+import { AGENTS_SCENE, AgentsDepartment, AgentsSlab } from "./AgentsFloorLook";
+import { AgentsFloorAmbience } from "./AgentsFloorAmbience";
 import { ExecutiveDesks, LeadOfficeLight } from "./LeadSuite";
 import { LiveMonitors } from "./LiveMonitors";
 import { TerminalMonitors } from "./TerminalMonitors";
@@ -35,9 +38,9 @@ import { OfficePlayer } from "./OfficePlayer";
 import { OfficeDog } from "./OfficeDog";
 import { PlayerBubble } from "./OfficeBubbles";
 import { OfficeCameraRig } from "./OfficeCameraRig";
-import { allDesks, type Department, type OfficeLayout, type Point } from "./officeLayout";
+import { allDesks, type OfficeLayout, type Point } from "./officeLayout";
 import { isWalkable, nearestWalkable, type NavGrid } from "./officeNav";
-import { CODING_SCENE, DEPARTMENT_ZONES, OFFICE } from "./officePalette";
+import { CODING_SCENE, OFFICE } from "./officePalette";
 import { officeSession, player as playerBody, useOfficeStore, type OfficeFloor, type Selection } from "./officeStore";
 import { arrivalPose } from "./officeFloors";
 
@@ -69,129 +72,6 @@ function GigiCompanion({ grid, awake, reduced }: { grid: NavGrid; awake: boolean
   const speaking = useEventStore((s) => s.voiceState === "speaking");
   const clear = useMemo(() => (x: number, z: number) => isWalkable(grid, { x, z }), [grid]);
   return <GigiFlyer owner={PLAYER_OWNER} mode="follow" speaking={speaking} paused={!awake} reduced={reduced} clear={clear} />;
-}
-
-/** Metres covered by one repeat of the floor texture (one poured panel). */
-const FLOOR_PANEL_M = 4;
-
-/** Microcement drawn once: soft clouds of tone and faint panel seams; repeated across the floor. */
-let floorTexture: Texture | null | undefined;
-function microcement(): Texture | null {
-  if (floorTexture !== undefined) return floorTexture;
-  const canvas = typeof document !== "undefined" ? document.createElement("canvas") : null;
-  let ctx: CanvasRenderingContext2D | null = null;
-  try {
-    ctx = canvas?.getContext("2d") ?? null;
-  } catch {
-    // jsdom without the canvas package: no texture, the flat floor colour is the right fallback.
-    ctx = null;
-  }
-  floorTexture = null;
-  if (canvas && ctx) {
-    const size = 512;
-    canvas.width = size;
-    canvas.height = size;
-    ctx.fillStyle = OFFICE.floor;
-    ctx.fillRect(0, 0, size, size);
-    // Deterministic clouds, drawn at every wrapped offset so the tile repeats seamlessly.
-    let seed = 0x2f6e2b1;
-    const rand = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 0x1_0000_0000);
-    for (let i = 0; i < 70; i += 1) {
-      const x = rand() * size, y = rand() * size, r = 30 + rand() * 90;
-      const tone = OFFICE.floorCloud[i % OFFICE.floorCloud.length];
-      for (const dx of [-size, 0, size]) {
-        for (const dy of [-size, 0, size]) {
-          const g = ctx.createRadialGradient(x + dx, y + dy, 0, x + dx, y + dy, r);
-          g.addColorStop(0, `${tone}66`);
-          g.addColorStop(1, `${tone}00`);
-          ctx.fillStyle = g;
-          ctx.fillRect(x + dx - r, y + dy - r, r * 2, r * 2);
-        }
-      }
-    }
-    // Fine grain, then the panel seams on two edges (they meet the next tile's).
-    for (let i = 0; i < 5000; i += 1) {
-      ctx.fillStyle = rand() > 0.5 ? "rgba(255,255,255,0.10)" : "rgba(90,84,76,0.07)";
-      ctx.fillRect(Math.floor(rand() * size), Math.floor(rand() * size), 1, 1);
-    }
-    ctx.fillStyle = OFFICE.floorSeam;
-    ctx.fillRect(0, 0, size, 2);
-    ctx.fillRect(0, 0, 2, size);
-    const texture = new CanvasTexture(canvas);
-    texture.colorSpace = SRGBColorSpace;
-    texture.wrapS = texture.wrapT = RepeatWrapping;
-    texture.anisotropy = 8;
-    floorTexture = texture;
-  }
-  return floorTexture;
-}
-
-function Slab({ layout, onFloorClick }: { layout: OfficeLayout; onFloorClick: (event: ThreeEvent<MouseEvent>) => void }) {
-  const { minX, maxX, minZ, maxZ } = layout.bounds;
-  const w = maxX - minX, d = maxZ - minZ, cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
-  const floorMap = useMemo(() => {
-    const base = microcement();
-    if (!base) return null;
-    const map = base.clone();
-    map.repeat.set(w / FLOOR_PANEL_M, d / FLOOR_PANEL_M);
-    map.needsUpdate = true;
-    return map;
-  }, [w, d]);
-  return (
-    <group>
-      <mesh position={[cx, -0.3, cz]} receiveShadow>
-        <boxGeometry args={[w, 0.6, d]} />
-        <meshStandardMaterial color={OFFICE.slabEdge} roughness={0.9} />
-      </mesh>
-      <mesh position={[cx, 0.001, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow onClick={onFloorClick}>
-        <planeGeometry args={[w, d]} />
-        <meshStandardMaterial color={floorMap ? "#ffffff" : OFFICE.walkway} map={floorMap} roughness={0.55} />
-      </mesh>
-      <Railing from={[minX + 0.2, minZ + 0.2]} to={[maxX - 0.2, minZ + 0.2]} />
-      <Railing from={[maxX - 0.2, minZ + 0.2]} to={[maxX - 0.2, maxZ - 0.2]} />
-      <Railing from={[maxX - 0.2, maxZ - 0.2]} to={[minX + 0.2, maxZ - 0.2]} />
-      <Railing from={[minX + 0.2, maxZ - 0.2]} to={[minX + 0.2, minZ + 0.2]} />
-    </group>
-  );
-}
-
-/** A flat rounded rectangle in the XY plane, laid on the floor by its mesh's rotation. */
-function roundedRect(w: number, d: number, r: number): Shape {
-  const x = -w / 2, y = -d / 2;
-  const shape = new Shape();
-  shape.moveTo(x + r, y);
-  shape.lineTo(x + w - r, y);
-  shape.quadraticCurveTo(x + w, y, x + w, y + r);
-  shape.lineTo(x + w, y + d - r);
-  shape.quadraticCurveTo(x + w, y + d, x + w - r, y + d);
-  shape.lineTo(x + r, y + d);
-  shape.quadraticCurveTo(x, y + d, x, y + d - r);
-  shape.lineTo(x, y + r);
-  shape.quadraticCurveTo(x, y, x + r, y);
-  return shape;
-}
-
-/** A department zone: a rounded felt rug with a darker border band, and its fluted back wall. */
-function DepartmentArea({ dept }: { dept: Department }) {
-  const t = useT();
-  const w = dept.maxX - dept.minX, d = dept.maxZ - dept.minZ;
-  const cx = (dept.minX + dept.maxX) / 2, cz = (dept.minZ + dept.maxZ) / 2;
-  const zone = DEPARTMENT_ZONES[dept.tint % DEPARTMENT_ZONES.length];
-  const outer = useMemo(() => roundedRect(w - 0.1, d - 0.1, 0.45), [w, d]);
-  const inner = useMemo(() => roundedRect(w - 0.4, d - 0.4, 0.32), [w, d]);
-  return (
-    <group>
-      <mesh position={[cx, 0.005, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <shapeGeometry args={[outer, 6]} />
-        <meshStandardMaterial color={zone.panel} roughness={1} />
-      </mesh>
-      <mesh position={[cx, 0.007, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <shapeGeometry args={[inner, 6]} />
-        <meshStandardMaterial color={zone.rug} roughness={1} />
-      </mesh>
-      <SignWall label={dept.label || t("society.office.open_space")} width={w - 0.4} position={[cx, 0, dept.minZ + 0.1]} zone={dept.tint} />
-    </group>
-  );
 }
 
 export interface OfficeSceneProps {
@@ -252,14 +132,14 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
       <primitive attach="background" object={background} />
       <fog attach="fog" args={[space, span * 2.2, span * 4.5]} />
       <Stars radius={span * 3} depth={span} count={2500} factor={4} saturation={0} fade speed={reduced ? 0 : 0.3} />
-      <hemisphereLight args={coding ? [CODING_SCENE.sky, CODING_SCENE.ground, 0.95] : ["#eef2ff", "#8a8279", 0.95]} />
+      <hemisphereLight args={coding ? [CODING_SCENE.sky, CODING_SCENE.ground, 0.95] : [AGENTS_SCENE.sky, AGENTS_SCENE.ground, 0.95]} />
       <ambientLight intensity={0.25} />
       <directionalLight position={[maxX + 10, 26, maxZ + 6]} intensity={1.55} color="#fff7ec" castShadow
         shadow-mapSize={[2048, 2048]} shadow-bias={-0.0004} shadow-normalBias={0.03}
         shadow-camera-left={-span * 0.7} shadow-camera-right={span * 0.7}
         shadow-camera-top={span * 0.7} shadow-camera-bottom={-span * 0.7} shadow-camera-far={120} />
-      {coding ? <CodingSlab layout={layout} onFloorClick={onFloorClick} /> : <Slab layout={layout} onFloorClick={onFloorClick} />}
-      {coding && <CodingFloorAmbience layout={layout} />}
+      {coding ? <CodingSlab layout={layout} onFloorClick={onFloorClick} /> : <AgentsSlab layout={layout} onFloorClick={onFloorClick} />}
+      {coding ? <CodingFloorAmbience layout={layout} /> : <AgentsFloorAmbience layout={layout} />}
       <RoomFloors rooms={layout.rooms} />
       <RoomWalls walls={layout.walls} />
       {layout.rooms.map((room) => <RoomSign key={room.id} room={room} label={t(`society.office.room_${room.kind}`)} />)}
@@ -269,7 +149,7 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
           <DeskDressing desks={benchDesks} departments={layout.departments} />
         </>
         : <>
-          {layout.departments.map((dept) => <DepartmentArea key={dept.id} dept={dept} />)}
+          {layout.departments.map((dept) => <AgentsDepartment key={dept.id} dept={dept} />)}
           <DeskInstances desks={benchDesks} agents={agents} zones={zones} />
           <DeskDressing desks={benchDesks} departments={layout.departments} floor="agents" />
         </>}
