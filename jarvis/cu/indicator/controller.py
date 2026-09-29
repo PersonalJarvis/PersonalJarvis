@@ -243,6 +243,7 @@ class CUIndicatorController:
         await self._quit_sidecar()
 
     async def _quit_sidecar(self) -> None:
+        capture_guard.unregister_hook()
         if self._proc is None:
             return
         await asyncio.to_thread(
@@ -276,6 +277,9 @@ class CUIndicatorController:
             await asyncio.to_thread(self._spawn_sidecar)
             if self._proc is None:
                 return False
+            # Without a border there was no guard yet: a later capture must
+            # blank the resting thumbnail before its grab on every OS.
+            capture_guard.register_hook(self._suppress_for_grab)
             shown = await asyncio.to_thread(
                 self._send_and_wait,
                 protocol.CMD_SNAP,

@@ -272,6 +272,11 @@ class ScreenContextService:
         loop, before redaction. It exists for the appshot effect, which must
         start at the true shutter moment; the hook stays in-process and must
         schedule anything slow itself. Its failures never affect the capture.
+
+        A service with a shutter hook shows no pre-shutter border: the appshot
+        flash over the captured window is the visible signal instead
+        (maintainer directive 2026-09-29 — the gold frame before every appshot
+        read as an ugly glitch).
         """
         self._shutter_hook = hook
 
@@ -475,8 +480,10 @@ class ScreenContextService:
         # Announce BEFORE the shutter so the indicator is up while there is
         # still something to indicate.
         event_trace_id = trace_id or uuid4()
-        announced = await self._announce(target, trace_id=event_trace_id)
-        if not announced:
+        # The appshot flash replaces the border (see ``set_shutter_hook``).
+        border = self._shutter_hook is None
+        announced = await self._announce(target, trace_id=event_trace_id) if border else False
+        if border and not announced:
             degradations.append(
                 Degradation(
                     code=DegradationCode.INDICATOR_UNAVAILABLE,
@@ -486,7 +493,7 @@ class ScreenContextService:
                     ),
                 )
             )
-        else:
+        elif announced:
             # Give the composited border a perceptible pre-shutter moment. The
             # renderer ACK proves it was processed; this short dwell makes the
             # privacy signal human-visible rather than a one-frame flicker.
@@ -622,7 +629,8 @@ class ScreenContextService:
                 handle_id=handle_id,
             )
         finally:
-            await self._dismiss_indicator(trace_id=event_trace_id)
+            if border:
+                await self._dismiss_indicator(trace_id=event_trace_id)
 
     async def _grab(self, target: CaptureTarget) -> tuple[tuple[int, int], bytes]:
         """Grab the target; rescue a window capture that came back empty.

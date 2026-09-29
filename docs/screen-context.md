@@ -17,6 +17,10 @@ platform through the same adapter seam.
 > deliver it to a running voice call or the next message. See
 > [appshots.md](appshots.md). The Settings card described in Wave 4 moved
 > onto the Appshots page as **Allow appshots**.
+> Since then the shared service shows no pre-shutter border: the appshot
+> flash right after the grab is the on-screen signal (maintainer directive
+> 2026-09-29), so the "indicator precedes the shutter" rule below applies
+> only to services built without a shutter hook.
 
 When the user says something that unambiguously asks Jarvis to *look* — "can you
 see this?", "what does that say?", "look at the error" — Jarvis takes **one**

@@ -82,3 +82,21 @@ async def test_a_window_with_content_is_used_as_captured() -> None:
 
     assert outcome.status == "captured"
     assert len(capturer.grabs) == 1
+
+
+async def test_an_appshot_service_shows_no_border_and_claims_no_missing_signal() -> None:
+    from .test_service import RecordingBus
+
+    bus = RecordingBus()
+    shutters: list = []
+    service = make_service(capturer=BlankWindowCapturer(), bus=bus)
+    service.set_shutter_hook(lambda *args: shutters.append(args))
+
+    outcome = await service.capture(verdict=WINDOW)
+
+    assert outcome.status == "captured"
+    assert len(shutters) == 1, "the flash is the visible signal"
+    names = [type(event).__name__ for event in bus.events]
+    assert "ScreenCaptureAnnounced" not in names, "no gold border before an appshot"
+    assert "ScreenCaptureIndicatorDismissed" not in names
+    assert all(d.code.value != "indicator_unavailable" for d in outcome.context.degradations)

@@ -37,8 +37,9 @@ the shutter and shows up as the last appshot.
 Appshots capture through the Screen Context engine
 ([screen-context.md](screen-context.md)), so everything there applies
 unchanged: the app denylist, redaction of password fields and sensitive
-patterns, the capture indicator before the shutter, and no image ever written
-to disk. **Allow appshots** on the Appshots page is `[screen_context].enabled`
+patterns, and no image ever written to disk. The one difference: an appshot
+shows no gold border before the shutter — the flash over the captured window
+is the visible signal (maintainer directive 2026-09-29). **Allow appshots** on the Appshots page is `[screen_context].enabled`
 — one switch for every screen look.
 
 The shutter effect's thumbnail is cut from the frame in memory and piped only
