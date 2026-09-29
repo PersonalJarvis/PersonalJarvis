@@ -289,22 +289,38 @@ def test_train_eligibility():
     assert not agent_integrate.eligible({**base, "headRefName": "dependabot/pip/x"})
 
 
-def test_train_reads_a_running_ci_as_pending_not_missing():
-    running = {"status": "in_progress", "conclusion": None, "created_at": "2"}
-    ignored = {"status": "completed", "conclusion": "action_required", "created_at": "3"}
-    assert agent_integrate.run_state([running, ignored]) == "pending"
-    assert agent_integrate.run_state([ignored]) == "missing"
-    assert agent_integrate.run_state([]) == "missing"
+def _run(event, status, conclusion, created, run_id=1):
+    return {
+        "event": event,
+        "status": status,
+        "conclusion": conclusion,
+        "created_at": created,
+        "id": run_id,
+    }
 
 
-def test_train_uses_the_newest_verdict_and_redispatches_a_cancelled_run():
-    old = {"status": "completed", "conclusion": "failure", "created_at": "1"}
-    new = {"status": "completed", "conclusion": "success", "created_at": "2"}
-    cancelled = {"status": "completed", "conclusion": "cancelled", "created_at": "3"}
-    assert agent_integrate.run_state([old, new]) == "success"
-    assert agent_integrate.run_state([new, old]) == "success"
-    assert agent_integrate.run_state([old]) == "failure"
-    assert agent_integrate.run_state([old, new, cancelled]) == "missing"
+def test_train_reads_a_running_ci_as_pending():
+    runs = [_run("pull_request", "in_progress", None, "2")]
+    assert agent_integrate.run_state(runs) == ("pending", None)
+
+
+def test_train_ignores_dispatch_runs_because_the_pr_never_sees_them():
+    runs = [_run("workflow_dispatch", "completed", "success", "3")]
+    assert agent_integrate.run_state(runs) == ("missing", None)
+
+
+def test_train_approves_a_parked_bot_run_and_reruns_a_cancelled_one():
+    parked = _run("pull_request", "completed", "action_required", "4", 7)
+    assert agent_integrate.run_state([parked]) == ("approve", 7)
+    cancelled = _run("pull_request", "completed", "cancelled", "5", 8)
+    assert agent_integrate.run_state([parked, cancelled]) == ("rerun", 8)
+
+
+def test_train_uses_the_newest_pull_request_verdict():
+    old = _run("pull_request", "completed", "failure", "1", 1)
+    new = _run("pull_request", "completed", "success", "2", 2)
+    assert agent_integrate.run_state([new, old]) == ("success", 2)
+    assert agent_integrate.run_state([old]) == ("failure", 1)
 
 
 def test_train_updates_only_conflicting_or_stale_red_branches():
@@ -312,10 +328,13 @@ def test_train_updates_only_conflicting_or_stale_red_branches():
     assert decide("CONFLICTING", "success", True) == "update"
     assert decide("MERGEABLE", "success", True) == "merge"  # behind main is fine
     assert decide("MERGEABLE", "pending", True) == "wait"
-    assert decide("MERGEABLE", "missing", False) == "dispatch"
+    assert decide("MERGEABLE", "approve", False) == "approve"
+    assert decide("MERGEABLE", "rerun", True) == "rerun"
+    assert decide("MERGEABLE", "missing", False) == "wait"
     assert decide("MERGEABLE", "failure", True) == "update"
     assert decide("MERGEABLE", "failure", False) == "wait"
     assert decide("UNKNOWN", "success", False) == "wait"
+    assert decide("UNKNOWN", "approve", False) == "approve"
 
 
 # --------------------------------------------------------------------------- release
