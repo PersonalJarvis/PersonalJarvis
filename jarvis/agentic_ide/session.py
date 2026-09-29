@@ -1086,11 +1086,6 @@ class Terminal:
     # Movement in the shadow of this stamp is the pane being redrawn, not the
     # agent working — see `activity._resize_shadowed`.
     last_resize_at: float | None = None
-    # Resized while its agent was still loading, before it had taken the whole
-    # screen — so no repaint check could run for that size, and a CLI that was
-    # not listening yet may still be drawing for the size it was born with.
-    # Settled once the input line appears (see `_prompt_ready_then_settle`).
-    resized_while_booting: bool = False
     prompts_sent: int = 0
     last_prompt: str = ""
     # The current process's records are kept as a fallback if the local history
@@ -3661,35 +3656,6 @@ class Registry:
         )
         return term.name in ready
 
-    async def _prompt_ready_then_settle(self, session: Session, term: Terminal) -> bool:
-        """Wait for the input line, then repaint a pane resized while it loaded.
-
-        A fresh pane is spawned at the size its tile measured on mount, and the
-        grid settles a moment later — so its real size reaches the PTY while the
-        CLI is still booting. A CLI that is not listening for size changes yet
-        keeps drawing for the size it was born with: an interface narrower or
-        shorter than its pane, the input box floating mid-pane (reported
-        2026-09-29, four panes opened together). The repaint check cannot catch
-        this, because it only runs once the agent has taken the whole screen.
-        One nudge after the input line appears — when the CLI certainly listens
-        — makes it lay out for the size the pane really has.
-        """
-        generation = term.process_generation
-        ready = await self._prompt_ready(session, term)
-        if (
-            ready
-            and term.process_generation == generation
-            and term.resized_while_booting
-            and term.replay.holds_screen
-            and term.pty_cols
-            and term.pty_rows
-        ):
-            term.resized_while_booting = False
-            # Shielded: the slot's ceiling may cancel this wait, and a nudge
-            # cut between its two resizes leaves the PTY a row short.
-            await asyncio.shield(self._nudge_repaint(term, term.pty_cols, term.pty_rows))
-        return ready
-
     async def _acquire_agent_cold_start(self, term: Terminal) -> asyncio.Semaphore | None:
         """Take this CLI/account's boot slot when its registry entry needs one.
 
@@ -4086,7 +4052,6 @@ class Registry:
         # can inherit the previous PTY's settled-screen evidence.
         term.process_generation += 1
         term.idle_seen = False
-        term.resized_while_booting = False
         term.transcript.resize(cols, rows)
         # Readiness belongs to this process. Keeping the dead process's screen
         # here leaves old prompt sigils visible to the readiness probe and makes
@@ -4265,9 +4230,7 @@ class Registry:
         try:
             # One of a few starts at a time (see COLD_START_LIMIT), and the
             # slot stays taken until this pane's input line appears.
-            async with self._cold_start_slot(
-                ready=lambda: self._prompt_ready_then_settle(session, term)
-            ):
+            async with self._cold_start_slot(ready=lambda: self._prompt_ready(session, term)):
                 try:
                     identity = "pane:" + term.history_id
                     if term.stopping or self._locate(identity, session.id) != (session, term):
@@ -4715,9 +4678,6 @@ class Registry:
         test, a script) simply goes unchecked.
         """
         if not term.replay.holds_screen:
-            # Either a line-mode CLI, or a full-screen one still loading. The
-            # second cannot be checked yet, so it is settled after boot.
-            term.resized_while_booting = True
             return
         try:
             loop = asyncio.get_running_loop()

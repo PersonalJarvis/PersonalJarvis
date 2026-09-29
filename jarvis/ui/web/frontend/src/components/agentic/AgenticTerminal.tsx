@@ -103,6 +103,8 @@ import { attachTerminalBridge } from "@/lib/editActions";
 import { robustCopy, robustPaste } from "@/lib/clipboard";
 import {
   TERMINAL_FONT_STACK,
+  TERMINAL_FONT_WEIGHT,
+  TERMINAL_FONT_WEIGHT_BOLD,
   alignTerminalCells,
   syncTerminalFont,
   terminalFontSettled,
@@ -925,11 +927,15 @@ export function AgenticTerminal({
       // module exists to prevent.
       fontFamily: TERMINAL_FONT_STACK,
       fontSize: fontSizeRef.current,
-      // A dense console line height, like a standalone terminal: at 1.3 a pane
-      // showed far fewer rows than the same window in a native terminal, which
-      // read as "zoomed in". Kept integral-friendly: fractional cell heights
-      // round differently per row and make a redrawn TUI box look ragged.
-      lineHeight: 1.2,
+      // Medium body text — see TERMINAL_FONT_WEIGHT for why Regular reads thin
+      // and grey under the WebGL renderer next to a native terminal.
+      fontWeight: TERMINAL_FONT_WEIGHT,
+      fontWeightBold: TERMINAL_FONT_WEIGHT_BOLD,
+      // The font's own line height, like a standalone terminal. JetBrains Mono
+      // already carries 1.32em of leading; at 1.2 on top a row was ~1.6em tall,
+      // so a pane showed large text gaps between small glyphs. At 1.0 the larger
+      // default size (./paneFont) fits the same number of rows as before.
+      lineHeight: 1.0,
       // Zero, not 0.2: extra tracking is added per cell, so a box-drawing frame
       // and the text under it accumulate different sub-pixel offsets and the
       // frame visibly bends. Monospace legibility comes from the line height.
