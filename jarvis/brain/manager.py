@@ -6762,6 +6762,7 @@ class BrainManager:
         try:
             max_tools = int(getattr(brain, "max_tools", 0) or 0)
         except (TypeError, ValueError):
+            # A brain without a numeric tool cap means 'no cap'.
             max_tools = 0
         if window <= 0 and max_tools <= 0:
             return tools

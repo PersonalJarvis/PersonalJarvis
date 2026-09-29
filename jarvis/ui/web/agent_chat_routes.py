@@ -869,6 +869,8 @@ async def resolve_approval(
 async def answer_question(
     session_id: str, question_id: str, body: QuestionAnswerBody, request: Request
 ) -> dict[str, Any]:
+    # Stays async on purpose: the answer sets the card's asyncio.Event, which is
+    # not thread-safe, so this must run on the event loop (a dict lookup, no I/O).
     svc = _service(request)
     try:
         ok = svc.resolve_question(
@@ -890,6 +892,8 @@ async def answer_question(
     summary="Close an agent's question card and let its recommendations apply",
 )
 async def skip_question(session_id: str, question_id: str, request: Request) -> dict[str, Any]:
+    # Stays async on purpose: the answer sets the card's asyncio.Event, which is
+    # not thread-safe, so this must run on the event loop (a dict lookup, no I/O).
     svc = _service(request)
     if not svc.skip_question(session_id, question_id):
         raise HTTPException(status_code=404, detail="no such open question")

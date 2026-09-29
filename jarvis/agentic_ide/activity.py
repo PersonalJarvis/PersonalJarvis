@@ -362,6 +362,7 @@ def _adopted_with_work(term: Any) -> bool:
             getattr(term, "process_generation", 0)
         )
     except (TypeError, ValueError):
+        # Unparseable generation counters mean the pane was not adopted.
         return False
 
 

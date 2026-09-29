@@ -87,6 +87,7 @@ def repo_root(folder: str | Path) -> Path | None:
     try:
         result = _git(["rev-parse", "--show-toplevel"], path)
     except ForkError:
+        # No git, or not a repository: the caller treats None as 'no project'.
         return None
     if result.returncode != 0:
         return None
@@ -213,6 +214,7 @@ def create_worktree(folder: str | Path, name: str) -> Worktree:
     try:
         relative = Path(os.path.relpath(source.resolve(), root.resolve()))
     except ValueError:
+        # Different drives on Windows: fall back to the project root.
         relative = Path(".")
     inside = str(relative) not in ("", ".") and relative.parts[0] != ".."
     pane_folder = target / relative if inside else target

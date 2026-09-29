@@ -139,6 +139,7 @@ class AskUserTool:
         try:
             specs = parse_questions(args)
         except ValueError as exc:
+            # The validation message goes back to the agent as the tool error.
             return ToolResult(success=False, output=None, error=f"invalid questions: {exc}")
         if is_routine_session(self._session_id):
             return _unattended(
@@ -152,6 +153,7 @@ class AskUserTool:
         try:
             question_id = await service.open_questions(self._session_id, specs, asker=self._asker())
         except TooManyQuestions:
+            # Over the per-turn limit: the agent is told and its defaults apply.
             return _unattended(
                 specs,
                 f"This turn already asked the user {MAX_ASKS_PER_TURN} times, so no card was "
@@ -170,6 +172,7 @@ class AskUserTool:
         try:
             specs = service.question_specs(self._session_id, question_id)
         except (AttributeError, KeyError):
+            # An unknown question id goes back to the agent as the tool error.
             return ToolResult(
                 success=False,
                 output=None,
