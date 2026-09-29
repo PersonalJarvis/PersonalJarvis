@@ -721,14 +721,23 @@ def _resolve_chain(config: JarvisConfig) -> list[tuple[str, str | None]]:
             deduped = [entry for entry in deduped if entry[0] != "claude-api"]
 
     # The realtime voice call owns its key (user mandate 2026-09-29). Families
-    # that bill it move to the end, so skill drafting, bios and other
-    # background resolves reach it only when nothing else can answer — a
-    # single-key install still works, a multi-key one stops draining the voice.
+    # that bill it move behind every other cloud family, so skill drafting,
+    # bios and other background resolves reach it only when nothing else can
+    # answer. They still precede the trailing keyless local tail: a single-key
+    # install without a local server must keep a working resolve (AP-22).
     from jarvis.brain.voice_key import bills_voice_key
 
     on_voice_key = [entry for entry in deduped if bills_voice_key(config, entry[0])]
     if on_voice_key and len(on_voice_key) < len(deduped):
-        deduped = [entry for entry in deduped if entry not in on_voice_key] + on_voice_key
+        rest = [entry for entry in deduped if entry not in on_voice_key]
+        local_ids = {provider for provider, _ in _local_tail(config)}
+        # Only the tail run counts: a local provider the user put first (a
+        # deliberate local primary or override) keeps its lead.
+        lead_kept = 1 if rest[0] == deduped[0] else 0
+        split = len(rest)
+        while split > lead_kept and rest[split - 1][0] in local_ids:
+            split -= 1
+        deduped = rest[:split] + on_voice_key + rest[split:]
     return deduped
 
 
