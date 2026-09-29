@@ -87,6 +87,8 @@ describe("Agentic IDE project flow", () => {
     await screen.findByText("Choose a workspace");
     act(() => useIdeProjectsStore.getState().newWorkspace("p1"));
     const dialog = await screen.findByRole("dialog", { name: "New workspace" });
+    // Git choices sit behind a disclosure so the common case stays one click.
+    fireEvent.click(await within(dialog).findByRole("button", { name: /Git options/ }));
     fireEvent.click(await within(dialog).findByRole("radio", { name: /New worktree/ }));
     expect((within(dialog).getByLabelText("Branch name") as HTMLInputElement).value).toBe("agent/brave-river-0001");
     fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
@@ -158,9 +160,10 @@ describe("Agentic IDE project flow", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Pane add" }));
     const dialog = screen.getByRole("dialog", { name: "Add coding agent" });
     // Still the automatic grid, so that is what the dialog offers first.
-    expect((within(dialog).getByRole("combobox", { name: "Split next to" }) as HTMLSelectElement).value).toBe("");
+    expect(within(dialog).getByRole("combobox", { name: "Split next to" }).textContent).toContain("Automatic even grid");
     expect(within(dialog).queryByRole("radio", { name: "Split left" })).toBeNull();
-    fireEvent.change(within(dialog).getByRole("combobox", { name: "Split next to" }), { target: { value: "T2" } });
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "Split next to" }));
+    fireEvent.click(await screen.findByText("T2 · Codex"));
     fireEvent.click(within(dialog).getByRole("radio", { name: "Split left" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Codex" }));
     await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith({ workspace_id: "w1", agent: "codex", anchor: "T2", direction: "left" }));
