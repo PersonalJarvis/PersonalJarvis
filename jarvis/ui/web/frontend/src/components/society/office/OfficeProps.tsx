@@ -401,7 +401,8 @@ function TeamBoard() {
 function ReceptionDesk() {
   return (
     <group>
-      <Rounded size={[2.8, 0.98, 0.4]} radius={0.15} position={[0, 0.49, 0.25]} material={MAT.deskBody} />
+      {/* Counter front stops 2 cm short of the wood strip: coplanar faces z-fight into stripes. */}
+      <Rounded size={[2.8, 0.98, 0.38]} radius={0.15} position={[0, 0.49, 0.24]} material={MAT.deskBody} />
       <Rounded size={[2.8, 0.05, 0.46]} radius={0.02} position={[0, 1.005, 0.22]} material={MAT.wood} />
       <Box size={[2.3, 0.1, 0.02]} position={[0, 0.55, 0.44]} material={MAT.wood} cast={false} />
       <Rounded size={[2.5, 0.04, 0.44]} radius={0.015} position={[0, 0.74, -0.2]} material={MAT.deskTop} />
@@ -587,7 +588,8 @@ function RugPiece({ w, d }: { w: number; d: number }) {
 function Elevator() {
   return (
     <group>
-      <Rounded size={[2.2, 2.4, 0.3]} radius={0.04} position={[0, 1.2, -0.05]} material={PM.shaft} />
+      {/* The back stops 3 cm short of the slats' outer face: coplanar faces z-fight into stripes. */}
+      <Rounded size={[2.2, 2.4, 0.27]} radius={0.04} position={[0, 1.2, -0.035]} material={PM.shaft} />
       <Box size={[0.1, 2.08, 0.06]} position={[-0.66, 1.04, 0.12]} material={PM.steelDark} />
       <Box size={[0.1, 2.08, 0.06]} position={[0.66, 1.04, 0.12]} material={PM.steelDark} />
       <Box size={[1.42, 0.1, 0.06]} position={[0, 2.13, 0.12]} material={PM.steelDark} />

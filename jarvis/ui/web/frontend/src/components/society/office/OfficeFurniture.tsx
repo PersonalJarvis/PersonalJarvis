@@ -136,7 +136,8 @@ export function Plant({ position, size = 1 }: { position: [number, number, numbe
 export function Bookshelf({ position, rotationY = 0 }: { position: [number, number, number]; rotationY?: number }) {
   const books = useMemo(() => Array.from({ length: 14 }, (_, i) => ({
     x: -0.72 + (i % 7) * 0.22 + ((i * 13) % 5) * 0.01,
-    y: i < 7 ? 0.42 : 0.98,
+    // Bottom-row books stay below the shelf board, whose front is flush with theirs.
+    y: i < 7 ? 0.4 : 0.98,
     h: 0.3 + ((i * 7) % 4) * 0.04,
     m: MAT.books[i % MAT.books.length],
   })), []);

@@ -25,8 +25,9 @@ interface OfficeState {
   focus: { point: Point; seq: number } | null;
   summons: Record<string, Summon>;
   /** One-shot camera dive into a desk monitor (then the chat opens), consumed by the camera rig. */
-  zoom: { eye: [number, number, number]; target: [number, number, number]; seq: number } | null;
-  zoomInto: (eye: [number, number, number], target: [number, number, number]) => void;
+  zoom: { target: [number, number, number]; facing: number; seq: number } | null;
+  /** Dive into a monitor centred on `target`, whose screen faces yaw `facing`. */
+  zoomInto: (target: [number, number, number], facing: number) => void;
   /** Walk the character to this point (click-to-move / "walk there"), consumed by the player. */
   walkTo: { point: Point; seq: number } | null;
   /** Agents picked for a new team, carried from agent panels to the team room. */
@@ -52,7 +53,7 @@ export const useOfficeStore = create<OfficeState>((set) => ({
   summons: {},
   walkTo: null,
   zoom: null,
-  zoomInto: (eye, target) => set({ zoom: { eye, target, seq: ++seq }, follow: false }),
+  zoomInto: (target, facing) => set({ zoom: { target, facing, seq: ++seq }, follow: false }),
   teamDraft: [],
   toggleDraft: (agentId) => set((s) => ({
     teamDraft: s.teamDraft.includes(agentId) ? s.teamDraft.filter((id) => id !== agentId) : [...s.teamDraft, agentId],
@@ -81,6 +82,17 @@ export const useOfficeStore = create<OfficeState>((set) => ({
 
 /** Where the camera looks on the floor, mutated by the camera rig every frame (for the minimap). */
 export const cameraView = { x: 0, z: 0, yaw: 0, halfWidth: 0.5, ready: false };
+
+/**
+ * What the office remembers while the app runs: where the character stands
+ * and how the camera looked. Leaving the map (e.g. into an agent's chat) and
+ * coming back puts you where you were; only an app reload starts fresh.
+ */
+export const officeSession: {
+  playerPlaced: boolean;
+  camera: { position: [number, number, number]; target: [number, number, number] } | null;
+  follow: boolean;
+} = { playerPlaced: false, camera: null, follow: true };
 
 /** The character's body, mutated by the player controller every frame. */
 export const player: PlayerBody = { x: 0, z: 0, heading: Math.PI, path: [], moving: false };

@@ -2,7 +2,7 @@
  * Desk monitors that show the seated agent's live chat. A click on a screen
  * zooms the camera into it and then opens that agent's chat view.
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { CanvasTexture, SRGBColorSpace, type Mesh } from "three";
 import type { SocietyAgent } from "../data";
@@ -10,6 +10,13 @@ import type { DeskSlot, Point } from "./officeLayout";
 import type { DeskChat } from "./useDeskChats";
 import type { ChatLineKind } from "./deskChat";
 import { seatedAtDesk } from "./walkerRegistry";
+import { RealChatScreen } from "./RealChatScreen";
+
+/** At most this many monitors run the real chat at once; farther ones keep the light preview. */
+const MAX_REAL_CHATS = 3;
+/** Start the real chat within this camera distance, stop it beyond the second (no flicker at the edge). */
+const REAL_CHAT_NEAR_M = 11;
+const REAL_CHAT_FAR_M = 14;
 
 const W = 512, H = 296;
 /** Same place as the instanced screen, a hair in front of it. */
@@ -70,8 +77,9 @@ export function drawChatScreen(ctx: CanvasRenderingContext2D, agent: Pick<Societ
   if (agent.state === "working") { ctx.fillStyle = "#4ade80"; ctx.fillRect(textLeft, H - 12, 9, 4); }
 }
 
-function Screen({ desk, agent, chat, onOpen }: {
-  desk: DeskSlot; agent: SocietyAgent; chat: DeskChat | undefined; onOpen: (agentId: string, screen: Point & { y: number }, facing: number) => void;
+function Screen({ desk, agent, chat, real, roster, onOpen }: {
+  desk: DeskSlot; agent: SocietyAgent; chat: DeskChat | undefined; real: boolean; roster: SocietyAgent[];
+  onOpen: (agentId: string, screen: Point & { y: number }, facing: number) => void;
 }) {
   const mesh = useRef<Mesh>(null);
   const turn = desk.facing === "north" ? 0 : Math.PI;
@@ -109,19 +117,45 @@ function Screen({ desk, agent, chat, onOpen }: {
         <planeGeometry args={[SCREEN_W, SCREEN_H]} />
         <meshBasicMaterial map={surface.texture} toneMapped={false} />
       </mesh>
+      {real && <RealChatScreen agent={agent} roster={roster} position={[0, SCREEN_Y, SCREEN_Z + 0.002]} />}
     </group>
   );
+}
+
+/** Which seated agents get the real chat: the nearest few to the camera, with hysteresis. Pure. */
+export function pickRealChats(candidates: { id: string; distance: number }[], current: ReadonlySet<string>): Set<string> {
+  const keep = candidates
+    .filter((c) => c.distance <= (current.has(c.id) ? REAL_CHAT_FAR_M : REAL_CHAT_NEAR_M))
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, MAX_REAL_CHATS);
+  return new Set(keep.map((c) => c.id));
 }
 
 export function LiveMonitors({ desks, agents, chats, onOpen }: {
   desks: DeskSlot[]; agents: ReadonlyMap<string, SocietyAgent>; chats: ReadonlyMap<string, DeskChat>;
   onOpen: (agentId: string, screen: Point & { y: number }, facing: number) => void;
 }) {
+  const roster = useMemo(() => [...agents.values()], [agents]);
+  const [real, setReal] = useState<ReadonlySet<string>>(new Set());
+  const nextCheck = useRef(0);
+  useFrame(({ camera, clock }) => {
+    if (clock.elapsedTime < nextCheck.current) return;
+    nextCheck.current = clock.elapsedTime + 0.3;
+    const candidates: { id: string; distance: number }[] = [];
+    for (const desk of desks) {
+      const agent = desk.agentId ? agents.get(desk.agentId) : undefined;
+      // The lead's chat is the app's own voice chat; its monitor keeps the preview.
+      if (!agent || agent.tier === "lead" || !agent.chatSessionId || !seatedAtDesk.has(agent.agentId)) continue;
+      candidates.push({ id: agent.agentId, distance: Math.hypot(camera.position.x - desk.x, camera.position.y - 1.2, camera.position.z - desk.z) });
+    }
+    const next = pickRealChats(candidates, real);
+    if (next.size !== real.size || [...next].some((id) => !real.has(id))) setReal(next);
+  });
   return (
     <group>
       {desks.map((desk) => {
         const agent = desk.agentId ? agents.get(desk.agentId) : undefined;
-        return agent ? <Screen key={desk.id} desk={desk} agent={agent} chat={chats.get(agent.agentId)} onOpen={onOpen} /> : null;
+        return agent ? <Screen key={desk.id} desk={desk} agent={agent} chat={chats.get(agent.agentId)} real={real.has(agent.agentId)} roster={roster} onOpen={onOpen} /> : null;
       })}
     </group>
   );

@@ -139,13 +139,15 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   // Clicking a monitor dives into it, then opens that agent's chat.
   const openTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(openTimer.current), []);
+  const [diving, setDiving] = useState(false);
   const openScreen = useCallback((agentId: string, screen: Point & { y: number }, facing: number) => {
-    const eye: [number, number, number] = [screen.x + Math.sin(facing) * 0.62, screen.y + 0.02, screen.z + Math.cos(facing) * 0.62];
     select(null);
     clearTimeout(openTimer.current);
     if (reduced) { onSelectAgent?.(agentId); return; }
-    useOfficeStore.getState().zoomInto(eye, [screen.x, screen.y, screen.z]);
-    openTimer.current = setTimeout(() => onSelectAgent?.(agentId), ZOOM_SECONDS * 1000 + 120);
+    useOfficeStore.getState().zoomInto([screen.x, screen.y, screen.z], facing);
+    // The screen fills the view, then the real chat view fades in over it.
+    setDiving(true);
+    openTimer.current = setTimeout(() => { onSelectAgent?.(agentId); setDiving(false); }, ZOOM_SECONDS * 1000 + 260);
   }, [onSelectAgent, reduced, select]);
 
   const counts = countStates(active);
@@ -196,7 +198,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
           <RenderBoundary key={generation} fallbackText={t("society.office.no_graphics")}>
             <Suspense fallback={<div className="office-fallback" role="status">{t("society.office.loading")}</div>}>
               <Canvas shadows="percentage" camera={{ fov: CAMERA_FOV, near: 0.2, far: 800, position: [30, 30, 30] }} dpr={[1, 1.75]}
-                gl={{ antialias: true, alpha: false, preserveDrawingBuffer: import.meta.env.DEV }}
+                gl={{ antialias: true, alpha: true, preserveDrawingBuffer: import.meta.env.DEV }}
                 frameloop={!awake ? "never" : "always"}
                 onPointerMissed={() => select(null)}>
                 <OfficeScene layout={layout} grid={grid} walkers={walkers} agents={agents} newcomers={newcomers}
@@ -248,6 +250,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
         </button>
       )}
       <OfficeCompass layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null} />
+      {diving && <div className="office-dive-fade" aria-hidden />}
       <OfficeMinimap layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null}
         onOpenMap={() => setMapOpen(true)} />
       <OfficeFullMap open={mapOpen} onOpen={() => setMapOpen(true)} onClose={() => setMapOpen(false)}

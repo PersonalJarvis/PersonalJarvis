@@ -12,7 +12,7 @@ import { ToyFigure } from "./ToyFigure";
 import type { ToyLook } from "./toyFigureModel";
 import { findPath, isWalkable, nearestWalkable, type NavGrid } from "./officeNav";
 import { applySeparation, clearOfBodies, separation, stepMover, turnToward } from "./officeMotion";
-import { player, sameSelection, useOfficeStore, type Selection } from "./officeStore";
+import { officeSession, player, sameSelection, useOfficeStore, type Selection } from "./officeStore";
 import { agentPositions, bodiesExcept } from "./walkerRegistry";
 import { OFFICE_FIGURE_HEIGHT_M } from "./OfficeAgents";
 import type { OfficeLayout } from "./officeLayout";
@@ -107,10 +107,16 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
   }, []);
   const { pressed, run } = useMoveKeys(awake, interact);
 
-  // Place the character at the elevator once per floor plan.
+  // Arrive by the elevator once per app run; coming back to the map keeps the
+  // character where it was, unless a changed floor plan put that spot in a wall.
   useEffect(() => {
-    const start = nearestWalkable(grid, layout.spawn) ?? layout.spawn;
-    player.x = start.x; player.z = start.z; player.heading = Math.PI; player.path = []; player.moving = false;
+    player.path = []; player.moving = false;
+    if (officeSession.playerPlaced && isWalkable(grid, player)) return;
+    const start = (officeSession.playerPlaced ? nearestWalkable(grid, player) : null)
+      ?? nearestWalkable(grid, layout.spawn) ?? layout.spawn;
+    player.x = start.x; player.z = start.z;
+    if (!officeSession.playerPlaced) player.heading = Math.PI;
+    officeSession.playerPlaced = true;
   }, [grid, layout.spawn]);
 
   useFrame((_, rawDt) => {
