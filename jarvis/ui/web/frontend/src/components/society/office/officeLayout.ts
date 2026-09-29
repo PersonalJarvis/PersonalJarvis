@@ -149,7 +149,7 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   // Mission Control: a display on a floor stand; the box is the screen's width and the base plate's depth.
   commandWall: { w: 7.8, d: 0.3, h: 2.7, solid: true },
   // Desk and chair together; not a solid box, navigation walks round commandDeskObstacles.
-  commandDesk: { w: 2.8, d: 2.1, h: 1.45, solid: false },
+  commandDesk: { w: 2.8, d: 2.1, h: 1.7, solid: false },
   // Server room: a row of five 42U racks, its ladder tray on top; the aisle between two rows (floor tiles,
   // overhead trays, a light) is walkable; the NOC console includes its stool.
   serverRack: { w: 3.0, d: 1.0, h: 2.3, solid: true },
@@ -187,6 +187,8 @@ export interface OfficeLayout {
   departments: Department[];
   /** Lead desks live in the lead office; the coding floor has none (its rect is Mission Control). */
   lead: Rect & { desks: DeskSlot[] };
+  /** Mission Control's desk on the coding floor, as a seat the person can take; absent downstairs. */
+  command?: DeskSlot;
   rooms: Room[];
   walls: WallSegment[];
   furniture: Furniture[];
@@ -228,7 +230,8 @@ const AISLE = 3.2;
  * from. On the floor the desk is turned round, so the chair stands between
  * it and the wall. The renderer and navigation both read these numbers.
  */
-export const COMMAND_DESK = { w: 2.6, d: 0.86, chairZ: 0.72 } as const;
+/** `chairZ` equals SEAT_OFFSET, so the chair is exactly where seatOf() puts a seated person. */
+export const COMMAND_DESK = { w: 2.6, d: 0.86, chairZ: 0.62 } as const;
 /** How far round Mission Control's desk the person can use it, from the desk's centre. */
 export const COMMAND_REACH = 1.9;
 /** The desk piece's origin sits this far from the desk's centre, towards the chair: its box covers desk and chair. */
@@ -373,11 +376,12 @@ export function chairRect(seat: Point, half = CHAIR_HALF): Rect {
 
 /** What a walker bumps into at Mission Control's desk: the desk top and the chair, nothing in between. */
 export function commandDeskObstacles(desk: Point): Rect[] {
-  const { w, d, chairZ } = COMMAND_DESK;
+  const { w, d } = COMMAND_DESK;
   return [
     { minX: desk.x - w / 2, maxX: desk.x + w / 2, minZ: desk.z - d / 2, maxZ: desk.z + d / 2 },
-    // The desk is turned round on the floor: its chair stands north of it, towards the wall.
-    chairRect({ x: desk.x, z: desk.z - chairZ }),
+    // The desk is turned round on the floor, facing south: its chair stands north of it,
+    // towards the wall (seatOf). A boss chair, so it takes the executive chair's footprint.
+    executiveChairRect({ x: desk.x, z: desk.z, facing: "south" }),
   ];
 }
 
@@ -717,6 +721,9 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
   };
   return {
     variant, departments, lead, rooms, walls, furniture, spots, checkpoints, obstacles,
+    // Its chair faces south, towards the door: seatOf() puts the person north of the desk.
+    ...(coding ? { command: { id: "command", x: commandDeskAt.x, z: commandDeskAt.z, facing: "south" as const, agentId: null,
+      size: { w: COMMAND_DESK.w, d: COMMAND_DESK.d } } } : {}),
     spawn: { x: rx0 + 1.4, z: bottomZ - 2.6 },
     floor,
     bounds: { minX: minX - EDGE, maxX: maxX + EDGE, minZ: topZ - EDGE, maxZ: bottomZ + EDGE },

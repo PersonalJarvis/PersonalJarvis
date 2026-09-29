@@ -17,7 +17,7 @@ import { officeSession, player, sameSelection, useOfficeStore, type Selection } 
 import { agentPositions, bodiesExcept, companions } from "./walkerRegistry";
 import { OFFICE_FIGURE_HEIGHT_M } from "./OfficeAgents";
 import { seatOf, type OfficeLayout } from "./officeLayout";
-import { chairInReach, useLeadSeat } from "./leadSeat";
+import { chairInReach, seatDesks, useLeadSeat } from "./leadSeat";
 import { useOfficeDog } from "./dogLife";
 import { TreatBone } from "./dogProps";
 import { isRunning, useOfficeSettings } from "./officeSettings";
@@ -139,6 +139,8 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
   }, []);
   const onJump = useMemo(() => () => pressJump(jump), [jump]);
   const hasBone = useOfficeDog((s) => s.hasBone);
+  // Seated at Mission Control the camera is the character's eyes: its own figure would block the view.
+  const firstPerson = useLeadSeat((s) => !!layout.command && s.seated === layout.command.id);
   const { pressed, run, jumpHeld } = useMoveKeys(awake, interact, onJump);
 
   // Arrive by the elevator once per app run; coming back to the map keeps the
@@ -159,7 +161,7 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
     // Sitting on the lead's chair: hold the seat until the person moves, walks
     // somewhere else or presses E; then step out to the nearest free spot.
     const seatState = useLeadSeat.getState();
-    const seatDesk = seatState.seated ? layout.lead.desks.find((d) => d.id === seatState.seated) : undefined;
+    const seatDesk = seatState.seated ? seatDesks(layout).find((d) => d.id === seatState.seated) : undefined;
     const walkRequested = !!store.walkTo && store.walkTo.seq !== lastWalk.current;
     if (seatState.seated && (!seatDesk || pressed.current.size > 0 || walkRequested)) seatState.set({ seated: null, standUp: true });
     if (useLeadSeat.getState().standUp) {
@@ -183,7 +185,7 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
     }
     // Clicked the chair from afar: sit as soon as the walk there ends beside it.
     if (seatState.pending) {
-      const target = layout.lead.desks.find((d) => d.id === seatState.pending);
+      const target = seatDesks(layout).find((d) => d.id === seatState.pending);
       if (!target || pressed.current.size > 0) seatState.set({ pending: null });
       else if (player.path.length === 0 && chairInReach([target], player)) seatState.set({ seated: target.id, pending: null });
     }
@@ -251,7 +253,7 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
     if (ring.current) ring.current.scale.setScalar(1 - Math.min(0.35, jump.y * 0.6));
     if (ring.current) (ring.current.material as MeshBasicMaterial).opacity = reduced ? 0.8 : 0.6 + Math.sin(performance.now() / 400) * 0.2;
     // What can the character reach right now? The lead's chair has its own prompt beside it.
-    const chair = chairInReach(layout.lead.desks, player);
+    const chair = chairInReach(seatDesks(layout), player);
     if (useLeadSeat.getState().near !== (chair?.id ?? null)) useLeadSeat.getState().set({ near: chair?.id ?? null });
     const nearby = chair ? null : nearestInteractable(layout);
     // Compared with the store too: a floor switch clears the store's reading while the character still stands at the elevator.
@@ -259,19 +261,21 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
   });
 
   return (
-    <group ref={group}>
+    <group ref={group} visible={!firstPerson}>
       <mesh ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
         <ringGeometry args={[0.42, 0.52, 40]} />
         <meshBasicMaterial color="#f5b83d" transparent opacity={0.8} side={DoubleSide} depthWrite={false} />
       </mesh>
       <group ref={body}>
         <ToyFigure look={look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} holding={hasBone ? <TreatBone scale={1.15} /> : undefined} />
-        <Html center position={[0, OFFICE_FIGURE_HEIGHT_M + 0.35, 0]} zIndexRange={[25, 0]}>
-          <span className="office-plate office-plate-player" data-office-ui>
-            <span className="office-plate-badge" style={{ background: "#f5b83d" }} aria-hidden>★</span>
-            <span className="office-plate-name">{name}</span>
-          </span>
-        </Html>
+        {!firstPerson && (
+          <Html center position={[0, OFFICE_FIGURE_HEIGHT_M + 0.35, 0]} zIndexRange={[25, 0]}>
+            <span className="office-plate office-plate-player" data-office-ui>
+              <span className="office-plate-badge" style={{ background: "#f5b83d" }} aria-hidden>★</span>
+              <span className="office-plate-name">{name}</span>
+            </span>
+          </Html>
+        )}
       </group>
     </group>
   );

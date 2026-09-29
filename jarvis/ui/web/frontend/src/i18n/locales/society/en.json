@@ -991,6 +991,7 @@
       "dog_pet": "Pet the dog",
       "seat_sit": "Sit in the chair",
       "seat_seated": "Click the screens to open your lead · move to stand up",
+      "seat_seated_mission": "Click a screen to open it · move to stand up",
       "prompt_agent": "Talk to {0}",
       "prompt_checkpoint": "Use: {0}",
       "me": "Follow me",
