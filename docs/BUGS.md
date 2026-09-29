@@ -15473,3 +15473,21 @@ worktree.
 the app; the IDE workspaces come back from `last_session.json` via
 `POST /api/agentic-ide/workspaces/{id}/restore`, each pane resuming its CLI
 session.
+
+## BUG-220: "look at my screen" / an appshot of the front window sent the model a black picture (MEDIUM, FIXED 2026-09-29)
+
+**Symptom.** Asking Jarvis to look at the window in front answered as if the
+screen were empty; the captured image of the Personal Jarvis window was one
+flat dark colour.
+
+**Cause.** Window-scoped captures use the native window-only backend
+(`jarvis.platform.window_capture.grab_window`). For some GPU-composited
+windows — WebView2 apps, the desktop app itself among them — it returns a
+frame that is a single colour (measured: every pixel luma 10) instead of
+failing, and the service handed that frame on as a successful capture.
+
+**Fix.** `ScreenContextService._grab` detects a flat frame
+(`_is_flat_frame`) or a failed window-only grab and uses the window's screen
+rectangle instead, under the rule monitor captures already follow: allowed
+with no denylist, refused when a visible denylisted window intersects that
+rectangle. Guard: `tests/unit/screen_context/test_blank_window_capture.py`.
