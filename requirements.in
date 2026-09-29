@@ -67,6 +67,7 @@ keyring>=25.5
 
 # SSH to the user's own servers and virtual machines (Settings -> Computers)
 asyncssh>=2.21
+bcrypt>=4.1
 
 # Audio I/O
 sounddevice>=0.5
