@@ -1377,3 +1377,35 @@ Guards: `tests/contract/test_internal_messages.py`, the router membership test,
 `InternalMessageBubble` tests. Voice confirmation retries share one result;
 a real microphone response captured after playback is not discarded solely
 because its transcript resembles the confirmation question.
+
+## Amendment 2026-09-29 — Every app action
+
+`find-app-action` and `run-app-action` join `ROUTER_TOOLS`. The Command
+Registry keeps its curated, hand-described commands; these two open the rest
+of the app's own REST surface (about 765 operations) without declaring a
+schema per operation on every turn. `find-app-action` (risk `safe`) ranks the
+catalog built in-process from the live app's OpenAPI document
+(`jarvis/app_actions/catalog.py`) and returns a few matches with their
+parameters. `run-app-action` sends ONE operation through the same in-process
+ASGI transport as `app-command`.
+
+### Pure-Dispatcher spirit is preserved
+
+- Each call's tier comes from `risk_tier_for_args`: the person's per-action
+  mode from Settings > Jarvis actions (`allow` → monitor, `ask`, `block`),
+  else the action default (read → safe, change → monitor, dangerous route →
+  ask). `ToolExecutor.execute()` still evaluates and confirms (AP-3); a
+  blocked action is refused by the evaluator. The same policy applies to the
+  registry commands that share an endpoint.
+- The catalog never contains credentials, sign-ins, OAuth callbacks,
+  webhooks, the raw control plane, self-modification or the policy routes —
+  voice never carries a secret (AP-2) and Jarvis never edits its own
+  permissions.
+- Never a spawn and never in a worker set (AP-5/AP-14): both names are in the
+  worker broker's forbidden list and in the society `NEVER_GRANTED` set.
+
+### Regression guards
+
+`tests/unit/brain/test_routing.py` (exact router set) and
+`tests/unit/app_actions/` (catalog exclusions, policy tiers, blocked calls,
+parameter mapping).

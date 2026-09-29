@@ -101,6 +101,14 @@ ROUTER_TOOLS = frozenset({
     # (two-turn voice confirm). Direct gated action, never a spawn — never in
     # a worker set (AP-5/AP-14). See ADR-0011 amendment "app-command tool".
     "app-command",
+    # Every app action (2026-09-29): search the app's own REST surface and
+    # run ONE operation in-process, each call tiered by the person's
+    # Jarvis-actions policy (allow / ask / block, else the action default).
+    # Secrets, sign-ins and the policy itself are never in the catalog.
+    # Direct gated action, never a spawn — never in a worker set
+    # (AP-5/AP-14). See ADR-0011 amendment "Every app action".
+    "find-app-action",
+    "run-app-action",
     # Phase A1: synchronous state read on the AwarenessManager (Plan §5).
     # NO brain call, NO IO — property read only.
     "awareness-snapshot",

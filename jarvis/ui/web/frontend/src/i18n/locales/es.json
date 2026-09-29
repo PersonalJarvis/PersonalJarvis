@@ -162,6 +162,7 @@
     "agent_instructions": "{name}.md",
     "wallpaper": "Fondo de pantalla",
     "appshots": "Appshots",
+    "jarvis_actions": "Acciones de Jarvis",
     "marketplace": "Marketplace",
     "agentic_ide": "IDE agéntico",
     "agentic_ide_beta": "Beta",
@@ -5926,6 +5927,30 @@
         "idle": "Inactivo"
       }
     }
+  },
+  "jarvis_actions": {
+    "title": "Acciones de Jarvis",
+    "subtitle": "Todo lo que Jarvis puede hacer en esta app. Elige por acción si se ejecuta libremente, pregunta antes o nunca se ejecuta.",
+    "search_placeholder": "Buscar acciones",
+    "area_all": "Todas las áreas",
+    "changed_only": "Solo cambiadas",
+    "mode_default": "Predeterminado",
+    "mode_allow": "Permitida",
+    "mode_ask": "Preguntar",
+    "mode_block": "Bloqueada",
+    "tier_safe": "Predeterminado: se ejecuta libremente (solo lectura)",
+    "tier_monitor": "Predeterminado: se ejecuta libremente",
+    "tier_ask": "Predeterminado: pregunta antes",
+    "count": "{shown} de {total} acciones",
+    "show_more": "Mostrar más",
+    "dangerous": "Cambia o elimina algo",
+    "history_title": "Acciones recientes",
+    "history_empty": "Jarvis aún no ha ejecutado ninguna acción de la app.",
+    "outcome_ran": "Ejecutada",
+    "outcome_failed": "Falló",
+    "outcome_blocked": "Bloqueada",
+    "load_error": "No se pudieron cargar las acciones.",
+    "save_error": "No se pudo guardar el cambio."
   },
   "appshots": {
     "title": "Appshots",

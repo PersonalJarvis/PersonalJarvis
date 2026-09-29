@@ -162,6 +162,7 @@
     "agent_instructions": "{name}.md",
     "wallpaper": "Hintergrund",
     "appshots": "Appshots",
+    "jarvis_actions": "Jarvis-Aktionen",
     "marketplace": "Marketplace",
     "agentic_ide": "Agentic IDE",
     "agentic_ide_beta": "Beta",
@@ -5926,6 +5927,30 @@
         "idle": "Im Leerlauf"
       }
     }
+  },
+  "jarvis_actions": {
+    "title": "Jarvis-Aktionen",
+    "subtitle": "Alles, was Jarvis in dieser App tun kann. Wähle pro Aktion, ob sie frei läuft, vorher nachfragt oder nie ausgeführt wird.",
+    "search_placeholder": "Aktionen suchen",
+    "area_all": "Alle Bereiche",
+    "changed_only": "Nur geänderte",
+    "mode_default": "Standard",
+    "mode_allow": "Erlaubt",
+    "mode_ask": "Nachfragen",
+    "mode_block": "Gesperrt",
+    "tier_safe": "Standard: läuft frei (nur lesen)",
+    "tier_monitor": "Standard: läuft frei",
+    "tier_ask": "Standard: fragt vorher",
+    "count": "{shown} von {total} Aktionen",
+    "show_more": "Mehr anzeigen",
+    "dangerous": "Ändert oder löscht etwas",
+    "history_title": "Letzte Aktionen",
+    "history_empty": "Jarvis hat noch keine App-Aktion ausgeführt.",
+    "outcome_ran": "Ausgeführt",
+    "outcome_failed": "Fehlgeschlagen",
+    "outcome_blocked": "Gesperrt",
+    "load_error": "Die Aktionen konnten nicht geladen werden.",
+    "save_error": "Die Änderung konnte nicht gespeichert werden."
   },
   "appshots": {
     "title": "Appshots",
