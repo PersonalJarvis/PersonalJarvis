@@ -14,10 +14,17 @@ export const knownAgents = new Set<string>();
 export const seatedAtDesk = new Set<string>();
 
 /**
+ * Agents flying along at the person's shoulder right now (Gigi). They are no
+ * obstacle and no "nearby" target: they would always be the closest one.
+ */
+export const companions = new Set<string>();
+
+/**
  * Every body except `selfId`: all agents plus, optionally, the person's character.
- * Gigi counts too — it hovers at chest height, so walking "under" it would pass through it.
+ * Gigi counts too — it hovers at chest height, so walking "under" it would pass
+ * through it — except while it follows the person as a companion.
  */
 export function* bodiesExcept(selfId: string | null, player: Point | null): Generator<Point> {
-  for (const [id, p] of agentPositions) if (id !== selfId) yield p;
+  for (const [id, p] of agentPositions) if (id !== selfId && !companions.has(id)) yield p;
   if (player) yield player;
 }

@@ -1,9 +1,10 @@
 /**
  * Flight of Gigi, the lead agent's mascot, over the office floor. The lead is
  * not drawn as a figure: Gigi hovers at chest/head height of the toy figures
- * and follows the walker's ground position (x, z). On the coding floor Gigi is
- * no walker at all: in "follow" mode it trails the person's own character,
- * hovering behind-beside its shoulder (`followAnchor`).
+ * and follows the walker's ground position (x, z). In "follow" mode it trails
+ * the person's own character instead, hovering behind-beside its shoulder
+ * (`followAnchor`): always on the coding floor, and on the agents floor
+ * whenever no errand or summons takes it away.
  *
  * Pure and deterministic: the same state and inputs give the same pose. With
  * an `out` object a step allocates nothing, so it can run every frame.

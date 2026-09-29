@@ -16,7 +16,7 @@ import type { SocietyAgent } from "../data";
 import type { FigureDrive, FigureMode } from "../figures/FigureRig";
 import { ToyFigure } from "./ToyFigure";
 import { GigiFlyer } from "./GigiFlyer";
-import type { GigiFlightMode } from "./gigiFlight";
+import { followAnchor, type GigiFlightMode } from "./gigiFlight";
 import { useEventStore } from "@/store/events";
 import { SEAT_HEIGHT, toyLookFor } from "./toyFigureModel";
 import { OFFICE } from "./officePalette";
@@ -28,7 +28,7 @@ import type { TrailPoint } from "../companion/trail";
 import { stepMover, stepMoverAvoiding, turnToward, WALK_SPEED, type Mover } from "./officeMotion";
 import { createRng, planFor, type ActivityKind, type Plan, type Pose, type SpotBook } from "./officeBehavior";
 import { player, useOfficeStore } from "./officeStore";
-import { agentPositions, bodiesExcept, seatedAtDesk } from "./walkerRegistry";
+import { agentPositions, bodiesExcept, companions, seatedAtDesk } from "./walkerRegistry";
 import { AgentBubble } from "./OfficeBubbles";
 import type { ChatLine } from "./deskChat";
 import type { DeskChat } from "./useDeskChats";
@@ -38,6 +38,11 @@ import { deliverySpot, ERRAND_SPEED, useErrandFeed, useGigiErrands } from "./gig
 /** The agent's symbol walks behind it as a little pet, about a fifth of its height. */
 export const PET_SIZE_M = 0.26;
 const PET_FOLLOW_M = 0.7;
+
+/** The person's character as a mover for Gigi to follow (the body object itself, mutated every frame). */
+const PLAYER_OWNER = { current: player };
+/** Farther than this from the person's shoulder and Gigi flies back first instead of hovering beside them. */
+const FOLLOW_CATCH_M = 1;
 
 /** Every figure shares one toy scale, so desks and couches read the same everywhere. */
 export const OFFICE_FIGURE_HEIGHT_M = 1.3;
@@ -163,12 +168,17 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
   const speaking = useEventStore((s) => isGigi && s.voiceState === "speaking");
   const errandKey = useRef("");
   const carrying = useGigiErrands((s) => isGigi && s.current?.phase === "fly");
+  const [following, setFollowing] = useState(false);
+  const followingRef = useRef(false);
+  const gigiSide = useRef<1 | -1>(1);
+  const airClear = useMemo(() => (x: number, z: number) => isWalkable(ctx.grid, { x, z }), [ctx.grid]);
 
   // Leaving the office releases the agent's spot and its registry entry.
   useEffect(() => () => {
     ctx.book.release(agent.agentId);
     agentPositions.delete(agent.agentId);
     seatedAtDesk.delete(agent.agentId);
+    companions.delete(agent.agentId);
   }, [ctx.book, agent.agentId]);
   const pet = useMemo(() => ({ ...resolveCompanion(agent.agentId, agent.figure?.companion), sizeM: PET_SIZE_M, followDistanceM: PET_FOLLOW_M }),
     [agent.agentId, agent.figure?.companion]);
@@ -185,6 +195,8 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
     const recipient = errand ? agentPositions.get(errand.to) : undefined;
     if (errand && !recipient) useGigiErrands.getState().finish(errand.id);
     if (errand && recipient) {
+      if (followingRef.current) { followingRef.current = false; setFollowing(false); }
+      companions.delete(agent.agentId);
       const key = `${errand.id}:${errand.phase}`;
       if (errand.phase === "fly") {
         const spot = deliverySpot(recipient, m);
@@ -205,6 +217,37 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
       plan.current = null;
       agentPositions.set(agent.agentId, { x: m.x, z: m.z });
       seatedAtDesk.delete(agent.agentId);
+    if (isGigi && !calledTo) {
+      // Gigi keeps the person company, as on the coding floor; an errand or a summons still takes it away.
+      const anchor = followAnchor(player.x, player.z, player.heading, gigiSide.current, airClear);
+      gigiSide.current = anchor.side;
+      const far = Math.hypot(anchor.x - m.x, anchor.z - m.z) > FOLLOW_CATCH_M;
+      if (!placed.current || reduced || !far) {
+        m.x = anchor.x; m.z = anchor.z; m.path = [];
+        placed.current = true;
+      } else if (awake) {
+        // Back from an errand or a meeting: fly over to the person, then fall in beside them.
+        m.path = [anchor];
+        stepMover(m, ERRAND_SPEED, dt);
+      }
+      const nowFollowing = Math.hypot(anchor.x - m.x, anchor.z - m.z) <= FOLLOW_CATCH_M;
+      if (nowFollowing) { m.heading = player.heading; companions.add(agent.agentId); } else companions.delete(agent.agentId);
+      if (followingRef.current !== nowFollowing || plan.current) {
+        followingRef.current = nowFollowing;
+        setFollowing(nowFollowing);
+        setGigiPose({ pose: null, travelling: !nowFollowing });
+        setActivity(null);
+      }
+      // The day resumes from wherever the person leaves Gigi (a summons).
+      plan.current = null;
+      summonKey.current = "";
+      agentPositions.set(agent.agentId, { x: m.x, z: m.z });
+      seatedAtDesk.delete(agent.agentId);
+      if (group.current) group.current.position.set(m.x, 0, m.z);
+      return;
+    }
+    if (followingRef.current) { followingRef.current = false; setFollowing(false); }
+    companions.delete(agent.agentId);
       if (group.current) group.current.position.set(m.x, 0, m.z);
       return;
     }
@@ -293,7 +336,9 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
     </group>
     {carrying && <ErrandEnvelope owner={group} />}
     {isGigi
-      ? <GigiFlyer owner={mover} mode={gigiModeFor(gigiPose.pose, gigiPose.travelling)} speaking={speaking} paused={!awake} reduced={reduced} />
+      // One flyer for both roles, so switching keeps its flight state instead of re-spawning it.
+      ? <GigiFlyer owner={following ? PLAYER_OWNER : mover} mode={following ? "follow" : gigiModeFor(gigiPose.pose, gigiPose.travelling)}
+          speaking={speaking} paused={!awake} reduced={reduced} clear={following ? airClear : undefined} />
       : <AgentFollower owner={group} appearance={pet} paused={!awake || reduced} clear={petClear} />}
     </>
   );

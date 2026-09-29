@@ -13,7 +13,7 @@ import type { ToyLook } from "./toyFigureModel";
 import { findPath, isWalkable, nearestWalkable, type NavGrid } from "./officeNav";
 import { applySeparation, separation, stepClearOfBodies, stepMover, turnToward } from "./officeMotion";
 import { officeSession, player, sameSelection, useOfficeStore, type Selection } from "./officeStore";
-import { agentPositions, bodiesExcept } from "./walkerRegistry";
+import { agentPositions, bodiesExcept, companions } from "./walkerRegistry";
 import { OFFICE_FIGURE_HEIGHT_M } from "./OfficeAgents";
 import { seatOf, type OfficeLayout } from "./officeLayout";
 import { chairInReach, useLeadSeat } from "./leadSeat";
@@ -82,6 +82,7 @@ function nearestInteractable(layout: OfficeLayout): Selection | null {
     if (d <= cp.radius && d < bestDistance) { best = { kind: "checkpoint", id: cp.id }; bestDistance = d; }
   }
   for (const [id, p] of agentPositions) {
+    if (companions.has(id)) continue;
     const d = Math.hypot(p.x - player.x, p.z - player.z);
     if (d <= AGENT_TALK_RANGE && d < bestDistance) { best = { kind: "agent", id }; bestDistance = d; }
   }
