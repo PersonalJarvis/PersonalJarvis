@@ -161,6 +161,8 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
   const dwellUntil = useRef(0);
   const placed = useRef(arrivesByElevator);
   const planState = useRef("");
+  // The desk the current plan was made for: a roster change can move an agent to another desk.
+  const planDesk = useRef<string | null>(null);
   const summonKey = useRef("");
   const [activity, setActivity] = useState<ActivityKind | null>(null);
   const [seatHeight, setSeatHeight] = useState<number>(SEAT_HEIGHT.chair);
@@ -257,7 +259,9 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
     companions.delete(agent.agentId);
     const calledSeat = calledTo ? summon.spotId ?? null : null;
     const sKey = calledTo ? `${calledTo.x.toFixed(2)},${calledTo.z.toFixed(2)},${calledSeat ?? ""}` : "";
+    const deskKey = desk ? `${desk.id}@${desk.x.toFixed(2)},${desk.z.toFixed(2)}` : null;
     const needsPlan = !plan.current || planState.current !== agent.state || summonKey.current !== sKey
+      || planDesk.current !== deskKey
       || (phase.current === "dwell" && now >= dwellUntil.current);
     if (needsPlan) {
       const next = planFor({
@@ -268,6 +272,7 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
       if (reduced && !calledTo) next.dwellMs = Infinity;
       plan.current = next;
       planState.current = agent.state;
+      planDesk.current = deskKey;
       summonKey.current = sKey;
       if (!placed.current || reduced) {
         // First sight (or reduced motion): already there, no walk across the floor.
