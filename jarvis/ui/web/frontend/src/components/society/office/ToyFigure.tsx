@@ -14,15 +14,15 @@
 import { useMemo, useRef, type MutableRefObject } from "react";
 import { useFrame } from "@react-three/fiber";
 import {
-  CapsuleGeometry, Color, ConeGeometry, MeshBasicMaterial, MeshStandardMaterial, SphereGeometry, TorusGeometry,
-  type Group,
+  BoxGeometry, CapsuleGeometry, Color, ConeGeometry, CylinderGeometry, MeshBasicMaterial, MeshStandardMaterial,
+  SphereGeometry, TorusGeometry, type Group,
 } from "three";
 import { RoundedBoxGeometry } from "three-stdlib";
 
 import type { FigureMode } from "../figures/FigureRig";
 import {
   blendPose, copyPose, createPose, poseFor, TOY, TOY_HEIGHT, walkCadence,
-  type HairStyle, type PoseOptions, type ToyLook, type ToyPose,
+  type HairStyle, type OutfitId, type PoseOptions, type ToyLook, type ToyPose,
 } from "./toyFigureModel";
 
 // ---------------------------------------------------------------------------
@@ -48,15 +48,21 @@ const GEO = {
   brim: new RoundedBoxGeometry(0.3, 0.022, 0.17, 2, 0.01),
   /** A band of hair around the back and sides, from just above the equator down: the hair a hat leaves visible. */
   hairBand: new SphereGeometry(1, 40, 14, Math.PI * 0.92, Math.PI * 1.16, Math.PI * 0.46, Math.PI * 0.3),
+  /** A unit triangular pyramid, one flat face towards +z, tip up: a jacket's V-opening (scaled, turned tip down). */
+  wedge: new ConeGeometry(1, 1, 3, 1, false, Math.PI),
+  box: new BoxGeometry(1, 1, 1),
+  collar: new CylinderGeometry(0.085, 0.097, 1, 24),
+  pocket: new RoundedBoxGeometry(0.2, 0.07, 0.02, 2, 0.01),
+  lens: new TorusGeometry(0.047, 0.008, 8, 24),
 };
 
 const materials = new Map<string, MeshStandardMaterial>();
-/** A matte material per colour, shared by every figure. */
-function matte(color: string, roughness = 0.82): MeshStandardMaterial {
-  const key = `${color}|${roughness}`;
+/** A material per colour, shared by every figure; matte unless a garment asks for sheen. */
+function matte(color: string, roughness = 0.82, metalness = 0): MeshStandardMaterial {
+  const key = `${color}|${roughness}|${metalness}`;
   let m = materials.get(key);
   if (!m) {
-    m = new MeshStandardMaterial({ color, roughness, metalness: 0 });
+    m = new MeshStandardMaterial({ color, roughness, metalness });
     materials.set(key, m);
   }
   return m;
@@ -66,6 +72,9 @@ const EYE = new MeshStandardMaterial({ color: "#16161b", roughness: 0.35, metaln
 const CATCHLIGHT = new MeshBasicMaterial({ color: "#ffffff" });
 const MOUTH = matte("#5b2b28", 0.7);
 const SOLE_LIGHT = "#f4f4f2";
+const METAL = matte("#c7c9cc", 0.3, 0.8);
+const FRAME = matte("#1a1a1e", 0.4);
+const SHADES = matte("#101014", 0.15, 0.2);
 
 function mix(a: string, b: string, k: number): string {
   return `#${new Color(a).lerp(new Color(b), k).getHexString()}`;
@@ -232,6 +241,37 @@ function Hair({ style, look }: { style: HairStyle; look: ToyLook }) {
           ))}
         </group>
       );
+    case "slick":
+      // Combed straight back with a little quiff: no fringe, a polished sheen.
+      return (
+        <group>
+          <HairCap color={look.hair} fringe={false} />
+          {/* Sunk into the cap at the front hairline, so it reads as swept-up hair rather than a hat. */}
+          <mesh geometry={GEO.sphere} material={matte(look.hair, 0.45)} position={[0, HD.y + HD.ry - 0.075, 0.12]} rotation={[-0.75, 0, 0]}
+            scale={[0.19, 0.06, 0.11]} castShadow />
+        </group>
+      );
+    case "sidepart":
+      return (
+        <group>
+          <HairCap color={look.hair} fringe={false} />
+          {/* One swept wave from the parting across the forehead. */}
+          <mesh geometry={GEO.sphere} material={hair} position={[-0.04, HD.y + 0.2, faceZ(-0.04, HD.y + 0.2, 0.04)]} rotation={[0.55, 0, 0.22]}
+            scale={[0.22, 0.07, 0.08]} castShadow />
+        </group>
+      );
+    case "buzz":
+      // Close-cropped: a thin cap tinted towards the skin, no fringe.
+      return <HairCap color={mix(look.hair, look.skin, 0.3)} grow={-0.014} fringe={false} />;
+    case "ponytail":
+      return (
+        <group>
+          <HairCap color={look.hair} />
+          <mesh geometry={GEO.lowSphere} material={matte(look.shirtAccent)} position={[0, HD.y + 0.06, -(HD.rz + 0.025)]} scale={0.035} />
+          <mesh geometry={GEO.sphere} material={hair} position={[0, HD.y - 0.08, -(HD.rz + 0.035)]} rotation={[0.18, 0, 0]}
+            scale={[0.06, 0.15, 0.055]} castShadow />
+        </group>
+      );
     case "beanie": {
       const knit = matte(look.shirtAccent, 0.95);
       return (
@@ -262,16 +302,165 @@ function Hair({ style, look }: { style: HairStyle; look: ToyLook }) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Clothes
+
+/** Outfits worn with polished dress shoes (when the shoe colour is dark). */
+const DRESS_SHOES: ReadonlySet<OutfitId> = new Set(["suit", "blazer", "leather"]);
+
+/** Outfits whose jacket shows a shirt cuff at the wrist. */
+const CUFFED: ReadonlySet<OutfitId> = new Set(["suit", "blazer"]);
+
+/** The material of a garment: leather shines, knits and fleece stay soft. */
+function garment(look: ToyLook, color: string): MeshStandardMaterial {
+  if (look.outfit === "leather" && color === look.shirt) return matte(color, 0.32, 0.12);
+  if (look.outfit === "quarterzip" || look.outfit === "turtleneck" || look.outfit === "hoodie") return matte(color, 0.95);
+  return matte(color);
+}
+
+/** Front of the chest (torso-local z) at mid height; the rounded box curves back above and below. */
+const FRONT = TOY.torso.d / 2;
+
+/**
+ * The opening of a jacket or vest: a shirt-coloured V (tip down) with lapels
+ * along its edges, tilted back to follow the chest's rounded top.
+ */
+function VOpening({ look, width, depth, lapel, tie }: { look: ToyLook; width: number; depth: number; lapel: number; tie: boolean }) {
+  const top = 0.285;
+  const angle = Math.atan2(width / 2, depth);
+  const edge = Math.hypot(width / 2, depth);
+  const shade = garment(look, mix(look.shirt, "#000000", look.outfit === "leather" ? 0.25 : 0.14));
+  return (
+    <group position={[0, top - depth / 2, FRONT - 0.012]} rotation={[-0.22, 0, 0]}>
+      {/* A cone of radius r has a face r·√3 wide; scaled flat in z it is a triangle on the chest. */}
+      <mesh geometry={GEO.wedge} material={matte(look.inner)} rotation={[0, 0, Math.PI]} scale={[width / Math.sqrt(3), depth, 0.03]} />
+      {[-1, 1].map((sx) => (
+        <mesh key={sx} geometry={GEO.box} material={shade} castShadow
+          position={[sx * (width / 4 + lapel * 0.45), 0, 0.02]} rotation={[0, 0, -sx * angle]} scale={[lapel, edge + 0.02, 0.012]} />
+      ))}
+      {tie && (
+        <group position={[0, 0, 0.022]}>
+          <mesh geometry={GEO.box} material={matte(look.shirtAccent, 0.5)} position={[0, depth / 2 - 0.018, 0]} scale={[0.03, 0.024, 0.014]} />
+          <mesh geometry={GEO.box} material={matte(look.shirtAccent, 0.5)} position={[0, -0.012, 0]} scale={[0.028, depth - 0.05, 0.01]} />
+        </group>
+      )}
+    </group>
+  );
+}
+
+function Buttons({ count, color }: { count: number; color: string }) {
+  return (
+    <>
+      {Array.from({ length: count }, (_, i) => (
+        <mesh key={i} geometry={GEO.lowSphere} material={matte(color, 0.4)} position={[0, 0.105 - i * 0.04, FRONT + 0.004 - i * 0.006]} scale={[0.011, 0.011, 0.006]} />
+      ))}
+    </>
+  );
+}
+
+/** Everything an outfit adds to the chest: opening, lapels, tie, collar, hood, zip, pockets. */
+function OutfitDetails({ look }: { look: ToyLook }) {
+  const accent = matte(look.shirtAccent);
+  const dark = mix(look.shirt, "#000000", 0.35);
+  switch (look.outfit) {
+    case "suit":
+      return (
+        <group>
+          <VOpening look={look} width={0.13} depth={0.17} lapel={0.034} tie />
+          <Buttons count={2} color={dark} />
+          <mesh geometry={GEO.box} material={accent} position={[0.09, 0.2, FRONT + 0.002]} scale={[0.04, 0.014, 0.01]} />
+        </group>
+      );
+    case "blazer":
+      return (
+        <group>
+          <VOpening look={look} width={0.14} depth={0.16} lapel={0.034} tie={false} />
+          <Buttons count={1} color={mix(look.shirtAccent, "#000000", 0.2)} />
+          <mesh geometry={GEO.box} material={accent} position={[0.09, 0.2, FRONT + 0.002]} scale={[0.04, 0.014, 0.01]} />
+        </group>
+      );
+    case "leather":
+      // A moto-style leather jacket: wide shiny collar and an off-centre zip over a plain tee.
+      return (
+        <group>
+          <VOpening look={look} width={0.16} depth={0.17} lapel={0.05} tie={false} />
+          <mesh geometry={GEO.box} material={METAL} position={[-0.055, 0.075, FRONT + 0.003]} scale={[0.008, 0.1, 0.008]} />
+          <mesh geometry={GEO.box} material={METAL} position={[0.085, 0.11, FRONT + 0.002]} scale={[0.05, 0.006, 0.008]} />
+        </group>
+      );
+    case "vest":
+      // A fleece vest over a button-down: a small shirt V, a centre zip and a chest logo.
+      return (
+        <group>
+          <VOpening look={look} width={0.1} depth={0.09} lapel={0.022} tie={false} />
+          <mesh geometry={GEO.box} material={METAL} position={[0, 0.12, FRONT + 0.002]} scale={[0.007, 0.13, 0.008]} />
+          <mesh geometry={GEO.box} material={accent} position={[0.075, 0.2, FRONT + 0.002]} scale={[0.04, 0.02, 0.008]} />
+        </group>
+      );
+    case "turtleneck":
+      return <mesh geometry={GEO.collar} material={garment(look, look.shirt)} position={[0, 0.29, 0]} scale={[1, 0.075, 1]} castShadow />;
+    case "quarterzip":
+      return (
+        <group>
+          <mesh geometry={GEO.collar} material={garment(look, look.shirt)} position={[0, 0.285, 0]} scale={[1.04, 0.055, 1.04]} castShadow />
+          <mesh geometry={GEO.box} material={METAL} position={[0, 0.25, FRONT - 0.01]} rotation={[-0.45, 0, 0]} scale={[0.008, 0.09, 0.01]} />
+          <mesh geometry={GEO.box} material={METAL} position={[0.012, 0.21, FRONT + 0.004]} scale={[0.012, 0.022, 0.006]} />
+        </group>
+      );
+    case "hoodie":
+      return (
+        <group>
+          {/* The hood lies folded behind the neck. */}
+          <mesh geometry={GEO.sphere} material={garment(look, look.shirt)} position={[0, 0.275, -0.07]} scale={[0.15, 0.065, 0.085]} castShadow />
+          {[-1, 1].map((sx) => (
+            <mesh key={sx} geometry={GEO.box} material={accent} position={[sx * 0.035, 0.22, FRONT - 0.002]} rotation={[-0.3, 0, 0]} scale={[0.009, 0.075, 0.009]} />
+          ))}
+          <mesh geometry={GEO.pocket} material={garment(look, dark)} position={[0, 0.075, FRONT - 0.006]} />
+        </group>
+      );
+    case "tee":
+    default:
+      // Chest emblem in the accent colour, like the logo on a T-shirt.
+      return <mesh geometry={GEO.sphere} material={accent} position={[0, 0.16, FRONT - 0.004]} scale={[0.05, 0.05, 0.012]} />;
+  }
+}
+
+function Eyewear({ look }: { look: ToyLook }) {
+  if (look.eyewear === "none") return null;
+  const eyeY = HD.y - 0.03;
+  const shades = look.eyewear === "shades";
+  return (
+    <group>
+      {[-1, 1].map((sx) => {
+        const x = sx * 0.1;
+        return (
+          <group key={sx} position={[x, eyeY, faceZ(x, eyeY) + 0.012]} rotation={[0, sx * 0.4, 0]}>
+            <mesh geometry={GEO.lens} material={FRAME} />
+            {shades && <mesh geometry={GEO.sphere} material={SHADES} scale={[0.046, 0.046, 0.006]} />}
+          </group>
+        );
+      })}
+      <mesh geometry={GEO.box} material={FRAME} position={[0, eyeY + 0.012, faceZ(0, eyeY) + 0.01]} scale={[0.06, 0.01, 0.01]} />
+    </group>
+  );
+}
+
 type JointRef = MutableRefObject<Group | null>;
 
 function Arm({ side, look, shoulder, elbow }: { side: 1 | -1; look: ToyLook; shoulder: JointRef; elbow: JointRef }) {
   const skin = matte(look.skin);
+  // A tee leaves the arms bare; everything else has long sleeves (a vest shows the shirt's).
+  const shirtSleeve = look.outfit === "vest" ? look.inner : look.shirt;
+  const sleeve = look.outfit === "tee" ? null : garment(look, shirtSleeve);
   return (
     <group ref={shoulder} position={[side * TOY.shoulderX, TOY.shoulderY, 0]}>
-      <mesh geometry={GEO.sphere} material={matte(look.shirt)} position={[0, -0.03, 0]} scale={[0.068, 0.078, 0.07]} castShadow />
-      <mesh geometry={GEO.upperArm} material={skin} position={[0, -TOY.upperArm / 2, 0]} castShadow />
+      <mesh geometry={GEO.sphere} material={garment(look, shirtSleeve)} position={[0, -0.03, 0]} scale={[0.068, 0.078, 0.07]} castShadow />
+      <mesh geometry={GEO.upperArm} material={sleeve ?? skin} position={[0, -TOY.upperArm / 2, 0]} scale={sleeve ? 1.08 : 1} castShadow />
       <group ref={elbow} position={[0, -TOY.upperArm, 0]}>
-        <mesh geometry={GEO.foreArm} material={skin} position={[0, -0.06, 0]} castShadow />
+        <mesh geometry={GEO.foreArm} material={sleeve ?? skin} position={[0, -0.06, 0]} scale={sleeve ? 1.1 : 1} castShadow />
+        {CUFFED.has(look.outfit) && (
+          <mesh geometry={GEO.sphere} material={matte(look.inner)} position={[0, -TOY.foreArm + 0.05, 0]} scale={[0.05, 0.016, 0.05]} />
+        )}
         <mesh geometry={GEO.sphere} material={skin} position={[0, -TOY.foreArm, 0]} scale={TOY.handRadius} castShadow />
       </group>
     </group>
@@ -280,14 +469,16 @@ function Arm({ side, look, shoulder, elbow }: { side: 1 | -1; look: ToyLook; sho
 
 function Leg({ side, look, hip, knee, ankle }: { side: 1 | -1; look: ToyLook; hip: JointRef; knee: JointRef; ankle: JointRef }) {
   const pants = matte(look.pants);
-  const sole = matte(isLight(look.shoes) ? mix(look.shoes, "#9a9aa0", 0.25) : SOLE_LIGHT);
+  // Dress shoes are polished with a dark sole; sneakers keep the light rubber sole.
+  const dress = DRESS_SHOES.has(look.outfit) && !isLight(look.shoes);
+  const sole = matte(dress ? mix(look.shoes, "#000000", 0.45) : isLight(look.shoes) ? mix(look.shoes, "#9a9aa0", 0.25) : SOLE_LIGHT);
   return (
     <group ref={hip} position={[side * TOY.hipX, TOY.hipUp, 0]}>
       <mesh geometry={GEO.thigh} material={pants} position={[0, -TOY.thigh / 2, 0]} castShadow />
       <group ref={knee} position={[0, -TOY.thigh, 0]}>
         <mesh geometry={GEO.shin} material={pants} position={[0, -TOY.shin / 2 + 0.005, 0]} castShadow />
         <group ref={ankle} position={[0, -TOY.shin, 0]}>
-          <mesh geometry={GEO.shoe} material={matte(look.shoes, 0.6)} position={[0, -TOY.sole + 0.0425, (TOY.toe - TOY.heel) / 2]} castShadow />
+          <mesh geometry={GEO.shoe} material={matte(look.shoes, dress ? 0.3 : 0.6)} position={[0, -TOY.sole + 0.0425, (TOY.toe - TOY.heel) / 2]} castShadow />
           <mesh geometry={GEO.sole} material={sole} position={[0, -TOY.sole + 0.011, (TOY.toe - TOY.heel) / 2]} castShadow />
         </group>
       </group>
@@ -340,8 +531,6 @@ export function ToyFigure({ look, drive, paused, heightM = TOY_HEIGHT, seatHeigh
     opts: { seatHeight: 0.52, phase: 0 } as PoseOptions & { phase: number },
     settled: false,
   }), []);
-
-  const shirtAccent = matte(look.shirtAccent);
 
   useFrame((_, rawDt) => {
     const s = state;
@@ -399,15 +588,15 @@ export function ToyFigure({ look, drive, paused, heightM = TOY_HEIGHT, seatHeigh
         <Leg side={1} look={look} hip={lHip} knee={lKnee} ankle={lAnkle} />
         <Leg side={-1} look={look} hip={rHip} knee={rKnee} ankle={rAnkle} />
         <group ref={torso} position={[0, TOY.hipUp, 0]}>
-          <mesh geometry={GEO.chest} material={matte(look.shirt)} position={[0, 0.02 + (TOY.torso.h - 0.02) / 2, 0]} castShadow />
-          {/* Chest emblem in the accent colour, like the logo on a T-shirt. */}
-          <mesh geometry={GEO.sphere} material={shirtAccent} position={[0, 0.16, TOY.torso.d / 2 - 0.004]} scale={[0.05, 0.05, 0.012]} />
+          <mesh geometry={GEO.chest} material={garment(look, look.shirt)} position={[0, 0.02 + (TOY.torso.h - 0.02) / 2, 0]} castShadow />
+          <OutfitDetails look={look} />
           <mesh geometry={GEO.lowSphere} material={matte(look.skin)} position={[0, TOY.neckY - 0.01, 0]} scale={[0.07, 0.04, 0.07]} />
           <Arm side={1} look={look} shoulder={lShoulder} elbow={lElbow} />
           <Arm side={-1} look={look} shoulder={rShoulder} elbow={rElbow} />
           <group ref={head} position={[0, TOY.neckY, 0]}>
             <mesh geometry={GEO.sphere} material={matte(look.skin)} position={[0, HD.y, 0]} scale={[HD.rx, HD.ry, HD.rz]} castShadow />
             <Face look={look} />
+            <Eyewear look={look} />
             <Hair style={look.hairStyle} look={look} />
           </group>
         </group>

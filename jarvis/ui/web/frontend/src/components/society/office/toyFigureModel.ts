@@ -23,17 +23,37 @@ import type { FigureMode } from "../figures/FigureRig";
 // ---------------------------------------------------------------------------
 // Look
 
-export type HairStyle = "short" | "spiky" | "bun" | "curly" | "long" | "beanie" | "cap" | "bald";
+export type HairStyle =
+  | "short" | "spiky" | "bun" | "curly" | "long" | "beanie" | "cap" | "bald"
+  | "slick" | "sidepart" | "buzz" | "ponytail";
+
+/**
+ * What the figure wears on its upper body. "tee" is the original casual look
+ * and the default for every recipe that names no outfit.
+ */
+export type OutfitId = "tee" | "hoodie" | "suit" | "leather" | "vest" | "turtleneck" | "blazer" | "quarterzip";
+
+export const OUTFIT_IDS: readonly OutfitId[] = ["tee", "hoodie", "suit", "leather", "vest", "turtleneck", "blazer", "quarterzip"];
+
+export type Eyewear = "none" | "glasses" | "shades";
+
+export const EYEWEAR: readonly Eyewear[] = ["none", "glasses", "shades"];
 
 export interface ToyLook {
   skin: string;
   hair: string;
   hairStyle: HairStyle;
+  /** The main upper-body garment: tee, hoodie, jacket, vest or knit. */
   shirt: string;
+  /** Emblem, tie, drawstrings or pocket square, depending on the outfit. */
   shirtAccent: string;
+  /** The shirt worn under a jacket or vest (collar, V-opening, sleeves under a vest). */
+  inner: string;
   pants: string;
   shoes: string;
   blush: boolean;
+  outfit: OutfitId;
+  eyewear: Eyewear;
 }
 
 /** Natural skin tones, light to dark; the fallback and the snap target for fantasy skins. */
@@ -115,11 +135,29 @@ function naturalSkinFor(hex: string): string {
  * primary → shirt, accent → shirt accent, secondary → trousers, shoes), with a
  * stable hash of `identity` choosing the hair style, blush and any missing colour.
  */
+/** Every hair style the figure can draw; the hash wheel above only picks from the original eight. */
+export const HAIR_STYLES: readonly HairStyle[] = [
+  "short", "slick", "sidepart", "buzz", "spiky", "curly", "long", "ponytail", "bun", "beanie", "cap", "bald",
+];
+
 /** The hair the recipe names explicitly, when it is one this figure can draw. */
 function chosenHair(recipe: FigureRecipe | null): HairStyle | null {
   const value = recipe?.hairStyle;
-  return typeof value === "string" && (HAIR_STYLE_WHEEL as readonly string[]).includes(value) ? (value as HairStyle) : null;
+  return typeof value === "string" && (HAIR_STYLES as readonly string[]).includes(value) ? (value as HairStyle) : null;
 }
+
+function chosenOutfit(recipe: FigureRecipe | null): OutfitId {
+  const value = recipe?.outfit;
+  return typeof value === "string" && (OUTFIT_IDS as readonly string[]).includes(value) ? (value as OutfitId) : "tee";
+}
+
+function chosenEyewear(recipe: FigureRecipe | null): Eyewear {
+  const value = recipe?.eyewear;
+  return typeof value === "string" && (EYEWEAR as readonly string[]).includes(value) ? (value as Eyewear) : "none";
+}
+
+/** The shirt under a jacket when the recipe names none: a crisp white. */
+const DEFAULT_INNER = "#f2f2ee";
 
 /**
  * The toy look for a stored figure. Hair comes from the recipe itself (its own
@@ -134,12 +172,15 @@ export function toyLookFor(recipe: FigureRecipe | null, identity: string): ToyLo
   return {
     skin,
     hair: validColour(palette.hair) ?? pick(HAIR_COLOURS, hash, 0x7a),
-    hairStyle: chosenHair(recipe) ?? pick(HAIR_STYLE_WHEEL, recipe ? hashString(recipeKey({ ...recipe, hairStyle: undefined })) : hash, 0x3c),
+    hairStyle: chosenHair(recipe) ?? pick(HAIR_STYLE_WHEEL, recipe ? hashString(recipeKey({ ...recipe, hairStyle: undefined, outfit: undefined, inner: undefined, eyewear: undefined })) : hash, 0x3c),
     shirt: validColour(palette.primary) ?? pick(SHIRT_COLOURS, hash, 0x19),
     shirtAccent: validColour(palette.accent) ?? pick(SHIRT_COLOURS, hash, 0x2d),
     pants: validColour(palette.secondary) ?? pick(PANTS_COLOURS, hash, 0x44),
+    inner: validColour(recipe?.inner) ?? DEFAULT_INNER,
     shoes: validColour(palette.shoes) ?? DEFAULT_SHOES,
     blush: (hash & 0x3) !== 0,
+    outfit: chosenOutfit(recipe),
+    eyewear: chosenEyewear(recipe),
   };
 }
 

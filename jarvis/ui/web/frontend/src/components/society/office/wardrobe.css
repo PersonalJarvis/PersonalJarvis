@@ -1,0 +1,13 @@
+/* Wardrobe panel: theme tokens only, so light and dark mode both work. Swatches show real garment colours. */
+.wardrobe-section { display:flex; flex-direction:column; gap:5px; }
+.wardrobe-row { display:flex; flex-wrap:wrap; gap:5px; }
+.wardrobe-outfits { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:5px; width:100%; }
+.wardrobe-outfit { display:flex; align-items:center; gap:7px; min-width:0; border:1px solid hsl(var(--border)); border-radius:9px; padding:5px 8px; background:hsl(var(--background)); color:hsl(var(--foreground)); font-size:11px; text-align:left; cursor:pointer; }
+.wardrobe-outfit i { flex:none; width:16px; height:16px; border-radius:5px; box-shadow:inset 0 0 0 1px hsl(var(--foreground) / .18); }
+.wardrobe-outfit:hover:not([aria-pressed="true"]) { background:hsl(var(--secondary)); }
+.wardrobe-outfit[aria-pressed="true"] { border-color:hsl(var(--ring)); background:hsl(var(--secondary)); font-weight:600; }
+.wardrobe-swatch { width:22px; height:22px; border-radius:999px; border:0; padding:0; cursor:pointer; box-shadow:inset 0 0 0 1px hsl(var(--foreground) / .2); }
+.wardrobe-swatch[aria-pressed="true"] { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
+.wardrobe-outfit:focus-visible, .wardrobe-swatch:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
+.wardrobe-chip-name { display:inline-block; max-width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; }
+.wardrobe-preview { height:240px; flex:none; border-radius:10px; background:hsl(var(--secondary) / .6); overflow:hidden; }

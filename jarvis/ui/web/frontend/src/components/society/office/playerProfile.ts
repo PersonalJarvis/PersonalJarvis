@@ -6,8 +6,8 @@
  * a missing or blocked storage and falls back to the default look.
  */
 import { CATALOG } from "../figures/figureRegistry";
-import { shufflePalette, type FigureRecipe } from "../figures/figureRecipe";
-import { toyLookFor, type HairStyle, type ToyLook } from "./toyFigureModel";
+import type { FigureRecipe } from "../figures/figureRecipe";
+import { HAIR_STYLES, toyLookFor, type HairStyle, type ToyLook } from "./toyFigureModel";
 
 const STORAGE_KEY = "jarvis.office.player.v1";
 
@@ -18,16 +18,12 @@ export interface PlayerProfile {
   hairStyle?: HairStyle;
 }
 
-export const HAIR_STYLES: readonly HairStyle[] = ["short", "spiky", "bun", "curly", "long", "beanie", "cap", "bald"];
+export { HAIR_STYLES };
 
 /** The look the office draws for the person. */
 export function playerLook(profile: PlayerProfile): ToyLook {
   const look = toyLookFor(profile.recipe, "office-player");
   return profile.hairStyle ? { ...look, hairStyle: profile.hairStyle } : look;
-}
-
-export function withHairStyle(profile: PlayerProfile, hairStyle: HairStyle): PlayerProfile {
-  return { ...profile, hairStyle };
 }
 
 /** Bodies offered in the wardrobe: two-legged, first-party, not reserved. */
@@ -77,8 +73,4 @@ export function saveProfile(profile: PlayerProfile): void {
 
 export function withBase(profile: PlayerProfile, base: string): PlayerProfile {
   return { ...profile, recipe: { ...profile.recipe, base, parts: {} } };
-}
-
-export function withShuffledColours(profile: PlayerProfile, seed = Math.random()): PlayerProfile {
-  return { ...profile, recipe: { ...profile.recipe, palette: shufflePalette(seed) } };
 }
