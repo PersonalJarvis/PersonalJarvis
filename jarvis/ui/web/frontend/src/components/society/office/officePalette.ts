@@ -160,7 +160,8 @@ export const ROOM_FLOOR_COLOURS = {
   wardrobe: { base: "#ece8e2", accents: ["#c9c2b8", "#9aa4ad", "#d9b8aa", "#aebcaa"] },
   reception: { base: "#e9e6e1", accents: ["#ece9e4", "#e5e2dc", "#efece8"] },
   break: { base: "#d9c09b", accents: ["#dcc39f", "#d2b791", "#e0c8a6", "#cfb48c"] },
-  focus: { base: "#b3c0ab", accents: ["#aebba6", "#b9c6b1", "#b0bda8"] },
+  // Mission Control: dark graphite microcement.
+  command: { base: "#454b54", accents: ["#3e444c", "#4d535c", "#41474f", "#51575f"] },
   server: { base: "#c3c8cf", accents: ["#c9ced4", "#bcc2c9"] },
 } as const;
 

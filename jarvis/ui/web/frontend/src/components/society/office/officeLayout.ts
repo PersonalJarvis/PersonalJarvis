@@ -13,12 +13,12 @@
  *
  * The coding floor (variant "coding", one elevator ride up) keeps the same
  * frame: its departments are the Agentic IDE workspaces, and the north strip
- * holds a quiet focus zone · the team room · a server room instead of the lead
- * office and the wardrobe. It has no lead desks and only the elevator and
- * break-room checkpoints — nothing there creates or dresses society agents.
- * It has exactly the agents office's footprint; its centre aisle holds
- * Mission Control: a screen on a floor stand between the two department
- * columns, where new coding agents are started and several can be briefed at once.
+ * holds Mission Control · the team room · a server room instead of the lead
+ * office and the wardrobe. It has no lead desks. Mission Control is a modern
+ * office: a walnut slat wall with a live video wall, a desk with three live
+ * monitors and a lounge corner; working it starts new coding agents and
+ * briefs several at once. Only it, the elevator and the break room are
+ * checkpoints there.
  */
 import type { AgentRunState, AgentTier } from "../data";
 
@@ -57,8 +57,8 @@ export interface Department extends Rect {
   tint: number;
 }
 
-/** "focus" and "server" only exist on the coding floor, in place of the lead office and the wardrobe. */
-export type RoomKind = "lead" | "team" | "wardrobe" | "reception" | "break" | "focus" | "server";
+/** "command" (Mission Control) and "server" only exist on the coding floor, in place of the lead office and the wardrobe. */
+export type RoomKind = "lead" | "team" | "wardrobe" | "reception" | "break" | "command" | "server";
 
 /** Which floor a layout draws: the society agents' office, or the coding agents' floor above it. */
 export type OfficeVariant = "agents" | "coding";
@@ -103,7 +103,8 @@ export type FurnitureKind =
   | "leadWall" | "executiveRug" | "guestChair" | "chesterfield" | "loungeTable" | "executiveBar" | "globe" | "floorLamp"
   | "dogBed" | "treatJar"
   // Coding floor: Mission Control's console ring.
-  | "missionConsole";
+  // Coding floor: Mission Control's slat wall with the video wall, and its desk with three monitors and a chair.
+  | "commandWall" | "commandDesk";
 
 /**
  * Footprint (x-extent × z-extent before rotation) and height of each piece.
@@ -140,7 +141,9 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   dogBed: { w: 0.9, d: 0.72, h: 0.45, solid: true },
   treatJar: { w: 0.5, d: 0.5, h: 1.2, solid: true },
   // Mission Control: a display on a floor stand; the box is the screen's width and the base plate's depth.
-  missionConsole: { w: 1.4, d: 0.5, h: 1.8, solid: true },
+  commandWall: { w: 7.8, d: 0.3, h: 2.7, solid: true },
+  // Desk and chair together; not a solid box, navigation walks round commandDeskObstacles.
+  commandDesk: { w: 2.8, d: 2.1, h: 1.45, solid: false },
 };
 
 export interface Furniture extends Point {
@@ -162,7 +165,7 @@ export interface Spot extends Point { id: string; kind: SpotKind; pose: SpotPose
 export interface OfficeLayout {
   variant: OfficeVariant;
   departments: Department[];
-  /** Lead desks live in the lead office; the coding floor has none (its rect is the focus zone). */
+  /** Lead desks live in the lead office; the coding floor has none (its rect is Mission Control). */
   lead: Rect & { desks: DeskSlot[] };
   rooms: Room[];
   walls: WallSegment[];
@@ -199,8 +202,16 @@ const DEPT_MARGIN_X = 1.1;
 const DEPT_HEADER_Z = 1.8;
 const DEPT_FOOTER_Z = 0.8;
 const AISLE = 3.2;
-/** How far round Mission Control's screen the person can use it, from its centre (metres). */
-export const MISSION_REACH = 1.5;
+/**
+ * Mission Control's desk, in its own space (origin = desk centre, +z = south,
+ * where the chair stands): the desk top and the chair the person works from.
+ * The renderer and navigation both read these numbers.
+ */
+export const COMMAND_DESK = { w: 2.6, d: 0.86, chairZ: 0.72 } as const;
+/** How far round Mission Control's desk the person can use it, from the desk's centre. */
+export const COMMAND_REACH = 1.9;
+/** The desk piece's origin sits this far south of the desk's centre: its box covers desk and chair. */
+export const COMMAND_DESK_OFFSET = 0.5;
 const EDGE = 1.6;
 /**
  * How far a figure's centre stays from the slab edge. The railing stands 0.2 m
@@ -313,6 +324,15 @@ export function chairRect(seat: Point, half = CHAIR_HALF): Rect {
   return { minX: seat.x - half, maxX: seat.x + half, minZ: seat.z - half, maxZ: seat.z + half };
 }
 
+/** What a walker bumps into at Mission Control's desk: the desk top and the chair, nothing in between. */
+export function commandDeskObstacles(desk: Point): Rect[] {
+  const { w, d, chairZ } = COMMAND_DESK;
+  return [
+    { minX: desk.x - w / 2, maxX: desk.x + w / 2, minZ: desk.z - d / 2, maxZ: desk.z + d / 2 },
+    chairRect({ x: desk.x, z: desk.z + chairZ }),
+  ];
+}
+
 /** Axis-aligned footprint of a rotated piece (rotations are multiples of 90°). */
 export function footprint(item: Pick<Furniture, "x" | "z" | "kind" | "rotationY" | "size">): Rect {
   const base = item.size ?? FURNITURE_SIZE[item.kind];
@@ -395,10 +415,10 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
   const bottomZ = floorDepth / 2;
 
   // North strip: lead office · team room · wardrobe, each with a door facing the office.
-  // The coding floor puts a focus zone and a server room on the same footprints.
+  // The coding floor puts Mission Control and a server room on the same footprints.
   const leadW = 8.2, teamW = 8.4;
   const northMaxZ = topZ + NORTH_DEPTH;
-  const westKind: RoomKind = coding ? "focus" : "lead";
+  const westKind: RoomKind = coding ? "command" : "lead";
   const eastKind: RoomKind = coding ? "server" : "wardrobe";
   const leadRoom: Room = { id: westKind, kind: westKind, walled: true, minX, maxX: minX + leadW, minZ: topZ, maxZ: northMaxZ,
     doors: [{ side: "south", at: minX + leadW / 2, width: 1.6 }] };
@@ -426,9 +446,6 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     }
     z += rowDepths[row] + AISLE;
   }
-  // Mission Control sits in the middle of the department block, on the centre aisle.
-  const departmentsMinZ = northMaxZ + AISLE;
-  const missionZ = (departmentsMinZ + (z - AISLE)) / 2;
 
   // South strip: an open reception/lobby in the west, a walled break room in the east.
   const southMinZ = bottomZ - SOUTH_DEPTH;
@@ -481,23 +498,27 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     // Easter egg: the jar of dog treats next to the coffee bar.
     { id: "break-treats", kind: "treatJar", x: breakRoom.minX + 9.95, z: breakRoom.minZ + 0.5, rotationY: 0, room: "break" },
   ];
-  // Coding floor, west: a quiet focus zone — a wall of shelves, a couch facing
-  // them on a rug, a beanbag in each corner, palms beside the door.
-  const focusFurniture: Furniture[] = coding ? [
-    { id: "focus-shelf-w", kind: "bookshelf", x: lx0 + 1.6, z: lz0 + 0.35, rotationY: 0, room: "focus" },
-    { id: "focus-shelf-c", kind: "bookshelf", x: lx0 + leadW / 2, z: lz0 + 0.35, rotationY: 0, room: "focus" },
-    { id: "focus-shelf-e", kind: "bookshelf", x: lx0 + leadW - 1.6, z: lz0 + 0.35, rotationY: 0, room: "focus" },
-    { id: "focus-rug", kind: "rug", x: lx0 + leadW / 2, z: lz0 + 3.6, rotationY: 0, room: "focus", size: { w: 4.8, d: 2.6 } },
-    { id: "focus-couch", kind: "couch", x: lx0 + leadW / 2, z: lz0 + 4.4, rotationY: Math.PI, room: "focus" },
-    { id: "focus-beanbag-w", kind: "beanbag", x: lx0 + 1.3, z: lz0 + 3.0, rotationY: 0, room: "focus" },
-    { id: "focus-beanbag-e", kind: "beanbag", x: lx0 + leadW - 1.3, z: lz0 + 3.0, rotationY: 0, room: "focus" },
-    { id: "focus-plant", kind: "plant", x: lx0 + 0.55, z: northMaxZ - 0.55, rotationY: 0, room: "focus" },
-    { id: "focus-plant-e", kind: "plant", x: leadRoom.maxX - 0.55, z: northMaxZ - 0.55, rotationY: 0, room: "focus" },
+  // Coding floor, west: Mission Control. The slat wall with the video wall
+  // along the north side, the desk in front of it facing the wall (the person
+  // works with their back to the door, so the screens face the camera), a
+  // lounge corner with a sofa facing east, an open shelf on the east wall.
+  const commandDeskAt = { x: lx0 + leadW / 2, z: lz0 + 2.35 };
+  const commandFurniture: Furniture[] = coding ? [
+    { id: "command-wall", kind: "commandWall", x: lx0 + leadW / 2, z: lz0 + 0.1 + FURNITURE_SIZE.commandWall.d / 2, rotationY: 0, room: "command" },
+    // The piece's box is desk + chair; its origin sits between them.
+    { id: "command-desk", kind: "commandDesk", x: commandDeskAt.x, z: commandDeskAt.z + COMMAND_DESK_OFFSET, rotationY: 0, room: "command" },
+    { id: "command-rug", kind: "rug", x: lx0 + 1.55, z: lz0 + 5.1, rotationY: 0, room: "command", size: { w: 2.7, d: 2.6 } },
+    { id: "command-sofa", kind: "couch", x: lx0 + 0.6, z: lz0 + 5.1, rotationY: Math.PI / 2, room: "command" },
+    { id: "command-table", kind: "coffeeTable", x: lx0 + 1.9, z: lz0 + 5.1, rotationY: 0, room: "command" },
+    { id: "command-shelf", kind: "bookshelf", x: leadRoom.maxX - 0.3, z: lz0 + 4.7, rotationY: -Math.PI / 2, room: "command" },
+    { id: "command-plant-w", kind: "plant", x: lx0 + 0.5, z: lz0 + 0.95, rotationY: 0, room: "command" },
+    { id: "command-plant-e", kind: "plant", x: leadRoom.maxX - 0.5, z: lz0 + 0.95, rotationY: 0, room: "command" },
+    { id: "command-plant-s", kind: "plant", x: leadRoom.maxX - 0.55, z: northMaxZ - 0.55, rotationY: 0, room: "command" },
   ] : [];
   const wx0 = wardrobeRoom.minX;
   const furniture: Furniture[] = [
     ...leadFurniture,
-    ...focusFurniture,
+    ...commandFurniture,
     // Team room: one long table, a board on the north wall.
     { id: "team-table", kind: "meetingTable", x: tcx, z: tcz + 0.4, rotationY: 0, room: "team" },
     { id: "team-board", kind: "teamBoard", x: tcx, z: topZ + 0.25, rotationY: 0, room: "team" },
@@ -533,10 +554,6 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     { id: "beanbag-b", kind: "beanbag", x: bx0 + 8.4, z: bz0 + 6.3, rotationY: 0, room: "break" },
     { id: "break-shelf", kind: "bookshelf", x: bx0 + 2.2, z: bz0 + 0.3, rotationY: 0, room: "break" },
     { id: "break-plant", kind: "plant", x: bx0 + 0.6, z: bottomZ - 0.6, rotationY: 0, room: "break" },
-    ...(coding ? [
-      // Mission Control: a screen on a stand, midway down the centre aisle, facing the camera.
-      { id: "mission-console", kind: "missionConsole", x: 0, z: missionZ, rotationY: 0, room: "floor" },
-    ] satisfies Furniture[] : []),
   ];
   for (const dept of departments) {
     furniture.push({ id: `${dept.id}-plant-w`, kind: "plant", x: dept.minX + 0.45, z: dept.maxZ - 0.45, rotationY: 0, room: "floor" });
@@ -558,13 +575,10 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     { id: "beanbag-b", kind: "beanbag", pose: "sit", x: bx0 + 8.4, z: bz0 + 6.3, facing: Math.PI * 1.25, room: "break" },
     { id: "shelf-break", kind: "shelf", pose: "stand", x: bx0 + 2.2, z: bz0 + 1.1, facing: Math.PI, room: "break" },
     ...(coding ? [
-      // Focus zone: browsing the shelf wall, the couch facing it, a beanbag per corner.
-      { id: "shelf-focus-w", kind: "shelf", pose: "stand", x: lx0 + 1.6, z: lz0 + 1.15, facing: Math.PI, room: "focus" },
-      { id: "shelf-focus-e", kind: "shelf", pose: "stand", x: lx0 + leadW - 1.6, z: lz0 + 1.15, facing: Math.PI, room: "focus" },
-      { id: "couch-focus-1", kind: "couch", pose: "sit", x: lx0 + leadW / 2 - 0.6, z: lz0 + 4.25, facing: Math.PI, room: "focus" },
-      { id: "couch-focus-2", kind: "couch", pose: "sit", x: lx0 + leadW / 2 + 0.6, z: lz0 + 4.25, facing: Math.PI, room: "focus" },
-      { id: "beanbag-focus-w", kind: "beanbag", pose: "sit", x: lx0 + 1.3, z: lz0 + 3.0, facing: Math.PI * 0.75, room: "focus" },
-      { id: "beanbag-focus-e", kind: "beanbag", pose: "sit", x: lx0 + leadW - 1.3, z: lz0 + 3.0, facing: Math.PI * 1.25, room: "focus" },
+      // Mission Control: the sofa facing east, the open shelf on the east wall.
+      { id: "couch-command-1", kind: "couch", pose: "sit", x: lx0 + 0.75, z: lz0 + 4.55, facing: Math.PI / 2, room: "command" },
+      { id: "couch-command-2", kind: "couch", pose: "sit", x: lx0 + 0.75, z: lz0 + 5.65, facing: Math.PI / 2, room: "command" },
+      { id: "shelf-command", kind: "shelf", pose: "stand", x: leadRoom.maxX - 1.1, z: lz0 + 4.7, facing: Math.PI / 2, room: "command" },
       // Server room: a look at the consoles on either wall.
       { id: "console-e", kind: "board", pose: "stand", x: wardrobeRoom.maxX - 1.2, z: topZ + 2.2, facing: Math.PI / 2, room: "server" },
       { id: "console-w", kind: "board", pose: "stand", x: wx0 + 1.2, z: topZ + 2.2, facing: -Math.PI / 2, room: "server" },
@@ -597,9 +611,9 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
   // The elevator's doors face east into the lobby; its checkpoint is the floor in front of them.
   const elevatorStop: Checkpoint = { id: "elevator", room: "reception", x: elevator.x + 0.95, z: elevator.z, radius: 1.0 };
   const breakStop: Checkpoint = { id: "break", room: "break", x: bx0 + 5.6, z: bz0 + 2.6, radius: 1.8 };
-  // Mission Control's stop is a ring round the screen, usable from every side; "walk there" ends in front of it.
-  const missionStop: Checkpoint = { id: "mission", room: "floor", x: 0, z: missionZ, radius: MISSION_REACH, tokenY: 2.95,
-    approach: { x: 0, z: missionZ + 0.9 } };
+  // Mission Control's stop is a ring round the desk, usable from every side; "walk there" ends behind the chair.
+  const missionStop: Checkpoint = { id: "mission", room: "command", x: commandDeskAt.x, z: commandDeskAt.z + 0.3, radius: COMMAND_REACH,
+    tokenY: 2.25, approach: { x: commandDeskAt.x, z: commandDeskAt.z + COMMAND_DESK.chairZ + 0.65 } };
   const checkpoints: Checkpoint[] = coding ? [missionStop, elevatorStop, breakStop] : [
     { id: "create", room: "reception", x: reception.x, z: reception.z + 1.7, radius: 1.2 },
     { id: "manage", room: "reception", x: kiosk.x, z: kiosk.z + 1.4, radius: 1.1 },
@@ -622,6 +636,7 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     // Department sign walls along each department's north edge.
     ...departments.map((d) => ({ minX: d.minX + 0.2, maxX: d.maxX - 0.2, minZ: d.minZ + 0.02, maxZ: d.minZ + 0.2 })),
     ...furniture.filter((f) => FURNITURE_SIZE[f.kind].solid).map(footprint),
+    ...(coding ? commandDeskObstacles(commandDeskAt) : []),
     // The posts of an open room's name arch are solid too; nobody walks through them.
     ...rooms.filter((r) => !r.walled).flatMap(archPosts).map((p) => ({
       minX: p.x - ARCH.post / 2, maxX: p.x + ARCH.post / 2, minZ: p.z - ARCH.post / 2, maxZ: p.z + ARCH.post / 2,

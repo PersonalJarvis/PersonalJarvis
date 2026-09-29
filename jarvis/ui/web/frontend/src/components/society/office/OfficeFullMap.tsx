@@ -119,7 +119,7 @@ function FullMapDialog({ onClose, layout, agents, selectedId }: Omit<OfficeFullM
     wardrobe: t("society.office.room_wardrobe"),
     reception: t("society.office.room_reception"),
     break: t("society.office.room_break"),
-    focus: t("society.office.room_focus"),
+    command: t("society.office.room_command"),
     server: t("society.office.room_server"),
   };
   const openSpace = t("society.office.open_space");

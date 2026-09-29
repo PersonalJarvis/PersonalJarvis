@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   allDesks, archPosts, buildOfficeLayout, countStates, departmentKey, FURNITURE_SIZE, footprint, groupDepartments,
-  MAX_DEPARTMENTS, MIN_DEPARTMENTS, MISSION_REACH, type OfficeAgentInput,
+  MAX_DEPARTMENTS, MIN_DEPARTMENTS, COMMAND_DESK, COMMAND_REACH, type OfficeAgentInput,
 } from "./officeLayout";
 import { buildNavGrid, isWalkable } from "./officeNav";
 import { cameraHome, fitDistance, focusBounds } from "./officeCamera";
@@ -117,16 +117,16 @@ describe("office layout", () => {
     expect(plain.checkpoints.map((c) => c.id)).toEqual(["create", "manage", "team", "wardrobe", "lead", "break", "elevator"]);
   });
 
-  it("builds the coding floor: workspaces as departments, focus zone and server room, no lead desks", () => {
+  it("builds the coding floor: workspaces as departments, Mission Control and server room, no lead desks", () => {
     const roster = [agent("p1", "Personal Jarvis"), agent("p2", "Website"), agent("p3", "Personal Jarvis")];
     const layout = buildOfficeLayout(roster, { variant: "coding" });
     expect(layout.variant).toBe("coding");
-    expect(layout.rooms.map((r) => r.kind)).toEqual(["focus", "team", "server", "reception", "break"]);
+    expect(layout.rooms.map((r) => r.kind)).toEqual(["command", "team", "server", "reception", "break"]);
     expect(layout.lead.desks).toEqual([]);
     expect(layout.checkpoints.map((c) => c.id)).toEqual(["mission", "elevator", "break"]);
     expect(layout.departments.map((d) => d.label)).toEqual(["Personal Jarvis", "Website", "", ""]);
     expect(layout.furniture.some((f) => f.room === "lead" || f.room === "wardrobe")).toBe(false);
-    expect(layout.spots.some((s) => s.room === "focus")).toBe(true);
+    expect(layout.spots.some((s) => s.room === "command")).toBe(true);
     expect(layout.spots.some((s) => s.room === "server")).toBe(true);
     // Both floors share one footprint, and the elevator stands at the same spot on each.
     const below = buildOfficeLayout(roster);
@@ -137,34 +137,43 @@ describe("office layout", () => {
     expect(layout.spawn.x - layout.bounds.minX).toBeCloseTo(below.spawn.x - below.bounds.minX);
   });
 
-  it("puts Mission Control in the middle of the coding floor, clear of every department", () => {
+  it("builds Mission Control as its own office: slat wall, desk, lounge, and a ring round the desk", () => {
     const layout = buildOfficeLayout([agent("p1", "Personal Jarvis"), agent("p2", "Website")], { variant: "coding" });
-    const hub = layout.furniture.find((f) => f.kind === "missionConsole")!;
+    const room = layout.rooms.find((r) => r.kind === "command")!;
     const stop = layout.checkpoints.find((c) => c.id === "mission")!;
-    expect(hub.x).toBe(0);
-    const depts = layout.departments;
-    expect(hub.z).toBeCloseTo((Math.min(...depts.map((d) => d.minZ)) + Math.max(...depts.map((d) => d.maxZ))) / 2);
-    // The whole ring the person can use from stays out of the departments.
-    for (const dept of depts) expect(stop.radius < Math.abs(dept.minX) && stop.radius < Math.abs(dept.maxX)).toBe(true);
-    expect(buildOfficeLayout([agent("a1", "codex")]).furniture.some((f) => f.kind === "missionConsole")).toBe(false);
+    const inRoom = (p: { x: number; z: number }) => p.x > room.minX && p.x < room.maxX && p.z > room.minZ && p.z < room.maxZ;
+    for (const kind of ["commandWall", "commandDesk", "couch", "coffeeTable", "bookshelf"] as const) {
+      expect(layout.furniture.some((f) => f.kind === kind && f.room === "command" && inRoom(f)), kind).toBe(true);
+    }
+    expect(stop.room).toBe("command");
+    expect(stop.radius).toBe(COMMAND_REACH);
+    // The whole ring stays inside the room's walls.
+    expect(stop.x - stop.radius).toBeGreaterThan(room.minX);
+    expect(stop.x + stop.radius).toBeLessThan(room.maxX);
+    expect(stop.z - stop.radius).toBeGreaterThan(room.minZ);
+    expect(stop.z + stop.radius).toBeLessThan(room.maxZ);
+    expect(buildOfficeLayout([agent("a1", "codex")]).furniture.some((f) => f.kind === "commandDesk")).toBe(false);
   });
 
-  it("makes Mission Control's screen usable from every side, with no invisible walls", () => {
+  it("lets the person work Mission Control's desk from every side, with no invisible walls", () => {
     const layout = buildOfficeLayout([agent("p1", "Personal Jarvis")], { variant: "coding" });
-    const hub = layout.furniture.find((f) => f.kind === "missionConsole")!;
     const stop = layout.checkpoints.find((c) => c.id === "mission")!;
-    // The interaction ring is centred on the screen.
-    expect([stop.x, stop.z]).toEqual([hub.x, hub.z]);
-    expect(stop.radius).toBe(MISSION_REACH);
-    // Only the screen's own box is solid; standing right round it works, inside the ring, on every side.
     const grid = buildNavGrid(layout);
+    // A loop round the desk and chair: free to stand on everywhere, and inside the ring.
     for (let i = 0; i < 16; i += 1) {
       const a = (i / 16) * Math.PI * 2;
-      const p = { x: hub.x + Math.cos(a) * 1.25, z: hub.z + Math.sin(a) * 1.25 };
-      expect(isWalkable(grid, p)).toBe(true);
+      // An ellipse: the desk is long and shallow, so the path round it is too.
+      const p = { x: stop.x + Math.cos(a) * 1.85, z: stop.z + Math.sin(a) * 1.6 };
+      expect(isWalkable(grid, p), `angle ${i}`).toBe(true);
       expect(Math.hypot(p.x - stop.x, p.z - stop.z)).toBeLessThanOrEqual(stop.radius);
     }
-    expect(isWalkable(grid, { x: hub.x, z: hub.z })).toBe(false);
+    // Only the desk top and the chair are solid: right beside the chair is open floor.
+    const deskZ = stop.z - 0.3;
+    const chairZ = deskZ + COMMAND_DESK.chairZ;
+    expect(isWalkable(grid, { x: stop.x, z: deskZ })).toBe(false);
+    expect(isWalkable(grid, { x: stop.x, z: chairZ })).toBe(false);
+    expect(isWalkable(grid, { x: stop.x + 0.75, z: chairZ })).toBe(true);
+    expect(isWalkable(grid, { x: stop.x - 0.75, z: chairZ })).toBe(true);
     expect(isWalkable(grid, stop.approach!)).toBe(true);
   });
 

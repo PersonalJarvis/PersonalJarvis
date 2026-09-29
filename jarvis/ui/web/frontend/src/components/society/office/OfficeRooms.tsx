@@ -25,7 +25,7 @@ function lcg(seed: number): () => number {
 }
 
 /** Metres covered by one repeat of each floor pattern. */
-const PATTERN_METRES: Record<RoomKind, number> = { lead: 2.6, team: 2, wardrobe: 2, reception: 3.2, break: 2.4, focus: 2, server: 2 };
+const PATTERN_METRES: Record<RoomKind, number> = { lead: 2.6, team: 2, wardrobe: 2, reception: 3.2, break: 2.4, command: 3.2, server: 2 };
 
 function drawFloor(kind: RoomKind, ctx: CanvasRenderingContext2D, w: number, h: number): void {
   const { base, accents } = ROOM_FLOOR_COLOURS[kind];
@@ -74,7 +74,7 @@ function drawFloor(kind: RoomKind, ctx: CanvasRenderingContext2D, w: number, h: 
       const s = 2 + rand() * 4;
       ctx.fillRect(Math.floor(rand() * w), Math.floor(rand() * h), s, s * (0.6 + rand() * 0.6));
     }
-  } else if (kind === "team" || kind === "focus") {
+  } else if (kind === "team") {
     // Carpet grain: fine speckles in the accent tones, plus a faint weave.
     for (let i = 0; i < 2600; i += 1) {
       ctx.fillStyle = accents[Math.floor(rand() * accents.length)];
@@ -82,6 +82,18 @@ function drawFloor(kind: RoomKind, ctx: CanvasRenderingContext2D, w: number, h: 
     }
     ctx.fillStyle = "rgba(0,0,0,0.035)";
     for (let y = 0; y < h; y += 8) ctx.fillRect(0, y, w, 1);
+  } else if (kind === "command") {
+    // Mission Control: dark graphite microcement, soft clouds of lighter and
+    // darker trowel marks and a faint sheen, no joints.
+    for (let i = 0; i < 520; i += 1) {
+      ctx.globalAlpha = 0.18 + rand() * 0.2;
+      ctx.fillStyle = accents[Math.floor(rand() * accents.length)];
+      const r = 6 + rand() * 22;
+      ctx.beginPath();
+      ctx.ellipse(rand() * w, rand() * h, r * (1 + rand()), r, rand() * Math.PI, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
   } else {
     // Tiles: the server room's raised-floor grid, reception's large pale stone slabs.
     const tiles = kind === "server" ? 4 : 2;
