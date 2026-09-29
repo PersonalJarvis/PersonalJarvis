@@ -305,6 +305,17 @@ _NATIVE_RESUME_ENV: dict[str, dict[str, str]] = {
 }
 
 
+def reports_session_starts(agent: str) -> bool:
+    """Does ``agent`` report every conversation it starts (Claude Code's hook)?
+
+    True for Claude Code and every launch profile built on it; their current
+    conversation is tracked by :mod:`.pane_sessions` rather than trusted from
+    the launch id.
+    """
+    adapter = _adapter_for(agent)
+    return adapter is not None and adapter.kind == "claude_session"
+
+
 def resume_env(agent: str) -> dict[str, str]:
     """Extra environment that lets ``agent`` finish an interrupted turn itself."""
     adapter = _adapter_for(agent)

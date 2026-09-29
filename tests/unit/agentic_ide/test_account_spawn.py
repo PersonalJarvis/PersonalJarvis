@@ -359,6 +359,10 @@ async def test_a_pane_on_the_builtin_account_spawns_exactly_as_it_always_did(
     await _attach(registry, registry.session.terminals[0].name)
     env = _env_of(fake_pty)
     assert env is not None
+    # Plus the pane's session-hook wiring (``pane_sessions``): who it is and
+    # where its hook reports — additive, never an account redirection.
+    assert env.pop("JARVIS_PANE_ID") == registry.session.terminals[0].history_id
+    assert env.pop("JARVIS_PANE_SESSIONS_DIR")
     assert env == {**os.environ, "CLAUDE_CODE_DISABLE_MOUSE_CLICKS": "1"}
 
 

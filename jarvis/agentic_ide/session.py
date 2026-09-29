@@ -87,6 +87,7 @@ from . import (
     layout_tree,
     library,
     opening,
+    pane_sessions,
     prompt_history,
     recap_engine,
     remote,
@@ -101,6 +102,7 @@ from .agent_sessions import (
     fork_argv,
     has_conversation,
     launch_extra,
+    reports_session_starts,
     resume_argv,
     resume_env,
 )
@@ -3260,6 +3262,31 @@ class Registry:
                 await self._close_locked(workspace_id)
             return count
 
+    def _sync_hooked_session(self, term: Terminal) -> None:
+        """Adopt the conversation id the pane's session hook last reported.
+
+        Runs off the loop (one small file read). A pane whose hook never fired
+        keeps the id it was launched with.
+        """
+        latest = pane_sessions.latest_session(term.history_id)
+        if latest is None:
+            return
+        session_id, at = latest
+        if term.resume is not None and term.resume.id == session_id:
+            return
+        term.resume = ResumeHandle("claude_session", session_id, at or time.time())
+        logger.info(
+            "Agentic IDE: {} is now on conversation {} (reported by its session hook)",
+            term.name,
+            session_id[:8],
+        )
+
+    def _sync_hooked_sessions(self) -> None:
+        for session in list(self._sessions.values()):
+            for term in list(session.terminals):
+                if not term.computer_id and reports_session_starts(term.agent):
+                    self._sync_hooked_session(term)
+
     def runtime_status(self) -> dict[str, Any]:
         """Where the agents run right now, for the UI and ``jarvis api``.
 
@@ -3351,6 +3378,7 @@ class Registry:
         than the one the previous save stored.
         """
         async with self._persist_lock:
+            await asyncio.to_thread(self._sync_hooked_sessions)
             snapshot = self.snapshot()
             if snapshot is None:
                 return
@@ -3917,6 +3945,10 @@ class Registry:
         # meant a dozen stalls interleaved with their own spawns. It only ever
         # runs on a pane that HAS a handle, which is why the restore path was
         # the only one that ever felt it.
+        if not term.computer_id and reports_session_starts(term.agent):
+            # The conversation the pane is on NOW — after a ``/clear`` or a
+            # ``/resume`` inside it that is not the id it was launched with.
+            await asyncio.to_thread(self._sync_hooked_session, term)
         home = account_home(term.agent, term.account)
         continuing = resume_argv(term.agent, term.resume)
         # A remote pane's history lives on that computer; its handle was
@@ -4148,6 +4180,16 @@ class Registry:
                     # without this proof the agent worked on while every list
                     # filed it under "done" (maintainer report 2026-09-29).
                     term.adopted_generation = term.process_generation
+        if not term.computer_id and reports_session_starts(term.agent):
+            # Herdr's rule: the pane reports every conversation it starts, so a
+            # reboot resumes the one it was really on (``pane_sessions``).
+            wiring_argv, wiring_env = await asyncio.to_thread(
+                pane_sessions.launch_wiring, term.history_id
+            )
+            # Right behind the binary, so resume arguments stay last.
+            argv = (argv[0], *wiring_argv, *argv[1:])
+            base = env if env is not None else _without_parent_agent_session(dict(os.environ))
+            env = {**(base if base is not None else os.environ), **wiring_env}
 
         # The provider/account gate is acquired BEFORE the machine-wide gate.
         # A Codex pane waiting on shared state must never occupy a CPU slot that
