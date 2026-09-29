@@ -1215,7 +1215,10 @@ class Terminal:
     # the last checkpoint. The instruction behind that job was submitted in the
     # previous app's lifetime, so ``submit_generation`` cannot prove it; this
     # does, for exactly this process (a respawn moves the generation on).
-    # Without it every re-joined agent read "done" while still working.
+    # Without it every re-joined agent read "done" while still working. The
+    # same proof is stamped on a process RESUMED to finish a turn that was cut
+    # off mid-work (``agent_sessions.resume_env``): it carries on by itself, so
+    # no submit in this lifetime exists either.
     adopted_generation: int = -1
     transcript: Transcript = field(default_factory=Transcript)
     # The RAW output stream, kept so the next viewer can be handed the screen
@@ -4139,6 +4142,12 @@ class Registry:
             if native:
                 base = env if env is not None else _without_parent_agent_session(dict(os.environ))
                 env = {**(base if base is not None else os.environ), **native}
+                if term.resume_continuation_needed:
+                    # The turn it re-runs is the job the user handed over before
+                    # the process died. Nothing is submitted in THIS lifetime, so
+                    # without this proof the agent worked on while every list
+                    # filed it under "done" (maintainer report 2026-09-29).
+                    term.adopted_generation = term.process_generation
 
         # The provider/account gate is acquired BEFORE the machine-wide gate.
         # A Codex pane waiting on shared state must never occupy a CPU slot that

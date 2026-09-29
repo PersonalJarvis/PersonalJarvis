@@ -353,7 +353,9 @@ def _adopted_with_work(term: Any) -> bool:
     its instruction in the previous app's lifetime, so no submit stamp of THIS
     app can prove it. ``Session._adopt_hosted`` records the proof it had then
     (a conversation on disk, prompts sent, work seen at the last checkpoint) as
-    ``adopted_generation``; it holds only for that very process.
+    ``adopted_generation``; it holds only for that very process. A process
+    resumed to finish a turn cut off mid-work carries the same proof: it goes
+    on with the old job by itself, with nothing submitted in this lifetime.
     """
     try:
         return int(getattr(term, "adopted_generation", -1)) == int(

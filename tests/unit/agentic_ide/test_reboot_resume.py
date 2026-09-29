@@ -127,6 +127,34 @@ async def test_agents_carry_on_by_themselves_never_by_a_typed_continue(
     assert nudged == []
 
 
+async def test_an_agent_resumed_mid_turn_reads_working_while_it_moves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The re-run turn is the old job: movement counts as work, not as noise.
+
+    Nothing is submitted in this lifetime, so without the resume proof both
+    panes below read "waiting" forever — the Agents tab filed a pane rendering
+    a film under Done (maintainer report 2026-09-29). An agent that was idle
+    when it died gets no such proof: its redraws must not invent work.
+    """
+    from jarvis.agentic_ide.activity import read_activity
+
+    ws, _ = _save(tmp_path, [_pane(1, working=True), _pane(2)])
+    _store(ws)
+    pool = FakeHostedPool()
+
+    registry, _nudged = await _boot(monkeypatch, pool)
+    await _settle(pool, 2)
+
+    session = registry.sessions[0]
+    interrupted, idle = session.find("T1"), session.find("T2")
+    now = time.time()
+    for term in (interrupted, idle):
+        term.last_output_at = now
+    assert read_activity(interrupted, now=now) == "working"
+    assert read_activity(idle, now=now) == "waiting"
+
+
 async def test_agents_that_ended_by_themselves_stay_ended(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
