@@ -53,6 +53,8 @@ __all__ = [
     "create_routine",
     "is_agent_routine",
     "list_routines",
+    "missing_timezone",
+    "next_run_readback",
     "routine_seat",
 ]
 
@@ -66,7 +68,7 @@ def agent_tag(agent_id: str) -> str:
 
 def _trigger(schedule: dict[str, Any]) -> Any:
     from jarvis.tasks.calendar import absolute_timestamp
-    from jarvis.tasks.context import client_timezone
+    from jarvis.tasks.context import turn_timezone
 
     kind = str(schedule.get("kind") or schedule.get("type") or "every")
     if kind == "source":
@@ -75,7 +77,7 @@ def _trigger(schedule: dict[str, Any]) -> Any:
         )
     if kind == "cron":
         values = dict(schedule)
-        values.setdefault("timezone", client_timezone.get())
+        values.setdefault("timezone", turn_timezone())
         return TriggerCron.model_validate(
             {"type": kind, **{k: v for k, v in values.items() if k not in ("kind", "type")}}
         )
@@ -86,7 +88,7 @@ def _trigger(schedule: dict[str, Any]) -> Any:
         )
     if kind == "calendar":
         schedule = dict(schedule)
-        schedule.setdefault("timezone", client_timezone.get())
+        schedule.setdefault("timezone", turn_timezone())
         return TriggerCalendar.model_validate(
             {"type": kind, **{k: v for k, v in schedule.items() if k not in ("kind", "type")}}
         )
@@ -95,7 +97,7 @@ def _trigger(schedule: dict[str, Any]) -> Any:
             interval_seconds=float(schedule.get("interval_seconds", 86_400)),
             start_at=(
                 absolute_timestamp(
-                    str(schedule["start_at"]), schedule.get("timezone") or client_timezone.get()
+                    str(schedule["start_at"]), schedule.get("timezone") or turn_timezone()
                 )
                 if schedule.get("start_at")
                 else None
@@ -104,7 +106,7 @@ def _trigger(schedule: dict[str, Any]) -> Any:
     if kind == "at_time":
         return TriggerAtTime(
             iso_timestamp=absolute_timestamp(
-                str(schedule["iso_timestamp"]), schedule.get("timezone") or client_timezone.get()
+                str(schedule["iso_timestamp"]), schedule.get("timezone") or turn_timezone()
             )
         )
     if kind == "after_delay":
@@ -119,6 +121,44 @@ def _trigger(schedule: dict[str, Any]) -> Any:
             max_firings=schedule.get("max_firings"),
         )
     raise ValueError(f"unknown schedule kind {kind!r}")
+
+
+#: Schedule kinds pinned to a wall clock; they need the person's IANA zone.
+_WALL_CLOCK_KINDS: Final[frozenset[str]] = frozenset({"calendar", "cron"})
+
+
+def missing_timezone(schedule: dict[str, Any]) -> bool:
+    """True when a wall-clock schedule has no zone and the turn knows none."""
+    from jarvis.tasks.context import turn_timezone
+
+    kind = str(schedule.get("kind") or schedule.get("type") or "every")
+    local_at_time = kind == "at_time" and not _has_offset(str(schedule.get("iso_timestamp", "")))
+    if kind not in _WALL_CLOCK_KINDS and not local_at_time:
+        return False
+    return not (schedule.get("timezone") or turn_timezone())
+
+
+def _has_offset(stamp: str) -> bool:
+    tail = stamp[10:]
+    return stamp.endswith("Z") or "+" in tail or "-" in tail
+
+
+def next_run_readback(due_at_ns: int | None, timezone: str | None) -> str | None:
+    """``"Wed 2026-09-30 08:00 (Europe/Berlin)"`` for a spoken confirmation."""
+    if not due_at_ns:
+        return None
+    from datetime import UTC, datetime
+
+    from jarvis.tasks.calendar import calendar_zone
+
+    when = datetime.fromtimestamp(due_at_ns / 1e9, UTC)
+    if timezone:
+        try:
+            when = when.astimezone(calendar_zone(timezone))
+        except ValueError:
+            timezone = "UTC"
+    label = timezone or "UTC"
+    return f"{when:%a %Y-%m-%d %H:%M} ({label})"
 
 
 def _routine_prompt(agent: AgentRecord, prompt: str) -> str:

@@ -192,6 +192,26 @@ async def add_template(
     return {"id": task_id}
 
 
+class ClientTimezoneBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    timezone: str = Field(min_length=1, max_length=100)
+
+
+@router.post("/client-timezone")
+async def report_client_timezone(body: ClientTimezoneBody) -> dict[str, Any]:
+    """The UI reports the person's IANA zone once per load. Voice turns carry
+    no client, so their calendar routines use this zone instead of guessing."""
+    from jarvis.tasks.calendar import calendar_zone
+    from jarvis.tasks.context import remember_ui_timezone
+
+    try:
+        calendar_zone(body.timezone)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    remember_ui_timezone(body.timezone)
+    return {"ok": True, "timezone": body.timezone}
+
+
 # ----------------------------------------------------------------------
 # Routes
 # ----------------------------------------------------------------------

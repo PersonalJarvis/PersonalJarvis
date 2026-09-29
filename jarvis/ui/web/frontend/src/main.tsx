@@ -82,6 +82,22 @@ void import("./lib/uiStallWatch").then(({ watchUiStalls }) => {
   });
 });
 
+// Tell the backend which timezone this person lives in. A voice request such
+// as "a briefing every day at 8" has no client of its own, so the routine it
+// creates is scheduled on this zone instead of the server clock.
+try {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (timezone) {
+    void fetch("/api/tasks/client-timezone", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ timezone }),
+    }).catch(() => undefined);
+  }
+} catch {
+  // A runtime without Intl zone data simply leaves voice routines to ask.
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

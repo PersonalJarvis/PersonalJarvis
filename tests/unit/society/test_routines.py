@@ -40,16 +40,40 @@ class FakeTaskStore:
     async def list(self, state_filter=None, *, limit: int = 100) -> list[dict]:
         return list(self.rows)
 
+    async def get(self, task_id: str) -> dict | None:
+        return next((row for row in self.rows if row["id"] == task_id), None)
+
+    async def update_state(self, task_id: str, state: str) -> None:
+        row = await self.get(task_id)
+        if row is not None:
+            row["state"] = state
+
+    async def delete(self, task_id: str) -> None:
+        self.rows = [row for row in self.rows if row["id"] != task_id]
+
 
 class FakeScheduler:
     def __init__(self, store: FakeTaskStore) -> None:
         self.store = store
         self.scheduled: list[str] = []
+        self.ran: list[str] = []
 
     async def schedule(self, spec) -> str:
         task_id = await self.store.insert(spec)
         self.scheduled.append(task_id)
         return task_id
+
+    async def pause(self, task_id: str) -> None:
+        await self.store.update_state(task_id, "paused")
+
+    async def resume(self, task_id: str) -> None:
+        await self.store.update_state(task_id, "scheduled")
+
+    async def cancel_task(self, task_id: str) -> None:
+        await self.store.update_state(task_id, "cancelled")
+
+    async def run_now(self, task_id: str) -> None:
+        self.ran.append(task_id)
 
 
 @pytest.fixture
