@@ -254,13 +254,14 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
     }
     if (followingRef.current) { followingRef.current = false; setFollowing(false); }
     companions.delete(agent.agentId);
-    const sKey = calledTo ? `${calledTo.x.toFixed(2)},${calledTo.z.toFixed(2)}` : "";
+    const calledSeat = calledTo ? summon.spotId ?? null : null;
+    const sKey = calledTo ? `${calledTo.x.toFixed(2)},${calledTo.z.toFixed(2)},${calledSeat ?? ""}` : "";
     const needsPlan = !plan.current || planState.current !== agent.state || summonKey.current !== sKey
       || (phase.current === "dwell" && now >= dwellUntil.current);
     if (needsPlan) {
       const next = planFor({
         agentId: agent.agentId, state: agent.state, desk, layout: ctx.layout, grid: ctx.grid, rng, book: ctx.book,
-        previous: plan.current?.kind ?? null, workingColleagues: ctx.colleagues().filter((c) => c.agentId !== agent.agentId), calledTo,
+        previous: plan.current?.kind ?? null, workingColleagues: ctx.colleagues().filter((c) => c.agentId !== agent.agentId), calledTo, calledSeat,
       });
       // Reduced motion: no idle wandering — a placement holds until the state changes.
       if (reduced && !calledTo) next.dwellMs = Infinity;

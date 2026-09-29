@@ -23,7 +23,15 @@ export function otherFloor(floor: OfficeFloor): OfficeFloor {
 export interface PlayerBody { x: number; z: number; heading: number; path: Point[]; moving: boolean }
 
 /** Agents walking over to a point for a while (called by the person, or a team gathering). */
-export interface Summon { target: Point; untilMs: number }
+export interface Summon {
+  target: Point;
+  untilMs: number;
+  /** A team meeting's chair (a `meeting-*` spot id): the agent sits there instead of standing by `target`. */
+  spotId?: string;
+}
+
+/** A team meeting at the team-room table; its members hold summons with a chair each until it ends. */
+export interface TeamMeeting { groupId: string; name: string; members: string[]; untilMs: number }
 
 interface OfficeState {
   /** The floor on screen; lives here so leaving the map and coming back keeps it. */
@@ -42,6 +50,12 @@ interface OfficeState {
   /** One-shot camera fly-to request, consumed by the camera rig. */
   focus: { point: Point; seq: number } | null;
   summons: Record<string, Summon>;
+  /** The meeting running in the team room, if any; one at a time. */
+  meeting: TeamMeeting | null;
+  /** Seat a team at the table (replacing any running meeting), each member on the chair `seats` gives it. */
+  startMeeting: (meeting: TeamMeeting, seats: Record<string, { target: Point; spotId?: string }>) => void;
+  /** End the running meeting: its members go back to their day. */
+  endMeeting: () => void;
   /** One-shot camera dive into a desk monitor (then the chat opens), consumed by the camera rig. */
   zoom: { target: [number, number, number]; facing: number; seq: number } | null;
   /** Dive into a monitor centred on `target`, whose screen faces yaw `facing`. */
@@ -66,13 +80,26 @@ let seq = 0;
 export const useOfficeStore = create<OfficeState>((set) => ({
   floor: "agents",
   setFloor: (floor) => set((s) => (s.floor === floor ? s : {
-    floor, selection: null, nearby: null, summons: {}, walkTo: null, zoom: null, focus: null, teamDraft: [], follow: true,
+    floor, selection: null, nearby: null, summons: {}, meeting: null, walkTo: null, zoom: null, focus: null, teamDraft: [], follow: true,
   })),
   selection: null,
   nearby: null,
   follow: true,
   focus: null,
   summons: {},
+  meeting: null,
+  startMeeting: (meeting, seats) => set((s) => {
+    const now = Date.now();
+    const ended = new Set(s.meeting?.members ?? []);
+    const next = Object.fromEntries(Object.entries(s.summons).filter(([id, summon]) => summon.untilMs > now && !ended.has(id)));
+    for (const [id, seat] of Object.entries(seats)) next[id] = { ...seat, untilMs: meeting.untilMs };
+    return { meeting, summons: next };
+  }),
+  endMeeting: () => set((s) => {
+    if (!s.meeting) return s;
+    const members = new Set(s.meeting.members);
+    return { meeting: null, summons: Object.fromEntries(Object.entries(s.summons).filter(([id]) => !members.has(id))) };
+  }),
   walkTo: null,
   zoom: null,
   zoomInto: (target, facing) => set({ zoom: { target, facing, seq: ++seq }, follow: false }),
@@ -81,7 +108,7 @@ export const useOfficeStore = create<OfficeState>((set) => ({
     teamDraft: s.teamDraft.includes(agentId) ? s.teamDraft.filter((id) => id !== agentId) : [...s.teamDraft, agentId],
   })),
   clearDraft: () => set({ teamDraft: [] }),
-  clearSummons: () => set({ summons: {} }),
+  clearSummons: () => set({ summons: {}, meeting: null }),
   select: (selection) => set({ selection }),
   setNearby: (nearby) => set((s) => (sameSelection(s.nearby, nearby) ? s : { nearby })),
   setFollow: (follow) => set((s) => (s.follow === follow ? s : { follow })),
