@@ -317,7 +317,12 @@ class ComputerService:
         now = time.time()
         try:
             async with self.session(computer_id) as opened:
-                result = await run_command(opened, PROBE_SCRIPT, timeout_s=_PROBE_TIMEOUT_S)
+                try:
+                    result = await run_command(opened, PROBE_SCRIPT, timeout_s=_PROBE_TIMEOUT_S)
+                except SshError as exc:
+                    # A probe that times out or loses the channel is a health
+                    # reading like a refused login, not a crash of the check.
+                    raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
                 latency = opened.latency_ms
         except ComputerError as exc:
             status = _ERROR_STATUS.get(exc.kind or "", "error")
