@@ -365,8 +365,8 @@ function useNearCamera(anchor: RefObject<Group | null>): boolean {
 /** The glass sits this far in front of a monitor's centre (see Screen). */
 const GLASS_Z = 0.0145;
 
-/** A click on a desk monitor: dive into its glass, then open its section. */
-function useMonitorDive(section: MonitorSection) {
+/** A click on a monitor: dive into its glass (`size` metres, `glassZ` in front of its centre), then open its section. */
+export function useMonitorDive(section: MonitorSection, size: [number, number] = [MONITOR.w, MONITOR.h], glassZ = GLASS_Z) {
   const hovered = useRef(false);
   useEffect(() => () => { if (hovered.current) document.body.style.cursor = ""; }, []);
   return {
@@ -376,8 +376,8 @@ function useMonitorDive(section: MonitorSection) {
       const monitor = event.eventObject;
       const centre = monitor.getWorldPosition(new Vector3());
       const normal = new Vector3(0, 0, 1).applyQuaternion(monitor.getWorldQuaternion(new Quaternion()));
-      const glass = centre.addScaledVector(normal, GLASS_Z);
-      useOfficeStore.getState().diveToSection(section, [glass.x, glass.y, glass.z], Math.atan2(normal.x, normal.z), [MONITOR.w, MONITOR.h]);
+      const glass = centre.addScaledVector(normal, glassZ);
+      useOfficeStore.getState().diveToSection(section, [glass.x, glass.y, glass.z], Math.atan2(normal.x, normal.z), size);
     },
     onPointerOver: (event: ThreeEvent<PointerEvent>) => { event.stopPropagation(); hovered.current = true; document.body.style.cursor = "zoom-in"; },
     onPointerOut: (event: ThreeEvent<PointerEvent>) => { event.stopPropagation(); hovered.current = false; document.body.style.cursor = ""; },
