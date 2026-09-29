@@ -67,8 +67,8 @@ it("keeps a manual collapse across polling and remount", () => {
   const { unmount } = render(<IdeProjectTree />);
   const selected = screen.getByTestId("ide-workspace-p1-w1");
   expect(selected.parentElement?.className).toContain("bg-muted");
-  expect(selected.className).toContain("min-h-10");
-  expect(screen.getByTestId("ide-project-p1").firstElementChild?.className).toContain("min-h-11");
+  expect(selected.className).toContain("min-h-8");
+  expect(screen.getByTestId("ide-project-p1").firstElementChild?.className).toContain("min-h-8");
   fireEvent.click(screen.getByRole("button", { name: "Collapse App" }));
   expect(screen.queryByTestId("ide-workspace-p1-w1")).toBeNull();
   act(() => useIdeProjectsStore.getState().publish([{ ...project() }], "p1-w1"));
