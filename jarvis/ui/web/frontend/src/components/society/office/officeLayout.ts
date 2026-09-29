@@ -101,6 +101,10 @@ export type FurnitureKind =
   | "meetingTable" | "teamBoard" | "receptionDesk" | "kiosk" | "lockers" | "mirror"
   | "coffeeBar" | "waterCooler" | "couch" | "coffeeTable" | "arcade" | "beanbag"
   | "bookshelf" | "plant" | "rug" | "elevator"
+  // Break room lounge: sofa modules and their corner, the oak coffee table, a kilim, the bookcase wall,
+  // the reading nook, foosball, monsteras and the arcade's game mat.
+  | "breakSofa" | "breakSofaCorner" | "breakTable" | "breakRug" | "breakBookcase" | "readingNook" | "foosball" | "breakPlant"
+  | "arcadeMat"
   // Lead office: the executive suite.
   | "leadWall" | "executiveRug" | "guestChair" | "chesterfield" | "loungeTable" | "executiveBar" | "globe" | "floorLamp"
   | "dogBed" | "treatJar"
@@ -141,6 +145,17 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   plant: { w: 0.6, d: 0.6, h: 1.3, solid: true },
   rug: { w: 1, d: 1, h: 0.02, solid: false },
   elevator: { w: 2.2, d: 0.4, h: 2.4, solid: true },
+  // Break room: the sofa modules keep the couch's box; the coffee table carries a chess game and board games;
+  // the reading nook is the armchair plus its floor lamp; the foosball box includes the rod handles.
+  breakSofa: { w: 2.2, d: 0.9, h: 0.85, solid: true },
+  breakSofaCorner: { w: 0.9, d: 0.9, h: 0.85, solid: true },
+  breakTable: { w: 1.3, d: 0.75, h: 0.5, solid: true },
+  breakRug: { w: 1, d: 1, h: 0.02, solid: false },
+  breakBookcase: { w: 2.8, d: 0.4, h: 2.05, solid: true },
+  readingNook: { w: 0.9, d: 0.9, h: 1.75, solid: true },
+  foosball: { w: 1.3, d: 1.05, h: 0.8, solid: true },
+  breakPlant: { w: 0.7, d: 0.7, h: 1.9, solid: true },
+  arcadeMat: { w: 1, d: 1, h: 0.02, solid: false },
   leadWall: { w: 7.9, d: 0.38, h: 2.9, solid: true },
   executiveRug: { w: 1, d: 1, h: 0.02, solid: false },
   guestChair: { w: 0.74, d: 0.74, h: 0.92, solid: true },
@@ -646,18 +661,28 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
       { id: "lobby-plant-a", kind: "plant", x: rx0 + 0.6, z: southMinZ + 0.8, rotationY: 0, room: "reception" },
       { id: "lobby-plant-b", kind: "plant", x: receptionRoom.maxX - 0.8, z: bottomZ - 0.7, rotationY: 0, room: "reception" },
     ] satisfies Furniture[] : lobbyFurniture(receptionRoom)),
-    // Break room: couches around a table, coffee bar, water cooler, arcade, beanbags.
-    { id: "break-rug", kind: "rug", x: bx0 + 3.6, z: bz0 + 4.6, rotationY: 0, room: "break", size: { w: 5.6, d: 4.2 } },
-    { id: "break-couch-a", kind: "couch", x: bx0 + 3.6, z: bz0 + 6.3, rotationY: Math.PI, room: "break" },
-    { id: "break-couch-b", kind: "couch", x: bx0 + 1.75, z: bz0 + 4.6, rotationY: Math.PI / 2, room: "break" },
-    { id: "break-table", kind: "coffeeTable", x: bx0 + 3.6, z: bz0 + 4.6, rotationY: 0, room: "break" },
+    // Break room lounge (both floors): an L-shaped sectional — module A along the
+    // south facing north, module B along the west facing east, the corner module
+    // joining them — round an oak coffee table on a kilim; the bookcase wall and
+    // the coffee bar on the north wall; the reading nook in the north-west corner
+    // by the dog's basket; foosball, beanbags, the water station and the arcade
+    // on its pixel mat in the east; monsteras in two corners.
+    { id: "break-rug", kind: "breakRug", x: bx0 + 3.4, z: bz0 + 4.9, rotationY: 0, room: "break", size: { w: 5.2, d: 4.2 } },
+    { id: "break-sofa-a", kind: "breakSofa", x: bx0 + 3.3, z: bz0 + 6.3, rotationY: Math.PI, room: "break" },
+    { id: "break-sofa-b", kind: "breakSofa", x: bx0 + 1.75, z: bz0 + 4.75, rotationY: Math.PI / 2, room: "break" },
+    { id: "break-sofa-corner", kind: "breakSofaCorner", x: bx0 + 1.75, z: bz0 + 6.3, rotationY: Math.PI, room: "break" },
+    { id: "break-table", kind: "breakTable", x: bx0 + 3.35, z: bz0 + 4.8, rotationY: 0, room: "break" },
     { id: "coffee-bar", kind: "coffeeBar", x: bx0 + 7.9, z: bz0 + 0.5, rotationY: 0, room: "break" },
     { id: "water-cooler", kind: "waterCooler", x: breakRoom.maxX - 0.45, z: bz0 + 2.6, rotationY: -Math.PI / 2, room: "break" },
     { id: "arcade", kind: "arcade", x: breakRoom.maxX - 0.6, z: bottomZ - 0.7, rotationY: -Math.PI / 2, room: "break" },
-    { id: "beanbag-a", kind: "beanbag", x: bx0 + 7.2, z: bz0 + 5.4, rotationY: 0, room: "break" },
-    { id: "beanbag-b", kind: "beanbag", x: bx0 + 8.4, z: bz0 + 6.3, rotationY: 0, room: "break" },
-    { id: "break-shelf", kind: "bookshelf", x: bx0 + 2.2, z: bz0 + 0.3, rotationY: 0, room: "break" },
-    { id: "break-plant", kind: "plant", x: bx0 + 0.6, z: bottomZ - 0.6, rotationY: 0, room: "break" },
+    { id: "arcade-mat", kind: "arcadeMat", x: breakRoom.maxX - 1.5, z: bottomZ - 0.7, rotationY: 0, room: "break", size: { w: 1.1, d: 1.2 } },
+    { id: "foosball", kind: "foosball", x: bx0 + 8.1, z: bz0 + 4.1, rotationY: 0, room: "break" },
+    { id: "beanbag-a", kind: "beanbag", x: bx0 + 6.6, z: bz0 + 6.1, rotationY: 0, room: "break" },
+    { id: "beanbag-b", kind: "beanbag", x: bx0 + 7.8, z: bz0 + 6.75, rotationY: 0, room: "break" },
+    { id: "break-shelf", kind: "breakBookcase", x: bx0 + 2.4, z: bz0 + 0.06 + FURNITURE_SIZE.breakBookcase.d / 2, rotationY: 0, room: "break" },
+    { id: "break-nook", kind: "readingNook", x: bx0 + 0.53, z: bz0 + 0.58, rotationY: 0, room: "break" },
+    { id: "break-plant", kind: "breakPlant", x: bx0 + 0.6, z: bottomZ - 0.6, rotationY: 0, room: "break" },
+    { id: "break-plant-e", kind: "breakPlant", x: breakRoom.maxX - 0.45, z: bz0 + 5.9, rotationY: 0, room: "break" },
   ];
   for (const dept of departments) {
     furniture.push({ id: `${dept.id}-plant-w`, kind: "plant", x: dept.minX + 0.45, z: dept.maxZ - 0.45, rotationY: 0, room: "floor" });
@@ -666,17 +691,19 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
 
   const table = furniture.find((f) => f.id === "team-table")!;
   const spots: Spot[] = [
-    // Couch seats: couch A faces north (rotated π), couch B faces east.
-    { id: "couch-a1", kind: "couch", pose: "sit", x: bx0 + 3.0, z: bz0 + 6.15, facing: Math.PI, room: "break" },
-    { id: "couch-a2", kind: "couch", pose: "sit", x: bx0 + 4.2, z: bz0 + 6.15, facing: Math.PI, room: "break" },
-    { id: "couch-b1", kind: "couch", pose: "sit", x: bx0 + 1.9, z: bz0 + 4.0, facing: Math.PI / 2, room: "break" },
-    { id: "couch-b2", kind: "couch", pose: "sleep", x: bx0 + 1.9, z: bz0 + 5.2, facing: Math.PI / 2, room: "break" },
+    // Couch seats: sofa module A faces north (rotated π), module B faces east;
+    // the reading nook's armchair faces south, into the room.
+    { id: "couch-a1", kind: "couch", pose: "sit", x: bx0 + 2.7, z: bz0 + 6.15, facing: Math.PI, room: "break" },
+    { id: "couch-a2", kind: "couch", pose: "sit", x: bx0 + 3.7, z: bz0 + 6.15, facing: Math.PI, room: "break" },
+    { id: "couch-b1", kind: "couch", pose: "sit", x: bx0 + 1.9, z: bz0 + 4.3, facing: Math.PI / 2, room: "break" },
+    { id: "couch-b2", kind: "couch", pose: "sleep", x: bx0 + 1.9, z: bz0 + 5.35, facing: Math.PI / 2, room: "break" },
+    { id: "couch-nook", kind: "couch", pose: "sit", x: bx0 + 0.61, z: bz0 + 0.72, facing: 0, room: "break" },
     { id: "coffee-1", kind: "coffee", pose: "stand", x: bx0 + 7.3, z: bz0 + 1.4, facing: Math.PI, room: "break" },
     { id: "coffee-2", kind: "coffee", pose: "stand", x: bx0 + 8.5, z: bz0 + 1.4, facing: Math.PI, room: "break" },
     { id: "cooler", kind: "cooler", pose: "stand", x: breakRoom.maxX - 1.2, z: bz0 + 2.6, facing: Math.PI / 2, room: "break" },
     { id: "arcade", kind: "arcade", pose: "stand", x: breakRoom.maxX - 1.45, z: bottomZ - 0.7, facing: Math.PI / 2, room: "break" },
-    { id: "beanbag-a", kind: "beanbag", pose: "sit", x: bx0 + 7.2, z: bz0 + 5.4, facing: Math.PI * 1.25, room: "break" },
-    { id: "beanbag-b", kind: "beanbag", pose: "sit", x: bx0 + 8.4, z: bz0 + 6.3, facing: Math.PI * 1.25, room: "break" },
+    { id: "beanbag-a", kind: "beanbag", pose: "sit", x: bx0 + 6.6, z: bz0 + 6.1, facing: Math.PI * 1.25, room: "break" },
+    { id: "beanbag-b", kind: "beanbag", pose: "sit", x: bx0 + 7.8, z: bz0 + 6.75, facing: Math.PI * 1.25, room: "break" },
     { id: "shelf-break", kind: "shelf", pose: "stand", x: bx0 + 2.2, z: bz0 + 1.1, facing: Math.PI, room: "break" },
     ...(coding ? [
       // Mission Control: the sofa facing east, the open shelf on the east wall.

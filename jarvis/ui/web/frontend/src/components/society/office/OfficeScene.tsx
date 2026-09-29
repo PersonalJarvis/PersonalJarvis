@@ -28,6 +28,7 @@ import type { DeskChat } from "./useDeskChats";
 import { FurniturePiece, MeetingChairs } from "./OfficeProps";
 import { TeamBoardFace } from "./TeamBoardFace";
 import { TeamRoomFittings } from "./TeamRoomDecor";
+import { BreakLoungeFittings } from "./BreakLounge";
 import { WardrobeFittings } from "./WardrobeRoom";
 import { LobbyFittings } from "./LobbyDecor";
 import { RoomFloors, RoomSign, RoomWalls } from "./OfficeRooms";
@@ -108,6 +109,7 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
   const zones = useMemo(() => new Map(layout.departments.flatMap((dept) => dept.desks.map((desk) => [desk.id, dept.tint] as const))), [layout]);
   const leadRoom = layout.rooms.find((r) => r.kind === "lead");
   const teamRoom = layout.rooms.find((r) => r.kind === "team");
+  const breakRoom = layout.rooms.find((r) => r.kind === "break");
   const dogBeds = useMemo(() => layout.furniture.filter((f) => f.kind === "dogBed"), [layout]);
   const treatJar = layout.furniture.find((f) => f.kind === "treatJar") ?? null;
   const coding = floor === "coding";
@@ -162,6 +164,7 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
       {table && <MeetingChairs table={table} />}
       {board && <TeamBoardFace board={board} enabled={floor === "agents"} />}
       {teamRoom && table && <TeamRoomFittings room={teamRoom} table={table} />}
+      {breakRoom && <BreakLoungeFittings room={breakRoom} furniture={layout.furniture} />}
       {wardrobeRug && <WardrobeFittings rug={wardrobeRug} />}
       {lobbyLamp && <LobbyFittings lamp={lobbyLamp} />}
       {/* At the elevator its call button takes over from the floating token, which would hide it. */}
