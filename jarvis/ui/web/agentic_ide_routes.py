@@ -3187,7 +3187,7 @@ def set_terminal_recap(
     it plainly means.
     """
     term, _session = _pane_for_recap(name, workspace_id)
-    summary = recap_engine.pin(term.key, payload.recap, payload.recap_detail)
+    summary = recap_engine.pin(recap_engine.pane_id(term), payload.recap, payload.recap_detail)
     if not summary.headline:
         # Cleared rather than written: answer with whatever the pane says now.
         summary = recap_engine.recap_for(term, lines=term.transcript.lines())
@@ -3207,7 +3207,7 @@ def clear_terminal_recap(name: str, workspace_id: str | None = None) -> Terminal
     window.
     """
     term, _session = _pane_for_recap(name, workspace_id)
-    recap_engine.unpin(term.key)
+    recap_engine.unpin(recap_engine.pane_id(term))
     return _recap_row(term, recap_engine.recap_for(term, lines=term.transcript.lines()))
 
 

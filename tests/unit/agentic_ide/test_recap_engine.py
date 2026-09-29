@@ -61,7 +61,7 @@ def test_a_pane_with_no_summary_yet_still_has_a_recap() -> None:
 
 def test_a_summarized_pane_reports_the_model_sentence() -> None:
     term = _pane(lines=3)
-    state = recap_engine._state(term.key)  # noqa: SLF001 - the cache under test
+    state = recap_engine._state(recap_engine.pane_id(term))  # noqa: SLF001 - the cache under test
     state.headline = "Wrote the swap analysis, not committed"
     state.detail = "The document is at docs/plans/agentic-ide-terminal-swap.md."
     state.generated_at = time.time()
@@ -75,11 +75,31 @@ def test_a_summarized_pane_reports_the_model_sentence() -> None:
 def test_a_closed_pane_forgets_its_recap() -> None:
     """Pane keys are reused, so a new pane must not inherit the old sentence."""
     term = _pane()
-    recap_engine._state(term.key).headline = "Old news"  # noqa: SLF001
+    recap_engine._state(recap_engine.pane_id(term)).headline = "Old news"  # noqa: SLF001
 
-    recap_engine.forget(term.key)
+    recap_engine.forget(recap_engine.pane_id(term))
 
     assert recap_engine.recap_for(term, lines=[]).source == recap_engine.BY_RULES
+
+
+def test_same_key_panes_in_two_workspaces_keep_their_own_titles() -> None:
+    """Two open workspaces each hold a T5; one's title must not appear on the other."""
+    here = _pane(lines=3, key="t5", last_prompt="Label the even-out button")
+    there = _pane(lines=3, key="t5", last_prompt="Round Mission Control deck")
+    assert here.history_id != there.history_id
+
+    state = recap_engine._state(recap_engine.pane_id(there))  # noqa: SLF001
+    state.headline = "Mission Control deck, modern screens"
+    state.generated_at = time.time()
+
+    assert recap_engine.recap_for(there, lines=[]).source == recap_engine.BY_MODEL
+    assert recap_engine.recap_for(here, lines=here.transcript.lines()).source == (
+        recap_engine.BY_RULES
+    )
+    assert "Mission Control" not in recap_engine.known_headline(here)
+
+    recap_engine.pin(recap_engine.pane_id(here), "Button label")
+    assert recap_engine.known_headline(there) == "Mission Control deck, modern screens"
 
 
 # ------------------------------------------------------ the title from memory
@@ -98,12 +118,12 @@ def test_the_known_headline_is_what_the_header_last_showed() -> None:
     assert recap_engine.known_headline(term) == shown.headline
     assert "Fix the failing login test" in recap_engine.known_headline(term)
 
-    state = recap_engine._state(term.key)  # noqa: SLF001 - the cache under test
+    state = recap_engine._state(recap_engine.pane_id(term))  # noqa: SLF001 - the cache under test
     state.headline = "Wrote the login fix, tests green"
     state.generated_at = time.time()
     assert recap_engine.known_headline(term) == "Wrote the login fix, tests green"
 
-    recap_engine.pin(term.key, "Login rework")
+    recap_engine.pin(recap_engine.pane_id(term), "Login rework")
     assert recap_engine.known_headline(term) == "Login rework"
 
 
@@ -197,7 +217,7 @@ def test_a_quiet_pane_is_not_summarized_again(monkeypatch) -> None:
     async def scenario() -> None:
         term = _pane(lines=30)
         rows = _rows(30)
-        state = recap_engine._state(term.key)  # noqa: SLF001
+        state = recap_engine._state(recap_engine.pane_id(term))  # noqa: SLF001
         state.headline = "Already known"
         state.generated_at = time.time()
         state.lines_at = len(rows)
@@ -232,7 +252,7 @@ def test_a_settled_title_ignores_output_growth() -> None:
     for, so once a summary has read a substantial transcript, more output alone
     must not re-word the header the user navigates by."""
     term = _pane(lines=0)
-    state = recap_engine._state(term.key)  # noqa: SLF001
+    state = recap_engine._state(recap_engine.pane_id(term))  # noqa: SLF001
     state.generated_at = time.time() - 2 * recap_engine.MIN_REFRESH_S
     state.lines_at = recap_engine.STABLE_AFTER_LINES
     state.prompts_at = 0
@@ -245,7 +265,7 @@ def test_a_settled_title_ignores_output_growth() -> None:
 def test_an_early_thin_summary_may_still_improve_with_output() -> None:
     """A pane summarized at its first rows knows the banner, not the work."""
     term = _pane(lines=0)
-    state = recap_engine._state(term.key)  # noqa: SLF001
+    state = recap_engine._state(recap_engine.pane_id(term))  # noqa: SLF001
     state.generated_at = time.time() - 2 * recap_engine.MIN_REFRESH_S
     state.lines_at = 10
     state.prompts_at = 0
@@ -261,7 +281,7 @@ def test_a_hand_typed_instruction_reopens_a_settled_title() -> None:
     task into the pane stamps last_submit_at — and repurposing a pane by hand
     must reopen its title exactly like a sent instruction does."""
     term = _pane(lines=0, last_submit_at=200.0)
-    state = recap_engine._state(term.key)  # noqa: SLF001
+    state = recap_engine._state(recap_engine.pane_id(term))  # noqa: SLF001
     state.generated_at = time.time()
     state.lines_at = recap_engine.STABLE_AFTER_LINES
     state.prompts_at = 0
@@ -277,7 +297,7 @@ def test_a_hand_typed_instruction_reopens_a_settled_title() -> None:
 def test_a_settled_title_still_reopens_for_a_new_instruction_or_exit() -> None:
     """The two events that CAN change what a pane is for."""
     term = _pane(lines=0, prompts_sent=2)
-    state = recap_engine._state(term.key)  # noqa: SLF001
+    state = recap_engine._state(recap_engine.pane_id(term))  # noqa: SLF001
     state.generated_at = time.time()
     state.lines_at = recap_engine.STABLE_AFTER_LINES
     state.prompts_at = 1
@@ -292,7 +312,7 @@ def test_a_settled_title_still_reopens_for_a_new_instruction_or_exit() -> None:
 
 def test_a_new_instruction_makes_a_pane_worth_re_reading() -> None:
     term = _pane(lines=30, prompts_sent=2)
-    state = recap_engine._state(term.key)  # noqa: SLF001
+    state = recap_engine._state(recap_engine.pane_id(term))  # noqa: SLF001
     state.generated_at = time.time()
     state.lines_at = 30
     state.prompts_at = 1
@@ -791,7 +811,7 @@ def test_a_failing_provider_leaves_the_previous_sentence_in_place() -> None:
 
     async def scenario() -> None:
         term = _pane(lines=40)
-        state = recap_engine._state(term.key)  # noqa: SLF001
+        state = recap_engine._state(recap_engine.pane_id(term))  # noqa: SLF001
         state.headline = "The sentence already on screen"
         state.inflight = True
 
@@ -801,7 +821,7 @@ def test_a_failing_provider_leaves_the_previous_sentence_in_place() -> None:
         original = recap_engine.summarize_with_model
         recap_engine.summarize_with_model = explode  # type: ignore[assignment]
         try:
-            await recap_engine._run(term, term.key, _rows(40), "")  # noqa: SLF001
+            await recap_engine._run(term, recap_engine.pane_id(term), _rows(40), "")  # noqa: SLF001
         finally:
             recap_engine.summarize_with_model = original  # type: ignore[assignment]
 
@@ -817,7 +837,7 @@ def test_repeated_failures_stop_the_pane_asking_for_a_while() -> None:
 
     async def scenario() -> None:
         term = _pane(lines=40)
-        state = recap_engine._state(term.key)  # noqa: SLF001
+        state = recap_engine._state(recap_engine.pane_id(term))  # noqa: SLF001
 
         async def explode(*_args: object, **_kwargs: object) -> None:
             raise RuntimeError("no key")
@@ -827,7 +847,7 @@ def test_repeated_failures_stop_the_pane_asking_for_a_while() -> None:
         try:
             for _ in range(recap_engine.FAILURES_BEFORE_QUIET):
                 state.inflight = True
-                await recap_engine._run(term, term.key, _rows(40), "")  # noqa: SLF001
+                await recap_engine._run(term, recap_engine.pane_id(term), _rows(40), "")  # noqa: SLF001
         finally:
             recap_engine.summarize_with_model = original  # type: ignore[assignment]
 
@@ -850,8 +870,8 @@ def test_a_successful_summary_becomes_the_pane_recap() -> None:
         original = recap_engine.summarize_with_model
         recap_engine.summarize_with_model = answer  # type: ignore[assignment]
         try:
-            recap_engine._state(term.key).inflight = True  # noqa: SLF001
-            await recap_engine._run(term, term.key, _rows(40), "")  # noqa: SLF001
+            recap_engine._state(recap_engine.pane_id(term)).inflight = True  # noqa: SLF001
+            await recap_engine._run(term, recap_engine.pane_id(term), _rows(40), "")  # noqa: SLF001
         finally:
             recap_engine.summarize_with_model = original  # type: ignore[assignment]
 
@@ -860,7 +880,7 @@ def test_a_successful_summary_becomes_the_pane_recap() -> None:
         assert shown.source == recap_engine.BY_MODEL
         # And the pane is now considered summarized as of these rows, so the
         # next poll does not immediately ask again.
-        state = recap_engine._state(term.key)  # noqa: SLF001
+        state = recap_engine._state(recap_engine.pane_id(term))  # noqa: SLF001
         assert state.lines_at == 40
         assert state.prompts_at == 1
 

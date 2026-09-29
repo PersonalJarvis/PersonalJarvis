@@ -450,6 +450,18 @@ def describe_failure(exc: BaseException) -> str:
     return recap.condense(raw, 200)
 
 
+def pane_id(term: Any) -> str:
+    """The id this module remembers a pane under: its LIFETIME id, never its key.
+
+    A pane key ("t5") is unique only inside one workspace, and two open
+    workspaces each hold a T5. Keyed by it, both panes shared one cache entry,
+    so one pane's header showed the other pane's model-written title
+    (maintainer report 2026-09-29). ``history_id`` is minted once per pane and
+    never handed on; the key is only the fallback for an object without one.
+    """
+    return str(getattr(term, "history_id", "") or getattr(term, "key", "") or "")
+
+
 def _state(key: str) -> _PaneState:
     entry = _panes.get(key)
     if entry is None:
@@ -554,7 +566,7 @@ def recap_for(term: Any, *, lines: Sequence[str] | None = None) -> SmartRecap:
     been written, and the deterministic one until then — so a pane always has a
     header, from the moment it opens.
     """
-    entry = _panes.get(str(getattr(term, "key", "") or ""))
+    entry = _panes.get(pane_id(term))
     if entry is not None and entry.pinned_headline:
         return SmartRecap(
             headline=entry.pinned_headline,
@@ -579,7 +591,7 @@ def recap_for(term: Any, *, lines: Sequence[str] | None = None) -> SmartRecap:
     # that names the work. A state label ("running since 10:52") is true for
     # this poll and must not be what the list keeps saying once the pane has
     # been asked something.
-    key = str(getattr(term, "key", "") or "")
+    key = pane_id(term)
     if key:
         state = _state(key)
         state.floor_headline = plain.headline if plain.names_work else ""
@@ -612,7 +624,7 @@ def known_headline(term: Any) -> str:
     been asked nothing anywhere; the list then names the CLI, which is then in
     fact everything there is to say.
     """
-    entry = _panes.get(str(getattr(term, "key", "") or ""))
+    entry = _panes.get(pane_id(term))
     if entry is not None:
         if entry.pinned_headline:
             return entry.pinned_headline
@@ -638,7 +650,7 @@ def refresh_soon(term: Any, *, lines: Sequence[str], folder: str = "") -> None:
     try:
         if not _enabled():
             return
-        key = str(getattr(term, "key", "") or "")
+        key = pane_id(term)
         if not key:
             return
         rows = list(lines)
@@ -1210,7 +1222,7 @@ async def summarize_now(term: Any, *, lines: Sequence[str], folder: str = "") ->
     as the deterministic recap plus a note saying exactly that, because "why is
     this line thin" is the question the whole feature exists to answer.
     """
-    key = str(getattr(term, "key", "") or "")
+    key = pane_id(term)
     entry = _state(key) if key else _PaneState()
     unpin(key)
     rows = list(lines)
