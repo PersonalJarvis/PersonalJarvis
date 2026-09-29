@@ -1,0 +1,586 @@
+<!doctype html>
+<!-- `class="dark"` is the STATIC default so the product's default theme needs
+     no script at all to paint correctly. The boot script in the head strips it
+     when the user has chosen light. Both run before the first paint, so
+     neither theme ever flashes the other one. -->
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/jarvis.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="256x256" href="/jarvis-gigi-256.png" />
+    <link rel="icon" type="image/x-icon" href="/jarvis-gigi.ico" />
+    <!-- Neutral, trademark-free fallback title. The inline boot script below
+         overwrites it with the user's own assistant name (from the localStorage
+         cache) the instant the window opens, so a trademarked placeholder is
+         never shown. -->
+    <title>Assistant</title>
+    <script>
+      // Resolve the theme SYNCHRONOUSLY, before a single pixel is painted.
+      //
+      // This has to happen here rather than in React: the bundle is large, and
+      // a document that paints its default ground first and switches when the
+      // app mounts is the classic theme flash — a white window blinking black a
+      // second later (or the reverse), every single launch.
+      //
+      // Reads the same key ThemeProvider writes (src/hooks/useTheme.tsx — keep
+      // the key and the resolution order in lockstep). "system" follows the OS.
+      // The backend value in [ui] theme is authoritative, but it arrives over
+      // HTTP; ThemeProvider reconciles it once it does, and mirrors it back
+      // here so the NEXT launch is instant.
+      (function () {
+        var mode = "dark";
+        try {
+          var stored = (localStorage.getItem("jarvis.theme") || "").trim();
+          if (stored === "light" || stored === "dark") {
+            mode = stored;
+          } else if (stored === "system") {
+            mode = window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+          }
+        } catch (e) {
+          /* storage blocked (private mode) — keep the dark default */
+        }
+        var root = document.documentElement;
+        root.classList.toggle("dark", mode === "dark");
+        root.style.colorScheme = mode;
+        // The ground: a flat theme colour unless the user switched a
+        // wallpaper on. Same key and fallback as src/lib/backgroundMode.ts —
+        // the class gates the wallpaper readability floor in index.css, so it
+        // must be right before the first frame, not a moment after.
+        var wallpaper = false;
+        try {
+          wallpaper = localStorage.getItem("jarvis.background.v1") === "wallpaper";
+        } catch (e) {
+          /* storage blocked — the flat colour is the default anyway */
+        }
+        root.classList.toggle("jarvis-wallpaper", wallpaper);
+        window.__JARVIS_BOOT_STARTED_AT = performance.now();
+      })();
+    </script>
+    <style>
+      /* Boot splash — painted from index.html the instant the window opens, so
+         there is NO blank screen while the (large) JS bundle loads + React
+         mounts. React's createRoot clears #root on its first render; AuthGate
+         then renders the SAME markup (src/components/BootSplash.tsx), carries
+         on in the same animation phase through --jbs-shift, drives the
+         progress line from real milestones, and plays the exit once the app
+         is mounted underneath. Keep the two markups in lockstep.
+
+         Restraint is the design: a flat, neutral ground (docs/BRAND.md — the
+         accent never fills a surface), the mark, the name, and one hairline
+         whose accent fill is the only colour on screen.
+
+         Choreography, measured from the moment the window opens:
+           0.00s  the mark settles in (fade + scale, with its shadow)
+           0.28s  the name rises into place
+           0.48s  the progress line and status fade in
+           ....   the line fills with each milestone (page painted, bundle
+                  running, backend answering, session granted); a soft light
+                  travels along the filled part so a long cold boot never
+                  looks frozen
+           exit   the content steps back and the ground dissolves into the
+                  app underneath (.jbs-exit)
+
+         The two grounds match the pywebview window colour for their theme
+         (jarvis/ui/theme.py WINDOW_BACKGROUND) and --background in index.css,
+         so the window frame and its contents are one surface from the first
+         frame. The accent is --accent. Keep the three in lockstep. */
+      :root {
+        --jbs-bg: #ffffff;
+        --jbs-accent: #096cdc;
+        --jbs-ring: rgba(9, 108, 220, 0.22);
+        --jbs-track: rgba(0, 0, 0, 0.07);
+        --jbs-rim: rgba(0, 0, 0, 0.08);
+        --jbs-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 12px 28px -6px rgba(0, 0, 0, 0.22);
+        --jbs-name: #171717;
+        --jbs-sub: #757575;
+        --jbs-ease: cubic-bezier(.16, 1, .3, 1);
+      }
+      :root.dark {
+        --jbs-bg: #0a0a0a;
+        --jbs-accent: #3d8bff;
+        --jbs-ring: rgba(61, 139, 255, 0.2);
+        --jbs-track: rgba(255, 255, 255, 0.08);
+        --jbs-rim: rgba(255, 255, 255, 0.1);
+        --jbs-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 16px 36px -8px rgba(0, 0, 0, 0.8);
+        --jbs-name: #fafafa;
+        --jbs-sub: #7a7a7a;
+      }
+      html, body { margin: 0; height: 100%; background: var(--jbs-bg); }
+      #jarvis-boot-splash {
+        position: fixed; inset: 0; z-index: 2147483000;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 8px;
+        background: var(--jbs-bg);
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+        color: var(--jbs-accent);
+        cursor: default; -webkit-user-select: none; -moz-user-select: none; user-select: none;
+      }
+      #jarvis-boot-splash .jbs-group {
+        display: flex; flex-direction: column; align-items: center;
+        /* Optical centre: a touch above the geometric middle. */
+        margin-top: -4vh;
+      }
+      #jarvis-boot-splash .jbs-mark {
+        width: 96px; height: 96px; border-radius: 24%;
+        box-shadow: var(--jbs-shadow), 0 0 0 1px var(--jbs-rim);
+        animation: jbs-mark-in .9s var(--jbs-ease) both;
+        animation-delay: var(--jbs-shift, 0s);
+      }
+      #jarvis-boot-splash .jbs-mark img {
+        display: block; width: 100%; height: 100%;
+        -webkit-user-drag: none;
+      }
+      #jarvis-boot-splash .name {
+        margin-top: 28px;
+        font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -.02em;
+        color: var(--jbs-name);
+        animation: jbs-rise .8s var(--jbs-ease) both;
+        animation-delay: calc(.28s + var(--jbs-shift, 0s));
+      }
+      #jarvis-boot-splash .name:empty { display: none; }
+      #jarvis-boot-splash .jbs-progress {
+        position: relative; overflow: hidden;
+        width: 144px; height: 2px; margin-top: 24px; border-radius: 2px;
+        background: var(--jbs-track);
+        animation: jbs-fade-in .6s ease both;
+        animation-delay: calc(.48s + var(--jbs-shift, 0s));
+      }
+      /* The fill. In static HTML it creeps to 30 % on its own — the page is
+         painted and the bundle is on its way. React then sets --jbs-p per
+         milestone (.jbs-live), and the transition carries it there. */
+      #jarvis-boot-splash .jbs-progress i {
+        position: absolute; inset: 0; border-radius: inherit;
+        background: var(--jbs-accent);
+        transform-origin: left center;
+        transform: scaleX(var(--jbs-p, 0));
+        animation: jbs-creep 2.4s cubic-bezier(.2, .7, .2, 1) both;
+        animation-delay: calc(.48s + var(--jbs-shift, 0s));
+      }
+      #jarvis-boot-splash .jbs-progress.jbs-live i {
+        animation: none;
+        transition: transform var(--jbs-pt, .8s) cubic-bezier(.2, .7, .2, 1);
+      }
+      /* A soft light travelling along the track, masked to the filled part by
+         mix-blend: it only shows where the accent is. */
+      #jarvis-boot-splash .jbs-progress::after {
+        content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 40%;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .55), transparent);
+        mix-blend-mode: soft-light;
+        transform: translateX(-100%);
+        animation: jbs-glide 2s cubic-bezier(.45, 0, .25, 1) infinite;
+        animation-delay: calc(1.2s + var(--jbs-shift, 0s));
+      }
+      #jarvis-boot-splash .sub {
+        margin-top: 12px;
+        font-size: 12px; line-height: 16px; letter-spacing: .01em;
+        color: var(--jbs-sub); text-align: center;
+        animation: jbs-fade-in .6s ease both;
+        animation-delay: calc(.48s + var(--jbs-shift, 0s));
+      }
+      /* Exit — added by AuthGate once the app is mounted underneath. */
+      #jarvis-boot-splash.jbs-exit {
+        pointer-events: none;
+        animation: jbs-fade-out .5s cubic-bezier(.4, 0, .2, 1) .1s forwards;
+      }
+      #jarvis-boot-splash.jbs-exit .jbs-group {
+        animation: jbs-step-back .36s cubic-bezier(.4, 0, 1, 1) forwards;
+      }
+      @keyframes jbs-mark-in {
+        from { opacity: 0; transform: scale(.92); }
+      }
+      @keyframes jbs-rise { from { opacity: 0; transform: translateY(6px); } }
+      @keyframes jbs-fade-in { from { opacity: 0; } }
+      @keyframes jbs-fade-out { to { opacity: 0; } }
+      @keyframes jbs-creep { to { transform: scaleX(.3); } }
+      @keyframes jbs-glide {
+        0% { transform: translateX(-100%); }
+        60%, 100% { transform: translateX(260%); }
+      }
+      @keyframes jbs-step-back {
+        to { opacity: 0; transform: scale(.97) translateY(-4px); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #jarvis-boot-splash .jbs-mark,
+        #jarvis-boot-splash .name,
+        #jarvis-boot-splash .jbs-progress,
+        #jarvis-boot-splash .sub,
+        #jarvis-boot-splash .jbs-progress::after,
+        #jarvis-boot-splash.jbs-exit .jbs-group { animation: none; }
+        #jarvis-boot-splash .jbs-progress i { animation: none; --jbs-p: .3; }
+        #jarvis-boot-splash .jbs-progress.jbs-live i { transition: none; }
+        #jarvis-boot-splash.jbs-exit { animation: jbs-fade-out .2s ease forwards; }
+      }
+      @media (max-height: 420px) {
+        #jarvis-boot-splash .jbs-mark { width: 64px; height: 64px; }
+        #jarvis-boot-splash .name { margin-top: 16px; }
+      }
+    </style>
+    <script type="module" crossorigin src="/assets/index-Cepj1PT6.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-C_JY2dqT.css">
+  </head>
+  <body>
+    <div id="root">
+      <div id="jarvis-boot-splash">
+        <div class="jbs-group">
+          <div class="jbs-mark" aria-hidden="true">
+            <img src="/jarvis-gigi-256.png" alt="" width="256" height="256" />
+          </div>
+          <!-- Painted synchronously by the inline script below from the cached
+               assistant name (the user's chosen wake word, e.g. "Nico"). Left
+               empty in static HTML so the very first run — before any name is
+               cached — shows only the emblem, never a hardcoded / trademarked
+               name. -->
+          <div class="name"></div>
+          <div class="jbs-progress" aria-hidden="true"><i></i></div>
+          <div class="sub" role="status" aria-live="polite">Starting up…</div>
+        </div>
+      </div>
+    </div>
+    <script>
+      // Paint the user's own assistant name (derived from their wake word) into
+      // the boot splash + window title the instant the window opens. The name is
+      // read SYNCHRONOUSLY from localStorage — no network, no await — so this
+      // adds effectively zero startup latency. The cache is written by the app
+      // after each name resolve (see src/lib/assistantNameCache.ts; keep this
+      // storage key in lockstep). On the very first run the cache is empty and
+      // the splash keeps just its emblem. A trademarked placeholder such as
+      // "Jarvis" is never painted here.
+      (function () {
+        try {
+          var name = (localStorage.getItem("jarvis.assistantName") || "").trim();
+          if (name) {
+            var el = document.querySelector("#jarvis-boot-splash .name");
+            if (el) el.textContent = name;
+            document.title = name;
+          }
+        } catch (e) {
+          /* storage blocked (private mode) — keep the neutral fallback */
+        }
+      })();
+    </script>
+    <script>
+      // Do not release the desktop's heavy backend warm-up merely because the
+      // HTML or entry bundle was sent. A cold WebView can receive those bytes
+      // before its browser main thread paints anything. Two animation frames
+      // prove that the user has seen this dependency-free boot shell first.
+      (function () {
+        var acknowledgePaint = function () {
+          fetch("/api/ui/shell-painted", {
+            method: "POST",
+            cache: "no-store",
+          }).catch(function () {
+            /* The full app may already own the route; startup remains bounded. */
+          });
+        };
+        requestAnimationFrame(function () {
+          requestAnimationFrame(acknowledgePaint);
+        });
+      })();
+    </script>
+    <script>
+      // The last line of defence against a window that shows NOTHING.
+      //
+      // Seen on 2026-08-20: a rebuild while the desktop window was open left
+      // the app mounted but with an empty #root — no error card, no splash,
+      // just the ground colour. src/lib/preloadRecovery.ts spends exactly one
+      // reload on a missing lazy chunk and then hands the failure to a view's
+      // error boundary; a failure ABOVE that boundary has no card to land in,
+      // and src/lib/bundleWatch.ts cannot help either — it lives in the bundle
+      // that is not running. So this watchdog lives in the HTML, where it runs
+      // whatever the bundle does.
+      //
+      // Two clocks, because the two failures look different: an #root emptied
+      // by a crash is a fact within a frame, while a splash that is still
+      // spinning may just be a large bundle on a cold cache. One automatic
+      // reload per incident, released again as soon as the app is up, so a
+      // later rebuild in the same session still heals itself. When the reload
+      // has been spent, the window says what happened instead of staying dark
+      // — a screen with no explanation is the bug, not the crash behind it.
+      (function () {
+        var CRASH_GRACE_MS = 2500;
+        var LOAD_GRACE_MS = 20000;
+        var POLL_MS = 500;
+        var RETRY_MS = 700;
+        var SLOW_RETRY_MS = 3000;
+        var FAST_TRIES = 20;
+        // Mirrors HOLDING_MARKER in jarvis/ui/web/spa_build.py. Tested for in
+        // its attribute form only, composed here so this very script never
+        // contains it: this document IS what a reload fetches, and a test for
+        // the bare word found it in these lines and never reloaded anything
+        // (2026-08-22/23). Mirrors HOLDING_ATTRIBUTE in src/lib/safeReload.ts.
+        var HOLDING = "jarvis-build-holding";
+        var HOLDING_ATTR = 'data-state="' + HOLDING + '"';
+        var KEY = "jarvis:blank-reloaded";
+        var started = Date.now();
+        var lastError = "";
+
+        window.addEventListener(
+          "error",
+          function (e) {
+            lastError = (e && (e.message || (e.error && e.error.message))) || lastError;
+          },
+          true,
+        );
+        window.addEventListener("unhandledrejection", function (e) {
+          var r = e && e.reason;
+          lastError = (r && (r.message || String(r))) || lastError;
+        });
+
+        // Reload ONLY once the server can hand out a whole build.
+        //
+        // A reload is a one-way door: once the navigation starts, this script
+        // is gone too. `npm run build` runs with emptyOutDir, so dist/ passes
+        // through a state where assets/ is deleted and the previous index.html
+        // is not — measured at 1.8 s against the live server on 2026-08-22.
+        // Reloading into that gives the window a splash whose module script
+        // 404s and nothing at all left to notice it. So: ask what a fresh
+        // window would load, confirm those files answer, and only then go.
+        // Never gives up — showing the app that is already here beats showing
+        // nothing. Mirrors src/lib/safeReload.ts.
+        function safeReload() {
+          var f = typeof fetch === "function" ? fetch : null;
+          if (!f) {
+            // No way to check (very old engine) — the old behaviour is still
+            // better than never reloading at all.
+            location.reload();
+            return;
+          }
+          var tries = 0;
+          function again() {
+            setTimeout(look, tries < FAST_TRIES ? RETRY_MS : SLOW_RETRY_MS);
+          }
+          function look() {
+            tries++;
+            f("/", { cache: "no-store", headers: { Accept: "text/html" } })
+              .then(function (r) {
+                return r.ok ? r.text() : "";
+              })
+              .then(function (html) {
+                if (!html || html.indexOf(HOLDING_ATTR) !== -1) {
+                  again();
+                  return;
+                }
+                var refs = html.match(/\/assets\/[A-Za-z0-9._-]+/g) || [];
+                if (!refs.length) {
+                  again();
+                  return;
+                }
+                var left = refs.length;
+                var bad = false;
+                refs.forEach(function (url) {
+                  f(url, { method: "HEAD", cache: "no-store" })
+                    .then(function (r) {
+                      if (!r.ok) bad = true;
+                    })
+                    ["catch"](function () {
+                      bad = true;
+                    })
+                    .then(function () {
+                      left--;
+                      if (left > 0) return;
+                      if (bad) again();
+                      else location.reload();
+                    });
+                });
+              })
+              ["catch"](function () {
+                again();
+              });
+          }
+          look();
+        }
+
+        // Put the splash back while we wait for a build worth reloading into.
+        // An emptied #root is the one state with nothing on screen at all, and
+        // the wait for a rebuild to finish can be tens of seconds — the window
+        // has to say something for all of it.
+        function waiting() {
+          var root = document.getElementById("root");
+          if (!root || root.childElementCount > 0) return;
+          var box = document.createElement("div");
+          box.id = "jarvis-boot-splash";
+          var group = document.createElement("div");
+          group.className = "jbs-group";
+          var mark = document.createElement("div");
+          mark.className = "jbs-mark";
+          mark.setAttribute("aria-hidden", "true");
+          mark.innerHTML = '<img src="/jarvis-gigi-256.png" alt="" width="256" height="256">';
+          var progress = document.createElement("div");
+          progress.className = "jbs-progress";
+          progress.setAttribute("aria-hidden", "true");
+          progress.appendChild(document.createElement("i"));
+          var name = document.createElement("div");
+          name.className = "name";
+          try {
+            name.textContent = (localStorage.getItem("jarvis.assistantName") || "").trim();
+          } catch (e) {
+            /* storage blocked — the emblem alone is enough */
+          }
+          var sub = document.createElement("div");
+          sub.className = "sub";
+          sub.setAttribute("role", "status");
+          sub.textContent = "Updating interface…";
+          group.appendChild(mark);
+          group.appendChild(name);
+          group.appendChild(progress);
+          group.appendChild(sub);
+          box.appendChild(group);
+          root.appendChild(box);
+        }
+
+        function state() {
+          var root = document.getElementById("root");
+          if (!root || root.childElementCount === 0) return "empty";
+          if (
+            root.childElementCount === 1 &&
+            root.firstElementChild &&
+            root.firstElementChild.id === "jarvis-boot-splash"
+          ) {
+            return "splash";
+          }
+          return "up";
+        }
+
+        function texts() {
+          var lang = (navigator.language || "en").slice(0, 2);
+          if (lang === "de") {
+            return {
+              title: "Die Oberfläche wurde nicht geladen.", // i18n-allow
+              why: "Grund: ", // i18n-allow
+              unknown: "Kein Grund gemeldet.", // i18n-allow
+              hint: "Das passiert, wenn ein Bereich beim Öffnen abstürzt oder die Oberfläche neu gebaut wird, während das Fenster offen ist.", // i18n-allow
+              button: "Neu laden", // i18n-allow
+            };
+          }
+          if (lang === "es") {
+            return {
+              title: "La interfaz no se cargó.", // i18n-allow
+              why: "Motivo: ", // i18n-allow
+              unknown: "No se informó ningún motivo.", // i18n-allow
+              hint: "Ocurre cuando una sección falla al abrirse o la interfaz se reconstruye con la ventana abierta.", // i18n-allow
+              button: "Recargar", // i18n-allow
+            };
+          }
+          return {
+            title: "The interface did not load.",
+            why: "Reason: ",
+            unknown: "No reason was reported.",
+            hint: "This happens when a section fails to open, or the interface is rebuilt while the window is open.",
+            button: "Reload",
+          };
+        }
+
+        function report() {
+          var root = document.getElementById("root");
+          if (!root) return;
+          var t = texts();
+          root.innerHTML = "";
+          var box = document.createElement("div");
+          box.id = "jarvis-boot-splash";
+          var h = document.createElement("div");
+          h.className = "name";
+          h.textContent = t.title;
+          var why = document.createElement("div");
+          why.className = "sub";
+          why.style.textTransform = "none";
+          why.style.maxWidth = "60ch";
+          why.style.textAlign = "center";
+          why.textContent = lastError ? t.why + lastError : t.unknown;
+          var hint = document.createElement("div");
+          hint.className = "sub";
+          hint.style.textTransform = "none";
+          hint.style.maxWidth = "60ch";
+          hint.style.textAlign = "center";
+          hint.textContent = t.hint;
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = t.button;
+          btn.style.cssText =
+            "margin-top:6px;padding:7px 16px;font:inherit;font-size:13px;cursor:pointer;" +
+            "color:var(--jbs-accent);background:transparent;border:1px solid var(--jbs-ring);border-radius:4px";
+          btn.onclick = function () {
+            try {
+              sessionStorage.removeItem(KEY);
+            } catch (e) {
+              /* storage blocked — the reload still happens */
+            }
+            // Same door, same rule: a person who clicks Reload during a
+            // rebuild must not be handed the black window this card replaced.
+            root.innerHTML = "";
+            waiting();
+            safeReload();
+          };
+          box.appendChild(h);
+          box.appendChild(why);
+          box.appendChild(hint);
+          box.appendChild(btn);
+          root.appendChild(box);
+        }
+
+        // The clock the grace period is measured against. It starts at page
+        // load and is re-based every time the app goes from up to not-up, so a
+        // section switch that empties #root twenty minutes in gets the same
+        // 2.5 s of benefit of the doubt the first paint got — not an instant
+        // verdict from a stopwatch that has been running since boot.
+        var emptySince = started;
+        var wasUp = false;
+
+        var timer = setInterval(function () {
+          var now = state();
+          if (now === "up") {
+            // Healthy — but do NOT stop watching. This watchdog used to
+            // clearInterval() here, which retired it permanently the moment the
+            // app painted once. Everything it exists to catch can still happen
+            // afterwards: a lazy section chunk whose import throws above every
+            // error boundary empties #root minutes later, and with the timer
+            // gone nothing noticed. The window simply stayed on the stage's
+            // near-black ground with no card, no reason and no button — the
+            // "it goes black when I switch sections" report. Watching costs one
+            // childElementCount read every 500 ms; not watching costs the user
+            // the whole window.
+            wasUp = true;
+            emptySince = null;
+            // The page is healthy: give the next incident its own reload.
+            try {
+              sessionStorage.removeItem(KEY);
+            } catch (e) {
+              /* storage blocked — nothing to release */
+            }
+            return;
+          }
+          if (emptySince === null) emptySince = Date.now();
+          var waited = Date.now() - emptySince;
+          // Once the app HAS painted, an empty #root is a crash rather than a
+          // slow bundle, so the short clock applies to both states.
+          var grace = now === "empty" || wasUp ? CRASH_GRACE_MS : LOAD_GRACE_MS;
+          if (waited < grace) return;
+          clearInterval(timer);
+          var spent = null;
+          try {
+            spent = sessionStorage.getItem(KEY);
+          } catch (e) {
+            // A storage that cannot be read cannot bound a reload loop, so no
+            // reload is started: the window explains itself instead.
+            spent = "1";
+          }
+          if (!spent) {
+            try {
+              sessionStorage.setItem(KEY, "1");
+            } catch (e) {
+              report();
+              return;
+            }
+            waiting();
+            safeReload();
+            return;
+          }
+          report();
+        }, POLL_MS);
+      })();
+    </script>
+  </body>
+</html>
