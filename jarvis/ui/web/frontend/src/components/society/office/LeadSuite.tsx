@@ -542,8 +542,9 @@ function ExecutiveDesk({ w, d, face }: { w: number; d: number; face: ScreenFace 
         </group>
       ))}
       {triple && [-0.72, 0.72].map((x) => <Box key={x} size={[0.05, 0.4, 0.05]} position={[x, 0.97, -0.18]} material={MAT.monitor} />)}
-      {/* Banker's lamp, a trophy star and a coffee cup. */}
-      <group position={[-w / 2 + 0.25, 0.77, -0.18]}>
+      {/* Banker's lamp, a trophy star and a coffee cup. The lamp stands at the
+          front-left corner: further back, the angled left wing monitor cuts through its shade. */}
+      <group position={[-w / 2 + 0.25, 0.77, 0.22]}>
         <Cyl radius={0.08} height={0.03} position={[0, 0.015, 0]} material={LEAD_MAT.brass} />
         <Cyl radius={0.012} height={0.3} position={[0, 0.16, 0]} material={LEAD_MAT.brass} />
         <Rounded size={[0.34, 0.08, 0.14]} radius={0.035} position={[0, 0.33, 0.04]} material={LEAD_MAT.lampGlass} cast={false} />
