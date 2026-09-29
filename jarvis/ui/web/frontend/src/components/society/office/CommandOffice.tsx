@@ -20,6 +20,7 @@ import { useWorkspacePanesStore } from "@/store/workspacePanes";
 import type { AgentRunState } from "../data";
 import { Box, MAT, matte, Rounded } from "./OfficeFurniture";
 import { paneOccupants } from "./codingFloor";
+import { TaskChair } from "./OfficeChairs";
 import { COMMAND_DESK, COMMAND_DESK_OFFSET, type Furniture, type FurnitureKind } from "./officeLayout";
 import { useOfficeStore } from "./officeStore";
 
@@ -406,31 +407,14 @@ const MONITOR = { w: 0.72, h: 0.42, y: 1.14 };
 const MONITOR_CANVAS = { w: 1024, h: Math.round((1024 * 0.42) / 0.72) };
 const DESK_Z = -COMMAND_DESK_OFFSET;
 const CHAIR_Z = DESK_Z + COMMAND_DESK.chairZ;
-const GAS = new CylinderGeometry(0.028, 0.028, 0.3, 12);
 const MUG = new CylinderGeometry(0.04, 0.036, 0.1, 16);
 
 function ExecutiveChair() {
-  // The person faces north, towards the monitors: the chair's back is on its +z side.
+  // The person faces north, towards the monitors: the chair's back is on its +z side,
+  // which is the task chair's own orientation.
   return (
     <group position={[0, 0, CHAIR_Z]}>
-      {[0, 1, 2, 3, 4].map((i) => (
-        <group key={i} rotation={[0, (i * Math.PI * 2) / 5, 0]}>
-          <Box size={[0.05, 0.035, 0.3]} position={[0, 0.07, 0.15]} material={MAT.chair} />
-          <Box size={[0.05, 0.05, 0.05]} position={[0, 0.025, 0.29]} material={MAT.steel} cast={false} />
-        </group>
-      ))}
-      <mesh geometry={GAS} material={MAT.steel} position={[0, 0.25, 0]} castShadow />
-      <Rounded size={[0.54, 0.08, 0.5]} radius={0.035} position={[0, 0.46, 0]} material={MAT.chairSeat} />
-      <group position={[0, 0.9, 0.24]} rotation={[0.12, 0, 0]}>
-        <Rounded size={[0.5, 0.66, 0.06]} radius={0.03} position={[0, 0, 0]} material={MAT.chairMesh} />
-        <Rounded size={[0.34, 0.13, 0.07]} radius={0.03} position={[0, 0.42, 0.02]} material={MAT.chair} />
-      </group>
-      {[-0.29, 0.29].map((x) => (
-        <group key={x}>
-          <Box size={[0.04, 0.2, 0.04]} position={[x, 0.58, 0.04]} material={MAT.chair} />
-          <Rounded size={[0.07, 0.03, 0.28]} radius={0.012} position={[x, 0.69, 0.0]} material={MAT.chair} />
-        </group>
-      ))}
+      <TaskChair />
     </group>
   );
 }
