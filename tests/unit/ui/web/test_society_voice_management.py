@@ -168,6 +168,8 @@ def test_a_spoken_schedule_with_day_names_and_blank_fields_is_accepted(client) -
                 "days": ["mon", "Friday"],
                 "timezone": "",
                 "expression": None,
+                # A model fills sibling fields of other kinds (seen live).
+                "interval_seconds": 86400,
             },
         },
         headers={CLIENT_TIMEZONE_HEADER: "Europe/Berlin"},

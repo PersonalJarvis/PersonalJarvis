@@ -88,6 +88,14 @@ def _without_blanks(schedule: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in schedule.items() if v not in (None, "", [], ())}
 
 
+def _fields_of(model: Any, schedule: dict[str, Any]) -> dict[str, Any]:
+    """Keep the keys this trigger kind knows. The voice command offers one
+    flat schedule object, and models fill sibling fields of other kinds
+    (``interval_seconds`` next to a calendar ``local_time``, seen live)."""
+    known = set(model.model_fields)
+    return {k: v for k, v in schedule.items() if k in known or k in ("kind", "type")}
+
+
 def _spoken_calendar(schedule: dict[str, Any]) -> dict[str, Any]:
     """Accept the voice command's shape: ``days`` as weekday names and
     ``local_time`` without a leading zero ("8:00")."""
@@ -122,7 +130,7 @@ def _trigger(schedule: dict[str, Any]) -> Any:
         )
     schedule = _without_blanks(schedule)
     if kind == "cron":
-        values = dict(schedule)
+        values = _fields_of(TriggerCron, schedule)
         values.setdefault("timezone", turn_timezone())
         return TriggerCron.model_validate(
             {"type": kind, **{k: v for k, v in values.items() if k not in ("kind", "type")}}
@@ -133,7 +141,7 @@ def _trigger(schedule: dict[str, Any]) -> Any:
             {"type": kind, **{k: v for k, v in schedule.items() if k not in ("kind", "type")}}
         )
     if kind == "calendar":
-        schedule = _spoken_calendar(schedule)
+        schedule = _fields_of(TriggerCalendar, _spoken_calendar(schedule))
         schedule.setdefault("timezone", turn_timezone())
         return TriggerCalendar.model_validate(
             {"type": kind, **{k: v for k, v in schedule.items() if k not in ("kind", "type")}}
