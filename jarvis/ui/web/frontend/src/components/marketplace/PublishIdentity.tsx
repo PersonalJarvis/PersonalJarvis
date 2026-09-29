@@ -19,6 +19,13 @@ import { fill, useLocaleChunk, useT } from "@/i18n";
 import { robustCopy } from "@/lib/clipboard";
 import { openExternalUrl } from "@/lib/openExternal";
 import { cn } from "@/lib/utils";
+import {
+  PUBLISH_IDENTITY_KEY,
+  usePublishIdentity,
+  type PublishIdentityWire,
+} from "./publishIdentityQuery";
+
+export { PUBLISH_IDENTITY_KEY, usePublishIdentity, type PublishIdentityWire };
 
 // ---------------------------------------------------------------------------
 // One identity for everything the app publishes.
@@ -37,18 +44,6 @@ import { cn } from "@/lib/utils";
 // nothing on their account.
 // ---------------------------------------------------------------------------
 
-export interface PublishIdentityWire {
-  /** Package publishing (plugins and skills) is configured. */
-  enabled: boolean;
-  /** The wallpaper lane is configured — a fork may run one without the other. */
-  wallpapers_enabled?: boolean;
-  signed_in: boolean;
-  login?: string;
-  avatar_url?: string | null;
-  /** Set when GitHub could not be reached — NOT the same as signed out. */
-  unreachable?: string;
-}
-
 interface SigninStartWire {
   flow_id: string;
   user_code: string;
@@ -57,20 +52,9 @@ interface SigninStartWire {
   interval?: number;
 }
 
-export const PUBLISH_IDENTITY_KEY = ["marketplace-publish-identity"] as const;
 
 const GITHUB_DEVICE_URL = "https://github.com/login/device";
 
-async function fetchIdentity(): Promise<PublishIdentityWire> {
-  const res = await fetch("/api/marketplace/publish/identity", { cache: "no-store" });
-  if (!res.ok) throw new Error(`Identity request failed (${res.status})`);
-  return res.json();
-}
-
-/** Who is signed in, shared by every surface that publishes. */
-export function usePublishIdentity() {
-  return useQuery({ queryKey: PUBLISH_IDENTITY_KEY, queryFn: fetchIdentity });
-}
 
 /**
  * The device-flow state machine: start → poll → connected | error, plus
