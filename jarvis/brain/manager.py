@@ -8276,10 +8276,18 @@ class BrainManager:
                     # is attempted on its own and what could not be opened is
                     # named at the end, so a mixed fleet degrades pane by pane
                     # instead of all at once.
+                    # A batch past the pane cap is refused whole, so ask only
+                    # for what still fits; the readback then says "only room
+                    # for N" instead of opening nothing at all.
+                    active = registry.session
+                    room = MAX_TERMINALS - (len(active.terminals) if active else 0)
+                    if room <= 0:
+                        break
                     try:
                         opened, _capped = await registry.add_terminals(
-                            group.count, agent=group.agent
+                            min(group.count, room), agent=group.agent
                         )
+                        _capped = _capped or group.count > room
                     except SessionError as exc:
                         if "maximum" in str(exc).lower():
                             raise
