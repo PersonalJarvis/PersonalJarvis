@@ -96,7 +96,8 @@ def schedule(kind: ReadbackKind, term: Any, publish: Publisher | None) -> None:
         return
     try:
         loop = asyncio.get_running_loop()
-    except RuntimeError:
+    except RuntimeError:  # no event loop (a sync test / CLI): nobody to speak to
+        logger.debug("Agentic IDE readback for {}: no event loop", getattr(term, "name", "?"))
         return
     task = loop.create_task(readback(kind, term, publish), name="agentic-ide-readback")
     _tasks.add(task)
