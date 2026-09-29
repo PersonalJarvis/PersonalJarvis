@@ -27,9 +27,9 @@ never moves an agent, starts work or invents activity (world-behaviour-manual
 |---|---|
 | Genre | Stylised "toy office" diorama: chunky low-poly 3D, not anime, not pixel art, not realistic. Close to casual social-game and avatar-app styling. |
 | Characters | Chibi proportions (big head, short body), dot eyes, flat matte colours, no textures. Seated at desks; the stored figure recipe is kept, agents without one get a stable chibi look. |
-| Furniture | Simple primitives with small rounded edges: light-wood desk tops on white pedestals, black monitors, dark swivel chairs, dark-wood name boards with light slats, potted low-poly plants, bookshelves with coloured books, dark couches in a lounge. |
-| Materials | Matte (roughness ~0.85), no metalness except the railings; colour does the work. Wood-plank floor, desaturated carpet per department. |
-| Light | Cool sky / warm ground hemisphere light plus one soft directional sun with PCF shadows. Always bright enough to read, never moody. |
+| Furniture | A contemporary workplace built from rounded primitives: light-oak bench desks on black steel T-legs with a white pedestal and a felt privacy screen, slim monitors on arms, ergonomic chairs with a mesh back on a five-star base, open oak-and-steel shelving, low modular sofas on slim legs, tall charcoal planters with full crowns. Department back walls are fluted acoustic felt with a charcoal name plate in white type and oak ledges with small plants. |
+| Materials | Mostly matte; black steel and chrome arms carry a little metalness. Light microcement floor, a rounded felt rug per department whose colour also dyes that department's felt screens and seat fabric (`DEPARTMENT_ZONES`). Rooms: slate felt (team), terrazzo (wardrobe), pale stone (reception), light oak (break room). Glass walls and the outer balustrade have slim black frames. |
+| Light | Cool sky / neutral ground hemisphere light plus one soft, slightly warm directional sun with PCF shadows. Always bright enough to read, never moody. |
 | Setting | The floor floats in a starry night sky behind glass railings. |
 | Camera | Perspective, 35° FOV, three-quarter view from the south-east about 40° below the horizon. Orbit, pan and zoom within limits (20°–72° polar, 4–140 m). Home view frames the occupied desks. |
 | Labels | Dark translucent pill above each agent: hexagon badge (initial, star for the lead), name, state dot; the state word only when it is not idle. Scale is clamped by distance. |
@@ -208,6 +208,20 @@ purpose, so the boss's room reads as the most precious place on the floor
   navigation tests still reach every seat, spot and checkpoint.
 
 Awaiting the maintainer's visual review like the rest of the office.
+
+## 5d. Contemporary look (2026-09-29)
+
+The maintainer rejected the first look as a 1990s office and asked for a
+genuinely modern one. The shared kit (`OfficeFurniture.tsx`,
+`DeskInstances.tsx`), the floors and room surfaces (`OfficeScene.tsx`,
+`OfficeRooms.tsx`) and the palette (`officePalette.ts`) were restyled as in §2;
+the coding floor keeps its own terrazzo, night and studios, now in the same
+contemporary kit with tone-on-tone patterns. Seat height, desk height, monitor
+screen position and every footprint are unchanged, so poses, live screens and
+navigation work as before. Still in the earlier style and waiting on the
+maintainer's review of this reference before they follow: the lead suite, the
+reception desk and kiosk, the team room table and chairs, the lockers and
+mirror, the coffee bar, the water cooler and the arcade.
 
 ## 6. Plan
 
