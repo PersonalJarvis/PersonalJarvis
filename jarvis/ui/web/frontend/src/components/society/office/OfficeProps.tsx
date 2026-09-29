@@ -13,6 +13,7 @@ import { CylinderGeometry, MeshStandardMaterial, SphereGeometry } from "three";
 import { canvasMaterial } from "./canvasMaterials";
 import { LEAD_RENDERERS } from "./LeadSuite";
 import { COMMAND_RENDERERS } from "./CommandOffice";
+import { SERVER_RENDERERS } from "./ServerRoom";
 import { TEAM_RENDERERS } from "./TeamRoomDecor";
 import { Bookshelf, Box, Couch, GEO, MAT, matte, Plant, Rounded, Rug } from "./OfficeFurniture";
 import { FURNITURE_SIZE, type Furniture, type FurnitureKind } from "./officeLayout";
@@ -647,6 +648,7 @@ export const PROP_RENDERERS: Record<FurnitureKind, (props: { item: Furniture }) 
   elevator: () => <Elevator />,
   ...LEAD_RENDERERS,
   ...COMMAND_RENDERERS,
+  ...SERVER_RENDERERS,
   ...TEAM_RENDERERS,
 };
 

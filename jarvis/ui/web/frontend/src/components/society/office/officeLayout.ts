@@ -105,6 +105,8 @@ export type FurnitureKind =
   // Coding floor: Mission Control's console ring.
   // Coding floor: Mission Control's slat wall with the video wall, and its desk with three monitors and a chair.
   | "commandWall" | "commandDesk"
+  // Coding floor: the server room — rack rows round a cold aisle, the NOC console and status wall, UPS, fire suppression.
+  | "serverRack" | "coldAisle" | "nocConsole" | "statusWall" | "ups" | "fireSuppression"
   // Team room: the slat wall behind the board, a credenza, fiddle-leaf figs and a wool rug.
   | "teamWall" | "credenza" | "designerPlant" | "teamRug";
 
@@ -147,6 +149,14 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   commandWall: { w: 7.8, d: 0.3, h: 2.7, solid: true },
   // Desk and chair together; not a solid box, navigation walks round commandDeskObstacles.
   commandDesk: { w: 2.8, d: 2.1, h: 1.45, solid: false },
+  // Server room: a row of five 42U racks, its ladder tray on top; the aisle between two rows (floor tiles,
+  // overhead trays, a light) is walkable; the NOC console includes its stool.
+  serverRack: { w: 3.0, d: 1.0, h: 2.3, solid: true },
+  coldAisle: { w: 2.44, d: 3.0, h: 2.3, solid: false },
+  nocConsole: { w: 2.0, d: 1.3, h: 1.3, solid: true },
+  statusWall: { w: 2.4, d: 0.3, h: 2.1, solid: true },
+  ups: { w: 1.2, d: 0.8, h: 1.9, solid: true },
+  fireSuppression: { w: 0.9, d: 0.5, h: 1.9, solid: true },
   // Team room: the slat wall carries the board, felt panels and the video display.
   teamWall: { w: 8.16, d: 0.12, h: 2.05, solid: true },
   // The body is 0.61 m; books and a vase of branches stand on it.
@@ -554,6 +564,10 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     { id: "command-plant-s", kind: "plant", x: leadRoom.maxX - 0.55, z: northMaxZ - 0.55, rotationY: 0, room: "command" },
   ] : [];
   const wx0 = wardrobeRoom.minX;
+  // Server room: the rack rows' centre line and the cold aisle between their fronts.
+  const serverRowZ = topZ + 3.5;
+  const serverAisleMinX = wx0 + 0.06 + FURNITURE_SIZE.serverRack.d;
+  const serverAisleMaxX = wardrobeRoom.maxX - 0.06 - FURNITURE_SIZE.serverRack.d;
   const furniture: Furniture[] = [
     ...leadFurniture,
     ...commandFurniture,
@@ -569,13 +583,17 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     { id: "team-plant", kind: "designerPlant", x: teamRoom.maxX - 0.6, z: northMaxZ - 0.6, rotationY: 0, room: "team" },
     { id: "team-plant-w", kind: "designerPlant", x: teamRoom.minX + 0.6, z: northMaxZ - 0.6, rotationY: Math.PI / 2, room: "team" },
     ...(coding ? [
-      // Coding floor, east: a server room — a rack cabinet on the north wall and
-      // console terminals along both side walls.
-      { id: "server-rack", kind: "lockers", x: wcx, z: topZ + 0.4, rotationY: 0, room: "server" },
-      { id: "server-console-e1", kind: "kiosk", x: wardrobeRoom.maxX - 0.35, z: topZ + 2.2, rotationY: -Math.PI / 2, room: "server" },
-      { id: "server-console-e2", kind: "kiosk", x: wardrobeRoom.maxX - 0.35, z: topZ + 3.7, rotationY: -Math.PI / 2, room: "server" },
-      { id: "server-console-w", kind: "kiosk", x: wx0 + 0.35, z: topZ + 2.2, rotationY: Math.PI / 2, room: "server" },
-      { id: "server-plant", kind: "plant", x: wx0 + 0.55, z: northMaxZ - 0.55, rotationY: 0, room: "server" },
+      // Coding floor, east: a server room — two rack rows back to the side walls,
+      // fronts facing across a cold aisle that runs from the door to the NOC
+      // console and the status wall on the north side; the UPS and the
+      // fire-suppression bank stand in the corners by the door.
+      { id: "server-status", kind: "statusWall", x: wcx, z: topZ + 0.08 + FURNITURE_SIZE.statusWall.d / 2, rotationY: 0, room: "server" },
+      { id: "server-noc", kind: "nocConsole", x: wcx, z: topZ + 0.5 + FURNITURE_SIZE.nocConsole.d / 2, rotationY: 0, room: "server" },
+      { id: "server-rack-w", kind: "serverRack", x: wx0 + 0.06 + FURNITURE_SIZE.serverRack.d / 2, z: serverRowZ, rotationY: Math.PI / 2, room: "server" },
+      { id: "server-rack-e", kind: "serverRack", x: wardrobeRoom.maxX - 0.06 - FURNITURE_SIZE.serverRack.d / 2, z: serverRowZ, rotationY: -Math.PI / 2, room: "server" },
+      { id: "server-aisle", kind: "coldAisle", x: wcx, z: serverRowZ, rotationY: 0, room: "server" },
+      { id: "server-ups", kind: "ups", x: wx0 + 0.06 + FURNITURE_SIZE.ups.d / 2, z: topZ + 6.0, rotationY: Math.PI / 2, room: "server" },
+      { id: "server-fire", kind: "fireSuppression", x: wardrobeRoom.maxX - 0.06 - FURNITURE_SIZE.fireSuppression.d / 2, z: topZ + 6.0, rotationY: -Math.PI / 2, room: "server" },
     ] satisfies Furniture[] : [
       // Wardrobe: lockers and a mirror.
       { id: "wardrobe-lockers", kind: "lockers", x: wcx - 0.2, z: topZ + 0.4, rotationY: 0, room: "wardrobe" },
@@ -624,9 +642,9 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
       { id: "couch-command-1", kind: "couch", pose: "sit", x: lx0 + 0.75, z: lz0 + 4.55, facing: Math.PI / 2, room: "command" },
       { id: "couch-command-2", kind: "couch", pose: "sit", x: lx0 + 0.75, z: lz0 + 5.65, facing: Math.PI / 2, room: "command" },
       { id: "shelf-command", kind: "shelf", pose: "stand", x: leadRoom.maxX - 1.1, z: lz0 + 4.7, facing: Math.PI / 2, room: "command" },
-      // Server room: a look at the consoles on either wall.
-      { id: "console-e", kind: "board", pose: "stand", x: wardrobeRoom.maxX - 1.2, z: topZ + 2.2, facing: Math.PI / 2, room: "server" },
-      { id: "console-w", kind: "board", pose: "stand", x: wx0 + 1.2, z: topZ + 2.2, facing: -Math.PI / 2, room: "server" },
+      // Server room: in the cold aisle, each looking at a rack row's glass fronts.
+      { id: "console-e", kind: "board", pose: "stand", x: serverAisleMaxX - 0.55, z: serverRowZ, facing: Math.PI / 2, room: "server" },
+      { id: "console-w", kind: "board", pose: "stand", x: serverAisleMinX + 0.55, z: serverRowZ, facing: -Math.PI / 2, room: "server" },
     ] satisfies Spot[] : [
       // In front of the feature wall's east bookcase.
       { id: "shelf-lead", kind: "shelf", pose: "stand", x: leadRoom.maxX - 1.45, z: topZ + 1.05, facing: Math.PI, room: "lead" },
