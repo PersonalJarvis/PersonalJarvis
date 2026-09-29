@@ -23,6 +23,7 @@ import { useEventStore } from "@/store/events";
 import type { DeskChat } from "./useDeskChats";
 import { FurniturePiece, MeetingChairs } from "./OfficeProps";
 import { TeamBoardFace } from "./TeamBoardFace";
+import { TeamRoomFittings } from "./TeamRoomDecor";
 import { RoomFloors, RoomSign, RoomWalls } from "./OfficeRooms";
 import { CHECKPOINT_ICON, CheckpointMarker } from "./CheckpointMarker";
 import { ElevatorCallButton } from "./ElevatorCallButton";
@@ -223,6 +224,7 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
   // Each desk takes its department's zone colour for the felt screen and the seat fabric.
   const zones = useMemo(() => new Map(layout.departments.flatMap((dept) => dept.desks.map((desk) => [desk.id, dept.tint] as const))), [layout]);
   const leadRoom = layout.rooms.find((r) => r.kind === "lead");
+  const teamRoom = layout.rooms.find((r) => r.kind === "team");
   const dogBeds = useMemo(() => layout.furniture.filter((f) => f.kind === "dogBed"), [layout]);
   const treatJar = layout.furniture.find((f) => f.kind === "treatJar") ?? null;
   const coding = floor === "coding";
@@ -272,6 +274,7 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
       {layout.furniture.map((item) => <FurniturePiece key={item.id} item={item} />)}
       {table && <MeetingChairs table={table} />}
       {board && <TeamBoardFace board={board} enabled={floor === "agents"} />}
+      {teamRoom && table && <TeamRoomFittings room={teamRoom} table={table} />}
       {/* At the elevator its call button takes over from the floating token, which would hide it. */}
       {layout.checkpoints.filter((cp) => cp.id !== "elevator" || !atLift).map((cp) => (
         <CheckpointMarker key={cp.id} checkpoint={cp} label={t(`society.office.cp_${cp.id}`)} icon={CHECKPOINT_ICON[cp.id]}
