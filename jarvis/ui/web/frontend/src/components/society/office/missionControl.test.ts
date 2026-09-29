@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentStatus } from "@/lib/agenticIdeApi";
 import type { PaneOccupant } from "./codingFloor";
-import { launchableAgents, pickFleet } from "./MissionControlPanel";
+import { launchableAgents, pickAll } from "./MissionControlPanel";
 import { QUICK_ORDERS, screenTail } from "./PaneCommandPanel";
 
 const cli = (name: string, extra: Partial<AgentStatus> = {}): AgentStatus => ({
@@ -29,11 +29,9 @@ describe("mission control", () => {
     expect(launchableAgents(list).map((a) => a.name)).toEqual(["claude", "gemini"]);
   });
 
-  it("picks the fleet by run state", () => {
-    const floor = [occupant("a", "working"), occupant("b", "waiting"), occupant("c", "idle"), occupant("d", "working")];
-    expect([...pickFleet(floor, "all")]).toEqual(["a", "b", "c", "d"]);
-    expect([...pickFleet(floor, "working")]).toEqual(["a", "d"]);
-    expect([...pickFleet(floor, "waiting")]).toEqual(["b"]);
-    expect([...pickFleet(floor, "none")]).toEqual([]);
+  it("selects everyone on the floor, and clears again once everyone is picked", () => {
+    const floor = [occupant("a", "working"), occupant("b", "waiting"), occupant("c", "idle")];
+    expect([...pickAll(floor, new Set(["b"]))]).toEqual(["a", "b", "c"]);
+    expect([...pickAll(floor, new Set(["a", "b", "c"]))]).toEqual([]);
   });
 });

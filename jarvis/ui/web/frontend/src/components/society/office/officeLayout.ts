@@ -16,9 +16,9 @@
  * holds a quiet focus zone · the team room · a server room instead of the lead
  * office and the wardrobe. It has no lead desks and only the elevator and
  * break-room checkpoints — nothing there creates or dresses society agents.
- * Its centre aisle is wider and holds Mission Control: a round console hub
- * between the two department columns where new coding agents are started and
- * the whole fleet can be briefed.
+ * Its centre aisle is wider and holds Mission Control: a screen on a floor
+ * stand between the two department columns, where new coding agents are
+ * started and several can be briefed at once.
  */
 import type { AgentRunState, AgentTier } from "../data";
 
@@ -86,11 +86,11 @@ export interface Checkpoint extends Point {
   id: CheckpointKind; room: RoomKind | "floor";
   /** Walk-in radius in metres. */
   radius: number;
-  /** Height of the floating token; absent = the standard height. Raised over tall props such as the holo deck. */
+  /** Height of the floating token; absent = the standard height. Raised over tall props such as Mission Control's screen. */
   tokenY?: number;
   /**
    * Where "walk there" goes when the checkpoint's centre is inside something
-   * solid (the holo deck's ring is centred on its table); absent = the centre.
+   * solid (Mission Control's ring is centred on its screen); absent = the centre.
    */
   approach?: Point;
 }
@@ -139,8 +139,8 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   floorLamp: { w: 0.46, d: 0.46, h: 1.8, solid: true },
   dogBed: { w: 0.9, d: 0.72, h: 0.45, solid: true },
   treatJar: { w: 0.5, d: 0.5, h: 1.2, solid: true },
-  // Round, so not a solid box: navigation walks around missionDeckObstacles instead.
-  missionConsole: { w: 3.9, d: 3.9, h: 3.1, solid: false },
+  // Mission Control: a display on a floor stand; the box is the screen's width and the base plate's depth.
+  missionConsole: { w: 1.4, d: 0.5, h: 1.8, solid: true },
 };
 
 export interface Furniture extends Point {
@@ -200,31 +200,9 @@ const DEPT_HEADER_Z = 1.8;
 const DEPT_FOOTER_Z = 0.8;
 const AISLE = 3.2;
 /** The coding floor's centre aisle: wide enough for Mission Control with a walkway on both sides. */
-export const MISSION_AISLE = 8;
-/** Mission Control's round deck and the command table standing on it (metres, from the deck centre). */
-export const MISSION_DECK_RADIUS = 1.9;
-export const MISSION_TABLE_RADIUS = 1.6;
-/** How far beyond the deck's edge the person can still use it. */
-export const MISSION_REACH = 1.2;
-
-/**
- * What a walker bumps into at Mission Control: thin horizontal strips that
- * trace the command table's circle (each as wide as the circle at its middle),
- * so the collision is round like the table. The low deck platform around it
- * stays walkable; nothing blocks the air beside the table.
- */
-export function missionDeckObstacles(centre: Point, strips = 24): Rect[] {
-  const r = MISSION_TABLE_RADIUS;
-  const step = (2 * r) / strips;
-  const out: Rect[] = [];
-  for (let i = 0; i < strips; i += 1) {
-    const z0 = -r + step * i;
-    const mid = z0 + step / 2;
-    const half = Math.sqrt(r * r - mid * mid);
-    out.push({ minX: centre.x - half, maxX: centre.x + half, minZ: centre.z + z0, maxZ: centre.z + z0 + step });
-  }
-  return out;
-}
+export const MISSION_AISLE = 5.6;
+/** How far round Mission Control's screen the person can use it, from its centre (metres). */
+export const MISSION_REACH = 1.5;
 const EDGE = 1.6;
 /**
  * How far a figure's centre stays from the slab edge. The railing stands 0.2 m
@@ -548,7 +526,7 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     { id: "break-shelf", kind: "bookshelf", x: bx0 + 2.2, z: bz0 + 0.3, rotationY: 0, room: "break" },
     { id: "break-plant", kind: "plant", x: bx0 + 0.6, z: bottomZ - 0.6, rotationY: 0, room: "break" },
     ...(coding ? [
-      // Mission Control: the round holo deck, midway down the centre aisle.
+      // Mission Control: a screen on a stand, midway down the centre aisle, facing the camera.
       { id: "mission-console", kind: "missionConsole", x: 0, z: missionZ, rotationY: 0, room: "floor" },
     ] satisfies Furniture[] : []),
   ];
@@ -611,9 +589,9 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
   // The elevator's doors face east into the lobby; its checkpoint is the floor in front of them.
   const elevatorStop: Checkpoint = { id: "elevator", room: "reception", x: elevator.x + 0.95, z: elevator.z, radius: 1.0 };
   const breakStop: Checkpoint = { id: "break", room: "break", x: bx0 + 5.6, z: bz0 + 2.6, radius: 1.8 };
-  // Mission Control's stop is the whole deck: a ring round it, usable from every side.
-  const missionStop: Checkpoint = { id: "mission", room: "floor", x: 0, z: missionZ, radius: MISSION_DECK_RADIUS + MISSION_REACH, tokenY: 3.5,
-    approach: { x: 0, z: missionZ + MISSION_DECK_RADIUS + 0.3 } };
+  // Mission Control's stop is a ring round the screen, usable from every side; "walk there" ends in front of it.
+  const missionStop: Checkpoint = { id: "mission", room: "floor", x: 0, z: missionZ, radius: MISSION_REACH, tokenY: 2.95,
+    approach: { x: 0, z: missionZ + 0.9 } };
   const checkpoints: Checkpoint[] = coding ? [missionStop, elevatorStop, breakStop] : [
     { id: "create", room: "reception", x: reception.x, z: reception.z + 1.7, radius: 1.2 },
     { id: "manage", room: "reception", x: kiosk.x, z: kiosk.z + 1.4, radius: 1.1 },
@@ -633,7 +611,6 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     // Department sign walls along each department's north edge.
     ...departments.map((d) => ({ minX: d.minX + 0.2, maxX: d.maxX - 0.2, minZ: d.minZ + 0.02, maxZ: d.minZ + 0.2 })),
     ...furniture.filter((f) => FURNITURE_SIZE[f.kind].solid).map(footprint),
-    ...(coding ? missionDeckObstacles({ x: 0, z: missionZ }) : []),
     // The posts of an open room's name arch are solid too; nobody walks through them.
     ...rooms.filter((r) => !r.walled).flatMap(archPosts).map((p) => ({
       minX: p.x - ARCH.post / 2, maxX: p.x + ARCH.post / 2, minZ: p.z - ARCH.post / 2, maxZ: p.z + ARCH.post / 2,
