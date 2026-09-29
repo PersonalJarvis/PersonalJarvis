@@ -472,7 +472,8 @@ export function drawFloorArt(ctx: Ctx, layout: OfficeLayout, t: MapTransform, ar
   for (const pass of ["rug", "solid"] as const) {
     for (const item of layout.furniture) {
       const isRug = item.kind === "rug" || item.kind === "executiveRug" || item.kind === "teamRug"
-        || item.kind === "breakRug" || item.kind === "arcadeMat";
+        || item.kind === "breakRug" || item.kind === "arcadeMat" || item.kind === "lobbyRug"
+        || item.kind === "entranceMat" || item.kind === "roundRug";
       if ((pass === "rug") !== isRug) continue;
       const colour = FURNITURE_PAINT[item.kind] ?? MAP_PAINT.furniture;
       const fp = footprint(item);
