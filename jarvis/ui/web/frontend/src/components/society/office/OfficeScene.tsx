@@ -17,8 +17,9 @@ import type { DeskChat } from "./useDeskChats";
 import { FurniturePiece, MeetingChairs } from "./OfficeProps";
 import { RoomFloors, RoomSign, RoomWalls } from "./OfficeRooms";
 import { CheckpointMarker, type CheckpointIcon } from "./CheckpointMarker";
-import { OfficeAgents, type WalkerContext } from "./OfficeAgents";
+import { OFFICE_FIGURE_HEIGHT_M, OfficeAgents, type WalkerContext } from "./OfficeAgents";
 import { OfficePlayer } from "./OfficePlayer";
+import { PlayerBubble } from "./OfficeBubbles";
 import { OfficeCameraRig } from "./OfficeCameraRig";
 import { allDesks, type CheckpointKind, type Department, type OfficeLayout, type Point } from "./officeLayout";
 import type { NavGrid } from "./officeNav";
@@ -164,7 +165,8 @@ export function OfficeScene({ layout, grid, walkers, agents, newcomers, awake, r
           animate={awake && !reduced} onActivate={() => select({ kind: "checkpoint", id: cp.id })} />
       ))}
       <OfficePlayer layout={layout} grid={grid} look={player.look} name={player.name} awake={awake} reduced={reduced} />
-      <OfficeAgents desks={desks} agents={agents} ctx={walkers} newcomers={newcomers} awake={awake} reduced={reduced}
+      <PlayerBubble height={OFFICE_FIGURE_HEIGHT_M + 0.49} />
+      <OfficeAgents desks={desks} agents={agents} ctx={walkers} newcomers={newcomers} awake={awake} reduced={reduced} chats={chats}
         selectedId={selection?.kind === "agent" ? selection.id : null} onSelect={(id) => select({ kind: "agent", id })} />
       <OfficeCameraRig layout={layout} overview={overview} />
     </>

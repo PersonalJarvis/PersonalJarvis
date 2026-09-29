@@ -12,10 +12,10 @@ import type { SocietyAgent } from "../data";
 import type { CheckpointKind, OfficeLayout, Point } from "./officeLayout";
 import { player, useOfficeStore } from "./officeStore";
 import { agentPositions } from "./walkerRegistry";
-import { HAIR_STYLES, playerLook, withHairStyle, withShuffledColours, type PlayerProfile } from "./playerProfile";
+import { AgentTalkPanel, CALL_MS } from "./AgentTalkPanel";
+import type { PlayerProfile } from "./playerProfile";
+import { WardrobePanel } from "./WardrobePanel";
 
-/** How long called or gathered agents stay before they drift back to their day. */
-const CALL_MS = 25_000;
 
 export interface OfficeActions {
   onOpenAgent: (id: string) => void;
@@ -55,39 +55,9 @@ function spotCentre(layout: OfficeLayout, kind: "meeting" | "couch"): Point {
   return { x: spots.reduce((s, p) => s + p.x, 0) / spots.length, z: spots.reduce((s, p) => s + p.z, 0) / spots.length };
 }
 
+/** The agent panel is a walkie-talkie to that agent (AgentTalkPanel). */
 export function AgentPanel({ agent, actions, onClose }: { agent: SocietyAgent; actions: OfficeActions; onClose: () => void }) {
-  const t = useT();
-  const store = useOfficeStore();
-  const inDraft = store.teamDraft.includes(agent.agentId);
-  const where = agentPositions.get(agent.agentId);
-  const [called, setCalled] = useState(false);
-  // A new agent in the same panel starts without the previous "coming over" note.
-  useEffect(() => setCalled(false), [agent.agentId]);
-  const subtitle = agent.title || agent.providerLabel;
-  return (
-    <PanelShell title={agent.name} subtitle={subtitle} onClose={onClose}>
-      <p className="office-panel-status"><StateDot state={agent.state} />{t(`society.office.state_${agent.state}`)}
-        {agent.providerLabel && agent.providerLabel !== subtitle ? <span> · {agent.providerLabel}</span> : null}</p>
-      <div className="office-actions">
-        <button type="button" className="office-action office-action-primary" onClick={() => actions.onOpenAgent(agent.agentId)}>{t("society.office.action_chat")}</button>
-        <button type="button" className="office-action" disabled={!where} onClick={() => where && store.requestWalk(where)}>{t("society.office.action_walk")}</button>
-        <button type="button" className="office-action" onClick={() => {
-          store.summon([agent.agentId], { x: player.x, z: player.z }, CALL_MS);
-          setCalled(true);
-        }}>{t("society.office.action_call")}</button>
-        <button type="button" className="office-action" disabled={!where} onClick={() => where && store.focusOn(where)}>{t("society.office.action_focus")}</button>
-        <button type="button" className="office-action" aria-pressed={inDraft} onClick={() => store.toggleDraft(agent.agentId)}>
-          {t(inDraft ? "society.office.action_undraft" : "society.office.action_draft")}
-        </button>
-      </div>
-      {called && <p className="office-hint" role="status">{t("society.office.call_sent").replace("{0}", agent.name)}</p>}
-      {store.teamDraft.length > 0 && (
-        <button type="button" className="office-link" onClick={() => store.select({ kind: "checkpoint", id: "team" })}>
-          {t("society.office.draft_count").replace("{0}", String(store.teamDraft.length))}
-        </button>
-      )}
-    </PanelShell>
-  );
+  return <AgentTalkPanel agent={agent} actions={actions} onClose={onClose} />;
 }
 
 function CreatePanel({ actions }: { actions: OfficeActions }) {
@@ -210,29 +180,6 @@ function TeamPanel({ agents, layout, sample, actions }: { agents: SocietyAgent[]
   );
 }
 
-function WardrobePanel({ profile, onProfile }: { profile: PlayerProfile; onProfile: (next: PlayerProfile) => void }) {
-  const t = useT();
-  const bodiesId = useId();
-  return (
-    <>
-      <label className="office-field">
-        <span>{t("society.office.wardrobe_name")}</span>
-        <input value={profile.name} maxLength={40} placeholder={t("society.office.you")} autoComplete="off" spellCheck={false}
-          onChange={(e) => onProfile({ ...profile, name: e.target.value })} />
-        <span>{t("society.office.wardrobe_saved")}</span>
-      </label>
-      <p className="office-subhead" id={bodiesId}>{t("society.office.wardrobe_body")}</p>
-      <div className="office-chips" role="group" aria-labelledby={bodiesId}>
-        {HAIR_STYLES.map((style) => (
-          <button key={style} type="button" className="office-chip" aria-pressed={playerLook(profile).hairStyle === style} onClick={() => onProfile(withHairStyle(profile, style))}>
-            {t(`society.office.hair_${style}`)}
-          </button>
-        ))}
-      </div>
-      <button type="button" className="office-action" onClick={() => onProfile(withShuffledColours(profile))}>{t("society.office.wardrobe_shuffle")}</button>
-    </>
-  );
-}
 
 function LeadPanel({ agents, actions }: { agents: SocietyAgent[]; actions: OfficeActions }) {
   const t = useT();
@@ -249,7 +196,9 @@ function LeadPanel({ agents, actions }: { agents: SocietyAgent[]; actions: Offic
         <div key={lead.agentId}>
           <p className="office-panel-status"><StateDot state={lead.state} />{lead.name} · {t(`society.office.state_${lead.state}`)}</p>
           <div className="office-actions">
-            <button type="button" className="office-action office-action-primary" aria-label={named(t("society.office.action_chat"), lead.name)}
+            <button type="button" className="office-action office-action-primary" aria-label={named(t("society.office.action_talk"), lead.name)}
+              onClick={() => store.select({ kind: "agent", id: lead.agentId })}>{t("society.office.action_talk")}</button>
+            <button type="button" className="office-action" aria-label={named(t("society.office.action_chat"), lead.name)}
               onClick={() => actions.onOpenAgent(lead.agentId)}>{t("society.office.action_chat")}</button>
             <button type="button" className="office-action" aria-label={named(t("society.office.action_call"), lead.name)}
               onClick={() => store.summon([lead.agentId], { x: player.x, z: player.z }, CALL_MS)}>{t("society.office.action_call")}</button>
@@ -295,7 +244,7 @@ export function CheckpointPanel({ id, agents, layout, sample, profile, onProfile
       {id === "create" && <CreatePanel actions={actions} />}
       {id === "manage" && <ManagePanel agents={agents} actions={actions} />}
       {id === "team" && <TeamPanel agents={agents} layout={layout} sample={sample} actions={actions} />}
-      {id === "wardrobe" && <WardrobePanel profile={profile} onProfile={onProfile} />}
+      {id === "wardrobe" && <WardrobePanel profile={profile} onProfile={onProfile} agents={agents} sample={sample} />}
       {id === "lead" && <LeadPanel agents={agents} actions={actions} />}
       {id === "break" && <BreakPanel agents={agents} layout={layout} />}
     </PanelShell>

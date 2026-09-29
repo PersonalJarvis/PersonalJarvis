@@ -29,6 +29,10 @@ import { stepMover, stepMoverAvoiding, turnToward, WALK_SPEED, type Mover } from
 import { createRng, planFor, type ActivityKind, type Plan, type Pose, type SpotBook } from "./officeBehavior";
 import { player, useOfficeStore } from "./officeStore";
 import { agentPositions, bodiesExcept, seatedAtDesk } from "./walkerRegistry";
+import { AgentBubble } from "./OfficeBubbles";
+import type { ChatLine } from "./deskChat";
+import type { DeskChat } from "./useDeskChats";
+import { officeTalkChat, useOfficeTalk } from "./officeTalk";
 
 /** The agent's symbol walks behind it as a little pet, about a fifth of its height. */
 export const PET_SIZE_M = 0.26;
@@ -107,9 +111,9 @@ export interface WalkerContext {
   spawn: Point;
 }
 
-function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected, onSelect }: {
+function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected, lines, onSelect }: {
   agent: SocietyAgent; desk: DeskSlot | null; ctx: WalkerContext; arrivesByElevator: boolean;
-  awake: boolean; reduced: boolean; selected: boolean; onSelect: (id: string) => void;
+  awake: boolean; reduced: boolean; selected: boolean; lines: readonly ChatLine[] | undefined; onSelect: (id: string) => void;
 }) {
   const look = useMemo(() => toyLookFor(agent.figure, agent.agentId), [agent.figure, agent.agentId]);
   const group = useRef<Group>(null);
@@ -223,6 +227,8 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
         {!isGigi && <ToyFigure look={look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} seatHeight={seatHeight} />}
       </group>
       <Nameplate agent={agent} activity={activity} selected={selected} onSelect={onSelect} height={isGigi ? 1.75 : undefined} />
+      <AgentBubble agent={agent} lines={lines} selected={selected} onSelect={onSelect}
+        height={(isGigi ? 1.75 : OFFICE_FIGURE_HEIGHT_M + 0.35) + 0.14} />
     </group>
     {isGigi
       ? <GigiFlyer owner={mover} mode={gigiModeFor(gigiPose.pose, gigiPose.travelling)} speaking={speaking} paused={!awake} reduced={reduced} />
@@ -231,17 +237,19 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
   );
 }
 
-export function OfficeAgents({ desks, agents, ctx, newcomers, awake, reduced, selectedId, onSelect }: {
+export function OfficeAgents({ desks, agents, ctx, newcomers, awake, reduced, selectedId, chats, onSelect }: {
   desks: DeskSlot[]; agents: ReadonlyMap<string, SocietyAgent>; ctx: WalkerContext; newcomers: ReadonlySet<string>;
-  awake: boolean; reduced: boolean; selectedId: string | null; onSelect: (id: string) => void;
+  awake: boolean; reduced: boolean; selectedId: string | null; chats?: ReadonlyMap<string, DeskChat>; onSelect: (id: string) => void;
 }) {
   const deskOf = useMemo(() => new Map(desks.filter((d) => d.agentId).map((d) => [d.agentId as string, d])), [desks]);
+  // Leaving the office hangs up: the talk socket closes, the chat keeps running on the server.
+  useEffect(() => () => { officeTalkChat.getState().disconnect(); useOfficeTalk.getState().setAgent(null); }, []);
   return (
     <group>
       {[...agents.values()].map((agent) => (
         <Walker key={agent.agentId} agent={agent} desk={deskOf.get(agent.agentId) ?? null} ctx={ctx}
           arrivesByElevator={newcomers.has(agent.agentId)} awake={awake} reduced={reduced}
-          selected={selectedId === agent.agentId} onSelect={onSelect} />
+          selected={selectedId === agent.agentId} lines={chats?.get(agent.agentId)?.lines} onSelect={onSelect} />
       ))}
     </group>
   );
