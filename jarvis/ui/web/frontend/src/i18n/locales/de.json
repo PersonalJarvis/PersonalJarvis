@@ -5808,7 +5808,12 @@
     "tabs": {
       "agents": "Agents",
       "files": "Ordner",
-      "changes": "Änderungen"
+      "changes": "Änderungen",
+      "office": "Büro"
+    },
+    "office": {
+      "failed": "Die Büro-Karte konnte nicht laden.",
+      "retry": "Erneut versuchen"
     },
     "agents": {
       "aria": "Agents in diesem Workspace",

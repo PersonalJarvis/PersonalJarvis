@@ -3,7 +3,7 @@
  * railings around it, walled rooms in the north and south, one carpeted
  * department per provider family in between — and everybody in it.
  */
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo } from "react";
 import { Stars } from "@react-three/drei";
 import type { ThreeEvent } from "@react-three/fiber";
 import { CanvasTexture, Color, RepeatWrapping, SRGBColorSpace, type Texture } from "three";
@@ -14,6 +14,10 @@ import { Railing, SignWall } from "./OfficeFurniture";
 import { DeskInstances } from "./DeskInstances";
 import { ExecutiveDesks, LeadOfficeLight } from "./LeadSuite";
 import { LiveMonitors } from "./LiveMonitors";
+import { TerminalMonitors } from "./TerminalMonitors";
+import type { PaneOccupant } from "./codingFloor";
+import { GigiFlyer } from "./GigiFlyer";
+import { useEventStore } from "@/store/events";
 import type { DeskChat } from "./useDeskChats";
 import { FurniturePiece, MeetingChairs } from "./OfficeProps";
 import { RoomFloors, RoomSign, RoomWalls } from "./OfficeRooms";
@@ -23,13 +27,44 @@ import { OfficePlayer } from "./OfficePlayer";
 import { PlayerBubble } from "./OfficeBubbles";
 import { OfficeCameraRig } from "./OfficeCameraRig";
 import { allDesks, type CheckpointKind, type Department, type OfficeLayout, type Point } from "./officeLayout";
-import type { NavGrid } from "./officeNav";
+import { isWalkable, nearestWalkable, type NavGrid } from "./officeNav";
 import { DEPARTMENT_TINTS, OFFICE } from "./officePalette";
-import { useOfficeStore, type Selection } from "./officeStore";
+import { officeSession, player as playerBody, useOfficeStore, type OfficeFloor, type Selection } from "./officeStore";
+import { arrivalPose } from "./officeFloors";
 
 const CHECKPOINT_ICON: Record<CheckpointKind, CheckpointIcon> = {
-  create: "plus", manage: "list", team: "team", wardrobe: "shirt", lead: "star", break: "coffee",
+  create: "plus", manage: "list", team: "team", wardrobe: "shirt", lead: "star", break: "coffee", elevator: "updown",
 };
+
+/** The person's character as a mover for Gigi to follow (the body object itself, mutated every frame). */
+const PLAYER_OWNER = { current: playerBody };
+
+/**
+ * Places the character on a floor it just arrived at (elevator ride, or a
+ * mount that asked for another floor). Runs as a layout effect, so it lands
+ * before the player controller checks its spot; it repeats for every rebuilt
+ * plan until the floor's roster has loaded, then the arrival is done.
+ */
+function FloorArrival({ floor, layout, grid, ready }: { floor: OfficeFloor; layout: OfficeLayout; grid: NavGrid; ready: boolean }) {
+  useLayoutEffect(() => {
+    const arrival = officeSession.arrival;
+    if (!arrival || arrival.floor !== floor) return;
+    const pose = arrivalPose(layout, arrival.at, officeSession.floors[floor]);
+    const spot = isWalkable(grid, pose) ? pose : nearestWalkable(grid, pose) ?? layout.spawn;
+    playerBody.x = spot.x; playerBody.z = spot.z; playerBody.heading = pose.heading;
+    playerBody.path = []; playerBody.moving = false;
+    officeSession.playerPlaced = true;
+    if (ready) officeSession.arrival = null;
+  }, [floor, layout, grid, ready]);
+  return null;
+}
+
+/** On the coding floor Jarvis is nobody's desk mate: Gigi flies along with the person. */
+function GigiCompanion({ grid, awake, reduced }: { grid: NavGrid; awake: boolean; reduced: boolean }) {
+  const speaking = useEventStore((s) => s.voiceState === "speaking");
+  const clear = useMemo(() => (x: number, z: number) => isWalkable(grid, { x, z }), [grid]);
+  return <GigiFlyer owner={PLAYER_OWNER} mode="follow" speaking={speaking} paused={!awake} reduced={reduced} clear={clear} />;
+}
 
 /** Warm planks drawn once; repeated across the floor. */
 let plankTexture: Texture | null | undefined;
@@ -111,6 +146,11 @@ function DepartmentArea({ dept }: { dept: Department }) {
 }
 
 export interface OfficeSceneProps {
+  floor: OfficeFloor;
+  /** The coding floor's figures by agent id (their IDE panes); empty on the agents floor. */
+  occupants: ReadonlyMap<string, PaneOccupant>;
+  /** The floor's roster has loaded (ends a pending arrival). */
+  ready: boolean;
   layout: OfficeLayout;
   grid: NavGrid;
   walkers: WalkerContext;
@@ -126,7 +166,7 @@ export interface OfficeSceneProps {
   onOpenScreen: (agentId: string, screen: Point & { y: number }, facing: number) => void;
 }
 
-export function OfficeScene({ layout, grid, walkers, agents, newcomers, awake, reduced, overview, player, selection, nearby, chats, onOpenScreen }: OfficeSceneProps) {
+export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, agents, newcomers, awake, reduced, overview, player, selection, nearby, chats, onOpenScreen }: OfficeSceneProps) {
   const t = useT();
   const desks = useMemo(() => allDesks(layout), [layout]);
   // Lead desks carry their own size and are built as executive desks, not bench instances.
@@ -162,7 +202,9 @@ export function OfficeScene({ layout, grid, walkers, agents, newcomers, awake, r
       <DeskInstances desks={benchDesks} agents={agents} />
       <ExecutiveDesks desks={desks} agents={agents} />
       {leadRoom && <LeadOfficeLight room={leadRoom} />}
-      <LiveMonitors desks={desks} agents={agents} chats={chats} onOpen={onOpenScreen} />
+      {floor === "coding"
+        ? <TerminalMonitors desks={desks} occupants={occupants} awake={awake} onOpen={onOpenScreen} />
+        : <LiveMonitors desks={desks} agents={agents} chats={chats} onOpen={onOpenScreen} />}
       {layout.furniture.map((item) => <FurniturePiece key={item.id} item={item} />)}
       {table && <MeetingChairs table={table} />}
       {layout.checkpoints.map((cp) => (
@@ -170,10 +212,12 @@ export function OfficeScene({ layout, grid, walkers, agents, newcomers, awake, r
           active={(nearby?.kind === "checkpoint" && nearby.id === cp.id) || (selection?.kind === "checkpoint" && selection.id === cp.id)}
           animate={awake && !reduced} onActivate={() => select({ kind: "checkpoint", id: cp.id })} />
       ))}
+      <FloorArrival floor={floor} layout={layout} grid={grid} ready={ready} />
       <OfficePlayer layout={layout} grid={grid} look={player.look} name={player.name} awake={awake} reduced={reduced} />
       <PlayerBubble height={OFFICE_FIGURE_HEIGHT_M + 0.49} />
       <OfficeAgents desks={desks} agents={agents} ctx={walkers} newcomers={newcomers} awake={awake} reduced={reduced} chats={chats}
         selectedId={selection?.kind === "agent" ? selection.id : null} onSelect={(id) => select({ kind: "agent", id })} />
+      {floor === "coding" && <GigiCompanion grid={grid} awake={awake} reduced={reduced} />}
       <OfficeCameraRig layout={layout} overview={overview} />
     </>
   );

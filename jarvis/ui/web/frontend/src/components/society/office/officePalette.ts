@@ -76,6 +76,9 @@ export const ROOM_FLOOR_COLOURS = {
   wardrobe: { base: "#ddd3ea", accents: ["#cfc3e0", "#e6ddf1"] },
   reception: { base: "#e7e2d9", accents: ["#ece8e0", "#e0dacf", "#e9e4dc"] },
   break: { base: "#d98b6e", accents: ["#e0967a", "#d08065", "#dc9074"] },
+  // Coding floor: a calm sage carpet in the focus zone, cool raised-floor tiles in the server room.
+  focus: { base: "#9fb08c", accents: ["#a9ba96", "#94a582", "#a3b491"] },
+  server: { base: "#b9c0cb", accents: ["#c3cad4", "#aeb5c0"] },
 } as const;
 
 /** Checkpoint gold: floor ring, hexagon token and the label badge. */

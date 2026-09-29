@@ -117,6 +117,57 @@ target runs WebGL.
 - **Pace**: the person walks at 2.0 m/s and sprints at 4.4 m/s (Shift).
   Working agents stay at their screen even when called.
 
+## 5b. Coding floor (2026-09-29)
+
+A second floor for the coding agents that run in the Agentic IDE's terminal
+panes. It shares the office's engine, style and controls; only the people and
+the floor plan differ.
+
+- **Elevator**: the reception elevator is a checkpoint on both floors. Its
+  panel offers "Up to the coding floor" in the agents office and "Down to the
+  agents office" on the coding floor. The ride is a short door-like fade, and
+  the person steps out at the elevator of the other floor. The floor survives
+  a remount of the stage.
+- **Floor plan** (`buildOfficeLayout(agents, { variant: "coding" })`): one
+  department per IDE workspace; no lead office and no wardrobe (a quiet zone
+  takes their place, built from existing furniture); reception with the
+  elevator and the break room stay. The agents office layout is unchanged.
+- **Gigi follows**: on the coding floor Jarvis (Gigi) flies in "follow" mode,
+  hovering beside and behind the person's head with a smoothed lag and never
+  inside a wall, including in the elevator. In the agents office Gigi keeps
+  its lead-office behaviour.
+- **Pane to character** (`codingFloor.ts`): every running coding-agent pane
+  (Claude Code, Codex and the other agent CLIs; not plain shells, not archived
+  panes) is one character. Its id is `pane:<workspace>:<history id or key>`,
+  and its look (figure and palette) is random but stable, hashed from the
+  pane's history id. Name comes from the pane's short title, department from
+  its workspace.
+- **States**: working, starting or pending → sits at its computer; asking →
+  waits at its desk and waves; idle, done or exited → walks around and hangs
+  out in the break room; an error keeps the agent at its desk. The exact
+  mapping lives in `codingFloor.ts` and its tests.
+- **Live monitors** (`TerminalMonitors.tsx`, `usePaneScreens.ts`,
+  `terminalScreen.ts`): an agent seated at its desk shows its terminal live —
+  dark background, monospace text, the last rows that fit, a cursor block and a
+  title bar with its name and state dot. Screens come from the read-only
+  `GET /api/agentic-ide/screens?pane=<workspace>:<key>` feed (at most eight
+  panes per call; it never resizes, attaches to or writes into a terminal).
+  Only seated agents near the camera are polled (six at most), on a jittered
+  1.2–2 s schedule that pauses while the stage is asleep, and a monitor
+  redraws only when its screen changed. Idle or absent agents show a dim
+  screensaver.
+- **Open session**: clicking a monitor (or E at the agent → "Open session")
+  dives the camera into the screen and then opens the Agentic IDE with that
+  pane focused (`codingNavigate.ts`).
+- **IDE side-panel tab**: the coding floor is also the "Office" tab of the
+  Agentic IDE's side panel (`components/agentic/sidePanel/OfficeTab.tsx`),
+  added from the panel's "+" menu or its closed-panel rail. It lazy-loads the
+  stage in a compact layout on the coding floor, inside its own error boundary,
+  so a failed scene stays inside the tab. Bringing the tab forward widens a
+  narrow panel to 520 px once; the user can drag it back. There a monitor click
+  focuses the pane in the grid right next to it, and the office's "open the
+  ledger" action brings the Agents tab forward.
+
 ## 5c. Lead office as an executive suite (2026-09-29)
 
 The lead office is the one room that breaks the plain toy-office palette on

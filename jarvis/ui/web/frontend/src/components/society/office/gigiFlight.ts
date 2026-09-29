@@ -1,13 +1,15 @@
 /**
  * Flight of Gigi, the lead agent's mascot, over the office floor. The lead is
  * not drawn as a figure: Gigi hovers at chest/head height of the toy figures
- * and follows the walker's ground position (x, z).
+ * and follows the walker's ground position (x, z). On the coding floor Gigi is
+ * no walker at all: in "follow" mode it trails the person's own character,
+ * hovering behind-beside its shoulder (`followAnchor`).
  *
  * Pure and deterministic: the same state and inputs give the same pose. With
  * an `out` object a step allocates nothing, so it can run every frame.
  */
 
-export type GigiFlightMode = "idle" | "work" | "talk" | "wave" | "sleep";
+export type GigiFlightMode = "idle" | "work" | "talk" | "wave" | "sleep" | "follow";
 
 export interface GigiFlightInput {
   /** The walker's ground position; Gigi hovers above it. */
@@ -26,6 +28,8 @@ export interface GigiFlightInput {
   heading?: number;
   /** Reduced motion: static hover, no bob, drift, hops or spins. */
   reduced?: boolean;
+  /** Is a point free airspace (not inside a wall or solid prop)? Gigi never settles where it is not. */
+  clear?: (x: number, z: number) => boolean;
 }
 
 export interface GigiFlightPose {
@@ -77,6 +81,13 @@ export const GIGI_MIN_Y = 0.6;
 export const GIGI_MAX_Y = 1.5;
 /** Maximum forward lean (~15°). */
 export const GIGI_MAX_LEAN = (15 * Math.PI) / 180;
+/** Following the person: just above shoulder height of the 1.3 m figure. */
+export const GIGI_FOLLOW_HOVER_M = 1.3;
+/** The follow anchor sits this far behind and beside the person. */
+export const GIGI_FOLLOW_BACK_M = 0.45;
+export const GIGI_FOLLOW_SIDE_M = 0.6;
+/** In follow mode Gigi trails the anchor by at most this much (a sprint stretches the spring). */
+const FOLLOW_MAX_LAG_M = 1.1;
 const MAX_BANK = 0.35;
 /** Spring stiffness of horizontal follow; steady lag at walking pace is 2v/ω ≈ 0.4 m. */
 const FOLLOW_OMEGA = 6.5;
@@ -153,23 +164,32 @@ export function stepGigiFlight(state: GigiFlightState, input: GigiFlightInput, o
     springStep(state.z, state.vz, targetZ, FOLLOW_OMEGA, dt, scratch);
     state.z = scratch[0]; state.vz = scratch[1];
     const lag = Math.hypot(state.x - targetX, state.z - targetZ);
-    if (lag > MAX_LAG_M) {
-      const k = MAX_LAG_M / lag;
+    const maxLag = mode === "follow" ? FOLLOW_MAX_LAG_M : MAX_LAG_M;
+    if (lag > maxLag) {
+      const k = maxLag / lag;
       state.x = targetX + (state.x - targetX) * k;
       state.z = targetZ + (state.z - targetZ) * k;
+    }
+  }
+  // Never settle inside a wall: pull back along the lag towards the (clear) target.
+  if (input.clear && !input.clear(state.x, state.z)) {
+    for (const k of [0.5, 0.25, 0]) {
+      const x = targetX + (state.x - targetX) * k, z = targetZ + (state.z - targetZ) * k;
+      if (k === 0 || input.clear(x, z)) { state.x = x; state.z = z; break; }
     }
   }
   const speed = dt > 0 ? Math.hypot(state.x - px, state.z - pz) / dt : 0;
 
   // ---- Mode blends --------------------------------------------------------
   const blend = approach(3, dt);
-  state.idleBlend += ((!moving && mode === "idle" && !input.speaking ? 1 : 0) - state.idleBlend) * blend;
+  const hovering = mode === "idle" || mode === "follow";
+  state.idleBlend += ((!moving && hovering && !input.speaking ? 1 : 0) - state.idleBlend) * blend;
   state.workBlend += ((mode === "work" && !input.speaking ? 1 : 0) - state.workBlend) * blend;
   state.sleepBlend += ((mode === "sleep" && !input.speaking ? 1 : 0) - state.sleepBlend) * blend;
   state.happyBlend += ((happy ? 1 : 0) - state.happyBlend) * blend;
 
   // ---- Height -------------------------------------------------------------
-  const baseTarget = mode === "sleep" && !input.speaking ? GIGI_SLEEP_HOVER_M : GIGI_HOVER_M;
+  const baseTarget = mode === "sleep" && !input.speaking ? GIGI_SLEEP_HOVER_M : mode === "follow" ? GIGI_FOLLOW_HOVER_M : GIGI_HOVER_M;
   if (reduced) { state.base = baseTarget; state.vBase = 0; }
   else if (dt > 0) {
     springStep(state.base, state.vBase, baseTarget, HEIGHT_OMEGA, dt, scratch);
@@ -238,4 +258,30 @@ export function stepGigiFlight(state: GigiFlightState, input: GigiFlightInput, o
   pose.glow = clamp(state.glow, 0, 1);
   pose.speed = speed;
   return pose;
+}
+
+export interface FollowAnchor { x: number; z: number; /** +1 or -1: which shoulder Gigi keeps to; carry it into the next call. */ side: 1 | -1 }
+
+/**
+ * Where Gigi hovers while following a walker at (x, z) facing `heading`
+ * (0 = +z): behind and beside its shoulder, on the side it already keeps to
+ * unless that side is blocked (then the other side, then straight behind,
+ * then right above the walker). `clear` tests free airspace; a candidate
+ * counts only when the midpoint to it is clear too, so no wall sits between.
+ */
+export function followAnchor(x: number, z: number, heading: number, side: 1 | -1, clear?: (x: number, z: number) => boolean): FollowAnchor {
+  const fx = Math.sin(heading), fz = Math.cos(heading);
+  // The walker's right hand (heading 0 faces +z, so its right is -x).
+  const rx = -fz, rz = fx;
+  const candidates: [number, number, 1 | -1][] = [
+    [GIGI_FOLLOW_BACK_M, GIGI_FOLLOW_SIDE_M * side, side],
+    [GIGI_FOLLOW_BACK_M, -GIGI_FOLLOW_SIDE_M * side, side === 1 ? -1 : 1],
+    [GIGI_FOLLOW_BACK_M + 0.2, 0, side],
+    [0.25, 0, side],
+  ];
+  for (const [back, lateral, keep] of candidates) {
+    const ax = x - fx * back + rx * lateral, az = z - fz * back + rz * lateral;
+    if (!clear || (clear(ax, az) && clear((x + ax) / 2, (z + az) / 2))) return { x: ax, z: az, side: keep };
+  }
+  return { x, z, side };
 }

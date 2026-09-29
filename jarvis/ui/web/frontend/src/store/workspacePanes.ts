@@ -143,11 +143,14 @@ let onActivity: ((event: Event) => void) | null = null;
 /**
  * Subscribe this component to the pane list, sharing one poll with the others.
  *
- * Returns the rows so a caller can use it as a plain hook.
+ * Returns the rows so a caller can use it as a plain hook. `enabled = false`
+ * holds no subscription (a hidden view must not keep the poll alive) and just
+ * returns whatever the store last held.
  */
-export function useWorkspacePanes(): WorkspacePaneRow[] {
+export function useWorkspacePanes(enabled = true): WorkspacePaneRow[] {
   const panes = useWorkspacePanesStore((s) => s.panes);
   useEffect(() => {
+    if (!enabled) return undefined;
     watchers += 1;
     if (timer === null) {
       void useWorkspacePanesStore.getState().load();
@@ -174,7 +177,7 @@ export function useWorkspacePanes(): WorkspacePaneRow[] {
         onActivity = null;
       }
     };
-  }, []);
+  }, [enabled]);
   return panes;
 }
 

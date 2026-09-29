@@ -16,6 +16,8 @@ const WIDTH_KEY = "jarvis.agenticIde.sidePanelWidth.v1";
 const DEFAULT_PX = 340;
 const MIN_PX = 260;
 const MAX_PX = 720;
+/** The office map needs room to walk around in: its tab opens the panel at least this wide. */
+const OFFICE_MIN_PX = 520;
 /** Terminal canvas kept visible while the panel is open. */
 const GRID_RESERVED_PX = 320;
 
@@ -37,6 +39,7 @@ const HEADER_BTN =
 export function IdeSidePanelFrame({ children }: { children: ReactNode }) {
   const t = useT();
   const open = useIdeSidePanelStore((state) => state.open);
+  const active = useIdeSidePanelStore((state) => state.active);
   // Ctrl+click on a path in any terminal opens it in the Explorer tab.
   useExplorerPathRouting();
   // A click on a pane in the grid counts as reviewing that agent.
@@ -64,6 +67,15 @@ export function IdeSidePanelFrame({ children }: { children: ReactNode }) {
   });
   // Keep a wider stored preference intact while the window is narrow.
   const width = Math.min(pane.size, max);
+
+  // Bringing the office forward widens a narrow panel once; the user can drag
+  // it back and it stays where they left it until the office is picked again.
+  const officeInFront = open && active === "office";
+  const paneRef = useRef(pane);
+  paneRef.current = pane;
+  useEffect(() => {
+    if (officeInFront && paneRef.current.size < OFFICE_MIN_PX) paneRef.current.resize(OFFICE_MIN_PX);
+  }, [officeInFront]);
 
   return (
     <div ref={frame} className="flex h-full min-h-0 w-full">

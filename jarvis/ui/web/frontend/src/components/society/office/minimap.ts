@@ -322,8 +322,8 @@ export const STATE_RING: Record<MinimapAgentState, string> = {
 };
 
 /** Checkpoint icon per checkpoint kind; the same pictures as the 3D tokens (CheckpointMarker). */
-export const CHECKPOINT_ICON_KEYS: Record<CheckpointKind, "plus" | "list" | "team" | "shirt" | "star" | "coffee"> = {
-  create: "plus", manage: "list", team: "team", wardrobe: "shirt", lead: "star", break: "coffee",
+export const CHECKPOINT_ICON_KEYS: Record<CheckpointKind, "plus" | "list" | "team" | "shirt" | "star" | "coffee" | "elevator"> = {
+  create: "plus", manage: "list", team: "team", wardrobe: "shirt", lead: "star", break: "coffee", elevator: "elevator",
 };
 
 /** Stroke-only icons in a 24 × 24 box; kept in sync with CheckpointMarker's paths. */
@@ -334,6 +334,7 @@ const ICON_PATHS: Record<(typeof CHECKPOINT_ICON_KEYS)[CheckpointKind], string> 
   shirt: "M8 3L3 6l2 4 2.5-1v12h9V9l2.5 1 2-4-5-3c-.5 1.5-2 2.5-4 2.5S8.5 4.5 8 3z",
   star: "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z",
   coffee: "M4 9h12v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9zM16 10h1.5a2.5 2.5 0 0 1 0 5H16M8 3.5c0 1 1 1 1 2M12 3.5c0 1 1 1 1 2",
+  elevator: "M5 3h14v18H5zM9 10l3-3 3 3M9 14l3 3 3-3",
 };
 
 // ------------------------------------------------------------------ drawing

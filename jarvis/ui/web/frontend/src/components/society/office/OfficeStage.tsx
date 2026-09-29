@@ -2,7 +2,9 @@
  * Agents > Map: the office. The person walks their own character through the
  * floor (or zooms out and clicks), agents live their day according to their
  * real run state, and checkpoints turn rooms into actions: create, manage,
- * team up, dress up, talk to the lead, call a coffee break.
+ * team up, dress up, talk to the lead, call a coffee break. One elevator ride
+ * up is the coding floor: a figure per IDE coding session, its terminal live
+ * on the monitor, and Gigi flying along with the person.
  */
 import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -12,6 +14,7 @@ import { useCanvasAwake } from "@/hooks/useCanvasAwake";
 import { useWebglSurface } from "@/hooks/useWebglSurface";
 import { useWebglSupported } from "@/lib/graphDimension";
 import { useT } from "@/i18n";
+import { useEventStore } from "@/store/events";
 import { useSocietyRoster, type SocietyAgent } from "../data";
 import { OfficeScene } from "./OfficeScene";
 import { allDesks, buildOfficeLayout, countStates, MAX_SEATED } from "./officeLayout";
@@ -21,16 +24,20 @@ import { CAMERA_FOV } from "./officeCamera";
 import { ZOOM_SECONDS } from "./OfficeCameraRig";
 import { useDeskChats } from "./useDeskChats";
 import type { Point } from "./officeLayout";
-import { player, useOfficeStore } from "./officeStore";
-import { agentPositions, knownAgents, seatedAtDesk } from "./walkerRegistry";
+import { otherFloor, player, switchFloor, useOfficeStore, type OfficeFloor } from "./officeStore";
+import { agentPositions, seatedAtDesk } from "./walkerRegistry";
+import { useCodingFloorOccupants, type PaneOccupant } from "./codingFloor";
+import { openPaneSession } from "./codingNavigate";
+import { knownOnFloor, noteArrivals } from "./officeFloors";
 import { loadProfile, playerLook, saveProfile, type PlayerProfile } from "./playerProfile";
-import { AgentPanel, CheckpointPanel, type OfficeActions } from "./OfficePanels";
+import { AgentPanel, CheckpointPanel, PaneAgentPanel, type OfficeActions } from "./OfficePanels";
 import type { WalkerContext } from "./OfficeAgents";
 import { ownsKeyboard } from "./OfficePlayer";
 import { ArcadeCabinet } from "./ArcadeCabinet";
 import "./office.css";
 import "./officeHud.css";
 import "./officeMinimap.css";
+import "./officeFloors.css";
 import { OfficeMinimap } from "./OfficeMinimap";
 import { OfficeCompass } from "./OfficeCompass";
 import { OfficeFullMap } from "./OfficeFullMap";
@@ -44,6 +51,12 @@ if (import.meta.env.DEV && typeof window !== "undefined") Object.assign(window, 
 const REFRESH_MS = 5000;
 const REFRESH_JITTER_MS = 1500;
 
+const EMPTY_OCCUPANTS: ReadonlyMap<string, PaneOccupant> = new Map();
+
+/** Elevator doors: closing, the ride (held until the new floor has loaded, capped), opening. */
+const DOORS_MS = 520;
+const RIDE_MAX_MS = 1400;
+
 class RenderBoundary extends Component<{ children: ReactNode; fallbackText: string }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
@@ -54,10 +67,15 @@ class RenderBoundary extends Component<{ children: ReactNode; fallbackText: stri
 }
 
 export interface OfficeStageProps {
-  onOpenLedger: () => void;
+  /** The agents list (the IDE tab passes its own sessions list). */
+  onOpenLedger?: () => void;
   onSelectAgent?: (id: string | null) => void;
   onCreateAgent?: () => void;
   onOpenGroup?: (groupId: string) => void;
+  /** The floor to show on mount; without it the office opens on the floor it was left on. */
+  initialFloor?: OfficeFloor;
+  /** A narrow host (the IDE side panel): smaller HUD, no minimap or compass. */
+  compact?: boolean;
 }
 
 function useRosterRefresh(awake: boolean) {
@@ -76,32 +94,35 @@ function useRosterRefresh(awake: boolean) {
   }, [awake, client]);
 }
 
-/** Agents created while the office is open arrive by the elevator; everyone else is simply there. */
-function useNewcomers(active: SocietyAgent[]): ReadonlySet<string> {
-  const [newcomers, setNewcomers] = useState<ReadonlySet<string>>(new Set());
+/**
+ * Agents created while the office is open arrive by the elevator; everyone
+ * else is simply there. Each floor keeps its own memory, so riding up or down
+ * never makes a whole floor "arrive".
+ */
+function useNewcomers(active: SocietyAgent[], floor: OfficeFloor): ReadonlySet<string> {
+  const [newcomers, setNewcomers] = useState<{ floor: OfficeFloor; ids: ReadonlySet<string> }>({ floor, ids: new Set() });
   useEffect(() => {
-    if (active.length === 0) return;
-    if (knownAgents.size === 0) { active.forEach((a) => knownAgents.add(a.agentId)); return; }
-    // Forget agents that left, so the set never outgrows the roster.
-    const present = new Set(active.map((a) => a.agentId));
-    for (const id of [...knownAgents]) if (!present.has(id)) knownAgents.delete(id);
-    const fresh = active.filter((a) => !knownAgents.has(a.agentId)).map((a) => a.agentId);
+    const fresh = noteArrivals(knownOnFloor(floor), active.map((a) => a.agentId));
     if (fresh.length === 0) return;
-    fresh.forEach((id) => knownAgents.add(id));
-    setNewcomers((prev) => new Set([...prev, ...fresh]));
-  }, [active]);
-  return newcomers;
+    setNewcomers((prev) => ({ floor, ids: new Set([...(prev.floor === floor ? prev.ids : []), ...fresh]) }));
+  }, [active, floor]);
+  return newcomers.floor === floor ? newcomers.ids : EMPTY_IDS;
 }
+const EMPTY_IDS: ReadonlySet<string> = new Set();
 
-export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpenGroup }: OfficeStageProps) {
+export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpenGroup, initialFloor, compact = false }: OfficeStageProps) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement>(null);
   const awake = useCanvasAwake(hostRef);
   const reduced = useReducedMotion() ?? false;
   const { generation } = useWebglSurface(hostRef);
   const webgl = useWebglSupported();
+  // A mount that names a floor opens there (e.g. the IDE tab on the coding floor).
+  useState(() => { if (initialFloor) switchFloor(initialFloor, false); return null; });
+  const floor = useOfficeStore((s) => s.floor);
+  const coding = floor === "coding";
   const roster = useSocietyRoster();
-  useRosterRefresh(awake);
+  useRosterRefresh(awake && !coding);
   const [overview, setOverview] = useState(0);
   const [mapOpen, setMapOpen] = useState(false);
   const [profile, setProfile] = useState<PlayerProfile>(loadProfile);
@@ -110,13 +131,22 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   const follow = useOfficeStore((s) => s.follow);
   const select = useOfficeStore((s) => s.select);
 
-  const active = useMemo(() => (roster.data?.agents ?? []).filter((a) => a.lifecycle !== "archived"), [roster.data]);
+  // The elevator panel tells how many are upstairs, so it wakes the coding roster too.
+  const elevatorOpen = selection?.kind === "checkpoint" && selection.id === "elevator";
+  const codingFloor = useCodingFloorOccupants(coding || elevatorOpen);
+  const jarvisAgents = useMemo(() => (roster.data?.agents ?? []).filter((a) => a.lifecycle !== "archived"), [roster.data]);
+  const codingAgents = useMemo(() => codingFloor.occupants.map((o) => o.agent), [codingFloor.occupants]);
+  const active = coding ? codingAgents : jarvisAgents;
+  const ready = coding ? codingFloor.loaded : !!roster.data;
+  const occupants = useMemo(() => (coding ? codingFloor.byAgentId : EMPTY_OCCUPANTS), [coding, codingFloor.byAgentId]);
+  const occupantsRef = useRef(occupants);
+  occupantsRef.current = occupants;
   const agents = useMemo(() => new Map<string, SocietyAgent>(active.map((a) => [a.agentId, a])), [active]);
-  const newcomers = useNewcomers(active);
+  const newcomers = useNewcomers(active, floor);
   // The floor plan depends on who works where, never on run state: a status
   // refresh changes monitors and behaviour without re-seating anyone.
-  const seatingKey = active.map((a) => `${a.agentId}|${a.tier}|${a.providerLabel}|${a.createdMs}`).join(",");
-  const layout = useMemo(() => buildOfficeLayout(active),
+  const seatingKey = floor + ":" + active.map((a) => `${a.agentId}|${a.tier}|${a.providerLabel}|${a.createdMs}`).join(",");
+  const layout = useMemo(() => buildOfficeLayout(active, { variant: floor }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [seatingKey]);
   const grid = useMemo(() => buildNavGrid(layout), [layout]);
@@ -135,28 +165,69 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     };
   }, [layout, grid, book]);
 
+  // Coding sessions have no desk chat; their monitors poll the terminal instead.
   const sessions = useMemo(() => new Map(active.filter((a) => a.chatSessionId).map((a) => [a.agentId, a.chatSessionId as string])), [active]);
-  const chats = useDeskChats(sessions, awake);
-  // Clicking a monitor dives into it, then opens that agent's chat.
+  const chats = useDeskChats(sessions, awake && !coding);
+  // Opening someone: a coding agent opens its IDE pane; a Jarvis agent its chat
+  // (a host without an agent view, like the IDE tab, goes to the Agents section).
+  const openAgent = useCallback((agentId: string) => {
+    const occupant = occupantsRef.current.get(agentId);
+    if (occupant) { openPaneSession(occupant.pane); return; }
+    if (onSelectAgent) onSelectAgent(agentId);
+    else useEventStore.getState().setActiveSection("agents");
+  }, [onSelectAgent]);
+  // Clicking a monitor dives into it, then opens that agent's chat (or IDE session).
   const openTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(openTimer.current), []);
   const [diving, setDiving] = useState(false);
   const openScreen = useCallback((agentId: string, screen: Point & { y: number }, facing: number) => {
     select(null);
     clearTimeout(openTimer.current);
-    if (reduced) { onSelectAgent?.(agentId); return; }
+    if (reduced) { openAgent(agentId); return; }
     useOfficeStore.getState().zoomInto([screen.x, screen.y, screen.z], facing);
     // The screen fills the view, then the real chat view fades in over it.
     setDiving(true);
-    openTimer.current = setTimeout(() => { onSelectAgent?.(agentId); setDiving(false); }, ZOOM_SECONDS * 1000 + 260);
-  }, [onSelectAgent, reduced, select]);
+    openTimer.current = setTimeout(() => { openAgent(agentId); setDiving(false); }, ZOOM_SECONDS * 1000 + 260);
+  }, [openAgent, reduced, select]);
+
+  // The elevator: doors close, the floor switches behind them, doors open once
+  // the new floor has loaded (capped). Reduced motion switches at once.
+  const [ride, setRide] = useState<{ to: OfficeFloor; phase: "closing" | "riding" | "opening" } | null>(null);
+  const rideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(rideTimer.current), []);
+  const takeElevator = useCallback((to: OfficeFloor) => {
+    if (ride || to === useOfficeStore.getState().floor) return;
+    if (reduced) { switchFloor(to, true); return; }
+    useOfficeStore.getState().select(null);
+    setRide({ to, phase: "closing" });
+    rideTimer.current = setTimeout(() => {
+      switchFloor(to, true);
+      setRide({ to, phase: "riding" });
+      rideTimer.current = setTimeout(() => setRide((r) => (r?.phase === "riding" ? { to, phase: "opening" } : r)), RIDE_MAX_MS);
+    }, DOORS_MS);
+  }, [reduced, ride]);
+  useEffect(() => {
+    if (ride?.phase === "riding" && floor === ride.to && ready) {
+      clearTimeout(rideTimer.current);
+      rideTimer.current = setTimeout(() => setRide({ to: ride.to, phase: "opening" }), 160);
+    }
+    if (ride?.phase === "opening") {
+      clearTimeout(rideTimer.current);
+      rideTimer.current = setTimeout(() => setRide(null), DOORS_MS);
+    }
+  }, [ride, floor, ready]);
 
   const counts = countStates(active);
   const updateProfile = useCallback((next: PlayerProfile) => { setProfile(next); saveProfile(next); }, []);
+  // The coding floor's list is the IDE (or, in the IDE tab, its sessions list).
+  const openList = useCallback(() => {
+    if (coding && !compact) useEventStore.getState().setActiveSection("agentic-ide");
+    else onOpenLedger?.();
+  }, [coding, compact, onOpenLedger]);
   const actions = useMemo<OfficeActions>(() => ({
-    onOpenAgent: (id) => onSelectAgent?.(id),
-    onOpenLedger, onCreateAgent, onOpenGroup,
-  }), [onSelectAgent, onOpenLedger, onCreateAgent, onOpenGroup]);
+    onOpenAgent: openAgent,
+    onOpenLedger: openList, onCreateAgent, onOpenGroup,
+  }), [openAgent, openList, onCreateAgent, onOpenGroup]);
 
   // Escape closes an open panel before it can leave the map.
   useEffect(() => {
@@ -181,21 +252,24 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
 
   // A panel for an agent that left the roster closes itself.
   useEffect(() => {
-    if (selection?.kind === "agent" && roster.data && !agents.has(selection.id)) select(null);
-  }, [selection, agents, roster.data, select]);
+    if (selection?.kind === "agent" && ready && !agents.has(selection.id)) select(null);
+  }, [selection, agents, ready, select]);
 
   const selectedAgent = selection?.kind === "agent" ? agents.get(selection.id) ?? null : null;
+  const selectedPane = selectedAgent ? occupants.get(selectedAgent.agentId) ?? null : null;
   const nearbyLabel = nearby
     ? nearby.kind === "agent"
-      ? t("society.office.prompt_agent").replace("{0}", agents.get(nearby.id)?.name ?? "")
+      ? t(coding ? "society.office.prompt_pane" : "society.office.prompt_agent").replace("{0}", agents.get(nearby.id)?.name ?? "")
       : nearby.kind === "arcade"
         ? t("society.office.arcade_prompt")
         : t(`society.office.cp_${nearby.id}_hint`)
     : null;
+  const titleKey = coding ? "society.office.coding_title" : "society.office.title";
   const playerName = profile.name.trim() || t("society.office.you");
 
   return (
-    <section className="office-stage" aria-label={t("society.office.title")} data-office-agents={active.length}>
+    <section className={compact ? "office-stage office-stage-compact" : "office-stage"} aria-label={t(titleKey)}
+      data-office-agents={active.length} data-office-floor={floor}>
       <div ref={hostRef} className="office-viewport" tabIndex={0} role="application" aria-label={t("society.office.viewport")}>
         {webgl ? (
           <RenderBoundary key={generation} fallbackText={t("society.office.no_graphics")}>
@@ -204,7 +278,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
                 gl={{ antialias: true, alpha: true, preserveDrawingBuffer: import.meta.env.DEV }}
                 frameloop={!awake ? "never" : "always"}
                 onPointerMissed={() => select(null)}>
-                <OfficeScene layout={layout} grid={grid} walkers={walkers} agents={agents} newcomers={newcomers}
+                <OfficeScene floor={floor} occupants={occupants} ready={ready} layout={layout} grid={grid} walkers={walkers} agents={agents} newcomers={newcomers}
                   awake={awake} reduced={reduced} overview={overview} player={{ look: playerLook(profile), name: playerName }}
                   selection={selection} nearby={nearby} chats={chats} onOpenScreen={openScreen} />
               </Canvas>
@@ -215,8 +289,8 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
 
       <div className="office-hud office-hud-left" data-office-ui>
         <div className="office-card office-title">
-          <strong>{t("society.office.title")}</strong>
-          <span>{t("society.office.subtitle").replace("{0}", String(active.length))}</span>
+          <strong>{t(titleKey)}</strong>
+          <span>{t(coding ? "society.office.coding_subtitle" : "society.office.subtitle").replace("{0}", String(active.length))}</span>
         </div>
         <div className="office-card office-counts" role="status" aria-live="polite">
           <span data-tone="working"><i aria-hidden />{t("society.office.count_working").replace("{0}", String(counts.working))}</span>
@@ -224,7 +298,8 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
           <span data-tone="idle"><i aria-hidden />{t("society.office.count_idle").replace("{0}", String(counts.idle))}</span>
           {counts.paused > 0 && <span data-tone="paused"><i aria-hidden />{t("society.office.count_paused").replace("{0}", String(counts.paused))}</span>}
         </div>
-        {roster.data?.sample && <p className="office-card office-note">{t("society.office.sample")}</p>}
+        {!coding && roster.data?.sample && <p className="office-card office-note">{t("society.office.sample")}</p>}
+        {coding && codingFloor.loaded && active.length === 0 && <p className="office-card office-note">{t("society.office.coding_empty")}</p>}
         {active.length > MAX_SEATED && <p className="office-card office-note">{t("society.office.overflow").replace("{0}", String(MAX_SEATED))}</p>}
       </div>
 
@@ -232,18 +307,25 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
         <button type="button" className="office-button" aria-pressed={follow} onClick={() => useOfficeStore.getState().setFollow(true)}>{t("society.office.me")}</button>
         <button type="button" className="office-button" onClick={() => setOverview((v) => v + 1)}>{t("society.office.overview")}</button>
         <button type="button" className="office-button" onClick={() => select({ kind: "checkpoint", id: "wardrobe" })}>{t("society.office.cp_wardrobe")}</button>
-        <button type="button" className="office-button" onClick={onOpenLedger}>{t("society.office.ledger")}</button>
+        <button type="button" className="office-button" data-office-floor-switch disabled={!!ride}
+          onClick={() => takeElevator(otherFloor(floor))}>{t(coding ? "society.office.floor_down" : "society.office.floor_up")}</button>
+        {(!coding || !compact || onOpenLedger) && (
+          <button type="button" className="office-button" onClick={openList}>
+            {t(coding ? (compact ? "society.office.ledger_coding" : "society.office.open_ide") : "society.office.ledger")}
+          </button>
+        )}
       </div>
 
       {selection?.kind === "arcade" && <ArcadeCabinet onClose={() => select(null)} />}
       {selection && selection.kind !== "arcade" && (
         <div className="office-panel-slot">
-          {selection.kind === "agent" && selectedAgent && (
-            <AgentPanel agent={selectedAgent} actions={actions} onClose={() => select(null)} />
-          )}
+          {selection.kind === "agent" && selectedAgent && (selectedPane
+            ? <PaneAgentPanel occupant={selectedPane} onOpen={() => openPaneSession(selectedPane.pane)} onClose={() => select(null)} />
+            : <AgentPanel agent={selectedAgent} actions={actions} onClose={() => select(null)} />)}
           {selection.kind === "checkpoint" && (
-            <CheckpointPanel id={selection.id} agents={active} layout={layout} sample={roster.data?.sample ?? false}
-              profile={profile} onProfile={updateProfile} actions={actions} onClose={() => select(null)} />
+            <CheckpointPanel id={selection.id} floor={floor} agents={active} layout={layout} sample={!coding && (roster.data?.sample ?? false)}
+              profile={profile} onProfile={updateProfile} actions={actions} onClose={() => select(null)}
+              elevator={{ jarvis: jarvisAgents.length, coding: codingFloor.loaded ? codingFloor.occupants.length : null, onRide: takeElevator }} />
           )}
         </div>
       )}
@@ -253,13 +335,20 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
           <kbd>E</kbd>{nearbyLabel}
         </button>
       )}
-      <OfficeCompass layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null} />
+      {!compact && <OfficeCompass layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null} />}
       {diving && <div className="office-dive-fade" aria-hidden />}
-      <OfficeMinimap layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null}
-        onOpenMap={() => setMapOpen(true)} />
+      {ride && (
+        <div className="office-elevator" data-phase={ride.phase} role="status" aria-live="polite">
+          <i className="office-elevator-door" data-side="left" aria-hidden />
+          <i className="office-elevator-door" data-side="right" aria-hidden />
+          <span className="office-elevator-sign">{t(ride.to === "coding" ? "society.office.riding_up" : "society.office.riding_down")}</span>
+        </div>
+      )}
+      {!compact && <OfficeMinimap layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null}
+        onOpenMap={() => setMapOpen(true)} />}
       <OfficeFullMap open={mapOpen} onOpen={() => setMapOpen(true)} onClose={() => setMapOpen(false)}
         layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null} />
-      <p className="office-hud office-help" data-office-ui>{t("society.office.help")}</p>
+      {!compact && <p className="office-hud office-help" data-office-ui>{t("society.office.help")}</p>}
     </section>
   );
 }

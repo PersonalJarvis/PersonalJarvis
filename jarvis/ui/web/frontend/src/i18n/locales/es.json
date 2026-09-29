@@ -5808,7 +5808,12 @@
     "tabs": {
       "agents": "Agentes",
       "files": "Carpeta",
-      "changes": "Cambios"
+      "changes": "Cambios",
+      "office": "Oficina"
+    },
+    "office": {
+      "failed": "No se pudo cargar el mapa de la oficina.",
+      "retry": "Reintentar"
     },
     "agents": {
       "aria": "Agentes de este espacio de trabajo",

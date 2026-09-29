@@ -5841,7 +5841,12 @@
     "tabs": {
       "agents": "Agents",
       "files": "Folder",
-      "changes": "Changes"
+      "changes": "Changes",
+      "office": "Office"
+    },
+    "office": {
+      "failed": "The office map could not load.",
+      "retry": "Try again"
     },
     "agents": {
       "aria": "Agents in this workspace",

@@ -25,7 +25,7 @@ function lcg(seed: number): () => number {
 }
 
 /** Metres covered by one repeat of each floor pattern. */
-const PATTERN_METRES: Record<RoomKind, number> = { lead: 2.6, team: 2, wardrobe: 2, reception: 2.4, break: 2 };
+const PATTERN_METRES: Record<RoomKind, number> = { lead: 2.6, team: 2, wardrobe: 2, reception: 2.4, break: 2, focus: 2, server: 2 };
 
 function drawFloor(kind: RoomKind, ctx: CanvasRenderingContext2D, w: number, h: number): void {
   const { base, accents } = ROOM_FLOOR_COLOURS[kind];
@@ -54,7 +54,7 @@ function drawFloor(kind: RoomKind, ctx: CanvasRenderingContext2D, w: number, h: 
       }
     }
     ctx.putImageData(image, 0, 0);
-  } else if (kind === "team" || kind === "break") {
+  } else if (kind === "team" || kind === "break" || kind === "focus") {
     // Carpet grain: fine speckles in the accent tones, plus a faint weave.
     for (let i = 0; i < 2600; i += 1) {
       ctx.fillStyle = accents[Math.floor(rand() * accents.length)];
@@ -64,7 +64,7 @@ function drawFloor(kind: RoomKind, ctx: CanvasRenderingContext2D, w: number, h: 
     for (let y = 0; y < h; y += 8) ctx.fillRect(0, y, w, 1);
   } else {
     // Tiles: wardrobe small square tiles, reception large stone slabs.
-    const tiles = kind === "wardrobe" ? 4 : 2;
+    const tiles = kind === "wardrobe" || kind === "server" ? 4 : 2;
     const size = w / tiles;
     for (let ty = 0; ty < tiles; ty += 1) {
       for (let tx = 0; tx < tiles; tx += 1) {

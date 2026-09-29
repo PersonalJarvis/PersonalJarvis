@@ -17,7 +17,7 @@ import { cachedCanvasTexture } from "./canvasMaterials";
 import type { Checkpoint } from "./officeLayout";
 import { CHECKPOINT_GOLD } from "./officePalette";
 
-export type CheckpointIcon = "plus" | "list" | "team" | "shirt" | "star" | "coffee";
+export type CheckpointIcon = "plus" | "list" | "team" | "shirt" | "star" | "coffee" | "updown";
 
 /** Stroke-only icons in a 24 × 24 box (round caps and joins). */
 export const CHECKPOINT_ICON_PATHS: Record<CheckpointIcon, string> = {
@@ -27,6 +27,8 @@ export const CHECKPOINT_ICON_PATHS: Record<CheckpointIcon, string> = {
   shirt: "M8 3L3 6l2 4 2.5-1v12h9V9l2.5 1 2-4-5-3c-.5 1.5-2 2.5-4 2.5S8.5 4.5 8 3z",
   star: "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z",
   coffee: "M4 9h12v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9zM16 10h1.5a2.5 2.5 0 0 1 0 5H16M8 3.5c0 1 1 1 1 2M12 3.5c0 1 1 1 1 2",
+  // The elevator: an up arrow beside a down arrow.
+  updown: "M8 20V4M4 8l4-4 4 4M16 4v16M12 16l4 4 4-4",
 };
 
 const TOKEN_RADIUS = 0.36;

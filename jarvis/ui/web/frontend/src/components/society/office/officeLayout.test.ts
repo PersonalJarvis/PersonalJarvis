@@ -68,13 +68,67 @@ describe("office layout", () => {
     }
   });
 
-  it("keeps every checkpoint centre clear of solid furniture", () => {
-    const layout = buildOfficeLayout(Array.from({ length: 12 }, (_, i) => agent(`a${i}`, i % 2 ? "Codex" : "Gemini")));
-    const solid = layout.furniture.filter((f) => FURNITURE_SIZE[f.kind].solid).map(footprint);
-    for (const cp of layout.checkpoints) {
-      const inside = solid.some((o) => cp.x >= o.minX && cp.x <= o.maxX && cp.z >= o.minZ && cp.z <= o.maxZ);
-      expect(inside, cp.id).toBe(false);
-    }
+  for (const variant of ["agents", "coding"] as const) {
+    it(`keeps every checkpoint centre clear of solid furniture (${variant})`, () => {
+      const layout = buildOfficeLayout(Array.from({ length: 12 }, (_, i) => agent(`a${i}`, i % 2 ? "Codex" : "Gemini")), { variant });
+      const solid = layout.furniture.filter((f) => FURNITURE_SIZE[f.kind].solid).map(footprint);
+      for (const cp of layout.checkpoints) {
+        const inside = solid.some((o) => cp.x >= o.minX && cp.x <= o.maxX && cp.z >= o.minZ && cp.z <= o.maxZ);
+        expect(inside, cp.id).toBe(false);
+      }
+    });
+
+    it(`puts the elevator checkpoint right in front of the elevator (${variant})`, () => {
+      const layout = buildOfficeLayout([], { variant });
+      const elevator = layout.furniture.find((f) => f.kind === "elevator")!;
+      const stop = layout.checkpoints.find((c) => c.id === "elevator")!;
+      expect(stop.room).toBe("reception");
+      expect(stop.z).toBeCloseTo(elevator.z, 9);
+      expect(stop.x).toBeGreaterThan(elevator.x);
+      expect(Math.hypot(stop.x - elevator.x, stop.z - elevator.z)).toBeLessThan(1.5);
+      expect(new Set(layout.checkpoints.map((c) => c.id)).size).toBe(layout.checkpoints.length);
+    });
+
+    it(`keeps room, furniture and spot ids unique and inside the floor (${variant})`, () => {
+      const layout = buildOfficeLayout(Array.from({ length: 20 }, (_, i) => agent(`a${i}`, `P${i % 3}`)), { variant });
+      for (const list of [layout.rooms, layout.furniture, layout.spots]) {
+        expect(new Set(list.map((x) => x.id)).size).toBe(list.length);
+      }
+      for (const item of [...layout.furniture, ...layout.spots]) {
+        const room = item.room === "floor" ? layout.floor : layout.rooms.find((r) => r.kind === item.room)!;
+        expect(room, item.id).toBeDefined();
+        expect(item.x, item.id).toBeGreaterThanOrEqual(room.minX);
+        expect(item.x, item.id).toBeLessThanOrEqual(room.maxX);
+        expect(item.z, item.id).toBeGreaterThanOrEqual(room.minZ);
+        expect(item.z, item.id).toBeLessThanOrEqual(room.maxZ);
+      }
+    });
+  }
+
+  it("keeps the agents office as it was when no variant is named", () => {
+    const roster = [agent("a1", "Codex"), agent("a2", "", { tier: "lead" })];
+    const plain = buildOfficeLayout(roster);
+    expect(plain).toEqual(buildOfficeLayout(roster, { variant: "agents" }));
+    expect(plain.variant).toBe("agents");
+    expect(plain.rooms.map((r) => r.kind)).toEqual(["lead", "team", "wardrobe", "reception", "break"]);
+    expect(plain.checkpoints.map((c) => c.id)).toEqual(["create", "manage", "team", "wardrobe", "lead", "break", "elevator"]);
+  });
+
+  it("builds the coding floor: workspaces as departments, focus zone and server room, no lead desks", () => {
+    const roster = [agent("p1", "Personal Jarvis"), agent("p2", "Website"), agent("p3", "Personal Jarvis")];
+    const layout = buildOfficeLayout(roster, { variant: "coding" });
+    expect(layout.variant).toBe("coding");
+    expect(layout.rooms.map((r) => r.kind)).toEqual(["focus", "team", "server", "reception", "break"]);
+    expect(layout.lead.desks).toEqual([]);
+    expect(layout.checkpoints.map((c) => c.id)).toEqual(["elevator", "break"]);
+    expect(layout.departments.map((d) => d.label)).toEqual(["Personal Jarvis", "Website", "", ""]);
+    expect(layout.furniture.some((f) => f.room === "lead" || f.room === "wardrobe")).toBe(false);
+    expect(layout.spots.some((s) => s.room === "focus")).toBe(true);
+    expect(layout.spots.some((s) => s.room === "server")).toBe(true);
+    // Same frame as the office below, so the elevator lands in the same place.
+    const below = buildOfficeLayout(roster);
+    expect(layout.spawn).toEqual(below.spawn);
+    expect(layout.checkpoints.find((c) => c.id === "elevator")).toEqual(below.checkpoints.find((c) => c.id === "elevator"));
   });
 
   it("counts states", () => {
