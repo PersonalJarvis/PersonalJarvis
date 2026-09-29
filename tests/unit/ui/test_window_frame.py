@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from jarvis.ui.window_frame import (
     caption_hit,
     install_resize_frame,
+    maximized_bounds,
     native_hwnd,
     window_is_maximized,
 )
@@ -77,3 +78,14 @@ def test_native_hwnd_handle_that_raises_is_none():
 
 def test_install_resize_frame_null_hwnd_is_false():
     assert install_resize_frame(0) is False
+
+
+def test_maximized_bounds_leave_the_taskbar_strip():
+    # 4K monitor with a bottom taskbar: the window must not cover the monitor,
+    # or Explorer takes it for a fullscreen app and hides the taskbar.
+    assert maximized_bounds((0, 0, 3840, 2160), (0, 0, 3840, 2088)) == (0, 0, 3840, 2088)
+
+
+def test_maximized_bounds_are_relative_to_the_monitor():
+    # Secondary monitor on the right with a taskbar docked at its left edge.
+    assert maximized_bounds((1920, 0, 3840, 1080), (1968, 0, 3840, 1080)) == (48, 0, 1872, 1080)

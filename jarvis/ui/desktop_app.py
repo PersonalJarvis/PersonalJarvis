@@ -4732,7 +4732,14 @@ class DesktopApp:
 
                 hwnd = native_hwnd(window)
                 if hwnd:
-                    install_resize_frame(hwnd)
+                    # pywebview's WinForms form flags its own fullscreen mode;
+                    # only then may the window cover the taskbar.
+                    install_resize_frame(
+                        hwnd,
+                        is_fullscreen=lambda: bool(
+                            getattr(getattr(window, "native", None), "is_fullscreen", False)
+                        ),
+                    )
             except Exception:  # noqa: BLE001
                 from loguru import logger
 
