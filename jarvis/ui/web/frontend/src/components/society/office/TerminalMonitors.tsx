@@ -1,7 +1,7 @@
 /**
  * Desk monitors on the coding floor: each shows its pane's terminal live
  * while the agent sits at the desk, a dim screensaver otherwise. A click on a
- * screen opens that session, maximized in the IDE grid.
+ * screen opens that agent's command panel, where it can be prompted.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
@@ -69,7 +69,7 @@ function Screen({ desk, occupant, screen, onOpen }: {
   return (
     <group position={[desk.x, 0, desk.z]} rotation={[0, turn, 0]}>
       <mesh position={[0, SCREEN_Y, SCREEN_Z]} onClick={click}
-        onPointerOver={() => { hovered.current = true; document.body.style.cursor = "zoom-in"; }}
+        onPointerOver={() => { hovered.current = true; document.body.style.cursor = "pointer"; }}
         onPointerOut={() => { hovered.current = false; document.body.style.cursor = ""; }}>
         <planeGeometry args={[SCREEN_W, SCREEN_H]} />
         <meshBasicMaterial map={surface.texture} toneMapped={false} />

@@ -179,14 +179,16 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     else useEventStore.getState().setActiveSection("agents");
   }, [onSelectAgent]);
   // Clicking a chat monitor dives into it, then opens that agent's chat. A
-  // terminal skips the dive: the live pane, maximized in the grid, is the close-up.
+  // coding agent's monitor opens its command panel instead: prompt it right
+  // here, and "open" from there shows the pane maximized in the grid.
   const openTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(openTimer.current), []);
   const [diving, setDiving] = useState(false);
   const openScreen = useCallback((agentId: string, screen: Point & { y: number }, facing: number) => {
     select(null);
     clearTimeout(openTimer.current);
-    if (reduced || occupantsRef.current.has(agentId)) { openAgent(agentId); return; }
+    if (occupantsRef.current.has(agentId)) { select({ kind: "agent", id: agentId }); return; }
+    if (reduced) { openAgent(agentId); return; }
     useOfficeStore.getState().zoomInto([screen.x, screen.y, screen.z], facing);
     // The screen fills the view, then the real chat view fades in over it.
     setDiving(true);
