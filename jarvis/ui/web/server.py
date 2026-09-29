@@ -1528,18 +1528,22 @@ class WebServer:
             from jarvis.core.config import DATA_DIR
             from jarvis.memory import CORE_MEMORY_FILENAME, CoreMemory
 
+            from .error_text import LOG_HINT
+
             try:
                 mem = CoreMemory.load(DATA_DIR / CORE_MEMORY_FILENAME)
                 return {"ok": True, "data": mem.all()}
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning("Memory read error")
-                return {"ok": False, "error": str(exc), "data": {}}
+                return {"ok": False, "error": "memory read failed. " + LOG_HINT, "data": {}}
 
         @app.post("/api/memory/facts")
         async def add_memory_fact(payload: dict[str, Any]) -> dict[str, Any]:
             """User-driven add from the UI."""
             from jarvis.core.config import DATA_DIR
             from jarvis.memory import CORE_MEMORY_FILENAME, CoreMemory
+
+            from .error_text import LOG_HINT
 
             fact = (payload.get("fact") or "").strip()
             category = (payload.get("category") or "general").strip()
@@ -1551,13 +1555,15 @@ class WebServer:
                 return {"ok": True, "data": mem.all()}
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning("Memory write error")
-                return {"ok": False, "error": str(exc)}
+                return {"ok": False, "error": "memory write failed. " + LOG_HINT}
 
         @app.delete("/api/memory/facts")
         async def delete_memory_fact(payload: dict[str, Any]) -> dict[str, Any]:
             """User-driven remove from the UI."""
             from jarvis.core.config import DATA_DIR
             from jarvis.memory import CORE_MEMORY_FILENAME, CoreMemory
+
+            from .error_text import LOG_HINT
 
             fact = (payload.get("fact") or "").strip()
             category = (payload.get("category") or "general").strip()
@@ -1569,7 +1575,7 @@ class WebServer:
                 return {"ok": ok, "data": mem.all()}
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning("Memory delete error")
-                return {"ok": False, "error": str(exc)}
+                return {"ok": False, "error": "memory delete failed. " + LOG_HINT}
 
         @app.get("/api/terminal/shells")
         async def terminal_shells() -> dict[str, Any]:

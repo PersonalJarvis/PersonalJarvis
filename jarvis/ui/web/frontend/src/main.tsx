@@ -8,6 +8,7 @@ import { AuthGate } from "./components/AuthGate";
 import { installPreloadRecovery } from "./lib/preloadRecovery";
 import { POLL_MS, installBundleWatch } from "./lib/bundleWatch";
 import { browserSafeReloadDeps, reloadWhenServable } from "./lib/safeReload";
+import { loadUiLocale, useI18nStore } from "./i18n";
 import "./index.css";
 
 // When the frontend is rebuilt while the window is open, the old main bundle
@@ -117,20 +118,26 @@ const queryClient = new QueryClient({
   },
 });
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <ViewErrorBoundary
-          viewName="App"
-          resetKey="root"
-          onRecover={() => window.location.reload()}
-        >
-          <AuthGate>
-            <App />
-          </AuthGate>
-        </ViewErrorBoundary>
-      </ThemeProvider>
-    </QueryClientProvider>
-  </React.StrictMode>,
-);
+function renderApp(): void {
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <ViewErrorBoundary
+            viewName="App"
+            resetKey="root"
+            onRecover={() => window.location.reload()}
+          >
+            <AuthGate>
+              <App />
+            </AuthGate>
+          </ViewErrorBoundary>
+        </ThemeProvider>
+      </QueryClientProvider>
+    </React.StrictMode>,
+  );
+}
+
+void loadUiLocale(useI18nStore.getState().ui)
+  .catch((error: unknown) => console.warn("Stored interface language could not be loaded", error))
+  .finally(renderApp);

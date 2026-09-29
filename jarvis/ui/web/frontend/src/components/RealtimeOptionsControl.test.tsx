@@ -52,6 +52,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  // Vitest 4's restoreAllMocks no longer resets plain vi.fn() mocks.
+  vi.resetAllMocks();
   vi.restoreAllMocks();
 });
 

@@ -244,7 +244,7 @@ class MarsNavigationService(RoverServiceMixin):
             async def reauthorize(record):
                 try:
                     await self._authorize(record.agent_id, record.station_id, record.mode)
-                except StationError as exc:
+                except StationError as exc:  # Persist a denied or unavailable navigation receipt.
                     return record.command_id, (
                         "denied" if exc.status_code in {401, 403, 404} else "unavailable"
                     )

@@ -2,7 +2,7 @@ blank_issues_enabled: true
 contact_links:
   - name: Questions & community (Discord)
     url: https://discord.gg/x7USduHxbc
-    about: Usage questions, setup help, and general chat. Fastest answer, usually same day.
+    about: Usage questions, setup help, and general chat.
   - name: Ideas & design discussion
     url: https://github.com/PersonalJarvis/PersonalJarvis/discussions
     about: Propose a feature, ask how something is meant to work, or float an approach before you build it.

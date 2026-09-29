@@ -131,8 +131,17 @@ def open_file_with(file: Path, launch_kind: str, launch_value: str) -> bool:
             return True
         if launch_kind == "startfile":
             # Windows .lnk/app launched with the file as an argument via `start`.
+            # cmd.exe re-parses its own command line, and list2cmdline only
+            # quotes arguments that contain spaces, so a file named
+            # "a&calc.md" would have run a second command. Both paths are
+            # double-quoted by hand (a Windows path cannot contain '"'; one
+            # that does is refused) and the string reaches CreateProcess as is.
+            file_str = str(file)
+            if '"' in launch_value or '"' in file_str:
+                log.warning("open_file_with: refusing a path containing a quote: %r", file_str)
+                return False
             subprocess.Popen(  # noqa: S603
-                ["cmd", "/c", "start", "", launch_value, str(file)],
+                f'cmd /c start "" "{launch_value}" "{file_str}"',
                 creationflags=NO_WINDOW_CREATIONFLAGS,
                 close_fds=True,
             )
@@ -199,7 +208,7 @@ def _windows_default_browser_exe() -> str | None:
     """
     try:
         import winreg
-    except ImportError:
+    except ImportError:  # Registry integration is optional outside Windows.
         return None
     try:
         with winreg.OpenKey(
@@ -212,7 +221,7 @@ def _windows_default_browser_exe() -> str | None:
             winreg.HKEY_CLASSES_ROOT, rf"{progid}\shell\open\command"
         ) as key:
             command, _ = winreg.QueryValueEx(key, "")  # "" = the (Default) value
-    except OSError:
+    except OSError:  # An absent registry association leaves no executable to open.
         return None
     exe = _parse_exe_from_shell_command(command)
     if exe and exe.lower().endswith(".exe") and Path(exe).exists():
@@ -572,7 +581,7 @@ def _inside(root: Path, candidate: Path) -> bool:
     try:
         resolved_root = root.resolve()
         resolved = candidate.resolve()
-    except OSError:
+    except OSError:  # Unresolvable candidates fail the containment check closed.
         return False
     return resolved == resolved_root or resolved_root in resolved.parents
 
@@ -617,7 +626,7 @@ def _existing_absolute(native: str) -> Path | None:
         return None
     try:
         target = path.resolve()
-    except OSError:
+    except OSError:  # An unresolvable target is not an openable local path.
         return None
     if target.exists() and (target.is_file() or target.is_dir()):
         return target

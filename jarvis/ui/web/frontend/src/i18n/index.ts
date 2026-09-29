@@ -1,9 +1,9 @@
 /**
- * Inhouse-i18n fuer die Desktop-App.
+ * In-house i18n for the desktop app.
  *
- * Warum kein react-i18next: 3 Sprachen, ~50 Strings, kein Pluralization-Bedarf,
- * kein Backend-Lazy-Load. Eine Mini-Implementation auf Zustand spart 200 KB
- * Bundle und einen npm-install-Schritt.
+ * The small Zustand implementation avoids a framework dependency. English is
+ * part of the first render; the other interface languages load on demand so
+ * their full dictionaries do not delay the default startup path.
  *
  * Usage:
  *   import { useT } from "@/i18n";
@@ -12,7 +12,7 @@
  *
  *   import { useUiLanguage, setUiLanguage } from "@/i18n";
  *   const lang = useUiLanguage();      // "en" | "de" | "es"
- *   setUiLanguage("de");                // sofort reactive
+ *   setUiLanguage("de");               // updates reactively when loaded
  *
  * STT recognition language (what Whisper transcribes the spoken voice INTO) is
  * its own setting, distinct from the UI and the reply language:
@@ -21,8 +21,6 @@
 import { useEffect } from "react";
 import { create } from "zustand";
 import enJson from "./locales/en.json";
-import deJson from "./locales/de.json";
-import esJson from "./locales/es.json";
 import { useEventStore } from "@/store/events";
 
 export type UiLanguage = "en" | "de" | "es";
@@ -65,16 +63,37 @@ function isSttLanguage(v: unknown): v is SttLanguage {
 
 const RESOURCES: Record<UiLanguage, Record<string, unknown>> = {
   en: enJson as Record<string, unknown>,
-  de: deJson as Record<string, unknown>,
-  es: esJson as Record<string, unknown>,
+  de: enJson as Record<string, unknown>,
+  es: enJson as Record<string, unknown>,
 };
+
+const UI_LOCALE_LOADERS: Record<"de" | "es", () => Promise<unknown>> = {
+  de: () => import("./locales/de.json"),
+  es: () => import("./locales/es.json"),
+};
+const UI_LOCALE_PROMISES: Partial<Record<"de" | "es", Promise<void>>> = {};
+
+/** Load a selected interface dictionary once and refresh mounted translations. */
+export function loadUiLocale(lang: UiLanguage): Promise<void> {
+  if (lang === "en") return Promise.resolve();
+  if (UI_LOCALE_PROMISES[lang]) return UI_LOCALE_PROMISES[lang];
+  const pending = UI_LOCALE_LOADERS[lang]().then((module) => {
+    RESOURCES[lang] = unwrapModule(module);
+    useI18nStore.setState((state) => ({ chunkRevision: state.chunkRevision + 1 }));
+  }).catch((error: unknown) => {
+    delete UI_LOCALE_PROMISES[lang];
+    throw error;
+  });
+  UI_LOCALE_PROMISES[lang] = pending;
+  return pending;
+}
 
 /**
  * Locale chunks that load on demand.
  *
- * The three main locale files ride in the startup bundle, which has a byte
- * budget (scripts/ci/check_frontend_bundle_budget.py). A section nobody opens
- * on start — the marketplace's publish studio, say — keeps its strings in
+ * English rides in the startup bundle; German and Spanish load on demand.
+ * A section nobody opens on start — the marketplace's publish studio, say —
+ * keeps its strings in
  * `locales/<chunk>/<lang>.json` and asks for them with `useLocaleChunk` when
  * it mounts. Until the chunk has arrived, `t()` returns the key, so a view
  * that cares waits for `ready` before it paints.
@@ -333,6 +352,9 @@ export const useI18nStore = create<I18nState>((set) => ({
       /* ignore */
     }
     set({ ui: lang });
+    void loadUiLocale(lang).catch((error: unknown) => {
+      console.warn("Interface language could not be loaded", error);
+    });
     // Default: propagate to the backend (the new source of truth). The WS
     // handler and hydrate pass push:false to avoid a GET/PUT echo loop.
     if (opts?.push !== false) {
@@ -368,11 +390,8 @@ export const useI18nStore = create<I18nState>((set) => ({
 }));
 
 /**
- * Resolve "nav.skills" zu dem String aus der aktiven Sprache.
- * Fallback-Kette:
- *   1. aktive Sprache
- *   2. Englisch (Default)
- *   3. der Key selbst (damit man nie "undefined" sieht)
+ * Resolve a key from the active language, then English, then the key itself.
+ * A failed optional dictionary load never renders an undefined label.
  */
 function resolve(lang: UiLanguage, key: string): string {
   const parts = key.split(".");

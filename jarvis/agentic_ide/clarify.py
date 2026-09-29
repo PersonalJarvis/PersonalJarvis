@@ -206,7 +206,21 @@ def addresses_workspace(text: str) -> bool:
 #: ``names`` so the two cannot disagree about where a name starts and ends.
 _WORD_RE = CALL_SIGN_WORD_RE
 
-_SENTENCE_START_RE = re.compile(r"(?:^|[.!?:;]\s*|\n\s*)$")
+def _opens_sentence(prefix: str) -> bool:
+    """True when whatever follows ``prefix`` stands at the start of a sentence.
+
+    That holds when ``prefix`` is empty, when its last non-blank character is
+    sentence punctuation (``.!?:;``), or when its trailing blank run contains
+    a line break. A plain string scan on purpose: the equivalent searched
+    regex ``(?:^|[.!?:;]\\s*|\\n\\s*)$`` retried every start position and went
+    quadratic on long whitespace runs (CodeQL py/polynomial-redos).
+    """
+    core = prefix.rstrip()
+    if "\n" in prefix[len(core) :]:
+        return True
+    if not core:
+        return not prefix
+    return core[-1] in ".!?:;"
 
 #: Function words that are never a call-sign, however close they score. This is
 #: matching *input vocabulary*, not prose.
@@ -377,7 +391,7 @@ def is_part_of_full_name(text: str, start: int, end: int) -> bool:
     # read "Ist Blake fertig?" as a person called Ist Blake, because "Ist" is
     # capitalized for grammar and stands at the very beginning — which silently
     # withdrew the pane from every question opening with a verb.
-    return not _SENTENCE_START_RE.search(preceding[: leading.start()])
+    return not _opens_sentence(preceding[: leading.start()])
 
 
 #: Two capitalized words in a row, the second not opening a sentence — a person
@@ -474,11 +488,15 @@ class ClarificationNeeded:
 #: enumeration punctuation and the supported languages' "and" — anything else
 #: means the two words are in different clauses and say nothing about each
 #: other. Matching *input vocabulary*, not prose.
+#: The separator runs are possessive and the second one only follows a
+#: conjunction: two adjacent optional runs let the engine try every split of a
+#: long blank gap, which is quadratic (CodeQL py/polynomial-redos). The accepted
+#: language is unchanged.
 _ENUMERATION_GAP_RE = re.compile(
-    r"^[\s,;&]*"
+    r"^[\s,;&]*+"
     # i18n-allow: input vocabulary — the supported languages' "and"
-    r"(?:und|and|y|e|sowie|plus|as\s+well\s+as|together\s+with|junto\s+con)?"
-    r"[\s,;&]*$",
+    r"(?:(?:und|and|y|e|sowie|plus|as\s+well\s+as|together\s+with|junto\s+con)"
+    r"[\s,;&]*+)?$",
     re.IGNORECASE,
 )
 

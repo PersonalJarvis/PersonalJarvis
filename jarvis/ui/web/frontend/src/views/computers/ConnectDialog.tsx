@@ -40,7 +40,7 @@ import { cn } from "@/lib/utils";
 import { robustCopy } from "@/lib/clipboard";
 import { useEventStore } from "@/store/events";
 import { computersApi, type AddServerInput, type Computer, type ProviderInfo } from "@/lib/computersApi";
-import { parseConnection, setupPrompt } from "./connection";
+import { parseConnection, setupPrompt, PRIVATE_KEY_PLACEHOLDER } from "./connection";
 import { checkFailed, ConnectCheck, startCheck, type CheckState, type StepId } from "./ConnectCheck";
 import { CopyField, Field, inputClass } from "./parts";
 import { ApiImportStep } from "./wizard/ApiImportStep";
@@ -493,7 +493,7 @@ export function ConnectDialog({
                               className={cn(inputClass, "h-24 resize-none py-2 font-mono text-xs")}
                               value={privateKey}
                               onChange={(e) => setPrivateKey(e.target.value)}
-                              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                              placeholder={PRIVATE_KEY_PLACEHOLDER}
                               spellCheck={false}
                               data-testid="cx-private-key"
                             />

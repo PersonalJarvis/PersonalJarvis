@@ -137,6 +137,7 @@ def _schedule_fresh_restart(request: Request) -> bool:
     if not callable(fn):
         return False
     try:
+        log.info("Desktop restart requested by onboarding completion")
         return bool(fn())
     except Exception:  # noqa: BLE001 — completing onboarding must never 500 here
         log.warning("post-onboarding fresh restart failed; staying up", exc_info=True)

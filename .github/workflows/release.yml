@@ -34,7 +34,19 @@ permissions:
   contents: read
 
 jobs:
+  # Release admission (release-gate.yml): tag == version, on main, CI green on
+  # this exact commit. Skipped for a manual run from a branch, which builds
+  # without publishing a release.
+  admit:
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: read
+      checks: read
+    uses: ./.github/workflows/release-gate.yml
+
   build:
+    needs: admit
+    if: ${{ !failure() && !cancelled() }}
     name: Build sdist + wheel
     runs-on: ubuntu-latest
     steps:

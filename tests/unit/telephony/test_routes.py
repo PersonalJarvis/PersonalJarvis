@@ -199,9 +199,7 @@ def test_config_post_updates_live_shared_config_without_reload(
     assert app.state.config.integrations.twilio.max_call_seconds == 120
 
 
-def test_credentials_post_updates_live_shared_config_sid(
-    app, secret_store, fake_cfg, monkeypatch
-):
+def test_credentials_post_updates_live_shared_config_sid(app, secret_store, fake_cfg, monkeypatch):
     monkeypatch.setattr(
         "jarvis.core.config_writer.set_telephony_config",
         lambda values, **kw: setattr(
@@ -239,8 +237,23 @@ def test_credentials_reports_partial_commit_when_sid_write_fails(
     body = r.json()
     assert body["token_saved"] is True
     assert body["sid_saved"] is False
+    # The raw exception text stays in the server log, never in the response.
+    assert "disk full" not in body["error"]
+    assert body["error"].startswith("config write failed")
     # The token really did land in the credential store despite the SID error.
     assert secret_store["twilio_auth_token"] == "freshtoken"
+
+
+def test_outbound_route_hides_unexpected_exception_text(app, secret_store, monkeypatch):
+    def boom(**kwargs):
+        raise RuntimeError("C:/internal/path secret-ish detail")
+
+    monkeypatch.setattr("jarvis.telephony.outbound.place_call", boom)
+    with TestClient(app) as client:
+        r = client.post("/api/telephony/outbound", json={"to": "+4915112345678", "opening": "Hi"})
+    assert r.status_code == 409
+    assert "internal/path" not in r.json()["error"]
+    assert r.json()["error"].startswith("outbound call failed")
 
 
 def test_calls_endpoint_returns_ring_buffer(app, secret_store):

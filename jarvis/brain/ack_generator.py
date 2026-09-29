@@ -91,7 +91,9 @@ _VOICE_CONTROL_PATTERN = re.compile(
     r")"
     # Optional trailing politeness / acknowledgment modifier
     r"(?:\s+(?:bitte|mal|jetzt|please|now|please\s+now))?"
-    r"\s*[!.?]?\s*$",
+    # Possessive tail: ``\s*[!.?]?\s*`` let the engine try every split of a
+    # long blank run before failing (CodeQL py/polynomial-redos). Same language.
+    r"\s*+[!.?]?+\s*+$",
     re.IGNORECASE,
 )
 

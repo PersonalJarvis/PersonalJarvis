@@ -1,44 +1,26 @@
 #!/usr/bin/env python3
-"""Keep ``AGENTS.md`` and ``CLAUDE.md`` carrying the same content.
+"""Copy the shared ``AGENTS.md`` instructions to Claude's compatibility file.
 
-The two files are intentional twins: ``CLAUDE.md`` is the long-standing agent
-contract for this repo, and ``AGENTS.md`` is the cross-tool standard name that
-other coding agents look for. The maintainer wants them to always hold the
-*exact same content* -- edit one and the other follows, in either direction.
+``AGENTS.md`` is authoritative. ``CLAUDE.md`` remains byte-identical because
+Claude Code's AGENTS.md support is conditional and older releases need it.
 
 This script is the single sync engine, used from three places:
 
   * ``.githooks/pre-commit`` (with ``--stage``)  -- the hard guarantee: every
-    commit lands both files in sync, regardless of who edited them (Claude, the
-    maintainer, a parallel session, a plain editor).
-  * the Claude Code ``PostToolUse`` hook            -- live mirroring while an
-    edit happens, so the working tree is already in sync before any commit.
+    commit lands both files in sync.
   * ``--check`` in CI / manual verification         -- exit non-zero on drift,
     change nothing.
 
-Sync direction ("and the other way around"):
+Any difference is fixed by copying ``AGENTS.md`` to ``CLAUDE.md``. A missing
+source is a setup error, not a reason to replace it with the generated copy.
 
-  * same content                       -> nothing to do.
-  * exactly one changed vs HEAD        -> the unchanged file is rewritten to
-                                          match the changed one (true bidirec-
-                                          tional follow).
-  * both changed vs HEAD and differ    -> genuine conflict: STOP, change
-                                          nothing, exit 2. No silent clobber.
-  * neither changed vs HEAD but differ -> pre-existing drift: CLAUDE.md is the
-                                          canonical tie-breaker; AGENTS.md is
-                                          rewritten to match it.
-
-Line-ending discipline (this repo runs ``core.autocrlf=true`` and CLAUDE.md is
-NOT pinned in .gitattributes): "changed vs HEAD" is answered by git itself
-(``git diff --quiet HEAD``), so a pure CRLF/LF skew between the working tree and
-the HEAD blob never looks like an edit. The content-equality check normalises
-line endings, because "the same stuff" means the same text, not the same
-invisible CR bytes. When a real sync happens, the target is written with the
-*exact* bytes of the source, so the two files end up byte-identical in the tree.
+Line endings are normalized for comparison because Git may check out CRLF on
+Windows. When a real sync happens, exact source bytes are written to the copy.
 
 stdlib-only; resolves the repo root via ``git rev-parse`` so it works in linked
 worktrees too. Designed to be a cheap no-op on the common path (files equal).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -49,11 +31,9 @@ from pathlib import Path
 CLAUDE_NAME = "CLAUDE.md"
 AGENTS_NAME = "AGENTS.md"
 
-# Exit codes: 0 = in sync (or synced), 1 = drift found in --check mode,
-# 2 = unresolvable conflict (both sides edited differently), 3 = setup error.
+# Exit codes: 0 = in sync (or synced), 1 = drift found, 3 = setup error.
 EXIT_OK = 0
 EXIT_DRIFT = 1
-EXIT_CONFLICT = 2
 EXIT_SETUP = 3
 
 
@@ -62,9 +42,7 @@ def _git(*args: str, repo: Path) -> subprocess.CompletedProcess[bytes]:
 
 
 def _repo_root() -> Path | None:
-    proc = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
-    )
+    proc = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
     if proc.returncode != 0:
         return None
     return Path(proc.stdout.strip())
@@ -84,54 +62,32 @@ def _norm(data: bytes | None) -> bytes | None:
     return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 
-def _changed_vs_head(name: str, repo: Path, working: bytes | None) -> bool:
-    """Has ``name``'s content changed vs its committed HEAD version?
-
-    "changed" means "tracked AND its text differs from the HEAD blob". A file
-    with no HEAD version (untracked / brand-new) has no committed baseline to
-    have diverged *from*, so it is NOT "changed" -- it can therefore never be
-    one half of a conflict, and CLAUDE.md (the canonical file, which does have
-    history) wins instead.
-
-    The comparison is done on line-ending-normalised content rather than via
-    ``git diff``, so it is fully deterministic regardless of how the HEAD blob
-    happens to be stored (this repo runs ``core.autocrlf=true`` and CLAUDE.md's
-    blob still carries legacy CRLF) -- a pure CRLF/LF skew is never an "edit".
-    """
-    show = _git("cat-file", "-p", f"HEAD:{name}", repo=repo)
-    if show.returncode != 0:
-        return False  # untracked / not in HEAD -> no committed baseline
-    return _norm(working) != _norm(show.stdout)
-
-
 def _decide_source(
     claude: bytes | None,
     agents: bytes | None,
-    claude_changed: bool,
-    agents_changed: bool,
 ) -> tuple[str, bytes] | None:
-    """Return (target_name, content_to_write) or None if already in sync.
-
-    Raises ValueError on an unresolvable conflict.
-    """
+    """Return the Claude copy to update, or None when it already matches."""
     if _norm(claude) == _norm(agents):
-        return None  # same content (covers both-missing -> handled by caller)
+        return None
+    return (CLAUDE_NAME, agents if agents is not None else b"")
 
-    if claude_changed and agents_changed:
-        # Both edited away from their committed state, and they differ. We must
-        # not guess which wins -- that would silently destroy one side's edit.
-        raise ValueError(
-            "both CLAUDE.md and AGENTS.md were changed and now differ; "
-            "reconcile them by hand, then re-stage."
-        )
 
-    if agents_changed and not claude_changed:
-        # AGENTS.md is the freshly edited side -> CLAUDE.md follows it.
-        return (CLAUDE_NAME, agents if agents is not None else b"")
+def _pair_staged(repo: Path) -> bool:
+    staged = _git(
+        "diff",
+        "--cached",
+        "--name-only",
+        "-z",
+        "--",
+        AGENTS_NAME,
+        CLAUDE_NAME,
+        repo=repo,
+    )
+    return staged.returncode == 0 and bool(staged.stdout)
 
-    # CLAUDE.md is the edited side, OR neither changed but they drifted
-    # (CLAUDE.md is the canonical tie-breaker) -> AGENTS.md follows CLAUDE.md.
-    return (AGENTS_NAME, claude if claude is not None else b"")
+
+def _stage_pair(repo: Path) -> bool:
+    return _git("add", "--", AGENTS_NAME, CLAUDE_NAME, repo=repo).returncode == 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -164,24 +120,16 @@ def main(argv: list[str] | None = None) -> int:
     claude = _read_bytes(claude_path)
     agents = _read_bytes(agents_path)
 
-    if claude is None and agents is None:
-        sys.stderr.write(
-            f"sync_agents_md: neither {CLAUDE_NAME} nor {AGENTS_NAME} exists.\n"
-        )
+    if agents is None:
+        sys.stderr.write(f"sync_agents_md: missing source {AGENTS_NAME}.\n")
         return EXIT_SETUP
 
-    try:
-        decision = _decide_source(
-            claude,
-            agents,
-            _changed_vs_head(CLAUDE_NAME, repo, claude),
-            _changed_vs_head(AGENTS_NAME, repo, agents),
-        )
-    except ValueError as exc:
-        sys.stderr.write(f"sync_agents_md: CONFLICT -- {exc}\n")
-        return EXIT_CONFLICT
+    decision = _decide_source(claude, agents)
 
     if decision is None:
+        if args.stage and _pair_staged(repo) and not _stage_pair(repo):
+            sys.stderr.write("sync_agents_md: 'git add' failed.\n")
+            return EXIT_SETUP
         if not args.quiet:
             print(f"sync_agents_md: {CLAUDE_NAME} and {AGENTS_NAME} already in sync.")
         return EXIT_OK
@@ -196,15 +144,12 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_DRIFT
 
     (repo / target_name).write_bytes(content)
-    print(f"sync_agents_md: rewrote {target_name} to match its twin.")
+    if not args.quiet:
+        print(f"sync_agents_md: rewrote {target_name} from {AGENTS_NAME}.")
 
-    if args.stage:
-        add = _git("add", "--", CLAUDE_NAME, AGENTS_NAME, repo=repo)
-        if add.returncode != 0:
-            sys.stderr.write(
-                "sync_agents_md: 'git add' failed:\n"
-                + add.stderr.decode("utf-8", "replace")
-            )
+    if args.stage and _pair_staged(repo):
+        if not _stage_pair(repo):
+            sys.stderr.write("sync_agents_md: 'git add' failed.\n")
             return EXIT_SETUP
 
     return EXIT_OK

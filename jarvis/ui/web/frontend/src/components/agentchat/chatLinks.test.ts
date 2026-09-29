@@ -18,6 +18,9 @@ describe("chat file links", () => {
   it.each([
     "https://example.test/clip.mp4",
     "javascript:alert(1)",
+    "  JavaScript:alert(1)",
+    "VBScript:msgbox(1)",
+    "data:text/html,<script>alert(1)</script>",
     "file://server/share/clip.mp4",
     "/api/outputs/run/files/clip.mp4/download",
   ])("does not treat %s as a local file", raw => {
