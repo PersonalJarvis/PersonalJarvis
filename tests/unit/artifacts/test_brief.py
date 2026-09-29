@@ -16,7 +16,12 @@ from jarvis.artifacts.brief import (
     artifact_filename,
     build_artifact_brief,
 )
-from jarvis.artifacts.design_guide import THEME_BOOTSTRAP_JS, THEME_CSS
+from jarvis.artifacts.design_guide import (
+    GIGI_MARK_SVG,
+    PAGE_SKELETON,
+    THEME_BOOTSTRAP_JS,
+    THEME_CSS,
+)
 from jarvis.missions.stream_evidence import clean_request_body
 
 
@@ -110,8 +115,9 @@ def test_an_oversized_previous_page_is_clipped_head_and_tail() -> None:
     brief = build_artifact_brief("Tweak.", title="Huge", language="en", previous_html=huge)
     assert "middle of the previous version omitted" in brief.prompt
     assert brief.prompt.rstrip("`\n").endswith("ZEND")
-    # The guide itself is ~12k chars; the clipped page adds the cap, not more.
-    assert len(brief.prompt) < MAX_PREVIOUS_HTML_CHARS + 20_000
+    # The guide itself is ~25k chars (tokens, kit, anatomy); the clipped page
+    # adds the cap, not more.
+    assert len(brief.prompt) < MAX_PREVIOUS_HTML_CHARS + 30_000
 
 
 def test_brief_is_deterministic() -> None:
@@ -158,3 +164,30 @@ def test_source_data_rides_between_the_facts_rule_and_the_design_guide() -> None
         "My mail as a page.", title="Mail", language="en", source_data="  \n"
     ).prompt == plain
     assert "## Source data" not in plain
+
+
+def test_the_brief_teaches_the_page_anatomy_and_the_writing() -> None:
+    """The archive review of 2026-09-29: strong pages open with eyebrow, a claim
+    headline and an answering standfirst, use hairline structure, and close with
+    a colophon. The brief states that shape and ships the kit that draws it."""
+    prompt = build_artifact_brief("x", title="T", language="en").prompt
+    assert "## Page anatomy" in prompt and "## Writing" in prompt
+    assert PAGE_SKELETON in prompt
+    for kit_class in (".masthead", ".standfirst", ".metrics", ".finding", ".colophon"):
+        assert kit_class + "{" in THEME_CSS, kit_class
+    assert "Headlines are claims, not topics" in prompt
+
+
+def test_the_colophon_carries_the_gigi_mark_and_never_the_star() -> None:
+    assert GIGI_MARK_SVG in PAGE_SKELETON
+    assert "Personal Jarvis" in PAGE_SKELETON
+    assert 'class="eye"' in GIGI_MARK_SVG
+    assert "star" not in GIGI_MARK_SVG.lower()
+
+
+def test_the_kit_writes_no_theme_breaking_colour() -> None:
+    """Component rules use tokens only; a raw white or black would break one theme.
+    The gigi body is the single fixed colour — the ghost is black in both."""
+    kit = THEME_CSS.split("/* --- The kit", 1)[1]
+    hexes = set(re.findall(r"#[0-9A-Fa-f]{3,8}\b", kit))
+    assert hexes == {"#0E0E0E"}
