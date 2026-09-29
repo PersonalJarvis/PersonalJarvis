@@ -21,10 +21,12 @@ import {
   type DogActivity, type DogPose,
 } from "./dogLife";
 import { TreatBone } from "./dogProps";
-import type { Furniture, Rect, Room } from "./officeLayout";
+import type { Furniture, Point, Rect, Room } from "./officeLayout";
 import { findPath, randomWalkablePoint, type NavGrid } from "./officeNav";
-import { stepMover, turnToward, type Mover } from "./officeMotion";
+import { stepMoverAvoiding, turnToward, type Mover } from "./officeMotion";
 import { player, useOfficeStore } from "./officeStore";
+import { bodiesExcept, extraBodies } from "./walkerRegistry";
+import { isWalkable } from "./officeNav";
 
 // ---------------------------------------------------------------------------
 // Model
@@ -154,6 +156,9 @@ function DogModel({ rig }: { rig: DogRig }) {
   );
 }
 
+/** The dog's id among the solid bodies on the floor. */
+const DOG_ID = "office-dog";
+
 // ---------------------------------------------------------------------------
 // Pose blending
 // ---------------------------------------------------------------------------
@@ -233,7 +238,10 @@ export function OfficeDog({ beds, rooms, jar, grid, awake, reduced }: OfficeDogP
     setActivity("sleep");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [basketKey, headingAt]);
-  useEffect(() => () => useOfficeDog.getState().set({ near: false, nearJar: false, pending: null }), []);
+  useEffect(() => () => {
+    useOfficeDog.getState().set({ near: false, nearJar: false, pending: null });
+    extraBodies.delete(DOG_ID);
+  }, []);
   // Dev-only handle for runtime checks (hold the dog still, read where it is).
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -263,6 +271,9 @@ export function OfficeDog({ beds, rooms, jar, grid, awake, reduced }: OfficeDogP
     }
     setActivity(b.activity);
   };
+
+  const walkable = useMemo(() => (q: Point) => isWalkable(grid, q), [grid]);
+  const others = () => Array.from(bodiesExcept(DOG_ID, player));
 
   useFrame(({ clock }, rawDt) => {
     if (!awake) return;
@@ -311,11 +322,11 @@ export function OfficeDog({ beds, rooms, jar, grid, awake, reduced }: OfficeDogP
           b.repathAt = now + 600;
           m.path = findPath(grid, m, followPoint(player, m)) ?? [];
         } else if (toPerson < DOG_FOLLOW_NEAR) m.path = [];
-        moved = stepMover(m, toPerson > 4 ? DOG_RUN_SPEED : DOG_WALK_SPEED * 1.4, dt).moved;
+        moved = stepMoverAvoiding(m, toPerson > 4 ? DOG_RUN_SPEED : DOG_WALK_SPEED * 1.4, dt, others(), walkable).moved;
         if (moved === 0) m.heading = turnToward(m.heading, Math.atan2(player.x - m.x, player.z - m.z), 6 * dt);
       }
     } else if (b.activity === "roam" || b.activity === "home" || b.activity === "move") {
-      const step = stepMover(m, b.activity === "move" ? DOG_WALK_SPEED * 1.2 : DOG_WALK_SPEED, dt);
+      const step = stepMoverAvoiding(m, b.activity === "move" ? DOG_WALK_SPEED * 1.2 : DOG_WALK_SPEED, dt, others(), walkable);
       moved = step.moved;
       if (step.arrived) {
         if (b.activity !== "roam") { m.x = bed.x; m.z = bed.z; }
@@ -331,6 +342,9 @@ export function OfficeDog({ beds, rooms, jar, grid, awake, reduced }: OfficeDogP
         advance();
       }
     }
+
+    // A solid body for everyone else: nobody walks through the dog.
+    extraBodies.set(DOG_ID, { x: m.x, z: m.z });
 
     // Place the figure; it lies a little higher on the basket's cushion.
     const inBed = beds.some((d) => Math.hypot(m.x - d.x, m.z - d.z) < 0.05);
@@ -396,7 +410,9 @@ export function OfficeDog({ beds, rooms, jar, grid, awake, reduced }: OfficeDogP
     const dog = useOfficeDog.getState();
     if (dog.near) { dog.interact(); return; }
     dog.set({ pending: "pet" });
-    useOfficeStore.getState().requestWalk({ x: mover.current.x, z: mover.current.z });
+    const m = mover.current;
+    const dx = player.x - m.x, dz = player.z - m.z, d = Math.hypot(dx, dz) || 1;
+    useOfficeStore.getState().requestWalk({ x: m.x + (dx / d) * 0.95, z: m.z + (dz / d) * 0.95 });
   };
   const onJarClick = (event: ThreeEvent<MouseEvent>) => {
     if (event.delta > 6 || !jar) return;
@@ -405,7 +421,8 @@ export function OfficeDog({ beds, rooms, jar, grid, awake, reduced }: OfficeDogP
     if (dog.hasBone) return;
     if (dog.nearJar) { dog.takeBone(); return; }
     dog.set({ pending: "jar" });
-    useOfficeStore.getState().requestWalk({ x: jar.x, z: jar.z });
+    // The jar faces +z (turned by its rotation): stand in front of it.
+    useOfficeStore.getState().requestWalk({ x: jar.x + Math.sin(jar.rotationY) * 0.8, z: jar.z + Math.cos(jar.rotationY) * 0.8 });
   };
   const hover = (cursor: string) => () => { document.body.style.cursor = cursor; };
   const busy = activity === "petted" || activity === "trick";
@@ -440,22 +457,8 @@ export function OfficeDog({ beds, rooms, jar, grid, awake, reduced }: OfficeDogP
           )}
         </group>
       )}
-      {hasBone && <CarriedBone />}
     </>
   );
-}
-
-/** The bone the person carries from the jar, held out in front at hand height. */
-function CarriedBone() {
-  const group = useRef<Group>(null);
-  useFrame(({ clock }) => {
-    const g = group.current;
-    if (!g) return;
-    const reach = 0.32;
-    g.position.set(player.x + Math.sin(player.heading) * reach, 0.72 + Math.sin(clock.elapsedTime * 3) * 0.02, player.z + Math.cos(player.heading) * reach);
-    g.rotation.y = player.heading + Math.PI / 2;
-  });
-  return <group ref={group}><TreatBone scale={0.9} /></group>;
 }
 
 const SPARK = new OctahedronGeometry(1, 0);

@@ -11,7 +11,7 @@
  * singletons and materials are cached by colour, so twenty figures share them;
  * the frame loop allocates nothing.
  */
-import { useMemo, useRef, type MutableRefObject } from "react";
+import { type ReactNode, useMemo, useRef, type MutableRefObject } from "react";
 import { useFrame } from "@react-three/fiber";
 import {
   BoxGeometry, CapsuleGeometry, Color, ConeGeometry, CylinderGeometry, MeshBasicMaterial, MeshStandardMaterial,
@@ -460,7 +460,7 @@ type JointRef = MutableRefObject<Group | null>;
  * sleeve over a bare arm; every other outfit has long sleeves ending in a cuff
  * at the wrist (a vest shows the shirt's sleeves, a suit the shirt cuff).
  */
-function Arm({ side, look, shoulder, elbow }: { side: 1 | -1; look: ToyLook; shoulder: JointRef; elbow: JointRef }) {
+function Arm({ side, look, shoulder, elbow, holding }: { side: 1 | -1; look: ToyLook; shoulder: JointRef; elbow: JointRef; holding?: ReactNode }) {
   const skin = matte(look.skin);
   const sleeveColour = look.outfit === "vest" ? look.inner : look.shirt;
   const cloth = garment(look, sleeveColour);
@@ -479,6 +479,7 @@ function Arm({ side, look, shoulder, elbow }: { side: 1 | -1; look: ToyLook; sho
         {/* Mitten hand: a soft paddle, palm turned towards the body, with a thumb pointing forward. */}
         <mesh geometry={GEO.sphere} material={skin} position={[0, hand, 0.004]} scale={[TOY.handRadius * 0.82, TOY.handRadius * 1.08, TOY.handRadius * 0.95]} castShadow />
         <mesh geometry={GEO.lowSphere} material={skin} position={[-side * 0.03, hand + 0.018, 0.034]} rotation={[0.5, 0, side * 0.45]} scale={[0.02, 0.03, 0.02]} castShadow />
+        {holding && <group position={[0, hand - 0.01, 0.03]}>{holding}</group>}
       </group>
     </group>
   );
@@ -519,9 +520,13 @@ export interface ToyFigureProps {
   heightM?: number;
   /** Seat-top height in metres for the seated modes (sit, work, sleep). */
   seatHeight?: number;
+  /** Something held in the right hand (e.g. a dog treat); the arm then stays raised forward. */
+  holding?: ReactNode;
 }
 
-export function ToyFigure({ look, drive, paused, heightM = TOY_HEIGHT, seatHeight = 0.52 }: ToyFigureProps) {
+export function ToyFigure({ look, drive, paused, heightM = TOY_HEIGHT, seatHeight = 0.52, holding }: ToyFigureProps) {
+  const holds = useRef(false);
+  holds.current = !!holding;
   const scale = heightM / TOY_HEIGHT;
   const pelvis = useRef<Group>(null);
   const torso = useRef<Group>(null);
@@ -576,6 +581,11 @@ export function ToyFigure({ look, drive, paused, heightM = TOY_HEIGHT, seatHeigh
       copyPose(s.target, s.current);
     }
     s.settled = s.blend >= 1;
+    // Holding something: the right arm stays raised forward with a bent elbow, whatever the gait does.
+    if (holds.current) {
+      s.current.rightShoulder[0] = -1.05; s.current.rightShoulder[1] = 0; s.current.rightShoulder[2] = 0.1;
+      s.current.rightElbow = -0.7;
+    }
     apply(s.current);
   });
 
@@ -609,7 +619,7 @@ export function ToyFigure({ look, drive, paused, heightM = TOY_HEIGHT, seatHeigh
           <OutfitDetails look={look} />
           <mesh geometry={GEO.lowSphere} material={matte(look.skin)} position={[0, TOY.neckY - 0.01, 0]} scale={[0.07, 0.04, 0.07]} />
           <Arm side={1} look={look} shoulder={lShoulder} elbow={lElbow} />
-          <Arm side={-1} look={look} shoulder={rShoulder} elbow={rElbow} />
+          <Arm side={-1} look={look} shoulder={rShoulder} elbow={rElbow} holding={holding} />
           <group ref={head} position={[0, TOY.neckY, 0]}>
             <mesh geometry={GEO.sphere} material={matte(look.skin)} position={[0, HD.y, 0]} scale={[HD.rx, HD.ry, HD.rz]} castShadow />
             <Face look={look} />

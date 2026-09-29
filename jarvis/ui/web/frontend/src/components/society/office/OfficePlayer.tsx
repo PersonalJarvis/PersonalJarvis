@@ -19,6 +19,7 @@ import { OFFICE_FIGURE_HEIGHT_M } from "./OfficeAgents";
 import { seatOf, type OfficeLayout } from "./officeLayout";
 import { chairInReach, useLeadSeat } from "./leadSeat";
 import { useOfficeDog } from "./dogLife";
+import { TreatBone } from "./dogProps";
 import { isRunning, useOfficeSettings } from "./officeSettings";
 import { jumpSquash, newJump, pressJump, stepJump } from "./officeJump";
 
@@ -137,6 +138,7 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
     if (nearby) useOfficeStore.getState().select(nearby);
   }, []);
   const onJump = useMemo(() => () => pressJump(jump), [jump]);
+  const hasBone = useOfficeDog((s) => s.hasBone);
   const { pressed, run, jumpHeld } = useMoveKeys(awake, interact, onJump);
 
   // Arrive by the elevator once per app run; coming back to the map keeps the
@@ -203,6 +205,11 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
     const speed = (sprinting ? PLAYER_SPRINT_SPEED : PLAYER_WALK_SPEED) * jump.speedMul;
     let moved = 0;
     if (ix !== 0 || iz !== 0) {
+      // Standing inside something solid (a snapped walk ended in it): step out first, or no move is ever free.
+      if (!isWalkable(grid, player)) {
+        const out = nearestWalkable(grid, player);
+        if (out) { player.x = out.x; player.z = out.z; }
+      }
       player.path = [];
       camera.getWorldDirection(forward);
       forward.y = 0;
@@ -258,7 +265,7 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
         <meshBasicMaterial color="#f5b83d" transparent opacity={0.8} side={DoubleSide} depthWrite={false} />
       </mesh>
       <group ref={body}>
-        <ToyFigure look={look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} />
+        <ToyFigure look={look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} holding={hasBone ? <TreatBone scale={1.15} /> : undefined} />
         <Html center position={[0, OFFICE_FIGURE_HEIGHT_M + 0.35, 0]} zIndexRange={[25, 0]}>
           <span className="office-plate office-plate-player" data-office-ui>
             <span className="office-plate-badge" style={{ background: "#f5b83d" }} aria-hidden>★</span>
