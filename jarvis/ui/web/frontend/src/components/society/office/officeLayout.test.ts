@@ -128,9 +128,9 @@ describe("office layout", () => {
     expect(layout.furniture.some((f) => f.room === "lead" || f.room === "wardrobe")).toBe(false);
     expect(layout.spots.some((s) => s.room === "focus")).toBe(true);
     expect(layout.spots.some((s) => s.room === "server")).toBe(true);
-    // The coding floor is wider (Mission Control's aisle), but the lobby is the
-    // same: the elevator stands at the same spot relative to the west edge.
+    // Both floors share one footprint, and the elevator stands at the same spot on each.
     const below = buildOfficeLayout(roster);
+    expect(layout.bounds).toEqual(below.bounds);
     const lift = (l: typeof layout) => l.checkpoints.find((c) => c.id === "elevator")!;
     expect(lift(layout).z).toBe(lift(below).z);
     expect(lift(layout).x - layout.bounds.minX).toBeCloseTo(lift(below).x - below.bounds.minX);

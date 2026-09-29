@@ -16,9 +16,9 @@
  * holds a quiet focus zone · the team room · a server room instead of the lead
  * office and the wardrobe. It has no lead desks and only the elevator and
  * break-room checkpoints — nothing there creates or dresses society agents.
- * Its centre aisle is wider and holds Mission Control: a screen on a floor
- * stand between the two department columns, where new coding agents are
- * started and several can be briefed at once.
+ * It has exactly the agents office's footprint; its centre aisle holds
+ * Mission Control: a screen on a floor stand between the two department
+ * columns, where new coding agents are started and several can be briefed at once.
  */
 import type { AgentRunState, AgentTier } from "../data";
 
@@ -199,8 +199,6 @@ const DEPT_MARGIN_X = 1.1;
 const DEPT_HEADER_Z = 1.8;
 const DEPT_FOOTER_Z = 0.8;
 const AISLE = 3.2;
-/** The coding floor's centre aisle: wide enough for Mission Control with a walkway on both sides. */
-export const MISSION_AISLE = 5.6;
 /** How far round Mission Control's screen the person can use it, from its centre (metres). */
 export const MISSION_REACH = 1.5;
 const EDGE = 1.6;
@@ -372,7 +370,9 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
   if (groups.length === 1 && groups[0].members.length === 0) groups.length = 0;
   while (groups.length < MIN_DEPARTMENTS) groups.push({ label: "", members: [] });
 
-  const centreAisle = coding ? MISSION_AISLE : AISLE;
+  // Both floors share one footprint: the elevator ride never changes the size of the world.
+  // Mission Control's screen (1.4 m) fits the normal aisle with a walkway on each side.
+  const centreAisle = AISLE;
   const floorWidth = COLUMNS * DEPT_WIDTH + (COLUMNS - 1) * centreAisle;
   const minX = -floorWidth / 2;
   const maxX = floorWidth / 2;
