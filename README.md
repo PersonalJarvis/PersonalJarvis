@@ -1,4 +1,4 @@
-https://github.com/user-attachments/assets/18ad36b9-1e78-44c3-ae84-c082b4020877
+https://github.com/user-attachments/assets/bd2d5f3c-c601-475e-a37e-f532ea6ef6ea
 
 <p align="center"><sub>A real, unedited click-through of the app, sped up only where agents are thinking.</sub></p>
 
