@@ -28,7 +28,7 @@ import type { TrailPoint } from "../companion/trail";
 import { stepMover, stepMoverAvoiding, turnToward, WALK_SPEED, type Mover } from "./officeMotion";
 import { createRng, planFor, type ActivityKind, type Plan, type Pose, type SpotBook } from "./officeBehavior";
 import { player, useOfficeStore } from "./officeStore";
-import { agentPositions, bodiesExcept, floatingAgents, seatedAtDesk } from "./walkerRegistry";
+import { agentPositions, bodiesExcept, seatedAtDesk } from "./walkerRegistry";
 
 /** The agent's symbol walks behind it as a little pet, about a fifth of its height. */
 export const PET_SIZE_M = 0.26;
@@ -135,7 +135,6 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
     ctx.book.release(agent.agentId);
     agentPositions.delete(agent.agentId);
     seatedAtDesk.delete(agent.agentId);
-    floatingAgents.delete(agent.agentId);
   }, [ctx.book, agent.agentId]);
   const pet = useMemo(() => ({ ...resolveCompanion(agent.agentId, agent.figure?.companion), sizeM: PET_SIZE_M, followDistanceM: PET_FOLLOW_M }),
     [agent.agentId, agent.figure?.companion]);
@@ -199,7 +198,6 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
       drive.current.speed = 0;
     }
     agentPositions.set(agent.agentId, { x: m.x, z: m.z });
-    if (isGigi) floatingAgents.add(agent.agentId);
     if (phase.current === "dwell" && (p.kind === "work" || p.kind === "desk")) seatedAtDesk.add(agent.agentId);
     else seatedAtDesk.delete(agent.agentId);
     if (group.current) group.current.position.set(m.x, 0, m.z);
