@@ -4399,6 +4399,7 @@
       "close_controls": "Cerrar controles del espacio de trabajo"
     },
     "even": {
+      "short": "Igualar",
       "label": "Igualar el tamaño de los terminales",
       "hint": "Da a cada terminal el mismo tamaño. No se mueve nada: los bordes se igualan donde ya están.",
       "already": "Todos los terminales ya tienen el mismo tamaño.",

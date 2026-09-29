@@ -4432,6 +4432,7 @@
       "close_controls": "Close workspace controls"
     },
     "even": {
+      "short": "Even out",
       "label": "Even out the terminal sizes",
       "hint": "Give every terminal the same size. Nothing is moved — the boundaries even out where they already are.",
       "already": "Every terminal already has the same size.",

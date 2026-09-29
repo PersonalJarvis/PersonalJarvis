@@ -4399,6 +4399,7 @@
       "close_controls": "Arbeitsbereich-Steuerelemente schließen"
     },
     "even": {
+      "short": "Angleichen",
       "label": "Terminal-Größen angleichen",
       "hint": "Jedes Terminal bekommt dieselbe Größe. Nichts wird verschoben — die Grenzen gleichen sich dort an, wo sie schon sind.",
       "already": "Alle Terminals haben bereits dieselbe Größe.",

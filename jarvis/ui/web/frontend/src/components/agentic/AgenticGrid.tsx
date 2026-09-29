@@ -2343,7 +2343,12 @@ export function AgenticGrid({
             Off in chat view and while a pane is maximized: both hide the
             boundaries this evens out, so the click would be a change nobody
             can see — and a control whose effect is invisible reads as a dead
-            one. The tooltip says which of the reasons applies. */}
+            one. The tooltip says which of the reasons applies.
+
+            It carries a word beside its glyph, framed like the text-size
+            stepper: as a bare 28 px glyph it sat among a dozen others and,
+            being disabled whenever the grid was already even, faded to 40 %
+            — people who knew it existed could no longer find it. */}
         <button
           type="button"
           data-testid="agentic-even-panes"
@@ -2357,9 +2362,10 @@ export function AgenticGrid({
                 : t("agentic_grid.even.hint")
           }
           aria-label={t("agentic_grid.even.label")}
-          className={TOOLBAR_BTN}
+          className="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2 text-micro font-medium text-foreground transition-colors hover:bg-secondary hover:text-foreground-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong disabled:cursor-not-allowed disabled:text-muted-foreground disabled:hover:bg-background"
         >
-          <AlignHorizontalDistributeCenter className="h-4 w-4 shrink-0" />
+          <AlignHorizontalDistributeCenter className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span className="whitespace-nowrap">{t("agentic_grid.even.short")}</span>
         </button>
 
         {/* Appearance stays behind one quiet menu; text size is deliberately
