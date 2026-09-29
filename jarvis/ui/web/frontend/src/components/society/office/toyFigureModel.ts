@@ -219,13 +219,15 @@ export const TOY = {
   /** Torso pivot = hip-joint level; chest block spans 0.02 … 0.28 above it. */
   torso: { w: 0.34, h: 0.28, d: 0.22 },
   neckY: 0.3,
-  shoulderX: 0.215,
-  shoulderY: 0.23,
-  upperArm: 0.13,
+  /** Shoulder joint: tucked into the chest's rounded edge so the arm grows out of the body. */
+  shoulderX: 0.2,
+  shoulderY: 0.225,
+  upperArm: 0.14,
   /** Elbow to hand centre. */
-  foreArm: 0.12,
-  armRadius: 0.047,
-  handRadius: 0.052,
+  foreArm: 0.13,
+  /** Upper-arm radius; the forearm tapers slightly below it. */
+  armRadius: 0.054,
+  handRadius: 0.056,
   /** Head ellipsoid radii; its centre sits `head.y` above the neck pivot. */
   head: { rx: 0.31, ry: 0.29, rz: 0.25, y: 0.3 },
   /** Hair or a hat adds at most this much behind the head. */

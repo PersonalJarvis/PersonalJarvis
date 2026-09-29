@@ -29,6 +29,8 @@ import {
 // Shared geometry
 
 const HD = TOY.head;
+/** The forearm tapers a little below the upper arm towards the wrist. */
+const FORE_RADIUS = TOY.armRadius - 0.006;
 
 const GEO = {
   sphere: new SphereGeometry(1, 40, 28),
@@ -39,8 +41,12 @@ const GEO = {
   chest: new RoundedBoxGeometry(TOY.torso.w, TOY.torso.h - 0.02, TOY.torso.d, 3, 0.08),
   thigh: new CapsuleGeometry(TOY.legRadius, 0.12, 4, 10),
   shin: new CapsuleGeometry(0.056, 0.1, 4, 10),
-  upperArm: new CapsuleGeometry(TOY.armRadius, 0.08, 4, 10),
-  foreArm: new CapsuleGeometry(0.043, 0.06, 4, 10),
+  // Each limb capsule overshoots its joint, so the rounded ends overlap into a closed elbow at any bend.
+  upperArm: new CapsuleGeometry(TOY.armRadius, TOY.upperArm - 0.04, 6, 16),
+  foreArm: new CapsuleGeometry(FORE_RADIUS, TOY.foreArm - 0.05, 6, 16),
+  /** A short T-shirt sleeve, slightly flared, hanging from the shoulder cap. */
+  sleeve: new CylinderGeometry(TOY.armRadius + 0.011, TOY.armRadius + 0.016, 0.075, 24),
+  cuff: new CylinderGeometry(FORE_RADIUS + 0.007, FORE_RADIUS + 0.007, 0.024, 24),
   shoe: new RoundedBoxGeometry(0.13, 0.075, TOY.heel + TOY.toe + 0.01, 3, 0.034),
   sole: new RoundedBoxGeometry(0.136, 0.022, TOY.heel + TOY.toe + 0.018, 2, 0.01),
   smile: new TorusGeometry(0.042, 0.009, 6, 14, Math.PI),
@@ -447,21 +453,32 @@ function Eyewear({ look }: { look: ToyLook }) {
 
 type JointRef = MutableRefObject<Group | null>;
 
+/**
+ * One arm: a rounded shoulder cap that grows out of the chest's edge, a full
+ * upper arm and a slightly tapered forearm whose capsule ends overlap into a
+ * closed elbow, and a mitten hand with a thumb. A tee shows a short flared
+ * sleeve over a bare arm; every other outfit has long sleeves ending in a cuff
+ * at the wrist (a vest shows the shirt's sleeves, a suit the shirt cuff).
+ */
 function Arm({ side, look, shoulder, elbow }: { side: 1 | -1; look: ToyLook; shoulder: JointRef; elbow: JointRef }) {
   const skin = matte(look.skin);
-  // A tee leaves the arms bare; everything else has long sleeves (a vest shows the shirt's).
-  const shirtSleeve = look.outfit === "vest" ? look.inner : look.shirt;
-  const sleeve = look.outfit === "tee" ? null : garment(look, shirtSleeve);
+  const sleeveColour = look.outfit === "vest" ? look.inner : look.shirt;
+  const cloth = garment(look, sleeveColour);
+  const long = look.outfit !== "tee";
+  const cuff = CUFFED.has(look.outfit) ? matte(look.inner) : garment(look, mix(sleeveColour, "#000000", 0.08));
+  const hand = -TOY.foreArm - 0.006;
   return (
     <group ref={shoulder} position={[side * TOY.shoulderX, TOY.shoulderY, 0]}>
-      <mesh geometry={GEO.sphere} material={garment(look, shirtSleeve)} position={[0, -0.03, 0]} scale={[0.068, 0.078, 0.07]} castShadow />
-      <mesh geometry={GEO.upperArm} material={sleeve ?? skin} position={[0, -TOY.upperArm / 2, 0]} scale={sleeve ? 1.08 : 1} castShadow />
+      {/* Shoulder cap, pulled in towards the chest so it rounds off the torso's corner instead of perching on it. */}
+      <mesh geometry={GEO.sphere} material={cloth} position={[-side * 0.008, -0.004, 0]} scale={[TOY.armRadius + 0.012, TOY.armRadius + 0.008, TOY.armRadius + 0.012]} castShadow />
+      {!long && <mesh geometry={GEO.sleeve} material={cloth} position={[0, -0.045, 0]} castShadow />}
+      <mesh geometry={GEO.upperArm} material={long ? cloth : skin} position={[0, -TOY.upperArm / 2, 0]} castShadow />
       <group ref={elbow} position={[0, -TOY.upperArm, 0]}>
-        <mesh geometry={GEO.foreArm} material={sleeve ?? skin} position={[0, -0.06, 0]} scale={sleeve ? 1.1 : 1} castShadow />
-        {CUFFED.has(look.outfit) && (
-          <mesh geometry={GEO.sphere} material={matte(look.inner)} position={[0, -TOY.foreArm + 0.05, 0]} scale={[0.05, 0.016, 0.05]} />
-        )}
-        <mesh geometry={GEO.sphere} material={skin} position={[0, -TOY.foreArm, 0]} scale={TOY.handRadius} castShadow />
+        <mesh geometry={GEO.foreArm} material={long ? cloth : skin} position={[0, -TOY.foreArm / 2 + 0.01, 0]} castShadow />
+        {long && <mesh geometry={GEO.cuff} material={cuff} position={[0, hand + 0.052, 0]} />}
+        {/* Mitten hand: a soft paddle, palm turned towards the body, with a thumb pointing forward. */}
+        <mesh geometry={GEO.sphere} material={skin} position={[0, hand, 0.004]} scale={[TOY.handRadius * 0.82, TOY.handRadius * 1.08, TOY.handRadius * 0.95]} castShadow />
+        <mesh geometry={GEO.lowSphere} material={skin} position={[-side * 0.03, hand + 0.018, 0.034]} rotation={[0.5, 0, side * 0.45]} scale={[0.02, 0.03, 0.02]} castShadow />
       </group>
     </group>
   );
