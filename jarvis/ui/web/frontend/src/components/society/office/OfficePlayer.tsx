@@ -131,7 +131,8 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
     const seat = useLeadSeat.getState();
     if (seat.seated) { seat.set({ seated: null, standUp: true }); return; }
     if (seat.near) { seat.set({ seated: seat.near, pending: null }); return; }
-    if (useOfficeDog.getState().near) { useOfficeDog.getState().pet(); return; }
+    // The dog: pet it, or hand over the bone; the treat jar hands one out.
+    if (useOfficeDog.getState().interact()) return;
     const nearby = nearbyRef.current;
     if (nearby) useOfficeStore.getState().select(nearby);
   }, []);

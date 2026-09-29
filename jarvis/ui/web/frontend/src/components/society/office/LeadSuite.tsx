@@ -18,6 +18,7 @@ import type { SocietyAgent } from "../data";
 import { canvasMaterial } from "./canvasMaterials";
 import { Box, matte, MAT, Rounded, screenMaterial } from "./OfficeFurniture";
 import { useT } from "@/i18n";
+import { TreatJar } from "./dogProps";
 import { useLeadSeat } from "./leadSeat";
 import { SEAT_OFFSET, seatOf, type DeskSlot, type Furniture, type FurnitureKind, type Point, type Room } from "./officeLayout";
 import { useOfficeStore } from "./officeStore";
@@ -471,6 +472,7 @@ export const LEAD_RENDERERS = {
   globe: () => <Globe />,
   floorLamp: () => <FloorLamp />,
   dogBed: () => <DogBed />,
+  treatJar: () => <TreatJar />,
 } satisfies Partial<Record<FurnitureKind, (props: { item: Furniture }) => JSX.Element>>;
 
 // ---------------------------------------------------------------------------

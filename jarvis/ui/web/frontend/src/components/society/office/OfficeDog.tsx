@@ -9,16 +9,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Billboard, Html } from "@react-three/drei";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import {
-  CylinderGeometry, ExtrudeGeometry, MeshStandardMaterial, Shape, SphereGeometry, TorusGeometry, type Group, type Mesh,
+  CylinderGeometry, ExtrudeGeometry, MeshStandardMaterial, OctahedronGeometry, Shape, SphereGeometry, TorusGeometry,
+  type Group, type Mesh,
 } from "three";
 import { useT } from "@/i18n";
 import { Rounded } from "./OfficeFurniture";
 import { createRng } from "./officeBehavior";
 import {
-  DOG_FOLLOW_FAR, DOG_FOLLOW_NEAR, DOG_PET_RANGE, DOG_PETTED_MS, DOG_POSE, DOG_RUN_SPEED, DOG_WALK_SPEED,
-  followPoint, nextDogStep, useOfficeDog, type DogActivity, type DogPose,
+  DOG_CHEW_MS, DOG_FOLLOW_FAR, DOG_FOLLOW_NEAR, DOG_PET_RANGE, DOG_PETTED_MS, DOG_POSE, DOG_RUN_SPEED, DOG_TRICK_MS,
+  DOG_WALK_SPEED, TREAT_JAR_RANGE, followPoint, insideRoom, nextDogStep, pickOtherBasket, useOfficeDog,
+  type DogActivity, type DogPose,
 } from "./dogLife";
-import type { Furniture, Room } from "./officeLayout";
+import { TreatBone } from "./dogProps";
+import type { Furniture, Rect, Room } from "./officeLayout";
 import { findPath, randomWalkablePoint, type NavGrid } from "./officeNav";
 import { stepMover, turnToward, type Mover } from "./officeMotion";
 import { player, useOfficeStore } from "./officeStore";
@@ -69,7 +72,7 @@ function Bone({ radius, length, m, y = 0, geometry = DG.cyl }: { radius: number;
 /** Joint handles the animator writes every frame. */
 interface DogRig {
   body: Group | null; torso: Group | null; head: Group | null; tail: Group | null; tongue: Mesh | null;
-  eyesOpen: Group | null; eyesShut: Group | null;
+  eyesOpen: Group | null; eyesShut: Group | null; mouthBone: Group | null;
   legs: { hip: Group | null; knee: Group | null }[];
 }
 
@@ -139,6 +142,7 @@ function DogModel({ rig }: { rig: DogRig }) {
               <mesh key={s} geometry={DG.cyl} material={DM.eye} position={[s * 0.05, 0.058, 0.135]} rotation={[0, 0, Math.PI / 2]} scale={[0.004, 0.035, 0.004]} />
             ))}
           </group>
+          <group ref={(g) => { rig.mouthBone = g; }} position={[0, -0.06, 0.2]} visible={false}><TreatBone scale={0.75} /></group>
           <mesh ref={(m) => { rig.tongue = m; }} geometry={DG.sphere} material={DM.tongue} position={[0, -0.085, 0.17]} scale={[0.028, 0.008, 0.045]} visible={false} />
         </group>
         <Leg at={[-0.09, 0.0, 0.4]} rig={rig} index={0} thigh={0.05} />
@@ -164,6 +168,8 @@ const POSES: Record<DogPose, Pose> = {
   // Sphinx: body low, forelegs stretched forward, hind legs tucked.
   lie: { pitch: 0, hipY: 0.15, front: -1.45, frontKnee: 0.1, hind: -1.25, hindKnee: 1.9, head: 0.05 },
   sleep: { pitch: 0, hipY: 0.14, front: -1.45, frontKnee: 0.1, hind: -1.25, hindKnee: 1.9, head: 0.55 },
+  // Begging: up on the hind legs, front paws tucked against the chest.
+  beg: { pitch: -1.2, hipY: 0.2, front: 0.5, frontKnee: -1.6, hind: -0.35, hindKnee: 1.35, head: -0.45 },
 };
 
 const damp = (from: number, to: number, k: number) => from + (to - from) * k;
@@ -173,51 +179,89 @@ const damp = (from: number, to: number, k: number) => from + (to - from) * k;
 // ---------------------------------------------------------------------------
 
 export interface OfficeDogProps {
-  room: Room;
-  bed: Furniture;
+  /** Every dog basket on the floor; the dog lives in the room of the one it last slept in. */
+  beds: Furniture[];
+  rooms: Room[];
+  /** The treat jar that hands out bones, when the floor has one. */
+  jar: Furniture | null;
   grid: NavGrid;
   awake: boolean;
   reduced: boolean;
 }
 
-export function OfficeDog({ room, bed, grid, awake, reduced }: OfficeDogProps) {
+/** The part of a room the dog roams: its floor, a little in from the walls. */
+function roamArea(room: Room): Rect {
+  return { minX: room.minX + 0.4, maxX: room.maxX - 0.4, minZ: room.minZ + 0.5, maxZ: room.maxZ - 0.4 };
+}
+
+export function OfficeDog({ beds, rooms, jar, grid, awake, reduced }: OfficeDogProps) {
   const t = useT();
   const root = useRef<Group>(null);
-  const rig = useMemo<DogRig>(() => ({ body: null, torso: null, head: null, tail: null, tongue: null, eyesOpen: null, eyesShut: null, legs: [0, 1, 2, 3].map(() => ({ hip: null, knee: null })) }), []);
+  const spin = useRef<Group>(null);
+  const rig = useMemo<DogRig>(() => ({
+    body: null, torso: null, head: null, tail: null, tongue: null, eyesOpen: null, eyesShut: null, mouthBone: null,
+    legs: [0, 1, 2, 3].map(() => ({ hip: null, knee: null })),
+  }), []);
   const rng = useMemo(() => createRng("office-dog"), []);
-  // Facing out of the corner, towards the middle of the room.
-  const homeHeading = useMemo(() => Math.atan2((room.minX + room.maxX) / 2 - bed.x, (room.minZ + room.maxZ) / 2 - bed.z), [room, bed]);
-  const mover = useRef<Mover>({ x: bed.x, z: bed.z, heading: homeHeading, path: [] });
-  const brain = useRef({ activity: "sleep" as DogActivity, until: Date.now() + 8000, roamsLeft: 0, lastPet: useOfficeDog.getState().petSeq, repathAt: 0 });
+  const roomOf = useMemo(() => (bed: Furniture) => rooms.find((r) => r.kind === bed.room) ?? null, [rooms]);
+  // Facing out of its corner, towards the middle of the basket's room.
+  const headingAt = useMemo(() => (bed: Furniture) => {
+    const room = roomOf(bed);
+    return room ? Math.atan2((room.minX + room.maxX) / 2 - bed.x, (room.minZ + room.maxZ) / 2 - bed.z) : 0;
+  }, [roomOf]);
+  const basketKey = beds.map((b) => `${b.id}:${b.x.toFixed(2)}:${b.z.toFixed(2)}`).join("|");
+  const first = beds[0];
+  const mover = useRef<Mover>({ x: first.x, z: first.z, heading: headingAt(first), path: [] });
+  const brain = useRef({
+    activity: "sleep" as DogActivity, until: Date.now() + 8000, roamsLeft: 0, basket: 0, bone: false, startedAt: 0,
+    lastPet: useOfficeDog.getState().petSeq, lastTreat: useOfficeDog.getState().treatSeq, repathAt: 0,
+  });
   const pose = useRef<Pose>({ ...POSES.sleep });
   const gait = useRef(0);
   const [activity, setActivity] = useState<DogActivity>("sleep");
   const [hearts, setHearts] = useState(0);
+  const [sparkles, setSparkles] = useState(0);
   const near = useOfficeDog((s) => s.near);
-  const within = useMemo(() => ({ minX: room.minX + 0.4, maxX: room.maxX - 0.4, minZ: room.minZ + 0.6, maxZ: room.maxZ - 0.4 }), [room]);
+  const nearJar = useOfficeDog((s) => s.nearJar);
+  const hasBone = useOfficeDog((s) => s.hasBone);
 
-  // A floor plan change (someone joined) puts the dog back in its basket.
+  // A changed floor plan (someone joined) puts the dog back in its first basket.
   useEffect(() => {
-    mover.current = { x: bed.x, z: bed.z, heading: homeHeading, path: [] };
-    brain.current.activity = "sleep";
+    const bed = beds[0];
+    mover.current = { x: bed.x, z: bed.z, heading: headingAt(bed), path: [] };
+    Object.assign(brain.current, { activity: "sleep", basket: 0, bone: false, until: Date.now() + 8000 });
     setActivity("sleep");
-  }, [bed.x, bed.z, homeHeading]);
-  useEffect(() => () => useOfficeDog.getState().set({ near: false, pending: false }), []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [basketKey, headingAt]);
+  useEffect(() => () => useOfficeDog.getState().set({ near: false, nearJar: false, pending: null }), []);
+  // Dev-only handle for runtime checks (hold the dog still, read where it is).
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as Record<string, unknown>;
+    w.__officeDog = { get brain() { return brain.current; }, get mover() { return mover.current; } };
+    return () => { delete w.__officeDog; };
+  }, []);
 
   const begin = (next: DogActivity, durationMs: number) => {
     const b = brain.current, m = mover.current;
+    // Moving house: pick another basket; the walk there is the activity.
+    if (next === "move") b.basket = pickOtherBasket(b.basket, beds.length, rng);
+    const bed = beds[b.basket] ?? beds[0];
+    const room = roomOf(bed);
     b.activity = next;
     b.until = Date.now() + durationMs;
+    b.startedAt = Date.now();
     m.path = [];
-    if (next === "roam" && !reduced) {
-      const target = randomWalkablePoint(grid, rng, within);
+    if (reduced) {
+      // No walking with reduced motion: the dog stays where it is and just changes pose.
+      if (next === "roam" || next === "home" || next === "move") { b.activity = "sleep"; b.until = Infinity; }
+    } else if (next === "roam" && room) {
+      const target = randomWalkablePoint(grid, rng, roamArea(room));
       m.path = (target && findPath(grid, m, target)) ?? [];
-    } else if (next === "home" && !reduced) {
+    } else if (next === "home" || next === "move") {
       m.path = findPath(grid, m, bed) ?? [];
-    } else if (next === "home" || (next === "roam" && reduced)) {
-      m.x = bed.x; m.z = bed.z; m.heading = homeHeading;
     }
-    setActivity(next);
+    setActivity(b.activity);
   };
 
   useFrame(({ clock }, rawDt) => {
@@ -225,26 +269,44 @@ export function OfficeDog({ room, bed, grid, awake, reduced }: OfficeDogProps) {
     const dt = Math.min(rawDt, 0.1);
     const now = Date.now();
     const b = brain.current, m = mover.current, dog = useOfficeDog.getState();
+    const bed = beds[b.basket] ?? beds[0];
+    const room = roomOf(bed);
 
-    // Petting: a new pet wakes it and turns it to the person.
-    if (dog.petSeq !== b.lastPet) {
+    // A bone beats everything; a pet wakes it and turns it to the person.
+    if (dog.treatSeq !== b.lastTreat) {
+      b.lastTreat = dog.treatSeq;
+      b.bone = true;
+      begin("trick", DOG_TRICK_MS);
+      setSparkles((n) => n + 1);
+    } else if (dog.petSeq !== b.lastPet) {
       b.lastPet = dog.petSeq;
-      begin("petted", DOG_PETTED_MS);
+      if (b.activity !== "trick") begin("petted", DOG_PETTED_MS);
       setHearts((h) => h + 1);
     }
     const toPerson = Math.hypot(player.x - m.x, player.z - m.z);
     const isNear = toPerson <= DOG_PET_RANGE;
     if (isNear !== dog.near) dog.set({ near: isNear });
-    if (dog.pending) {
-      if (isNear) dog.pet();
-      else if (player.path.length === 0) dog.set({ pending: false });
+    const atJar = !!jar && Math.hypot(player.x - jar.x, player.z - jar.z) <= TREAT_JAR_RANGE;
+    if (atJar !== dog.nearJar) dog.set({ nearJar: atJar });
+    if (dog.pending === "pet") {
+      if (isNear) dog.interact();
+      else if (player.path.length === 0) dog.set({ pending: null });
+    } else if (dog.pending === "jar") {
+      if (atJar) dog.takeBone();
+      else if (player.path.length === 0) dog.set({ pending: null });
     }
 
     // Movement and the schedule.
     let moved = 0;
+    const advance = () => {
+      const next = nextDogStep(b.activity, b.roamsLeft, rng, beds.length);
+      b.roamsLeft = next.roamsLeft;
+      begin(next.activity, next.durationMs);
+    };
     if (b.activity === "follow") {
-      if (now >= b.until) begin("home", Infinity);
-      else if (!reduced) {
+      // It follows inside its own room only; when the person leaves, it goes back to bed.
+      if (now >= b.until || !room || !insideRoom(room, player)) begin("home", Infinity);
+      else {
         if (toPerson > DOG_FOLLOW_FAR && now >= b.repathAt) {
           b.repathAt = now + 600;
           m.path = findPath(grid, m, followPoint(player, m)) ?? [];
@@ -252,43 +314,49 @@ export function OfficeDog({ room, bed, grid, awake, reduced }: OfficeDogProps) {
         moved = stepMover(m, toPerson > 4 ? DOG_RUN_SPEED : DOG_WALK_SPEED * 1.4, dt).moved;
         if (moved === 0) m.heading = turnToward(m.heading, Math.atan2(player.x - m.x, player.z - m.z), 6 * dt);
       }
-    } else if (b.activity === "roam" || b.activity === "home") {
-      const step = stepMover(m, DOG_WALK_SPEED, dt);
+    } else if (b.activity === "roam" || b.activity === "home" || b.activity === "move") {
+      const step = stepMover(m, b.activity === "move" ? DOG_WALK_SPEED * 1.2 : DOG_WALK_SPEED, dt);
       moved = step.moved;
       if (step.arrived) {
-        if (b.activity === "home") { m.x = bed.x; m.z = bed.z; }
-        const next = nextDogStep(b.activity, b.roamsLeft, rng);
-        b.roamsLeft = next.roamsLeft;
-        begin(next.activity, next.durationMs);
+        if (b.activity !== "roam") { m.x = bed.x; m.z = bed.z; }
+        // Carrying the bone home: settle down and chew on it.
+        if (b.activity === "home" && b.bone) begin("chew", DOG_CHEW_MS);
+        else advance();
       }
     } else {
-      if (b.activity === "petted") m.heading = turnToward(m.heading, Math.atan2(player.x - m.x, player.z - m.z), 8 * dt);
-      if (b.activity === "sleep" && m.x === bed.x && m.z === bed.z) m.heading = turnToward(m.heading, homeHeading, 4 * dt);
-      if (now >= b.until && !(reduced && b.activity === "sleep")) {
-        const next = nextDogStep(b.activity, b.roamsLeft, rng);
-        b.roamsLeft = next.roamsLeft;
-        begin(next.activity, next.durationMs);
+      if (b.activity === "petted" || b.activity === "trick") m.heading = turnToward(m.heading, Math.atan2(player.x - m.x, player.z - m.z), 8 * dt);
+      if ((b.activity === "sleep" || b.activity === "chew") && m.x === bed.x && m.z === bed.z) m.heading = turnToward(m.heading, headingAt(bed), 4 * dt);
+      if (now >= b.until) {
+        if (b.activity === "chew") b.bone = false;
+        advance();
       }
     }
 
     // Place the figure; it lies a little higher on the basket's cushion.
-    const inBed = Math.hypot(m.x - bed.x, m.z - bed.z) < 0.05;
+    const inBed = beds.some((d) => Math.hypot(m.x - d.x, m.z - d.z) < 0.05);
+    const trickT = b.activity === "trick" ? (now - b.startedAt) / 1000 : -1;
+    // The trick: beg (0–0.9 s), catch, then two spins in the air (0.9–2.7 s), land and sit proud.
+    const spinning = trickT >= 0.9 && trickT < 2.7 && !reduced;
+    const hop = spinning ? Math.abs(Math.sin(((trickT - 0.9) / 0.9) * Math.PI)) * 0.35 : 0;
     if (root.current) {
-      root.current.position.set(m.x, inBed ? 0.1 : 0, m.z);
+      root.current.position.set(m.x, (inBed ? 0.1 : 0) + hop, m.z);
       root.current.rotation.y = m.heading;
     }
+    if (spin.current) spin.current.rotation.y = spinning ? ((trickT - 0.9) / 1.8) * Math.PI * 4 : 0;
 
     // Blend the pose, then layer the gait, breathing, wag and head life on top.
     const walking = moved > 1e-4;
-    const target = POSES[walking ? "stand" : DOG_POSE[b.activity]];
-    const k = 1 - Math.exp(-8 * dt), p = pose.current;
+    const trickPose: DogPose = trickT < 0 ? DOG_POSE[b.activity] : trickT < 0.9 ? "beg" : spinning ? "stand" : "sit";
+    const target = POSES[walking ? "stand" : trickPose];
+    const k = 1 - Math.exp(-(spinning ? 14 : 8) * dt), p = pose.current;
     (Object.keys(p) as (keyof Pose)[]).forEach((key) => { p[key] = damp(p[key], target[key], k); });
     const speed = moved / Math.max(dt, 1e-3);
     gait.current += dt * (walking ? 5 + speed * 3.2 : 0);
-    const swing = walking ? Math.sin(gait.current) * Math.min(0.6, 0.25 + speed * 0.12) : 0;
+    const swing = walking ? Math.sin(gait.current) * Math.min(0.6, 0.25 + speed * 0.12) : spinning ? -0.5 : 0;
     const time = clock.elapsedTime;
     const sleeping = b.activity === "sleep";
-    const happy = b.activity === "petted" || b.activity === "follow";
+    const chewing = b.activity === "chew";
+    const happy = b.activity === "petted" || b.activity === "follow" || b.activity === "trick" || chewing;
 
     if (rig.body) {
       rig.body.position.y = p.hipY + (walking ? Math.abs(Math.sin(gait.current)) * 0.02 : 0);
@@ -298,8 +366,8 @@ export function OfficeDog({ room, bed, grid, awake, reduced }: OfficeDogProps) {
       const breath = 1 + Math.sin(time * (sleeping ? 1.4 : 2.6)) * (sleeping ? 0.03 : 0.012);
       rig.torso.scale.set(breath, breath, 1);
     }
-    // Diagonal pairs swing together: front-left with hind-right.
-    const phase = [swing, -swing, -swing, swing];
+    // Diagonal pairs swing together: front-left with hind-right. Mid-spin all legs tuck.
+    const phase = spinning ? [swing, swing, -swing, -swing] : [swing, -swing, -swing, swing];
     rig.legs.forEach((leg, i) => {
       const front = i < 2;
       if (leg.hip) leg.hip.rotation.x = (front ? p.front : p.hind) + phase[i];
@@ -307,13 +375,17 @@ export function OfficeDog({ room, bed, grid, awake, reduced }: OfficeDogProps) {
     });
     if (rig.head) {
       const sniffBob = b.activity === "sniff" ? Math.sin(time * 9) * 0.08 : 0;
-      rig.head.rotation.x = p.head + sniffBob + (sleeping ? Math.sin(time * 1.4) * 0.02 : 0);
-      const look = happy && !walking ? Math.sin(time * 1.3) * 0.25 : b.activity === "sniff" ? Math.sin(time * 1.7) * 0.4 : 0;
+      const chew = chewing ? Math.sin(time * 7) * 0.08 : 0;
+      rig.head.rotation.x = p.head + sniffBob + chew + (sleeping ? Math.sin(time * 1.4) * 0.02 : 0);
+      const look = happy && !walking && !chewing ? Math.sin(time * 1.3) * 0.25 : b.activity === "sniff" ? Math.sin(time * 1.7) * 0.4 : 0;
       rig.head.rotation.y = damp(rig.head.rotation.y, look, k);
-      rig.head.rotation.z = damp(rig.head.rotation.z, b.activity === "petted" ? 0.22 : 0, k);
+      rig.head.rotation.z = damp(rig.head.rotation.z, b.activity === "petted" || chewing ? 0.22 : 0, k);
     }
     if (rig.tail) rig.tail.rotation.y = Math.sin(time * (happy ? 22 : 6)) * (sleeping ? 0.05 : happy ? 0.7 : walking ? 0.35 : 0.15);
-    if (rig.tongue) rig.tongue.visible = happy || (walking && speed > 2) || b.activity === "sit";
+    // The bone sits in its mouth from the catch until the chewing is done.
+    const holding = b.bone && (trickT < 0 || trickT >= 0.7);
+    if (rig.mouthBone) rig.mouthBone.visible = holding;
+    if (rig.tongue) rig.tongue.visible = !holding && (happy || (walking && speed > 2) || b.activity === "sit");
     if (rig.eyesOpen) rig.eyesOpen.visible = !sleeping;
     if (rig.eyesShut) rig.eyesShut.visible = sleeping;
   });
@@ -322,54 +394,109 @@ export function OfficeDog({ room, bed, grid, awake, reduced }: OfficeDogProps) {
     if (event.delta > 6) return;
     event.stopPropagation();
     const dog = useOfficeDog.getState();
-    if (dog.near) { dog.pet(); return; }
-    dog.set({ pending: true });
+    if (dog.near) { dog.interact(); return; }
+    dog.set({ pending: "pet" });
     useOfficeStore.getState().requestWalk({ x: mover.current.x, z: mover.current.z });
   };
+  const onJarClick = (event: ThreeEvent<MouseEvent>) => {
+    if (event.delta > 6 || !jar) return;
+    event.stopPropagation();
+    const dog = useOfficeDog.getState();
+    if (dog.hasBone) return;
+    if (dog.nearJar) { dog.takeBone(); return; }
+    dog.set({ pending: "jar" });
+    useOfficeStore.getState().requestWalk({ x: jar.x, z: jar.z });
+  };
+  const hover = (cursor: string) => () => { document.body.style.cursor = cursor; };
+  const busy = activity === "petted" || activity === "trick";
 
   return (
-    <group ref={root} name="office-dog">
-      <DogModel rig={rig} />
-      {/* Generous invisible hit box: the dog is small from the usual camera distance. */}
-      <mesh position={[0, 0.35, 0.1]} visible={false} onClick={onClick}
-        onPointerOver={() => { document.body.style.cursor = "pointer"; }} onPointerOut={() => { document.body.style.cursor = ""; }}>
-        <boxGeometry args={[0.6, 0.7, 1.1]} />
-      </mesh>
-      {hearts > 0 && <Hearts key={hearts} animate={!reduced} />}
-      {near && activity !== "petted" && (
-        <Html center position={[0, 1.0, 0]} zIndexRange={[24, 0]}>
-          <span className="office-plate office-seat-prompt" data-office-ui><kbd>E</kbd>{t("society.office.dog_pet")}</span>
-        </Html>
+    <>
+      <group ref={root} name="office-dog">
+        <group ref={spin}><DogModel rig={rig} /></group>
+        {/* Generous invisible hit box: the dog is small from the usual camera distance. */}
+        <mesh position={[0, 0.35, 0.1]} visible={false} onClick={onClick} onPointerOver={hover("pointer")} onPointerOut={hover("")}>
+          <boxGeometry args={[0.6, 0.7, 1.1]} />
+        </mesh>
+        {hearts > 0 && <Burst key={`h${hearts}`} kind="heart" animate={!reduced} />}
+        {sparkles > 0 && <Burst key={`s${sparkles}`} kind="spark" animate={!reduced} />}
+        {near && !busy && (
+          <Html center position={[0, 1.0, 0]} zIndexRange={[24, 0]}>
+            <span className="office-plate office-seat-prompt" data-office-ui>
+              <kbd>E</kbd>{t(hasBone ? "society.office.dog_treat" : "society.office.dog_pet")}
+            </span>
+          </Html>
+        )}
+      </group>
+      {jar && (
+        <group position={[jar.x, 0, jar.z]}>
+          <mesh position={[0, 0.6, 0]} visible={false} onClick={onJarClick} onPointerOver={hover("pointer")} onPointerOut={hover("")}>
+            <boxGeometry args={[0.6, 1.2, 0.6]} />
+          </mesh>
+          {nearJar && !hasBone && (
+            <Html center position={[0, 1.55, 0]} zIndexRange={[24, 0]}>
+              <span className="office-plate office-seat-prompt" data-office-ui><kbd>E</kbd>{t("society.office.dog_take_bone")}</span>
+            </Html>
+          )}
+        </group>
       )}
-    </group>
+      {hasBone && <CarriedBone />}
+    </>
   );
 }
 
-/** Three hearts float up from the dog's head and fade out. */
-function Hearts({ animate }: { animate: boolean }) {
+/** The bone the person carries from the jar, held out in front at hand height. */
+function CarriedBone() {
+  const group = useRef<Group>(null);
+  useFrame(({ clock }) => {
+    const g = group.current;
+    if (!g) return;
+    const reach = 0.32;
+    g.position.set(player.x + Math.sin(player.heading) * reach, 0.72 + Math.sin(clock.elapsedTime * 3) * 0.02, player.z + Math.cos(player.heading) * reach);
+    g.rotation.y = player.heading + Math.PI / 2;
+  });
+  return <group ref={group}><TreatBone scale={0.9} /></group>;
+}
+
+const SPARK = new OctahedronGeometry(1, 0);
+const SPARK_MAT = new MeshStandardMaterial({ color: "#ffd44d", emissive: "#ffb300", emissiveIntensity: 1.2, roughness: 0.3, transparent: true });
+
+/** Hearts float up from the dog's head (petting); gold sparks burst around it (the treat trick). */
+function Burst({ kind, animate }: { kind: "heart" | "spark"; animate: boolean }) {
   const group = useRef<Group>(null);
   const start = useRef(-1);
-  const material = useMemo(() => DM.heart.clone(), []);
+  const material = useMemo(() => (kind === "heart" ? DM.heart : SPARK_MAT).clone(), [kind]);
   useEffect(() => () => material.dispose(), [material]);
+  const count = kind === "heart" ? 3 : 12;
+  const life = kind === "heart" ? 3.2 : 2.6;
   useFrame(({ clock }) => {
     if (start.current < 0) start.current = clock.elapsedTime;
     const age = clock.elapsedTime - start.current;
     const g = group.current;
     if (!g) return;
     g.children.forEach((child, i) => {
-      const a = Math.max(0, age - i * 0.35);
-      child.position.set(Math.sin(a * 3 + i * 2) * 0.12 + (i - 1) * 0.12, 0.75 + (animate ? a * 0.45 : 0.1 * i), 0.25);
-      const s = a > 0 ? Math.min(1, a * 4) * 0.09 : 0;
-      child.scale.setScalar(s);
+      if (kind === "heart") {
+        const a = Math.max(0, age - i * 0.35);
+        child.position.set(Math.sin(a * 3 + i * 2) * 0.12 + (i - 1) * 0.12, 0.75 + (animate ? a * 0.45 : 0.1 * i), 0.25);
+        child.scale.setScalar(a > 0 ? Math.min(1, a * 4) * 0.09 : 0);
+      } else {
+        // Sparks fly out in a ring from mid-trick and drift down.
+        const a = Math.max(0, age - 0.9);
+        const angle = (i / count) * Math.PI * 2;
+        const r = animate ? 0.2 + a * 0.9 : 0.5;
+        child.position.set(Math.cos(angle) * r, 0.55 + (animate ? a * 0.6 - a * a * 0.35 : 0.2), Math.sin(angle) * r);
+        child.rotation.set(age * 4, age * 3, 0);
+        child.scale.setScalar(a > 0 ? 0.035 * Math.min(1, a * 5) : 0);
+      }
     });
-    material.opacity = Math.max(0, 1 - Math.max(0, age - 1.6) / 1.2);
-    g.visible = age < 3.2;
+    material.opacity = Math.max(0, 1 - Math.max(0, age - (life - 1.2)) / 1.2);
+    g.visible = age < life;
   });
   return (
     <group ref={group}>
-      {[0, 1, 2].map((i) => (
-        <Billboard key={i}><mesh geometry={HEART} material={material} /></Billboard>
-      ))}
+      {Array.from({ length: count }, (_, i) => (kind === "heart"
+        ? <Billboard key={i}><mesh geometry={HEART} material={material} /></Billboard>
+        : <mesh key={i} geometry={SPARK} material={material} />))}
     </group>
   );
 }

@@ -222,7 +222,8 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
   // Each desk takes its department's zone colour for the felt screen and the seat fabric.
   const zones = useMemo(() => new Map(layout.departments.flatMap((dept) => dept.desks.map((desk) => [desk.id, dept.tint] as const))), [layout]);
   const leadRoom = layout.rooms.find((r) => r.kind === "lead");
-  const dogBed = layout.furniture.find((f) => f.kind === "dogBed");
+  const dogBeds = useMemo(() => layout.furniture.filter((f) => f.kind === "dogBed"), [layout]);
+  const treatJar = layout.furniture.find((f) => f.kind === "treatJar") ?? null;
   const coding = floor === "coding";
   // The coding floor floats in a violet night of its own, so a glance tells the floors apart.
   const space = coding ? CODING_SCENE.space : OFFICE.space;
@@ -279,7 +280,7 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
       )}
       <FloorArrival floor={floor} layout={layout} grid={grid} ready={ready} />
       <OfficePlayer layout={layout} grid={grid} look={player.look} name={player.name} awake={awake} reduced={reduced} />
-      {leadRoom && dogBed && <OfficeDog room={leadRoom} bed={dogBed} grid={grid} awake={awake} reduced={reduced} />}
+      {dogBeds.length > 0 && <OfficeDog beds={dogBeds} rooms={layout.rooms} jar={treatJar} grid={grid} awake={awake} reduced={reduced} />}
       <PlayerBubble height={OFFICE_FIGURE_HEIGHT_M + 0.49} />
       <OfficeAgents desks={desks} agents={agents} ctx={walkers} newcomers={newcomers} awake={awake} reduced={reduced} chats={chats}
         selectedId={selection?.kind === "agent" ? selection.id : null} onSelect={(id) => select({ kind: "agent", id })} />

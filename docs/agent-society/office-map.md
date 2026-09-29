@@ -199,11 +199,14 @@ purpose, so the boss's room reads as the most precious place on the floor
   through it. Walk up and press E, or click the chair, to sit (`leadSeat.ts`);
   any movement stands the character up. Clicking the monitors dives into them
   and opens the lead agent in the agents view, like any agent's desk screen.
-- **Office dog (`OfficeDog.tsx`, `dogLife.ts`):** a black-and-tan rottweiler figure with
-  jointed legs, head, ears, tail and tongue. It sleeps in its basket in the north-east
-  corner, gets up, roams the lead office, sniffs, sits and lies down, then goes home.
-  Pet it with E or a click: it sits, wags, shows hearts and follows the person for
-  30 s before trotting back to bed. Client-side only, like the agents' idle life.
+- **Office dog (`OfficeDog.tsx`, `dogLife.ts`, `dogProps.tsx`):** a black-and-tan
+  rottweiler figure with jointed legs, head, ears, tail and tongue. It has baskets in
+  the lead office, the team room and the break room and lives in the room of its
+  current basket: sleeps, roams, sniffs, sits, lies down. Now and then it walks (never
+  jumps) to another basket. Pet it with E or a click: it sits, wags, shows hearts and
+  follows the person inside its room for 30 s. Easter egg: the treat jar beside the
+  break room's coffee bar hands out a bone; give it to the dog and it begs, catches
+  it, spins twice in the air with gold sparks and chews it in its basket.
 - Every piece stays inside its `FURNITURE_SIZE` footprint (props test) and the
   navigation tests still reach every seat, spot and checkpoint.
 

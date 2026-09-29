@@ -101,7 +101,7 @@ export type FurnitureKind =
   | "bookshelf" | "plant" | "rug" | "elevator"
   // Lead office: the executive suite.
   | "leadWall" | "executiveRug" | "guestChair" | "chesterfield" | "loungeTable" | "executiveBar" | "globe" | "floorLamp"
-  | "dogBed"
+  | "dogBed" | "treatJar"
   // Coding floor: Mission Control's console ring.
   | "missionConsole";
 
@@ -138,6 +138,7 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   globe: { w: 0.92, d: 0.72, h: 1.2, solid: true },
   floorLamp: { w: 0.46, d: 0.46, h: 1.8, solid: true },
   dogBed: { w: 0.9, d: 0.72, h: 0.45, solid: true },
+  treatJar: { w: 0.5, d: 0.5, h: 1.2, solid: true },
   // Round, so not a solid box: navigation walks around missionDeckObstacles instead.
   missionConsole: { w: 3.9, d: 3.9, h: 3.1, solid: false },
 };
@@ -485,8 +486,14 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     { id: "lead-lamp-e", kind: "floorLamp", x: leadRoom.maxX - 0.34, z: lz0 + 2.9, rotationY: 0, room: "lead" },
     { id: "lead-plant", kind: "plant", x: lx0 + 0.55, z: northMaxZ - 0.55, rotationY: 0, room: "lead" },
     { id: "lead-plant-e", kind: "plant", x: leadRoom.maxX - 0.55, z: northMaxZ - 0.55, rotationY: 0, room: "lead" },
-    // The office dog's basket, in the north-east corner beside the bookcase.
+    // The office dog's baskets: the lead office's north-east corner beside the
+    // bookcase, the team room's north-west corner and the break room's corner
+    // by the bookshelf. It walks between them now and then.
     { id: "lead-dog", kind: "dogBed", x: leadRoom.maxX - 0.58, z: lz0 + 0.98, rotationY: 0, room: "lead" },
+    { id: "team-dog", kind: "dogBed", x: teamRoom.minX + 0.62, z: topZ + 0.95, rotationY: 0, room: "team" },
+    { id: "break-dog", kind: "dogBed", x: breakRoom.minX + 0.62, z: breakRoom.minZ + 1.6, rotationY: 0, room: "break" },
+    // Easter egg: the jar of dog treats next to the coffee bar.
+    { id: "break-treats", kind: "treatJar", x: breakRoom.minX + 9.95, z: breakRoom.minZ + 0.5, rotationY: 0, room: "break" },
   ];
   // Coding floor, west: a quiet focus zone — a wall of shelves, a couch facing
   // them on a rug, a beanbag in each corner, palms beside the door.
