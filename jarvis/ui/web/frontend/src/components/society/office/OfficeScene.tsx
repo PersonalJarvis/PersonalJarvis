@@ -12,6 +12,7 @@ import type { SocietyAgent } from "../data";
 import type { ToyLook } from "./toyFigureModel";
 import { Railing, SignWall } from "./OfficeFurniture";
 import { DeskInstances } from "./DeskInstances";
+import { DeskDressing } from "./DeskDressing";
 import { CodingSlab, CodingStudio } from "./CodingFloorLook";
 import { ExecutiveDesks, LeadOfficeLight } from "./LeadSuite";
 import { LiveMonitors } from "./LiveMonitors";
@@ -255,7 +256,10 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
       <RoomWalls walls={layout.walls} />
       {layout.rooms.map((room) => <RoomSign key={room.id} room={room} label={t(`society.office.room_${room.kind}`)} />)}
       {coding
-        ? layout.departments.map((dept) => <CodingStudio key={dept.id} dept={dept} agents={agents} />)
+        ? <>
+          {layout.departments.map((dept) => <CodingStudio key={dept.id} dept={dept} agents={agents} />)}
+          <DeskDressing desks={benchDesks} departments={layout.departments} />
+        </>
         : <>
           {layout.departments.map((dept) => <DepartmentArea key={dept.id} dept={dept} />)}
           <DeskInstances desks={benchDesks} agents={agents} zones={zones} />
