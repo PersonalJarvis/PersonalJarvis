@@ -27,6 +27,7 @@ import { CHECKPOINT_ICON, CheckpointMarker } from "./CheckpointMarker";
 import { ElevatorCallButton } from "./ElevatorCallButton";
 import { OFFICE_FIGURE_HEIGHT_M, OfficeAgents, type WalkerContext } from "./OfficeAgents";
 import { OfficePlayer } from "./OfficePlayer";
+import { OfficeDog } from "./OfficeDog";
 import { PlayerBubble } from "./OfficeBubbles";
 import { OfficeCameraRig } from "./OfficeCameraRig";
 import { allDesks, type Department, type OfficeLayout, type Point } from "./officeLayout";
@@ -175,6 +176,7 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
   // Lead desks carry their own size and are built as executive desks, not bench instances.
   const benchDesks = useMemo(() => desks.filter((d) => !d.size), [desks]);
   const leadRoom = layout.rooms.find((r) => r.kind === "lead");
+  const dogBed = layout.furniture.find((f) => f.kind === "dogBed");
   const coding = floor === "coding";
   // The coding floor floats in a violet night of its own, so a glance tells the floors apart.
   const space = coding ? CODING_SCENE.space : OFFICE.space;
@@ -231,6 +233,7 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
       )}
       <FloorArrival floor={floor} layout={layout} grid={grid} ready={ready} />
       <OfficePlayer layout={layout} grid={grid} look={player.look} name={player.name} awake={awake} reduced={reduced} />
+      {leadRoom && dogBed && <OfficeDog room={leadRoom} bed={dogBed} grid={grid} awake={awake} reduced={reduced} />}
       <PlayerBubble height={OFFICE_FIGURE_HEIGHT_M + 0.49} />
       <OfficeAgents desks={desks} agents={agents} ctx={walkers} newcomers={newcomers} awake={awake} reduced={reduced} chats={chats}
         selectedId={selection?.kind === "agent" ? selection.id : null} onSelect={(id) => select({ kind: "agent", id })} />

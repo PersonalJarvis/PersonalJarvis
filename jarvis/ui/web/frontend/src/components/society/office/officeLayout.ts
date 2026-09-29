@@ -427,8 +427,8 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     { id: "lead-lamp-e", kind: "floorLamp", x: leadRoom.maxX - 0.34, z: lz0 + 2.9, rotationY: 0, room: "lead" },
     { id: "lead-plant", kind: "plant", x: lx0 + 0.55, z: northMaxZ - 0.55, rotationY: 0, room: "lead" },
     { id: "lead-plant-e", kind: "plant", x: leadRoom.maxX - 0.55, z: northMaxZ - 0.55, rotationY: 0, room: "lead" },
-    // The office dog, asleep in its basket between the globe and the door.
-    { id: "lead-dog", kind: "dogBed", x: leadRoom.maxX - 1.65, z: lz0 + 5.75, rotationY: 0, room: "lead" },
+    // The office dog's basket, in the north-east corner beside the bookcase.
+    { id: "lead-dog", kind: "dogBed", x: leadRoom.maxX - 0.58, z: lz0 + 0.98, rotationY: 0, room: "lead" },
   ];
   // Coding floor, west: a quiet focus zone — a wall of shelves, a couch facing
   // them on a rug, a beanbag in each corner, palms beside the door.

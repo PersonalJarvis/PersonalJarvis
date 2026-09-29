@@ -17,6 +17,7 @@ import { agentPositions, bodiesExcept, companions } from "./walkerRegistry";
 import { OFFICE_FIGURE_HEIGHT_M } from "./OfficeAgents";
 import { seatOf, type OfficeLayout } from "./officeLayout";
 import { chairInReach, useLeadSeat } from "./leadSeat";
+import { useOfficeDog } from "./dogLife";
 import { isRunning, useOfficeSettings } from "./officeSettings";
 
 /** The person's pace: a brisk walk, and a sprint on Shift (m/s). */
@@ -111,6 +112,7 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
     const seat = useLeadSeat.getState();
     if (seat.seated) { seat.set({ seated: null, standUp: true }); return; }
     if (seat.near) { seat.set({ seated: seat.near, pending: null }); return; }
+    if (useOfficeDog.getState().near) { useOfficeDog.getState().pet(); return; }
     const nearby = nearbyRef.current;
     if (nearby) useOfficeStore.getState().select(nearby);
   }, []);
