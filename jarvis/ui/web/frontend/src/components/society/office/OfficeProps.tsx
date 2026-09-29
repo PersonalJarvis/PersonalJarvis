@@ -15,6 +15,7 @@ import { LEAD_RENDERERS } from "./LeadSuite";
 import { COMMAND_RENDERERS } from "./CommandOffice";
 import { SERVER_RENDERERS } from "./ServerRoom";
 import { TEAM_RENDERERS } from "./TeamRoomDecor";
+import { BREAK_RENDERERS } from "./BreakLounge";
 import { WARDROBE_RENDERERS } from "./WardrobeRoom";
 import { LOBBY_RENDERERS } from "./LobbyDecor";
 import { MeetingChair } from "./OfficeChairs";
@@ -283,8 +284,6 @@ const PM = {
   shaft: matte(P.elevatorShaft),
   lockers: P.lockers.map((c) => matte(c)),
   lockerVent: matte(P.lockerVent),
-  bottle: new MeshStandardMaterial({ color: P.waterBottle, roughness: 0.2, transparent: true, opacity: 0.8 }),
-  taps: P.waterTap.map((c) => matte(c)),
   mug: matte(P.mug),
   coffee: matte(P.coffee),
   espresso: matte(P.espresso, { roughness: 0.35, metalness: 0.25 }),
@@ -293,7 +292,6 @@ const PM = {
   marquee: matte(P.arcadeMarquee, { emissive: P.arcadeMarquee, emissiveIntensity: 0.8 }),
   joystick: matte(P.joystick, { roughness: 0.4 }),
   arcadeButtons: P.arcadeButtons.map((c) => matte(c, { emissive: c, emissiveIntensity: 0.35 })),
-  beanbags: P.beanbag.map((c) => matte(c, { roughness: 0.95 })),
   bell: matte(P.bell, { roughness: 0.35, metalness: 0.3 }),
   boardFrame: matte(P.boardFrame),
   kioskBody: matte(P.kioskBody),
@@ -502,22 +500,6 @@ function CoffeeBar() {
   );
 }
 
-/** Water cooler: white stand, taps on the +z side, a blue bottle on top. */
-function WaterCooler() {
-  return (
-    <group>
-      <Rounded size={[0.36, 0.9, 0.36]} radius={0.04} position={[0, 0.45, 0]} material={MAT.deskBody} />
-      <Box size={[0.26, 0.2, 0.01]} position={[0, 0.72, 0.181]} material={PM.steelDark} cast={false} />
-      <Box size={[0.04, 0.05, 0.04]} position={[-0.06, 0.74, 0.2]} material={PM.taps[0]} />
-      <Box size={[0.04, 0.05, 0.04]} position={[0.06, 0.74, 0.2]} material={PM.taps[1]} />
-      <Box size={[0.22, 0.02, 0.06]} position={[0, 0.6, 0.2]} material={PM.steelDark} />
-      <Cyl radius={0.12} height={0.04} position={[0, 0.92, 0]} material={MAT.deskBody} />
-      <Cyl radius={0.16} height={0.3} position={[0, 1.09, 0]} material={PM.bottle} />
-      <Cyl radius={0.15} height={0.03} position={[0, 1.255, 0]} material={PM.bottle} />
-    </group>
-  );
-}
-
 /** Round low wood table with a mug and a magazine. */
 function CoffeeTable() {
   return (
@@ -563,17 +545,6 @@ export function idHash(id: string): number {
   let hash = 0;
   for (const ch of id) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
   return hash;
-}
-
-/** A squashed soft beanbag; the raised back is on the -z side, so it faces +z. */
-function Beanbag({ id }: { id: string }) {
-  const material = PM.beanbags[idHash(id) % PM.beanbags.length];
-  return (
-    <group>
-      <mesh geometry={PGEO.sphere} material={material} position={[0, 0.26, 0]} scale={[0.44, 0.26, 0.44]} castShadow receiveShadow />
-      <mesh geometry={PGEO.sphere} material={material} position={[0, 0.42, -0.16]} scale={[0.36, 0.18, 0.24]} castShadow receiveShadow />
-    </group>
-  );
 }
 
 /** A flat rug with an inner field, sized per instance. */
@@ -624,12 +595,10 @@ export const PROP_RENDERERS: Record<FurnitureKind, (props: { item: Furniture }) 
   lockers: () => <Lockers />,
   mirror: () => <Mirror />,
   coffeeBar: () => <CoffeeBar />,
-  waterCooler: () => <WaterCooler />,
   // The shared couch's armrests reach 2.36 m; squeeze it into the 2.2 m footprint.
   couch: () => <group scale={[COUCH_FIT_X, 1, 1]}><Couch position={[0, 0, 0]} /></group>,
   coffeeTable: () => <CoffeeTable />,
   arcade: () => <Arcade />,
-  beanbag: ({ item }) => <Beanbag id={item.id} />,
   bookshelf: () => <Bookshelf position={[0, 0, 0]} />,
   plant: () => <Plant position={[0, 0, 0]} size={PROP_PLANT_SIZE} />,
   rug: ({ item }) => {
@@ -641,6 +610,7 @@ export const PROP_RENDERERS: Record<FurnitureKind, (props: { item: Furniture }) 
   ...COMMAND_RENDERERS,
   ...SERVER_RENDERERS,
   ...TEAM_RENDERERS,
+  ...BREAK_RENDERERS,
   ...WARDROBE_RENDERERS,
   ...LOBBY_RENDERERS,
 };
