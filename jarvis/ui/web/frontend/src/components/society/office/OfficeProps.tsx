@@ -13,7 +13,7 @@ import { CylinderGeometry, MeshStandardMaterial, SphereGeometry } from "three";
 import { canvasMaterial } from "./canvasMaterials";
 import { LEAD_RENDERERS } from "./LeadSuite";
 import { MISSION_RENDERERS } from "./MissionConsole";
-import { Bookshelf, Box, Couch, MAT, matte, Plant, Rounded, Rug } from "./OfficeFurniture";
+import { Bookshelf, Box, Couch, GEO, MAT, matte, Plant, Rounded, Rug } from "./OfficeFurniture";
 import { FURNITURE_SIZE, type Furniture, type FurnitureKind } from "./officeLayout";
 import { PROP_COLOURS as P } from "./officePalette";
 
@@ -112,16 +112,90 @@ function drawKioskList(ctx: CanvasRenderingContext2D, w: number, h: number): voi
   ctx.fillRect(w - 53, h - 54, 6, 24);
 }
 
-/** A generic desktop UI for the reception monitor. */
-function drawDeskScreen(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-  ctx.fillStyle = "#1b2a44";
+/**
+ * Reception's help display: the map's main keys as key caps, each over a gold
+ * pictogram of what it does (walk, run, use, map, help). Shapes only, no words,
+ * so it reads the same in every language.
+ */
+function drawReceptionHelp(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  const bg = ctx.createLinearGradient(0, 0, 0, h);
+  bg.addColorStop(0, "#1a2742");
+  bg.addColorStop(1, "#0f1628");
+  ctx.fillStyle = bg;
   ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = "#7dd3fc";
-  ctx.fillRect(12, 12, w - 24, 16);
-  ctx.fillStyle = "rgba(255,255,255,0.75)";
-  for (let i = 0; i < 5; i += 1) ctx.fillRect(16, 44 + i * 20, 60 + ((i * 41) % 110), 8);
-  ctx.fillStyle = "#a7f3d0";
-  ctx.fillRect(w - 80, 44, 60, 90);
+  ctx.fillStyle = "#f5b83d";
+  ctx.fillRect(0, 0, w, 7);
+  const cap = (x: number, y: number, cw: number, label: string) => {
+    ctx.fillStyle = "#0a0f1c";
+    roundRect(ctx, x, y + 5, cw, 46, 9);
+    ctx.fill();
+    ctx.fillStyle = "#eef2f8";
+    roundRect(ctx, x, y, cw, 44, 9);
+    ctx.fill();
+    ctx.fillStyle = "#1a2742";
+    ctx.font = "700 24px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, x + cw / 2, y + 23);
+  };
+  const gold = () => { ctx.strokeStyle = "#f5b83d"; ctx.fillStyle = "#f5b83d"; ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.lineJoin = "round"; };
+  const iy = 150;
+  // WASD cluster over a four-way arrow.
+  const kx = 26, ky = 30, kw = 44;
+  cap(kx + kw + 6, ky, kw, "W");
+  cap(kx, ky + 52, kw, "A"); cap(kx + kw + 6, ky + 52, kw, "S"); cap(kx + 2 * (kw + 6), ky + 52, kw, "D");
+  gold();
+  const cx = kx + 1.5 * kw + 6;
+  ctx.beginPath();
+  ctx.moveTo(cx - 22, iy); ctx.lineTo(cx + 22, iy); ctx.moveTo(cx, iy - 16); ctx.lineTo(cx, iy + 16);
+  ctx.moveTo(cx - 14, iy - 7); ctx.lineTo(cx - 22, iy); ctx.lineTo(cx - 14, iy + 7);
+  ctx.moveTo(cx + 14, iy - 7); ctx.lineTo(cx + 22, iy); ctx.lineTo(cx + 14, iy + 7);
+  ctx.stroke();
+  // Shift: a double chevron (run).
+  const col = (x: number, cw: number, label: string, icon: (x: number) => void) => { cap(x, 56, cw, label); gold(); icon(x + cw / 2); };
+  col(186, 92, "Shift", (x) => {
+    ctx.beginPath();
+    for (const dx of [-12, 6]) { ctx.moveTo(x + dx, iy - 12); ctx.lineTo(x + dx + 12, iy); ctx.lineTo(x + dx, iy + 12); }
+    ctx.stroke();
+  });
+  // E: a filled ring (use what is nearby).
+  col(298, 52, "E", (x) => {
+    ctx.beginPath(); ctx.arc(x, iy, 14, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, iy, 5, 0, Math.PI * 2); ctx.fill();
+  });
+  // M: a folded map.
+  col(370, 52, "M", (x) => {
+    ctx.beginPath();
+    ctx.moveTo(x - 18, iy - 10); ctx.lineTo(x - 6, iy - 15); ctx.lineTo(x + 6, iy - 10); ctx.lineTo(x + 18, iy - 15);
+    ctx.lineTo(x + 18, iy + 10); ctx.lineTo(x + 6, iy + 15); ctx.lineTo(x - 6, iy + 10); ctx.lineTo(x - 18, iy + 15); ctx.closePath();
+    ctx.moveTo(x - 6, iy - 15); ctx.lineTo(x - 6, iy + 10); ctx.moveTo(x + 6, iy - 10); ctx.lineTo(x + 6, iy + 15);
+    ctx.stroke();
+  });
+  // H: a question mark in a ring (help), the key the whole guide hangs on.
+  col(442, 52, "H", (x) => {
+    ctx.beginPath(); ctx.arc(x, iy, 17, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, iy - 4, 6, Math.PI * 1.05, Math.PI * 2.3); ctx.lineTo(x, iy + 5); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, iy + 11, 2.6, 0, Math.PI * 2); ctx.fill();
+  });
+}
+
+/** The gold info sign on the reception counter's front (drawn on a disc, so the square corners never show). */
+function drawInfoSign(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  ctx.clearRect(0, 0, w, h);
+  const r = w / 2 - 4;
+  const disc = ctx.createRadialGradient(w * 0.42, h * 0.38, r * 0.1, w / 2, h / 2, r);
+  disc.addColorStop(0, "#ffe19a");
+  disc.addColorStop(1, "#f0a92b");
+  ctx.fillStyle = disc;
+  ctx.beginPath(); ctx.arc(w / 2, h / 2, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.55)";
+  ctx.lineWidth = w * 0.025;
+  ctx.beginPath(); ctx.arc(w / 2, h / 2, r * 0.86, 0, Math.PI * 2); ctx.stroke();
+  // The "i": a dot over a rounded stem.
+  ctx.fillStyle = "#2a1a04";
+  ctx.beginPath(); ctx.arc(w / 2, h * 0.3, w * 0.075, 0, Math.PI * 2); ctx.fill();
+  roundRect(ctx, w / 2 - w * 0.065, h * 0.43, w * 0.13, h * 0.34, w * 0.05);
+  ctx.fill();
 }
 
 /** Arcade screen: the Asteroid Run attract screen, a rocket among faceted rocks. */
@@ -272,13 +346,15 @@ const PM = {
   paper: matte(P.paper),
   rugInner: matte(P.rugInner),
   gold: matte("#f5b83d", { emissive: "#f5b83d", emissiveIntensity: 0.6 }),
+  brochures: P.lockers.map((c) => matte(c, { roughness: 0.8 })),
   indicatorLight: matte(P.indicator, { emissive: P.indicator, emissiveIntensity: 0.9 }),
 };
 
 const lazy = {
   board: () => canvasMaterial("prop:teamBoard", 1024, 478, drawTeamBoard, { fallback: P.boardWhite, roughness: 0.7 }),
   kiosk: () => canvasMaterial("prop:kiosk", 512, 360, drawKioskList, { glow: 0.85, fallback: "#1b2a44", roughness: 0.4 }),
-  deskScreen: () => canvasMaterial("prop:deskScreen", 256, 160, drawDeskScreen, { glow: 0.8, fallback: "#1b2a44", roughness: 0.4 }),
+  receptionHelp: () => canvasMaterial("prop:receptionHelp", 512, 192, drawReceptionHelp, { glow: 0.85, fallback: "#1a2742", roughness: 0.4 }),
+  infoSign: () => canvasMaterial("prop:infoSign", 256, 256, drawInfoSign, { glow: 0.7, fallback: "#f5b83d", roughness: 0.4 }),
   arcade: () => canvasMaterial("prop:arcade", 256, 200, drawArcade, { glow: 1, fallback: "#07060f", roughness: 0.4 }),
   indicator: () => canvasMaterial("prop:indicator", 128, 48, drawIndicator, { glow: 0.9, fallback: "#111318", roughness: 0.4 }),
   mirror: () => canvasMaterial("prop:mirror", 128, 256, drawMirror, { glow: 0.25, fallback: P.mirror, roughness: 0.1 }),
@@ -381,26 +457,63 @@ function TeamBoard() {
  * wood top and a service bell; the receptionist side (-z) is a lower work
  * surface whose monitor faces -z.
  */
+/** Vertical slat positions across the reception back wall. */
+const RECEPTION_SLATS = Array.from({ length: 15 }, (_, i) => -1.26 + i * 0.18);
+
+/**
+ * Reception counter, the office's help desk. Visitor side (+z): a white
+ * counter on a dark plinth with wood end caps, a wood feature panel carrying
+ * a glowing gold info sign, gold light lines under the lip and along the
+ * floor, and on the wood top a service bell, a brochure stand and a small
+ * plant. Behind it a slatted wood wall holds the help display with the map's
+ * main keys, so the desk reads as "ask here" from across the floor.
+ */
 function ReceptionDesk() {
   return (
     <group>
-      {/* Counter front stops 2 cm short of the wood strip: coplanar faces z-fight into stripes. */}
-      <Rounded size={[2.8, 0.98, 0.38]} radius={0.15} position={[0, 0.49, 0.24]} material={MAT.deskBody} />
+      {/* Back wall: dark panel, light slats, a gold light line on top. */}
+      <Box size={[2.8, 2.1, 0.05]} position={[0, 1.05, -0.42]} material={MAT.woodDark} />
+      {RECEPTION_SLATS.map((x) => <Box key={x} size={[0.07, 2.02, 0.03]} position={[x, 1.05, -0.38]} material={MAT.wood} />)}
+      <Box size={[2.8, 0.05, 0.1]} position={[0, 2.125, -0.405]} material={MAT.woodDark} />
+      <Box size={[2.7, 0.018, 0.02]} position={[0, 2.09, -0.345]} material={PM.gold} cast={false} />
+      {/* Help display on the wall, facing the visitors. */}
+      <Rounded size={[1.56, 0.64, 0.05]} radius={0.03} position={[0, 1.62, -0.34]} material={PM.kioskHead} />
+      <Panel size={[1.46, 0.548]} position={[0, 1.62, -0.3135]} material={lazy.receptionHelp()} />
+      <Box size={[0.6, 0.02, 0.012]} position={[0, 1.95, -0.32]} material={PM.gold} cast={false} />
+
+      {/* Receptionist side: a low work surface on two pedestals and a keyboard. */}
+      <Rounded size={[2.5, 0.04, 0.3]} radius={0.015} position={[0, 0.74, -0.17]} material={MAT.deskTop} />
+      <Box size={[0.36, 0.72, 0.26]} position={[-1.05, 0.36, -0.17]} material={MAT.deskBody} />
+      <Box size={[0.36, 0.72, 0.26]} position={[1.05, 0.36, -0.17]} material={MAT.deskBody} />
+      <Box size={[0.4, 0.02, 0.12]} position={[0.2, 0.77, -0.2]} material={MAT.keyboard} />
+
+      {/* Visitor counter: plinth, body and wood end caps (body stops short of the caps: no coplanar faces). */}
+      <Box size={[2.64, 0.08, 0.34]} position={[0, 0.04, 0.22]} material={MAT.woodDark} />
+      <Box size={[2.5, 0.012, 0.012]} position={[0, 0.07, 0.395]} material={PM.gold} cast={false} />
+      <Rounded size={[2.6, 0.9, 0.38]} radius={0.12} position={[0, 0.53, 0.24]} material={MAT.deskBody} />
+      <Rounded size={[0.1, 0.96, 0.42]} radius={0.03} position={[-1.35, 0.5, 0.23]} material={MAT.wood} />
+      <Rounded size={[0.1, 0.96, 0.42]} radius={0.03} position={[1.35, 0.5, 0.23]} material={MAT.wood} />
       <Rounded size={[2.8, 0.05, 0.46]} radius={0.02} position={[0, 1.005, 0.22]} material={MAT.wood} />
-      <Box size={[2.3, 0.1, 0.02]} position={[0, 0.55, 0.44]} material={MAT.wood} cast={false} />
-      <Rounded size={[2.5, 0.04, 0.44]} radius={0.015} position={[0, 0.74, -0.2]} material={MAT.deskTop} />
-      <Box size={[0.36, 0.72, 0.42]} position={[-1.05, 0.36, -0.2]} material={MAT.deskBody} />
-      <Box size={[0.36, 0.72, 0.42]} position={[1.05, 0.36, -0.2]} material={MAT.deskBody} />
-      {/* Monitor facing the receptionist. */}
-      <Box size={[0.2, 0.015, 0.14]} position={[-0.3, 0.768, -0.05]} material={MAT.monitor} />
-      <Box size={[0.06, 0.12, 0.05]} position={[-0.3, 0.83, -0.05]} material={MAT.monitor} />
-      <Rounded size={[0.56, 0.32, 0.035]} radius={0.012} position={[-0.3, 0.93, -0.08]} material={MAT.monitor} />
-      <Panel size={[0.52, 0.28]} position={[-0.3, 0.93, -0.0985]} rotation={[0, Math.PI, 0]} material={lazy.deskScreen()} />
-      <Box size={[0.4, 0.02, 0.13]} position={[-0.3, 0.77, -0.3]} material={MAT.keyboard} />
-      {/* Service bell on the visitor counter. */}
-      <Cyl radius={0.07} height={0.012} position={[0.9, 1.036, 0.26]} material={MAT.monitor} />
-      <mesh geometry={PGEO.dome} material={PM.bell} position={[0.9, 1.042, 0.26]} scale={0.055} castShadow />
-      <mesh geometry={PGEO.sphere} material={PM.bell} position={[0.9, 1.1, 0.26]} scale={0.012} />
+      <Box size={[2.5, 0.016, 0.012]} position={[0, 0.965, 0.432]} material={PM.gold} cast={false} />
+      {/* Front feature panel with the info sign. */}
+      <Rounded size={[0.92, 0.62, 0.03]} radius={0.02} position={[0, 0.52, 0.43]} material={MAT.wood} />
+      <mesh position={[0, 0.54, 0.448]} material={lazy.infoSign()}>
+        <circleGeometry args={[0.2, 40]} />
+      </mesh>
+
+      {/* On the counter: service bell, brochure stand, a small plant. */}
+      <Cyl radius={0.07} height={0.012} position={[0.95, 1.036, 0.26]} material={MAT.monitor} />
+      <mesh geometry={PGEO.dome} material={PM.bell} position={[0.95, 1.042, 0.26]} scale={0.055} castShadow />
+      <mesh geometry={PGEO.sphere} material={PM.bell} position={[0.95, 1.1, 0.26]} scale={0.012} />
+      <Box size={[0.34, 0.02, 0.12]} position={[-0.9, 1.04, 0.24]} material={PM.kioskHead} />
+      {P.lockers.slice(0, 3).map((colour, i) => (
+        <group key={colour} position={[-1.01 + i * 0.11, 1.11, 0.24]} rotation={[-0.2, 0, 0]}>
+          <Box size={[0.085, 0.13, 0.01]} position={[0, 0, 0]} material={PM.brochures[i]!} />
+        </group>
+      ))}
+      <Cyl radius={0.05} height={0.07} position={[-0.35, 1.065, 0.3]} material={MAT.pot} />
+      <mesh geometry={GEO.blob} material={MAT.leaf} position={[-0.35, 1.13, 0.3]} scale={[0.07, 0.06, 0.07]} castShadow />
+      <mesh geometry={GEO.blob} material={MAT.leafDark} position={[-0.32, 1.17, 0.29]} scale={0.035} castShadow />
     </group>
   );
 }

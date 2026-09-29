@@ -102,7 +102,8 @@ export type FurnitureKind =
 export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: number; solid: boolean }> = {
   meetingTable: { w: 3.6, d: 1.6, h: 0.76, solid: true },
   teamBoard: { w: 2.6, d: 0.2, h: 1.9, solid: true },
-  receptionDesk: { w: 2.8, d: 0.9, h: 1.1, solid: true },
+  // The counter is 1.1 m; its slatted back wall with the help display rises to 2.2 m.
+  receptionDesk: { w: 2.8, d: 0.9, h: 2.2, solid: true },
   kiosk: { w: 1.0, d: 0.5, h: 1.8, solid: true },
   lockers: { w: 2.4, d: 0.5, h: 1.9, solid: true },
   mirror: { w: 0.9, d: 0.12, h: 1.9, solid: true },
