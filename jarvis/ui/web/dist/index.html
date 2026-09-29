@@ -106,7 +106,7 @@
       }
       @keyframes jbs-spin { to { transform: rotate(360deg); } }
     </style>
-    <script type="module" crossorigin src="/assets/index-Cyso2z_a.js"></script>
+    <script type="module" crossorigin src="/assets/index-CFyTQxkL.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-BRlPX6Rw.css">
   </head>
   <body>
@@ -142,6 +142,34 @@
         } catch (e) {
           /* storage blocked (private mode) — keep the neutral fallback */
         }
+        var updating = false;
+        var recoveryQuery = new URLSearchParams(location.search);
+        var recoveryFromQuery = recoveryQuery.get("jarvis_recovery") === "1";
+        var recoveryFromHash = location.hash === "#jarvis-interface-recovery";
+        var recovering = recoveryFromQuery || recoveryFromHash;
+        try {
+          updating = sessionStorage.getItem("jarvis:interface-update") === "1";
+          recovering = recovering || sessionStorage.getItem("jarvis:interface-recovery") === "1";
+          sessionStorage.removeItem("jarvis:interface-update");
+          sessionStorage.removeItem("jarvis:interface-recovery");
+        } catch (e) {
+          /* storage blocked — the native recovery fragment still works */
+        }
+        if (recoveryFromQuery || recoveryFromHash) {
+          try {
+            recoveryQuery.delete("jarvis_recovery");
+            var remaining = recoveryQuery.toString();
+            history.replaceState(
+              null, "", location.pathname + (remaining ? "?" + remaining : "") +
+              (recoveryFromHash ? "" : location.hash)
+            );
+          } catch (e) {
+            /* a restricted view may keep the marker until it navigates again */
+          }
+        }
+        var status = document.querySelector("#jarvis-boot-splash .sub");
+        if (status && updating) status.textContent = "Updating interface…";
+        else if (status && recovering) status.textContent = "Restoring interface…";
       })();
     </script>
     <script>
@@ -223,12 +251,20 @@
         // window would load, confirm those files answer, and only then go.
         // Never gives up — showing the app that is already here beats showing
         // nothing. Mirrors src/lib/safeReload.ts.
+        function reloadRecovering() {
+          try {
+            sessionStorage.setItem("jarvis:interface-recovery", "1");
+          } catch (e) {
+            location.hash = "jarvis-interface-recovery";
+          }
+          location.reload();
+        }
         function safeReload() {
           var f = typeof fetch === "function" ? fetch : null;
           if (!f) {
             // No way to check (very old engine) — the old behaviour is still
             // better than never reloading at all.
-            location.reload();
+            reloadRecovering();
             return;
           }
           var tries = 0;
@@ -265,7 +301,7 @@
                       left--;
                       if (left > 0) return;
                       if (bad) again();
-                      else location.reload();
+                      else reloadRecovering();
                     });
                 });
               })
@@ -452,6 +488,6 @@
           report();
         }, POLL_MS);
       })();
-    </script>
+    </script>
   </body>
 </html>

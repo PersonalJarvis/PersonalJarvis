@@ -3135,7 +3135,9 @@ class DesktopApp:
             return
 
         self._auto_recovery_used = True
-        scheduled, detail = self._schedule_restart(drop_elevation=False)
+        scheduled, detail = self._schedule_restart(
+            drop_elevation=False, reason="backend_recovery"
+        )
         if scheduled:
             logger.warning("Backend died — restarting the app automatically.")
         else:
@@ -3536,7 +3538,7 @@ class DesktopApp:
         (no window to restart). Fully guarded — a spawn failure leaves the app
         running rather than half-quitting.
         """
-        return self._schedule_restart(drop_elevation=False)[0]
+        return self._schedule_restart(drop_elevation=False, reason="desktop_request")[0]
 
     def request_unelevated_restart(self) -> tuple[bool, str]:
         """Restart WITHOUT the administrator rights this process is carrying.
@@ -3554,9 +3556,11 @@ class DesktopApp:
         comes back is strictly worse than the problem being fixed, and the
         detail string is what the UI shows instead of a silent dead button.
         """
-        return self._schedule_restart(drop_elevation=True)
+        return self._schedule_restart(drop_elevation=True, reason="input_isolation")
 
-    def _schedule_restart(self, *, drop_elevation: bool) -> tuple[bool, str]:
+    def _schedule_restart(
+        self, *, drop_elevation: bool, reason: str = "unspecified"
+    ) -> tuple[bool, str]:
         """Spawn the detached relauncher, then quit — optionally dropping
         elevation on the way out.
 
@@ -3635,8 +3639,9 @@ class DesktopApp:
 
         threading.Thread(target=_quit_soon, name="jarvis-restart-quit", daemon=True).start()
         logger.info(
-            "Self-restart scheduled (relauncher spawned{}; quitting in ~0.2 s, "
+            "Self-restart scheduled (reason={}; relauncher spawned{}; quitting in ~0.2 s, "
             "independent hard-exit watchdog at ~0.9 s).",
+            reason,
             " WITHOUT administrator rights" if drop_elevation else "",
         )
         return (True, "restart scheduled")

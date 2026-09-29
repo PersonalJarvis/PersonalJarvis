@@ -28,6 +28,56 @@ function indexHtmlPath(): string {
 
 const HTML = readFileSync(indexHtmlPath(), "utf8");
 
+test("an interface reload identifies itself without claiming the assistant restarted", () => {
+  const script = (HTML.match(/<script>([\s\S]*?)<\/script>/g) ?? []).find((s) =>
+    s.includes('localStorage.getItem("jarvis.assistantName")'),
+  );
+  expect(script).toBeDefined();
+  document.body.innerHTML =
+    '<div id="jarvis-boot-splash"><div class="name"></div><div class="sub">Starting…</div></div>';
+  const session = new Map([["jarvis:interface-update", "1"]]);
+  const sessionStub = {
+    getItem: (key: string) => session.get(key) ?? null,
+    removeItem: (key: string) => void session.delete(key),
+  };
+  // eslint-disable-next-line no-new-func
+  new Function("localStorage", "sessionStorage", script!.slice(8, -9))(
+    { getItem: () => "Nova" },
+    sessionStub,
+  );
+  expect(document.querySelector("#jarvis-boot-splash .name")?.textContent).toBe("Nova");
+  expect(document.querySelector("#jarvis-boot-splash .sub")?.textContent).toBe(
+    "Updating interface…",
+  );
+  expect(session.size).toBe(0);
+});
+
+test("a native recovery query identifies a late reload and is cleared", () => {
+  const script = (HTML.match(/<script>([\s\S]*?)<\/script>/g) ?? []).find((s) =>
+    s.includes('localStorage.getItem("jarvis.assistantName")'),
+  );
+  expect(script).toBeDefined();
+  document.body.innerHTML =
+    '<div id="jarvis-boot-splash"><div class="name"></div><div class="sub">Starting…</div></div>';
+  const replaceState = vi.fn();
+  const locationStub = {
+    hash: "",
+    pathname: "/",
+    search: "?dev=1&jarvis_recovery=1",
+  };
+  // eslint-disable-next-line no-new-func
+  new Function("localStorage", "sessionStorage", "location", "history", script!.slice(8, -9))(
+    { getItem: () => "Nova" },
+    { getItem: () => null, removeItem: () => undefined },
+    locationStub,
+    { replaceState },
+  );
+  expect(document.querySelector("#jarvis-boot-splash .sub")?.textContent).toBe(
+    "Restoring interface…",
+  );
+  expect(replaceState).toHaveBeenCalledWith(null, "", "/?dev=1");
+});
+
 /** The one inline script that owns the reload guard. */
 function watchdogSource(): string {
   const scripts = HTML.match(/<script>([\s\S]*?)<\/script>/g) ?? [];
@@ -138,6 +188,7 @@ describe("the blank-window watchdog in index.html", () => {
     const run = runWatchdog({ served: built });
     await vi.advanceTimersByTimeAsync(3_000);
     expect(run.reloads()).toBe(1);
+    expect(run.store.get("jarvis:interface-recovery")).toBe("1");
   });
 
   test("an emptied root is a crash, and does not wait twenty seconds for it", async () => {
