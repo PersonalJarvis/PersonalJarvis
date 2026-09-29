@@ -777,24 +777,9 @@ def test_a_depleted_key_failure_reads_as_a_sentence_not_json() -> None:
     assert note.startswith("Its provider is out of credits or rate-limited.")
 
 
-def test_a_connected_subscription_is_the_last_candidate(monkeypatch) -> None:
-    """One depleted API key + a signed-in coding CLI must still produce recaps."""
-    from jarvis.brain import resolver
-
-    api = SimpleNamespace(model="depleted-api")
-    subscription = SimpleNamespace(model="coding-cli")
-    monkeypatch.setattr(resolver, "frontier_brain_candidates", lambda cfg: iter([api]))
-    monkeypatch.setattr(resolver, "resolve_subscription_brain", lambda cfg, **kwargs: subscription)
-    monkeypatch.setattr("jarvis.core.config.load_config", lambda: SimpleNamespace())
-
-    assert recap_engine._resolve_brains() == [api, subscription]  # noqa: SLF001
-
-
-def test_a_full_api_chain_still_ends_at_the_subscription(monkeypatch) -> None:
-    """The regression that shipped: three configured-but-dead API keys filled
-    every candidate slot, and the one credential provably working — the CLI
-    running in the panes — was never asked. The subscription rides behind the
-    API cap, always."""
+def test_a_connected_subscription_writes_recaps_without_any_key(monkeypatch) -> None:
+    """Recaps are background work: a signed-in subscription writes them and no
+    per-token key is asked, even when several keys are configured."""
     from jarvis.brain import resolver
 
     brains = [SimpleNamespace(model=f"api-{n}") for n in range(recap_engine.MAX_PROVIDER_TRIES)]
@@ -803,7 +788,19 @@ def test_a_full_api_chain_still_ends_at_the_subscription(monkeypatch) -> None:
     monkeypatch.setattr(resolver, "resolve_subscription_brain", lambda cfg, **kwargs: subscription)
     monkeypatch.setattr("jarvis.core.config.load_config", lambda: SimpleNamespace())
 
-    assert recap_engine._resolve_brains() == [*brains, subscription]  # noqa: SLF001
+    assert recap_engine._resolve_brains() == [subscription]  # noqa: SLF001
+
+
+def test_without_a_subscription_the_keyed_chain_writes_recaps(monkeypatch) -> None:
+    """A single-key install keeps model recaps (AP-22)."""
+    from jarvis.brain import resolver
+
+    api = SimpleNamespace(model="only-key")
+    monkeypatch.setattr(resolver, "frontier_brain_candidates", lambda cfg: iter([api]))
+    monkeypatch.setattr(resolver, "resolve_subscription_brain", lambda cfg, **kwargs: None)
+    monkeypatch.setattr("jarvis.core.config.load_config", lambda: SimpleNamespace())
+
+    assert recap_engine._resolve_brains() == [api]  # noqa: SLF001
 
 
 def test_a_failing_provider_leaves_the_previous_sentence_in_place() -> None:
