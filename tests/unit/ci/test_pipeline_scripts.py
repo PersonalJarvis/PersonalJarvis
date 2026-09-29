@@ -334,6 +334,7 @@ def test_train_updates_only_conflicting_or_stale_red_branches():
     assert decide("MERGEABLE", "failure", True) == "update"
     assert decide("MERGEABLE", "failure", False) == "wait"
     assert decide("UNKNOWN", "success", False) == "wait"
+    assert decide("UNKNOWN", "approve", False) == "approve"
 
 
 # --------------------------------------------------------------------------- release

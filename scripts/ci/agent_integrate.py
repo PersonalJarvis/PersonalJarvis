@@ -466,12 +466,12 @@ def decide(mergeable: str, state: str, behind: bool) -> str:
     """
     if mergeable == "CONFLICTING":
         return "update"
+    if state in ("approve", "rerun"):
+        return state  # getting CI to run never depends on mergeability
     if mergeable not in ("MERGEABLE", ""):
         return "wait"  # GitHub is still computing mergeability
     if state == "success":
         return "merge"
-    if state in ("approve", "rerun"):
-        return state
     if state == "failure" and behind:
         return "update"
     return "wait"
