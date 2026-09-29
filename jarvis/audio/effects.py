@@ -65,6 +65,10 @@ class AudioEffectsService:
             config = await asyncio.to_thread(self._load_config)
             if not bool(getattr(getattr(config, "ui", None), "sound_effects", True)):
                 return
+            # Every shared-service capture is an appshot to the user, so the
+            # Appshots page's "play sound" switch owns this cue.
+            if not bool(getattr(getattr(config, "appshot", None), "sound", True)):
+                return
             player = self._bound_player()
             if player is None:
                 player = await asyncio.to_thread(self._make_player, config)

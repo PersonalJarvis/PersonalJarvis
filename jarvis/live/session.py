@@ -937,6 +937,46 @@ class LiveVoiceSession:
         )
         return True
 
+    async def attach_appshot(self, image: bytes, mime: str, note: str) -> bool:
+        """Put an appshot into the thinking backend's context, silently.
+
+        The voice model only hears that it exists; the picture itself goes to
+        the backend conversation, which answers every question about it. No
+        response is requested: the user's next words are the question.
+        """
+        if not self.is_active or self._recovering or self._resume_needs_input:
+            return False
+        await self._connection.send(
+            {
+                "type": "session.thinking.append",
+                "delegation_id": None,
+                "content": (
+                    "The user just took an appshot of their front window. It is "
+                    "in your backend's context. Delegate any question about what "
+                    "they are looking at; do not describe it yourself, and do "
+                    "not comment on the appshot unless asked."
+                ),
+            }
+        )
+        await self._connection.send(
+            {
+                "type": "response.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": note},
+                        {
+                            "type": "input_image",
+                            "image_url": f"data:{mime};base64,"
+                            + base64.b64encode(image).decode("ascii"),
+                        },
+                    ],
+                },
+            }
+        )
+        return True
+
     async def end(self, *, reason: str = "client_stop") -> None:
         if self._ended:
             return

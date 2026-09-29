@@ -2697,6 +2697,25 @@ _MID_ANSWER_ERROR_PHRASES: dict[str, str] = {
 }
 
 
+#: Source layers that run without a person waiting on the reply. An appshot
+#: parked for "the next message" belongs to the user's next message, never to
+#: a scheduled task or a background worker that happens to run first.
+_AUTOMATED_LAYER_PREFIXES = (
+    "tasks",
+    "workflows",
+    "skills",
+    "missions",
+    "society",
+    "supervisor",
+    "tool.",
+)
+
+
+def _takes_pending_appshot(source_layer: str | None) -> bool:
+    layer = (source_layer or "").strip().lower()
+    return not layer.startswith(_AUTOMATED_LAYER_PREFIXES)
+
+
 class BrainManager:
     """Top-level orchestrator with intent router and smart fallback."""
 
@@ -10028,6 +10047,7 @@ class BrainManager:
             locale=locale,
             bus=self._bus,
             trace_id=trace_id,
+            allow_pending_appshot=_takes_pending_appshot(source_layer),
         )
         if outcome.status == "clarify":
             pending_map[confirm_key] = _PendingScreenConfirm(

@@ -203,6 +203,7 @@ class ScreenContextService:
         self._expiry_timers: dict[str, asyncio.TimerHandle | threading.Timer] = {}
         self._handle_lock = threading.RLock()
         self._closed = False
+        self._shutter_hook: Any | None = None
         self._patterns = redaction.build_patterns(
             self._settings.extra_patterns,
             include_defaults=self._settings.include_default_patterns,
@@ -262,6 +263,16 @@ class ScreenContextService:
             from jarvis.audio.effects import attach_audio_effects  # noqa: PLC0415
 
             attach_audio_effects(bus)
+
+    def set_shutter_hook(self, hook: Any | None) -> None:
+        """Run ``hook(target, size, rgb, monitors)`` at every shutter.
+
+        Called synchronously right after the pixels are grabbed, on the event
+        loop, before redaction. It exists for the appshot effect, which must
+        start at the true shutter moment; the hook stays in-process and must
+        schedule anything slow itself. Its failures never affect the capture.
+        """
+        self._shutter_hook = hook
 
     # ---- intent ----------------------------------------------------------
 
@@ -424,10 +435,11 @@ class ScreenContextService:
             if callable(getter):
                 window_handle = await asyncio.to_thread(getter)
 
+        monitors = await asyncio.to_thread(self.displays.monitors)
         try:
             target, target_degradations = resolve_target(
                 verdict.intent,
-                monitors=await asyncio.to_thread(self.displays.monitors),
+                monitors=monitors,
                 cursor_point=cursor_point,
                 bar_point=bar_point,
                 window=window_facts,
@@ -536,6 +548,7 @@ class ScreenContextService:
             # This is the shutter boundary: pixels exist now. Publish only
             # metadata so the shared audio layer can play its cue at the
             # truthful moment without receiving or retaining screen content.
+            self._run_shutter_hook(target, size, rgb, monitors)
             await self._publish_grabbed(size, trace_id=event_trace_id)
 
             # Treat a post-shutter identity change as untrusted: discard the
@@ -613,6 +626,21 @@ class ScreenContextService:
             )
         finally:
             await self._dismiss_indicator(trace_id=event_trace_id)
+
+    def _run_shutter_hook(
+        self,
+        target: CaptureTarget,
+        size: tuple[int, int],
+        rgb: bytes,
+        monitors: list[dict],
+    ) -> None:
+        hook = self._shutter_hook
+        if hook is None:
+            return
+        try:
+            hook(target, size, rgb, monitors)
+        except Exception:  # noqa: BLE001 - an effect must never cost the capture
+            log.warning("screen_context: shutter hook failed", exc_info=True)
 
     # ---- assembly --------------------------------------------------------
 

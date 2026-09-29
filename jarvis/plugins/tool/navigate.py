@@ -54,6 +54,8 @@ KNOWN: frozenset[str] = frozenset(
         "feedback",
         "agent-instructions",
         "wallpaper",
+        # Appshots: the shortcut and destination for showing the front window.
+        "appshots",
         "dictionary",
         "dictation",
         "voice-shortcuts",
@@ -199,6 +201,9 @@ _ALIASES: dict[str, str] = {
     "hintergrund": "wallpaper",  # i18n-allow: input vocab
     "hintergrundbild": "wallpaper",  # i18n-allow: input vocab
     "fondo de pantalla": "wallpaper",  # i18n-allow: input vocab
+    "appshot": "appshots",
+    "app shots": "appshots",
+    "app shot": "appshots",
     "task bar": "taskbar",
     "taskleiste": "taskbar",
     # The Artifacts section (section id kept as "visualization" — its 2026-08

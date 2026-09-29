@@ -1228,6 +1228,25 @@ class ScreenCaptureCompleted(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class AppshotTaken(Event):
+    """An appshot was captured and handed to the conversation.
+
+    Metadata only, like ``ScreenCaptureCompleted``: pixels stay in
+    ``jarvis.appshot`` memory and are served to the app on request.
+    """
+
+    appshot_id: str = ""
+    #: What started it: ``hotkey`` | ``voice`` | ``tool`` | ``button``.
+    trigger: str = ""
+    #: Where it went: ``voice`` (running call) | ``message`` (next turn) |
+    #: ``turn`` (the turn that asked for it) | ``none``.
+    delivered_to: str = ""
+    target_label: str = ""
+    width: int = 0
+    height: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class ActionPlanned(Event):
     """The CU loop planner proposed the next action (before execution)."""
     action_kind: str = ""               # "click" | "type" | "hotkey" | "wait" | "verify"

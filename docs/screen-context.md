@@ -11,6 +11,13 @@ platform through the same adapter seam.
 
 ## 1. What this is
 
+> **Appshots** (2026-09-29) are the user-facing face of this engine: a
+> global shortcut, a button and the word "appshot" take one front-window
+> capture through the service below, with a shutter effect and sound, and
+> deliver it to a running voice call or the next message. See
+> [appshots.md](appshots.md). The Settings card described in Wave 4 moved
+> onto the Appshots page as **Allow appshots**.
+
 When the user says something that unambiguously asks Jarvis to *look* — "can you
 see this?", "what does that say?", "look at the error" — Jarvis takes **one**
 capture of the screen the user is actually working on, enriches it with the

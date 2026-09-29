@@ -33,6 +33,7 @@ import {
   Wallet,
   Workflow,
   Image as ImageIcon,
+  ScanLine,
   type LucideIcon,
 } from "lucide-react";
 import { OllamaIcon } from "@/components/icons/OllamaIcon";
@@ -266,6 +267,15 @@ export const NAV_FOOTER_ITEMS: NavItem[] = [
 ];
 
 /**
+ * Rows that exist only inside the Settings hub's own navigation, not in the
+ * app sidebar: settings for one feature, reached through Settings the way the
+ * Appshots page is.
+ */
+export const SETTINGS_HUB_ONLY_ITEMS: NavItem[] = [
+  { id: "appshots", labelKey: "nav.appshots", icon: ScanLine, fallbackLabel: "Appshots" },
+];
+
+/**
  * Every section id rendered inside the Settings hub (`SettingsHubView`).
  *
  * The ids keep their meaning — deep links, voice commands, the deck and the
@@ -289,6 +299,7 @@ export const SETTINGS_HUB_IDS: readonly SectionId[] = [
   "local-models",
   "computers",
   "wallpaper",
+  "appshots",
   "costs",
   "feedback",
 ];

@@ -237,6 +237,61 @@ label,
     }
   }
 
+  /* Appshots page demo: the same shutter the desktop overlay plays — a white
+     flash, then the picture shrinks into the corner, rests, and slides out. */
+  .appshot-demo-flash {
+    animation: appshot-demo-flash 4.8s ease-out infinite;
+  }
+
+  .appshot-demo-card {
+    transform-origin: 100% 100%;
+    animation: appshot-demo-card 4.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .appshot-demo-flash,
+    .appshot-demo-card {
+      animation: none;
+      opacity: 0;
+    }
+  }
+
+  @keyframes appshot-demo-flash {
+    0%,
+    6% {
+      opacity: 0;
+    }
+    9% {
+      opacity: 0.85;
+    }
+    22%,
+    100% {
+      opacity: 0;
+    }
+  }
+
+  @keyframes appshot-demo-card {
+    0%,
+    8% {
+      opacity: 0;
+      transform: translate(0, 0) scale(1);
+    }
+    10% {
+      opacity: 1;
+      transform: translate(0, 0) scale(1);
+    }
+    28%,
+    78% {
+      opacity: 1;
+      transform: translate(-6%, -7%) scale(0.34);
+    }
+    90%,
+    100% {
+      opacity: 0;
+      transform: translate(4%, -7%) scale(0.34);
+    }
+  }
+
   @keyframes agentic-transcript-in {
     from {
       opacity: 0;

@@ -12,7 +12,6 @@ const SEARCH_GROUPS = [
   { id: "languages", keys: ["language", "languages_group_title"] },
   { id: "app", keys: ["app_settings_group_title", "autostart", "appearance", "jarvis_api"] },
   { id: "permissions", keys: ["nav.permissions"] },
-  { id: "screen-context", keys: ["screen_context"] },
   { id: "realtime-voice", keys: ["realtime_voice"] },
   { id: "system-prompt", keys: ["system_prompt"] },
   { id: "wake-word", keys: ["wake_word"] },
@@ -32,6 +31,7 @@ const SEARCH_PAGES = [
   { id: "socials", keys: ["socials"] },
   { id: "apikeys", keys: ["apikeys_view", "apikeys_voice", "apikeys_model", "apikeys_cu_model"] },
   { id: "wallpaper", keys: ["home.background_label", "home.background_hint"] },
+  { id: "appshots", keys: ["appshots"] },
   { id: "costs", keys: ["costs_view"] },
   { id: "feedback", keys: ["feedback"] },
 ] as const;

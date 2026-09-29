@@ -85,6 +85,9 @@ export type SectionId =
   | "feedback"
   | "agent-instructions"
   | "wallpaper"
+  // Appshots: the shortcut, destination, sound and flash for showing the
+  // assistant the front window. A Settings-hub page.
+  | "appshots"
   | "dictionary"
   | "dictation"
   // The three tabs added by the merged voice section. "dictation" (default
@@ -139,6 +142,7 @@ export const SECTION_IDS = [
   "feedback",
   "agent-instructions",
   "wallpaper",
+  "appshots",
   "dictionary",
   "dictation",
   // `satisfies` only catches array entries that are missing from the union,
@@ -229,6 +233,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   feedback: "Feedback",
   "agent-instructions": "Agent Instructions",
   wallpaper: "Wallpaper",
+  appshots: "Appshots",
   dictionary: "Dictionary",
   dictation: "Dictation",
   // Plain English, deliberately NOT the "{name} Voice" brand: these labels are

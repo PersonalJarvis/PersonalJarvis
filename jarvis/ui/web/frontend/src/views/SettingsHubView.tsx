@@ -3,6 +3,7 @@ import { ArrowLeft, Loader2, Search, Settings as SettingsIcon, X } from "lucide-
 import {
   NAV_FOOTER_ITEMS,
   NAV_GROUPS,
+  SETTINGS_HUB_ONLY_ITEMS,
   resolveNavLabel,
   type NavItem,
 } from "@/components/layout/navGroups";
@@ -18,7 +19,7 @@ import { cn } from "@/lib/utils";
  * searchable left navigation (Personal · System · Activity) and the selected
  * section on the right:
  *
- *   General: Settings, Profile, {name}.md, Contacts, Socials
+ *   General: Settings, Appshots, Profile, {name}.md, Contacts, Socials
  *   System: Computers, API Keys, Local models, Wallpaper
  *   Activity: Spend, Feedback
  *
@@ -77,6 +78,9 @@ const ComputersTab = lazy(() =>
 const WallpaperTab = lazy(() =>
   import("@/views/WallpaperView").then((m) => ({ default: m.WallpaperView })),
 );
+const AppshotsTab = lazy(() =>
+  import("@/views/AppshotsView").then((m) => ({ default: m.AppshotsView })),
+);
 const CostsTab = lazy(() =>
   import("@/views/CostsView").then((m) => ({ default: m.CostsView })),
 );
@@ -89,6 +93,7 @@ const FeedbackTab = lazy(() =>
 /** The eleven entries of the left navigation, in display order. */
 type HubNavId =
   | "settings"
+  | "appshots"
   | "profile"
   | "agent-instructions"
   | "contacts"
@@ -103,7 +108,7 @@ type HubNavId =
 const HUB_NAV_GROUPS: readonly { labelKey: string; ids: readonly HubNavId[] }[] = [
   {
     labelKey: "settings_hub.group_general",
-    ids: ["settings", "profile", "agent-instructions", "contacts", "socials"],
+    ids: ["settings", "appshots", "profile", "agent-instructions", "contacts", "socials"],
   },
   {
     labelKey: "settings_hub.group_system",
@@ -126,6 +131,7 @@ const TAB_CONTENT: Record<HubNavId | "telephony-setup", LazyExoticComponent<Comp
   "local-models": LocalModelsTab,
   computers: ComputersTab,
   wallpaper: WallpaperTab,
+  appshots: AppshotsTab,
   costs: CostsTab,
   feedback: FeedbackTab,
 };
@@ -156,6 +162,8 @@ function resolveHubTab(active: string): { content: HubNavId | "telephony-setup";
       return { content: "computers", highlight: "computers" };
     case "wallpaper":
       return { content: "wallpaper", highlight: "wallpaper" };
+    case "appshots":
+      return { content: "appshots", highlight: "appshots" };
     case "costs":
       return { content: "costs", highlight: "costs" };
     case "feedback":
@@ -171,7 +179,11 @@ function resolveHubTab(active: string): { content: HubNavId | "telephony-setup";
 // `NAV_GROUPS` plus the footer: "feedback" lives in `NAV_FOOTER_ITEMS`, not in
 // a group (same lookup as TopBar/DockRail) — without it the hub cannot resolve
 // its own tenth entry.
-const ALL_NAV_ITEMS: readonly NavItem[] = [...NAV_GROUPS.flat(), ...NAV_FOOTER_ITEMS];
+const ALL_NAV_ITEMS: readonly NavItem[] = [
+  ...NAV_GROUPS.flat(),
+  ...NAV_FOOTER_ITEMS,
+  ...SETTINGS_HUB_ONLY_ITEMS,
+];
 
 function findNavItem(id: HubNavId): NavItem {
   const item = ALL_NAV_ITEMS.find((row) => row.id === id);

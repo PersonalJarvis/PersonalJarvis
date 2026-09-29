@@ -512,6 +512,7 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     case "local-models":
     case "computers":
     case "wallpaper":
+    case "appshots":
     case "costs":
     case "feedback":
       return <SettingsHubView />;
