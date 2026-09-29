@@ -12,6 +12,7 @@ import type { SocietyAgent } from "../data";
 import type { ToyLook } from "./toyFigureModel";
 import { Railing, SignWall } from "./OfficeFurniture";
 import { DeskInstances } from "./DeskInstances";
+import { CodingSlab, CodingStudio } from "./CodingFloorLook";
 import { ExecutiveDesks, LeadOfficeLight } from "./LeadSuite";
 import { LiveMonitors } from "./LiveMonitors";
 import { TerminalMonitors } from "./TerminalMonitors";
@@ -29,7 +30,7 @@ import { PlayerBubble } from "./OfficeBubbles";
 import { OfficeCameraRig } from "./OfficeCameraRig";
 import { allDesks, type Department, type OfficeLayout, type Point } from "./officeLayout";
 import { isWalkable, nearestWalkable, type NavGrid } from "./officeNav";
-import { DEPARTMENT_TINTS, OFFICE } from "./officePalette";
+import { CODING_SCENE, DEPARTMENT_TINTS, OFFICE } from "./officePalette";
 import { officeSession, player as playerBody, useOfficeStore, type OfficeFloor, type Selection } from "./officeStore";
 import { arrivalPose } from "./officeFloors";
 
@@ -169,7 +170,10 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
   // Lead desks carry their own size and are built as executive desks, not bench instances.
   const benchDesks = useMemo(() => desks.filter((d) => !d.size), [desks]);
   const leadRoom = layout.rooms.find((r) => r.kind === "lead");
-  const background = useMemo(() => new Color(OFFICE.space), []);
+  const coding = floor === "coding";
+  // The coding floor floats in a violet night of its own, so a glance tells the floors apart.
+  const space = coding ? CODING_SCENE.space : OFFICE.space;
+  const background = useMemo(() => new Color(space), [space]);
   const { minX, maxX, minZ, maxZ } = layout.bounds;
   const span = Math.max(maxX - minX, maxZ - minZ);
   const select = useOfficeStore((s) => s.select);
@@ -184,20 +188,24 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
   return (
     <>
       <primitive attach="background" object={background} />
-      <fog attach="fog" args={[OFFICE.space, span * 2.2, span * 4.5]} />
+      <fog attach="fog" args={[space, span * 2.2, span * 4.5]} />
       <Stars radius={span * 3} depth={span} count={2500} factor={4} saturation={0} fade speed={reduced ? 0 : 0.3} />
-      <hemisphereLight args={["#dfe9ff", "#6b5a48", 0.9]} />
+      <hemisphereLight args={coding ? [CODING_SCENE.sky, CODING_SCENE.ground, 0.95] : ["#dfe9ff", "#6b5a48", 0.9]} />
       <ambientLight intensity={0.25} />
       <directionalLight position={[maxX + 10, 26, maxZ + 6]} intensity={1.6} castShadow
         shadow-mapSize={[2048, 2048]} shadow-bias={-0.0004} shadow-normalBias={0.03}
         shadow-camera-left={-span * 0.7} shadow-camera-right={span * 0.7}
         shadow-camera-top={span * 0.7} shadow-camera-bottom={-span * 0.7} shadow-camera-far={120} />
-      <Slab layout={layout} onFloorClick={onFloorClick} />
+      {coding ? <CodingSlab layout={layout} onFloorClick={onFloorClick} /> : <Slab layout={layout} onFloorClick={onFloorClick} />}
       <RoomFloors rooms={layout.rooms} />
       <RoomWalls walls={layout.walls} />
       {layout.rooms.map((room) => <RoomSign key={room.id} room={room} label={t(`society.office.room_${room.kind}`)} />)}
-      {layout.departments.map((dept) => <DepartmentArea key={dept.id} dept={dept} />)}
-      <DeskInstances desks={benchDesks} agents={agents} />
+      {coding
+        ? layout.departments.map((dept) => <CodingStudio key={dept.id} dept={dept} agents={agents} />)
+        : <>
+          {layout.departments.map((dept) => <DepartmentArea key={dept.id} dept={dept} />)}
+          <DeskInstances desks={benchDesks} agents={agents} />
+        </>}
       <ExecutiveDesks desks={desks} agents={agents} onOpenScreen={onOpenScreen} />
       {leadRoom && <LeadOfficeLight room={leadRoom} />}
       {floor === "coding"

@@ -167,6 +167,14 @@ the floor plan differ.
   narrow panel to 520 px once; the user can drag it back. There a monitor click
   focuses the pane in the grid right next to it, and the office's "open the
   ledger" action brings the Agents tab forward.
+- **Its own look** (`CodingFloorLook.tsx`, `CODING_SCENE` / `CODING_STUDIOS`
+  in `officePalette.ts`): same plan as the agents office, none of its
+  surfaces. A violet night instead of navy, a fine terrazzo floor instead of
+  warm planks, and a glowing cyan rim under the slab edge. Every workspace
+  department is furnished as a studio of its own — carpet pattern (grid,
+  stripes, checker, dots, diagonal, zigzag) with a border, a painted sign wall,
+  and desk and chair colours — cycled by the department's index. All of it is
+  flat or outside the railing, so navigation is unchanged.
 
 ## 5c. Lead office as an executive suite (2026-09-29)
 

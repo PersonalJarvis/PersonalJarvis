@@ -207,13 +207,16 @@ function signTexture(label: string): Texture | null {
   return texture;
 }
 
-/** A department's back wall: white partition, dark-wood name board, slatted wood panels. */
-export function SignWall({ label, width, position }: { label: string; width: number; position: [number, number, number] }) {
+/** A department's back wall: white partition, dark-wood name board, slatted wood panels; `tone` repaints wall and slats. */
+export function SignWall({ label, width, position, tone }: {
+  label: string; width: number; position: [number, number, number];
+  tone?: { wall: MeshStandardMaterial; slat: MeshStandardMaterial };
+}) {
   const texture = signTexture(label);
   const slats = Math.max(2, Math.floor(width / 0.5));
   return (
     <group position={position}>
-      <Box size={[width, 1.9, 0.14]} position={[0, 0.95, 0]} material={MAT.wall} />
+      <Box size={[width, 1.9, 0.14]} position={[0, 0.95, 0]} material={tone?.wall ?? MAT.wall} />
       <Box size={[width * 0.52, 0.5, 0.05]} position={[0, 1.35, 0.1]} material={MAT.sign} />
       {texture && (
         <mesh position={[0, 1.35, 0.13]}>
@@ -224,7 +227,7 @@ export function SignWall({ label, width, position }: { label: string; width: num
       {Array.from({ length: slats }, (_, i) => {
         const x = -width / 2 + 0.25 + i * ((width - 0.5) / (slats - 1));
         if (Math.abs(x) < width * 0.3) return null;
-        return <Box key={i} size={[0.12, 1.7, 0.05]} position={[x, 0.95, 0.1]} material={MAT.woodDark} />;
+        return <Box key={i} size={[0.12, 1.7, 0.05]} position={[x, 0.95, 0.1]} material={tone?.slat ?? MAT.woodDark} />;
       })}
     </group>
   );

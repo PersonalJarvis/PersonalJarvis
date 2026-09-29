@@ -5,31 +5,37 @@
  * north at its monitor); a desk facing south is rotated half a turn.
  */
 import { useLayoutEffect, useMemo, useRef } from "react";
-import { BufferGeometry, Euler, InstancedMesh, Matrix4, PlaneGeometry, Quaternion, Vector3, type Material } from "three";
+import { BufferGeometry, Euler, InstancedMesh, Matrix4, PlaneGeometry, Quaternion, Vector3, type Material, type MeshStandardMaterial } from "three";
 import { RoundedBoxGeometry } from "three-stdlib";
 import type { SocietyAgent } from "../data";
 import { GEO, MAT, screenMaterial } from "./OfficeFurniture";
 import type { DeskSlot } from "./officeLayout";
 import type { ScreenFace } from "./screenTextures";
 
-interface Part { geometry: BufferGeometry; material: Material; position: [number, number, number]; scale?: [number, number, number]; cast: boolean }
+/** Which surface of a workstation a part is; a desk tone recolours parts by role. */
+type PartRole = "top" | "body" | "leg" | "monitor" | "keyboard" | "chair" | "seat";
+
+/** Per-department materials for the parts that carry a room's style (the monitor and keyboard stay). */
+export type DeskTone = Partial<Record<Exclude<PartRole, "monitor" | "keyboard">, MeshStandardMaterial>>;
+
+interface Part { role: PartRole; geometry: BufferGeometry; material: Material; position: [number, number, number]; scale?: [number, number, number]; cast: boolean }
 
 const CHAIR_Z = 0.62;
 const rounded = (w: number, h: number, d: number, r: number) => new RoundedBoxGeometry(w, h, d, 2, r);
 
 const PARTS: Part[] = [
-  { geometry: rounded(1.5, 0.06, 0.8, 0.02), material: MAT.deskTop, position: [0, 0.74, 0], cast: true },
-  { geometry: GEO.box, material: MAT.deskBody, position: [0.53, 0.36, 0], scale: [0.36, 0.7, 0.72], cast: true },
-  { geometry: GEO.box, material: MAT.deskLeg, position: [-0.7, 0.36, 0], scale: [0.05, 0.7, 0.7], cast: true },
-  { geometry: GEO.box, material: MAT.deskBody, position: [0, 0.94, -0.41], scale: [1.5, 0.34, 0.03], cast: true },
-  { geometry: GEO.box, material: MAT.monitor, position: [0, 0.87, -0.22], scale: [0.08, 0.2, 0.08], cast: true },
-  { geometry: GEO.box, material: MAT.monitor, position: [0, 0.78, -0.22], scale: [0.24, 0.02, 0.16], cast: true },
-  { geometry: rounded(0.72, 0.44, 0.05, 0.02), material: MAT.monitor, position: [0, 1.18, -0.24], cast: true },
-  { geometry: GEO.box, material: MAT.keyboard, position: [0, 0.78, 0.24], scale: [0.42, 0.02, 0.14], cast: true },
-  { geometry: GEO.cyl, material: MAT.chair, position: [0, 0.03, CHAIR_Z], scale: [0.3, 0.04, 0.3], cast: true },
-  { geometry: GEO.cyl, material: MAT.chair, position: [0, 0.25, CHAIR_Z], scale: [0.03, 0.42, 0.03], cast: false },
-  { geometry: rounded(0.5, 0.08, 0.48, 0.03), material: MAT.chairSeat, position: [0, 0.48, CHAIR_Z], cast: true },
-  { geometry: rounded(0.48, 0.5, 0.07, 0.03), material: MAT.chairSeat, position: [0, 0.78, CHAIR_Z + 0.24], cast: true },
+  { role: "top", geometry: rounded(1.5, 0.06, 0.8, 0.02), material: MAT.deskTop, position: [0, 0.74, 0], cast: true },
+  { role: "body", geometry: GEO.box, material: MAT.deskBody, position: [0.53, 0.36, 0], scale: [0.36, 0.7, 0.72], cast: true },
+  { role: "leg", geometry: GEO.box, material: MAT.deskLeg, position: [-0.7, 0.36, 0], scale: [0.05, 0.7, 0.7], cast: true },
+  { role: "body", geometry: GEO.box, material: MAT.deskBody, position: [0, 0.94, -0.41], scale: [1.5, 0.34, 0.03], cast: true },
+  { role: "monitor", geometry: GEO.box, material: MAT.monitor, position: [0, 0.87, -0.22], scale: [0.08, 0.2, 0.08], cast: true },
+  { role: "monitor", geometry: GEO.box, material: MAT.monitor, position: [0, 0.78, -0.22], scale: [0.24, 0.02, 0.16], cast: true },
+  { role: "monitor", geometry: rounded(0.72, 0.44, 0.05, 0.02), material: MAT.monitor, position: [0, 1.18, -0.24], cast: true },
+  { role: "keyboard", geometry: GEO.box, material: MAT.keyboard, position: [0, 0.78, 0.24], scale: [0.42, 0.02, 0.14], cast: true },
+  { role: "chair", geometry: GEO.cyl, material: MAT.chair, position: [0, 0.03, CHAIR_Z], scale: [0.3, 0.04, 0.3], cast: true },
+  { role: "chair", geometry: GEO.cyl, material: MAT.chair, position: [0, 0.25, CHAIR_Z], scale: [0.03, 0.42, 0.03], cast: false },
+  { role: "seat", geometry: rounded(0.5, 0.08, 0.48, 0.03), material: MAT.chairSeat, position: [0, 0.48, CHAIR_Z], cast: true },
+  { role: "seat", geometry: rounded(0.48, 0.5, 0.07, 0.03), material: MAT.chairSeat, position: [0, 0.78, CHAIR_Z + 0.24], cast: true },
 ];
 
 const SCREEN_GEOMETRY = new PlaneGeometry(0.66, 0.38);
@@ -43,7 +49,7 @@ function deskMatrix(desk: DeskSlot, local: [number, number, number], scale: [num
   return world.multiply(part);
 }
 
-function PartInstances({ part, desks }: { part: Part; desks: DeskSlot[] }) {
+function PartInstances({ part, desks, material }: { part: Part; desks: DeskSlot[]; material: Material }) {
   const ref = useRef<InstancedMesh>(null);
   useLayoutEffect(() => {
     const mesh = ref.current;
@@ -53,7 +59,7 @@ function PartInstances({ part, desks }: { part: Part; desks: DeskSlot[] }) {
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
   }, [desks, part]);
-  return <instancedMesh ref={ref} args={[part.geometry, part.material, Math.max(1, desks.length)]} castShadow={part.cast} receiveShadow frustumCulled={false} />;
+  return <instancedMesh ref={ref} args={[part.geometry, material, Math.max(1, desks.length)]} castShadow={part.cast} receiveShadow frustumCulled={false} />;
 }
 
 function ScreenInstances({ face, desks }: { face: ScreenFace; desks: DeskSlot[] }) {
@@ -69,8 +75,8 @@ function ScreenInstances({ face, desks }: { face: ScreenFace; desks: DeskSlot[] 
   return <instancedMesh key={Math.max(1, desks.length)} ref={ref} args={[SCREEN_GEOMETRY, screenMaterial(face), Math.max(1, desks.length)]} frustumCulled={false} />;
 }
 
-/** All desks with the monitor face each one's agent state calls for. */
-export function DeskInstances({ desks, agents }: { desks: DeskSlot[]; agents: ReadonlyMap<string, SocietyAgent> }) {
+/** All desks with the monitor face each one's agent state calls for; `tone` restyles the desk and chair. */
+export function DeskInstances({ desks, agents, tone }: { desks: DeskSlot[]; agents: ReadonlyMap<string, SocietyAgent>; tone?: DeskTone }) {
   const byFace = useMemo(() => {
     const groups = new Map<ScreenFace, DeskSlot[]>(FACES.map((f) => [f, []]));
     for (const desk of desks) {
@@ -81,7 +87,10 @@ export function DeskInstances({ desks, agents }: { desks: DeskSlot[]; agents: Re
   }, [desks, agents]);
   return (
     <group>
-      {PARTS.map((part, i) => <PartInstances key={`${i}:${desks.length}`} part={part} desks={desks} />)}
+      {PARTS.map((part, i) => {
+        const material = (part.role !== "monitor" && part.role !== "keyboard" && tone?.[part.role]) || part.material;
+        return <PartInstances key={`${i}:${desks.length}:${material.uuid}`} part={part} desks={desks} material={material} />;
+      })}
       {FACES.map((face) => (byFace.get(face)!.length > 0 ? <ScreenInstances key={face} face={face} desks={byFace.get(face)!} /> : null))}
     </group>
   );
