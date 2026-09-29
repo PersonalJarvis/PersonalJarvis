@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.requests import HTTPConnection
 
+from jarvis.brain.assistant_name import DEFAULT_ASSISTANT_NAME, resolve_assistant_name
 from jarvis.society.events import MsgType
 from jarvis.society.failure_reasons import FailureReason, retry_action
 from jarvis.society.memory import MEMORY_SHARE_CAPABILITY, MemoryRefused
@@ -182,13 +183,29 @@ class RoomSayBody(BaseModel):
 # ------------------------------------------------------------------- agents
 
 
+def _agent_row(agent: AgentRecord, request: HTTPConnection) -> dict[str, Any]:
+    """Serialize an agent; the lead wears the name derived from the wake phrase.
+
+    The roster row keeps its seeded name, but the lead IS the assistant, so every
+    surface (office, roster, chat, CLI) shows what the user calls it. Resolved per
+    request, so a changed wake word shows up without a restart.
+    """
+    row = agent.to_dict()
+    if agent.tier == "lead":
+        config = getattr(request.app.state, "config", None)
+        name = resolve_assistant_name(config) if config is not None else ""
+        if name and name != DEFAULT_ASSISTANT_NAME:
+            row["name"] = name
+    return row
+
+
 @router.get("/agents")
 async def list_agents(request: Request, include_archived: bool = False) -> dict[str, Any]:
     rt = await _runtime(request)
     agents = await rt.roster.list(include_archived=include_archived)
     rows = []
     for agent in agents:
-        row = agent.to_dict()
+        row = _agent_row(agent, request)
         if agent.state == "paused":
             row["run_state"] = "paused"
         elif rt.checkpoints.is_busy(agent.agent_id):
@@ -279,7 +296,7 @@ async def get_agent(agent_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
     events = await rt.store.events_for_agent(agent.agent_id, limit=50)
     return {
-        "agent": agent.to_dict(),
+        "agent": _agent_row(agent, request),
         "recent_events": [e.model_dump() for e in events],
         "active_runs": rt.scheduler.active_runs(agent.agent_id),
     }
@@ -322,7 +339,7 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
     if "state" in fields:
         await rt.checkpoints.refresh(agent.agent_id)
         updated = await rt.roster.get(agent.agent_id) or updated
-    return {"agent": updated.to_dict(), "readback": _capability_readback(rt, updated)}
+    return {"agent": _agent_row(updated, request), "readback": _capability_readback(rt, updated)}
 
 
 @router.post("/agents/{agent_id}/chat")
@@ -482,7 +499,7 @@ async def kill_agent(agent_id: str, request: Request) -> dict[str, Any]:
             except Exception:  # noqa: BLE001 — already gone is fine
                 log.debug("society kill: mission %s not cancellable", run_id)
     paused = await rt.roster.update(agent.agent_id, {"state": "paused"})
-    return {"agent": paused.to_dict(), "runs_dropped": dropped}
+    return {"agent": _agent_row(paused, request), "runs_dropped": dropped}
 
 
 # ------------------------------------------------------------------ quests
@@ -704,7 +721,7 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
         except PermissionError as exc:
             log.info("society: %s re-seat deferred: %s", agent.agent_id, exc)
     return {
-        "agent": updated.to_dict(),
+        "agent": _agent_row(updated, request),
         "runner": resolve_runner(updated.provider, surface="society"),
         "reseated": reseated,
     }
