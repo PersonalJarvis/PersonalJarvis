@@ -2,8 +2,8 @@ import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { SessionState } from "@/lib/agenticIdeApi";
-const api = vi.hoisted(() => ({ move: vi.fn(), rename: vi.fn(), toast: vi.fn() }));
-vi.mock("@/lib/agenticIdeApi", () => ({ moveTerminal: api.move, renameTerminal: api.rename }));
+const api = vi.hoisted(() => ({ move: vi.fn(), rename: vi.fn(), toast: vi.fn(), weights: vi.fn() }));
+vi.mock("@/lib/agenticIdeApi", () => ({ moveTerminal: api.move, renameTerminal: api.rename, saveLayoutWeights: api.weights }));
 vi.mock("@/store/events", () => ({ useEventStore: (select: (state: unknown) => unknown) => select({ pushToast: api.toast }) }));
 vi.mock("./AgenticTerminal", () => ({ AgenticTerminal: (props: {
   name: string; onToggleMaximize: () => void; onRestart: () => void; restartToken: number;
@@ -198,4 +198,31 @@ it("ignores a spotlight aimed at another workspace", () => {
   render(<WorkspaceTerminalGrid {...props} session={makeSession()} />);
   expect(document.querySelector("[data-spotlit]")).toBeNull();
   useIdeSidePanelStore.setState({ spotlight: null });
+});
+
+it("drags the seam between two panes to resize them and saves the new sizes", async () => {
+  vi.useFakeTimers();
+  try {
+    api.weights.mockResolvedValue(makeSession());
+    render(<WorkspaceTerminalGrid {...props} session={makeSession()} />);
+    const canvas = document.querySelector<HTMLElement>('[data-session-id="T1"]')!.parentElement!;
+    Object.defineProperty(canvas, "clientWidth", { configurable: true, value: 1000 });
+    Object.defineProperty(canvas, "clientHeight", { configurable: true, value: 800 });
+    // The balanced four-pane grid is two rows of two; "0:1" divides T1 | T2.
+    const seam = screen.getByTestId("pane-seam-0:1");
+    fireEvent.pointerDown(seam, { button: 0, pointerId: 1, clientX: 500, clientY: 100 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 700, clientY: 100 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 700, clientY: 100 });
+    expect(document.querySelector<HTMLElement>('[data-session-id="T1"]')!.style.width).toContain("70%");
+    expect(document.querySelector<HTMLElement>('[data-session-id="T3"]')!.style.width).toContain("50%");
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    expect(api.weights).toHaveBeenCalledTimes(1);
+  } finally { vi.useRealTimers(); }
+});
+
+it("hides the seams while a pane is maximized", () => {
+  render(<WorkspaceTerminalGrid {...props} session={makeSession()} />);
+  expect(screen.getAllByRole("separator").length).toBe(3);
+  fireEvent.click(screen.getByRole("button", { name: "Maximize T1" }));
+  expect(screen.queryAllByRole("separator")).toHaveLength(0);
 });

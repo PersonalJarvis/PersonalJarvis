@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AgenticTerminal } from "./AgenticTerminal";
 import { AgentMark } from "./AgentMark";
 import { ForkPaneDialog, type ForkMode, type ForkSource } from "./ForkPaneDialog";
@@ -10,12 +10,30 @@ import { useThemeValue } from "@/hooks/useTheme";
 import { useEventStore } from "@/store/events";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { cn } from "@/lib/utils";
-import { treeLayout, treeLeaves, type LayoutNode } from "./treeLayout";
+import { PaneResizer } from "@/components/layout/PaneResizer";
+import { treeLayout, treeLeaves, type LayoutNode, type PaneSeam } from "./treeLayout";
+import { useTreeSizes } from "./useTreeSizes";
 import { DOCK_LABELS, GRID_LIMIT_HINT, MAX_GRID_COLUMNS, MAX_GRID_ROWS, MAX_WORKSPACE_PANES, dockPosition, fitsWorkspace, layoutSpan, paneStyle, previewDock, workspaceLayout } from "./workspaceDocking";
 
 const GAP = 8;
 const MIN_WIDTH = 280;
 const idOf = (terminal: TerminalState) => terminal.history_id ?? terminal.key;
+
+/*
+ * A seam's grab area fills the whole gap between two panes, centred on the
+ * boundary, and runs the full length of the boundary it divides.
+ */
+function seamStyle(seam: PaneSeam): React.CSSProperties {
+  return seam.orientation === "vertical"
+    ? { position: "absolute", left: `calc(${seam.x * 100}% - ${GAP / 2}px)`, top: `${seam.y * 100}%`, width: `${GAP}px`, height: `${seam.h * 100}%` }
+    : { position: "absolute", top: `calc(${seam.y * 100}% - ${GAP / 2}px)`, left: `${seam.x * 100}%`, height: `${GAP}px`, width: `${seam.w * 100}%` };
+}
+
+function writeStyle(node: HTMLElement, style: React.CSSProperties) {
+  for (const [property, value] of Object.entries(style)) {
+    (node.style as unknown as Record<string, string>)[property] = String(value);
+  }
+}
 
 interface Props {
   session: SessionState;
@@ -63,9 +81,36 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
   const keys = session.terminals.map((terminal) => terminal.key);
   const pendingKeys = treeLeaves(optimistic);
   const pendingOrderMatches = optimistic && pendingKeys.length === keys.length && pendingKeys.every((key) => keys.includes(key));
-  const tree = pendingOrderMatches ? optimistic : workspaceLayout(session.layout, session.terminals);
   const tiles = session.terminals;
+  const canvas = useRef<HTMLDivElement>(null);
+  const paneNodes = useRef(new Map<string, HTMLElement>());
+  const seamNodes = useRef(new Map<string, HTMLElement>());
+  /*
+   * A seam drag repaints the boxes directly, once per frame, instead of
+   * re-rendering every live terminal per pointer move; state is written once
+   * on release (see `useTreeSizes`).
+   */
+  const paintDragged = useCallback((next: LayoutNode) => {
+    const terminals = latest.current.session.terminals;
+    const live = treeLayout(next, terminals);
+    terminals.forEach((terminal, index) => {
+      const node = paneNodes.current.get(idOf(terminal));
+      const box = live.boxes[index];
+      if (node && box) writeStyle(node, paneStyle(box));
+    });
+    for (const seam of live.seams) {
+      const node = seamNodes.current.get(seam.id);
+      if (node) writeStyle(node, seamStyle(seam));
+    }
+  }, []);
+  const sizes = useTreeSizes(
+    workspaceLayout(session.layout, session.terminals),
+    useCallback(() => ({ width: canvas.current?.clientWidth ?? 0, height: canvas.current?.clientHeight ?? 0 }), []),
+    paintDragged,
+  );
+  const tree = pendingOrderMatches ? optimistic : sizes.tree;
   const layout = treeLayout(tree, tiles);
+  const resizing = sizes.dragging !== null;
   const columns = Math.max(1, layoutSpan(tree, "row"));
   const visibleMaximized = maximized && members.includes(maximized) ? maximized : null;
 
@@ -258,6 +303,14 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
   };
   const computerName = (terminal: TerminalState) => terminal.computer_id
     ? (computers.find((computer) => computer.id === terminal.computer_id)?.name ?? "another computer") : undefined;
+  // Any other render mid-drag (a poll, a pane going live) would paint the
+  // pre-drag sizes; re-apply the in-flight layout right after it.
+  useLayoutEffect(() => {
+    if (sizes.dragging === null) return;
+    const inFlight = sizes.liveTree.current;
+    if (inFlight) paintDragged(inFlight);
+  });
+  const showSeams = !visibleMaximized && !drag && !saving && !disabled && !optimistic && tiles.length > 1;
   const dragged = drag ? session.terminals.find((terminal) => idOf(terminal) === drag.id) : null;
 
   // A pane picked from the side panel may sit off-screen on a narrow grid.
@@ -270,13 +323,13 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
   }, [spotlitPane]);
 
   return <div ref={frame} data-testid="workspace-terminal-grid" aria-busy={saving} className="relative h-full min-h-0 overflow-auto p-2">
-    <div className="relative h-full" style={{
+    <div ref={canvas} className={cn("relative h-full", resizing && "select-none")} style={{
       minWidth: visibleMaximized ? undefined : `${columns * MIN_WIDTH + (columns - 1) * GAP}px`,
       minHeight: visibleMaximized ? "240px" : `${Math.max(1, layoutSpan(tree, "column")) * 200}px`,
     }}>
       {tiles.map((terminal, index) => {
         const id = idOf(terminal);
-        return <div key={id} data-session-id={id} data-spotlit={spotlitPane === terminal.name ? "true" : undefined} tabIndex={0}
+        return <div key={id} ref={(node) => { if (node) paneNodes.current.set(id, node); else paneNodes.current.delete(id); }} data-session-id={id} data-spotlit={spotlitPane === terminal.name ? "true" : undefined} tabIndex={0}
           aria-label={`${terminal.name}. Drag to an edge to dock, or the center to swap. Alt+Arrow swaps with a neighbor.`}
           onKeyDown={(event) => {
             if (event.target !== event.currentTarget && !(event.target instanceof HTMLElement && event.target.closest("[data-ide-drag-handle]"))) return;
@@ -309,6 +362,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             name={terminal.name} workspaceId={session.id} displayName={terminal.display_name}
             recap={terminal.recap} promptCount={terminal.prompts_sent} appearance={appearance ?? theme} fontSize={fontSize}
             focused={selected === terminal.name} onFocus={() => { if (spotlitPane && spotlitPane !== terminal.name) setSpotlight(null); onSelect(terminal.name); }}
+            layoutBusy={resizing}
             maximized={visibleMaximized === id} onToggleMaximize={() => setMaximized((current) => current === id ? null : id)}
             onArrangeStart={visibleMaximized || saving || disabled ? undefined : (event) => startDrag(id, event)} arranging={drag?.id === id}
             onClose={() => onClose(terminal)} onAttachError={(message) => pushToast("error", message)}
@@ -325,6 +379,23 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
           </div>}
         </div>;
       })}
+      {/*
+        The boundaries between panes: drag one to give the panes on either side
+        more or less room, double-click it to even them out, or focus it and
+        use the arrow keys. Only the panes it divides change size.
+      */}
+      {showSeams && layout.seams.map((seam) => (
+        <PaneResizer key={seam.id}
+          ref={(node) => { if (node) seamNodes.current.set(seam.id, node); else seamNodes.current.delete(seam.id); }}
+          testId={`pane-seam-${seam.id}`} orientation={seam.orientation} title={seam.label}
+          active={sizes.dragging === seam.id}
+          onPointerDown={(event) => { if (event.button === 0) sizes.startDrag(seam, event); }}
+          onDoubleClick={() => sizes.even(seam)}
+          // PaneResizer's vertical sign is written for a pane's own edge; here
+          // an arrow key moves the seam the way it points.
+          onNudge={(delta) => sizes.nudge(seam, seam.orientation === "horizontal" ? -delta : delta)}
+          className="!z-30" style={seamStyle(seam)} />
+      ))}
     </div>
     {drag && dragged && <div aria-hidden="true" className="pointer-events-none fixed z-[100] flex items-center gap-2 rounded-lg border border-border bg-popover px-3 py-2 text-sm font-medium text-popover-foreground shadow-xl"
       style={{ left: drag.x + 14, top: drag.y + 14 }}>
