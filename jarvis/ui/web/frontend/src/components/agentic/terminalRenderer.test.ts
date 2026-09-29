@@ -4,6 +4,7 @@ import type { ITerminalAddon, Terminal } from "@xterm/xterm";
 import {
   MAX_WEBGL_PANES,
   attachTerminalRenderer,
+  clearEveryFrame,
   clearTerminalTextureAtlas,
   forgetUploadedAtlasPages,
   resetWebglPaneCount,
@@ -203,5 +204,63 @@ describe("an atlas page merge", () => {
   it("leaves a terminal without the addon's internals alone", () => {
     const { term } = fakeTerminal();
     expect(() => forgetUploadedAtlasPages(term)).not.toThrow();
+  });
+});
+
+describe("clearEveryFrame", () => {
+  /** A terminal whose WebGL renderer records what it drew, and in what order. */
+  function drawingTerminal() {
+    const calls: string[] = [];
+    const gl = {
+      COLOR_BUFFER_BIT: 0x4000,
+      clearColor: (...rgba: number[]) => calls.push(`clearColor ${rgba.join(",")}`),
+      clear: () => calls.push("clear"),
+    };
+    const renderer = {
+      _gl: gl,
+      renderRows(start: number, end: number) {
+        calls.push(`rows ${start}-${end}`);
+      },
+    };
+    const term = {
+      loadAddon() {},
+      _core: { _renderService: { _renderer: { value: renderer } } },
+    } as unknown as Terminal;
+    return { term, renderer, calls };
+  }
+
+  it("empties the canvas before every frame, once however often it is applied", () => {
+    // A transparent background makes the addon's own "clear" a no-op, so a
+    // pane rebuilt behind its curtain showed two frames in the same cells
+    // and a cursor left at the top-left corner (2026-09-29).
+    const { term, renderer, calls } = drawingTerminal();
+    clearEveryFrame(term);
+    clearEveryFrame(term);
+
+    renderer.renderRows(0, 23);
+    renderer.renderRows(4, 4);
+
+    expect(calls).toEqual([
+      "clearColor 0,0,0,0",
+      "clear",
+      "rows 0-23",
+      "clearColor 0,0,0,0",
+      "clear",
+      "rows 4-4",
+    ]);
+  });
+
+  it("is applied to every pane that draws with WebGL", () => {
+    const { term, renderer, calls } = drawingTerminal();
+    attachTerminalRenderer(term, undefined, deps());
+
+    renderer.renderRows(0, 1);
+
+    expect(calls[1]).toBe("clear");
+  });
+
+  it("leaves a terminal without the addon's internals alone", () => {
+    const { term } = fakeTerminal();
+    expect(() => clearEveryFrame(term)).not.toThrow();
   });
 });
