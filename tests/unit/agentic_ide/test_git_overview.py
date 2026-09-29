@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.agentic_ide import git_overview
+from jarvis.agentic_ide import git_overview, github_link
 from jarvis.agentic_ide.git_overview import ci_from_rollup, parse_github
 
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
@@ -190,10 +190,17 @@ def test_unreadable_payload_is_unavailable() -> None:
     assert parse_github({"data": {"repository": None}}).ok is False
 
 
-def test_gh_failure_reasons_are_fixed_sentences() -> None:
-    reason = git_overview._gh_failure_reason("To get started with GitHub CLI, run: gh auth login")
-    assert reason == "The GitHub CLI (gh) is not signed in."
-    assert git_overview._gh_failure_reason("secret host detail") == "GitHub could not be reached."
+def test_a_github_failure_becomes_a_coded_sentence(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(token: str, query: str, variables: dict | None = None) -> dict:
+        raise github_link.GitHubError("GitHub could not be reached.", code="unreachable")
+
+    monkeypatch.setattr(github_link, "graphql", boom)
+    snap = git_overview._fetch_github("o/r", "t")
+    assert (snap.ok, snap.code, snap.reason) == (
+        False,
+        "unreachable",
+        "GitHub could not be reached.",
+    )
 
 
 # ------------------------------------------------------------------ local git
@@ -227,10 +234,10 @@ def test_overview_joins_pull_requests_ci_and_squash_merges(
 ) -> None:
     wip_head = _git(repo, "rev-parse", "feature/wip")
     fresh_head = _git(repo, "rev-parse", "feature/fresh")
-    calls: list[Path] = []
+    calls: list[str] = []
 
-    def fake_fetch(root: Path) -> git_overview._GitHubSnapshot:
-        calls.append(root)
+    def fake_fetch(repo_name: str, token: str) -> git_overview._GitHubSnapshot:
+        calls.append(repo_name)
         snap = parse_github(
             _payload(
                 [
@@ -265,7 +272,11 @@ def test_overview_joins_pull_requests_ci_and_squash_merges(
         return snap
 
     monkeypatch.setattr(git_overview, "_fetch_github", fake_fetch)
+    monkeypatch.setattr(github_link, "credential", lambda: github_link.Credential("t", "app"))
+    monkeypatch.setattr(github_link, "bound_repository", lambda folder: "o/r")
     info = git_overview.overview(repo)
+    assert calls == ["o/r"]
+    assert (info.github.repo, info.github.source) == ("o/r", "app")
     by_name = {row.name: row for row in info.branches}
 
     wip = by_name["feature/wip"]
@@ -283,3 +294,64 @@ def test_overview_joins_pull_requests_ci_and_squash_merges(
     # A second read inside the TTL reuses the answer instead of calling GitHub again.
     git_overview.overview(repo)
     assert len(calls) == 1
+
+
+# ------------------------------------------------------------------ the one-time pick
+
+
+@pytest.fixture
+def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    target = tmp_path / "data" / "github_repos.json"
+    monkeypatch.setattr(github_link, "_store_path", lambda: target)
+    return target
+
+
+@needs_git
+def test_without_a_connection_the_tab_offers_to_connect(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, store: Path
+) -> None:
+    monkeypatch.setattr(github_link, "credential", lambda: None)
+    info = git_overview.overview(repo)
+    assert info.available and info.branches  # local git still works
+    assert (info.github.available, info.github.code) == (False, "not_connected")
+
+
+@needs_git
+def test_an_unpicked_folder_asks_once_and_suggests_its_remote(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, store: Path
+) -> None:
+    monkeypatch.setattr(github_link, "credential", lambda: github_link.Credential("t", "gh"))
+    _git(repo, "remote", "add", "origin", "git@github.com:Octo-Org/my.app.git")
+    info = git_overview.overview(repo)
+    assert info.github.code == "needs_repo"
+    assert info.github.suggested_repo == "Octo-Org/my.app"
+
+    github_link.bind_repository(repo, "Octo-Org/my.app")
+    # A worktree of the same repository shares the answer.
+    tree = repo.parent / "tree"
+    _git(repo, "worktree", "add", "-q", str(tree), "feature/fresh")
+    assert github_link.bound_repository(tree) == "Octo-Org/my.app"
+    assert github_link.bound_repository(repo / ".") == "Octo-Org/my.app"
+
+    github_link.bind_repository(repo, "")
+    assert github_link.bound_repository(repo) == ""
+
+
+def test_a_malformed_choice_is_refused(tmp_path: Path, store: Path) -> None:
+    with pytest.raises(ValueError):
+        github_link.bind_repository(tmp_path, "not a repo")
+    store.parent.mkdir(parents=True)
+    store.write_text("{broken", encoding="utf-8")
+    assert github_link.bound_repository(tmp_path) == ""  # unreadable file = no choice
+
+
+def test_remote_parsing_accepts_https_and_ssh(tmp_path: Path) -> None:
+    for url in (
+        "https://github.com/o/r.git",
+        "https://github.com/o/r",
+        "git@github.com:o/r.git",
+        "ssh://git@github.com/o/r.git",
+    ):
+        match = github_link._REMOTE_RE.search(url)
+        assert match is not None and f"{match['owner']}/{match['name']}" == "o/r", url
+    assert github_link._REMOTE_RE.search("https://gitlab.com/o/r.git") is None

@@ -22,8 +22,10 @@ import { cn } from "@/lib/utils";
 import { QuickTooltip } from "@/components/ui/tooltip";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
+import { ConnectGitHubCard, GitHubRepoPicker } from "./GitHubRepoPicker";
 import {
   fetchGitOverview,
+  GitOverviewError,
   type BranchRow,
   type CiState,
   type CiStatus,
@@ -101,6 +103,7 @@ function CiIcon({ state, className }: { state: CiState; className?: string }) {
 function useGitOverview(workspaceId: string | null) {
   const [data, setData] = useState<RepoOverview | null>(null);
   const [error, setError] = useState("");
+  const [routeMissing, setRouteMissing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [force, setForce] = useState(0);
   useEffect(() => {
@@ -121,10 +124,14 @@ function useGitOverview(workspaceId: string | null) {
           if (alive) {
             setData(next);
             setError("");
+            setRouteMissing(false);
           }
         } catch (err) {
           // Keep the last answer on screen; the next tick tries again.
-          if (alive) setError((err as Error).message);
+          if (alive) {
+            setError((err as Error).message);
+            setRouteMissing(err instanceof GitOverviewError && err.routeMissing);
+          }
         } finally {
           if (alive) setLoading(false);
         }
@@ -137,7 +144,7 @@ function useGitOverview(workspaceId: string | null) {
       window.clearTimeout(timer);
     };
   }, [workspaceId, force]);
-  return { data, error, loading, refresh: () => setForce((value) => value + 1) };
+  return { data, error, routeMissing, loading, refresh: () => setForce((value) => value + 1) };
 }
 
 /** An icon that opens a GitHub page; a plain span when there is nowhere to go. */
@@ -355,14 +362,18 @@ export function GitOverviewTab() {
   const t = useT();
   const workspace = useIdeChatStore((state) => state.workspace);
   const workspaceId = workspace?.id ?? null;
-  const { data, error, loading, refresh } = useGitOverview(workspaceId);
+  const { data, error, routeMissing, loading, refresh } = useGitOverview(workspaceId);
   const [showRemote, setShowRemote] = useState(false);
   const [showLegend, setShowLegend] = useState(false);
+  // Reopened from the repository chip to change an earlier choice.
+  const [changing, setChanging] = useState(false);
+  useEffect(() => setChanging(false), [workspaceId]);
 
   if (!workspace) {
     return <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t("ide_side_panel.git.no_workspace")}</p>;
   }
   const github = data?.github;
+  const picking = Boolean(data && workspaceId && (github?.code === "needs_repo" || (changing && github?.code !== "not_connected")));
   const repoName = (data?.root || workspace.path).replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? workspace.name;
 
   return (
@@ -413,11 +424,24 @@ export function GitOverviewTab() {
             </QuickTooltip>
           </span>
         </div>
-        {github && (
-          <p data-testid="git-github-state" className="truncate text-[10.5px] text-muted-foreground">
-            {github.available
-              ? fill(t("ide_side_panel.git.github_updated"), { when: sinceLabel(t, github.fetched_at) })
-              : fill(t("ide_side_panel.git.github_off"), { reason: github.reason })}
+        {github?.repo && (
+          <p data-testid="git-github-state" className="flex min-w-0 items-center gap-1.5 text-[10.5px] text-muted-foreground">
+            <QuickTooltip content={t("ide_side_panel.git.change_repo")} side="bottom" className="inline-flex min-w-0">
+              <button
+                type="button"
+                data-testid="git-bound-repo"
+                onClick={() => setChanging(true)}
+                className="inline-flex min-w-0 items-center gap-1 rounded px-0.5 font-mono text-foreground/80 hover:bg-secondary hover:text-foreground"
+              >
+                <span className="truncate">{github.repo}</span>
+              </button>
+            </QuickTooltip>
+            <span aria-hidden>·</span>
+            <span className="min-w-0 truncate">
+              {github.available
+                ? fill(t("ide_side_panel.git.github_updated"), { when: sinceLabel(t, github.fetched_at) })
+                : github.reason}
+            </span>
           </p>
         )}
       </div>
@@ -426,10 +450,26 @@ export function GitOverviewTab() {
           <Legend />
         </div>
       )}
+      {picking && data && workspaceId ? (
+        <GitHubRepoPicker
+          key={workspaceId}
+          workspaceId={workspaceId}
+          current={github?.repo ?? ""}
+          suggested={github?.suggested_repo ?? ""}
+          onPicked={() => {
+            setChanging(false);
+            refresh();
+          }}
+          onCancel={github?.repo ? () => setChanging(false) : undefined}
+        />
+      ) : (
       <div className="min-h-0 flex-1 overflow-y-auto py-1">
+        {github?.code === "not_connected" && <ConnectGitHubCard />}
         {!data ? (
           error ? (
-            <p className="px-4 py-6 text-center text-xs text-destructive">{error}</p>
+            <p data-testid="git-error" className="px-4 py-6 text-center text-xs text-muted-foreground">
+              {routeMissing ? t("ide_side_panel.git.needs_restart") : error}
+            </p>
           ) : (
             <p className="flex items-center justify-center gap-2 px-4 py-6 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -477,6 +517,7 @@ export function GitOverviewTab() {
           </>
         )}
       </div>
+      )}
     </section>
   );
 }

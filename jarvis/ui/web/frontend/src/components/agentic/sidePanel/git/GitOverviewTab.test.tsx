@@ -53,7 +53,16 @@ const OVERVIEW: RepoOverview = {
   head: "abc123def456",
   default_branch: "main",
   truncated: false,
-  github: { available: true, reason: "", repo_url: "https://github.com/o/r", fetched_at: Date.now() / 1000 },
+  github: {
+    available: true,
+    reason: "",
+    code: "",
+    repo: "o/r",
+    suggested_repo: "o/r",
+    source: "app",
+    repo_url: "https://github.com/o/r",
+    fetched_at: Date.now() / 1000,
+  },
   branches: [
     branch("feature/wip", {
       current: true,
@@ -78,16 +87,39 @@ const OVERVIEW: RepoOverview = {
 };
 
 let answer: unknown = OVERVIEW;
+let status = 200;
 const calls: string[] = [];
+const puts: string[] = [];
+const REPOS = {
+  connected: true,
+  source: "app",
+  login: "octo",
+  reason: "",
+  repos: [
+    { name: "octo/other", description: "Something else", private: true, fork: false, url: "", pushed_at: "" },
+    { name: "o/r", description: "", private: false, fork: false, url: "", pushed_at: "" },
+  ],
+};
 
 beforeEach(() => {
   answer = OVERVIEW;
+  status = 200;
   calls.length = 0;
+  puts.length = 0;
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      calls.push(String(input));
-      return new Response(JSON.stringify(answer), { status: 200, headers: { "Content-Type": "application/json" } });
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push(url);
+      const json = (body: unknown, code = 200) =>
+        new Response(JSON.stringify(body), { status: code, headers: { "Content-Type": "application/json" } });
+      if (url.includes("/github/repos")) return json(REPOS);
+      if (url.includes("/github/binding")) {
+        puts.push(String(init?.body));
+        answer = OVERVIEW;
+        return json({ ok: true, repo: "o/r" });
+      }
+      return json(answer, status);
     }),
   );
   useEventStore.setState({ activeSection: "agentic-ide" });
@@ -177,5 +209,43 @@ describe("GitOverviewTab", () => {
     answer = { ...OVERVIEW, available: false, reason: "This folder is not a git repository.", branches: [], remote_branches: [] };
     render(<GitOverviewTab />);
     expect((await screen.findByTestId("git-unavailable")).textContent).toContain("not a git repository");
+  });
+
+  it("asks once which GitHub repository the folder is, recommending its remote", async () => {
+    answer = { ...OVERVIEW, github: { ...OVERVIEW.github, available: false, code: "needs_repo", repo: "", repo_url: "" } };
+    render(<GitOverviewTab />);
+    // The recommendation is clickable at once; the rest of the list follows.
+    await vi.waitFor(() => expect(screen.getAllByTestId("git-repo-choice")).toHaveLength(2));
+    const choices = screen.getAllByTestId("git-repo-choice");
+    expect(choices.map((el) => el.dataset.repo)).toEqual(["o/r", "octo/other"]);
+    expect(choices[0].textContent).toContain("Recommended");
+    fireEvent.click(choices[0]);
+    await vi.waitFor(() => expect(puts).toEqual([JSON.stringify({ workspace_id: "w1", repo: "o/r" })]));
+    expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(6);
+    expect(screen.queryByTestId("git-repo-picker")).toBeNull();
+  });
+
+  it("reopens the pick from the repository name to change it", async () => {
+    render(<GitOverviewTab />);
+    fireEvent.click(await screen.findByTestId("git-bound-repo"));
+    await vi.waitFor(() => expect(screen.getAllByTestId("git-repo-choice")).toHaveLength(2));
+    fireEvent.click(screen.getByLabelText("Keep the current repository"));
+    expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(6);
+  });
+
+  it("offers to connect GitHub and still lists the local branches", async () => {
+    answer = { ...OVERVIEW, github: { ...OVERVIEW.github, available: false, code: "not_connected", repo: "" } };
+    render(<GitOverviewTab />);
+    expect(await screen.findByTestId("git-connect-github")).toBeTruthy();
+    expect(screen.getAllByTestId("git-branch-row")).toHaveLength(6);
+    fireEvent.click(screen.getByText("Connect GitHub"));
+    expect(useEventStore.getState().activeSection).toBe("plugins");
+  });
+
+  it("asks for one restart when the running backend does not know the route yet", async () => {
+    answer = { detail: "Not Found" };
+    status = 404;
+    render(<GitOverviewTab />);
+    expect((await screen.findByTestId("git-error")).textContent).toContain("Restart Jarvis once");
   });
 });

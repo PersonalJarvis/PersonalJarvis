@@ -13,20 +13,20 @@ separate facts that are easy to mix up:
   apart on purpose.
 
 Local git is read on every call (a handful of fast plumbing commands). GitHub
-is read through the ``gh`` CLI with ONE GraphQL query per repository and
-cached per repository, so N open panes polling one project cost one network
-call per minute — shorter while a check is still running, because that is
-exactly when the user is waiting for the answer.
+is read for the repository the person picked for this folder ONCE
+(:mod:`jarvis.agentic_ide.github_link`), with their existing GitHub
+connection, in ONE GraphQL query per repository, cached per repository: N open
+panes polling one project cost one network call per minute — shorter while a
+check is still running, because that is exactly when the user is waiting.
 
-Degrades, never raises: no git, not a repository, no ``gh``, ``gh`` not signed
-in, no GitHub remote — each comes back as ``available=False`` or
-``github.available=False`` with one plain sentence. Raw ``gh`` error text is
-logged, never returned: it may carry account or host details.
+Degrades, never raises: no git, not a repository, GitHub not connected, no
+repository picked yet — each comes back as ``available=False`` or
+``github.available=False`` with a ``code`` the tab turns into the one next
+step (connect GitHub, pick the repository) and one plain sentence.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
@@ -38,10 +38,10 @@ from typing import Any
 
 from loguru import logger
 
+from jarvis.agentic_ide import github_link
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 _GIT_TIMEOUT_S = 8.0
-_GH_TIMEOUT_S = 25.0
 #: Most local branches listed; the newest by commit date win.
 MAX_BRANCHES = 60
 #: Most GitHub-only branches listed beside the local ones.
@@ -177,6 +177,15 @@ class BranchRow:
 class GitHubState:
     available: bool = False
     reason: str = ""
+    #: What the tab offers next: ``not_connected`` (connect GitHub),
+    #: ``needs_repo`` (pick this folder's repository), another failure code, or "".
+    code: str = ""
+    #: The ``owner/name`` picked for this folder.
+    repo: str = ""
+    #: What the folder's git remote points at — the picker's recommendation.
+    suggested_repo: str = ""
+    #: ``app`` or ``gh``: which GitHub credential is in use.
+    source: str = ""
     repo_url: str = ""
     #: Epoch seconds of the GitHub answer in use.
     fetched_at: float = 0.0
@@ -326,6 +335,7 @@ _PR_RANK = {"queued": 0, "open": 1, "draft": 2, "merged": 3, "closed": 4}
 class _GitHubSnapshot:
     ok: bool
     reason: str = ""
+    code: str = ""
     repo_url: str = ""
     fetched_at: float = 0.0
     prs: list[PullRequest] = field(default_factory=list)
@@ -380,54 +390,13 @@ def parse_github(payload: dict[str, Any], fetched_at: float = 0.0) -> _GitHubSna
     return snap
 
 
-def _gh_failure_reason(stderr: str) -> str:
-    text = stderr.lower()
-    if "auth login" in text or "not logged" in text or "authentication" in text:
-        return "The GitHub CLI (gh) is not signed in."
-    if "known github host" in text or "no git remotes" in text or "set-default" in text:
-        return "This repository has no GitHub remote gh can use."
-    if "could not resolve to a repository" in text:
-        return "GitHub does not know this repository, or this account cannot see it."
-    if "rate limit" in text:
-        return "GitHub's rate limit is reached; it resets within the hour."
-    return "GitHub could not be reached."
-
-
-def _fetch_github(root: Path) -> _GitHubSnapshot:
+def _fetch_github(repo: str, token: str) -> _GitHubSnapshot:
     now = time.time()
-    if shutil.which("gh") is None:
-        return _GitHubSnapshot(
-            ok=False, reason="The GitHub CLI (gh) is not installed.", fetched_at=now
-        )
-    result = _run(
-        [
-            "api",
-            "graphql",
-            "-F",
-            "owner={owner}",
-            "-F",
-            "name={repo}",
-            "-f",
-            f"query={_QUERY}",
-        ],
-        root,
-        timeout=_GH_TIMEOUT_S,
-        program="gh",
-    )
-    if result is None:
-        return _GitHubSnapshot(ok=False, reason="GitHub did not answer in time.", fetched_at=now)
-    if result.returncode != 0:
-        # Logged for the maintainer, never shown: it may name the account or host.
-        logger.debug("Git overview: gh graphql failed: {}", (result.stderr or "").strip()[:500])
-        return _GitHubSnapshot(
-            ok=False, reason=_gh_failure_reason(result.stderr or ""), fetched_at=now
-        )
+    owner, _, name = repo.partition("/")
     try:
-        payload = json.loads(result.stdout or "{}")
-    except json.JSONDecodeError:  # answered as github.available=False with a reason
-        return _GitHubSnapshot(
-            ok=False, reason="GitHub sent an answer that could not be read.", fetched_at=now
-        )
+        payload = github_link.graphql(token, _QUERY, {"owner": owner, "name": name})
+    except github_link.GitHubError as exc:  # shown in the tab as github.reason/code
+        return _GitHubSnapshot(ok=False, reason=str(exc), code=exc.code, fetched_at=now)
     return parse_github(payload, fetched_at=now)
 
 
@@ -447,29 +416,30 @@ class _GitHubCache:
             return age < GITHUB_MIN_REFRESH_S
         return age < (GITHUB_BUSY_TTL_S if snap.busy else GITHUB_TTL_S)
 
-    def _load(self, key: str, root: Path, lock: threading.Lock, force: bool) -> _GitHubSnapshot:
+    def _load(self, key: str, token: str, lock: threading.Lock, force: bool) -> _GitHubSnapshot:
         # One fetch per repository at a time; everyone else waits for its answer.
         with lock:
             snap = self._entries.get(key)
             if self._fresh(snap, time.time(), force):
                 assert snap is not None
                 return snap
-            snap = _fetch_github(root)
+            snap = _fetch_github(key, token)
             self._entries[key] = snap
             return snap
 
-    def get(self, key: str, root: Path, *, force: bool = False) -> _GitHubSnapshot:
+    def get(self, key: str, token: str, *, force: bool = False) -> _GitHubSnapshot:
+        """``key`` is the repository (``owner/name``)."""
         with self._guard:
             lock = self._locks.setdefault(key, threading.Lock())
             snap = self._entries.get(key)
         if snap is None or force:
-            return self._load(key, root, lock, force)
+            return self._load(key, token, lock, force)
         if not self._fresh(snap, time.time(), False) and not lock.locked():
             # Stale-while-revalidate: a poll never waits seconds for GitHub;
             # it gets the last answer now and the new one on its next tick.
             threading.Thread(
                 target=self._load,
-                args=(key, root, lock, False),
+                args=(key, token, lock, False),
                 name="git-overview-github",
                 daemon=True,
             ).start()
@@ -606,6 +576,31 @@ def _attach_github(row: BranchRow, remote: str, snap: _GitHubSnapshot) -> None:
             )
 
 
+def _github_for(root: Path, info: RepoOverview, refresh: bool) -> _GitHubSnapshot | None:
+    """GitHub's answer for the repository picked for ``root``, or None with
+    ``info.github`` saying what is missing (a connection, or the choice)."""
+    state = info.github
+    state.repo = github_link.bound_repository(root)
+    cred = github_link.credential()
+    if cred is None:
+        state.code = "not_connected"
+        state.reason = "GitHub is not connected yet."
+        return None
+    state.source = cred.source
+    if not state.repo:
+        state.code = "needs_repo"
+        state.reason = "Pick which GitHub repository this folder is."
+        state.suggested_repo = github_link.remote_repository(root)
+        return None
+    snap = _CACHE.get(state.repo, cred.token, force=refresh)
+    state.available = snap.ok
+    state.reason = snap.reason
+    state.code = snap.code
+    state.repo_url = snap.repo_url or f"https://github.com/{state.repo}"
+    state.fetched_at = snap.fetched_at
+    return snap if snap.ok else None
+
+
 def overview(folder: str | Path, *, refresh: bool = False, github: bool = True) -> RepoOverview:
     """Branches of the repository ``folder`` is in, with merge, PR and CI state."""
     path = Path(folder).expanduser()
@@ -630,16 +625,7 @@ def overview(folder: str | Path, *, refresh: bool = False, github: bool = True) 
 
     snap: _GitHubSnapshot | None = None
     if github:
-        common = (
-            _out(["rev-parse", "--path-format=absolute", "--git-common-dir"], root) or ""
-        ).strip()
-        snap = _CACHE.get(os.path.normcase(common or str(root)), root, force=refresh)
-        info.github = GitHubState(
-            available=snap.ok,
-            reason=snap.reason,
-            repo_url=snap.repo_url,
-            fetched_at=snap.fetched_at,
-        )
+        snap = _github_for(root, info, refresh)
 
     # Current and default branch always make the list, however old they are.
     keep = {head, info.default_branch}
