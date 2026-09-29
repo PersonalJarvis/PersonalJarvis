@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from jarvis.core.protocols import BrainMessage, BrainRequest
+from jarvis.plugins.brain import claude_cli
 from jarvis.plugins.brain.claude_cli import ClaudeCliBrain
 
 
@@ -233,14 +234,16 @@ def test_a_failed_probe_degrades_to_the_minimal_invocation(
 def test_a_contract_too_long_for_one_command_line_travels_on_stdin() -> None:
     """Windows refuses a command line over 32,767 characters (WinError 206):
     every browser turn of a society agent died at spawn. The contract then
-    rides on stdin, verbatim, and argv stays short."""
+    rides on stdin, verbatim, and argv stays short. The budget is per OS
+    (Linux allows far more per argument), so the contract is sized past it."""
     brain = ClaudeCliBrain(structured_prompts=True)
-    contract = "RULE " * 20_000
+    budget = claude_cli._ARGV_BUDGET  # noqa: SLF001
+    contract = "RULE " * (budget // 5 + 1_000)
     argv, prompt = brain.build_invocation(
         _req(system=contract, user="do X"), cli_flags=frozenset({"--system-prompt"})
     )
     assert "--system-prompt" not in argv
-    assert sum(len(arg) for arg in argv) < 30_000
+    assert sum(len(arg) for arg in argv) < budget
     assert contract.strip() in prompt and "do X" in prompt
     # A short contract keeps its dedicated flag.
     argv, _ = brain.build_invocation(_req(), cli_flags=frozenset({"--system-prompt"}))
