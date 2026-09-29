@@ -4366,7 +4366,7 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
             except Exception:  # noqa: BLE001, S110 - viewer gone; transcript keeps filling
                 pass
 
-    async def on_replay(text: str) -> None:
+    async def on_replay(text: str, repaint: bool = False) -> None:
         """The screen this pane is re-joining, as the bytes that drew it.
 
         Its own frame type rather than a large ``o``, because the viewer has to
@@ -4379,10 +4379,17 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
         A viewer that does not know this frame simply ignores it and comes back
         blank rather than scrambled, which is the better of the two failures and
         only reachable by a client older than this server.
+
+        ``repaint`` says a whole-screen repaint has been requested and will
+        follow on the ordinary output channel; the viewer keeps the pane hidden
+        until it lands (older viewers ignore the extra field).
         """
+        frame: dict[str, object] = {"t": "replay", "d": text}
+        if repaint:
+            frame["repaint"] = True
         async with send_lock:
             try:
-                await ws.send_json({"t": "replay", "d": text})
+                await ws.send_json(frame)
             except Exception:  # noqa: BLE001, S110 - viewer gone; transcript keeps filling
                 pass
 

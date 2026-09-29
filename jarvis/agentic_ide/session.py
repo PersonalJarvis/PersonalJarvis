@@ -3795,6 +3795,11 @@ class Registry:
         them. Omitting ``on_replay`` keeps the old single-channel behaviour, for
         internal callers that consume bytes rather than paint them.
 
+        ``on_replay`` is called with ``repaint=True`` when the replay cannot
+        stand on its own and a full-screen agent has been asked to repaint: the
+        viewer then waits for that repaint's whole-screen erase before showing
+        the pane.
+
         **This is also where a conversation is continued rather than restarted.**
         A pane holding a resume handle launches its CLI with the arguments that
         reopen that conversation; a pane without one starts fresh and keeps
@@ -3910,7 +3915,15 @@ class Registry:
                 # On the replay channel when the viewer offered one — see the
                 # docstring for what appending it to a screen that already had
                 # a copy of it looked like.
-                await (on_replay or on_output)(replay)
+                if on_replay is not None and needs_repaint and term.replay.holds_screen:
+                    # This replay alone cannot rebuild the screen, and the
+                    # nudge below will be answered by a whole-screen erase —
+                    # so the viewer is told to keep its curtain down until that
+                    # erase arrives, instead of revealing the broken tail
+                    # while a busy agent takes its time to repaint.
+                    await on_replay(replay, repaint=True)
+                else:
+                    await (on_replay or on_output)(replay)
             if needs_repaint:
                 # Either the tail lost its opening frame, or its cursor moves
                 # belong to another geometry. Neither can rebuild this viewer.

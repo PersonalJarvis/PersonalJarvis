@@ -48,12 +48,14 @@ class Viewer:
     def __init__(self) -> None:
         self.output: list[str] = []
         self.replay: list[str] = []
+        self.repaint_flags: list[bool] = []
 
     async def on_output(self, text: str) -> None:
         self.output.append(text)
 
-    async def on_replay(self, text: str) -> None:
+    async def on_replay(self, text: str, repaint: bool = False) -> None:
         self.replay.append(text)
+        self.repaint_flags.append(repaint)
 
 
 async def _running_pane(pool: FakePtyManager, folder: Path):  # noqa: ANN202 - internal fixture
@@ -99,6 +101,51 @@ async def test_a_rejoined_screen_arrives_as_a_replay(
         "and NOT as output — a viewer appends output, which draws the agent's "
         "interface a second time over the copy already on its screen"
     )
+
+
+async def test_a_self_sufficient_replay_promises_no_repaint(
+    pool: FakePtyManager, tmp_path: Path
+) -> None:
+    """A whole, same-size replay rebuilds the screen alone; nothing is awaited."""
+    registry, session, term = await _running_pane(pool, tmp_path)
+    back = Viewer()
+
+    await registry.attach(
+        term.key,
+        80,
+        24,
+        back.on_output,
+        _gone,
+        workspace_id=session.id,
+        on_replay=back.on_replay,
+    )
+
+    assert back.repaint_flags == [False]
+
+
+async def test_a_replay_at_another_size_promises_a_repaint(
+    pool: FakePtyManager, tmp_path: Path
+) -> None:
+    """The viewer is told to wait for the repaint a stale geometry needs.
+
+    Without the promise the viewer revealed on quiet, and a busy agent that
+    answered the repaint request late left the pane showing a broken screen
+    for about a second after every bundle reload (2026-09-29).
+    """
+    registry, session, term = await _running_pane(pool, tmp_path)
+    back = Viewer()
+
+    await registry.attach(
+        term.key,
+        100,
+        30,
+        back.on_output,
+        _gone,
+        workspace_id=session.id,
+        on_replay=back.on_replay,
+    )
+
+    assert back.repaint_flags == [True]
 
 
 async def test_live_output_after_a_rejoin_is_still_output(

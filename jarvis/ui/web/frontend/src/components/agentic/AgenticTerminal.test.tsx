@@ -192,6 +192,8 @@ import {
   CURTAIN_MAX_MS,
   DRAG_REFIT_MS,
   REBUILD_QUIET_MS,
+  REBUILD_SETTLE_MAX_MS,
+  REPAINT_WAIT_MAX_MS,
   RESIZE_PARSE_WAIT_MS,
   UNMEASURED_SIZE,
 } from "./AgenticTerminal";
@@ -650,6 +652,71 @@ describe("AgenticTerminal layout", () => {
     expect(region?.className).toContain("invisible");
 
     act(() => vi.advanceTimersByTime(PAST_REBUILD));
+    expect(region?.className).not.toContain("invisible");
+  });
+
+  it("waits for a promised repaint rather than showing the broken tail", () => {
+    // A replay the server marks as needing a repaint cannot rebuild the screen
+    // by itself. A busy agent may answer the repaint request late (the server
+    // repeats it after half a second), and revealing on quiet in between showed
+    // the cut-off tail — terminals badly formatted for a second after a reload.
+    vi.useFakeTimers();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+    const region = screen.getByTestId("agentic-terminal-host-Dana").parentElement;
+    act(() => vi.advanceTimersByTime(PAST_REBUILD));
+
+    terminalHarness.deferWrite = true;
+    act(() => {
+      // An older erase inside the replay itself is not the answer.
+      terminalHarness.handlers.current?.onReplay?.(
+        "\x1b[2Jcut-off tail" as never,
+        true as never,
+      );
+      terminalHarness.writeCallbacks.shift()?.();
+    });
+    act(() => vi.advanceTimersByTime(REBUILD_SETTLE_MAX_MS + 100));
+    expect(region?.className).toContain("invisible");
+
+    // The erase arrives split across two chunks; the quiet window follows it.
+    act(() => {
+      terminalHarness.handlers.current?.onOutput?.("\x1b[2" as never);
+      terminalHarness.handlers.current?.onOutput?.("Jthe repainted screen" as never);
+    });
+    expect(region?.className).toContain("invisible");
+    act(() => vi.advanceTimersByTime(PAST_REBUILD));
+    expect(region?.className).not.toContain("invisible");
+  });
+
+  it("shows the pane anyway when a promised repaint never comes", () => {
+    vi.useFakeTimers();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+    const region = screen.getByTestId("agentic-terminal-host-Dana").parentElement;
+    act(() => vi.advanceTimersByTime(PAST_REBUILD));
+
+    terminalHarness.deferWrite = true;
+    act(() => {
+      terminalHarness.handlers.current?.onReplay?.("cut-off tail" as never, true as never);
+      terminalHarness.writeCallbacks.shift()?.();
+    });
+    act(() => vi.advanceTimersByTime(REPAINT_WAIT_MAX_MS - 50));
+    expect(region?.className).toContain("invisible");
+    act(() => vi.advanceTimersByTime(100));
     expect(region?.className).not.toContain("invisible");
   });
 

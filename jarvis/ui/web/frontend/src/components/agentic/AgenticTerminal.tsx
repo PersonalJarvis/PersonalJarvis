@@ -218,6 +218,24 @@ export const REBUILD_QUIET_MS = 140;
 export const REBUILD_SETTLE_MAX_MS = 450;
 
 /**
+ * How long a rebuild may wait for a repaint the server has promised.
+ *
+ * A replay whose front was cut (or that belongs to another geometry) cannot
+ * rebuild a full-screen agent's interface; the server says so on the replay
+ * frame and asks the agent to repaint, and that repaint opens with a
+ * whole-screen erase. Revealing on quiet alone showed the broken tail
+ * whenever the agent answered late — a busy Claude Code lets a repaint request
+ * pass and the server repeats it half a second later — which after a bundle
+ * reload, with every pane rebuilding at once, read as terminals badly
+ * formatted for about a second (reported 2026-09-29). So such a rebuild waits
+ * for the erase, bounded by this, and still under {@link CURTAIN_MAX_MS}.
+ */
+export const REPAINT_WAIT_MAX_MS = 1_400;
+
+/** The whole-screen erase a full-screen agent's repaint starts with. */
+const FULL_SCREEN_ERASE = "\x1b[2J";
+
+/**
  * The longest an active pane's surface may stay behind a curtain, full stop.
  *
  * Every curtain in this file is lifted by a chain — a write callback, a
@@ -1275,6 +1293,26 @@ export function AgenticTerminal({
     let settleReveal: (() => void) | null = null;
     /** The rebuild being waited out, so a superseded one cannot reveal. */
     let settlingFor = 0;
+    /**
+     * Is the current rebuild still waiting for the repaint's whole-screen
+     * erase (see {@link REPAINT_WAIT_MAX_MS})? Set by a replay that announced
+     * one, cleared by the erase arriving — which may happen before the replay
+     * has even finished parsing.
+     */
+    let repaintPending = false;
+    /** The last bytes of the preceding chunk, in case it split the erase. */
+    let eraseScanTail = "";
+
+    const noteRepaintOutput = (text: string) => {
+      if (!repaintPending) return;
+      const scanned = eraseScanTail + text;
+      if (scanned.includes(FULL_SCREEN_ERASE)) {
+        repaintPending = false;
+        eraseScanTail = "";
+        return;
+      }
+      eraseScanTail = scanned.slice(-(FULL_SCREEN_ERASE.length - 1));
+    };
 
     const clearSettleTimers = () => {
       if (quietTimer !== undefined) window.clearTimeout(quietTimer);
@@ -1289,6 +1327,8 @@ export function AgenticTerminal({
       clearSettleTimers();
       settlingFor = 0;
       settleReveal = null;
+      repaintPending = false;
+      eraseScanTail = "";
       // Before the guards, deliberately: a settle abandoned because the pane
       // went away must not leave the curtain flag raised, or the next stage
       // switch would refuse to lift a curtain nobody owns any more.
@@ -1307,6 +1347,10 @@ export function AgenticTerminal({
     const noteRebuildOutput = () => {
       if (settlingFor === 0) return;
       if (quietTimer !== undefined) window.clearTimeout(quietTimer);
+      quietTimer = undefined;
+      // Quiet proves nothing while the promised repaint has not started: the
+      // agent may simply not have answered yet. Only the deadline runs then.
+      if (repaintPending) return;
       quietTimer = window.setTimeout(finishSettle, REBUILD_QUIET_MS);
     };
 
@@ -1315,7 +1359,10 @@ export function AgenticTerminal({
       clearSettleTimers();
       settlingFor = generation;
       settleReveal = reveal;
-      deadlineTimer = window.setTimeout(finishSettle, REBUILD_SETTLE_MAX_MS);
+      deadlineTimer = window.setTimeout(
+        finishSettle,
+        repaintPending ? REPAINT_WAIT_MAX_MS : REBUILD_SETTLE_MAX_MS,
+      );
       noteRebuildOutput();
     };
     settleRebuildRef.current = settleRebuild;
@@ -1328,6 +1375,7 @@ export function AgenticTerminal({
       // Anything drawn while a rebuild settles belongs to that rebuild. The
       // viewport is deliberately NOT touched here — where the pane opens is
       // the reveal's decision, and it restores what the reader was looking at.
+      noteRepaintOutput(text);
       noteRebuildOutput();
       // The first byte is what retires the "starting" overlay — and it is taken
       // HERE rather than at the socket, so a pane whose output is parked
@@ -1381,8 +1429,11 @@ export function AgenticTerminal({
      * the agent negotiated (alternate screen, mouse tracking), and those have
      * to start from a known state or the pane inherits half of the old one.
      */
-    const replayToPane = (text: string) => {
+    const replayToPane = (text: string, awaitRepaint = false) => {
       if (!text) return;
+      // A newer replay replaces whatever an older one was waiting for.
+      repaintPending = false;
+      eraseScanTail = "";
       const replayViewport =
         preservedViewportRef.current ?? captureTerminalViewport(term);
       if (replayViewport) preservedViewportRef.current = replayViewport;
@@ -1461,6 +1512,12 @@ export function AgenticTerminal({
           });
         });
       });
+      // Armed only AFTER the replay went in: its own bytes may well contain
+      // an older erase, and that must not count as the repaint's answer.
+      // Output from here on is live, so the erase it waits for can arrive
+      // before the replay has finished parsing — the settle then starts on
+      // an ordinary quiet window.
+      if (curtain && awaitRepaint) repaintPending = true;
     };
 
     /*
@@ -1756,7 +1813,7 @@ export function AgenticTerminal({
           requestAnimationFrame(() => sendResize());
         },
         onOutput: (text) => writeToPane(text),
-        onReplay: (text) => replayToPane(text),
+        onReplay: (text, awaitRepaint) => replayToPane(text, awaitRepaint),
         /**
          * The agent is in a different size than this pane asked for — follow it.
          *

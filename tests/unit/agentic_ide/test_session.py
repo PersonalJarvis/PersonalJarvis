@@ -335,7 +335,7 @@ async def test_a_geometry_change_rebases_an_intact_replay_and_repaints(
 
     replayed: list[str] = []
 
-    async def _capture_replay(text: str) -> None:
+    async def _capture_replay(text: str, repaint: bool = False) -> None:
         replayed.append(text)
 
     fake_pty.resizes.clear()
