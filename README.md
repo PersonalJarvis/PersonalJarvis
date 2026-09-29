@@ -2,6 +2,8 @@
   <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/banner.png" alt="Personal Jarvis" width="860" />
 </p>
 
+<h3 align="center">Your AI assistant, built for the agentic era.</h3>
+
 <p align="center">
   <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-666666?labelColor=333333" alt="Apache 2.0 license" /></a>
   <a href="https://github.com/PersonalJarvis/PersonalJarvis/releases/latest"><img src="https://img.shields.io/github/v/release/PersonalJarvis/PersonalJarvis?label=release&labelColor=333333&color=666666" alt="latest release" /></a>
@@ -9,7 +11,9 @@
   <a href="https://x.com/PersonalJarvis"><img src="https://img.shields.io/badge/follow-%40PersonalJarvis-000000?logo=x&logoColor=white" alt="follow @PersonalJarvis on X" /></a>
 </p>
 
-Personal Jarvis is an open-source AI assistant that runs on your own computer and that you simply talk to. Say your wake phrase and it answers out loud, works your browser and desktop apps, and runs your coding agents for you: Claude Code, Codex, OpenCode, Kimi and others sit side by side in one workspace, and you can tell any of them what to do by voice ("tell T1 to run the tests"). Longer jobs go to persistent agents that keep working in the background. One app for Windows, macOS and Linux, or headless on a server.
+Personal Jarvis is an open-source AI assistant that runs on your own computer and that you simply talk to. Say your wake phrase and it answers out loud, works your browser and desktop apps, and runs your coding agents for you: Claude Code, Codex, OpenCode, Kimi and others sit side by side in one workspace, and you can tell any of them what to do by voice ("tell T1 to run the tests"). One app for Windows, macOS and Linux, or headless on a server.
+
+**A team of agents, not a single chatbot.** Jarvis is the one you talk to, and behind it you build a team. Each agent has its own name, instructions, memory and browser, runs its own routines on a schedule, learns from what worked in its past runs, and stops to ask you a multiple choice question when it isn't sure. You can watch them work in a small office you can walk through, and move any of them onto another computer over SSH. Coding work gets the same treatment: in the [Agentic IDE](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/agentic-ide.md) every coding agent has its own pane and, if you want, its own git worktree, and Jarvis always knows what each one is doing ("what is T2 working on?").
 
 **It conducts your tools instead of replacing them.** Most AI apps want you to move into their chat and their subscription. Jarvis sits on top of what you already have: your Claude Code or Codex plan, one API key from any provider, or a local model through Ollama. It turns them into a single assistant you can talk to, and you can swap any of them without touching anything else.
 
