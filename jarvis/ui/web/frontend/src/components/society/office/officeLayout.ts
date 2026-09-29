@@ -317,6 +317,32 @@ export function deskRect(desk: Pick<DeskSlot, "x" | "z" | "size">): Rect {
   return { minX: desk.x - w / 2, maxX: desk.x + w / 2, minZ: desk.z - d / 2, maxZ: desk.z + d / 2 };
 }
 
+/** A planter box at each end of a coding-floor bench: its width, length and the gap to the end desk. */
+export const BENCH_PLANTER = { w: 0.36, d: 1.56, gap: 0.14 } as const;
+
+/**
+ * The planter boxes closing off each bench of a department, west and east,
+ * keyed "<deptId>:<bench>:w|e". They stand in the dead end between the two
+ * desk rows, clear of the chairs and the walkway behind them.
+ */
+export function benchPlanters(dept: Pick<Department, "id" | "desks">): { key: string; rect: Rect }[] {
+  const benches = new Map<string, DeskSlot[]>();
+  for (const desk of dept.desks) {
+    const bench = desk.id.split(":").at(-3) ?? "0";
+    benches.set(bench, [...(benches.get(bench) ?? []), desk]);
+  }
+  const half = DESK_SIZE.w / 2 + BENCH_PLANTER.gap;
+  return [...benches.entries()].flatMap(([bench, desks]) => {
+    const z = desks.reduce((sum, d) => sum + d.z, 0) / desks.length;
+    const west = Math.min(...desks.map((d) => d.x)) - half, east = Math.max(...desks.map((d) => d.x)) + half;
+    const zs = { minZ: z - BENCH_PLANTER.d / 2, maxZ: z + BENCH_PLANTER.d / 2 };
+    return [
+      { key: `${dept.id}:${bench}:w`, rect: { minX: west - BENCH_PLANTER.w, maxX: west, ...zs } },
+      { key: `${dept.id}:${bench}:e`, rect: { minX: east, maxX: east + BENCH_PLANTER.w, ...zs } },
+    ];
+  });
+}
+
 /** Half the width of the executive chair; unlike bench chairs it is solid, so nobody walks through it. */
 export const EXECUTIVE_CHAIR_HALF = 0.32;
 
@@ -656,6 +682,8 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     ...departments.map((d) => ({ minX: d.minX + 0.2, maxX: d.maxX - 0.2, minZ: d.minZ + 0.02, maxZ: d.minZ + 0.2 })),
     ...furniture.filter((f) => FURNITURE_SIZE[f.kind].solid).map(footprint),
     ...(coding ? commandDeskObstacles(commandDeskAt) : []),
+    // Planter boxes at the bench ends on the coding floor.
+    ...(coding ? departments.flatMap(benchPlanters).map((p) => p.rect) : []),
     // The posts of an open room's name arch are solid too; nobody walks through them.
     ...rooms.filter((r) => !r.walled).flatMap(archPosts).map((p) => ({
       minX: p.x - ARCH.post / 2, maxX: p.x + ARCH.post / 2, minZ: p.z - ARCH.post / 2, maxZ: p.z + ARCH.post / 2,
