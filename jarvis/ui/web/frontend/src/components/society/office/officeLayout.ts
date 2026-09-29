@@ -305,6 +305,14 @@ export function executiveChairRect(desk: Pick<DeskSlot, "x" | "z" | "facing">): 
   return { minX: seat.x - EXECUTIVE_CHAIR_HALF, maxX: seat.x + EXECUTIVE_CHAIR_HALF, minZ: seat.z - EXECUTIVE_CHAIR_HALF, maxZ: seat.z + EXECUTIVE_CHAIR_HALF };
 }
 
+/** Half the width of a bench desk or meeting chair: its five-star base reaches ~0.29 m from the column. */
+export const CHAIR_HALF = 0.28;
+
+/** A chair's square footprint round its seat centre. Chairs are solid; walks to a seat snap onto it. */
+export function chairRect(seat: Point, half = CHAIR_HALF): Rect {
+  return { minX: seat.x - half, maxX: seat.x + half, minZ: seat.z - half, maxZ: seat.z + half };
+}
+
 /** Axis-aligned footprint of a rotated piece (rotations are multiples of 90°). */
 export function footprint(item: Pick<Furniture, "x" | "z" | "kind" | "rotationY" | "size">): Rect {
   const base = item.size ?? FURNITURE_SIZE[item.kind];
@@ -608,6 +616,9 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     ...walls.map(wallRect),
     ...desks.map(deskRect),
     ...lead.desks.filter((d) => d.size).map(executiveChairRect),
+    // Bench desk chairs and the meeting chairs: nobody walks through a chair.
+    ...desks.filter((d) => !d.size).map((d) => chairRect(seatOf(d))),
+    ...spots.filter((s) => s.kind === "meeting").map((s) => chairRect(s)),
     // Department sign walls along each department's north edge.
     ...departments.map((d) => ({ minX: d.minX + 0.2, maxX: d.maxX - 0.2, minZ: d.minZ + 0.02, maxZ: d.minZ + 0.2 })),
     ...furniture.filter((f) => FURNITURE_SIZE[f.kind].solid).map(footprint),
