@@ -342,6 +342,40 @@ def test_whole_screen_erases_are_counted_even_split_across_reads() -> None:
     assert buffer.clears == 2, "a rebase changes what is replayed, not what went past"
 
 
+def test_a_whole_screen_erase_starts_a_replay_that_rebuilds_on_its_own() -> None:
+    """Everything a full-screen agent drew before erasing its screen is gone.
+
+    Kept anyway, those bytes filled the budget and pushed the frame's front out,
+    so a re-joining viewer got row updates for a frame it never saw (2026-09-29).
+    """
+    buffer = ReplayBuffer(limit=200)
+    buffer.feed("\x1b[?1049h\x1b[?1006h")
+    buffer.feed("old frame " * 30)
+    buffer.feed("spinner\x1b[2J\x1b[H> prompt box\r\n")
+    buffer.feed("\x1b[1A\x1b[Kworking")
+
+    replay = buffer.text()
+
+    assert buffer.truncated is False, "the frame is whole, no repaint is needed"
+    assert "old frame" not in replay
+    assert "spinner" not in replay, "bytes before the erase in the same read go too"
+    assert "\x1b[?1049h" in replay and "\x1b[?1006h" in replay
+    assert replay.index("\x1b[?1049h") < replay.index("\x1b[2J")
+    assert replay.endswith("\x1b[2J\x1b[H> prompt box\r\n\x1b[1A\x1b[Kworking")
+    screen = ScreenBuffer(40, 6)
+    screen.feed(replay)
+    assert any("working" in row for row in screen.display())
+
+
+def test_a_line_mode_cli_erasing_its_screen_keeps_its_scrollback() -> None:
+    """Only the alternate screen is repainted whole; a shell's history stays."""
+    buffer = ReplayBuffer()
+    buffer.feed("earlier output\r\n")
+    buffer.feed("\x1b[2J\x1b[Hafter clear")
+
+    assert buffer.text() == "earlier output\r\n\x1b[2J\x1b[Hafter clear"
+
+
 def test_only_an_alternate_screen_agent_holds_the_screen() -> None:
     buffer = ReplayBuffer()
     buffer.feed("plain shell output")

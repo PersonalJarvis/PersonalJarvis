@@ -250,6 +250,20 @@ class ReplayBuffer:
         # The tail is shorter than the sequence, so no erase is counted twice.
         self.clears += scanned.count(_FULL_CLEAR)
         self._clear_scan_tail = scanned[-(len(_FULL_CLEAR) - 1) :]
+        erase = chunk.rfind(_FULL_CLEAR) if self.holds_screen else -1
+        if erase >= 0:
+            # A full-screen agent just emptied its screen, so everything it
+            # drew before this is gone from it — and what follows is a frame
+            # built from nothing, the one replay that rebuilds a viewer on its
+            # own. Keeping the older bytes instead is what let the tail lose
+            # its front: a busy agent's 128 KB fill within minutes, and a
+            # viewer re-joining then got partial row updates for a frame it
+            # never saw, rows drawn over rows until a repaint nudge was
+            # answered — which a busy Claude Code does only half the time
+            # (2026-09-29). The modes the dropped bytes negotiated are kept
+            # the same way ``rebase_for_resize`` keeps them.
+            self._rebase(chunk[erase:])
+            return
         self._chunks.append(chunk)
         self._size += len(chunk)
         while self._size > self.limit and len(self._chunks) > 1:
@@ -326,13 +340,24 @@ class ReplayBuffer:
         those together with the stale drawing would repair the text while
         silently breaking the pane's mouse and scrollbar.
         """
+        return self._rebase("")
+
+    def _rebase(self, frame: str) -> str:
+        """Start a fresh replay epoch: the negotiated modes, then ``frame``."""
         prologue = self._mode_prologue() + "\x1b[0m"
         self._chunks.clear()
-        self._size = 0
         self.truncated = False
         self._open_escape = False
         self._chunks.append(prologue)
         self._size = len(prologue)
+        if frame:
+            self._chunks.append(frame)
+            self._size += len(frame)
+            while self._size > self.limit and len(self._chunks) > 1:
+                dropped = self._chunks.popleft()
+                self._size -= len(dropped)
+                self.truncated = True
+                self._open_escape = _ends_mid_escape(dropped)
         return prologue
 
     def clear(self) -> None:
