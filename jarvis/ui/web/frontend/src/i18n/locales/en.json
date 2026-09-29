@@ -5810,6 +5810,8 @@
     "expand": "Open side panel",
     "collapse": "Close side panel",
     "resize": "Resize side panel",
+    "maximize": "Fill the whole view",
+    "restore": "Back to the side panel",
     "add_tab": "Add a tab",
     "all_open": "Every tab is already open",
     "close_tab": "Close tab",

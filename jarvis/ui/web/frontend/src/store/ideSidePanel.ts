@@ -78,6 +78,12 @@ interface IdeSidePanelState {
   closeTab: (id: SidePanelTabId) => void;
   spotlight: PaneSpotlight | null;
   setSpotlight: (spotlight: PaneSpotlight | null) => void;
+  /**
+   * The panel covers the whole IDE view (the office walked full-size). Not
+   * persisted: a reload always comes back to the terminals.
+   */
+  maximized: boolean;
+  setMaximized: (maximized: boolean) => void;
 }
 
 const initialTabs = storedTabs();
@@ -94,8 +100,10 @@ export const useIdeSidePanelStore = create<IdeSidePanelState>((set, get) => {
     active: initialTabs.active,
     spotlight: null,
     setSpotlight: (spotlight) => set({ spotlight }),
+    maximized: false,
+    setMaximized: (maximized) => set({ maximized: maximized && get().open }),
     setOpen: (open) => {
-      if (!open) set({ spotlight: null });
+      if (!open) set({ spotlight: null, maximized: false });
       commit({ open });
     },
     toggle: () => get().setOpen(!get().open),
@@ -112,7 +120,7 @@ export const useIdeSidePanelStore = create<IdeSidePanelState>((set, get) => {
       if (index < 0) return;
       const rest = tabs.filter((tab) => tab !== id);
       if (rest.length === 0) {
-        set({ spotlight: null });
+        set({ spotlight: null, maximized: false });
         commit({ open: false, tabs: DEFAULT_TABS, active: DEFAULT_TABS[0] });
         return;
       }

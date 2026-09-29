@@ -5777,6 +5777,8 @@
     "expand": "Seitenleiste öffnen",
     "collapse": "Seitenleiste schließen",
     "resize": "Breite der Seitenleiste ändern",
+    "maximize": "Ganze Ansicht füllen",
+    "restore": "Zurück in die Seitenleiste",
     "add_tab": "Tab hinzufügen",
     "all_open": "Alle Tabs sind bereits offen",
     "close_tab": "Tab schließen",

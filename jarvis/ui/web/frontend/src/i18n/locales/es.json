@@ -5777,6 +5777,8 @@
     "expand": "Abrir panel lateral",
     "collapse": "Cerrar panel lateral",
     "resize": "Cambiar el ancho del panel lateral",
+    "maximize": "Ocupar toda la vista",
+    "restore": "Volver al panel lateral",
     "add_tab": "Añadir una pestaña",
     "all_open": "Todas las pestañas ya están abiertas",
     "close_tab": "Cerrar pestaña",
