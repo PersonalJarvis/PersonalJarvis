@@ -85,35 +85,65 @@ def generate_ready_pcm(
     return (np.clip(wave, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
 
 
+#: Silence ahead of the appshot cue. ``play_pcm`` opens a fresh output stream
+#: per cue, and its 5 ms edge fade plus the device's start-up swallow the first
+#: few milliseconds; a cue that starts at sample 0 loses its onset there.
+SCREEN_CAPTURE_PREROLL_S: float = 0.045
+
+
 def generate_screen_capture_pcm(
     sample_rate: int = 24_000,
-    amplitude: float = 0.42,
+    amplitude: float = 0.45,
 ) -> bytes:
-    """Generate an original mechanical-camera shutter cue.
+    """Generate the appshot cue: a soft, rounded two-note "bloop".
 
-    Two short deterministic noise transients form the shutter blades, with a
-    quiet resonant body underneath. The sound is synthesized in memory so it
-    is portable and carries no third-party recording or licensing baggage.
+    A sine that glides up a fourth (D5 -> G5) lands on a gentle D6 bell, both
+    with a smooth attack and a short synthetic room tail. Every onset sits
+    after ``SCREEN_CAPTURE_PREROLL_S`` of silence, so a freshly opened stream
+    plays the whole cue (the former noise-burst shutter packed half its
+    energy into the first 5 ms and was inaudible). Synthesized in memory:
+    portable and free of third-party recordings.
     """
-    duration_s = 0.16
-    n = int(duration_s * sample_rate)
-    t = np.arange(n, dtype=np.float32) / float(sample_rate)
-    rng = np.random.default_rng(0x5C4E_454E)
-    noise = rng.uniform(-1.0, 1.0, n).astype(np.float32)
+    preroll = int(SCREEN_CAPTURE_PREROLL_S * sample_rate)
+    body_s = 0.34
+    n = int(body_s * sample_rate)
+    t = np.arange(n, dtype=np.float64) / float(sample_rate)
 
-    wave = np.zeros(n, dtype=np.float32)
-    for onset, strength, decay in ((0.0, 1.0, 150.0), (0.052, 0.78, 115.0)):
+    def _note(
+        onset: float,
+        f_start: float,
+        f_end: float,
+        glide_s: float,
+        attack_s: float,
+        decay: float,
+    ) -> np.ndarray:
         local_t = np.maximum(t - onset, 0.0)
-        active = (t >= onset).astype(np.float32)
-        transient = noise * np.exp(-local_t * decay) * active
-        resonance = np.sin(2.0 * np.pi * 1850.0 * local_t) * np.exp(
-            -local_t * (decay * 0.62)
-        ) * active
-        wave += strength * (0.78 * transient + 0.22 * resonance)
+        active = t >= onset
+        # Smoothstep glide, integrated into phase so the pitch bend has no seam.
+        g = np.clip(local_t / glide_s, 0.0, 1.0) if glide_s > 0 else np.ones_like(t)
+        freq = f_start + (f_end - f_start) * (g * g * (3.0 - 2.0 * g))
+        phase = 2.0 * np.pi * np.cumsum(freq * active) / sample_rate
+        tone = np.sin(phase) + 0.12 * np.sin(2.0 * phase)  # a touch of warmth
+        attack = 0.5 - 0.5 * np.cos(np.pi * np.clip(local_t / attack_s, 0.0, 1.0))
+        return tone * attack * np.exp(-local_t * decay) * active
 
-    # A short fade avoids a digital edge while preserving the crisp first hit.
-    fade_out = np.minimum((duration_s - t) * 180.0, 1.0)
-    wave *= np.clip(fade_out, 0.0, 1.0) * amplitude
+    dry = _note(0.0, 587.33, 783.99, 0.05, 0.008, 20.0)
+    dry += 0.8 * _note(0.075, 1174.66, 1174.66, 0.0, 0.010, 13.0)
+
+    # A few soft, darkened early reflections give the cue air without a
+    # convolution dependency.
+    wave = dry.copy()
+    for delay_s, gain in ((0.031, 0.22), (0.053, 0.15), (0.083, 0.09)):
+        shift = int(delay_s * sample_rate)
+        echo = np.zeros_like(dry)
+        echo[shift:] = dry[:-shift]
+        echo = np.convolve(echo, np.ones(6) / 6.0, mode="same")
+        wave += gain * echo
+
+    fade_out = np.clip((body_s - t) / 0.04, 0.0, 1.0)
+    wave *= fade_out
+    wave *= amplitude / max(float(np.max(np.abs(wave))), 1e-9)
+    wave = np.concatenate([np.zeros(preroll), wave])
     return (np.clip(wave, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
 
 

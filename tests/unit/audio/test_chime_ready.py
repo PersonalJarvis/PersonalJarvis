@@ -8,11 +8,15 @@ never confused.
 """
 from __future__ import annotations
 
+import numpy as np
+
 from jarvis.audio.chime import (
     CHIME_PCM,
+    CHIME_SAMPLE_RATE,
     DISCONNECT_PCM,
     READY_PCM,
     SCREEN_CAPTURE_PCM,
+    SCREEN_CAPTURE_PREROLL_S,
     generate_ready_pcm,
     generate_screen_capture_pcm,
 )
@@ -40,3 +44,18 @@ def test_screen_capture_cue_is_original_and_deterministic() -> None:
     assert SCREEN_CAPTURE_PCM == generate_screen_capture_pcm()
     assert SCREEN_CAPTURE_PCM not in (CHIME_PCM, READY_PCM, DISCONNECT_PCM)
     assert len(SCREEN_CAPTURE_PCM) % 2 == 0
+
+
+def test_screen_capture_cue_survives_a_fresh_stream_onset() -> None:
+    """The cue must not live in its first milliseconds.
+
+    ``play_pcm`` fades the first 5 ms and a freshly opened device swallows its
+    start; the old shutter packed ~half its energy there and was inaudible.
+    """
+    samples = np.frombuffer(SCREEN_CAPTURE_PCM, dtype=np.int16).astype(np.float64)
+    preroll = int(SCREEN_CAPTURE_PREROLL_S * CHIME_SAMPLE_RATE)
+    assert not samples[:preroll].any()
+    energy = np.cumsum(samples**2)
+    early = energy[preroll + int(0.005 * CHIME_SAMPLE_RATE)] / energy[-1]
+    assert early < 0.05
+    assert np.max(np.abs(samples)) < 32767 * 0.5  # soft, never clipping

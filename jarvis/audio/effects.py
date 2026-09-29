@@ -17,7 +17,10 @@ from jarvis.core.events import ScreenCaptureGrabbed
 
 log = logging.getLogger(__name__)
 
-_PLAYBACK_TIMEOUT_S = 1.0
+# Covers stream open + the ~0.4 s cue + draining a high-latency (~0.4 s)
+# output buffer. A timeout aborts the shared player's native stream, so it must
+# never fire on a healthy device.
+_PLAYBACK_TIMEOUT_S = 2.5
 
 
 class AudioEffectsService:
