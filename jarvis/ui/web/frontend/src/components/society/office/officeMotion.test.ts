@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BODY_SPACING, WALK_SPEED, applySeparation, clearOfBodies, separation, stepMover, stepMoverAvoiding, turnToward, type Mover, wrapAngle } from "./officeMotion";
+import { BODY_SPACING, WALK_SPEED, applySeparation, clearOfBodies, separation, stepClearOfBodies, stepMover, stepMoverAvoiding, turnToward, type Mover, wrapAngle } from "./officeMotion";
 
 describe("office motion", () => {
   it("turns the short way and clamps the step", () => {
@@ -69,6 +69,16 @@ describe("separation", () => {
     expect(m.x).toBeGreaterThan(0);
     expect(clearOfBodies({ x: 0, z: 0 }, [{ x: BODY_SPACING / 2, z: 0 }])).toBe(false);
     expect(clearOfBodies({ x: 0, z: 0 }, [{ x: BODY_SPACING * 2, z: 0 }])).toBe(true);
+  });
+  it("lets a figure pinned against someone step away even when others stand far off in that direction", () => {
+    // Touching a colleague to the west; the rest of the office lies south-east, beyond the step.
+    const from = { x: 0, z: 0 };
+    const others = [{ x: -0.4, z: 0 }, { x: 5, z: 5 }, { x: 8, z: -2 }];
+    expect(stepClearOfBodies({ x: 0.03, z: 0 }, from, others)).toBe(true);
+    expect(stepClearOfBodies({ x: 0, z: 0.03 }, from, others)).toBe(true);
+    // Never deeper into the one already touched, never into someone new.
+    expect(stepClearOfBodies({ x: -0.03, z: 0 }, from, others)).toBe(false);
+    expect(stepClearOfBodies({ x: 0.03, z: 0 }, from, [{ x: 0.5, z: 0 }])).toBe(false);
   });
   it("keeps two walkers crossing head-on apart", () => {
     const a = { x: 0, z: -3, heading: 0, path: [{ x: 0, z: 3 }] };

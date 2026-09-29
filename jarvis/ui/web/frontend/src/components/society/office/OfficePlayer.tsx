@@ -11,7 +11,7 @@ import type { FigureDrive } from "../figures/FigureRig";
 import { ToyFigure } from "./ToyFigure";
 import type { ToyLook } from "./toyFigureModel";
 import { findPath, isWalkable, nearestWalkable, type NavGrid } from "./officeNav";
-import { applySeparation, clearOfBodies, separation, stepMover, turnToward } from "./officeMotion";
+import { applySeparation, separation, stepClearOfBodies, stepMover, turnToward } from "./officeMotion";
 import { officeSession, player, sameSelection, useOfficeStore, type Selection } from "./officeStore";
 import { agentPositions, bodiesExcept } from "./walkerRegistry";
 import { OFFICE_FIGURE_HEIGHT_M } from "./OfficeAgents";
@@ -40,14 +40,6 @@ export function ownsKeyboard(target: EventTarget | null): boolean {
   if (target.isContentEditable) return true;
   const tag = target.tagName;
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || !!target.closest("[role='dialog']");
-}
-
-/** Would stepping to `next` bring the character closer to any agent than it is now at `from`? */
-function closerToAnyone(next: { x: number; z: number }, from: { x: number; z: number }): boolean {
-  for (const p of bodiesExcept(null, null)) {
-    if (Math.hypot(next.x - p.x, next.z - p.z) < Math.hypot(from.x - p.x, from.z - p.z)) return true;
-  }
-  return false;
 }
 
 /** Pressed movement keys, tracked on the window while the office is awake. */
@@ -157,8 +149,7 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
       const nx = player.x + dx * step, nz = player.z + dz * step;
       // Slide along walls and around people: full move, else each axis alone.
       // Moving away from someone you already touch is always allowed, so nobody gets stuck.
-      const free = (p: { x: number; z: number }) => isWalkable(grid, p)
-        && (clearOfBodies(p, bodiesExcept(null, null)) || !closerToAnyone(p, player));
+      const free = (p: { x: number; z: number }) => isWalkable(grid, p) && stepClearOfBodies(p, player, bodiesExcept(null, null));
       if (free({ x: nx, z: nz })) { player.x = nx; player.z = nz; moved = step; }
       else if (free({ x: nx, z: player.z })) { player.x = nx; moved = Math.abs(dx * step); }
       else if (free({ x: player.x, z: nz })) { player.z = nz; moved = Math.abs(dz * step); }
