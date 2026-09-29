@@ -911,6 +911,8 @@
       "cmd_screen": "Pantalla en vivo de {0}",
       "cmd_screen_loading": "Cargando la pantalla…",
       "cmd_screen_empty": "Todavía no hay nada en la pantalla.",
+      "cmd_live": "En vivo",
+      "cmd_screen_open": "Abrir la terminal completa",
       "cmd_quick": "Órdenes rápidas",
       "cmd_order_continue": "Continuar",
       "cmd_order_continue_text": "Continúa.",

@@ -1,6 +1,6 @@
 /**
- * A coding session on the coding floor, as a command panel: the live terminal
- * screen, a box to prompt the agent directly, one-tap orders, the recent
+ * A coding session on the coding floor, as a command panel: a small live
+ * window onto its terminal, a box to prompt the agent directly, one-tap orders, the recent
  * prompts, and the session actions (open, stop, fork, close) next to the map
  * actions (walk there, call over, show).
  *
@@ -14,20 +14,15 @@ import { useT } from "@/i18n";
 import {
   closeTerminal, fetchPromptHistory, forkTerminal, interruptTerminal, promptTerminal, type PromptHistoryItem,
 } from "@/lib/agenticIdeApi";
-import { fetchPaneScreens } from "@/lib/paneScreensApi";
 import { useWorkspacePanesStore } from "@/store/workspacePanes";
 import type { PaneOccupant } from "./codingFloor";
 import { player, useOfficeStore } from "./officeStore";
 import { agentPositions } from "./walkerRegistry";
 import { CALL_MS } from "./AgentTalkPanel";
+import { PaneLiveScreen } from "./PaneLiveScreen";
 import "./officeTalk.css";
 import "./missionControl.css";
 
-/** The live screen refreshes this often while the panel is open (jittered, AP-33). */
-const SCREEN_MS = 1100;
-const SCREEN_JITTER_MS = 400;
-/** Terminal rows the panel shows: the bottom of the screen, where the agent writes. */
-const SCREEN_ROWS = 12;
 /** Recent prompts offered for re-use. */
 const HISTORY_ITEMS = 4;
 /** A second press within this window confirms closing the session. */
@@ -36,13 +31,6 @@ const CONFIRM_MS = 4000;
 /** One-tap orders; the label is the chip, the text is what the agent receives. */
 export const QUICK_ORDERS = ["continue", "status", "tests", "commit"] as const;
 
-/** The bottom `rows` non-empty-trailing rows of a screen. Pure. */
-export function screenTail(lines: readonly string[], rows: number): string[] {
-  let end = lines.length;
-  while (end > 0 && !lines[end - 1].trim()) end -= 1;
-  return lines.slice(Math.max(0, end - rows), end);
-}
-
 function sinceLabel(at: number | null, t: (key: string) => string): string {
   if (!at) return "";
   const seconds = Math.max(0, Date.now() / 1000 - at);
@@ -50,31 +38,6 @@ function sinceLabel(at: number | null, t: (key: string) => string): string {
   if (seconds < 3600) return t("society.office.since_minutes").replace("{0}", String(Math.floor(seconds / 60)));
   if (seconds < 86400) return t("society.office.since_hours").replace("{0}", String(Math.floor(seconds / 3600)));
   return t("society.office.since_days").replace("{0}", String(Math.floor(seconds / 86400)));
-}
-
-function useLiveScreen(workspaceId: string, key: string): string[] | null {
-  const [rows, setRows] = useState<string[] | null>(null);
-  useEffect(() => {
-    let alive = true;
-    let timer: ReturnType<typeof setTimeout>;
-    let failing = false;
-    setRows(null);
-    const tick = async () => {
-      try {
-        const [screen] = await fetchPaneScreens([{ workspaceId, key }]);
-        if (alive) setRows(screen ? screenTail(screen.lines, SCREEN_ROWS) : []);
-        failing = false;
-      } catch (err) {
-        // The last good screen stays up; only the first failure of a streak is worth a line.
-        if (!failing) console.warn("Pane screen unavailable", err);
-        failing = true;
-      }
-      if (alive) timer = setTimeout(() => void tick(), SCREEN_MS + Math.random() * SCREEN_JITTER_MS);
-    };
-    void tick();
-    return () => { alive = false; clearTimeout(timer); };
-  }, [workspaceId, key]);
-  return rows;
 }
 
 type Note = { tone: "ok" | "error"; text: string } | null;
@@ -92,7 +55,6 @@ export function PaneCommandPanel({ occupant, onOpen, onClose }: { occupant: Pane
   const [note, setNote] = useState<Note>(null);
   const [confirmClose, setConfirmClose] = useState(false);
   const [history, setHistory] = useState<PromptHistoryItem[]>([]);
-  const screen = useLiveScreen(pane.workspace_id, pane.key);
   const where = agentPositions.get(agent.agentId);
   const live = pane.status === "live";
   const canPrompt = live && pane.accepts_prompts;
@@ -184,59 +146,62 @@ export function PaneCommandPanel({ occupant, onOpen, onClose }: { occupant: Pane
         <button type="button" className="office-icon-button" onClick={onClose} aria-label={t("society.office.close")}>×</button>
       </header>
 
-      {recap && <p className="office-cmd-topic" title={recap}><strong>{t("society.office.pane_recap")}</strong> {recap}</p>}
+      <div className="office-cmd-body">
+        <PaneLiveScreen workspaceId={pane.workspace_id} paneKey={pane.key} title={pane.display_name || pane.name}
+          dot={occupant.dot} stateLabel={t(`society.office.pane_state_${occupant.stateKey}`)} agentName={agent.name} onOpen={onOpen} />
 
-      <pre className="office-cmd-screen" aria-label={t("society.office.cmd_screen").replace("{0}", agent.name)} aria-live="off">
-        {screen === null ? t("society.office.cmd_screen_loading") : screen.length === 0 ? t("society.office.cmd_screen_empty") : screen.join("\n")}
-      </pre>
+        <div className="office-cmd-side">
+          {recap && <p className="office-cmd-topic" title={recap}><strong>{t("society.office.pane_recap")}</strong> {recap}</p>}
 
-      <div className="office-cmd-quick" role="group" aria-label={t("society.office.cmd_quick")}>
-        {QUICK_ORDERS.map((order) => (
-          <button key={order} type="button" disabled={!canPrompt || sending} title={t(`society.office.cmd_order_${order}_text`)}
-            onClick={() => void send(t(`society.office.cmd_order_${order}_text`))}>
-            {t(`society.office.cmd_order_${order}`)}
-          </button>
-        ))}
-      </div>
-
-      <div className="office-talk-composer">
-        <textarea ref={input} rows={1} value={value} maxLength={8000} disabled={!canPrompt}
-          placeholder={t("society.office.cmd_placeholder").replace("{0}", agent.name)}
-          aria-label={t("society.office.cmd_placeholder").replace("{0}", agent.name)}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(value); }
-            // Escape leaves the box so the arrow keys walk again; a second Escape closes the panel.
-            else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); panel.current?.focus({ preventScroll: true }); }
-          }} />
-        {working && !value.trim()
-          ? <button type="button" className="office-talk-send" data-stop onClick={stop}
-              aria-label={t("society.office.cmd_stop")} title={t("society.office.cmd_stop")}><Square aria-hidden /></button>
-          : <button type="button" className="office-talk-send" disabled={!canPrompt || sending || !value.trim()} onClick={() => void send(value)}
-              aria-label={t("society.office.cmd_send")} title={t("society.office.cmd_send")}><ArrowUp aria-hidden /></button>}
-      </div>
-      <div className="office-cmd-row">
-        <label className="office-cmd-check">
-          <input type="checkbox" checked={sharpen} onChange={(e) => setSharpen(e.target.checked)} />
-          <span>{t("society.office.cmd_sharpen")}</span>
-        </label>
-        <span className="office-talk-status" role="status" data-tone={note?.tone}>{sending ? t("society.office.cmd_sending") : note?.text ?? status}</span>
-      </div>
-
-      {history.length > 0 && (
-        <details className="office-cmd-history">
-          <summary>{t("society.office.cmd_history").replace("{0}", String(history.length))}</summary>
-          <ul>
-            {history.map((item) => (
-              <li key={item.id}>
-                <button type="button" title={t("society.office.cmd_reuse")} onClick={() => { setValue(item.text); input.current?.focus(); }}>
-                  {item.text}
-                </button>
-              </li>
+          <div className="office-cmd-quick" role="group" aria-label={t("society.office.cmd_quick")}>
+            {QUICK_ORDERS.map((order) => (
+              <button key={order} type="button" disabled={!canPrompt || sending} title={t(`society.office.cmd_order_${order}_text`)}
+                onClick={() => void send(t(`society.office.cmd_order_${order}_text`))}>
+                {t(`society.office.cmd_order_${order}`)}
+              </button>
             ))}
-          </ul>
-        </details>
-      )}
+          </div>
+
+          <div className="office-talk-composer">
+            <textarea ref={input} rows={1} value={value} maxLength={8000} disabled={!canPrompt}
+              placeholder={t("society.office.cmd_placeholder").replace("{0}", agent.name)}
+              aria-label={t("society.office.cmd_placeholder").replace("{0}", agent.name)}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(value); }
+                // Escape leaves the box so the arrow keys walk again; a second Escape closes the panel.
+                else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); panel.current?.focus({ preventScroll: true }); }
+              }} />
+            {working && !value.trim()
+              ? <button type="button" className="office-talk-send" data-stop onClick={stop}
+                  aria-label={t("society.office.cmd_stop")} title={t("society.office.cmd_stop")}><Square aria-hidden /></button>
+              : <button type="button" className="office-talk-send" disabled={!canPrompt || sending || !value.trim()} onClick={() => void send(value)}
+                  aria-label={t("society.office.cmd_send")} title={t("society.office.cmd_send")}><ArrowUp aria-hidden /></button>}
+          </div>
+          <div className="office-cmd-row">
+            <label className="office-cmd-check">
+              <input type="checkbox" checked={sharpen} onChange={(e) => setSharpen(e.target.checked)} />
+              <span>{t("society.office.cmd_sharpen")}</span>
+            </label>
+            <span className="office-talk-status" role="status" data-tone={note?.tone}>{sending ? t("society.office.cmd_sending") : note?.text ?? status}</span>
+          </div>
+
+          {history.length > 0 && (
+            <details className="office-cmd-history">
+              <summary>{t("society.office.cmd_history").replace("{0}", String(history.length))}</summary>
+              <ul>
+                {history.map((item) => (
+                  <li key={item.id}>
+                    <button type="button" title={t("society.office.cmd_reuse")} onClick={() => { setValue(item.text); input.current?.focus(); }}>
+                      {item.text}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      </div>
 
       <div className="office-talk-tools office-cmd-tools" role="toolbar" aria-label={t("society.office.talk_tools")}>
         <button type="button" onClick={onOpen} title={t("society.office.pane_open")}>

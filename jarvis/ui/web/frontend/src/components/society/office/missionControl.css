@@ -4,7 +4,46 @@
 /* ---- session command panel -------------------------------------------- */
 .office-cmd-topic { margin:8px 12px 0; font-size:12px; line-height:1.4; color:hsl(var(--muted-foreground)); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
 .office-cmd-topic strong { color:hsl(var(--foreground)); font-weight:600; margin-right:4px; }
-.office-cmd-screen { margin:8px 10px 0; padding:8px 10px; min-height:72px; max-height:176px; overflow:auto; border-radius:10px; border:1px solid hsl(var(--border)); background:hsl(var(--muted)); color:hsl(var(--foreground)); font:11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space:pre; text-shadow:none; }
+/* The panel reads as one terminal window with its controls beside it: wide
+   (the compact office stretches the panel across the view) puts the live
+   window left and the controls right; narrow stacks them. */
+.office-panel-slot:has(> .office-cmd) { width:min(480px, calc(100% - 28px)); }
+.office-stage-compact .office-panel-slot:has(> .office-cmd) { width:calc(100% - 16px); }
+.office-cmd { container-type:inline-size; }
+.office-cmd-body { display:flex; flex-direction:column; min-height:0; overflow:auto; }
+.office-cmd-side { display:flex; flex-direction:column; min-width:0; }
+.office-live { display:flex; flex-direction:column; margin:10px 10px 0; min-height:0; border:1px solid hsl(var(--border-strong, var(--border))); border-radius:10px; overflow:hidden; background:hsl(var(--muted)); }
+.office-live[data-dot="working"] { border-color:hsl(var(--success) / .55); box-shadow:0 0 0 1px hsl(var(--success) / .15); }
+.office-live[data-dot="waiting"] { border-color:hsl(var(--warning) / .6); }
+.office-live-bar .office-dot[data-dot="working"] { background:hsl(var(--success)); }
+.office-live-bar .office-dot[data-dot="waiting"] { background:hsl(var(--warning)); }
+.office-live[data-dot="error"] { border-color:hsl(var(--destructive) / .55); }
+.office-live-bar { display:flex; align-items:center; gap:7px; min-width:0; padding:5px 6px 5px 10px; border-bottom:1px solid hsl(var(--border)); background:hsl(var(--secondary)); font-size:11px; color:hsl(var(--muted-foreground)); }
+.office-live-title { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; color:hsl(var(--foreground)); }
+.office-live-state { flex:none; white-space:nowrap; }
+.office-live-beat { flex:none; display:inline-flex; align-items:center; gap:4px; padding:1px 6px; border-radius:6px; background:hsl(var(--success) / .14); color:hsl(var(--success)); font-size:10px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; }
+.office-live-beat::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; animation:office-live-beat 1.4s ease-in-out infinite; }
+@keyframes office-live-beat { 50% { opacity:.25; } }
+.office-live-size { flex:none; margin-left:auto; font:10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; opacity:.8; }
+.office-live-open { flex:none; display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; margin-left:auto; border:0; border-radius:6px; background:none; color:hsl(var(--muted-foreground)); cursor:pointer; }
+.office-live-size + .office-live-open { margin-left:2px; }
+.office-live-open svg { width:14px; height:14px; }
+.office-live-open:hover { background:hsl(var(--background)); color:hsl(var(--foreground)); }
+.office-live-open:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:1px; }
+/* Fixed height, rows absolutely placed: the grid is fitted to this box, so the
+   text can never feed back into its size. */
+.office-live-body { position:relative; height:clamp(150px, 26vh, 240px); cursor:zoom-in; }
+.office-live-rows { position:absolute; inset:10px; margin:0; overflow:hidden; display:flex; flex-direction:column; justify-content:flex-end; color:hsl(var(--foreground)); font-family:ui-monospace, 'Cascadia Mono', SFMono-Regular, Menlo, Consolas, monospace; white-space:pre; text-shadow:none; }
+.office-live-rows > div { overflow:hidden; }
+.office-live-cursor { background:hsl(var(--foreground) / .85); color:hsl(var(--muted)); }
+.office-live-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; margin:0; font-size:12px; color:hsl(var(--muted-foreground)); }
+@container (min-width:720px) {
+  .office-cmd-body { display:grid; grid-template-columns:minmax(0, 1.6fr) minmax(300px, 1fr); align-items:stretch; }
+  .office-cmd-body > .office-live { margin:10px 0 0 10px; }
+  .office-cmd-body .office-live-body { height:auto; flex:1 1 auto; min-height:220px; }
+  .office-cmd-side { justify-content:flex-end; padding-bottom:2px; }
+}
+@media (prefers-reduced-motion:reduce) { .office-live-beat::before { animation:none; } }
 .office-cmd-quick { display:flex; flex-wrap:wrap; gap:5px; margin:8px 10px; }
 .office-cmd-quick button, .office-mc-chips button { padding:4px 10px; border:1px solid hsl(var(--border)); border-radius:999px; background:hsl(var(--background)); color:hsl(var(--foreground)); font-size:11px; font-weight:600; cursor:pointer; }
 .office-cmd-quick button:hover:not(:disabled), .office-mc-chips button:hover:not(:disabled) { background:hsl(var(--secondary)); }

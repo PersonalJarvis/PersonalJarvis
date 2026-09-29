@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { AgentStatus } from "@/lib/agenticIdeApi";
 import type { PaneOccupant } from "./codingFloor";
 import { launchableAgents, pickAll } from "./MissionControlPanel";
-import { QUICK_ORDERS, screenTail } from "./PaneCommandPanel";
+import { QUICK_ORDERS } from "./PaneCommandPanel";
+import { liveGrid } from "./PaneLiveScreen";
 
 const cli = (name: string, extra: Partial<AgentStatus> = {}): AgentStatus => ({
   name, display_name: name, installed: true, version: null, install_command: null, ...extra,
@@ -12,10 +13,16 @@ const occupant = (id: string, state: PaneOccupant["agent"]["state"]): PaneOccupa
   ({ agent: { agentId: id, state } } as PaneOccupant);
 
 describe("pane command panel", () => {
-  it("shows the bottom of the terminal, without the blank rows under the cursor", () => {
-    expect(screenTail(["a", "b", "c", "", "  "], 2)).toEqual(["b", "c"]);
-    expect(screenTail(["", ""], 5)).toEqual([]);
-    expect(screenTail(["one"], 12)).toEqual(["one"]);
+  it("fits the live window's font to the pane's width, within bounds", () => {
+    // A narrow 40-column TUI in a wide window grows to the cap instead of hugging the left edge.
+    expect(liveGrid(40, 900, 240).font).toBe(14);
+    // A wide 200-column terminal shrinks to the floor and is cut on the right.
+    const wide = liveGrid(200, 500, 240);
+    expect(wide.font).toBe(10);
+    expect(wide.cols).toBe(80);
+    // As many rows as the height holds, never zero.
+    expect(liveGrid(80, 600, 240).fit).toBe(Math.floor(220 / Math.round(liveGrid(80, 600, 240).font * 1.3)));
+    expect(liveGrid(80, 0, 0).fit).toBe(1);
   });
 
   it("offers the four one-tap orders", () => {

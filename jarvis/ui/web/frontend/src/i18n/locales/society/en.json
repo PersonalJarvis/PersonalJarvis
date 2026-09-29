@@ -911,6 +911,8 @@
       "cmd_screen": "Live screen of {0}",
       "cmd_screen_loading": "Loading the screen…",
       "cmd_screen_empty": "Nothing on the screen yet.",
+      "cmd_live": "Live",
+      "cmd_screen_open": "Open the full terminal",
       "cmd_quick": "Quick orders",
       "cmd_order_continue": "Continue",
       "cmd_order_continue_text": "Continue.",
