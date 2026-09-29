@@ -131,8 +131,10 @@ export function Bookshelf({ position, rotationY = 0 }: { position: [number, numb
   }), []);
   return (
     <group position={position} rotation={[0, rotationY, 0]}>
+      {/* Boards are shallower than the uprights and the top board sits below their tops:
+          coplanar faces where steel meets oak would z-fight and flicker as the camera moves. */}
       {[-0.88, 0, 0.88].map((x) => <Box key={x} size={[0.03, 1.4, 0.34]} position={[x, 0.7, 0]} material={MAT.steel} />)}
-      {[0.035, 0.485, 0.935, 1.385].map((y) => <Box key={y} size={[1.8, 0.03, 0.34]} position={[0, y, 0]} material={MAT.wood} />)}
+      {[0.035, 0.485, 0.935, 1.37].map((y) => <Box key={y} size={[1.8, 0.03, 0.32]} position={[0, y, 0]} material={MAT.wood} />)}
       {books.map((b, i) => <Box key={i} size={[0.07, b.h, 0.24]} position={[b.x, b.y + b.h / 2, 0]} material={b.m} />)}
       {/* A small planter, two ceramic vases and a trailing plant. */}
       <mesh geometry={GEO.cyl} material={MAT.planterLight} position={[0.45, 0.58, 0]} scale={[0.08, 0.14, 0.08]} castShadow />
