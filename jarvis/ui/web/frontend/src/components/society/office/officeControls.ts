@@ -24,6 +24,8 @@ export type MouseGesture = "click" | "double" | "drag" | "right_drag" | "wheel";
 export const OFFICE_CONTROLS: readonly OfficeControl[] = [
   { id: "walk", group: "move", keys: [["W", "A", "S", "D"], ["ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]] },
   { id: "run", group: "move", keys: [["Shift"]] },
+  { id: "jump", group: "move", keys: [["Space"]] },
+  { id: "sprint_jump", group: "move", keys: [["Shift", "+", "Space"]] },
   { id: "click_walk", group: "move", keys: [["mouse:click"]] },
   { id: "rotate", group: "camera", keys: [["mouse:drag"]] },
   { id: "pan", group: "camera", keys: [["mouse:right_drag"], ["Ctrl/⌘", "+", "mouse:drag"]] },

@@ -1,6 +1,7 @@
 /**
  * The person's own character: walks with WASD/arrows (camera-relative, Shift
- * runs) or by clicking the floor, and interacts with whatever is nearby (E).
+ * runs, Space jumps — a sprint jump is faster than a sprint) or by clicking
+ * the floor, and interacts with whatever is nearby (E).
  * Zooming out never requires walking — everything stays clickable from afar.
  */
 import { useEffect, useMemo, useRef } from "react";
@@ -19,6 +20,7 @@ import { seatOf, type OfficeLayout } from "./officeLayout";
 import { chairInReach, useLeadSeat } from "./leadSeat";
 import { useOfficeDog } from "./dogLife";
 import { isRunning, useOfficeSettings } from "./officeSettings";
+import { jumpSquash, newJump, pressJump, stepJump } from "./officeJump";
 
 /** The person's pace: a brisk walk, and a sprint on Shift (m/s). */
 export const PLAYER_WALK_SPEED = 2.0;
@@ -45,10 +47,16 @@ export function ownsKeyboard(target: EventTarget | null): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || !!target.closest("[role='dialog']");
 }
 
-/** Pressed movement keys, tracked on the window while the office is awake. */
-function useMoveKeys(enabled: boolean, onInteract: () => void) {
+/** Space on a focused button, tab or switch activates that control, never a jump. */
+function activatesControl(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && !!target.closest("button, a[href], [role='button'], [role='tab'], [role='switch'], [role='checkbox']");
+}
+
+/** Pressed movement keys (and Space for jumping), tracked on the window while the office is awake. */
+function useMoveKeys(enabled: boolean, onInteract: () => void, onJump: () => void) {
   const pressed = useRef(new Set<string>());
   const run = useRef(false);
+  const jumpHeld = useRef(false);
   useEffect(() => {
     if (!enabled) { pressed.current.clear(); return; }
     const down = (event: KeyboardEvent) => {
@@ -56,12 +64,21 @@ function useMoveKeys(enabled: boolean, onInteract: () => void) {
       run.current = event.shiftKey;
       if (event.code in MOVE_KEYS) { pressed.current.add(event.code); event.preventDefault(); }
       else if (event.code === "KeyE" && !event.repeat) { onInteract(); event.preventDefault(); }
+      else if (event.code === "Space" && !activatesControl(event.target)) {
+        event.preventDefault();
+        if (!event.repeat) onJump();
+        jumpHeld.current = true;
+      }
     };
-    const up = (event: KeyboardEvent) => { pressed.current.delete(event.code); run.current = event.shiftKey; };
+    const up = (event: KeyboardEvent) => {
+      pressed.current.delete(event.code);
+      if (event.code === "Space") jumpHeld.current = false;
+      run.current = event.shiftKey;
+    };
     // A key held while the window loses focus never sees its keyup; forget
     // everything then, or the character walks on by itself. (Not on
     // visibilitychange: the desktop WebView reports visible windows as hidden.)
-    const release = () => pressed.current.clear();
+    const release = () => { pressed.current.clear(); jumpHeld.current = false; };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     window.addEventListener("blur", release);
@@ -71,8 +88,8 @@ function useMoveKeys(enabled: boolean, onInteract: () => void) {
       window.removeEventListener("keyup", up);
       window.removeEventListener("blur", release);
     };
-  }, [enabled, onInteract]);
-  return { pressed, run };
+  }, [enabled, onInteract, onJump]);
+  return { pressed, run, jumpHeld };
 }
 
 function nearestInteractable(layout: OfficeLayout): Selection | null {
@@ -101,7 +118,9 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
   layout: OfficeLayout; grid: NavGrid; look: ToyLook; name: string; awake: boolean; reduced: boolean;
 }) {
   const group = useRef<Group>(null);
+  const body = useRef<Group>(null);
   const ring = useRef<Mesh>(null);
+  const jump = useMemo(newJump, []);
   const drive = useRef<FigureDrive>({ mode: "idle", speed: 0 });
   const camera = useThree((s) => s.camera);
   const forward = useMemo(() => new Vector3(), []);
@@ -116,7 +135,8 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
     const nearby = nearbyRef.current;
     if (nearby) useOfficeStore.getState().select(nearby);
   }, []);
-  const { pressed, run } = useMoveKeys(awake, interact);
+  const onJump = useMemo(() => () => pressJump(jump), [jump]);
+  const { pressed, run, jumpHeld } = useMoveKeys(awake, interact, onJump);
 
   // Arrive by the elevator once per app run; coming back to the map keeps the
   // character where it was, unless a changed floor plan put that spot in a wall.
@@ -150,6 +170,9 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
       player.x = seat.x; player.z = seat.z; player.heading = seat.facing; player.path = []; player.moving = false;
       drive.current.mode = "sit";
       drive.current.speed = 0;
+      Object.assign(jump, newJump());
+      body.current?.position.setY(0);
+      body.current?.scale.set(1, 1, 1);
       group.current?.position.set(player.x, 0, player.z);
       if (group.current) group.current.rotation.y = player.heading;
       if (nearbyRef.current) { nearbyRef.current = null; store.setNearby(null); }
@@ -172,7 +195,11 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
     // Keyboard movement, relative to where the camera looks.
     let ix = 0, iz = 0;
     for (const code of pressed.current) { ix += MOVE_KEYS[code][0]; iz += MOVE_KEYS[code][1]; }
-    const speed = isRunning(run.current, useOfficeSettings.getState().alwaysRun) ? PLAYER_SPRINT_SPEED : PLAYER_WALK_SPEED;
+    const sprinting = isRunning(run.current, useOfficeSettings.getState().alwaysRun);
+    const steering = ix !== 0 || iz !== 0 || player.path.length > 0;
+    stepJump(jump, dt, jumpHeld.current, sprinting && steering);
+    // A sprint jump carries its boost while airborne (eased in and out by stepJump).
+    const speed = (sprinting ? PLAYER_SPRINT_SPEED : PLAYER_WALK_SPEED) * jump.speedMul;
     let moved = 0;
     if (ix !== 0 || iz !== 0) {
       player.path = [];
@@ -207,6 +234,13 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
       group.current.position.set(player.x, 0, player.z);
       group.current.rotation.y = player.heading;
     }
+    // The body rides the hop; the gold ring stays on the floor as its shadow.
+    if (body.current) {
+      body.current.position.y = jump.y;
+      const [sw, sh] = reduced ? [1, 1] : jumpSquash(jump);
+      body.current.scale.set(sw, sh, sw);
+    }
+    if (ring.current) ring.current.scale.setScalar(1 - Math.min(0.35, jump.y * 0.6));
     if (ring.current) (ring.current.material as MeshBasicMaterial).opacity = reduced ? 0.8 : 0.6 + Math.sin(performance.now() / 400) * 0.2;
     // What can the character reach right now? The lead's chair has its own prompt beside it.
     const chair = chairInReach(layout.lead.desks, player);
@@ -222,13 +256,15 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
         <ringGeometry args={[0.42, 0.52, 40]} />
         <meshBasicMaterial color="#f5b83d" transparent opacity={0.8} side={DoubleSide} depthWrite={false} />
       </mesh>
-      <ToyFigure look={look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} />
-      <Html center position={[0, OFFICE_FIGURE_HEIGHT_M + 0.35, 0]} zIndexRange={[25, 0]}>
-        <span className="office-plate office-plate-player" data-office-ui>
-          <span className="office-plate-badge" style={{ background: "#f5b83d" }} aria-hidden>★</span>
-          <span className="office-plate-name">{name}</span>
-        </span>
-      </Html>
+      <group ref={body}>
+        <ToyFigure look={look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} />
+        <Html center position={[0, OFFICE_FIGURE_HEIGHT_M + 0.35, 0]} zIndexRange={[25, 0]}>
+          <span className="office-plate office-plate-player" data-office-ui>
+            <span className="office-plate-badge" style={{ background: "#f5b83d" }} aria-hidden>★</span>
+            <span className="office-plate-name">{name}</span>
+          </span>
+        </Html>
+      </group>
     </group>
   );
 }
