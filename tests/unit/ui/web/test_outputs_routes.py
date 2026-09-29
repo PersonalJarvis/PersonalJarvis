@@ -802,6 +802,35 @@ async def test_list_outputs_still_hides_an_unmarked_neighbour(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["chat_media", "chat_image"])
+async def test_list_outputs_leaves_out_chat_attachments(
+    app: FastAPI, tmp_path: Path, kind: str
+) -> None:
+    """A chat's parked media is no artifact.
+
+    Every picture or clip shown in a chat is archived as its own directory so
+    the transcript can serve it; listing those flooded the Artifacts section
+    with untitled "Chat media" rows (2026-09-29). The files stay reachable.
+    """
+    artifact = _make_worktree_dir(tmp_path, utterance="drawn", short="feedface")
+    write_standalone_marker(artifact, kind="visualization", title="Drawn")
+    attachment = tmp_path / "chat-media-0123456789abcdef01234567"
+    files = attachment / "tasks" / "chat" / "artifacts" / "files"
+    files.mkdir(parents=True)
+    (files / "media.png").write_bytes(b"\x89PNG")
+    write_standalone_marker(attachment, kind=kind, title="Chat media")
+
+    with TestClient(app) as client:
+        listed = client.get("/api/outputs")
+        served = client.get(
+            f"/api/outputs/{attachment.name}/files/tasks/chat/artifacts/files/media.png/download"
+        )
+
+    assert [s["slug"] for s in listed.json()["sessions"]] == [artifact.name]
+    assert served.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_list_outputs_tolerates_a_corrupt_marker(app: FastAPI, tmp_path: Path) -> None:
     """A half-written marker degrades that ONE entry, never the whole listing."""
     run_dir = _make_worktree_dir(tmp_path, utterance="broken", short="feedface")
