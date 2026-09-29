@@ -1,0 +1,57 @@
+/* Coding floor command surfaces: the session command panel and Mission Control.
+   Theme tokens only, so both read in light and dark mode. */
+
+/* ---- session command panel -------------------------------------------- */
+.office-cmd-topic { margin:8px 12px 0; font-size:12px; line-height:1.4; color:hsl(var(--muted-foreground)); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.office-cmd-topic strong { color:hsl(var(--foreground)); font-weight:600; margin-right:4px; }
+.office-cmd-screen { margin:8px 10px 0; padding:8px 10px; min-height:72px; max-height:176px; overflow:auto; border-radius:10px; border:1px solid hsl(var(--border)); background:hsl(var(--muted)); color:hsl(var(--foreground)); font:11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space:pre; text-shadow:none; }
+.office-cmd-quick { display:flex; flex-wrap:wrap; gap:5px; margin:8px 10px; }
+.office-cmd-quick button, .office-mc-chips button { padding:4px 10px; border:1px solid hsl(var(--border)); border-radius:999px; background:hsl(var(--background)); color:hsl(var(--foreground)); font-size:11px; font-weight:600; cursor:pointer; }
+.office-cmd-quick button:hover:not(:disabled), .office-mc-chips button:hover:not(:disabled) { background:hsl(var(--secondary)); }
+.office-cmd-quick button:disabled, .office-mc-chips button:disabled { opacity:.45; cursor:not-allowed; }
+.office-mc-chips button[aria-pressed="true"] { border-color:hsl(var(--primary)); background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); text-shadow:none; }
+.office-cmd-quick button:focus-visible, .office-mc-chips button:focus-visible, .office-mc-tabs button:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
+.office-cmd-row { display:flex; align-items:center; gap:8px; margin:5px 12px 0; min-width:0; }
+.office-cmd-row .office-talk-status { flex:1; margin:0; text-align:right; }
+.office-talk-status[data-tone="ok"] { color:hsl(var(--success)); }
+.office-talk-status[data-tone="error"] { color:hsl(var(--destructive)); white-space:normal; }
+.office-cmd-check { display:inline-flex; align-items:center; gap:6px; flex:none; font-size:11px; color:hsl(var(--muted-foreground)); cursor:pointer; }
+.office-cmd-check input { accent-color:hsl(var(--primary)); }
+.office-cmd-history { margin:8px 12px 0; font-size:12px; }
+.office-cmd-history summary { cursor:pointer; color:hsl(var(--muted-foreground)); font-weight:600; }
+.office-cmd-history ul { list-style:none; margin:6px 0 0; padding:0; display:flex; flex-direction:column; gap:4px; }
+.office-cmd-history button { width:100%; padding:5px 8px; border:0; border-radius:8px; background:hsl(var(--secondary)); color:hsl(var(--foreground)); font:inherit; font-size:11px; text-align:left; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.office-cmd-history button:hover { background:hsl(var(--secondary) / .7); }
+.office-cmd-tools { grid-template-columns:repeat(7, 1fr); }
+.office-cmd-tools button[data-danger]:hover:not(:disabled), .office-cmd-tools button[data-danger][aria-pressed="true"] { color:hsl(var(--destructive)); background:hsl(var(--destructive) / .1); }
+
+/* ---- Mission Control -------------------------------------------------- */
+.office-mc { display:flex; flex-direction:column; gap:10px; }
+.office-mc-tabs { display:grid; grid-template-columns:1fr 1fr; gap:4px; padding:3px; border-radius:10px; background:hsl(var(--secondary)); }
+.office-mc-tabs button { padding:6px 8px; border:0; border-radius:8px; background:none; color:hsl(var(--muted-foreground)); font-size:12px; font-weight:600; cursor:pointer; }
+.office-mc-tabs button[aria-selected="true"] { background:hsl(var(--background)); color:hsl(var(--foreground)); box-shadow:0 1px 3px rgb(0 0 0 / .12); }
+.office-mc-form { display:flex; flex-direction:column; gap:10px; }
+.office-mc-intro { margin:0; font-size:12px; line-height:1.45; color:hsl(var(--muted-foreground)); }
+.office-mc-field { display:flex; flex-direction:column; gap:5px; margin:0; padding:0; border:0; min-width:0; }
+.office-mc-field > span, .office-mc-field > legend { padding:0; font-size:11px; font-weight:700; color:hsl(var(--muted-foreground)); text-transform:uppercase; letter-spacing:.04em; }
+.office-mc-field select, .office-mc-field textarea, .office-mc-message { width:100%; padding:7px 9px; border:1px solid hsl(var(--border)); border-radius:9px; background:hsl(var(--background)); color:hsl(var(--foreground)); font:inherit; font-size:12px; }
+.office-mc-field textarea, .office-mc-message { resize:vertical; min-height:60px; }
+.office-mc-field select:focus-visible, .office-mc-field textarea:focus-visible, .office-mc-message:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:1px; }
+.office-mc-chips { display:flex; flex-wrap:wrap; gap:5px; }
+.office-mc-go { display:inline-flex; align-items:center; justify-content:center; gap:6px; }
+.office-mc-go svg, .office-mc .office-action svg { width:15px; height:15px; }
+.office-mc .office-action { display:inline-flex; align-items:center; gap:6px; }
+.office-mc-log { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; font-size:12px; }
+.office-mc-log li { padding:5px 8px; border-radius:8px; background:hsl(var(--secondary)); color:hsl(var(--foreground)); }
+.office-mc-log li[data-tone="busy"] { color:hsl(var(--muted-foreground)); font-style:italic; }
+.office-mc-log li[data-tone="ok"] { background:hsl(var(--success) / .14); }
+.office-mc-log li[data-tone="warn"] { background:hsl(var(--warning) / .16); }
+.office-mc-log li[data-tone="error"] { background:hsl(var(--destructive) / .12); color:hsl(var(--destructive)); }
+.office-mc-fleet { list-style:none; margin:0; padding:0; max-height:200px; overflow:auto; display:flex; flex-direction:column; gap:2px; }
+.office-mc-fleet label { display:flex; align-items:center; gap:7px; padding:4px 6px; border-radius:8px; cursor:pointer; font-size:12px; min-width:0; }
+.office-mc-fleet label:hover { background:hsl(var(--secondary)); }
+.office-mc-fleet input { accent-color:hsl(var(--primary)); flex:none; }
+.office-mc-fleet-name { font-weight:600; flex:none; max-width:45%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.office-mc-fleet-state { flex:1; min-width:0; color:hsl(var(--muted-foreground)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.office-mc-result[data-tone="ok"] { color:hsl(var(--success)); }
+.office-mc-result[data-tone="warn"] { color:hsl(var(--foreground)); }

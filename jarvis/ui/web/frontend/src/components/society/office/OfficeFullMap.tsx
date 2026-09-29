@@ -111,6 +111,7 @@ function FullMapDialog({ onClose, layout, agents, selectedId }: Omit<OfficeFullM
     lead: t("society.office.cp_lead"),
     break: t("society.office.cp_break"),
     elevator: t("society.office.cp_elevator"),
+    mission: t("society.office.cp_mission"),
   };
   const roomLabels: Record<RoomKind, string> = {
     lead: t("society.office.room_lead"),

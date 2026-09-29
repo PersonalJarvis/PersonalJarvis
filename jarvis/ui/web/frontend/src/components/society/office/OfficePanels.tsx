@@ -1,7 +1,8 @@
 /**
- * DOM panels for what the person selects in the office: an agent (or, on the
- * coding floor, an IDE session), or one of the checkpoints (reception, agent
- * board, team room, wardrobe, lead office, break room, elevator). Every action here uses an existing app path — create dialog,
+ * DOM panels for what the person selects in the office: an agent (an IDE
+ * session on the coding floor has its own PaneCommandPanel), or one of the
+ * checkpoints (reception, agent board, team room, wardrobe, lead office, break
+ * room, elevator, Mission Control). Every action here uses an existing app path — create dialog,
  * agent card/chat, chat groups — the office adds no new backend contract.
  */
 import { useEffect, useId, useRef, useState } from "react";
@@ -9,13 +10,13 @@ import { useT } from "@/i18n";
 import type { SocietyAgent } from "../data";
 import type { CheckpointKind, OfficeLayout, Point } from "./officeLayout";
 import { player, useOfficeStore, type OfficeFloor } from "./officeStore";
-import type { PaneOccupant } from "./codingFloor";
 import { agentPositions } from "./walkerRegistry";
 import { AgentTalkPanel, CALL_MS } from "./AgentTalkPanel";
 import type { PlayerProfile } from "./playerProfile";
 import { WardrobePanel } from "./WardrobePanel";
 import { ReceptionPanel } from "./ReceptionPanel";
 import { TeamRoomPanel } from "./TeamRoomPanel";
+import { MissionControlPanel } from "./MissionControlPanel";
 import { CHECKPOINT_ICON, IconSvg, type CheckpointIcon } from "./CheckpointMarker";
 
 
@@ -63,54 +64,6 @@ function spotCentre(layout: OfficeLayout, kind: "couch"): Point {
 /** The agent panel is a walkie-talkie to that agent (AgentTalkPanel). */
 export function AgentPanel({ agent, actions, onClose }: { agent: SocietyAgent; actions: OfficeActions; onClose: () => void }) {
   return <AgentTalkPanel agent={agent} actions={actions} onClose={onClose} />;
-}
-
-/** How long ago an epoch-seconds moment was, in the viewer's words ("" when unknown). */
-function sinceLabel(at: number | null, t: (key: string) => string): string {
-  if (!at) return "";
-  const seconds = Math.max(0, Date.now() / 1000 - at);
-  if (seconds < 60) return t("society.office.since_now");
-  if (seconds < 3600) return t("society.office.since_minutes").replace("{0}", String(Math.floor(seconds / 60)));
-  if (seconds < 86400) return t("society.office.since_hours").replace("{0}", String(Math.floor(seconds / 3600)));
-  return t("society.office.since_days").replace("{0}", String(Math.floor(seconds / 86400)));
-}
-
-/**
- * A coding session on the coding floor: what it is doing, where it lives and
- * what it was last asked. It has no chat or team — its home is the IDE pane.
- */
-export function PaneAgentPanel({ occupant, onOpen, onClose }: { occupant: PaneOccupant; onOpen: () => void; onClose: () => void }) {
-  const t = useT();
-  const store = useOfficeStore();
-  const { agent, pane } = occupant;
-  const since = sinceLabel(pane.activity_since || null, t);
-  const prompt = pane.last_prompt.trim();
-  const recap = pane.recap.trim();
-  const place = () => agentPositions.get(agent.agentId);
-  return (
-    <PanelShell title={agent.name} subtitle={pane.display_name || pane.agent} onClose={onClose}>
-      <p className="office-panel-status" data-pane-state={occupant.stateKey}>
-        <i className="office-dot" data-state={agent.state} data-dot={occupant.dot} aria-hidden />
-        {t(`society.office.pane_state_${occupant.stateKey}`)}{since ? <span className="office-hint"> · {since}</span> : null}
-      </p>
-      <dl className="office-facts">
-        <dt>{t("society.office.pane_workspace")}</dt>
-        <dd title={pane.folder}>{agent.providerLabel}</dd>
-        {recap && recap !== prompt && (<><dt>{t("society.office.pane_recap")}</dt><dd>{recap}</dd></>)}
-        {prompt && (<><dt>{t("society.office.pane_prompt")}</dt><dd className="office-facts-quote">{prompt}</dd></>)}
-      </dl>
-      {!recap && !prompt && <p className="office-note-inline">{t("society.office.pane_unasked")}</p>}
-      <div className="office-actions">
-        <button type="button" className="office-action office-action-primary" onClick={onOpen}>{t("society.office.pane_open")}</button>
-        <button type="button" className="office-action" onClick={() => { const p = place(); if (p) store.focusOn(p); }}>
-          {t("society.office.action_focus")}
-        </button>
-        <button type="button" className="office-action" onClick={() => { const p = place(); if (p) store.requestWalk(p); }}>
-          {t("society.office.action_walk")}
-        </button>
-      </div>
-    </PanelShell>
-  );
 }
 
 function ManagePanel({ agents, actions }: { agents: SocietyAgent[]; actions: OfficeActions }) {
@@ -206,6 +159,7 @@ export function CheckpointPanel({ id, floor = "agents", agents, layout, sample, 
       {id === "wardrobe" && <WardrobePanel profile={profile} onProfile={onProfile} agents={agents} sample={sample} />}
       {id === "lead" && <LeadPanel agents={agents} actions={actions} />}
       {id === "break" && <BreakPanel agents={agents} layout={layout} />}
+      {id === "mission" && <MissionControlPanel />}
     </PanelShell>
   );
 }

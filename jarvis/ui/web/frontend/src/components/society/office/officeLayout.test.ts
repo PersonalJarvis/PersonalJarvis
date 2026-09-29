@@ -120,15 +120,33 @@ describe("office layout", () => {
     expect(layout.variant).toBe("coding");
     expect(layout.rooms.map((r) => r.kind)).toEqual(["focus", "team", "server", "reception", "break"]);
     expect(layout.lead.desks).toEqual([]);
-    expect(layout.checkpoints.map((c) => c.id)).toEqual(["elevator", "break"]);
+    expect(layout.checkpoints.map((c) => c.id)).toEqual(["mission", "elevator", "break"]);
     expect(layout.departments.map((d) => d.label)).toEqual(["Personal Jarvis", "Website", "", ""]);
     expect(layout.furniture.some((f) => f.room === "lead" || f.room === "wardrobe")).toBe(false);
     expect(layout.spots.some((s) => s.room === "focus")).toBe(true);
     expect(layout.spots.some((s) => s.room === "server")).toBe(true);
-    // Same frame as the office below, so the elevator lands in the same place.
+    // The coding floor is wider (Mission Control's aisle), but the lobby is the
+    // same: the elevator stands at the same spot relative to the west edge.
     const below = buildOfficeLayout(roster);
-    expect(layout.spawn).toEqual(below.spawn);
-    expect(layout.checkpoints.find((c) => c.id === "elevator")).toEqual(below.checkpoints.find((c) => c.id === "elevator"));
+    const lift = (l: typeof layout) => l.checkpoints.find((c) => c.id === "elevator")!;
+    expect(lift(layout).z).toBe(lift(below).z);
+    expect(lift(layout).x - layout.bounds.minX).toBeCloseTo(lift(below).x - below.bounds.minX);
+    expect(layout.spawn.x - layout.bounds.minX).toBeCloseTo(below.spawn.x - below.bounds.minX);
+  });
+
+  it("puts Mission Control in the middle of the coding floor, clear of every department", () => {
+    const layout = buildOfficeLayout([agent("p1", "Personal Jarvis"), agent("p2", "Website")], { variant: "coding" });
+    const hub = layout.furniture.find((f) => f.kind === "missionConsole")!;
+    const stop = layout.checkpoints.find((c) => c.id === "mission")!;
+    expect(hub.x).toBe(0);
+    const depts = layout.departments;
+    expect(hub.z).toBeCloseTo((Math.min(...depts.map((d) => d.minZ)) + Math.max(...depts.map((d) => d.maxZ))) / 2);
+    const box = footprint(hub);
+    for (const dept of depts) expect(box.maxX < dept.minX || box.minX > dept.maxX).toBe(true);
+    // The stop is in front of the console (south, towards the camera), outside its footprint.
+    expect(stop.x).toBe(0);
+    expect(stop.z - stop.radius).toBeGreaterThan(box.maxZ - 0.5);
+    expect(buildOfficeLayout([agent("a1", "codex")]).furniture.some((f) => f.kind === "missionConsole")).toBe(false);
   });
 
   it("counts states", () => {

@@ -32,7 +32,8 @@ import { useDprBudget } from "./useDprBudget";
 import { knownOnFloor, noteArrivals } from "./officeFloors";
 import { atElevator, CALL_PRESS_MS } from "./elevatorCall";
 import { loadProfile, playerLook, saveProfile, type PlayerProfile } from "./playerProfile";
-import { AgentPanel, CheckpointPanel, PaneAgentPanel, type OfficeActions } from "./OfficePanels";
+import { AgentPanel, CheckpointPanel, type OfficeActions } from "./OfficePanels";
+import { PaneCommandPanel } from "./PaneCommandPanel";
 import type { WalkerContext } from "./OfficeAgents";
 import { ownsKeyboard } from "./OfficePlayer";
 import { ArcadeCabinet } from "./ArcadeCabinet";
@@ -314,6 +315,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   const playerName = profile.name.trim() || t("society.office.you");
   const showHintBar = useOfficeSettings((s) => s.showHintBar);
   const receptionOpen = selection?.kind === "checkpoint" && selection.id === "create";
+  const missionOpen = selection?.kind === "checkpoint" && selection.id === "mission";
 
   // A full-view office draws no more pixels than a side-panel one would afford.
   const dpr = useDprBudget(hostRef);
@@ -373,9 +375,9 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
 
       {selection?.kind === "arcade" && <ArcadeCabinet onClose={() => select(null)} />}
       {selection && selection.kind !== "arcade" && (
-        <div className="office-panel-slot" data-wide={receptionOpen || undefined}>
+        <div className="office-panel-slot" data-wide={receptionOpen || missionOpen || undefined}>
           {selection.kind === "agent" && selectedAgent && (selectedPane
-            ? <PaneAgentPanel occupant={selectedPane} onOpen={() => openPaneSession(selectedPane.pane)} onClose={() => select(null)} />
+            ? <PaneCommandPanel occupant={selectedPane} onOpen={() => openPaneSession(selectedPane.pane)} onClose={() => select(null)} />
             : <AgentPanel agent={selectedAgent} actions={actions} onClose={() => select(null)} />)}
           {selection.kind === "checkpoint" && (
             <CheckpointPanel id={selection.id} floor={floor} agents={active} layout={layout} sample={!coding && (roster.data?.sample ?? false)}

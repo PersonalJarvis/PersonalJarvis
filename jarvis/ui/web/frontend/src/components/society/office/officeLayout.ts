@@ -16,6 +16,9 @@
  * holds a quiet focus zone · the team room · a server room instead of the lead
  * office and the wardrobe. It has no lead desks and only the elevator and
  * break-room checkpoints — nothing there creates or dresses society agents.
+ * Its centre aisle is wider and holds Mission Control: a round console hub
+ * between the two department columns where new coding agents are started and
+ * the whole fleet can be briefed.
  */
 import type { AgentRunState, AgentTier } from "../data";
 
@@ -72,11 +75,14 @@ export interface Room extends Rect {
 
 export interface WallSegment { x1: number; z1: number; x2: number; z2: number; room: RoomKind }
 
-/** "elevator" rides between the floors and stands in front of the lobby elevator on both of them. */
-export type CheckpointKind = "create" | "manage" | "team" | "wardrobe" | "lead" | "break" | "elevator";
+/**
+ * "elevator" rides between the floors and stands in front of the lobby elevator on both of them.
+ * "mission" is Mission Control, the coding floor's centre hub.
+ */
+export type CheckpointKind = "create" | "manage" | "team" | "wardrobe" | "lead" | "break" | "elevator" | "mission";
 
-/** A place the person can walk to (or click from afar) to act. */
-export interface Checkpoint extends Point { id: CheckpointKind; room: RoomKind; /** Walk-in radius in metres. */ radius: number }
+/** A place the person can walk to (or click from afar) to act. "floor" = the open office, outside every room. */
+export interface Checkpoint extends Point { id: CheckpointKind; room: RoomKind | "floor"; /** Walk-in radius in metres. */ radius: number }
 
 export type FurnitureKind =
   | "meetingTable" | "teamBoard" | "receptionDesk" | "kiosk" | "lockers" | "mirror"
@@ -84,7 +90,9 @@ export type FurnitureKind =
   | "bookshelf" | "plant" | "rug" | "elevator"
   // Lead office: the executive suite.
   | "leadWall" | "executiveRug" | "guestChair" | "chesterfield" | "loungeTable" | "executiveBar" | "globe" | "floorLamp"
-  | "dogBed";
+  | "dogBed"
+  // Coding floor: Mission Control's console ring.
+  | "missionConsole";
 
 /**
  * Footprint (x-extent × z-extent before rotation) and height of each piece.
@@ -118,6 +126,7 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   globe: { w: 0.92, d: 0.72, h: 1.2, solid: true },
   floorLamp: { w: 0.46, d: 0.46, h: 1.8, solid: true },
   dogBed: { w: 0.9, d: 0.72, h: 0.45, solid: true },
+  missionConsole: { w: 3.2, d: 3.2, h: 2.2, solid: true },
 };
 
 export interface Furniture extends Point {
@@ -176,6 +185,8 @@ const DEPT_MARGIN_X = 1.1;
 const DEPT_HEADER_Z = 1.8;
 const DEPT_FOOTER_Z = 0.8;
 const AISLE = 3.2;
+/** The coding floor's centre aisle: wide enough for Mission Control with a walkway on both sides. */
+export const MISSION_AISLE = 8;
 const EDGE = 1.6;
 const NORTH_DEPTH = 7;
 const SOUTH_DEPTH = 8;
@@ -339,7 +350,8 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
   if (groups.length === 1 && groups[0].members.length === 0) groups.length = 0;
   while (groups.length < MIN_DEPARTMENTS) groups.push({ label: "", members: [] });
 
-  const floorWidth = COLUMNS * DEPT_WIDTH + (COLUMNS - 1) * AISLE;
+  const centreAisle = coding ? MISSION_AISLE : AISLE;
+  const floorWidth = COLUMNS * DEPT_WIDTH + (COLUMNS - 1) * centreAisle;
   const minX = -floorWidth / 2;
   const maxX = floorWidth / 2;
   const rows = Math.ceil(groups.length / COLUMNS);
@@ -374,7 +386,7 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
       const group = groups[index];
       if (!group) continue;
       const benches = benchCount(group.members.length);
-      const dMinX = minX + col * (DEPT_WIDTH + AISLE);
+      const dMinX = minX + col * (DEPT_WIDTH + centreAisle);
       const id = `dept-${index}`;
       departments.push({
         id, label: group.label, tint: index,
@@ -384,6 +396,9 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     }
     z += rowDepths[row] + AISLE;
   }
+  // Mission Control sits in the middle of the department block, on the centre aisle.
+  const departmentsMinZ = northMaxZ + AISLE;
+  const missionZ = (departmentsMinZ + (z - AISLE)) / 2;
 
   // South strip: an open reception/lobby in the west, a walled break room in the east.
   const southMinZ = bottomZ - SOUTH_DEPTH;
@@ -482,6 +497,11 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     { id: "beanbag-b", kind: "beanbag", x: bx0 + 8.4, z: bz0 + 6.3, rotationY: 0, room: "break" },
     { id: "break-shelf", kind: "bookshelf", x: bx0 + 2.2, z: bz0 + 0.3, rotationY: 0, room: "break" },
     { id: "break-plant", kind: "plant", x: bx0 + 0.6, z: bottomZ - 0.6, rotationY: 0, room: "break" },
+    ...(coding ? [
+      // Mission Control: the console ring on a round-cornered rug, midway down the centre aisle.
+      { id: "mission-rug", kind: "rug", x: 0, z: missionZ, rotationY: 0, room: "floor", size: { w: 5.4, d: 5.4 } },
+      { id: "mission-console", kind: "missionConsole", x: 0, z: missionZ, rotationY: 0, room: "floor" },
+    ] satisfies Furniture[] : []),
   ];
   for (const dept of departments) {
     furniture.push({ id: `${dept.id}-plant-w`, kind: "plant", x: dept.minX + 0.45, z: dept.maxZ - 0.45, rotationY: 0, room: "floor" });
@@ -542,7 +562,9 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
   // The elevator's doors face east into the lobby; its checkpoint is the floor in front of them.
   const elevatorStop: Checkpoint = { id: "elevator", room: "reception", x: elevator.x + 0.95, z: elevator.z, radius: 1.0 };
   const breakStop: Checkpoint = { id: "break", room: "break", x: bx0 + 5.6, z: bz0 + 2.6, radius: 1.8 };
-  const checkpoints: Checkpoint[] = coding ? [elevatorStop, breakStop] : [
+  // Mission Control's stop is the console's south side, the side that faces the camera.
+  const missionStop: Checkpoint = { id: "mission", room: "floor", x: 0, z: missionZ + FURNITURE_SIZE.missionConsole.d / 2 + 0.9, radius: 1.2 };
+  const checkpoints: Checkpoint[] = coding ? [missionStop, elevatorStop, breakStop] : [
     { id: "create", room: "reception", x: reception.x, z: reception.z + 1.7, radius: 1.2 },
     { id: "manage", room: "reception", x: kiosk.x, z: kiosk.z + 1.4, radius: 1.1 },
     { id: "team", room: "team", x: tcx + 2.2, z: northMaxZ - 1.05, radius: 0.95 },

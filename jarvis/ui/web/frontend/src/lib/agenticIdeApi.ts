@@ -1362,6 +1362,23 @@ export async function addTerminal(payload: {
 }
 
 /**
+ * Open one more terminal and answer with THAT terminal — the pane Mission
+ * Control goes on to brief. `addTerminal` answers with the front workspace,
+ * which is not where the pane went when another workspace was named.
+ */
+export async function openTerminal(
+  payload: Parameters<typeof addTerminal>[0],
+): Promise<TerminalState> {
+  const res = await fetch("/api/agentic-ide/terminals", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  return ((await res.json()) as { terminal: TerminalState }).terminal;
+}
+
+/**
  * Persist the pane sizes a seam drag produced.
  *
  * Sends back the whole tree this client was looking at. The backend adopts
@@ -2010,10 +2027,12 @@ export interface PromptResult {
 export async function promptTerminal(
   name: string,
   prompt: string,
-  options: { compose?: boolean; attachments?: DropAttachment[] } = {},
+  options: { compose?: boolean; attachments?: DropAttachment[]; workspaceId?: string } = {},
 ): Promise<PromptResult> {
+  // A call-sign is only unique inside its workspace; name it when the caller knows it.
+  const query = options.workspaceId ? `?workspace=${encodeURIComponent(options.workspaceId)}` : "";
   const res = await fetch(
-    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/prompt`,
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/prompt${query}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
