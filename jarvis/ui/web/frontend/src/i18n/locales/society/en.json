@@ -833,6 +833,8 @@
       "room_break": "Break room",
       "room_focus": "Focus zone",
       "room_server": "Server room",
+      "seat_sit": "Sit in the chair",
+      "seat_seated": "Click the screens to open your lead · move to stand up",
       "prompt_agent": "Talk to {0}",
       "prompt_checkpoint": "Use: {0}",
       "me": "Follow me",

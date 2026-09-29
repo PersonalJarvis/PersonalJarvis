@@ -15,7 +15,8 @@ import { applySeparation, separation, stepClearOfBodies, stepMover, turnToward }
 import { officeSession, player, sameSelection, useOfficeStore, type Selection } from "./officeStore";
 import { agentPositions, bodiesExcept } from "./walkerRegistry";
 import { OFFICE_FIGURE_HEIGHT_M } from "./OfficeAgents";
-import type { OfficeLayout } from "./officeLayout";
+import { seatOf, type OfficeLayout } from "./officeLayout";
+import { chairInReach, useLeadSeat } from "./leadSeat";
 
 /** The person's pace: a brisk walk, and a sprint on Shift (m/s). */
 export const PLAYER_WALK_SPEED = 2.0;
@@ -104,6 +105,10 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
   const lastWalk = useRef(0);
   const nearbyRef = useRef<Selection | null>(null);
   const interact = useMemo(() => () => {
+    // E on the lead's chair sits down (or stands up again); otherwise it opens what is nearby.
+    const seat = useLeadSeat.getState();
+    if (seat.seated) { seat.set({ seated: null, standUp: true }); return; }
+    if (seat.near) { seat.set({ seated: seat.near, pending: null }); return; }
     const nearby = nearbyRef.current;
     if (nearby) useOfficeStore.getState().select(nearby);
   }, []);
@@ -124,6 +129,34 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
   useFrame((_, rawDt) => {
     const dt = Math.min(rawDt, 0.1);
     const store = useOfficeStore.getState();
+    // Sitting on the lead's chair: hold the seat until the person moves, walks
+    // somewhere else or presses E; then step out to the nearest free spot.
+    const seatState = useLeadSeat.getState();
+    const seatDesk = seatState.seated ? layout.lead.desks.find((d) => d.id === seatState.seated) : undefined;
+    const walkRequested = !!store.walkTo && store.walkTo.seq !== lastWalk.current;
+    if (seatState.seated && (!seatDesk || pressed.current.size > 0 || walkRequested)) seatState.set({ seated: null, standUp: true });
+    if (useLeadSeat.getState().standUp) {
+      const out = nearestWalkable(grid, player);
+      if (out) { player.x = out.x; player.z = out.z; }
+      player.path = [];
+      useLeadSeat.getState().set({ standUp: false });
+    }
+    if (useLeadSeat.getState().seated && seatDesk) {
+      const seat = seatOf(seatDesk);
+      player.x = seat.x; player.z = seat.z; player.heading = seat.facing; player.path = []; player.moving = false;
+      drive.current.mode = "sit";
+      drive.current.speed = 0;
+      group.current?.position.set(player.x, 0, player.z);
+      if (group.current) group.current.rotation.y = player.heading;
+      if (nearbyRef.current) { nearbyRef.current = null; store.setNearby(null); }
+      return;
+    }
+    // Clicked the chair from afar: sit as soon as the walk there ends beside it.
+    if (seatState.pending) {
+      const target = layout.lead.desks.find((d) => d.id === seatState.pending);
+      if (!target || pressed.current.size > 0) seatState.set({ pending: null });
+      else if (player.path.length === 0 && chairInReach([target], player)) seatState.set({ seated: target.id, pending: null });
+    }
     // Click-to-move / "walk there" requests.
     if (store.walkTo && store.walkTo.seq !== lastWalk.current) {
       lastWalk.current = store.walkTo.seq;
@@ -168,8 +201,10 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
       group.current.rotation.y = player.heading;
     }
     if (ring.current) (ring.current.material as MeshBasicMaterial).opacity = reduced ? 0.8 : 0.6 + Math.sin(performance.now() / 400) * 0.2;
-    // What can the character reach right now?
-    const nearby = nearestInteractable(layout);
+    // What can the character reach right now? The lead's chair has its own prompt beside it.
+    const chair = chairInReach(layout.lead.desks, player);
+    if (useLeadSeat.getState().near !== (chair?.id ?? null)) useLeadSeat.getState().set({ near: chair?.id ?? null });
+    const nearby = chair ? null : nearestInteractable(layout);
     if (!sameSelection(nearby, nearbyRef.current)) { nearbyRef.current = nearby; store.setNearby(nearby); }
   });
 

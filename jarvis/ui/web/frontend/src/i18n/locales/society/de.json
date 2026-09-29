@@ -833,6 +833,8 @@
       "room_break": "Pausenraum",
       "room_focus": "Ruhezone",
       "room_server": "Serverraum",
+      "seat_sit": "Auf den Sessel setzen",
+      "seat_seated": "Klick auf die Bildschirme öffnet deinen Chef-Agenten · bewegen zum Aufstehen",
       "prompt_agent": "Mit {0} sprechen",
       "prompt_checkpoint": "Benutzen: {0}",
       "me": "Mir folgen",

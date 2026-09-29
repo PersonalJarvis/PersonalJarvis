@@ -8,14 +8,19 @@
  * the origin, front facing +z, inside its `FURNITURE_SIZE` box, from rounded
  * primitives; materials and canvas textures are module-level singletons.
  */
-import { memo } from "react";
+import { memo, useRef } from "react";
+import { Html } from "@react-three/drei";
+import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import {
-  CylinderGeometry, DoubleSide, MeshStandardMaterial, OctahedronGeometry, SphereGeometry, TorusGeometry,
+  CylinderGeometry, DoubleSide, type Group, MeshStandardMaterial, OctahedronGeometry, SphereGeometry, TorusGeometry,
 } from "three";
 import type { SocietyAgent } from "../data";
 import { canvasMaterial } from "./canvasMaterials";
 import { Box, matte, MAT, Rounded, screenMaterial } from "./OfficeFurniture";
-import { SEAT_OFFSET, type DeskSlot, type Furniture, type FurnitureKind, type Room } from "./officeLayout";
+import { useT } from "@/i18n";
+import { useLeadSeat } from "./leadSeat";
+import { SEAT_OFFSET, seatOf, type DeskSlot, type Furniture, type FurnitureKind, type Point, type Room } from "./officeLayout";
+import { useOfficeStore } from "./officeStore";
 import { LEAD_SUITE as L } from "./officePalette";
 import type { ScreenFace } from "./screenTextures";
 
@@ -48,6 +53,12 @@ export const LEAD_MAT = {
   bottles: L.bottles.map((c) => new MeshStandardMaterial({ color: c, roughness: 0.15, transparent: true, opacity: 0.85 })),
   globeLand: matte(L.globe.land),
   rugBorder: matte(L.rug.border, { roughness: 0.95 }),
+  fur: matte(L.dog.fur, { roughness: 0.95 }),
+  ear: matte(L.dog.ear, { roughness: 0.95 }),
+  muzzle: matte(L.dog.muzzle, { roughness: 0.95 }),
+  nose: matte(L.dog.nose, { roughness: 0.5 }),
+  basket: matte(L.dog.basket, { roughness: 0.95 }),
+  cushion: matte(L.dog.cushion, { roughness: 0.95 }),
 };
 
 const books = ["#7a2c22", "#1d2744", "#2f5a3f", "#c9a24a", "#e9e1d0", "#4a3a6a", "#8a5a36"].map((c) => matte(c));
@@ -57,6 +68,7 @@ const GEO = {
   sphere: new SphereGeometry(1, 24, 16),
   star: new OctahedronGeometry(1, 0),
   ring: new TorusGeometry(1, 0.035, 8, 48),
+  rim: new TorusGeometry(1, 0.16, 10, 36),
 };
 
 function Cyl({ radius, height, position, material, rotation, cast = true }: {
@@ -441,6 +453,47 @@ function ExecutiveRug({ w, d }: { w: number; d: number }) {
   );
 }
 
+/** A golden office dog curled up asleep in a round basket; it breathes slowly. */
+function DogBed() {
+  const body = useRef<Group>(null);
+  useFrame(({ clock }) => {
+    const b = body.current;
+    if (!b) return;
+    const breath = 1 + Math.sin(clock.elapsedTime * 1.6) * 0.035;
+    b.scale.set(1, breath, 1 + (breath - 1) * 0.6);
+  });
+  return (
+    <group>
+      {/* Basket: a padded rim around a soft cushion. */}
+      <mesh geometry={GEO.cyl} material={LEAD_MAT.basket} position={[0, 0.07, 0]} scale={[0.43, 0.14, 0.34]} castShadow receiveShadow />
+      <mesh geometry={GEO.rim} material={LEAD_MAT.basket} position={[0, 0.15, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[0.38, 0.29, 0.5]} castShadow />
+      <mesh geometry={GEO.cyl} material={LEAD_MAT.cushion} position={[0, 0.15, 0]} scale={[0.36, 0.05, 0.27]} receiveShadow />
+      {/* The dog faces south-east, towards the usual camera, and fills the basket. */}
+      <group position={[0, 0.17, 0]} rotation={[0, Math.PI, 0]} scale={1.25}>
+        <group ref={body}>
+          {/* Curled body and haunch. */}
+          <Ball radius={[0.24, 0.11, 0.16]} position={[0.02, 0.1, -0.02]} material={LEAD_MAT.fur} />
+          <Ball radius={[0.12, 0.1, 0.12]} position={[0.16, 0.11, 0.0]} material={LEAD_MAT.fur} />
+        </group>
+        {/* Head resting on the front paws, eyes closed. */}
+        <Ball radius={[0.1, 0.085, 0.1]} position={[-0.2, 0.1, 0.08]} material={LEAD_MAT.fur} />
+        <Ball radius={[0.055, 0.045, 0.06]} position={[-0.29, 0.08, 0.12]} material={LEAD_MAT.muzzle} />
+        <Ball radius={0.018} position={[-0.335, 0.095, 0.14]} material={LEAD_MAT.nose} cast={false} />
+        {[-0.03, 0.035].map((dz) => (
+          <Box key={dz} size={[0.012, 0.006, 0.03]} position={[-0.25, 0.14, 0.1 + dz]} material={LEAD_MAT.nose} cast={false} />
+        ))}
+        <Ball radius={[0.035, 0.07, 0.05]} position={[-0.18, 0.1, -0.01]} material={LEAD_MAT.ear} />
+        <Ball radius={[0.035, 0.07, 0.05]} position={[-0.2, 0.1, 0.17]} material={LEAD_MAT.ear} />
+        {/* Paws, tail tucked round, a red collar with a brass tag. */}
+        {[0.05, 0.13].map((dz) => <Ball key={dz} radius={[0.06, 0.03, 0.035]} position={[-0.26, 0.03, dz + 0.02]} material={LEAD_MAT.muzzle} />)}
+        <Ball radius={[0.13, 0.03, 0.04]} position={[0.05, 0.04, 0.15]} material={LEAD_MAT.fur} />
+        <mesh geometry={GEO.ring} material={LEAD_MAT.leather} position={[-0.13, 0.1, 0.08]} rotation={[0, Math.PI / 2, 0]} scale={0.075} />
+        <Cyl radius={0.014} height={0.006} position={[-0.13, 0.03, 0.08]} rotation={[0, 0, Math.PI / 2]} material={LEAD_MAT.brass} cast={false} />
+      </group>
+    </group>
+  );
+}
+
 /** Renderers of the executive-suite furniture kinds; merged into OfficeProps' exhaustive table. */
 export const LEAD_RENDERERS = {
   leadWall: () => <LeadWall />,
@@ -451,6 +504,7 @@ export const LEAD_RENDERERS = {
   executiveBar: () => <ExecutiveBar />,
   globe: () => <Globe />,
   floorLamp: () => <FloorLamp />,
+  dogBed: () => <DogBed />,
 } satisfies Partial<Record<FurnitureKind, (props: { item: Furniture }) => JSX.Element>>;
 
 // ---------------------------------------------------------------------------
@@ -536,17 +590,71 @@ function ExecutiveDesk({ w, d, face }: { w: number; d: number; face: ScreenFace 
   );
 }
 
-/** Every lead desk (the ones that carry their own size) with the monitor face its agent's state calls for. */
-export const ExecutiveDesks = memo(function ExecutiveDesks({ desks, agents }: { desks: DeskSlot[]; agents: ReadonlyMap<string, SocietyAgent> }) {
+/** Monitor centre of a lead desk in world space, and the heading a camera dive looks along. */
+function screenOf(desk: DeskSlot): { point: Point & { y: number }; facing: number } {
+  const turn = desk.facing === "north" ? 0 : Math.PI;
+  return { point: { x: desk.x - Math.sin(turn) * 0.24, y: 1.2, z: desk.z - Math.cos(turn) * 0.24 }, facing: turn };
+}
+
+/** "E - sit down" next to the chair, and once seated, how to open the lead and stand up again. */
+function SeatPrompt({ desk }: { desk: DeskSlot }) {
+  const t = useT();
+  const seated = useLeadSeat((s) => s.seated === desk.id);
+  const near = useLeadSeat((s) => s.near === desk.id);
+  if (!seated && !near) return null;
+  return (
+    <Html center position={[0, 1.95, SEAT_OFFSET]} zIndexRange={[24, 0]}>
+      <span className="office-plate office-seat-prompt" data-office-ui>
+        {seated ? t("society.office.seat_seated") : <><kbd>E</kbd>{t("society.office.seat_sit")}</>}
+      </span>
+    </Html>
+  );
+}
+
+/**
+ * Every lead desk (the ones that carry their own size) with the monitor face
+ * its agent's state calls for. The chair can be clicked to walk over and sit;
+ * the monitors open the lead agent (a camera dive, then the agents view).
+ */
+export const ExecutiveDesks = memo(function ExecutiveDesks({ desks, agents, onOpenScreen }: {
+  desks: DeskSlot[]; agents: ReadonlyMap<string, SocietyAgent>;
+  onOpenScreen?: (agentId: string, screen: Point & { y: number }, facing: number) => void;
+}) {
   return (
     <group>
       {desks.map((desk) => {
         const size = desk.size;
         if (!size) return null;
         const agent = desk.agentId ? agents.get(desk.agentId) : undefined;
+        const openScreen = (event: ThreeEvent<MouseEvent>) => {
+          if (!agent || !onOpenScreen || event.delta > 6) return;
+          event.stopPropagation();
+          const { point, facing } = screenOf(desk);
+          onOpenScreen(agent.agentId, point, facing);
+        };
+        const takeSeat = (event: ThreeEvent<MouseEvent>) => {
+          if (event.delta > 6) return;
+          event.stopPropagation();
+          const seat = seatOf(desk);
+          useLeadSeat.getState().set({ pending: desk.id });
+          useOfficeStore.getState().requestWalk({ x: seat.x, z: seat.z });
+        };
+        const hover = (cursor: string) => () => { document.body.style.cursor = cursor; };
         return (
           <group key={desk.id} position={[desk.x, 0, desk.z]} rotation={[0, desk.facing === "north" ? 0 : Math.PI, 0]} name={`desk:${desk.id}`}>
             <ExecutiveDesk w={size.w} d={size.d} face={agent ? agent.state : "empty"} />
+            {/* Invisible hit boxes: the monitor bank (clickable from any side) and the chair. */}
+            {agent && onOpenScreen && (
+              <mesh position={[0, 1.2, -0.2]} visible={false} onClick={openScreen}
+                onPointerOver={hover("zoom-in")} onPointerOut={hover("")}>
+                <boxGeometry args={[size.w >= 2.2 ? 2.1 : 0.8, 0.5, 0.25]} />
+              </mesh>
+            )}
+            <mesh position={[0, 0.75, SEAT_OFFSET + 0.1]} visible={false} onClick={takeSeat}
+              onPointerOver={hover("pointer")} onPointerOut={hover("")}>
+              <boxGeometry args={[0.64, 1.5, 0.7]} />
+            </mesh>
+            <SeatPrompt desk={desk} />
           </group>
         );
       })}

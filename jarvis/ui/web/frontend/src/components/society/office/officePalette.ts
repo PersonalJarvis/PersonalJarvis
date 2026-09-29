@@ -110,4 +110,5 @@ export const LEAD_SUITE = {
   globe: { ocean: "#5f8f96", land: "#e2cd98", line: "#3d5c61" },
   bottles: ["#b8661e", "#4f7a3a", "#d9e6ea", "#8c2a2a", "#c79a3a"],
   trophy: "#e8b949",
+  dog: { fur: "#d9a35b", ear: "#a8702f", muzzle: "#f1d6a6", nose: "#1c1a1a", basket: "#6d4a33", cushion: "#c9b28f" },
 } as const;

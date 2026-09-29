@@ -187,6 +187,11 @@ purpose, so the boss's room reads as the most precious place on the floor
   armchairs for visitors, a bar cabinet and a chesterfield lounge with a glass
   coffee table along the west wall (fronts towards the camera), a floor globe,
   two floor lamps and palms. Two warm point lights make the room glow.
+- **Sit at the desk (2026-09-29):** the executive chair is solid, so nobody walks
+  through it. Walk up and press E, or click the chair, to sit (`leadSeat.ts`);
+  any movement stands the character up. Clicking the monitors dives into them
+  and opens the lead agent in the agents view, like any agent's desk screen.
+- **Office dog:** a golden dog sleeps in a basket by the door, breathing slowly.
 - Every piece stays inside its `FURNITURE_SIZE` footprint (props test) and the
   navigation tests still reach every seat, spot and checkpoint.
 

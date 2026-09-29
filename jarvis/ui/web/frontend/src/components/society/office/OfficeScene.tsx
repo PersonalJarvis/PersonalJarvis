@@ -200,7 +200,7 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
       {layout.rooms.map((room) => <RoomSign key={room.id} room={room} label={t(`society.office.room_${room.kind}`)} />)}
       {layout.departments.map((dept) => <DepartmentArea key={dept.id} dept={dept} />)}
       <DeskInstances desks={benchDesks} agents={agents} />
-      <ExecutiveDesks desks={desks} agents={agents} />
+      <ExecutiveDesks desks={desks} agents={agents} onOpenScreen={onOpenScreen} />
       {leadRoom && <LeadOfficeLight room={leadRoom} />}
       {floor === "coding"
         ? <TerminalMonitors desks={desks} occupants={occupants} awake={awake} onOpen={onOpenScreen} />
