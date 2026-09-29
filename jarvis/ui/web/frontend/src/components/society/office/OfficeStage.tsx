@@ -28,6 +28,7 @@ import { otherFloor, player, switchFloor, useOfficeStore, type OfficeFloor } fro
 import { agentPositions, seatedAtDesk } from "./walkerRegistry";
 import { useCodingFloorOccupants, type PaneOccupant } from "./codingFloor";
 import { openPaneSession } from "./codingNavigate";
+import { useDprBudget } from "./useDprBudget";
 import { knownOnFloor, noteArrivals } from "./officeFloors";
 import { loadProfile, playerLook, saveProfile, type PlayerProfile } from "./playerProfile";
 import { AgentPanel, CheckpointPanel, PaneAgentPanel, type OfficeActions } from "./OfficePanels";
@@ -177,14 +178,15 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     if (onSelectAgent) onSelectAgent(agentId);
     else useEventStore.getState().setActiveSection("agents");
   }, [onSelectAgent]);
-  // Clicking a monitor dives into it, then opens that agent's chat (or IDE session).
+  // Clicking a chat monitor dives into it, then opens that agent's chat. A
+  // terminal skips the dive: the live pane, maximized in the grid, is the close-up.
   const openTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(openTimer.current), []);
   const [diving, setDiving] = useState(false);
   const openScreen = useCallback((agentId: string, screen: Point & { y: number }, facing: number) => {
     select(null);
     clearTimeout(openTimer.current);
-    if (reduced) { openAgent(agentId); return; }
+    if (reduced || occupantsRef.current.has(agentId)) { openAgent(agentId); return; }
     useOfficeStore.getState().zoomInto([screen.x, screen.y, screen.z], facing);
     // The screen fills the view, then the real chat view fades in over it.
     setDiving(true);
@@ -288,6 +290,9 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   const showHintBar = useOfficeSettings((s) => s.showHintBar);
   const receptionOpen = selection?.kind === "checkpoint" && selection.id === "create";
 
+  // A full-view office draws no more pixels than a side-panel one would afford.
+  const dpr = useDprBudget(hostRef);
+
   return (
     <section className={compact ? "office-stage office-stage-compact" : "office-stage"} aria-label={t(titleKey)}
       data-office-agents={active.length} data-office-floor={floor}>
@@ -295,7 +300,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
         {webgl ? (
           <RenderBoundary key={generation} fallbackText={t("society.office.no_graphics")}>
             <Suspense fallback={<div className="office-fallback" role="status">{t("society.office.loading")}</div>}>
-              <Canvas shadows="percentage" camera={{ fov: CAMERA_FOV, near: 0.2, far: 800, position: [30, 30, 30] }} dpr={[1, 1.75]}
+              <Canvas shadows="percentage" camera={{ fov: CAMERA_FOV, near: 0.2, far: 800, position: [30, 30, 30] }} dpr={dpr}
                 gl={{ antialias: true, alpha: true, preserveDrawingBuffer: import.meta.env.DEV }}
                 frameloop={!awake ? "never" : "always"}
                 onPointerMissed={() => select(null)}>

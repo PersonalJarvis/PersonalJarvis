@@ -1,7 +1,7 @@
 /**
  * Desk monitors on the coding floor: each shows its pane's terminal live
  * while the agent sits at the desk, a dim screensaver otherwise. A click on a
- * screen zooms the camera into it; the caller then opens that session.
+ * screen opens that session, maximized in the IDE grid.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";

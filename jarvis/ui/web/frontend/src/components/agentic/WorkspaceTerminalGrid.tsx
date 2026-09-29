@@ -8,6 +8,7 @@ import { forkTerminal, moveTerminal, placeTerminal, renameTerminal, type PaneMov
 import { useComputerChoices } from "@/hooks/useComputers";
 import { useThemeValue } from "@/hooks/useTheme";
 import { useEventStore } from "@/store/events";
+import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { cn } from "@/lib/utils";
 import { PaneResizer } from "@/components/layout/PaneResizer";
@@ -121,6 +122,17 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
   useEffect(() => {
     if (maximized && !members.includes(maximized)) setMaximized(null);
   }, [maximized, members]);
+  // "Show me that terminal" from the office: the pane fills the grid, live. A
+  // request for another workspace waits for that workspace's own grid.
+  const paneRequest = useIdeChatStore((state) => state.paneRequest);
+  const settlePaneMaximize = useIdeChatStore((state) => state.settlePaneMaximize);
+  useEffect(() => {
+    if (!paneRequest?.maximize || paneRequest.workspaceId !== session.id) return;
+    const terminal = session.terminals.find((entry) => entry.name === paneRequest.pane);
+    if (!terminal) return;
+    settlePaneMaximize(paneRequest.nonce);
+    setMaximized(idOf(terminal));
+  }, [paneRequest, session.id, session.terminals, settlePaneMaximize]);
   useEffect(() => { if (disabled) dragCleanup.current?.(); }, [disabled]);
   useEffect(() => {
     const node = frame.current;

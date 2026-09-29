@@ -157,6 +157,8 @@ describe("IdeSidePanel", () => {
     fireEvent.click(screen.getByTestId("ide-side-panel-maximize"));
     expect(useIdeSidePanelStore.getState().maximized).toBe(true);
     expect(screen.getByTestId("ide-side-panel-body").className).toContain("absolute inset-0");
+    expect(screen.getByTestId("ide-side-panel-grid").className).toContain("invisible");
+    expect(screen.getByTestId("grid")).toBeTruthy();
     expect(host.className).not.toContain("relative");
     expect(host.style.width).toBe("600px");
     expect(screen.queryByTestId("ide-side-panel-resizer")).toBeNull();
@@ -164,6 +166,7 @@ describe("IdeSidePanel", () => {
 
     fireEvent.click(screen.getByTestId("ide-side-panel-maximize"));
     expect(screen.getByTestId("ide-side-panel-body").className).toBe("h-full");
+    expect(screen.getByTestId("ide-side-panel-grid").className).not.toContain("invisible");
     expect(screen.getByTestId("office-stage")).toBe(stage);
   });
 

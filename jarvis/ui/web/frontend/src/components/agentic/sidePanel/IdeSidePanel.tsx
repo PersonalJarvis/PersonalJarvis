@@ -80,7 +80,9 @@ export function IdeSidePanelFrame({ children }: { children: ReactNode }) {
 
   return (
     <div ref={frame} className="relative flex h-full min-h-0 w-full">
-      <div className="h-full min-h-0 min-w-0 flex-1">{children}</div>
+      {/* Hidden, not removed, under a maximized panel: the glass theme's panel is
+          see-through, and the live terminals keep their size and sockets. */}
+      <div data-testid="ide-side-panel-grid" className={cn("h-full min-h-0 min-w-0 flex-1", maximized && "invisible")}>{children}</div>
       {/* Maximized, the host keeps its width in the row so the terminals behind
           it never resize, and stops being the positioning box: the panel then
           anchors to the frame and covers the whole view. */}
@@ -124,7 +126,7 @@ export function IdeSidePanelFrame({ children }: { children: ReactNode }) {
               </div>
             )}
             {/* Same element either way, so the live office scene is never remounted. */}
-            <div data-testid="ide-side-panel-body" className={maximized ? "absolute inset-0 z-30 bg-background" : "h-full"}>
+            <div data-testid="ide-side-panel-body" className={maximized ? "absolute inset-0 z-30" : "h-full"}>
               <IdeSidePanel />
             </div>
           </>

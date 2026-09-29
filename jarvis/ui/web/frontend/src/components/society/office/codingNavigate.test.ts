@@ -14,7 +14,7 @@ describe("open a coding session from the office", () => {
     useEventStore.setState({ activeSection: "visualization" });
     openPaneSession({ workspace_id: "ws-1", name: "T2" });
     expect(useEventStore.getState().activeSection).toBe("agentic-ide");
-    expect(useIdeChatStore.getState().paneRequest).toMatchObject({ workspaceId: "ws-1", pane: "T2" });
+    expect(useIdeChatStore.getState().paneRequest).toMatchObject({ workspaceId: "ws-1", pane: "T2", maximize: true });
   });
 
   it("stays in the IDE and issues a fresh request each time", () => {

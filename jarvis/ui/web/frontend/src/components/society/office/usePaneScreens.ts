@@ -12,8 +12,10 @@ import { fetchPaneScreens, type PaneScreen } from "@/lib/paneScreensApi";
 import { screenChanged } from "./terminalScreen";
 import { seatedAtDesk } from "./walkerRegistry";
 
-const POLL_MIN_MS = 1200;
-const POLL_JITTER_MS = 800;
+// The feed is an in-memory read of the pane's screen buffer and unchanged
+// screens are never redrawn, so a near-live rate costs next to nothing.
+const POLL_MIN_MS = 450;
+const POLL_JITTER_MS = 250;
 /** Never more panes per request than this; the feed accepts up to 8. */
 export const MAX_SCREEN_TARGETS = 6;
 
