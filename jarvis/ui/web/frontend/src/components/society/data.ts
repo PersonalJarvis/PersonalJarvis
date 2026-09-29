@@ -17,6 +17,8 @@ import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-quer
 import type { MentionPlugin } from "./chat/mentionItems";
 
 import type { Checkpoint, SocietyAgentRow } from "@/lib/societyApi";
+import { NEUTRAL_ASSISTANT_NAME } from "@/lib/assistantNameCache";
+import { useEventStore } from "@/store/events";
 
 import { PALETTE_PRESETS, resolvePalette, type FigureRecipe } from "./figures/figureRecipe";
 import { SAMPLE_ROSTER } from "./mockRoster";
@@ -295,10 +297,25 @@ function patchRoster(
   void client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
 }
 
+/**
+ * The lead is the assistant itself, so it wears the name the user gave it
+ * through the wake phrase ("George"), not the roster row's seeded name. The
+ * neutral fallback never replaces a real row name while the seed is pending.
+ */
+export function withLeadName(data: RosterData, assistantName: string): RosterData {
+  const name = assistantName.trim();
+  if (!name || name === NEUTRAL_ASSISTANT_NAME) return data;
+  if (!data.agents.some((a) => a.tier === "lead" && a.name !== name)) return data;
+  return { ...data, agents: data.agents.map((a) => (a.tier === "lead" ? { ...a, name } : a)) };
+}
+
 export function useSocietyRoster() {
+  const assistantName = useEventStore((s) => s.assistantName) ?? "";
+  const select = useCallback((data: RosterData) => withLeadName(data, assistantName), [assistantName]);
   return useQuery({
     queryKey: ROSTER_QUERY_KEY,
     queryFn: fetchSocietyRoster,
+    select,
     staleTime: 15_000,
     // A refetch mid-ceremony would delete the figure being carried to the
     // mine out from under the animation; the commit invalidates instead.
