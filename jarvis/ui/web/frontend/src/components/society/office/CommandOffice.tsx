@@ -14,6 +14,7 @@
  * stay inside their FURNITURE_SIZE box.
  */
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { Html } from "@react-three/drei";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { CanvasTexture, CylinderGeometry, MeshBasicMaterial, MeshStandardMaterial, Quaternion, SRGBColorSpace, Vector3, type Group } from "three";
 import { useT } from "@/i18n";
@@ -21,8 +22,8 @@ import { useWorkspacePanesStore } from "@/store/workspacePanes";
 import type { AgentRunState } from "../data";
 import { Box, MAT, matte, Rounded } from "./OfficeFurniture";
 import { paneOccupants } from "./codingFloor";
-import { TaskChair } from "./OfficeChairs";
 import { COMMAND_DESK, COMMAND_DESK_OFFSET, type Furniture, type FurnitureKind } from "./officeLayout";
+import { useLeadSeat } from "./leadSeat";
 import { MissionLiveScreen, preloadMissionScreens } from "./MissionScreens";
 import { useOfficeStore, type MonitorSection } from "./officeStore";
 
@@ -328,12 +329,100 @@ const DESK_Z = -COMMAND_DESK_OFFSET;
 const CHAIR_Z = DESK_Z + COMMAND_DESK.chairZ;
 const MUG = new CylinderGeometry(0.04, 0.036, 0.1, 16);
 
+/** The boss chair's leather and chrome. */
+const BOSS = {
+  leather: new MeshStandardMaterial({ color: "#17181b", roughness: 0.42, metalness: 0.05 }),
+  seam: new MeshStandardMaterial({ color: "#0c0d0f", roughness: 0.6 }),
+  chrome: new MeshStandardMaterial({ color: "#d4d8de", roughness: 0.16, metalness: 0.95 }),
+  caster: new MeshStandardMaterial({ color: "#101113", roughness: 0.5 }),
+};
+const GAS_LIFT = new CylinderGeometry(0.032, 0.032, 0.26, 16);
+const SHROUD = new CylinderGeometry(0.055, 0.075, 0.1, 20);
+/** Mission Control's chair is a seat the person can take (leadSeat); its id is the desk's. */
+const COMMAND_SEAT = "command";
+
+/**
+ * A high-back executive chair in black leather on a polished five-star base:
+ * a thick seat, four channel-stitched back cushions leaning back, a headrest,
+ * side bolsters and chrome armrests with leather pads. Local space: seat on
+ * the floor at the origin, the sitter faces -z, the back is on the +z side.
+ */
+function BossChair() {
+  return (
+    <group>
+      {/* Chrome star base with casters, a shroud and the gas lift. */}
+      {[0, 1, 2, 3, 4].map((i) => (
+        <group key={i} rotation={[0, (i * Math.PI * 2) / 5 + Math.PI / 5, 0]}>
+          <Box size={[0.055, 0.035, 0.33]} position={[0, 0.085, 0.165]} material={BOSS.chrome} />
+          <Box size={[0.05, 0.06, 0.07]} position={[0, 0.03, 0.31]} material={BOSS.caster} cast={false} />
+        </group>
+      ))}
+      <mesh geometry={SHROUD} material={BOSS.leather} position={[0, 0.14, 0]} castShadow />
+      <mesh geometry={GAS_LIFT} material={BOSS.chrome} position={[0, 0.27, 0]} castShadow />
+      {/* Seat: a thick cushion on a dark frame, a stitch line round its top. */}
+      <Box size={[0.5, 0.04, 0.46]} position={[0, 0.4, 0]} material={BOSS.seam} />
+      <Rounded size={[0.62, 0.13, 0.58]} radius={0.055} position={[0, 0.48, -0.01]} material={BOSS.leather} />
+      <Box size={[0.52, 0.006, 0.48]} position={[0, 0.547, -0.01]} material={BOSS.seam} cast={false} />
+      {/* High back, leaning back: a shell, four stitched cushions, bolsters, the headrest. */}
+      <group position={[0, 0.56, 0.27]} rotation={[0.14, 0, 0]}>
+        <Rounded size={[0.6, 0.94, 0.07]} radius={0.04} position={[0, 0.47, 0.05]} material={BOSS.leather} />
+        {[0.14, 0.34, 0.54, 0.74].map((y) => (
+          <Rounded key={y} size={[0.48, 0.19, 0.1]} radius={0.045} position={[0, y, -0.01]} material={BOSS.leather} />
+        ))}
+        {[-0.28, 0.28].map((x) => (
+          <Rounded key={x} size={[0.07, 0.86, 0.13]} radius={0.03} position={[x, 0.45, 0.0]} material={BOSS.leather} />
+        ))}
+        <Rounded size={[0.42, 0.18, 0.12]} radius={0.05} position={[0, 0.98, 0.0]} material={BOSS.leather} />
+      </group>
+      {/* Chrome loop armrests with leather pads. */}
+      {[-0.34, 0.34].map((x) => (
+        <group key={x}>
+          <Box size={[0.03, 0.26, 0.03]} position={[x, 0.6, 0.12]} material={BOSS.chrome} />
+          <Box size={[0.03, 0.2, 0.03]} position={[x, 0.58, -0.14]} material={BOSS.chrome} />
+          <Rounded size={[0.08, 0.05, 0.36]} radius={0.02} position={[x, 0.74, -0.01]} material={BOSS.leather} />
+        </group>
+      ))}
+    </group>
+  );
+}
+
+/**
+ * The chair behind the desk: click it (or press E beside it) to sit down. While
+ * seated the camera looks through the person's eyes at the monitors, so the
+ * chair steps out of the way; any movement stands them up again.
+ */
 function ExecutiveChair() {
-  // The person faces north, towards the monitors: the chair's back is on its +z side,
-  // which is the task chair's own orientation.
+  const t = useT();
+  const seated = useLeadSeat((s) => s.seated === COMMAND_SEAT);
+  const near = useLeadSeat((s) => s.near === COMMAND_SEAT);
+  const hovered = useRef(false);
+  useEffect(() => () => { if (hovered.current) document.body.style.cursor = ""; }, []);
+  const takeSeat = (event: ThreeEvent<MouseEvent>) => {
+    if (event.delta > 6) return;
+    event.stopPropagation();
+    const at = new Vector3(0, 0, CHAIR_Z);
+    event.eventObject.parent?.localToWorld(at);
+    useLeadSeat.getState().set({ pending: COMMAND_SEAT });
+    useOfficeStore.getState().requestWalk({ x: at.x, z: at.z });
+  };
   return (
     <group position={[0, 0, CHAIR_Z]}>
-      <TaskChair />
+      <group visible={!seated} onClick={takeSeat}
+        onPointerOver={(event) => { event.stopPropagation(); hovered.current = true; document.body.style.cursor = "pointer"; }}
+        onPointerOut={() => { hovered.current = false; document.body.style.cursor = ""; }}>
+        <BossChair />
+      </group>
+      {near && !seated && (
+        <Html center position={[0, 1.75, 0]} zIndexRange={[24, 0]}>
+          <span className="office-plate office-seat-prompt" data-office-ui><kbd>E</kbd>{t("society.office.seat_sit")}</span>
+        </Html>
+      )}
+      {seated && (
+        // In first person this floats just under the monitors, where the eyes are.
+        <Html center position={[0, 0.86, -0.42]} zIndexRange={[24, 0]}>
+          <span className="office-plate office-seat-prompt" data-office-ui>{t("society.office.seat_seated_mission")}</span>
+        </Html>
+      )}
     </group>
   );
 }

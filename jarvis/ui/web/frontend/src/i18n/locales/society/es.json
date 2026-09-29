@@ -991,6 +991,7 @@
       "dog_pet": "Acariciar al perro",
       "seat_sit": "Sentarse en el sillón",
       "seat_seated": "Haz clic en las pantallas para abrir tu líder · muévete para levantarte",
+      "seat_seated_mission": "Haz clic en una pantalla para abrirla · muévete para levantarte",
       "prompt_agent": "Hablar con {0}",
       "prompt_checkpoint": "Usar: {0}",
       "me": "Seguirme",
