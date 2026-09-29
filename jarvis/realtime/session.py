@@ -1749,12 +1749,16 @@ _HANDSHAKE_FAILURE_MESSAGES: dict[str, dict[str, str]] = {
     },
     "no_credits": {
         "de": (  # i18n-allow: localized runtime voice output
-            "Das Sprachkontingent ist aufgebraucht, "  # i18n-allow
-            "deshalb musste ich das Gespräch beenden."  # i18n-allow
+            "Das Guthaben für die Sprachverbindung ist aufgebraucht. "  # i18n-allow
+            "Lade es beim Anbieter auf, dann klappt es wieder."  # i18n-allow
         ),
-        "en": "The voice quota is used up, so I had to end the call.",
+        "en": (
+            "The credit for the voice connection is used up. "
+            "Top it up with the provider and it will work again."
+        ),
         "es": (  # i18n-allow: localized runtime voice output
-            "Se agotó la cuota de voz, así que tuve que terminar la llamada."
+            "Se agotó el saldo de la conexión de voz. "
+            "Recárgalo con el proveedor y volverá a funcionar."
         ),
     },
     "dropped": {

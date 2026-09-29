@@ -497,9 +497,42 @@ class LiveVoiceSession:
                     "continuous": True,
                 }
             )
-        except BaseException:
+        except BaseException as exc:
+            if isinstance(exc, Exception):
+                await self._announce_start_failure(exc)
             await self.end(reason="error")
             raise
+
+    async def _announce_start_failure(self, exc: Exception) -> None:
+        """Say why the call ends instead of hanging up in silence.
+
+        Live 2026-09-29: an empty API balance made every wake end after a
+        second with no word, which read as a broken wake word.
+        """
+        from jarvis.brain.provider_test import (
+            NO_CREDITS,
+            RATE_LIMITED,
+            classify_provider_error,
+        )
+        from jarvis.realtime.session import _handshake_failure_message
+
+        status = classify_provider_error(str(exc))
+        cause = {NO_CREDITS: "no_credits", RATE_LIMITED: "rate_limited"}.get(
+            status, "unavailable"
+        )
+        log.warning("Live session could not start (cause=%s): %s", cause, exc)
+        try:
+            await self._send_json(
+                {
+                    "type": "error_spoken",
+                    "text": _handshake_failure_message(cause, self._language),
+                    "language": self._language,
+                    "spoken_kind": "reply",
+                    "provider": self.active_provider,
+                }
+            )
+        except Exception:  # noqa: BLE001 — the start failure still propagates
+            log.warning("Live start failure notice could not be sent", exc_info=True)
 
     def _take_initial_context(self) -> list[dict]:
         from jarvis.core.runtime_refs import get_brain_manager
