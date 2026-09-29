@@ -110,6 +110,8 @@ export type FurnitureKind =
   | "serverRack" | "coldAisle" | "nocConsole" | "statusWall" | "ups" | "fireSuppression"
   // Team room: the slat wall behind the board, a credenza, fiddle-leaf figs and a wool rug.
   | "teamWall" | "credenza" | "designerPlant" | "teamRug"
+  // Wardrobe (agents floor): the oak wardrobe wall, a bulb-lit mirror, a tailor's dummy, a bench, a coat stand, a round rug.
+  | "wardrobeWall" | "dressingMirror" | "tailorDummy" | "dressingBench" | "coatStand" | "roundRug"
   // Lobby (agents floor): the brand wall, the Agent board totem, the waiting lounge, olive trees, the award vitrine, the mat.
   | "brandWall" | "agentTotem" | "lobbySofa" | "lobbyArmchair" | "lobbyTable" | "sideTable" | "lobbyLamp" | "oliveTree"
   | "awardCase" | "entranceMat" | "lobbyRug";
@@ -167,6 +169,13 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   credenza: { w: 2.2, d: 0.46, h: 1.1, solid: true },
   designerPlant: { w: 0.8, d: 0.8, h: 2.0, solid: true },
   teamRug: { w: 1, d: 1, h: 0.02, solid: false },
+  // Wardrobe: four open oak bays with rails, shelves and drawers; the mirror stands on splayed feet.
+  wardrobeWall: { w: 4.36, d: 0.62, h: 2.05, solid: true },
+  dressingMirror: { w: 1.1, d: 0.3, h: 2.05, solid: true },
+  tailorDummy: { w: 0.5, d: 0.5, h: 1.75, solid: true },
+  dressingBench: { w: 1.3, d: 0.5, h: 0.5, solid: true },
+  coatStand: { w: 0.5, d: 0.5, h: 1.85, solid: true },
+  roundRug: { w: 1, d: 1, h: 0.02, solid: false },
   // Lobby: the ghost and the wordmark on the brand wall; the totem is the Agent board ("manage").
   brandWall: { w: 3.2, d: 0.36, h: 2.9, solid: true },
   agentTotem: { w: 0.9, d: 0.5, h: 2.1, solid: true },
@@ -616,9 +625,16 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
       { id: "server-ups", kind: "ups", x: wx0 + 0.06 + FURNITURE_SIZE.ups.d / 2, z: topZ + 6.0, rotationY: Math.PI / 2, room: "server" },
       { id: "server-fire", kind: "fireSuppression", x: wardrobeRoom.maxX - 0.06 - FURNITURE_SIZE.fireSuppression.d / 2, z: topZ + 6.0, rotationY: -Math.PI / 2, room: "server" },
     ] satisfies Furniture[] : [
-      // Wardrobe: lockers and a mirror.
-      { id: "wardrobe-lockers", kind: "lockers", x: wcx - 0.2, z: topZ + 0.4, rotationY: 0, room: "wardrobe" },
-      { id: "wardrobe-mirror", kind: "mirror", x: wardrobeRoom.maxX - 0.25, z: tcz, rotationY: -Math.PI / 2, room: "wardrobe" },
+      // Wardrobe: an open oak wardrobe along the north wall, a bulb-lit mirror
+      // on the west side facing the room, a tailor's dummy, a bench on the east
+      // side, a round rug under the checkpoint, a fig and a coat stand by the door.
+      { id: "wardrobe-wall", kind: "wardrobeWall", x: wcx, z: topZ + 0.06 + FURNITURE_SIZE.wardrobeWall.d / 2, rotationY: 0, room: "wardrobe" },
+      { id: "wardrobe-rug", kind: "roundRug", x: wcx, z: tcz + 0.3, rotationY: 0, room: "wardrobe", size: { w: 2.8, d: 2.8 } },
+      { id: "wardrobe-mirror", kind: "dressingMirror", x: wx0 + 0.06 + FURNITURE_SIZE.dressingMirror.d / 2, z: tcz - 0.6, rotationY: Math.PI / 2, room: "wardrobe" },
+      { id: "wardrobe-dummy", kind: "tailorDummy", x: wardrobeRoom.maxX - 0.6, z: topZ + 1.4, rotationY: -Math.PI / 4, room: "wardrobe" },
+      { id: "wardrobe-bench", kind: "dressingBench", x: wardrobeRoom.maxX - 0.06 - FURNITURE_SIZE.dressingBench.d / 2, z: tcz + 0.1, rotationY: -Math.PI / 2, room: "wardrobe" },
+      { id: "wardrobe-plant", kind: "designerPlant", x: wx0 + 0.5, z: northMaxZ - 0.5, rotationY: 0, room: "wardrobe" },
+      { id: "wardrobe-stand", kind: "coatStand", x: wardrobeRoom.maxX - 0.4, z: northMaxZ - 0.45, rotationY: 0, room: "wardrobe" },
     ] satisfies Furniture[]),
     // Reception and lobby.
     { id: "elevator", kind: "elevator", x: rx0 + 0.25, z: bottomZ - 2.6, rotationY: Math.PI / 2, room: "reception" },
@@ -672,6 +688,8 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     ] satisfies Spot[] : [
       // In front of the feature wall's east bookcase.
       { id: "shelf-lead", kind: "shelf", pose: "stand", x: leadRoom.maxX - 1.45, z: topZ + 1.05, facing: Math.PI, room: "lead" },
+      // Browsing the wardrobe's jacket rail.
+      { id: "shelf-wardrobe", kind: "shelf", pose: "stand", x: wcx - 1.0, z: topZ + 1.3, facing: Math.PI, room: "wardrobe" },
       ...lobbySpots(receptionRoom),
     ] satisfies Spot[]),
     { id: "board", kind: "board", pose: "stand", x: tcx - 0.6, z: topZ + 1.2, facing: Math.PI, room: "team" },

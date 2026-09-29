@@ -15,6 +15,7 @@ import { LEAD_RENDERERS } from "./LeadSuite";
 import { COMMAND_RENDERERS } from "./CommandOffice";
 import { SERVER_RENDERERS } from "./ServerRoom";
 import { TEAM_RENDERERS } from "./TeamRoomDecor";
+import { WARDROBE_RENDERERS } from "./WardrobeRoom";
 import { LOBBY_RENDERERS } from "./LobbyDecor";
 import { MeetingChair } from "./OfficeChairs";
 import { Bookshelf, Box, Couch, GEO, MAT, matte, Plant, Rounded, Rug } from "./OfficeFurniture";
@@ -640,6 +641,7 @@ export const PROP_RENDERERS: Record<FurnitureKind, (props: { item: Furniture }) 
   ...COMMAND_RENDERERS,
   ...SERVER_RENDERERS,
   ...TEAM_RENDERERS,
+  ...WARDROBE_RENDERERS,
   ...LOBBY_RENDERERS,
 };
 
