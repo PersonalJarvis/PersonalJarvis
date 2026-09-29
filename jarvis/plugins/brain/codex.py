@@ -751,7 +751,9 @@ class CodexBrain:
         # OPENAI_API_KEY, so without this a key added for voice silently
         # billed every memory pass on the most expensive model (live
         # 2026-09-29: ~$0.30 of wiki calls after a two-minute voice chat).
-        # The key stays the fallback when the subscription turn fails.
+        # A failed subscription turn raises instead of crossing to the key:
+        # background callers walk their own chain to the next subscription,
+        # and the maintainer wants the key spent only on the live voice call.
         if (
             api_key
             and self._structured_prompts
@@ -762,25 +764,14 @@ class CodexBrain:
                 "CodexBrain.complete: structured request on the ChatGPT subscription (model=%s)",
                 self._cli_model or "default",
             )
-            sub_emitted = False
-            try:
-                stream = (
-                    self._complete_via_cli(req)
-                    if self._subscription_text_only
-                    else self._complete_via_app_server(req)
-                )
-                async for delta in stream:
-                    if delta.content:
-                        sub_emitted = True
-                    yield delta
-                return
-            except Exception as exc:  # noqa: BLE001 — re-raised once output was emitted
-                if sub_emitted:
-                    raise
-                log.warning(
-                    "CodexBrain: subscription path failed (%s) — using the API key",
-                    type(exc).__name__,
-                )
+            stream = (
+                self._complete_via_cli(req)
+                if self._subscription_text_only
+                else self._complete_via_app_server(req)
+            )
+            async for delta in stream:
+                yield delta
+            return
         if api_key:
             log.info("CodexBrain.complete: API-key path (model=%s)", self._model)
             client = self._ensure_client(api_key)

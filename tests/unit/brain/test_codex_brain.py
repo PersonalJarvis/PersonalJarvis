@@ -152,7 +152,7 @@ async def test_structured_request_prefers_subscription_over_paid_key(
 
 
 @pytest.mark.asyncio
-async def test_structured_request_falls_back_to_key_when_subscription_fails(
+async def test_structured_request_never_crosses_to_the_paid_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     api_calls: list[str] = []
@@ -166,10 +166,11 @@ async def test_structured_request_falls_back_to_key_when_subscription_fails(
     brain = CodexBrain(structured_prompts=True)
     req = BrainRequest(messages=(BrainMessage(role="user", content="extract facts"),))
 
-    text = "".join([d.content or "" async for d in brain.complete(req)])
+    with pytest.raises(RuntimeError, match="app server down"):
+        async for _delta in brain.complete(req):
+            pass
 
-    assert text == "from-api"
-    assert api_calls == ["api"]
+    assert api_calls == []
 
 
 @pytest.mark.asyncio
