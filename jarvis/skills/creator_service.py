@@ -738,6 +738,22 @@ class SkillCreatorService:
             return True
 
         bm = self._brain
+        # A caller that pinned a model for this operation (a GPT-Live call pins
+        # its thinking model) outranks the chat brain's active model: without
+        # this, a skill drafted from a cheap voice session ran on the chat
+        # tier's frontier model instead (live 2026-09-29: ~$0.06 per draft).
+        from jarvis.core.model_selection import operation_model
+
+        selection = operation_model.get()
+        get_brain = getattr(bm, "_get_brain", None) if bm is not None else None
+        if selection is not None and selection.model and callable(get_brain):
+            try:
+                pinned = get_brain(selection.provider, selection.model)
+            except Exception as exc:  # noqa: BLE001
+                _LOG.info("creator: pinned operation model unavailable (%s)", exc)
+                pinned = None
+            if _fresh(pinned):
+                yield pinned, f"operation:{selection.provider}/{selection.model}"
         if bm is not None:
             getter = getattr(bm, "_get_or_create", None)
             active = getattr(bm, "active_provider", None)
