@@ -365,9 +365,13 @@ async def regenerate_bio(
             ok=False, generated_at=None, text=None, reason=str(exc),
         )
     if result is None:
+        skip_reason = getattr(gen, "last_skip_reason", None)
         return BioRegenerateResponse(
             ok=False, generated_at=None, text=None,
-            reason="Brain not available — old bio stays",
+            reason=(
+                f"{skip_reason} The old bio stays." if skip_reason
+                else "Brain not available — old bio stays"
+            ),
         )
     return BioRegenerateResponse(
         ok=True,

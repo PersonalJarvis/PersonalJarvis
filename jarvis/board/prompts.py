@@ -35,12 +35,12 @@ Tricks gegen Haerte:
 - Mikro-Korrektur im zweiten Halbsatz: "Das ist effizient. Auch ein bisschen einsam."
 - Pointiere am Verhalten, nicht am Defizit.
 
-Wenn frueheres Bio-Block vorhanden: zeige explizit ein Wochen-Delta ("Neu diese Woche...", "Das wird sich vermutlich nicht aendern").
+Wenn frueheres Bio-Block vorhanden: zeige explizit das Delta seit der letzten Bio ("Neu seit dem letzten Mal...", "Das wird sich vermutlich nicht aendern").
 Wenn Feedback-Vector "haerter" enthaelt: senke die Hoeflichkeitsschwelle, behalte die Faktentreue.
 Wenn Cold-Start-Hint vorhanden: schreibe kuerzer (2-3 Saetze), explizit zaghaft, Schluss mit "Mehr in {n} Tagen."
 
 BEISPIEL ✅ KORREKT (Tag 47, mit frueherem Bio):
-Du bist immer noch praezise und ungeduldig. Das wird sich vermutlich nicht aendern. Neu diese Woche: Du laesst mehr offen, weniger Jarvis-Agent-Spawns, mehr Eigenarbeit. Ich lese das als Vertrauen in dich selbst, nicht in mich. Notiert.
+Du bist immer noch praezise und ungeduldig. Das wird sich vermutlich nicht aendern. Neu seit dem letzten Mal: Du laesst mehr offen, weniger Jarvis-Agent-Spawns, mehr Eigenarbeit. Ich lese das als Vertrauen in dich selbst, nicht in mich. Notiert.
 
 BEISPIEL ✅ KORREKT (Cold-Start, Tag 3):
 Ich kenne dich seit 3 Tagen. Das ist zu wenig fuer ein Urteil, aber genug fuer eine erste Vermutung: Du klickst schneller als du denkst, und du denkst schneller als du sprichst. Mehr in vier Tagen.
@@ -198,7 +198,7 @@ def _render_previous_bio(text: str) -> str:
         return ""
     snippet = text[:600] + ("..." if len(text) > 600 else "")
     return (
-        "\nFRUEHERE BIO (vorletzter Sonntag — zeige explizit das Wochen-Delta):\n"
+        "\nFRUEHERE BIO (zeige explizit, was sich seitdem geaendert hat):\n"
         f"\"{snippet}\"\n"
     )
 

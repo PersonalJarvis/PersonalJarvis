@@ -5,7 +5,8 @@ Brainstorm spec 2026-05-02 (ten axes):
 - Voice: Jarvis as first-person narrator.
 - Tone: sharp, biting with a wink.
 - Format: 3-5 sentences, one paragraph, no CTA.
-- Update: evolutionarily on Sundays (delta from the previous week).
+- Update: evolutionarily, when a board milestone is reached or the user asks
+  (delta from the previous bio) — see ``scheduler.py``.
 - Data sources: everything Jarvis sees (Board stats + awareness episodes +
   missions + self-mod audit + previous bio + feedback vector).
 - Cold-start: first quiet observation from day 1.
@@ -19,7 +20,9 @@ a ``brain_resolver: Callable[[], Brain]`` — called fresh on EVERY
 ``generate_bio()`` call. This way a provider switch at runtime (user
 switches the UI from Gemini to Claude) takes effect immediately.
 
-Default resolver: ``jarvis.brain.resolver.resolve_frontier_brain(config)``.
+Production resolver: ``jarvis.board.bio_brain.resolve_bio_brain(config)`` —
+the background billing rule (subscription or local model once a subscription
+is connected, the frontier chain on a key-only install).
 
 ## Failure modes
 
@@ -41,6 +44,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from jarvis.brain.background_policy import BackgroundDeferred
 from jarvis.brain.streaming import aggregate
 from jarvis.core.protocols import BrainMessage, BrainRequest
 
@@ -237,6 +241,10 @@ class BioGenerator:
         self._temperature = float(temperature)
         self._max_tokens = int(max_tokens)
         self._timeout_s = float(timeout_s)
+        #: Why the last ``generate_bio`` wrote nothing, when it knows better than
+        #: "brain unavailable" (a deferred subscription resolve). The refresh
+        #: route shows it to the user.
+        self.last_skip_reason: str | None = None
 
     # --------------- Public API ---------------
 
@@ -254,13 +262,21 @@ class BioGenerator:
             dict with bio fields on success; ``None`` when the old bio
             should stay visible (brain gone, timeout, empty output).
         """
+        self.last_skip_reason = None
         if self._resolver is None:
             log.info("BioGenerator: no brain_resolver configured — skip")
+            self.last_skip_reason = "No brain is configured for the bio"
             return None
 
-        # Call the resolver here — provider switches at runtime take effect this way.
+        # Call the resolver here — provider switches at runtime take effect this
+        # way. In a worker thread: the background billing rule probes
+        # subscription logins and may construct a CLI brain, both blocking.
         try:
-            brain = self._resolver()
+            brain = await asyncio.to_thread(self._resolver)
+        except BackgroundDeferred as exc:
+            log.info("BioGenerator: %s Keeping the old bio.", exc)
+            self.last_skip_reason = str(exc)
+            return None
         except Exception:  # noqa: BLE001
             log.exception(
                 "BioGenerator: brain_resolver failed — keeping old bio"
