@@ -1,6 +1,8 @@
 /* The spawn point's panel. Theme tokens plus the checkpoints' gold, so light and dark mode both work. */
 .office-panel[data-panel="spawn"]:focus-visible, .office-panel[data-panel="launch"]:focus-visible { outline:none; }
-.office-spawn { display:flex; flex-direction:column; gap:12px; min-height:0; }
+/* Nothing in it shrinks: a tall launcher scrolls the panel body instead of squashing the hero. */
+.office-spawn { display:flex; flex-direction:column; gap:12px; }
+.office-spawn > * { flex:none; }
 
 /* The hero: the spawn mark on gold, a title and one line of what happens. */
 .office-spawn-hero { position:relative; overflow:hidden; display:flex; align-items:flex-start; gap:12px; padding:14px; border-radius:14px; border:1px solid rgb(240 169 43 / .38); background:radial-gradient(120% 140% at 100% 0%, rgb(245 184 61 / .22), transparent 60%), hsl(var(--background) / .55); }
