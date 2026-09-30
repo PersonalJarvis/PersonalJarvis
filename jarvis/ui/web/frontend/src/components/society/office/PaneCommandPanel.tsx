@@ -209,11 +209,28 @@ export function PaneCommandPanel({ occupant, compact = false, onOpen, onClose }:
     setResizing(false);
   };
 
+  /**
+   * The pointer was taken away mid-drag (the OS, a touch turned into a scroll,
+   * capture lost). Its last coordinates are not a place anyone chose — a
+   * cancelled pointer often reports (0, 0) — so the window goes back to where
+   * the drag began and nothing is remembered. After a normal release the
+   * gesture is already over and this does nothing.
+   */
+  const abandon = (event: ReactPointerEvent<HTMLElement>) => {
+    const g = gesture.current;
+    if (!g || g.pointerId !== event.pointerId) return;
+    gesture.current = null;
+    if (frame.current !== null) { cancelAnimationFrame(frame.current); frame.current = null; }
+    setDragRect(null);
+    setResizing(false);
+  };
+
   const gestureHandlers = (kind: Gesture["kind"], edge?: ResizeEdge) => ({
     onPointerDown: (event: ReactPointerEvent<HTMLElement>) => begin(event, kind, edge),
     onPointerMove: follow,
     onPointerUp: finish,
-    onPointerCancel: finish,
+    onPointerCancel: abandon,
+    onLostPointerCapture: abandon,
   });
 
   /** Double-click on the title bar: back to where the window first opened. */
@@ -227,8 +244,9 @@ export function PaneCommandPanel({ occupant, compact = false, onOpen, onClose }:
 
   // Built once per pane and size state, so the window re-rendering while it is
   // carried around never re-renders the terminal inside it. Mounted only once
-  // the stage is measured: the first size the agent hears is the window's.
-  const ready = stage !== null;
+  // the stage has a size: the first size the agent hears is the window's, and
+  // a window with no room cannot hold the pane's size lead against the grid.
+  const ready = stage !== null && stage.width > 0 && stage.height > 0;
   const terminal = useMemo(() => ready ? (
     // Keyed by the pane, so another session is a fresh socket, never this one's screen under a new name.
     <AgenticTerminal key={`${pane.workspace_id}/${pane.name}`} headerMode="none" sizeLead
