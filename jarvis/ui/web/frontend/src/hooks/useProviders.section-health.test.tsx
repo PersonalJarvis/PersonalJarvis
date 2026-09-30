@@ -214,4 +214,27 @@ describe("provider-bound section health", () => {
     expect(result.current.health.brain).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("re-reads after a key save without forcing a server-side recompute", async () => {
+    // The rollup never probes a provider; every window hears a key save, so
+    // the follow-up is a plain read of what the server already knows.
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(
+        responseFor({ status: "unknown", reason: "unverified", detail: "", subject_id: "openai" }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderHook(() => useSectionHealth());
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("jarvis:secret-configured", { detail: { key: "openai_api_key" } }),
+      );
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(urls.every((url) => !url.includes("refresh=true"))).toBe(true);
+  });
 });

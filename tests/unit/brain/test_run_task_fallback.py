@@ -143,6 +143,26 @@ async def test_402_moves_on_to_the_next_family(monkeypatch: pytest.MonkeyPatch) 
     assert [c[0] for c in calls] == ["openrouter", "gemini"]
 
 
+async def test_scheduled_turns_feed_the_tool_model_health_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Tool Model tab's dot reads what real tool-model turns did (it no
+    longer probes): the 402 and the answering fallback are both recorded."""
+    from jarvis.brain import provider_health_ledger as ledger
+
+    mgr = _manager(monkeypatch)
+    _install_dispatch(monkeypatch, mgr, {
+        "openrouter": _Credit402("Error code: 402 - Insufficient credits"),
+        "gemini": "digest from gemini",
+    })
+
+    await mgr.run_task(prompt="p", allowed_tools=("gmail",), model_tier="fast")
+
+    record = ledger.get_ledger()
+    assert record.get("openrouter", ledger.MODALITY_TOOL).status == "no_credits"
+    assert record.get("gemini", ledger.MODALITY_TOOL).status == "ok"
+
+
 async def test_the_whole_chain_is_walked_not_just_one_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -177,8 +177,8 @@ async def test_switching_the_pass_off_draws_no_dot() -> None:
 
 
 async def test_a_present_key_reports_ready_without_a_live_call(monkeypatch) -> None:
-    """``probe=False``: the credential here is always a key another tier already
-    tests, so page-open must not fire a second network round-trip."""
+    """Credential presence decides: the key here is always one another tier
+    already uses, and page-open must never fire a network round-trip."""
     monkeypatch.setattr(pr, "_is_credential_present", lambda spec, bp=None: True)
 
     async def _explode(*_args, **_kwargs):
@@ -208,23 +208,17 @@ async def test_a_required_tier_still_nags(monkeypatch) -> None:
 
 async def test_an_optional_tier_still_reports_a_failing_key(monkeypatch) -> None:
     """Nag suppression covers "not set up", never "set up and broken"."""
+    from jarvis.brain import provider_health_ledger as ledger
+
     monkeypatch.setattr(pr, "_is_credential_present", lambda spec, bp=None: True)
-
-    async def _bad_key(spec, cfg, **_kwargs):
-        return SimpleNamespace(status="bad_key", detail="rejected")
-
-    # A wording card is judged by the dictation layer's own probe, never by the
-    # STT branch of the shared provider test — the tier has no recognizer behind
-    # it, and probing one reported the user's speech engine under this card's
-    # name. Both seams are stubbed so the test pins the RULE (an optional tier
-    # still goes red on a failing key) rather than which module answered.
-    from jarvis.dictation import polish_probe
-
-    monkeypatch.setattr(pr._provider_test, "run_provider_test", _bad_key)
-    monkeypatch.setattr(polish_probe, "probe_polish_family", _bad_key)
     spec = pr.get_spec(dictation_spec_id("groq"))
+    # A real call on this card's key was rejected: the optional flag must not
+    # hide that. (The record, not a probe, carries the evidence.)
+    ledger.get_ledger().record(spec.id, ledger.MODALITY_BRAIN, "bad_key")
 
-    health = await pr._tier_section_health(None, spec, probe=True)
+    health = await pr._tier_section_health(
+        None, spec, modality=ledger.MODALITY_BRAIN, optional=True
+    )
 
     assert health.status != _section_health.OK
     assert health.reason == "bad_key"

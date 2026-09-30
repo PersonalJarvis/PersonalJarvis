@@ -29,6 +29,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from jarvis.brain import background_policy
+from jarvis.brain import provider_health_ledger as _health_ledger
 from jarvis.brain import provider_test as _provider_test
 from jarvis.brain import section_health as _section_health
 from jarvis.brain.model_catalog import ModelInfo, catalog_spec, classify_model
@@ -1386,8 +1387,11 @@ async def test_provider_connection(provider_id: str, request: Request) -> Provid
             detail=(f"Test timed out after {ceiling:.0f}s — the provider did not answer."),
             latency_ms=ceiling * 1000.0,
         )
-    # This exact result is newer than any overlapping section sweep. Cancel the
-    # older snapshot so the UI refresh cannot resurrect a pre-test status.
+    # The status dots read the passive health record, never a probe of their
+    # own; this user-clicked verdict is the freshest evidence there is.
+    _record_test_verdict(spec, result.status)
+    # This exact result is newer than any cached rollup. Drop it so the UI
+    # refresh reads the verdict just recorded.
     _invalidate_section_health_state(request)
     return ProviderTestResponse(
         provider=result.provider,
@@ -1411,13 +1415,19 @@ assert set(get_args(SectionHealthStatusLiteral)) == set(_section_health.SECTION_
     "section-health status vocabulary drift (Pydantic Literal vs SSOT)"
 )
 
-# Cache the rollup so opening the API-Keys page / switching tabs does not re-run
-# the REAL connectivity tests on every render. ``?refresh=true`` (used by the UI
-# after a key save / provider switch) bypasses it. The sidebar and dock mount
-# this poll in every window, and every frontend build reloads every window, so a
-# short TTL turned into a paid probe per provider about once a minute (live
-# 2026-09-29: the voice key ran dry on health checks). Selection changes still
-# re-check at once through the fingerprint and the explicit refresh.
+# The rollup sends NOTHING to any provider (decision 2026-09-30): it reads
+# credential presence, a CLI's local login state, the on-disk install state of
+# a local model and the passive health record (``provider_health_ledger``) that
+# real calls and the explicit Test button feed. It used to run a real
+# completion, a real TTS synthesis, cloud STT audio and a billed realtime
+# session start per tier, on every app start, window reload and key/provider
+# event — an idle app spent money on its own health dots.
+#
+# What is left to cache is the cheap part (keyring reads, CLI login status), so
+# every window's sidebar and dock can mount this without repeating it. The
+# fingerprint carries the ledger version, so a newly recorded outcome, a
+# selection change or a key save (which drops the cache) is visible on the very
+# next read; ``?refresh=true`` still recomputes without the cache.
 _SECTION_HEALTH_TTL_S = 30 * 60.0
 _SECTION_HEALTH_KEYS = (
     "brain",
@@ -1429,6 +1439,11 @@ _SECTION_HEALTH_KEYS = (
     "subagents",
     "advanced",
 )
+
+#: ``reason`` of a keyed provider whose credential is present but which has not
+#: made a real call since (status ``unknown``: no dot). Readiness counts it as
+#: set up — it will be checked by its first real use, never by a probe.
+UNVERIFIED_REASON: Final[str] = "unverified"
 
 
 class SectionHealth(BaseModel):
@@ -1454,13 +1469,63 @@ class SectionHealthResponse(BaseModel):
     cached: bool = False
 
 
+#: What the last real outcome means, as the tail of a card/tooltip sentence.
+#: Deliberately our own words: a provider's error body never reaches the UI,
+#: a log line or the record (AP-34).
+_OUTCOME_PHRASES: dict[str, str] = {
+    _provider_test.OK: "answered",
+    _provider_test.BAD_KEY: "the key was rejected",
+    _provider_test.NO_CREDITS: "out of credit or quota",
+    _provider_test.RATE_LIMITED: "rate-limited",
+    _provider_test.MODEL_UNAVAILABLE: "the selected model was not available",
+    _provider_test.UNREACHABLE: "did not answer in time",
+    _provider_test.ERROR: "the check failed",
+}
+
+
+def _age_phrase(seconds: float) -> str:
+    if seconds < 90:
+        return "just now"
+    minutes = int(seconds // 60)
+    if minutes < 90:
+        return f"{minutes} min ago"
+    hours = int(seconds // 3600)
+    if hours < 48:
+        return f"{hours} h ago"
+    return f"{int(seconds // 86400)} d ago"
+
+
+def _outcome_detail(label: str, outcome: _health_ledger.Outcome) -> str:
+    """``"<label>: <what happened> on its last real call (<age>)"``."""
+    what = _OUTCOME_PHRASES.get(outcome.status, outcome.status)
+    where = "on the last test" if outcome.source == _health_ledger.SOURCE_TEST else (
+        "on its last real call"
+    )
+    age = _age_phrase(max(0.0, time.time() - outcome.at))
+    return f"{label}: {what} {where} ({age})"
+
+
+def _record_test_verdict(spec: ProviderSpec, status: str, *, model: str | None = None) -> None:
+    """Feed an explicit test's verdict into the passive health record.
+
+    Only for the checks a person asked for — the card's Test button, the check
+    right after a key is saved, the probe of a model they just picked. The
+    rollup and the composer never probe; they read what this left behind.
+    """
+    modality = _health_ledger.modality_for_tier(getattr(spec, "tier", None))
+    if modality is None:
+        return
+    _health_ledger.record_status(
+        spec.id, modality, status, source=_health_ledger.SOURCE_TEST, model=model
+    )
+
+
 async def _tier_section_health(
     cfg: Any,
     spec: ProviderSpec | None,
     *,
-    model: str | None = None,
+    modality: str | None = None,
     optional: bool = False,
-    probe: bool = True,
     binary_path: str | None = None,
 ) -> SectionHealth:
     """Health of one provider tier, derived from its ACTIVE provider only.
@@ -1469,9 +1534,20 @@ async def _tier_section_health(
     deliberately NOT "does any provider here lack a key" (that would paint every
     tab red, since unused providers are normally left empty).
 
-    ``model`` probes that exact model for a brain-tier spec — used by sections
-    whose tier carries its own model pin (Tool Model), so the dot reflects what
-    that tier actually runs, not the general brain model.
+    Nothing here calls a provider (2026-09-30). The verdict is built from:
+
+    * credential presence (a stored key, or a CLI's local login state);
+    * for an on-device card, whether its engine and weights are on disk;
+    * the passive health record for ``modality`` — the last REAL outcome of this
+      provider (a real brain turn, tool step, spoken sentence, transcription or
+      realtime handshake), or the verdict of an explicit Test.
+
+    A keyed provider that has not been used since its key was saved is
+    ``unknown`` / ``unverified``: silent, never red — it is checked by its first
+    real use. A login-based provider (Codex, Antigravity, Grok Build, Claude
+    Code) is ``ok`` on its login alone, which is the whole verdict the Test
+    button gives for it too. ``modality=None`` judges on credential presence
+    alone (the dictation wording pass, whose key another tier owns).
 
     ``optional`` marks a tier the install does not depend on. A missing key then
     reports ``ok``/``not_configured_optional`` instead of amber ``needs_setup``,
@@ -1482,11 +1558,6 @@ async def _tier_section_health(
     that must stay silent); a spec that carries ``optional`` itself also counts.
     An optional tier still turns RED when a key IS present and failing — the
     rule suppresses nagging, never a real fault.
-
-    ``probe=False`` skips the live provider call and reports on credential
-    presence alone. For a tier whose credential is a key another tier already
-    owns and tests, a second network round-trip on every page open buys no
-    signal it does not already have.
     """
     optional = optional or bool(getattr(spec, "optional", False))
     if spec is None:
@@ -1507,8 +1578,7 @@ async def _tier_section_health(
     # same as "usable", and reading it that way is how an on-device card comes to
     # claim it works on a machine where its engine and weights were never
     # installed. So ask the disk (a cheap file check, no model load) before
-    # calling the tier healthy. The real inference test still stays off the
-    # page-open path: it would force a multi-gigabyte load for no extra signal.
+    # calling the tier healthy.
     if getattr(spec, "auth_mode", None) == "none":
         local_state = await asyncio.to_thread(_local_runtime_payload, spec)
         if local_state is not None and not local_state["ready"]:
@@ -1529,7 +1599,8 @@ async def _tier_section_health(
             spec,
             binary_path,
         )
-    except Exception:  # noqa: BLE001 — a probe failure is "not set up", not a crash
+    except Exception as exc:  # noqa: BLE001 — a failed presence check is "not set up", not a crash
+        log.info("section-health credential check for %s failed: %s", spec.id, exc)
         configured = False
     if not configured:
         if optional:
@@ -1545,41 +1616,50 @@ async def _tier_section_health(
             detail=f"{spec.label}: not connected or configured",
             subject_id=spec.id,
         )
-    if not probe:
+    if modality is None:
         return SectionHealth(
             status=_section_health.OK,
             reason="configured",
             detail=f"{spec.label}: connected or configured",
             subject_id=spec.id,
         )
-    try:
-        result = await _run_tier_test(spec, cfg, model=model)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("section-health test for %s failed: %s", spec.id, exc)
+    outcome = _health_ledger.effective_outcome(spec.id, modality)
+    if outcome is None:
+        if getattr(spec, "auth_mode", None) != "api_key":
+            return SectionHealth(
+                status=_section_health.OK,
+                reason="connected",
+                detail=f"{spec.label}: signed in",
+                subject_id=spec.id,
+            )
         return SectionHealth(
             status=_section_health.UNKNOWN,
-            reason="error",
-            detail=f"{spec.label}: check failed",
+            reason=UNVERIFIED_REASON,
+            detail=f"{spec.label}: connected, checked on its first real use",
             subject_id=spec.id,
         )
-    status = _section_health.section_status_for_test(result.status, configured=True)
     return SectionHealth(
-        status=status,
-        reason=result.status,
-        detail=f"{spec.label}: {_human_detail(result) or result.status}",
+        status=_section_health.section_status_for_test(outcome.status, configured=True),
+        reason=outcome.status,
+        detail=_outcome_detail(spec.label, outcome),
         subject_id=spec.id,
     )
 
 
-async def provider_health(cfg: Any, provider_id: str, *, probe: bool = True) -> SectionHealth:
-    """The live health of ONE named provider, for a caller outside this module.
+async def provider_health(cfg: Any, provider_id: str) -> SectionHealth:
+    """The health of ONE named provider, for a caller outside this module.
 
-    The same check the API-Keys tabs run, addressed by provider id instead of
-    by tier: a credential that is present but rejected is ``error`` with the
-    reason ("bad_key", "no_credits", …), a missing one is ``needs_setup``, a
-    working one is ``ok``. The agent chat's composer uses it to say which
+    The same verdict the API-Keys tabs show, addressed by provider id instead
+    of by tier: a credential whose last real call was rejected is ``error``
+    with the reason ("bad_key", "no_credits", …), a missing one is
+    ``needs_setup``, one that answered is ``ok``, one never used since its key
+    was saved is ``unknown``. The agent chat's composer uses it to say which
     seats actually answer, so the two surfaces can never disagree about
-    whether a provider works — there is one check, not two opinions.
+    whether a provider works — there is one record, not two opinions.
+
+    Sends nothing to the provider: it reads the passive health record
+    (2026-09-30 — every open of the chat used to spend a paid completion per
+    keyed provider).
 
     An unknown id is ``unknown`` rather than an error: a caller listing rows
     must not lose its whole answer to one name this module has never heard of.
@@ -1592,13 +1672,9 @@ async def provider_health(cfg: Any, provider_id: str, *, probe: bool = True) -> 
             detail=f"{provider_id}: not a known provider",
             subject_id=provider_id,
         )
-    # The realtime voice key is probed by the Realtime tab only: a composer
-    # sweep that spent it again on every open drained it (mandate 2026-09-29).
-    from jarvis.brain.voice_key import bills_voice_key
-
-    if bills_voice_key(cfg, provider_id):
-        probe = False
-    return await _tier_section_health(cfg, spec, probe=probe)
+    return await _tier_section_health(
+        cfg, spec, modality=_health_ledger.modality_for_tier(spec.tier)
+    )
 
 
 def _worker_usable(provider: str) -> bool:
@@ -1769,13 +1845,16 @@ async def _realtime_section_health(
     *,
     binary_path: str | None = None,
 ) -> SectionHealth:
-    """Test the active provider's actual duplex handshake.
+    """The active realtime provider, judged by its last REAL handshake.
 
-    Credential presence alone previously painted a depleted or schema-broken
-    provider green. Reuse the standard tier health mapping so the Realtime tab
-    reports the same honest account/integration states as every other tier.
+    Credential presence alone once painted a depleted or schema-broken provider
+    green, so the tab reports the outcome of the last real session start (or an
+    explicit Test) — never a session of its own: opening one is a billed
+    mutation, and the rollup used to open one on every app start and reload.
     """
-    return await _tier_section_health(cfg, spec, binary_path=binary_path)
+    return await _tier_section_health(
+        cfg, spec, modality=_health_ledger.MODALITY_REALTIME, binary_path=binary_path
+    )
 
 
 async def _dictation_section_health(
@@ -1792,10 +1871,9 @@ async def _dictation_section_health(
       amber dot on every install forever. That dot would be the feature's most
       visible effect on the majority of users, which is the opposite of what an
       optional convenience should do.
-    * ``probe=False`` — no live call. The credential here is always a key some
-      other tier already owns and tests (the Groq speech-to-text key, the
-      Gemini/OpenAI/OpenRouter brain key), so probing again on page open would
-      duplicate a request without producing a signal we do not already have.
+    * no health record (``modality=None``) — credential presence decides. The
+      credential here is always a key some other tier already owns and reports
+      on (the Groq speech-to-text key, the Gemini/OpenAI/OpenRouter brain key).
 
     ``enabled`` is reported separately from "no key", because "you switched it
     off" and "you have no key for it" are different answers to "why is nothing
@@ -1808,7 +1886,7 @@ async def _dictation_section_health(
             detail="Dictation polish is switched off",
             subject_id=None,
         )
-    return await _tier_section_health(cfg, spec, optional=True, probe=False)
+    return await _tier_section_health(cfg, spec, optional=True)
 
 
 def _advanced_section_health(request: Request) -> SectionHealth:
@@ -1896,6 +1974,8 @@ def _section_health_fingerprint(
         ("dictation-polish", "1" if _polish_enabled(cfg) else "0"),
         ("dictation-provider", str(getattr(dictation, "polish_provider", None) or "")),
         ("advanced-reachable", repr(reachable)),
+        # A newly recorded real-call outcome supersedes the cached rollup.
+        ("health-ledger", str(_health_ledger.ledger_version())),
     )
     return tuple((key, subjects.get(key) or "") for key in _SECTION_HEALTH_KEYS) + configuration
 
@@ -2042,29 +2122,34 @@ async def _compute_section_health(
             )
 
     binary_path = _codex_binary_path(request)
-    # The realtime section already probes the voice key. A brain on that same
-    # key would spend it a second time for the same answer, so it reports from
-    # configuration only.
-    from jarvis.brain.voice_key import bills_voice_key
-
+    # Every section reads the passive health record; none sends a request.
     checks = {
         "brain": _tier_section_health(
             cfg,
             get_spec(subjects["brain"] or ""),
-            probe=not bills_voice_key(cfg, subjects["brain"]),
+            modality=_health_ledger.MODALITY_BRAIN,
             binary_path=binary_path,
         ),
-        # The Tool Model tier has its own model pin (tool_model → cu_model);
-        # probe THAT model, not the general brain model. An unset pin falls
-        # through to run_provider_test's own resolution (model → tier default).
+        # The Tool Model tier runs its own model pin (tool_model → cu_model), so
+        # it is judged by the outcomes of tool-model calls, not brain turns.
         "computer-use": _tier_section_health(
             cfg,
             get_spec(subjects["computer-use"] or ""),
-            model=_provider_cu_model(cfg, subjects["computer-use"] or "") or None,
+            modality=_health_ledger.MODALITY_TOOL,
             binary_path=binary_path,
         ),
-        "tts": _tier_section_health(cfg, get_spec(subjects["tts"] or ""), binary_path=binary_path),
-        "stt": _tier_section_health(cfg, get_spec(subjects["stt"] or ""), binary_path=binary_path),
+        "tts": _tier_section_health(
+            cfg,
+            get_spec(subjects["tts"] or ""),
+            modality=_health_ledger.MODALITY_TTS,
+            binary_path=binary_path,
+        ),
+        "stt": _tier_section_health(
+            cfg,
+            get_spec(subjects["stt"] or ""),
+            modality=_health_ledger.MODALITY_STT,
+            binary_path=binary_path,
+        ),
         "realtime": _realtime_section_health(
             cfg,
             get_spec(subjects["realtime"] or ""),
@@ -2421,10 +2506,22 @@ async def _apply_brain_model(
             applied_live = False
     restart_required = brain is None
 
+    # What the previous model did says nothing about this one; whether the KEY
+    # works still holds.
+    _health_ledger.forget_providers(
+        [provider_id],
+        modality=_health_ledger.MODALITY_BRAIN,
+        keep_credential_failures=True,
+    )
     probe_payload: BrainModelProbe | None = None
     if probe:
         probe_model = model or _current_brain_model(cfg, provider_id)
         result = await _probe_brain_model(provider_id, probe_model)
+        picked_spec = get_spec(provider_id)
+        if picked_spec is not None:
+            # The user just picked this model: the probe is their action and
+            # its verdict feeds the same record the status dots read.
+            _record_test_verdict(picked_spec, result.status, model=probe_model)
         probe_payload = BrainModelProbe(
             status=result.status,
             detail=_human_detail(result),
@@ -2506,6 +2603,9 @@ def _apply_tts_selection(
         except Exception as exc:  # noqa: BLE001
             log.error("TTS live re-apply for %s failed: %s", provider_id, exc, exc_info=True)
 
+    _health_ledger.forget_providers(
+        [provider_id], modality=_health_ledger.MODALITY_TTS, keep_credential_failures=True
+    )
     _invalidate_section_health_state(request)
     return BrainModelSaveResponse(
         ok=True,
@@ -2566,6 +2666,9 @@ def _apply_stt_model(
         except Exception as exc:  # noqa: BLE001
             log.debug("In-memory stt model update skipped: %s", exc)
 
+    _health_ledger.forget_providers(
+        [provider_id], modality=_health_ledger.MODALITY_STT, keep_credential_failures=True
+    )
     _invalidate_section_health_state(request)
     return BrainModelSaveResponse(
         ok=True,
@@ -3403,6 +3506,9 @@ async def set_cu_model(provider_id: str, body: CuModelBody, request: Request) ->
         SecretConfigured(key=f"brain.providers.{provider_id}.cu_model", action="set"),
     )
     effective = value or _current_brain_model(cfg, provider_id)
+    _health_ledger.forget_providers(
+        [provider_id], modality=_health_ledger.MODALITY_TOOL, keep_credential_failures=True
+    )
     _invalidate_section_health_state(request)
     return CuModelResponse(
         ok=True,
@@ -3566,6 +3672,13 @@ async def set_realtime_options(
     selected_provider = str(
         getattr(getattr(getattr(cfg, "brain", None), "realtime", None), "provider", "") or ""
     )
+    if model is not None or voice is not None:
+        # The last handshake was for the old model/voice; the key still stands.
+        _health_ledger.forget_providers(
+            [provider_id],
+            modality=_health_ledger.MODALITY_REALTIME,
+            keep_credential_failures=True,
+        )
     session_restarted = False
     if selected_provider == provider_id:
         from jarvis.ui.web.voice_runtime import reconnect_realtime
@@ -4047,6 +4160,19 @@ def _secret_slot_labels(slots: tuple[str, ...]) -> list[str]:
     return list(labels)
 
 
+def _providers_reading_slots(slots: tuple[str, ...] | list[str]) -> list[str]:
+    """Every provider card that reads any of ``slots`` — its own key slots and
+    its resolution chain (a realtime card falls back to the family key)."""
+    wanted = {slot for slot in slots if slot}
+    found: list[str] = []
+    for spec in PROVIDERS:
+        reads = set(spec.secret_keys)
+        reads.update(slot for slot, _env in cfg_mod.PROVIDER_SECRET_CANDIDATES.get(spec.id, ()))
+        if reads & wanted:
+            found.append(spec.id)
+    return found
+
+
 @router.post("/secrets/{key}", openapi_extra={"x-jarvis-dangerous": True})
 async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict[str, Any]:
     """Save a key for its whole provider family, or ask which scope was meant.
@@ -4085,6 +4211,8 @@ async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict
                 slot,
             )
     touched = (*plan.writes, *plan.deletes)
+    # What the old key did says nothing about the new one.
+    _health_ledger.forget_providers(_providers_reading_slots(touched))
     for slot in plan.writes:
         await _emit(request, SecretConfigured(key=slot, action="set"))
     for slot in plan.deletes:
@@ -4112,6 +4240,7 @@ async def delete_secret_value(key: str, request: Request) -> dict[str, Any]:
                 "credential store may be locked or unavailable."
             ),
         )
+    _health_ledger.forget_providers(_providers_reading_slots((key,)))
     await _emit(request, SecretConfigured(key=key, action="delete"))
     _invalidate_section_health_state(request)
     return {"ok": True, "key": key}

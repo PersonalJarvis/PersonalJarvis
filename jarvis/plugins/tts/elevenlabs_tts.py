@@ -176,6 +176,9 @@ class ElevenLabsTTS:
         log = logging.getLogger("jarvis.tts.elevenlabs")
         self.last_voice = voice
         self.last_voice_provider = self.name
+        # What this provider failed with when a fallback voice spoke instead
+        # (read by the speech meter for the provider-health dots).
+        self.last_failure: str | None = None
 
         # Cooldown active? Gemini first, then SAPI5 — never stay silent.
         if self._quota_blocked_until and time.monotonic() < self._quota_blocked_until:
@@ -201,6 +204,7 @@ class ElevenLabsTTS:
                     yield chunk
         except Exception as exc:  # noqa: BLE001
             msg = str(exc)
+            self.last_failure = f"{type(exc).__name__}: {msg}"
             low = msg.lower()
             if (
                 "quota" in low

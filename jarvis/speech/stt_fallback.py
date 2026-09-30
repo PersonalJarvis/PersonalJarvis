@@ -168,6 +168,14 @@ class FallbackSTT:
         return ""
 
     _last_used = ""
+    _last_failure: str | None = None
+
+    @property
+    def last_failure(self) -> str | None:
+        """What the primary failed with when a fallback produced the latest
+        transcript, else ``None``. In memory only; the speech meter hands it to
+        the provider-health record, which keeps just its classification."""
+        return self._last_failure
 
     # ------------------------------------------------------------------
     # Cooldown bookkeeping
@@ -216,6 +224,7 @@ class FallbackSTT:
     # ------------------------------------------------------------------
     async def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
         first_error: BaseException | None = None
+        self._last_failure = None
         for name, preloaded in self._order():
             try:
                 provider = preloaded if preloaded is not None else self._instance(name)
@@ -241,6 +250,8 @@ class FallbackSTT:
                     raise
                 if first_error is None:
                     first_error = exc
+                if name == self._primary_name and self._last_failure is None:
+                    self._last_failure = f"{type(exc).__name__}: {exc}"
                 self._penalize(name, kind)
                 log.warning(
                     "STT provider %s failed (%s: %s) — crossing to the next "

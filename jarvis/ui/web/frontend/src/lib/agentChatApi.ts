@@ -246,9 +246,10 @@ export async function fetchTypeahead(
 }
 
 /**
- * Which seats actually answer. Slow by nature — it makes one real request per
- * provider — so callers fire it beside the catalog and never await it before
- * painting. The backend caches a sweep for five minutes.
+ * Which seats actually answer, from the outcome of each seat's last real call
+ * (the backend never probes a provider for this). It still reads CLI logins,
+ * so callers fire it beside the catalog and never await it before painting.
+ * The backend reuses a sweep until a new outcome is recorded.
  */
 export async function fetchProviderHealth(
   surface: AgentChatSurface,

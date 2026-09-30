@@ -219,6 +219,20 @@ def _app_action_state_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
 
 
 @pytest.fixture(autouse=True)
+def _provider_health_ledger_in_tmp(tmp_path_factory):  # noqa: ANN001
+    """Every real brain/speech/realtime call records its outcome for the
+    status dots; keep that record off the developer's real ``data/state`` and
+    start every test with an empty one."""
+    from jarvis.brain import provider_health_ledger as ledger
+
+    root = tmp_path_factory.mktemp("provider-health")
+    ledger.set_ledger(ledger.ProviderHealthLedger(root / ledger.LEDGER_FILE_NAME))
+    yield root
+    # In-memory, not None: a late background call must not create the real file.
+    ledger.set_ledger(ledger.ProviderHealthLedger(None))
+
+
+@pytest.fixture(autouse=True)
 def _reset_bus():
     """Reset the global default bus before and after each test."""
     reset_default_bus()

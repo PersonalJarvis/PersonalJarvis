@@ -228,8 +228,9 @@ def _app(tmp_path: Path) -> FastAPI:
 def test_provider_health_reports_each_row_and_caches_the_sweep(tmp_path: Path, monkeypatch):
     """The picker's live state: which connected seats actually answer.
 
-    The sweep costs one real request per provider, so it must be cached and
-    must never lose the whole answer to one slow or raising provider.
+    The sweep reads key presence, CLI logins and the passive health record;
+    the login reads are not free, so it is cached, and it must never lose the
+    whole answer to one slow or raising row.
     """
     import jarvis.ui.web.agent_chat_routes as routes
 
@@ -240,7 +241,7 @@ def test_provider_health_reports_each_row_and_caches_the_sweep(tmp_path: Path, m
         cli_calls.append(runner)
         return "ok", "ok", f"{runner}: signed in"
 
-    async def _fake(cfg, provider_id, *, probe=True):
+    async def _fake(cfg, provider_id):
         calls.append(provider_id)
         table = {
             "claude-api": ("error", "bad_key", "Claude (API-Key): 401"),
@@ -284,6 +285,40 @@ def test_provider_health_reports_each_row_and_caches_the_sweep(tmp_path: Path, m
         # …unless the caller asks for a fresh one.
         client.get("/api/agent-chat/provider-health?surface=jarvis&refresh=true")
         assert len(calls) > swept[0] and len(cli_calls) > swept[1]
+
+
+def test_provider_health_sweep_sends_nothing_to_any_provider(tmp_path: Path, monkeypatch):
+    """Every open of the chat used to spend one paid completion per keyed
+    provider (live 2026-09-30). The composer now reads the passive record of
+    real calls: zero provider requests, and a new real outcome drops the
+    cached sweep so the next open shows it."""
+    import jarvis.ui.web.agent_chat_routes as routes
+    from jarvis.brain import provider_health_ledger as ledger
+    from jarvis.ui.web import provider_routes
+    from tests.fakes.fake_provider_calls import ProviderCallRecorder
+
+    recorder = ProviderCallRecorder().install(monkeypatch)
+    monkeypatch.setattr(provider_routes, "_is_credential_present", lambda *args: True)
+    monkeypatch.setattr(
+        routes, "_cli_login_snapshot", lambda runner: ("ok", "ok", f"{runner}: signed in")
+    )
+    monkeypatch.setattr("jarvis.agent_chat.service._claude_cli_installed", lambda: False)
+    monkeypatch.setattr(routes, "_health_cache", {})
+
+    with TestClient(_app(tmp_path)) as client:
+        first = client.get("/api/agent-chat/provider-health?surface=jarvis").json()
+        rows = {r["provider"]: r for r in first["providers"]}
+        assert rows["grok"]["status"] == "unknown"  # keyed, never used: no dot
+        assert rows["grok"]["reason"] == provider_routes.UNVERIFIED_REASON
+
+        ledger.get_ledger().record("grok", ledger.MODALITY_BRAIN, "no_credits")
+        second = client.get("/api/agent-chat/provider-health?surface=jarvis").json()
+
+    assert second["cached"] is False
+    rows = {r["provider"]: r for r in second["providers"]}
+    assert rows["grok"]["status"] == "error"
+    assert rows["grok"]["reason"] == "no_credits"
+    assert recorder.calls == []
 
 
 class _CliStatus:
@@ -357,7 +392,7 @@ def test_cli_surface_health_does_not_probe_the_api_key(tmp_path: Path, monkeypat
 
     api_calls: list[str] = []
 
-    async def _fake_api(cfg, provider_id, *, probe=True):
+    async def _fake_api(cfg, provider_id):
         api_calls.append(provider_id)
         return SimpleNamespace(status="error", reason="bad_key", detail=f"{provider_id}: 401")
 
@@ -393,7 +428,7 @@ def test_jarvis_surface_probes_the_claude_api_key_when_cli_is_uninstalled(
     api_calls: list[str] = []
     cli_calls: list[str] = []
 
-    async def _fake_api(cfg, provider_id, *, probe=True):
+    async def _fake_api(cfg, provider_id):
         api_calls.append(provider_id)
         return SimpleNamespace(status="error", reason="bad_key", detail="401")
 

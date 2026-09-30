@@ -103,6 +103,41 @@ def test_readiness_is_false_when_a_required_section_is_not_ok(
     assert body["sections"]["subagents"]["status"] == "needs_setup"
 
 
+def test_readiness_counts_a_set_up_but_unused_section_as_ready(
+    server, state_path, monkeypatch
+) -> None:
+    """The rollup never probes, so a freshly keyed tier is ``unknown`` /
+    ``unverified`` until its first real call. That is set up — the note must
+    not wait for every tier to have been used once. A KNOWN failure or any
+    other unknown still holds it back."""
+    server.cfg.voice.mode = "realtime"
+    unverified = {"status": "unknown", "reason": provider_routes.UNVERIFIED_REASON, "detail": ""}
+
+    async def fresh_install(request, refresh=False):
+        snap = _all_ok(("subagents",))
+        snap.sections["realtime"] = dict(unverified)
+        snap.sections["computer-use"] = dict(unverified)
+        return snap
+
+    async def one_known_failure(request, refresh=False):
+        snap = await fresh_install(request)
+        snap.sections["computer-use"] = {"status": "error", "reason": "bad_key", "detail": ""}
+        return snap
+
+    async def unknown_for_another_reason(request, refresh=False):
+        snap = await fresh_install(request)
+        snap.sections["realtime"] = {"status": "unknown", "reason": "error", "detail": ""}
+        return snap
+
+    with TestClient(server.app) as client:
+        monkeypatch.setattr(provider_routes, "section_health", fresh_install)
+        assert client.get("/api/setup/readiness").json()["ready"] is True
+        monkeypatch.setattr(provider_routes, "section_health", one_known_failure)
+        assert client.get("/api/setup/readiness").json()["ready"] is False
+        monkeypatch.setattr(provider_routes, "section_health", unknown_for_another_reason)
+        assert client.get("/api/setup/readiness").json()["ready"] is False
+
+
 def test_readiness_fails_open_when_health_probe_breaks(server, state_path, monkeypatch) -> None:
     async def boom(request, refresh=False):
         raise RuntimeError("probe exploded")
