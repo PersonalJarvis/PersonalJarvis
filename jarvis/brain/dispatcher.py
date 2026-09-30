@@ -141,7 +141,7 @@ class BrainDispatcher:
         """
         tid = trace_id or uuid4()
         messages: list[BrainMessage] = list(history or [])
-        # Wave 2 (omni-latency): per-turn dynamic context (date/awareness/wiki)
+        # Wave 2 (omni-latency): per-turn dynamic context (date/wiki)
         # rides on the user message, NOT the cached system prompt, so the
         # provider prompt cache stays warm. It is never stored in history
         # (the manager appends the clean user_text there).

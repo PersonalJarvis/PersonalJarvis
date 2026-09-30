@@ -64,11 +64,6 @@ _WIKI_OBJECTS: tuple[str, ...] = (
     "fact", "fakt",  # i18n-allow
 )
 
-_AWARENESS_OBJECTS: tuple[str, ...] = (
-    "awareness", "status", "zustand", "zustaende", "state", "context",
-    "kontext", "erinnerung", "memory", "verlauf", "history", "episode",  # i18n-allow
-)
-
 
 # ---------------------------------------------------------------------------
 # Seed table
@@ -143,24 +138,6 @@ _SEED_CAPABILITIES: list[Capability] = [
         description="Spawn a background worker sub-agent for heavy code or file tasks.",
         risk_tier="ask",
         requires_evidence=True,
-    ),
-    Capability(
-        id="tool.awareness-snapshot",
-        source="router_tool",
-        verbs=_READ_VERBS,
-        objects=_AWARENESS_OBJECTS,
-        description="Read a snapshot of the current awareness/context state (read-only).",
-        risk_tier="safe",
-        requires_evidence=False,
-    ),
-    Capability(
-        id="tool.awareness-recall",
-        source="router_tool",
-        verbs=_READ_VERBS,
-        objects=_AWARENESS_OBJECTS,
-        description="Full-text search over the recent awareness episode log (read-only).",
-        risk_tier="safe",
-        requires_evidence=False,
     ),
     Capability(
         id="tool.run-skill",

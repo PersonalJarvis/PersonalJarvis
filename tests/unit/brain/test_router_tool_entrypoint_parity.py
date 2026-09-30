@@ -78,7 +78,7 @@ KNOWN_UNREACHABLE: frozenset[str] = frozenset({
     "dispatch-to-admin",
     "dispatch-with-review",
     "multi-spawn",
-    # Superseded by the wiki + awareness tools.
+    # Superseded by the wiki tools.
     "remember",
     "whoami",
     # Dev-loop helpers, plausibly worker-only by design.

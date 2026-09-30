@@ -53,9 +53,7 @@ def test_six_stable_keys_in_order() -> None:
         ("read_visible_ui_state", "browser"),
         ("click_element", "browser"),
         # Knowledge / memory — MUST win over "community" for the "recall"
-        # substring (awareness-recall contains "call").
-        ("awareness-recall", "knowledge"),
-        ("awareness-snapshot", "knowledge"),
+        # substring (wiki-recall contains "call").
         ("wiki-recall", "knowledge"),
         ("wiki-ingest", "knowledge"),
         ("remember", "knowledge"),

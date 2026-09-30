@@ -1,6 +1,7 @@
 # ADR-0009 — Awareness-Layer Architecture
 
-**Status:** Accepted (2026-04-25)
+**Status:** Superseded (2026-09-30) — the awareness layer was removed; its background summaries cost model tokens for a recall feature the product no longer wants. Kept as the historical record.
+**Accepted:** 2026-04-25
 **Phase:** A0 — Foundations (the following phases A1-A5 reference this ADR)
 
 ## Context

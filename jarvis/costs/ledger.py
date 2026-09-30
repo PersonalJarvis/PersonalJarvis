@@ -3,8 +3,8 @@
 The Costs section used to learn about spend from the surfaces that happened
 to record it — a voice turn's ``BrainTurnCompleted``, a chat's
 ``turn_finished``, a mission's draft. Twenty-odd callers of the brain
-protocol never told anyone: dictation polish, the wiki curator, awareness
-digests, the mission critic, computer-use planning, skill authoring, board
+protocol never told anyone: dictation polish, the wiki curator, the mission
+critic, computer-use planning, skill authoring, board
 profiles. Their OpenRouter and Gemini bills were real and invisible
 (maintainer, 2026-08-25: "I have spent money on OpenRouter, I know it").
 

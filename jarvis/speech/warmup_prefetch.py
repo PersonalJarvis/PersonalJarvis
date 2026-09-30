@@ -10,8 +10,8 @@ Profiling on a real desktop showed the dominant cost is the
 ~2.9 s, NOT the model parse (~0.1 s).
 
 Worse, since the serve-first fast-boot bootstrap (the server now answers in
-~200 ms and every subsystem — brain build, wiki FTS index, conductor, workflows,
-awareness — boots concurrently as ``create_task``), that import no longer runs
+~200 ms and every subsystem — brain build, wiki FTS index, conductor, workflows —
+boots concurrently as ``create_task``), that import no longer runs
 alone: it serializes on the global Python import lock against all those other
 heavy imports and starves to 7-24 s (measured ``wake-start=14187``). That is the
 "VOICE STARTING… forever" the user sees.

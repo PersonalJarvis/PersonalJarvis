@@ -757,10 +757,6 @@ app-command = "jarvis.plugins.tool.app_command:AppCommandTool"
 # under the person's per-action policy. See ADR-0011 amendment "Every app action".
 find-app-action = "jarvis.plugins.tool.app_action:FindAppActionTool"
 run-app-action = "jarvis.plugins.tool.app_action:RunAppActionTool"
-# Phase A1 — Awareness layer L1 (synchronous state read for the router).
-awareness-snapshot = "jarvis.plugins.tool.awareness_snapshot:AwarenessSnapshotTool"
-# Phase A3 — Awareness-Layer L3 (BM25 search across recent episodes).
-awareness-recall = "jarvis.plugins.tool.awareness_recall:AwarenessRecallTool"
 # Agent society voice tools (2026-09-02): ONE typed ASSIGN to a named agent
 # with an immediate spoken ack, and a read-only status answer. Router-tier
 # only (ADR-0011 amendment); never in a worker set (AP-5/AP-14).
@@ -903,9 +899,6 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "A"]
 ignore = ["S101", "S603", "S607"]
 
 [tool.ruff.lint.per-file-ignores]
-# The Verdichter system prompt intentionally contains long few-shot examples
-# (Tournament 2026-04-26 pick) — string content, must NOT be reformatted.
-"jarvis/awareness/prompts.py" = ["E501"]
 # Telephony tests parse our OWN generated TwiML (trusted input, not untrusted
 # network data) and use the literal word "secret" / fake fixture tokens that
 # bandit flags as hardcoded passwords. Both are false positives in a test

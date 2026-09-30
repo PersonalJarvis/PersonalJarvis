@@ -83,7 +83,7 @@ class TestSpecShape:
         # model that actually owns it in the schema — the TestAllowlistFieldParity
         # contract, applied to the whole introspected set via schema navigation
         # (more robust than getattr(config, name): covers submodule section
-        # models like AwarenessPrivacyConfig that config never re-exports).
+        # models that config never re-exports).
         for spec in introspect_mutable_specs():
             model = resolve_model_for_path(spec.path)
             assert issubclass(model, BaseModel)
