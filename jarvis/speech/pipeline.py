@@ -11093,6 +11093,26 @@ class SpeechPipeline:
                     self._dictation_discard_requested = True
                 self._dictate_key_down = False
                 self.stop_dictation()
+                if discard:
+                    # The stop event only ends capture. After release the lane
+                    # may be waiting on model startup, STT or formatting, so an
+                    # explicit discard must cancel that work as well. The task's
+                    # completion handler closes the UI and releases the wake gate.
+                    task = getattr(self, "_dictation_task", None)
+                    if task is not None and not task.done():
+                        # Let a just-created session enter its cleanup scope
+                        # before cancellation; repeated X clicks must not cancel
+                        # the cleanup itself.
+                        def _cancel() -> None:
+                            if not task.done() and not task.cancelling():
+                                task.cancel()
+
+                        if current is not None or (
+                            owner is not None and owner.is_running()
+                        ):
+                            asyncio.get_running_loop().call_soon(_cancel)
+                        else:
+                            _cancel()
             except Exception:  # noqa: BLE001 — a stop gesture must never crash
                 log.exception("request_dictation_stop dispatch failed")
 
@@ -11889,6 +11909,7 @@ class SpeechPipeline:
         prefix_polish_deltas = 0
         prefix_polish_failed = False
         prefix_polish_task: asyncio.Task[None] | None = None
+        probe_task: asyncio.Task[None] | None = None
 
         def _append_unique(values: list[str], value: object) -> None:
             text = str(value or "").strip()
@@ -13385,10 +13406,12 @@ class SpeechPipeline:
             # than awaited, because awaiting inside a cancelled task is not
             # reliable.
             #
-            # A hangup or a crash leaves prefetched final windows in flight;
-            # nothing will read their answers, so stop asking for them.
-            for pending in final_tasks.values():
-                if not pending.done():
+            # Cancellation can interrupt capture, preview or formatting as well
+            # as a final window. Retire every task owned by this recording so
+            # discarded speech cannot keep decoding or formatting in the back.
+            stop_event.set()
+            for pending in (*final_tasks.values(), probe_task, prefix_polish_task):
+                if pending is not None and not pending.done():
                     pending.cancel()
             if not getattr(self, "_dictation_completion_published", True):
                 self._dictation_completion_published = True

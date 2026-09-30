@@ -115,8 +115,17 @@ async def test_no_live_trigger_means_no_watchdog() -> None:
 
 
 class _RunningTask:
+    def __init__(self) -> None:
+        self.cancel_count = 0
+
     def done(self) -> bool:
         return False
+
+    def cancelling(self) -> int:
+        return self.cancel_count
+
+    def cancel(self) -> None:
+        self.cancel_count += 1
 
 
 class _StopCounting(SpeechPipeline):
@@ -151,6 +160,7 @@ def test_request_dictation_stop_finishes_by_default_and_discards_for_the_x() -> 
     assert pipe.request_dictation_stop(discard=True) is True
     assert pipe.stopped == 2
     assert pipe._dictation_discard_requested is True
+    assert pipe._dictation_task.cancel_count == 1
 
 
 @pytest.mark.asyncio
