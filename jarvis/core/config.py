@@ -1876,8 +1876,10 @@ class JarvisLearningConfig(BaseModel):
     #: stays small. At 125 % new entries are refused until the reviewer merges.
     user_budget_chars: int = Field(default=1_500, ge=300, le=40_000)
     memory_budget_chars: int = Field(default=1_000, ge=300, le=40_000)
-    #: Reviewer provider/model. Empty = the wiki curator's provider on its cheap
-    #: model, then every other reachable provider (subscriptions before keys).
+    #: Reviewer override: a brain provider id and, optionally, its model (the
+    #: model applies only together with a provider). Empty = the Jarvis lead's
+    #: own seat, the provider, model and auth mode the front-page Jarvis chat
+    #: answers on; no other provider is ever asked (``society.seat_brain``).
     provider: str = ""
     model: str = ""
     timeout_s: float = Field(default=90.0, ge=5.0, le=600.0)

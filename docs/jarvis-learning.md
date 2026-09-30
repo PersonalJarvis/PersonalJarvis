@@ -35,11 +35,13 @@ Jarvis itself, tuned for a voice assistant.
    it, cut to 240 characters) and the two small notebooks. It returns at most
    three changes (`add`, `replace` to update or merge, `remove` only when the
    user retracted something), capped at 800 output tokens; proposals below
-   importance 5 are dropped. The model is each provider's cheap router-tier
-   model on the wiki's background chain: subscriptions and keyless local
-   models while a subscription is connected, never the key that pays for the
-   voice call.
-5. **Validate (Python decides).** A change is written only when:
+   importance 5 are dropped. The call runs on the Jarvis lead's own seat:
+   the provider, model and auth mode the front-page Jarvis chat answers on
+   (the Agents selection; a subscription seat through its CLI, an API seat
+   on its Agents-tab key). An explicit `[memory.learning].provider` (with its
+   `model`) overrides that seat. No other provider is ever asked: a failed
+   review is retried after a growing pause, and after four failures in a row
+   its turns are dropped with one log line.
 5. **Validate (Python decides).** A change is written only when:
    - its `evidence` is a verbatim quote (12 characters or more) of the
      **user's** own words the review was shown. Anything only the
@@ -114,17 +116,17 @@ Compaction (`compact.py`) keeps the files themselves small:
 4. **Bounded ledger.** `.learning-ledger.jsonl` rotates at 256 KB and keeps one
    previous file, so the audit trail never exceeds about 0.5 MB.
 
-Privacy: reviews send the reviewed turns to the same background provider
-chain the wiki extractor already uses for every conversation turn; the loop
-adds no new destination. `enabled = false` switches it off.
+Privacy: reviews and merges send the reviewed turns only to the provider the
+Jarvis chat already talks to (or the explicit `[memory.learning]` override);
+the loop adds no new destination. `enabled = false` switches it off.
 
 ## Cost
 
 - An ordinary conversation (requests, questions, small talk): no model call.
 - "Remember that X": no model call.
 - A conversation with a personal fact, preference, correction or plan: one
-  call of roughly 1,300 input tokens and at most 800 output tokens on a cheap
-  model, preferably on a subscription.
+  call of roughly 1,300 input tokens and at most 800 output tokens on the
+  Jarvis chat's own seat (on a subscription when the chat runs on one).
 - Every turn: at most about 650 prompt tokens for the notebooks, usually far
   less, and byte-stable between reviews so provider prompt caches apply.
 - Compaction: nothing while a notebook is below 80 percent full; then at most
