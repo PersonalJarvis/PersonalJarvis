@@ -48,6 +48,11 @@ registers the desktop launcher, and opens the app. Language, wake phrase, and pr
 OS permissions and hardware capabilities affect voice and desktop control.
 Re-running the installer updates an existing installation.
 
+For a minimal server installation, use `pip install personal-jarvis` and
+`jarvis serve`. Open the local address reported at startup; the default is
+`http://localhost:47821`. Remote browser microphone access requires HTTPS.
+See the [headless deployment guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md).
+
 The idea is simple: one place on your computer where you say what you need, and it happens. You talk to Jarvis or type to it, and it works out whether to just answer, do something on your computer for you, or pass the job to an agent that keeps at it while you get on with your day. You can always see what it's doing, and it asks before it touches anything that matters.
 
 It runs on your own machine with whichever model you like, local ones included, and it's free. There's no account to create, and nothing sends your data anywhere you didn't connect yourself.
@@ -74,27 +79,6 @@ receive the content required for their requests. See [privacy and local data](ht
 https://github.com/user-attachments/assets/9930ca95-5015-4ade-9a16-975c77d179fd
 
 <p align="center"><sub>A real click-through of the app: every frame is recorded, waiting is sped up, and a few moments are zoomed in.</sub></p>
-
-## install
-
-**Windows (PowerShell)**
-
-```powershell
-irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex
-```
-
-**macOS and Linux**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
-```
-
-For a minimal server installation, use `pip install personal-jarvis` and
-`jarvis serve`. Open the local address reported at startup; the default is
-`http://localhost:47821`. Remote browser microphone access requires HTTPS.
-See the [headless deployment guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md).
-
-</details>
 
 ## Jarvis Agents
 
