@@ -16,7 +16,7 @@ once (one `echo` that sh, cmd and PowerShell answer differently) and then:
 | Health check and facts | POSIX probe | PowerShell probe on stdin, same sections; no load average |
 | Planting the app's key (password login) | `~/.ssh/authorized_keys` | PowerShell: `administrators_authorized_keys` for admins, ACL by SID (works on a German Windows), UTF-8 without BOM |
 | Readiness and install | tmux, git, Node, CLIs; apt/dnf/yum/apk/pacman/brew | git (Git for Windows), Node, CLIs; winget and npm; "admin" instead of root |
-| Society agent's CLI turn | `exec env … <cli>` on the command line | system prompt uploaded as a file, CLI started by a Git Bash launcher uploaded over SFTP |
+| Society agent's CLI turn | `exec env … <cli>` on the command line; cancel = hang up | system prompt uploaded as a file, CLI started by a Git Bash launcher uploaded over SFTP; cancel ends the launcher's process tree with `taskkill /T` first, because hanging up ends only cmd and bash and left the CLI running (measured) |
 | Society agent's shell tool | sh in `~/jarvis-agents/<id>` | Git Bash in the same folder; PowerShell when Git for Windows is missing |
 | IDE panes | tmux session; survives app close and network loss, re-attached | no tmux: the agent runs in the SSH terminal (ConPTY) and ends with the channel; a plain terminal is PowerShell |
 | IDE folder sync, conversation copy | POSIX scripts | the same scripts in Git Bash; SFTP paths as `/C:/…` |
@@ -25,8 +25,10 @@ once (one `echo` that sh, cmd and PowerShell answer differently) and then:
 Git for Windows is the one prerequisite beyond the SSH server, and every
 feature that needs it says so in one sentence. Verified live against a
 Windows 11 Pro VM (German locale): facts, readiness, a CLI start through the
-launcher, an agent shell command with non-ASCII output, a PowerShell pane,
-and a git folder sent over and brought back with an edit made there. Covered
+launcher, a cancelled turn leaving no process behind, an agent shell command
+with non-ASCII output, a PowerShell pane (closing it, or the app, ends its
+program there), and a git folder sent over and brought back with an edit made
+there. Covered
 by `tests/unit/computers/test_windows_remote.py` against a scripted Windows
 SSH server. Not verified live: planting the key with a password (unit-tested
 only; the VM already had the key), a Windows computer whose `DefaultShell` is

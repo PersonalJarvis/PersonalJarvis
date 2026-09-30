@@ -192,14 +192,38 @@ def forget(computer_id: str) -> None:
     _CACHE.pop(computer_id, None)
 
 
-def launcher_script(cwd: str, argv: Sequence[str], env: Mapping[str, str] | None = None) -> str:
-    """The Git Bash file that starts ``argv`` in ``cwd`` with stdin and terminal intact."""
+def launcher_script(
+    cwd: str,
+    argv: Sequence[str],
+    env: Mapping[str, str] | None = None,
+    *,
+    pid_file: str | None = None,
+) -> str:
+    """The Git Bash file that starts ``argv`` in ``cwd`` with stdin and terminal intact.
+
+    ``pid_file`` (relative to the home folder) receives the Windows id of the
+    bash that becomes ``argv``'s parent: hanging up the SSH channel ends that
+    bash but not the program below it, so :func:`stop_script` ends the tree.
+    """
     lines = [f"cd -- {shlex.quote(cwd)} || exit 97"]
+    if pid_file:
+        lines.append(f'cat /proc/$$/winpid > "$HOME"/{shlex.quote(pid_file)} 2>/dev/null || true')
     for key, value in (env or {}).items():
         lines.append(f"export {key}={shlex.quote(value)}")
     lines.append(_NO_PATH_CONVERSION)
     lines.append("exec " + shlex.join(argv))
     return "\n".join(lines) + "\n"
+
+
+def stop_script(pid_file: str) -> str:
+    """The Git Bash script that ends a launcher's whole process tree (Windows)."""
+    return (
+        f'f="$HOME"/{shlex.quote(pid_file)}\n'
+        '[ -f "$f" ] || exit 0\n'
+        'p=$(cat "$f"); rm -f "$f"\n'
+        '[ -n "$p" ] && MSYS_NO_PATHCONV=1 taskkill /PID "$p" /T /F >/dev/null 2>&1\n'
+        "exit 0\n"
+    )
 
 
 def launcher_name(identity: str, suffix: str = ".sh") -> str:

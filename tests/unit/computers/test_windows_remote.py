@@ -441,3 +441,47 @@ async def test_keep_working_never_moves_panes_to_windows(
 
     assert await offload_on_quit.offload_before_quit(registry) == []
     assert placed == []
+
+
+async def test_cancelling_a_turn_ends_the_remote_process_tree(
+    desk,  # noqa: ANN001
+    box: WindowsBox,
+    ssh_server: FakeSshServer,
+    tmp_path: Path,
+) -> None:
+    """Hanging up ends only cmd and bash on Windows; the CLI below them lived on."""
+    stopped = asyncio.Event()
+
+    async def handler(command: str, process: Any) -> bool:
+        if "--noprofile --norc" in command:
+            await stopped.wait()  # the CLI runs until its tree is ended
+            process.exit(1)
+            return True
+        if "-l -s" in command and GIT_BASH in command:
+            script = await process.stdin.read()
+            box.scripts.append(("bash", script))
+            if "taskkill" in script:
+                stopped.set()
+            elif "pwd -W" in script:
+                process.stdout.write(f"{HOME}/jarvis-agents/scout\nfound\n")
+            process.exit(0)
+            return True
+        return await box(command, process)
+
+    ssh_server.state.handler = handler
+    proc = await remote_cli.spawn(
+        desk.id,
+        agent_id="scout",
+        runner="claude-cli",
+        binary="claude",
+        argv=["claude", "--print"],
+        local_cwd="/ws",
+        env={},
+    )
+    launcher = (tmp_path / "remote-home/jarvis-agents/.launch/scout.sh").read_text(encoding="utf-8")
+    assert 'cat /proc/$$/winpid > "$HOME"/jarvis-agents/.launch/scout.pid' in launcher
+
+    proc.kill()
+    assert await asyncio.wait_for(proc.wait(), timeout=30) == 1
+    stop = next(script for _kind, script in box.scripts if "taskkill" in script)
+    assert "jarvis-agents/.launch/scout.pid" in stop and "/T /F" in stop

@@ -26,10 +26,11 @@ small Git Bash launcher uploaded next to it (``jarvis.computers.remote_os``).
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import shlex
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Final
 
 log = logging.getLogger(__name__)
@@ -165,13 +166,22 @@ class RemoteCliProcess:
 
     pid: int | None = None
 
-    def __init__(self, process: Any, stack: contextlib.AsyncExitStack) -> None:
+    def __init__(
+        self,
+        process: Any,
+        stack: contextlib.AsyncExitStack,
+        *,
+        stop: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         self._process = process
         self._stack = stack
         self.stdin = _Stdin(process.stdin)
         self.stdout = process.stdout
         self.stderr = process.stderr
         self._closed = False
+        #: Ends the remote process tree on a computer where hanging up does not.
+        self._stop = stop
+        self._stopping: asyncio.Task[None] | None = None
 
     @property
     def returncode(self) -> int | None:
@@ -179,18 +189,49 @@ class RemoteCliProcess:
         return None if code is None else int(code)
 
     async def wait(self) -> int | None:
+        if self._stopping is not None:
+            # Shielded: a caller giving up on the wait must not cut the stop short.
+            with contextlib.suppress(Exception):
+                await asyncio.shield(self._stopping)
         with contextlib.suppress(Exception):  # a torn-down channel reports no status
             await self._process.wait_closed()
         await self._release()
         return self.returncode
 
     def kill(self) -> None:
+        if self._stop is not None:
+            if self._stopping is None:
+                self._stopping = asyncio.get_running_loop().create_task(
+                    self._stop_then_hang_up(), name="remote-cli-stop"
+                )
+            return
+        self._hang_up()
+
+    def _hang_up(self) -> None:
         # Many sshd builds ignore signal requests; closing the channel hangs
         # up the remote command's terminal-less session instead.
         with contextlib.suppress(Exception):
             self._process.kill()
         with contextlib.suppress(Exception):
             self._process.close()
+
+    async def _stop_then_hang_up(self) -> None:
+        """Windows: hanging up ends only cmd and bash; the CLI below them lived on.
+
+        So the process tree is ended first, on the same connection, and only
+        then is the channel closed — and the connection released even when
+        nobody waits for the process any more.
+        """
+        assert self._stop is not None
+        try:
+            await self._stop()
+        except Exception as exc:  # noqa: BLE001 — logged; hanging up below still runs
+            log.warning("agent chat: stopping the remote CLI failed: %s", exc)
+        finally:
+            self._hang_up()
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(self._process.wait_closed(), timeout=15)
+        await self._release()
 
     async def _release(self) -> None:
         if self._closed:
@@ -253,9 +294,17 @@ async def _windows_launch(
         uploaded_prompt_files=uploaded,
     )
     launcher = f"{remote_os.LAUNCH_DIR}/{remote_os.launcher_name(agent_id)}"
-    script = remote_os.launcher_script(remote_cwd, command_argv, remote_env(env))
+    script = remote_os.launcher_script(
+        remote_cwd, command_argv, remote_env(env), pid_file=_pid_file(agent_id)
+    )
     await remote_os.upload_text(opened, host, launcher, script)
     return host.launcher_command(launcher)
+
+
+def _pid_file(agent_id: str) -> str:
+    from jarvis.computers import remote_os
+
+    return f"{remote_os.LAUNCH_DIR}/{remote_os.launcher_name(agent_id, '.pid')}"
 
 
 async def spawn(
@@ -334,4 +383,11 @@ async def spawn(
     except BaseException:
         await stack.aclose()
         raise
-    return RemoteCliProcess(process, stack)
+    stop = None
+    if host.windows:
+        stop_command = remote_os.stop_script(_pid_file(agent_id))
+
+        async def stop() -> None:
+            await remote_os.run_bash(opened, host, stop_command, timeout_s=30)
+
+    return RemoteCliProcess(process, stack, stop=stop)
