@@ -66,6 +66,8 @@ def _row(computer: Computer) -> dict[str, Any]:
 
 
 AuthLiteral = Literal["key", "password", "private_key"]
+#: What a connect form may ask for; "auto" tries this PC's own SSH keys.
+LoginLiteral = Literal["key", "password", "private_key", "auto"]
 
 
 class AddServerBody(BaseModel):
@@ -73,7 +75,7 @@ class AddServerBody(BaseModel):
     host: str = Field(min_length=1, max_length=253)
     port: int = Field(default=22, ge=1, le=65535)
     username: str = Field(default="root", min_length=1, max_length=64)
-    auth: AuthLiteral = "key"
+    auth: LoginLiteral = "key"
     password: str | None = Field(default=None, max_length=1024)
     keep_password: bool = False
     private_key: str | None = Field(default=None, max_length=32_000)
@@ -86,7 +88,7 @@ class TestBody(BaseModel):
     host: str = Field(min_length=1, max_length=253)
     port: int = Field(default=22, ge=1, le=65535)
     username: str = Field(default="root", min_length=1, max_length=64)
-    auth: AuthLiteral = "key"
+    auth: LoginLiteral = "key"
     password: str | None = Field(default=None, max_length=1024)
     keep_password: bool = False
     private_key: str | None = Field(default=None, max_length=32_000)

@@ -33,6 +33,7 @@ from jarvis.computers.models import (
     AuthMethod,
     Computer,
     ComputerHealth,
+    LoginMode,
     ProviderId,
 )
 from jarvis.computers.probe import PROBE_SCRIPT, parse_probe
@@ -186,6 +187,25 @@ _ERROR_STATUS = {
     "unreachable": "offline",
     "timeout": "offline",
 }
+
+
+def _login_error(exc: SshError, target: SshTarget) -> ComputerError:
+    """A refused login as the sentence (and kind) the connect form acts on."""
+    if exc.kind == "auth" and target.use_this_pc:
+        if exc.password_offered:
+            return ComputerError(
+                "None of this PC's SSH keys opens this server. Enter its password once: "
+                "the app then sets up its own key and forgets the password.",
+                status=502,
+                kind="needs_password",
+            )
+        return ComputerError(
+            "This server only accepts keys it already knows. Add the app's key there "
+            "once (one line, shown below), then try again.",
+            status=502,
+            kind="key_only",
+        )
+    return ComputerError(exc.message, status=502, kind=exc.kind)
 
 
 class ComputerService:
@@ -383,11 +403,11 @@ class ComputerService:
     # -- adding -------------------------------------------------------------
 
     async def _plant_key(self, target: SshTarget) -> Session:
-        """Log in with the password, add Jarvis's key, prove the key works."""
+        """Log in (password or this PC's keys), add Jarvis's key, prove it works."""
         try:
             opened = await open_session(target)
         except SshError as exc:
-            raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
+            raise _login_error(exc, target) from exc
         try:
             result = await run_command(
                 opened, authorize_key_command(identity.public_key_line()), timeout_s=20
@@ -428,7 +448,7 @@ class ComputerService:
         host: str,
         port: int = 22,
         username: str = "root",
-        auth: AuthMethod = "key",
+        auth: LoginMode = "key",
         password: str | None = None,
         keep_password: bool = False,
         private_key: str | None = None,
@@ -438,7 +458,14 @@ class ComputerService:
         region: str | None = None,
         plan: str | None = None,
     ) -> Computer:
-        """Register a server. With a password, plant the key first (default)."""
+        """Register a server. With a password, plant the key first (default).
+
+        ``auth="auto"`` needs nothing but the address: the app's own key or any
+        key this PC's ``ssh`` uses logs in once, the app's key is planted, and
+        the computer is stored with key login. When none opens the server the
+        error says whether a password would (``needs_password``) or only a key
+        (``key_only``).
+        """
         computer = Computer(
             id=_new_id(),
             name=_clean_name(name),
@@ -472,6 +499,12 @@ class ComputerService:
             import_private_key(private_key, passphrase)
             self._save_private_key(computer.id, private_key or "", passphrase)
             computer = computer.model_copy(update={"auth": "private_key"})
+        elif auth == "auto":
+            proof = await self._plant_key(self._this_pc_target(computer))
+            close(proof)
+            computer = computer.model_copy(
+                update={"host_key": proof.host_key, "host_fingerprint": proof.host_fingerprint}
+            )
         self._store.add(computer)
         return await self.check(computer.id)
 
@@ -484,13 +517,28 @@ class ComputerService:
         else:
             delete_secret(_passphrase_slot(computer_id))
 
+    def _this_pc_target(self, computer: Computer) -> SshTarget:
+        """The app's key plus this PC's own SSH keys, for one planting login."""
+        try:
+            key = identity.private_key()
+        except identity.IdentityError as exc:
+            raise ComputerError(str(exc), status=500) from exc
+        return SshTarget(
+            host=computer.host,
+            port=computer.port,
+            username=computer.username,
+            host_key=computer.host_key,
+            client_key=key,
+            use_this_pc=True,
+        )
+
     async def test_connection(
         self,
         *,
         host: str,
         port: int = 22,
         username: str = "root",
-        auth: AuthMethod = "key",
+        auth: LoginMode = "key",
         password: str | None = None,
         private_key: str | None = None,
         passphrase: str | None = None,
@@ -513,6 +561,10 @@ class ComputerService:
             elif auth == "private_key":
                 key = import_private_key(private_key, passphrase)
                 target = dataclasses.replace(base, client_key=key)
+            elif auth == "auto":
+                target = dataclasses.replace(
+                    base, client_key=identity.private_key(), use_this_pc=True
+                )
             else:
                 target = dataclasses.replace(base, client_key=identity.private_key())
         except ComputerError as exc:  # the answer IS the result: shown in the form
@@ -522,6 +574,9 @@ class ComputerService:
         try:
             opened = await open_session(target)
         except SshError as exc:  # a failed login is the test's answer, not an error
+            if target.use_this_pc:
+                refused = _login_error(exc, target)
+                return _test_result(False, refused.kind or exc.kind, refused.message)
             message = exc.message
             if exc.kind == "auth" and auth == "key":
                 message = (
