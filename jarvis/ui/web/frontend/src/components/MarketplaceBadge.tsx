@@ -5,13 +5,13 @@ import { cn } from "@/lib/utils";
 /**
  * "This came from the marketplace."
  *
- * One component for all three kinds — a plugin card, a skill row, a wallpaper
- * tile — because the whole point is that the mark reads the same everywhere:
- * somebody who installed a skill yesterday should recognise the same badge on
- * a wallpaper today without being told.
+ * One component for both kinds — a plugin card, a skill row — because the
+ * whole point is that the mark reads the same everywhere: somebody who
+ * installed a skill yesterday should recognise the same badge on a plugin
+ * today without being told.
  *
  * Colours come from theme tokens only, so it stays legible in light and dark
- * mode and over the wallpaper-tinted panes.
+ * mode.
  */
 export function MarketplaceBadge({
   publisher,

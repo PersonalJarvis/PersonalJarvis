@@ -91,7 +91,7 @@ export function CaptureCard({ className }: { className?: string }) {
     >
       {/* A picture gets a letterbox in the theme's own scrim (a screenshot on
           a dark plate reads as a screen); the ledger and the empty line sit
-          on the wallpaper like every other readout — a plain dark slab under
+          on the stage's ground like every other readout — a plain dark slab under
           "no capture" was a hole in the light stage. */}
       <div
         className={cn(

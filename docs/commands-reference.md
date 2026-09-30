@@ -293,7 +293,7 @@ Return the effective live Brain tool surface, including native, connected CLI, M
 
 ## `marketplace-browse` — Browse the marketplace
 
-List everything the community marketplace publishes — skills, plugins and wallpapers — with the exact name of each entry and whether it is already installed. Use this to find the name before installing, and to answer 'what is there to install'.
+List everything the community marketplace publishes — skills and plugins — with the exact name of each entry and whether it is already installed. Use this to find the name before installing, and to answer 'what is there to install'.
 
 - **Endpoint:** `GET /api/marketplace/community`
 - **Arguments:** none
@@ -303,13 +303,13 @@ List everything the community marketplace publishes — skills, plugins and wall
 
 ## `marketplace-install` — Install from the marketplace
 
-Install ONE published marketplace entry by its exact name. The kind is resolved by the app, so the same command installs a skill, a plugin or a wallpaper. What the user gets differs and the answer must say so: a skill is usable right away, a wallpaper lands in the wallpaper picker, a plugin only lands on the plugin list and stays powerless until the user connects their account. Look the name up with marketplace-browse first rather than guessing it; report the result the tool returns.
+Install ONE published marketplace entry by its exact name. The kind is resolved by the app, so the same command installs a skill or a plugin. What the user gets differs and the answer must say so: a skill is usable right away, a plugin only lands on the plugin list and stays powerless until the user connects their account. Look the name up with marketplace-browse first rather than guessing it; report the result the tool returns.
 
 - **Endpoint:** `POST /api/marketplace/community/install/{item_id}`
 - **Arguments:** `item_id` (string; required)
 - **Requires confirmation:** yes
 - **Desktop UI section:** `plugins`
-- **Voice example (EN):** "install that wallpaper"
+- **Voice example (EN):** "install that skill"
 
 ## `dictation-start` — Start dictation
 

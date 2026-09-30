@@ -1,7 +1,7 @@
 /**
  * The mission deck as a ROOM — the numbers behind `components/deck/room/`.
  *
- * The room is a display case in real 3D (three.js): the wallpaper is the
+ * The room is a display case in real 3D (three.js): the app's ground is the
  * back wall, a reflecting floor runs from it toward the viewer, the mascot
  * stands on that floor, and the instruments stand around it as upright
  * glass panels — near the viewer what the person acts on (log, outputs,

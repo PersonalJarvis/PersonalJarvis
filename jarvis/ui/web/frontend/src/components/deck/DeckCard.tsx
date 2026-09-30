@@ -8,8 +8,8 @@ import { cn } from "@/lib/utils";
  * One instrument on the deck.
  *
  * Deliberately NOT a filled box: the app's convention (index.css, "Frontend
- * theming") is that the wallpaper shines through untinted and the stage's
- * text halo keeps ink readable on it. So a card is a HUD frame (see
+ * theming") is that the stage's ground shows through untinted. So a card is
+ * a HUD frame (see
  * HudFrame.tsx — bracket, chamfer or rail, chosen per card so the stage does
  * not read as a grid of identical rectangles), a title strip in plain words
  * with a status lamp, and its content.

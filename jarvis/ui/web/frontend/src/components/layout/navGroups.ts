@@ -32,7 +32,6 @@ import {
   Users,
   Wallet,
   Workflow,
-  Image as ImageIcon,
   ScanLine,
   ShieldCheck,
   type LucideIcon,
@@ -136,8 +135,8 @@ export const NAV_GROUPS: NavItem[][] = [
       icon: Boxes,
       matchIds: ["skills", "plugins", "mcps"],
     },
-    // The marketplace fills those lists: a plugin, a skill or a wallpaper
-    // published there ends up in one of them once installed.
+    // The marketplace fills those lists: a plugin or a skill published there
+    // ends up in one of them once installed.
     {
       id: "marketplace",
       labelKey: "nav.marketplace",
@@ -249,12 +248,6 @@ export const NAV_GROUPS: NavItem[][] = [
       // missing from a locale, and it is NOT interpolated.
       fallbackLabel: "Voice",
     },
-    {
-      id: "wallpaper",
-      labelKey: "nav.wallpaper",
-      icon: ImageIcon,
-      fallbackLabel: "Wallpaper",
-    },
   ],
 ];
 
@@ -305,7 +298,6 @@ export const SETTINGS_HUB_IDS: readonly SectionId[] = [
   "telephony-setup",
   "local-models",
   "computers",
-  "wallpaper",
   "appshots",
   "jarvis-actions",
   "costs",

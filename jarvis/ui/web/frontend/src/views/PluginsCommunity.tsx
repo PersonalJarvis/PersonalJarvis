@@ -91,30 +91,12 @@ function portableNote(skill: CommunitySkillWire): string | null {
     : "Portable skill · also runs in other agents";
 }
 
-export interface CommunityWallpaperWire {
-  name: string;
-  title: string;
-  description: string;
-  publisher?: string | null;
-  version?: string | null;
-  categories: string[];
-  source_url?: string | null;
-  raw_url?: string | null;
-  /** The small preview the registry publishes next to the full image. */
-  thumb_url?: string | null;
-  /** SPDX id the publisher declared for the artwork. */
-  license?: string | null;
-  theme?: string | null;
-  installed: boolean;
-}
-
 export interface CommunityResponse {
   status: "fresh" | "fetched" | "stale" | "unavailable" | "disabled";
   revision?: number | null;
   generated_at?: string | null;
   plugins: CommunityPluginWire[];
   skills: CommunitySkillWire[];
-  wallpapers?: CommunityWallpaperWire[];
 }
 
 /** One readable file of a published entry — mirrors ``_text_file`` server-side. */
@@ -126,12 +108,11 @@ export interface EntryFileWire {
 }
 
 export interface EntryContentsWire {
-  kind: "skill" | "plugin" | "wallpaper";
+  kind: "skill" | "plugin";
   name: string;
   title: string;
   root: string;
   files: EntryFileWire[];
-  image_url?: string | null;
   error?: string | null;
 }
 
@@ -188,7 +169,6 @@ export function CommunityTab({ onInstalled }: { onInstalled?: (pluginName: strin
   const [query, setQuery] = useState("");
   const [consentPlugin, setConsentPlugin] = useState<CommunityPluginWire | null>(null);
   const [consentSkill, setConsentSkill] = useState<CommunitySkillWire | null>(null);
-  const [consentPaper, setConsentPaper] = useState<CommunityWallpaperWire | null>(null);
 
   const refreshMutation = useMutation({
     mutationFn: async (): Promise<CommunityResponse> => {
@@ -245,8 +225,7 @@ export function CommunityTab({ onInstalled }: { onInstalled?: (pluginName: strin
 
   const skillInstallMutation = useMutation({
     mutationFn: async (skill: CommunitySkillWire) => {
-      // The by-name route, same as the wallpaper below: it runs the existing
-      // catalog install (download, validation, registry hot-swap) and then
+      // The by-name route: it runs the existing catalog install (download, validation, registry hot-swap) and then
       // writes the origin receipt. Posting to the catalog route directly
       // skipped that receipt, so a skill installed from this card arrived
       // with no mark on it — installed from the marketplace and unable to
@@ -268,31 +247,6 @@ export function CommunityTab({ onInstalled }: { onInstalled?: (pluginName: strin
       setConsentSkill(null);
       queryClient.invalidateQueries({ queryKey: ["marketplace-community"] });
       queryClient.invalidateQueries({ queryKey: ["skills"] });
-    },
-  });
-
-  const paperInstallMutation = useMutation({
-    mutationFn: async (paper: CommunityWallpaperWire) => {
-      // The by-name route already resolves the kind and does the download,
-      // re-encode and origin receipt — a picture needs no second install path.
-      const res = await fetch(
-        `/api/marketplace/community/install/${encodeURIComponent(paper.name)}`,
-        { method: "POST" },
-      );
-      if (!res.ok) {
-        const detail = await res
-          .json()
-          .then((body: { detail?: string }) => body.detail)
-          .catch(() => undefined);
-        throw new Error(detail ?? `Install failed (${res.status})`);
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      setConsentPaper(null);
-      queryClient.invalidateQueries({ queryKey: ["marketplace-community"] });
-      // The picker reads its own store — it has to learn about the new tile.
-      queryClient.invalidateQueries({ queryKey: ["wallpapers"] });
     },
   });
 
@@ -321,19 +275,6 @@ export function CommunityTab({ onInstalled }: { onInstalled?: (pluginName: strin
       }),
     [data, q],
   );
-  const wallpapers = useMemo(
-    () =>
-      (data?.wallpapers ?? []).filter((w) => {
-        if (!q) return true;
-        return (
-          w.name.toLowerCase().includes(q) ||
-          w.title.toLowerCase().includes(q) ||
-          w.description.toLowerCase().includes(q)
-        );
-      }),
-    [data, q],
-  );
-
   return (
     <div className="space-y-8">
       <header className="flex flex-wrap items-center gap-3">
@@ -342,7 +283,7 @@ export function CommunityTab({ onInstalled }: { onInstalled?: (pluginName: strin
             Community marketplace
           </h2>
           <p className="text-xs text-muted-foreground">
-            Plugins, skills and wallpapers published by anyone. Nothing here is
+            Plugins and skills published by anyone. Nothing here is
             reviewed by the {PRODUCT_NAME} team — read what a card would connect
             to before installing it.
           </p>
@@ -351,7 +292,7 @@ export function CommunityTab({ onInstalled }: { onInstalled?: (pluginName: strin
           size="sm"
           variant="outline"
           onClick={() => setActiveSection("marketplace")}
-          title="The whole marketplace — plugins, skills and wallpapers — in its own section"
+          title="The whole marketplace — plugins and skills — in its own section"
         >
           <Store className="mr-1.5 h-3.5 w-3.5" />
           Marketplace section
@@ -380,16 +321,13 @@ export function CommunityTab({ onInstalled }: { onInstalled?: (pluginName: strin
 
       <StatusNotice status={data?.status} error={error} isLoading={isLoading} />
 
-      {(data?.plugins.length ?? 0) +
-        (data?.skills.length ?? 0) +
-        (data?.wallpapers?.length ?? 0) >
-        0 && (
+      {(data?.plugins.length ?? 0) + (data?.skills.length ?? 0) > 0 && (
         <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
           <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search community plugins, skills and wallpapers…"
+            placeholder="Search community plugins and skills…"
             className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-faint-foreground"
           />
         </label>
@@ -442,40 +380,6 @@ export function CommunityTab({ onInstalled }: { onInstalled?: (pluginName: strin
             ))}
           </div>
         </section>
-      )}
-
-      {wallpapers.length > 0 && (
-        <section>
-          <h3 className="mb-3 font-display text-xs font-semibold text-muted-foreground">
-            Wallpapers
-          </h3>
-          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {wallpapers.map((w) => (
-              <CommunityWallpaperCard
-                key={w.name}
-                paper={w}
-                onOpen={() => setConsentPaper(w)}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {consentPaper && (
-        <WallpaperPreviewDialog
-          paper={consentPaper}
-          isPending={paperInstallMutation.isPending}
-          errorMessage={
-            paperInstallMutation.error instanceof Error
-              ? paperInstallMutation.error.message
-              : null
-          }
-          onCancel={() => {
-            setConsentPaper(null);
-            paperInstallMutation.reset();
-          }}
-          onConfirm={() => paperInstallMutation.mutate(consentPaper)}
-        />
       )}
 
       {consentPlugin && (
@@ -890,160 +794,6 @@ function CommunitySkillRow({
         </span>
       )}
     </article>
-  );
-}
-
-/** A published wallpaper, shown as the thing it is: a picture.
- *
- *  A tile rather than a row — a filename tells nobody whether they want the
- *  picture, and the whole card opens the full-size preview. */
-function CommunityWallpaperCard({
-  paper,
-  onOpen,
-}: {
-  paper: CommunityWallpaperWire;
-  onOpen: () => void;
-}) {
-  const [failed, setFailed] = useState(false);
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      title={`Preview ${paper.title}`}
-      className={cn(
-        "group overflow-hidden rounded-lg border bg-card text-left transition-colors",
-        paper.installed
-          ? "border-primary/30"
-          : "border-border hover:border-border-strong hover:bg-secondary",
-      )}
-    >
-      <div className="grid aspect-video place-items-center overflow-hidden bg-muted">
-        {failed || !paper.raw_url ? (
-          <span className="text-micro text-muted-foreground">No preview</span>
-        ) : (
-          <img
-            src={paper.raw_url}
-            alt=""
-            loading="lazy"
-            className="h-full w-full object-cover transition-transform group-hover:scale-[1.03]"
-            onError={() => setFailed(true)}
-          />
-        )}
-      </div>
-      <div className="px-2.5 py-2">
-        <div className="flex items-center gap-1.5">
-          <h4 className="min-w-0 truncate text-xs font-semibold text-foreground">
-            {paper.title}
-          </h4>
-          {paper.installed && (
-            <Check className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Installed" />
-          )}
-        </div>
-        <p className="truncate text-micro text-muted-foreground">
-          {paper.publisher ? `by ${paper.publisher}` : "unknown publisher"}
-        </p>
-      </div>
-    </button>
-  );
-}
-
-/** The picture at full size before it lands in the picker.
- *
- *  A wallpaper carries no code and no credentials, so there is nothing to
- *  disclose beyond the image itself — which makes seeing it big the entire
- *  decision. */
-export function WallpaperPreviewDialog({
-  paper,
-  isPending,
-  errorMessage,
-  onCancel,
-  onConfirm,
-}: {
-  paper: CommunityWallpaperWire;
-  isPending: boolean;
-  errorMessage: string | null;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !isPending) onCancel();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel, isPending]);
-
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="community-wallpaper-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/70 backdrop-blur-sm"
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !isPending) onCancel();
-      }}
-    >
-      <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-popover shadow-float">
-        <header className="border-b border-border px-5 py-4">
-          <h2
-            id="community-wallpaper-title"
-            className="font-display text-base font-semibold tracking-tight"
-          >
-            {paper.installed ? paper.title : `Install ${paper.title}?`}
-          </h2>
-          <p className="text-micro text-foreground">
-            Community wallpaper · not reviewed
-            {paper.installed ? " · installed" : ""}
-          </p>
-        </header>
-
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4 text-sm">
-          {paper.raw_url ? (
-            <img
-              src={paper.raw_url}
-              alt={paper.title}
-              className="max-h-[52vh] w-full rounded-lg border border-border object-contain"
-            />
-          ) : (
-            <Notice tone="warn">This wallpaper publishes no downloadable image.</Notice>
-          )}
-          {paper.description && (
-            <p className="text-muted-foreground">{paper.description}</p>
-          )}
-          <p className="text-xs text-muted-foreground">
-            Published by{" "}
-            <span className="text-foreground">
-              {paper.publisher ?? "an unknown author"}
-            </span>
-            {paper.version ? ` · version ${paper.version}` : ""}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Installing downloads the picture and stores it beside your own
-            uploads. It carries no code and no credentials.
-          </p>
-          {errorMessage && (
-            <p className="flex items-start gap-2 rounded-md bg-secondary px-2 py-1.5 text-xs text-destructive">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              {errorMessage}
-            </p>
-          )}
-        </div>
-
-        <footer className="flex shrink-0 justify-end gap-2 border-t border-border px-5 py-3">
-          <Button size="sm" variant="ghost" onClick={onCancel} disabled={isPending}>
-            {paper.installed ? "Close" : "Cancel"}
-          </Button>
-          {!paper.installed && paper.raw_url && (
-            <Button size="sm" onClick={onConfirm} disabled={isPending}>
-              {isPending ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-              ) : null}
-              Install
-            </Button>
-          )}
-        </footer>
-      </div>
-    </div>
   );
 }
 

@@ -2687,7 +2687,7 @@ describe("terminal text size across a rebuild", () => {
     });
 
     // GrokNight paints #141414 on every empty cell. That RGB is the canvas
-    // fill; xterm must see the default background so the wallpaper shows.
+    // fill; xterm must see the default background so the pane shell shows.
     // The rewrite is not keyed on the pane's product name.
     expect(terminalHarness.write).toHaveBeenCalledWith("\x1b[49m     \x1b[0m");
   });

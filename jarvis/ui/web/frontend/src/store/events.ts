@@ -84,7 +84,6 @@ export type SectionId =
   | "contacts"
   | "feedback"
   | "agent-instructions"
-  | "wallpaper"
   // Appshots: the shortcut, destination, sound and flash for showing the
   // assistant the front window. A Settings-hub page.
   | "appshots"
@@ -112,8 +111,8 @@ export type SectionId =
   // stay reachable while the new surface grows into full parity.
   | "agentic-ide-classic"
   // The Jarvis Marketplace, in the app: everything the community published —
-  // plugins, skills and wallpapers — browsable and installable in one place
-  // instead of scattered across three unrelated sections.
+  // plugins and skills — browsable and installable in one place instead of
+  // scattered across unrelated sections.
   | "marketplace";
 
 export const SECTION_IDS = [
@@ -144,7 +143,6 @@ export const SECTION_IDS = [
   "contacts",
   "feedback",
   "agent-instructions",
-  "wallpaper",
   "appshots",
   "jarvis-actions",
   "dictionary",
@@ -173,9 +171,13 @@ export function isSectionId(value: unknown): value is SectionId {
  *
  * - "outputs": the Outputs section folded into Artifacts (2026-08-23) — every
  *   run, with or without a page, is listed there now.
+ * - "wallpaper": the Wallpaper page was removed (2026-09-30); the app paints
+ *   its flat theme colour only. A remembered link lands in Settings, where
+ *   the page used to live.
  */
 export const LEGACY_SECTION_ALIASES: Readonly<Record<string, SectionId>> = {
   outputs: "visualization",
+  wallpaper: "settings",
 };
 
 /** The section an id names today — itself, its successor, or null. */
@@ -236,7 +238,6 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   contacts: "Contacts",
   feedback: "Feedback",
   "agent-instructions": "Agent Instructions",
-  wallpaper: "Wallpaper",
   appshots: "Appshots",
   "jarvis-actions": "Jarvis actions",
   dictionary: "Dictionary",

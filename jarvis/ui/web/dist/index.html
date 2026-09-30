@@ -45,17 +45,6 @@
         var root = document.documentElement;
         root.classList.toggle("dark", mode === "dark");
         root.style.colorScheme = mode;
-        // The ground: a flat theme colour unless the user switched a
-        // wallpaper on. Same key and fallback as src/lib/backgroundMode.ts —
-        // the class gates the wallpaper readability floor in index.css, so it
-        // must be right before the first frame, not a moment after.
-        var wallpaper = false;
-        try {
-          wallpaper = localStorage.getItem("jarvis.background.v1") === "wallpaper";
-        } catch (e) {
-          /* storage blocked — the flat colour is the default anyway */
-        }
-        root.classList.toggle("jarvis-wallpaper", wallpaper);
         window.__JARVIS_BOOT_STARTED_AT = performance.now();
       })();
     </script>
@@ -219,8 +208,8 @@
         #jarvis-boot-splash .name { margin-top: 16px; }
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-CXiocVjk.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Bdyk94VH.css">
+    <script type="module" crossorigin src="/assets/index-BBh9xkvU.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-70k7wUE8.css">
   </head>
   <body>
     <div id="root">

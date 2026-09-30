@@ -78,21 +78,6 @@ const INDEX: CommunityResponse = {
       installed: false,
     },
   ],
-  wallpapers: [
-    {
-      name: "flooded-observatory",
-      title: "Flooded Observatory",
-      description: "A drowned observatory under a storm-lit sky",
-      publisher: "octocat",
-      version: "1.0.0",
-      categories: [],
-      source_url: "https://github.com/PersonalJarvis/marketplace",
-      raw_url: "https://example.test/wallpaper.webp",
-      thumb_url: "https://example.test/thumb.webp",
-      theme: "dark",
-      installed: false,
-    },
-  ],
 };
 
 const CONTENTS = {
@@ -111,7 +96,7 @@ const CONTENTS = {
 };
 
 /** The publishing identity the view asks for; signed out unless a test says so. */
-let identity: Record<string, unknown> = { enabled: true, wallpapers_enabled: true, signed_in: false };
+let identity: Record<string, unknown> = { enabled: true, signed_in: false };
 
 function installFetchMock(overrides?: Partial<CommunityResponse>) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -122,9 +107,6 @@ function installFetchMock(overrides?: Partial<CommunityResponse>) {
     }
     if (url === "/api/marketplace/publish/identity" && method === "GET") {
       return { ok: true, status: 200, json: async () => identity } as Response;
-    }
-    if (url === "/api/wallpapers/uploads") {
-      return { ok: true, status: 200, json: async () => ({ items: [] }) } as Response;
     }
     if (url === "/api/marketplace/publish/signin/start") {
       return {
@@ -181,19 +163,20 @@ afterEach(() => {
   vi.unstubAllGlobals();
   openExternalUrl.mockReset();
   setUiLanguage("en");
-  identity = { enabled: true, wallpapers_enabled: true, signed_in: false };
+  identity = { enabled: true, signed_in: false };
 });
 
 describe("MarketplaceView", () => {
-  it("shows all three published kinds in one storefront", async () => {
+  it("shows both published kinds in one storefront", async () => {
     installFetchMock();
     renderView();
 
     expect(await screen.findByText("Sentry")).toBeTruthy();
     expect(screen.getByText("Three Bullet Brief")).toBeTruthy();
-    expect(screen.getByText("Flooded Observatory")).toBeTruthy();
     // The count in the subtitle covers every kind, not just the plugins.
-    expect(screen.getByText(/3 published entries/)).toBeTruthy();
+    expect(screen.getByText(/2 published entries/)).toBeTruthy();
+    // Wallpapers were retired as a marketplace kind: no filter, no shelf.
+    expect(screen.queryByRole("button", { name: /Wallpapers/ })).toBeNull();
   });
 
   it("searches across kinds at once", async () => {
@@ -202,12 +185,11 @@ describe("MarketplaceView", () => {
     await screen.findByText("Sentry");
 
     fireEvent.change(screen.getByLabelText(/Search plugins/i), {
-      target: { value: "observatory" },
+      target: { value: "crisp bullets" },
     });
 
     expect(screen.queryByText("Sentry")).toBeNull();
-    expect(screen.queryByText("Three Bullet Brief")).toBeNull();
-    expect(screen.getByText("Flooded Observatory")).toBeTruthy();
+    expect(screen.getByText("Three Bullet Brief")).toBeTruthy();
   });
 
   it("filters to one kind and says how many there are", async () => {
@@ -315,14 +297,11 @@ describe("MarketplaceView", () => {
 
     // The German strings resolve from the locale file, including the count
     // template whose {count} token this view fills itself.
-    expect(await screen.findByText(/3 veröffentlichte Einträge/)).toBeTruthy();
-    // The word appears three times on purpose — the hero count, the filter
-    // chip and the shelf head name the same thing, and they must agree.
-    expect(screen.getAllByText("Hintergründe").length).toBe(3); // i18n-allow
-    expect(screen.getByLabelText(/Plugins, Skills und Hintergründe/)).toBeTruthy();
+    expect(await screen.findByText(/2 veröffentlichte Einträge/)).toBeTruthy(); // i18n-allow
+    expect(screen.getByLabelText(/Plugins und Skills durchsuchen/)).toBeTruthy(); // i18n-allow
 
     setUiLanguage("es");
-    expect((await screen.findAllByText("Fondos")).length).toBe(3);
+    expect(await screen.findByLabelText(/Buscar plugins y skills/)).toBeTruthy(); // i18n-allow
   });
 
   it("opens the public storefront in a real browser", async () => {
@@ -359,7 +338,6 @@ describe("MarketplaceView", () => {
   it("filters to the signed-in account's own publications", async () => {
     identity = {
       enabled: true,
-      wallpapers_enabled: true,
       signed_in: true,
       login: "octocat",
       avatar_url: null,
@@ -381,7 +359,7 @@ describe("MarketplaceView", () => {
     const chip = await screen.findByTestId("publisher-chip");
     expect(chip.textContent).toContain("@octocat");
 
-    fireEvent.click(screen.getByRole("button", { name: /Mine 3/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Mine 2/ }));
     expect(screen.getByText("Three Bullet Brief")).toBeTruthy();
     expect(screen.getByText("Sentry")).toBeTruthy();
     expect(screen.queryByText("Someone Else's Skill")).toBeNull();

@@ -24,7 +24,7 @@ vi.mock("@/hooks/useGraphOrbit", () => ({
 import { WikiGraph3D } from "@/components/wiki/WikiGraph3D";
 
 describe("3D graph stage transparency", () => {
-  it("lets the wallpaper show through the Wiki graph canvas", () => {
+  it("lets the app ground show through the Wiki graph canvas", () => {
     render(
       <WikiGraph3D
         graphData={{ nodes: [], links: [] }}

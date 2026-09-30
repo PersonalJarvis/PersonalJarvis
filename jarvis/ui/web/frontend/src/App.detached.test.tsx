@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "@/App";
 import { useEventStore } from "@/store/events";
-import { useWallpaperStore } from "@/store/wallpaper";
 
 vi.mock("@/hooks/useWebSocket", () => ({ useWebSocket: () => undefined }));
 vi.mock("@/hooks/useBrainStatus", () => ({ useBrainStatus: () => undefined }));
@@ -74,10 +73,6 @@ beforeEach(() => {
     solo: false,
     detachedViews: [],
   });
-  // The ground is a flat colour by default (2026-08-23); these tests are
-  // about the wallpaper layer, so they switch it on. The solid default has
-  // its own test below.
-  useWallpaperStore.setState({ background: "wallpaper" });
 });
 
 afterEach(() => {
@@ -95,42 +90,16 @@ describe("App shell around detached coding views", () => {
     expect(screen.getByTestId("sidebar-resizer")).toBeTruthy();
   });
 
-  it("renders the desktop wallpaper behind normal app sections", () => {
+  it("paints the sections on the flat theme ground, with no wallpaper layer", () => {
     render(<App />);
 
-    expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
-    expect(screen.queryByTestId("jarvis-desktop-wallpaper-mascot")).toBeNull();
-    expect(
-      screen.getByTestId("main-view").parentElement?.classList.contains("jarvis-section-stage"),
-    ).toBe(true);
-  });
-
-  it("paints no mascot layer on top of the wallpaper", () => {
-    render(<App />);
-
-    expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
-    expect(screen.queryByTestId("jarvis-desktop-wallpaper-mascot")).toBeNull();
-  });
-
-  it("paints no wallpaper layer at all on the solid ground (the default)", () => {
-    useWallpaperStore.setState({ background: "solid" });
-    render(<App />);
-
+    // Wallpapers were removed (2026-09-30): the app has one ground, the theme
+    // colour, and nothing is layered behind the sections.
     expect(screen.queryByTestId("jarvis-desktop-wallpaper")).toBeNull();
-    expect(screen.queryByTestId("jarvis-desktop-wallpaper-mascot")).toBeNull();
-    // The stage class stays: the solid-ground overrides in index.css key on
-    // the root class, not on the stage being absent.
     expect(
       screen.getByTestId("main-view").parentElement?.classList.contains("jarvis-section-stage"),
     ).toBe(true);
-  });
-
-  it("shows the plain wallpaper with no mascot on every section", () => {
-    useEventStore.setState({ activeSection: "tasks" });
-    render(<App />);
-
-    expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
-    expect(screen.queryByTestId("jarvis-desktop-wallpaper-mascot")).toBeNull();
+    expect(document.documentElement.classList.contains("jarvis-wallpaper")).toBe(false);
   });
 
   it("keeps the sidebar reachable in the main window", () => {
@@ -155,7 +124,6 @@ describe("App shell around detached coding views", () => {
 
     expect(screen.getByTestId("sidebar")).toBeTruthy();
     expect(screen.getByTestId("sidebar-resizer")).toBeTruthy();
-    expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
     expect(
       screen.getByTestId("main-view").parentElement?.classList.contains("jarvis-section-stage"),
     ).toBe(true);
@@ -173,7 +141,6 @@ describe("App shell around detached coding views", () => {
     expect(screen.queryByTestId("sidebar")).toBeNull();
     // The caption stays: it is that window's title bar.
     expect(screen.getByTestId("topbar")).toBeTruthy();
-    expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
     expect(
       screen.getByTestId("main-view").parentElement?.classList.contains("jarvis-section-stage"),
     ).toBe(true);

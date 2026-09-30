@@ -70,6 +70,3 @@
 .office-talk-tools button:disabled { opacity:.4; cursor:not-allowed; }
 .office-talk-note { margin:0 14px 10px; }
 @media (prefers-reduced-motion:reduce) { .office-talk-mic[aria-pressed="true"] { animation:none; } }
-/* The light-mode wallpaper halo (index.css) rings every glyph in ivory; on filled chips with light
-   ink — your own messages, the in-world bubbles and name pills — that ring smears the letters. */
-.office-talk-msg[data-from="you"] p, .office-talk-mic, .office-talk-send, .office-bubble, .office-plate, .office-checkpoint { text-shadow:none; }

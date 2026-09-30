@@ -1,11 +1,11 @@
 """Keep an https-only download https-only, redirect after redirect.
 
 Several places fetch a URL that came from the community registry: the index
-itself, a skill's ``SKILL.md``, a wallpaper's bytes, a plugin's files. Each of
-them checks the URL is ``https://`` before fetching, and each says why in a
-comment — the fetch runs on the user's machine, so a plaintext or internal
-address would let a published entry aim the backend at the loopback API, the
-router's admin page, or a cloud metadata endpoint.
+itself, a skill's ``SKILL.md``, a plugin's files. Each of them checks the URL
+is ``https://`` before fetching, and each says why in a comment — the fetch
+runs on the user's machine, so a plaintext or internal address would let a
+published entry aim the backend at the loopback API, the router's admin page,
+or a cloud metadata endpoint.
 
 That check covers the FIRST url only. With ``follow_redirects=True`` the
 server on the other end picks the next one, and a publisher who controls

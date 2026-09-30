@@ -83,7 +83,6 @@ vi.mock("@/views/TelephonyView", () => ({
 vi.mock("@/views/LocalModelsView", () => ({
   LocalModelsView: stub("TAB_LOCAL_MODELS"),
 }));
-vi.mock("@/views/WallpaperView", () => ({ WallpaperView: stub("TAB_WALLPAPER") }));
 vi.mock("@/views/CostsView", () => ({ CostsView: stub("TAB_COSTS") }));
 vi.mock("@/views/feedback/FeedbackView", () => ({
   FeedbackView: stub("TAB_FEEDBACK"),
@@ -102,7 +101,6 @@ const NAV_IDS = [
   "socials",
   "apikeys",
   "local-models",
-  "wallpaper",
   "costs",
   "feedback",
 ] as const;
@@ -179,8 +177,8 @@ describe("SettingsHubView header and navigation", () => {
     render(<SettingsHubView />);
     await screen.findByTestId("TAB_SETTINGS");
 
-    fireEvent.click(screen.getByTestId("settings-hub-nav-wallpaper"));
-    expect(mockState.setActiveSection).toHaveBeenCalledWith("wallpaper");
+    fireEvent.click(screen.getByTestId("settings-hub-nav-costs"));
+    expect(mockState.setActiveSection).toHaveBeenCalledWith("costs");
   });
 });
 
@@ -193,7 +191,6 @@ describe("SettingsHubView tab resolution", () => {
     ["socials", "TAB_SOCIALS"],
     ["apikeys", "TAB_APIKEYS"],
     ["local-models", "TAB_LOCAL_MODELS"],
-    ["wallpaper", "TAB_WALLPAPER"],
     ["costs", "TAB_COSTS"],
     ["feedback", "TAB_FEEDBACK"],
     // Merged-in ids land on the tab hosting their content.
@@ -266,10 +263,10 @@ describe("SettingsHubView search", () => {
     await screen.findByTestId("TAB_SETTINGS");
 
     fireEvent.change(screen.getByPlaceholderText("settings_hub.search_placeholder"), {
-      target: { value: "wall" },
+      target: { value: "spend" },
     });
 
-    expect(screen.getByTestId("settings-hub-nav-wallpaper")).toBeTruthy();
+    expect(screen.getByTestId("settings-hub-nav-costs")).toBeTruthy();
     expect(screen.queryByTestId("settings-hub-nav-profile")).toBeNull();
     expect(screen.queryByTestId("settings-hub-nav-apikeys")).toBeNull();
   });

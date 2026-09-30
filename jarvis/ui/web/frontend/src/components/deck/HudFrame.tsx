@@ -47,10 +47,9 @@ export function useElementSize<T extends HTMLElement>(): [RefObject<T>, { w: num
 }
 
 /**
- * A soft halo in the theme's own ground colour under every HUD stroke — the
- * SVG twin of the stage's text-shadow readability floor. Accent hairlines on a
- * light theme over a dark picture (or the reverse) would otherwise vanish;
- * with the halo they read on any wallpaper in either appearance.
+ * A soft halo in the theme's own ground colour under every HUD stroke, so
+ * accent hairlines stay separate from whatever they cross and read in either
+ * appearance.
  */
 export function HudHaloDefs({ id }: { id: string }) {
   return (
