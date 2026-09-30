@@ -2676,6 +2676,17 @@ class WebServer:
                 logger.debug("wiki health.record_bootstrap(False) failed", exc_info=True)
         _boot_mark("wiki_integration")
 
+        # Jarvis' own self-learning loop: two bus subscriptions, nothing else
+        # at boot. Reviews run later in the background (jarvis/memory/learning).
+        try:
+            from jarvis.memory.learning.loop import start_learning
+
+            start_learning(self.cfg, self.bus)
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=exc).warning(
+                "Jarvis learning loop init failed — Jarvis will not learn this run"
+            )
+
         # Reconcile the derived FTS5 index after readiness. This repairs stale
         # rows after a vault switch without extending the startup critical path.
         try:
@@ -3852,6 +3863,13 @@ class WebServer:
                 logger.warning("Society runtime cleanup incomplete ({})", society_shutdown_failure)
         self._mic_level_sessions.clear()
         self._stop_mic_level_bridge()
+
+        try:
+            from jarvis.memory.learning.loop import stop_learning
+
+            await stop_learning()
+        except Exception as exc:  # noqa: BLE001 -- finish independent cleanup below
+            logger.opt(exception=exc).debug("Jarvis learning loop stop failed")
 
         agent_chat = getattr(self.app.state, "agent_chat", None)
         if agent_chat is not None:

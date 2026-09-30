@@ -4277,6 +4277,18 @@ class BrainManager:
             except Exception:  # noqa: BLE001
                 pass
 
+        # What Jarvis learned across earlier calls and chats (the background
+        # review loop in jarvis/memory/learning). A cached snapshot that only
+        # changes after a review writes, so it stays in the cached prefix.
+        try:
+            from jarvis.memory.learning.notebook import snapshot_block
+
+            learned_block = snapshot_block()
+            if learned_block:
+                parts.append(learned_block)
+        except Exception:  # noqa: BLE001 — a notebook fault never breaks a prompt build
+            log.debug("learned notebook block unavailable", exc_info=True)
+
         # Profile-write directive — only when the update_profile tool is actually
         # wired (else this would contradict the hard "do not invent tools" rule).
         # The legacy auto-curator is soft-disabled, so the brain itself must

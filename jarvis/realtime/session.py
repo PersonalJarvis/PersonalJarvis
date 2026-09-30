@@ -2190,6 +2190,19 @@ def _preferences_block(config: Any, *, compact: bool = False) -> str:
         return ""
 
 
+def _learned_block(*, compact: bool = False) -> str:
+    """Jarvis' learned notebooks (cached snapshot; at most one ``stat``).
+
+    Degrades to ``""`` so a notebook fault never blocks the session handshake.
+    """
+    try:
+        from jarvis.memory.learning.notebook import snapshot_block
+
+        return snapshot_block(compact=compact)
+    except Exception:  # noqa: BLE001 — never break the voice session on a notebook fault
+        return ""
+
+
 def _session_instructions(
     language: str,
     *,
@@ -2336,6 +2349,7 @@ def _session_instructions(
         "classic text brain configuration."
     )
     history_lost_line = _HISTORY_LOST_INSTRUCTION if history_lost else ""
+    learned = _learned_block(compact=compact)
     if compact:
         # Static-first / dynamic-last: everything that is identical from turn
         # to turn forms one stable prefix, so Ollama's KV prefix cache skips
@@ -2344,6 +2358,7 @@ def _session_instructions(
         parts = [
             persona,
             preferences,
+            learned,
             _ONE_SPEAKER_DIRECTIVE,
             _COMPLETE_THE_REQUEST_DIRECTIVE,
             tool_directive,
@@ -2368,6 +2383,10 @@ def _session_instructions(
         # for THIS user (tone, dialect, address, defaults) and must frame the
         # whole spoken output, while safety and tool rules below stay above them.
         preferences,
+        # What Jarvis has learned about this user across earlier calls and
+        # chats (jarvis/memory/learning). Background knowledge, framed as data
+        # below the user's own standing instructions.
+        learned,
         _ONE_SPEAKER_DIRECTIVE,
         # Right after the one-speaker rule, because the two shape the same
         # thing: how much of the turn belongs to this reply. One says "do not
