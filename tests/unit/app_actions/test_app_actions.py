@@ -79,6 +79,26 @@ def test_catalog_offers_actions_but_never_secrets_or_its_own_policy(app: FastAPI
     assert not any(p.startswith("/api/app-actions") for p in paths)
 
 
+def test_remote_commands_ask_and_the_brain_switch_is_never_offered() -> None:
+    """A prompt-injected page must not reach a shell on the person's server or
+    flip the user-only main-brain switch through run-app-action."""
+    from jarvis.ui.web.computers_routes import router as computers_router
+
+    application = FastAPI()
+    application.include_router(computers_router)
+
+    @application.post("/api/brain/switch", tags=["providers"])
+    async def brain_switch() -> dict[str, Any]:
+        return {"ok": True}
+
+    catalog = build_catalog(application.openapi())
+    by_route = {(e.method, e.path): e for e in catalog.values()}
+    for path in ("run", "power", "install"):
+        entry = by_route[("POST", f"/api/computers/{{computer_id}}/{path}")]
+        assert default_tier(entry) == "ask", path
+    assert ("POST", "/api/brain/switch") not in by_route
+
+
 def test_default_tiers_read_safe_change_monitor_delete_ask(app: FastAPI) -> None:
     catalog = build_catalog(app.openapi())
     tiers = {(e.method, e.path): default_tier(e) for e in catalog.values()}
