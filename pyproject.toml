@@ -95,6 +95,9 @@ dependencies = [
     # Security floor for a transitive dependency (mcp, twilio): 2.13.0 carries
     # ten advisories fixed in 2.14.0 (CVE-2026-101917, CVE-2026-102265..102274).
     "pyjwt>=2.14.0",
+    # Security floor for a transitive dependency (requests, httpx stacks):
+    # 2.7.0 carries CVE-2026-97687..97689, fixed in 2.8.0.
+    "urllib3>=2.8.0",
     "sounddevice>=0.5",  # PortAudio binding; needs system libportaudio2 on Linux
     # ChatGPT-Live (Codex subscription voice) carries audio ONLY on a WebRTC
     # media track — its protocol has no audio event at all. Jarvis owns that

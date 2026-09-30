@@ -72,6 +72,10 @@ asyncssh[bcrypt]>=2.21
 # ten advisories fixed in 2.14.0.
 pyjwt>=2.14.0
 
+# Security floor for a transitive dependency: 2.7.0 carries
+# CVE-2026-97687..97689, fixed in 2.8.0.
+urllib3>=2.8.0
+
 # Audio I/O
 sounddevice>=0.5
 # Upstream's native dependencies do not publish Windows ARM64 wheels. The
