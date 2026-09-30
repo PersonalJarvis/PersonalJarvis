@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderDescriptor } from "@/hooks/useProviders";
 import type { StarterPlan } from "@/hooks/useStarterPlans";
-import { cardForPlan, planKeysComplete, startableProviders } from "./brainPlans";
+import { planKeysComplete, startableProviders } from "./brainPlans";
 
 function provider(over: Partial<ProviderDescriptor> & { id: string }): ProviderDescriptor {
   return {
@@ -56,10 +56,6 @@ describe("startableProviders", () => {
 
 describe("plans", () => {
   const cards = [provider({ id: "gemini" }), provider({ id: "openai" })];
-
-  it("finds the one card whose slot the plan needs", () => {
-    expect(cardForPlan(plan, cards)?.id).toBe("openai");
-  });
 
   it("is complete once the plan's key reaches its card, own or shared", () => {
     expect(planKeysComplete(plan, cards)).toBe(false);

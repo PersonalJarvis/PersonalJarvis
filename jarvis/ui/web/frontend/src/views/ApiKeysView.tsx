@@ -107,7 +107,7 @@ export function ApiKeysView() {
   const modeTabs = engineMode === "realtime" ? REALTIME_TABS : PIPELINE_TABS;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col" data-tour="apikeys-page">
       <ViewHeader
         icon={<KeyRound className="h-4 w-4 text-muted-foreground" />}
         title={t("apikeys_view.title")}

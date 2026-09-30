@@ -4,11 +4,11 @@ import { TOUR_START_EVENT } from "./tourEvents";
 
 /**
  * Code-split: a finished install renders this gate as `null` forever, so the
- * guide and the tour load only on the boot that shows them — the gate's own
+ * setup and the tour load only on the boot that shows them — the gate's own
  * show/hide logic is all that rides in the entry chunk.
  */
-const WelcomeStage = lazy(() =>
-  import("./WelcomeFlow").then((m) => ({ default: m.WelcomeStage })),
+const SetupTour = lazy(() =>
+  import("./setup/SetupTour").then((m) => ({ default: m.SetupTour })),
 );
 const GuidedTour = lazy(() =>
   import("./tour/GuidedTour").then((m) => ({ default: m.GuidedTour })),
@@ -22,22 +22,25 @@ function param(name: string): string | null {
 }
 
 /**
- * First run, in two acts.
+ * First run, in two acts, both on the real app — there is no setup screen.
  *
- * 1. The guide: one card on the app's own ground (the caption bar stays free)
- *    until setup is complete. Fails open — while loading or on a fetch error
- *    it renders nothing, so a broken guide never traps anyone.
- * 2. The tour: after the completion restart, the real app with a spotlight on
+ * 1. Setup: the window dims and a guide walks the user to the app's own
+ *    places — consent, the API Keys page, the wake word in Settings (and the
+ *    macOS permissions) — until onboarding is complete. Fails open: while
+ *    loading or on a fetch error it renders nothing, so a broken guide never
+ *    traps anyone.
+ * 2. The tour: after the completion restart, a spotlight explains the app
  *    one control at a time. Shown once (`tour_completed`), replayable from
  *    Settings via `jarvis:tour-start`.
  *
- * Dev replay, both non-destructive until the final action: `?onboarding=force`
- * opens the guide, `?tour=force` the tour.
+ * Replay, never destructive: `?onboarding=force` walks the setup on a
+ * finished install without completing or restarting anything, then hands
+ * over to the tour; `?tour=force` opens the tour alone.
  */
 export function OnboardingGate({ activeSection }: { activeSection?: string } = {}) {
   const onb = useOnboarding();
-  // Set once the guide completes (the Start action dispatches
-  // jarvis:onboarding-changed). Closes the stage even under ?onboarding=force.
+  // Set once setup completes (the Start action dispatches
+  // jarvis:onboarding-changed) or a replay ends.
   const [dismissed, setDismissed] = useState(false);
   const [tourRequested, setTourRequested] = useState(() => param("tour") === "force");
   const [tourDone, setTourDone] = useState(false);
@@ -64,20 +67,20 @@ export function OnboardingGate({ activeSection }: { activeSection?: string } = {
 
   if (onb.loading || onb.error || !onb.state) return null;
 
-  const showGuide = (forced || !onb.state.completed) && !dismissed && (forced || !inIde);
-  if (showGuide) {
+  const showSetup = (forced || !onb.state.completed) && !dismissed && (forced || !inIde);
+  if (showSetup) {
     return (
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="onboarding-title"
-        className="fixed inset-x-0 bottom-0 top-8 z-50 overflow-y-auto bg-background text-foreground scrollbar-jarvis"
-      >
-        {/* No fallback: the ground is already painted while the chunk loads. */}
-        <Suspense fallback={null}>
-          <WelcomeStage onb={onb} />
-        </Suspense>
-      </div>
+      <Suspense fallback={null}>
+        <SetupTour
+          onb={onb}
+          preview={forced && onb.state.completed}
+          onFinished={() => {
+            setDismissed(true);
+            setTourDone(false);
+            setTourRequested(true);
+          }}
+        />
+      </Suspense>
     );
   }
 

@@ -47,23 +47,6 @@ export function startableProviders(providers: ProviderDescriptor[]): ProviderDes
     });
 }
 
-/**
- * The card a plan asks a key for: the brain card whose primary slot is the
- * plan's family slot. One key per provider family, so one card per plan.
- */
-export function cardForPlan(
-  plan: StarterPlan,
-  startable: ProviderDescriptor[],
-): ProviderDescriptor | null {
-  const slots = new Set(plan.key_slots.map((s) => s.slot));
-  return (
-    startable.find((p) => {
-      const slot = primarySlot(p);
-      return slot !== null && slots.has(slot);
-    }) ?? null
-  );
-}
-
 /** Every key the plan needs is saved (dedicated or covered by the family). */
 export function planKeysComplete(plan: StarterPlan, startable: ProviderDescriptor[]): boolean {
   return (
@@ -72,15 +55,4 @@ export function planKeysComplete(plan: StarterPlan, startable: ProviderDescripto
       startable.some((p) => primarySlot(p) === s.slot && slotEffective(p)),
     )
   );
-}
-
-/** A plan's label in the UI language, falling back to the catalog's own. */
-export function planText(
-  t: (key: string) => string,
-  plan: StarterPlan,
-  field: "label" | "summary",
-): string {
-  const key = `first_run.brain.plans.${plan.id.replace(/-/g, "_")}_${field}`;
-  const translated = t(key);
-  return translated === key ? plan[field] : translated;
 }

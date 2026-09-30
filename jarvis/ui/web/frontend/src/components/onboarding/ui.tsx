@@ -1,13 +1,12 @@
 /**
- * The handful of pieces every beat of the first-run card is built from.
+ * The handful of pieces the first-run guide's cards are built from.
  *
- * One rule runs through all of them: a beat has exactly ONE way forward that
+ * One rule runs through all of them: a card has exactly ONE way forward that
  * looks like a button — the full-width ink action at its foot. Everything else
  * (later, back, decline, the terms) is quiet text, so the eye never has to
  * choose between two equal buttons.
  */
-import { motion, useReducedMotion } from "framer-motion";
-import { Check, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { FOCUS_RING } from "@/components/agentic/controls";
 import { cn } from "@/lib/utils";
@@ -15,34 +14,7 @@ import { cn } from "@/lib/utils";
 /** The guide's one easing curve: quick out, soft landing. */
 export const EASE_OUT = [0.22, 1, 0.36, 1] as const;
 
-/**
- * Children rise into place one after another — 10 px up and in, 40 ms apart.
- * Nothing grows out of nothing; with reduced motion everything is simply there.
- */
-export function Rise({
-  index = 0,
-  className,
-  children,
-}: {
-  index?: number;
-  className?: string;
-  children: ReactNode;
-}) {
-  const reduced = useReducedMotion() ?? false;
-  if (reduced) return <div className={className}>{children}</div>;
-  return (
-    <motion.div
-      className={className}
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.32, ease: EASE_OUT, delay: 0.06 + index * 0.04 }}
-    >
-      {children}
-    </motion.div>
-  );
-}
-
-/** The beat's one way forward: full width, ink on the room colour. */
+/** The card's one way forward: full width, ink on the room colour. */
 export function PrimaryAction({
   children,
   onClick,
@@ -111,7 +83,7 @@ export type StatusTone = "ok" | "warning" | "error" | "muted";
 
 /**
  * A live result, said in one line: a dot in the status hue and the sentence.
- * Every beat that checks something (a key, the microphone, a permission)
+ * Every step that checks something (a key, the wake word)
  * answers with one of these, in place, instead of a toast somewhere else.
  */
 export function Status({
@@ -171,80 +143,5 @@ export function CheckLine({
       />
       <span>{children}</span>
     </label>
-  );
-}
-
-/**
- * One selectable tile of a choice (radio semantics). The selected tile takes
- * the accent edge and a small check; the others stay on the card ground.
- */
-export function Option({
-  selected,
-  onSelect,
-  title,
-  body,
-  badge,
-  testId,
-}: {
-  selected: boolean;
-  onSelect: () => void;
-  title: string;
-  body?: ReactNode;
-  badge?: string | null;
-  testId?: string;
-}) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      onClick={onSelect}
-      data-testid={testId}
-      className={cn(
-        "relative flex w-full flex-col items-start gap-1 rounded-xl border px-4 py-3 text-left transition-colors",
-        selected
-          ? "border-accent bg-accent-soft"
-          : "border-border bg-background hover:border-border-strong hover:bg-secondary",
-        FOCUS_RING,
-      )}
-    >
-      <span className="flex w-full items-center gap-2 pr-6">
-        <span className="text-sm font-medium text-foreground">{title}</span>
-        {badge && (
-          <span className="rounded-full bg-accent-soft px-2 py-0.5 text-micro font-medium text-accent">
-            {badge}
-          </span>
-        )}
-      </span>
-      {body && <span className="text-sm leading-snug text-muted-foreground">{body}</span>}
-      {selected && (
-        <span
-          aria-hidden
-          className="absolute right-3 top-3 flex h-4 w-4 items-center justify-center rounded-full bg-accent text-accent-foreground"
-        >
-          <Check className="h-3 w-3" strokeWidth={3} />
-        </span>
-      )}
-    </button>
-  );
-}
-
-/** A key combo from the backend ("f3+f4") drawn as keycaps. */
-export function Keycaps({ combo }: { combo: string }) {
-  const keys = combo
-    .split("+")
-    .map((k) => k.trim())
-    .filter(Boolean);
-  return (
-    <span className="inline-flex items-center gap-1 align-middle">
-      {keys.map((k, i) => (
-        <kbd
-          key={`${k}-${i}`}
-          className="inline-flex h-6 min-w-6 items-center justify-center rounded-md border border-border-strong bg-background px-1.5 font-mono text-xs uppercase text-foreground"
-        >
-          {k.replace(/_/g, " ")}
-        </kbd>
-      ))}
-    </span>
   );
 }

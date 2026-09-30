@@ -1,6 +1,7 @@
 import { motion, useReducedMotion } from "framer-motion";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { TOUR_LAYER_ATTR } from "../tourEvents";
 import { EASE_OUT } from "../ui";
 import { cutout, padded, placeCard, type Rect, type TourPlacement } from "./tourSteps";
 
@@ -33,10 +34,19 @@ export function Spotlight({
   rect,
   placement,
   children,
+  blocking = false,
+  cardWidth = CARD_W,
 }: {
   rect: Rect | null;
   placement: TourPlacement;
   children: ReactNode;
+  /**
+   * The dim takes clicks: only the hole (the element being set up) and the
+   * card stay usable. The setup steps use it so nothing else in the app can
+   * be pressed before the step is done; the app tour leaves the app free.
+   */
+  blocking?: boolean;
+  cardWidth?: number;
 }) {
   const view = useViewport();
   const reduced = useReducedMotion() ?? false;
@@ -73,17 +83,18 @@ export function Spotlight({
   // so the same clip-path shape still animates.
   const point: Rect = { x: view.w / 2, y: view.h / 2, w: 0, h: 0 };
   const clip = cutout(!settled ? whole : hole ?? point);
-  const pos = placeCard(hole, placement, { w: Math.min(CARD_W, view.w - 24), h: cardH }, view);
+  const width = Math.min(cardWidth, view.w - 24);
+  const pos = placeCard(hole, placement, { w: width, h: cardH }, view);
   const glide = reduced ? "none" : "clip-path 320ms cubic-bezier(0.22,1,0.36,1)";
   const ringGlide = reduced
     ? "none"
     : "transform 320ms cubic-bezier(0.22,1,0.36,1), width 320ms cubic-bezier(0.22,1,0.36,1), height 320ms cubic-bezier(0.22,1,0.36,1)";
 
   return createPortal(
-    <div className="pointer-events-none fixed inset-0 z-[110]" data-testid="tour-layer">
+    <div className="pointer-events-none fixed inset-0 z-[110]" data-testid="tour-layer" {...{ [TOUR_LAYER_ATTR]: "" }}>
       <div
         aria-hidden
-        className="absolute inset-0 bg-scrim/55"
+        className={blocking ? "pointer-events-auto absolute inset-0 bg-scrim/70" : "absolute inset-0 bg-scrim/60"}
         style={{ clipPath: clip, WebkitClipPath: clip, transition: glide }}
         data-testid="tour-dim"
       />
@@ -105,7 +116,7 @@ export function Spotlight({
       <motion.div
         ref={cardRef}
         className="pointer-events-auto absolute left-0 top-0"
-        style={{ width: Math.min(CARD_W, view.w - 24) }}
+        style={{ width }}
         initial={false}
         animate={{ x: pos.x, y: pos.y }}
         transition={reduced ? { duration: 0 } : { duration: 0.32, ease: EASE_OUT }}

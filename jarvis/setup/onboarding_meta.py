@@ -14,20 +14,20 @@ logger = logging.getLogger(__name__)
 
 CURRENT_TERMS_VERSION = "1.0"
 
-# Canonical step order — must match the frontend beat list
-# (components/onboarding/beats.ts). The guide is one card that changes shape
-# per step; the tour of the real app runs AFTER the completion restart and is
-# tracked separately (``tour_completed_at`` in jarvis.setup.state).
+# Canonical step order — must match SETUP_STEP_IDS in the frontend
+# (components/onboarding/setup/setupSteps.ts). Setup runs INSIDE the real app:
+# each step opens the app's own place for the job (the API Keys page, the
+# wake-word group in Settings) and points at it. The tour of the app runs
+# AFTER the completion restart and is tracked separately
+# (``tour_completed_at`` in jarvis.setup.state).
 # Restart batching (maintainer mandate 2026-07-18): permissions and voice sit
 # LAST, directly before ready, because both only take full effect after a
 # relaunch — and onboarding already ends with one unconditional fresh restart
-# (onboarding_routes._schedule_fresh_restart). One restart covers everything;
-# the guide must never demand a second one mid-flow. Permissions precede voice
-# so the macOS microphone grant exists before the voice step's mic check.
+# (onboarding_routes._schedule_fresh_restart). Permissions precede voice so the
+# macOS microphone grant exists before the wake-word group's microphone test.
 ONBOARDING_STEPS: list[str] = [
     "welcome",
-    "brain",
-    "agents",
+    "keys",
     "permissions",
     "voice",
     "ready",

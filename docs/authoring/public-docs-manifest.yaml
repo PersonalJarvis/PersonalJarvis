@@ -65,12 +65,10 @@ pages:
     file: docs/product/start-here/first-run-setup.md
     title: Complete First-Run Setup
     diataxis: tutorial
-    summary: Agree to the terms, connect one Brain, find your coding agents, choose how voice starts, then take the tour of the app.
+    summary: Setup runs inside the app. Agree to the terms, add one key on the API Keys page, pick a wake word in Settings, then take the tour.
     authoritative_sources:
-      - jarvis/ui/web/frontend/src/components/onboarding/WelcomeFlow.tsx
-      - jarvis/ui/web/frontend/src/components/onboarding/beats/BrainBeat.tsx
-      - jarvis/ui/web/frontend/src/components/onboarding/beats/VoiceBeat.tsx
-      - jarvis/ui/web/frontend/src/components/onboarding/beats/PermissionsBeat.tsx
+      - jarvis/ui/web/frontend/src/components/onboarding/setup/SetupTour.tsx
+      - jarvis/ui/web/frontend/src/components/onboarding/setup/setupSteps.ts
       - jarvis/ui/web/frontend/src/components/onboarding/tour/tourSteps.ts
       - jarvis/ui/web/onboarding_routes.py
     related:

@@ -14,7 +14,7 @@ import type { MascotAction } from "@/components/MascotGigi";
 /** What a step may do to the app. Every effect is plain navigation. */
 export type TourEffect = "home-voice" | "open-agents" | "back-home";
 
-export type TourPlacement = "right" | "below" | "above" | "inside";
+export type TourPlacement = "right" | "left" | "below" | "above" | "inside";
 
 export interface TourStep {
   /** Also the i18n key: `app_tour.steps.<id>`. */
@@ -106,6 +106,11 @@ export function placeCard(
         return { x: clampX(rect.x), y: clampY(rect.y + rect.h + gap) };
       }
       return { x: clampX(x), y: clampY(rect.y + rect.h / 2 - card.h / 2) };
+    }
+    case "left": {
+      const x = rect.x - gap - card.w;
+      // No room on the left: lie over the element's left edge instead.
+      return { x: clampX(x < margin ? rect.x + 16 : x), y: clampY(rect.y + 24) };
     }
     case "below": {
       const y = rect.y + rect.h + gap;

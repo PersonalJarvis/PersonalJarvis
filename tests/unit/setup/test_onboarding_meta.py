@@ -3,23 +3,15 @@ from jarvis.setup import onboarding_meta as m
 
 def test_meta_constants():
     assert m.CURRENT_TERMS_VERSION == "1.0"
-    # The guide is one morphing card (rebuilt 2026-09-30): consent inside the
-    # welcome step, one key, the detected agents, voice, then the start.
-    assert m.ONBOARDING_STEPS == [
-        "welcome",
-        "brain",
-        "agents",
-        "permissions",
-        "voice",
-        "ready",
-    ]
+    # Setup runs inside the real app (2026-09-30): consent, one key on the API
+    # Keys page, macOS permissions, the wake word in Settings, then the start.
+    assert m.ONBOARDING_STEPS == ["welcome", "keys", "permissions", "voice", "ready"]
     # Restart batching (2026-07-18): permissions + voice sit LAST before the
-    # final step so the single unconditional completion restart covers both;
-    # permissions first so the macOS mic grant exists for the mic check.
+    # final step so the single unconditional completion restart covers both.
     assert m.ONBOARDING_STEPS.index("permissions") < m.ONBOARDING_STEPS.index("voice")
     assert m.ONBOARDING_STEPS[-2] == "voice"
     # Retired step ids must not come back through a partial revert.
-    for retired in ("terms", "language", "api-keys", "wake-word", "finish", "mic-test"):
+    for retired in ("terms", "language", "api-keys", "wake-word", "finish", "brain", "agents"):
         assert retired not in m.ONBOARDING_STEPS
     assert len(m.WAKE_WORD_LEGAL_REFERENCES) >= 3
     for ref in m.WAKE_WORD_LEGAL_REFERENCES:

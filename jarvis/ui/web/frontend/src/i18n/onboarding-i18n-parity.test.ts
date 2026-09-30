@@ -6,7 +6,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { BEAT_IDS } from "@/components/onboarding/beats";
+import { SETUP_STEP_IDS } from "@/components/onboarding/setup/setupSteps";
 import en from "./locales/onboarding/en.json";
 import de from "./locales/onboarding/de.json";
 import es from "./locales/onboarding/es.json";
@@ -62,14 +62,10 @@ describe("onboarding locale chunk", () => {
     expect(missing).toEqual([]);
   });
 
-  it("gives every beat its title, lede and review row", () => {
-    for (const beat of BEAT_IDS) {
-      expect(enKeys.has(`first_run.${beat}.title`), beat).toBe(true);
-      expect(enKeys.has(`first_run.${beat}.lede`), beat).toBe(true);
-    }
-    for (const beat of ["brain", "agents", "permissions", "voice"]) {
-      expect(enKeys.has(`first_run.ready.row_${beat}`), beat).toBe(true);
-      expect(enKeys.has(`first_run.ready.skipped_${beat}`), beat).toBe(true);
+  it("gives every setup step its title and lede", () => {
+    for (const step of SETUP_STEP_IDS) {
+      expect(enKeys.has(`first_run.${step}.title`), step).toBe(true);
+      expect(enKeys.has(`first_run.${step}.lede`), step).toBe(true);
     }
   });
 
