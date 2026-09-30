@@ -335,10 +335,17 @@ describe("AgenticTerminal layout", () => {
     expect(screen.queryByTestId("pane-header-Dana")).toBeNull();
     const resting = pane.style.borderColor;
     expect(resting).toBeTruthy();
-    expect(pane.style.boxShadow).toBe("");
+    expect(screen.queryByTestId("pane-focus-ring-Dana")).toBeNull();
     rerender(<AgenticTerminal {...props} focused />);
     expect(pane.style.borderColor).not.toBe(resting);
-    expect(pane.style.boxShadow).toContain("inset");
+    // The inner line is a layer of its own on top of the title row, so the
+    // row's translucent ground cannot dim it (it read darker along the top).
+    const ring = screen.getByTestId("pane-focus-ring-Dana");
+    expect(ring.style.boxShadow).toContain("inset");
+    expect(ring.className).toContain("pointer-events-none");
+    expect(ring.className).toContain("z-[45]");
+    expect(pane.lastElementChild).toBe(ring);
+    expect(pane.style.boxShadow).toBe("");
     // One pane in the grid is still the pane in use: it is marked too.
     rerender(<AgenticTerminal {...props} focused={false} />);
     expect(pane.style.borderColor).toBe(resting);
