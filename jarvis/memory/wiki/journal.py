@@ -61,7 +61,9 @@ _CAPTURE_FINISH_STATUSES = frozenset({"filtered", "empty", "candidates", "failed
 _CAPTURE_STALE_AFTER_MS = 5 * 60 * 1000
 # A review that keeps failing is retried at most this many times in total.
 # Every retry is a paid model call; before the bound the periodic
-# auto-backfill re-claimed failed reviews forever.
+# auto-backfill re-claimed failed reviews forever. A review that only had to
+# WAIT (subscription not answering, daily cap) is released through
+# ``release_capture`` and never runs this budget down.
 _MAX_CAPTURE_ATTEMPTS = 5
 _MAX_FACT_CHARS = 2_000
 _MAX_EVIDENCE_CHARS = 1_200
@@ -454,8 +456,12 @@ class CandidateJournal:
 
         A new key is claimed immediately. ``failed`` rows and ``started`` rows
         older than five minutes are retried with an incremented attempt count,
-        up to :data:`_MAX_CAPTURE_ATTEMPTS` attempts in total. Fresh in-flight,
-        terminal, or exhausted rows are left untouched and return ``False``.
+        up to :data:`_MAX_CAPTURE_ATTEMPTS` attempts in total. A review that
+        was only released because the work had to wait (``failed`` with
+        ``deferred``, see :meth:`release_capture`) is always claimable again
+        and re-claiming it does not count: waiting never spends the budget.
+        Fresh in-flight, terminal, or exhausted rows are left untouched and
+        return ``False``.
         """
         key = _safe_identifier(review_key, allow_empty=False)
         now_ms = self._now_ms()
@@ -483,14 +489,21 @@ class CandidateJournal:
                     provider = '',
                     duration_ms = 0,
                     error_code = '',
-                    attempts = wiki_extraction_audit.attempts + 1,
+                    attempts = CASE
+                        WHEN wiki_extraction_audit.status = 'failed'
+                         AND wiki_extraction_audit.error_code = 'deferred'
+                        THEN wiki_extraction_audit.attempts
+                        ELSE wiki_extraction_audit.attempts + 1
+                    END,
                     updated_ms = excluded.updated_ms,
                     started_ms = excluded.started_ms,
                     finished_ms = NULL
-                WHERE wiki_extraction_audit.attempts < ?
-                  AND (wiki_extraction_audit.status = 'failed'
-                       OR (wiki_extraction_audit.status = 'started'
-                           AND wiki_extraction_audit.updated_ms <= ?))
+                WHERE (wiki_extraction_audit.status = 'failed'
+                       AND (wiki_extraction_audit.error_code = 'deferred'
+                            OR wiki_extraction_audit.attempts < ?))
+                   OR (wiki_extraction_audit.status = 'started'
+                       AND wiki_extraction_audit.attempts < ?
+                       AND wiki_extraction_audit.updated_ms <= ?)
                 """,
                 (
                     key,
@@ -502,6 +515,7 @@ class CandidateJournal:
                     now_ms,
                     now_ms,
                     now_ms,
+                    _MAX_CAPTURE_ATTEMPTS,
                     _MAX_CAPTURE_ATTEMPTS,
                     stale_before_ms,
                 ),
@@ -552,6 +566,45 @@ class CandidateJournal:
             )
             conn.commit()
             return cur.rowcount == 1
+
+    def release_capture(self, review_key: str) -> bool:
+        """Hand a claimed review back without spending one of its attempts.
+
+        For a review that never got an answer because the work had to WAIT —
+        the subscription was not answering, or the runaway guard's daily cap
+        was reached. The row becomes retryable (``failed`` / ``deferred``),
+        and :meth:`claim_capture` re-claims such a row without counting an
+        attempt, so an explicit "remember this" survives a long subscription
+        outage instead of running out of :data:`_MAX_CAPTURE_ATTEMPTS` while
+        nothing was ever tried.
+        """
+        key = _safe_identifier(review_key, allow_empty=False)
+        now_ms = self._now_ms()
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return False
+            cur = conn.execute(
+                "UPDATE wiki_extraction_audit SET status = 'failed', "
+                "error_code = 'deferred', updated_ms = ?, finished_ms = ? "
+                "WHERE review_key = ? AND status = 'started'",
+                (now_ms, now_ms, key),
+            )
+            conn.commit()
+            return cur.rowcount == 1
+
+    def capture_attempts(self, review_key: str) -> int:
+        """How many counted attempts a review has used (0 when unknown)."""
+        key = _safe_identifier(review_key, allow_empty=False)
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return 0
+            row = conn.execute(
+                "SELECT attempts FROM wiki_extraction_audit WHERE review_key = ?",
+                (key,),
+            ).fetchone()
+        return int(row[0]) if row else 0
 
     def capture_seen(self, review_key: str) -> bool:
         """Return ``True`` only when a capture reached a terminal status."""

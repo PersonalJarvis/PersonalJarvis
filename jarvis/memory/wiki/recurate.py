@@ -22,6 +22,7 @@ FTS). Manual invocation only (``jarvis.memory.wiki.cli recurate-profile``)
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -195,7 +196,10 @@ async def recurate_profile(
 
         registry = BrainProviderRegistry()
     try:
-        background = build_background_wiki_chain(
+        # Provider selection may run vendor login probes (seconds of subprocess):
+        # keep it off the event loop (AP-9).
+        background = await asyncio.to_thread(
+            build_background_wiki_chain,
             registry=registry,
             config=config,
             primary=(wiki_cfg.curator.provider.strip() or config.brain.primary),

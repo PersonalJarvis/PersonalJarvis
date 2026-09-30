@@ -446,3 +446,147 @@ async def test_search_aliases_respect_the_daily_cap(
 
     assert aliases == []
     assert registry.instantiated == []
+
+
+async def test_search_aliases_wait_out_the_backoff() -> None:
+    from jarvis.memory.wiki.search_aliases import generate_aliases
+
+    registry = _RecordingRegistry({"gemini"}, _ScriptedBrain(text="Hund"))
+    guard.note_failure("every wiki provider failed")
+
+    aliases = await generate_aliases(
+        title="Dog", body="The user's dog.", cfg=_config(), registry=registry,
+    )
+
+    assert aliases == []
+    assert registry.available_calls == 0, "no provider lookup inside the backoff"
+    assert registry.instantiated == []
+
+
+# --- review attempts ---------------------------------------------------------
+
+
+def _extractor(journal: CandidateJournal, registry: Any) -> Any:
+    from jarvis.memory.wiki.extractor import ConversationFactExtractor
+
+    return ConversationFactExtractor(config=_config(), journal=journal, registry=registry)
+
+
+def test_a_released_review_keeps_its_attempt_budget(tmp_path: Path) -> None:
+    journal = CandidateJournal(tmp_path / "jarvis.db")
+    key = "live:v2:voice:1:abc"
+    try:
+        for _ in range(12):
+            assert journal.claim_capture(key, "voice-fact:1", "voice-fact", "a" * 40)
+            assert journal.release_capture(key)
+        assert journal.capture_attempts(key) == 1, "waiting never counts an attempt"
+        assert journal.capture_status(key) == "failed"
+        # The full failure budget is still there for real failures.
+        failures = 0
+        while journal.claim_capture(key, "voice-fact:1", "voice-fact", "a" * 40):
+            journal.finish_capture(key, "failed", error_code="provider_timeout")
+            failures += 1
+        assert failures == 5  # the whole budget, none of it spent on waiting
+    finally:
+        journal.close()
+
+
+async def test_a_long_subscription_outage_never_burns_the_explicit_save(
+    tmp_path: Path, background_billing,  # noqa: ANN001
+) -> None:
+    """Signed in but not answering for hours: every retry hands its attempt
+    back, so the save is still reviewed once the subscription answers."""
+    background_billing.sign_in("claude-cli")
+    registry = _RecordingRegistry({"claude-cli", "gemini"}, _ScriptedBrain(fail=True))
+    journal = CandidateJournal(tmp_path / "jarvis.db")
+    extractor = _extractor(journal, registry)
+    key = "live:v2:rt-session:turn-1"
+    try:
+        for _ in range(8):  # well past the five-attempt failure budget
+            guard.note_progress()  # the backoff window has passed
+            with pytest.raises(BackgroundDeferred):
+                await extractor.extract_and_journal(
+                    "Lena lives in Hamburg.",
+                    "Noted.",
+                    source_label="realtime-fact:1",
+                    turn_hash="turn-1",
+                    review_key=key,
+                )
+        assert journal.capture_attempts(key) == 1, "eight waits spent no attempt"
+        assert set(registry.instantiated) == {"claude-cli"}, "never the keyed provider"
+
+        registry._brain = _ScriptedBrain(text="[]")  # noqa: SLF001 - it answers again
+        guard.note_progress()
+        await extractor.extract_and_journal(
+            "Lena lives in Hamburg.",
+            "Noted.",
+            source_label="realtime-fact:1",
+            turn_hash="turn-1",
+            review_key=key,
+        )
+        assert journal.capture_status(key) == "empty"
+        assert journal.capture_attempts(key) == 1
+    finally:
+        journal.close()
+
+
+async def test_an_exhausted_review_is_reported_not_dropped_silently(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    journal = CandidateJournal(tmp_path / "jarvis.db")
+    brain = _ScriptedBrain(text="[]")
+    extractor = _extractor(journal, _RecordingRegistry({"gemini"}, brain))
+    key = "live:v2:voice:2:def"
+    try:
+        while journal.claim_capture(key, "voice-fact:2", "voice-fact", "b" * 40):
+            journal.finish_capture(key, "failed", error_code="provider_timeout")
+        with caplog.at_level("WARNING", logger="jarvis.memory.wiki.extractor"):
+            count = await extractor.extract_and_journal(
+                "Lena lives in Hamburg.",
+                "Noted.",
+                source_label="voice-fact:2",
+                turn_hash="turn-2",
+                review_key=key,
+            )
+    finally:
+        journal.close()
+
+    assert count == 0
+    assert brain.calls == 0
+    assert any(
+        record.levelname == "WARNING" and "retry budget is spent" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+# --- provider selection stays off the event loop ------------------------------
+
+
+async def test_provider_selection_runs_off_the_event_loop(
+    wiki, monkeypatch: pytest.MonkeyPatch,  # noqa: ANN001
+) -> None:
+    import threading
+
+    import jarvis.memory.wiki.provider_chain as chain_module
+
+    real_build = chain_module.build_background_wiki_chain
+    on_main_thread: list[bool] = []
+
+    def _recording_build(**kwargs: Any) -> Any:
+        on_main_thread.append(threading.current_thread() is threading.main_thread())
+        return real_build(**kwargs)
+
+    monkeypatch.setattr(chain_module, "build_background_wiki_chain", _recording_build)
+    registry = _RecordingRegistry({"gemini"}, _ScriptedBrain(text="[]"))
+    consolidator = _consolidator(wiki, registry, config=_config())
+    _journal_facts(wiki[2], 1)
+    await consolidator.run_once()
+    guard.note_progress()
+    await _extractor(wiki[2], registry).extract_and_journal(
+        "Lena lives in Hamburg.",
+        "Noted.",
+        source_label="voice-fact:3",
+        turn_hash="turn-3",
+    )
+
+    assert on_main_thread == [False, False], "login probes must never block the loop"

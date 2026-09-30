@@ -545,7 +545,10 @@ class Consolidator:
         )
 
         try:
-            background = build_background_wiki_chain(
+            # Provider selection may run vendor login probes (seconds of subprocess):
+            # keep it off the event loop (AP-9).
+            background = await asyncio.to_thread(
+                build_background_wiki_chain,
                 registry=self._registry,
                 config=self._root_cfg,
                 primary=(

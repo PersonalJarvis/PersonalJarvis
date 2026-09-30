@@ -807,9 +807,12 @@ def _resolve_brains() -> list[Any]:
     """The brains that could write the recap, best first. Empty when none can.
 
     Resolution goes through ``jarvis.brain.resolver`` so this module never grows
-    its own opinion about providers (AP-21/AP-22): whatever keys the user has
-    are what write the recap, and an install with none gets an empty list and
-    the deterministic floor. More than one candidate comes back because the
+    its own opinion about providers (AP-21/AP-22): a connected subscription
+    writes the recap; on an install that never connected one, whatever keys the
+    user has write it; an install in subscription mode whose subscription cannot
+    answer right now, or one with nothing at all, gets an empty list and the
+    deterministic floor (``background_policy``). More than one candidate comes
+    back because the
     ordinary failure is CALL-time — a depleted key instantiates fine and only
     429s when asked to write — and the retry must cross to a different family.
     """
@@ -825,6 +828,15 @@ def _resolve_brains() -> list[Any]:
         subscription = _resolve_subscription(config)
         if subscription is not None:
             return [subscription]
+        if _subscription_install():
+            # A subscription is connected (or was, within the policy's
+            # memory) but cannot write right now: wait for it. The title
+            # floor covers the pane meanwhile; no key is instantiated.
+            logger.info(
+                "Agentic IDE recap: the subscription cannot write right now — "
+                "using the plain title instead of an API key"
+            )
+            return []
         candidates: list[Any] = []
         for brain in frontier_brain_candidates(config):
             candidates.append(brain)
@@ -833,9 +845,32 @@ def _resolve_brains() -> list[Any]:
     except Exception as exc:  # noqa: BLE001 - no brain is an answer, not an error
         logger.info("Agentic IDE recap: no brain reachable ({})", exc)
         return []
-    # Reached only with no subscription connected: the keyed families are
-    # then the whole chain, so a single-key install still gets model recaps.
+    # Reached only on an install that never connected a subscription: the
+    # keyed families are then the whole chain, so a single-key install still
+    # gets model recaps.
     return candidates
+
+
+def _subscription_install() -> bool:
+    """Whether recaps may only run on subscriptions (``background_policy``).
+
+    True while any subscription is signed in or was seen signed in within the
+    policy's memory window. Probes vendor CLIs, so it runs only from
+    :func:`_resolve_brains`, which is always called off the event loop. A
+    broken probe answers True: the plain title is a safe fallback, a paid key
+    is not.
+    """
+    try:
+        from jarvis.brain.background_policy import background_providers
+        from jarvis.brain.provider_registry import BrainProviderRegistry
+
+        names = sorted(BrainProviderRegistry().available())
+        return background_providers(names).subscription_mode
+    except Exception:  # noqa: BLE001 - failing closed is the handling, logged here
+        logger.opt(exception=True).warning(
+            "Agentic IDE recap: background billing check failed — no API key is used"
+        )
+        return True
 
 
 def _resolve_subscription(config: Any) -> Any | None:

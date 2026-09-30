@@ -34,6 +34,7 @@ crosses to another family instead of bricking the feature (AP-22).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
@@ -281,11 +282,18 @@ async def generate_aliases(
     # credential (AP-22 — never a single-provider brick) and may bill
     # background work.
     try:
+        if count_against_daily_cap:
+            # Background write-time call: no alias lookup inside the runaway
+            # guard's backoff window or past the daily cap.
+            guard.check_ready(cfg)
         curator = getattr(getattr(getattr(cfg, "memory", None), "wiki", None), "curator", None)
         primary = str(getattr(curator, "provider", "") or "").strip() or str(
             getattr(getattr(cfg, "brain", None), "primary", "") or ""
         )
-        background = build_background_wiki_chain(
+        # Provider selection may run vendor login probes (seconds of subprocess):
+        # keep it off the event loop (AP-9).
+        background = await asyncio.to_thread(
+            build_background_wiki_chain,
             registry=registry,
             config=cfg,
             primary=primary,
