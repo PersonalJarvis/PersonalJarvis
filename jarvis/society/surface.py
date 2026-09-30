@@ -593,9 +593,17 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
         return None
     agent = rt.cached_agent(agent_id)
     if agent is None:
-        # The briefing fills the cache before the override is built. A miss
-        # cannot establish the agent's mode or grants, so offer no hands.
-        return lambda _tools: {}
+        # The briefing fills the cache before the override is built. A miss (a
+        # turn that skipped the briefing, a runtime restart mid-session) cannot
+        # establish the agent's mode or grants, so no granted hand and no write
+        # is offered. Its own safe society tools stay: without them it can
+        # neither report back nor ask the user, and the job stalls silently
+        # (#255).
+        return lambda tools: {
+            n: t
+            for n, t in tools.items()
+            if n.startswith(_OWN_PREFIX) and getattr(t, "risk_tier", "monitor") == "safe"
+        }
     approval_mode = _effective_approval_mode(agent, session, _permission_override(rt, session))
 
     def _apply(tools: dict[str, Tool]) -> dict[str, Tool]:

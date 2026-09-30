@@ -180,3 +180,34 @@ def test_stack_is_reported_even_before_any_beat_landed(live_loop):
     watchdog = EventLoopWatchdog(live_loop, interval_s=5.0, stall_s=5.0)
     text = watchdog._loop_stack()
     assert isinstance(text, str) and text
+
+def _fake_psutil(monkeypatch, *, available_gb: float, total_gb: float = 32.0) -> None:
+    import sys
+    from types import ModuleType, SimpleNamespace
+
+    fake = ModuleType("psutil")
+    fake.virtual_memory = lambda: SimpleNamespace(  # type: ignore[attr-defined]
+        available=int(available_gb * 1024**3), total=int(total_gb * 1024**3)
+    )
+    monkeypatch.setitem(sys.modules, "psutil", fake)
+
+
+def test_a_stall_on_a_machine_out_of_memory_says_so(monkeypatch):
+    """2026-09-30: three stalls, three unrelated stacks, 1.5 GB of 32 GB free.
+    The report must point at the paging, not only at the random stack."""
+    from jarvis.core.loop_watchdog import _memory_pressure_note
+
+    _fake_psutil(monkeypatch, available_gb=1.5)
+
+    note = _memory_pressure_note()
+
+    assert "1.5 GB of 32 GB free" in note
+    assert "paging" in note
+
+
+def test_a_stall_with_memory_to_spare_blames_only_the_stack(monkeypatch):
+    from jarvis.core.loop_watchdog import _memory_pressure_note
+
+    _fake_psutil(monkeypatch, available_gb=12.0)
+
+    assert _memory_pressure_note() == ""

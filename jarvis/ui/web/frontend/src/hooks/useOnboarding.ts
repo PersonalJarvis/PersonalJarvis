@@ -11,6 +11,8 @@ export interface OnboardingState {
   skipped_steps: string[];
   terms: { accepted: boolean; accepted_version: string | null; current_version: string };
   wake_word_acknowledged: boolean;
+  /** The guided tour of the real app was finished or skipped (runs after the completion restart). */
+  tour_completed?: boolean;
   legal_references: LegalReference[];
   steps: string[];
 }
@@ -33,7 +35,7 @@ const RETRY_DELAYS_MS = [500, 1000, 1500, 2000, 3000, 3000, 4000, 5000, 5000, 50
 
 /**
  * Loads /api/onboarding/state and exposes the onboarding mutation actions.
- * `saveStep` is best-effort (progress persistence — never blocks navigation);
+ * `saveStep` and `completeTour` are best-effort (progress — never block anything);
  * `acceptTerms`/`acknowledgeWakeWord`/`complete` propagate failures so the
  * calling step can surface an error. `complete` dispatches
  * `jarvis:onboarding-changed` only after a successful POST.
@@ -101,5 +103,23 @@ export function useOnboarding(opts?: { retryDelaysMs?: number[] }) {
     window.dispatchEvent(new CustomEvent("jarvis:onboarding-changed"));
   }, []);
 
-  return { state, loading, error, refetch, saveStep, acceptTerms, acknowledgeWakeWord, complete };
+  const completeTour = useCallback(async () => {
+    try {
+      await post("/api/onboarding/tour-complete");
+    } catch {
+      // Best-effort: a missed record only means the tour offers itself once more.
+    }
+  }, []);
+
+  return {
+    state,
+    loading,
+    error,
+    refetch,
+    saveStep,
+    acceptTerms,
+    acknowledgeWakeWord,
+    complete,
+    completeTour,
+  };
 }

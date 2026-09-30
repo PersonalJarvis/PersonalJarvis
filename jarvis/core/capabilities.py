@@ -334,7 +334,7 @@ class CapabilityRegistry:
         Each line: ``• <id> — <description>``
 
         The *lang* parameter is reserved for future localisation.  Currently
-        all descriptions are English (CLAUDE.md policy) regardless of lang.
+        all descriptions are English (AGENTS.md policy) regardless of lang.
         """
         caps = self.all()
         if not caps:

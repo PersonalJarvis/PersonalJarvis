@@ -47,7 +47,7 @@ class TestWhatTheRecogniserIsAskedFor:
         assert resolve_recognition_language(pinned="auto", session_language=" ES ") == "es"
 
     def test_every_supported_language_is_carried_the_same_way(self):
-        """No de/en bias — a locale is a locale (CLAUDE.md §1)."""
+        """No de/en bias — a locale is a locale (AGENTS.md §1)."""
         for code in ("de", "en", "es"):
             assert (
                 resolve_recognition_language(pinned="auto", session_language=code)

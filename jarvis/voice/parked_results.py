@@ -16,7 +16,7 @@ module is the ONE vocabulary both voice engines and the text surfaces share:
   abandons by name.
 * :func:`classify_wait_query` — the closed multilingual vocabulary for the
   two things a user says INTO a wait: "how far are you?" (progress) and "what
-  came out of it?" (result). Regex only, every locale equal (CLAUDE.md §1),
+  came out of it?" (result). Regex only, every locale equal (AGENTS.md §1),
   a miss stays native.
 * :func:`reanchor` — the short spoken/written prefix that ties a result
   delivered after other exchanges back to the request it answers.

@@ -92,9 +92,9 @@ def test_capture_diff_surfaces_modified_tracked_file(
     worktree: Path, kontrollierer: Kontrollierer
 ) -> None:
     """Tracked file modifications must show up via `git diff HEAD`."""
-    target = worktree / "CLAUDE.md"
+    target = worktree / "README.md"
     if not target.exists():
-        pytest.skip("CLAUDE.md not present in worktree (unexpected fixture state)")
+        pytest.skip("README.md not present in worktree (unexpected fixture state)")
     target.write_text(
         target.read_text(encoding="utf-8") + "\n<!-- capture-diff-marker -->\n",
         encoding="utf-8",
@@ -103,7 +103,7 @@ def test_capture_diff_surfaces_modified_tracked_file(
     diff = kontrollierer._capture_diff(worktree)
 
     assert diff, "expected non-empty diff for a modified tracked file"
-    assert "CLAUDE.md" in diff
+    assert "README.md" in diff
     assert "capture-diff-marker" in diff
 
 
@@ -222,7 +222,7 @@ def test_archive_task_artifacts_writes_diff_and_copies_untracked(
     after the worktree is gone."""
     # Mix: one new untracked file + one modified tracked file.
     (worktree / "hello.txt").write_text("hi\n", encoding="utf-8")
-    target = worktree / "CLAUDE.md"
+    target = worktree / "README.md"
     if target.exists():
         target.write_text(
             target.read_text(encoding="utf-8") + "\n<!-- archive-test -->\n",

@@ -301,7 +301,7 @@ class ScreenContextService:
         ``locale`` must be the ALREADY-RESOLVED output language for this turn
         (``jarvis.core.turn_language.resolve_output_language``). This service
         never derives a language itself — a second derivation is exactly the
-        mid-session language flip CLAUDE.md §1.3 forbids.
+        mid-session language flip AGENTS.md §1.3 forbids.
 
         ``force`` skips classification for callers that are not a conversation
         turn (the REST endpoint, an explicit bar button). It never skips

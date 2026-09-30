@@ -223,14 +223,20 @@ def _cut(text: str) -> tuple[str, bool]:
     return text[:MAX_OUTPUT_CHARS], True
 
 
-async def run_command(session: Session, command: str, *, timeout_s: float) -> CommandResult:
-    """Run one command on an open session and collect its output."""
+async def run_command(
+    session: Session, command: str, *, timeout_s: float, stdin: str | None = None
+) -> CommandResult:
+    """Run one command on an open session and collect its output.
+
+    ``stdin`` is written to the command and then closed — how a script
+    reaches a Windows computer, whose command line cannot carry one.
+    """
     import asyncssh
 
     started = time.perf_counter()
     try:
         result = await asyncio.wait_for(
-            session.conn.run(command, check=False, encoding="utf-8", errors="replace"),
+            session.conn.run(command, input=stdin, check=False, encoding="utf-8", errors="replace"),
             timeout=timeout_s,
         )
     except TimeoutError as exc:
@@ -265,6 +271,44 @@ def authorize_key_command(public_key: str) -> str:
         f"printf '%s\\n' {quoted} >> {keys}; }}) && "
         f"chmod 700 ~/.ssh && chmod 600 {keys}"
     )
+
+
+def authorize_key_script_windows(public_key: str) -> str:
+    """The PowerShell script (sent on stdin) that adds ``public_key`` on Windows.
+
+    The Windows OpenSSH server reads an administrator's keys ONLY from
+    ``%ProgramData%\\ssh\\administrators_authorized_keys``, and only while that
+    file is writable by Administrators and SYSTEM alone; every other account
+    uses its own ``.ssh\\authorized_keys``. The groups are named by their SIDs,
+    because "Administrators" is "Administratoren" on a German Windows. The
+    file is written as UTF-8 without a byte-order mark, which sshd requires.
+    """
+    key = public_key.strip().replace("'", "''")
+    return rf"""
+$ErrorActionPreference = 'Stop'
+$key = '{key}'
+$admin = [bool]((whoami /groups) -match 'S-1-5-32-544')
+if ($admin) {{
+  $file = Join-Path $env:ProgramData 'ssh\administrators_authorized_keys'
+}} else {{
+  $folder = Join-Path $HOME '.ssh'
+  New-Item -ItemType Directory -Force -Path $folder | Out-Null
+  $file = Join-Path $folder 'authorized_keys'
+}}
+$text = ''
+if (Test-Path -LiteralPath $file) {{ $text = [IO.File]::ReadAllText($file) }}
+$present = $text -split "`r?`n" | Where-Object {{ $_.Trim() -eq $key }}
+if (-not $present) {{
+  $gap = ''
+  if ($text.Length -gt 0 -and -not $text.EndsWith("`n")) {{ $gap = "`r`n" }}
+  [IO.File]::AppendAllText($file, $gap + $key + "`r`n")
+}}
+if ($admin) {{
+  icacls $file /inheritance:r /grant '*S-1-5-32-544:F' /grant '*S-1-5-18:F' | Out-Null
+  if ($LASTEXITCODE) {{ exit $LASTEXITCODE }}
+}}
+'ok'
+""".strip()
 
 
 def close(session: Session) -> None:

@@ -175,7 +175,7 @@ class Delivery:
 
     The spoken layer localizes from THIS, never from ``reason`` — an English
     sentence pasted into a German answer is exactly the mixed-language output
-    the per-turn resolver exists to prevent (CLAUDE.md, runtime output
+    the per-turn resolver exists to prevent (AGENTS.md, runtime output
     language)."""
 
     reason: str = ""

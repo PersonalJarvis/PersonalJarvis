@@ -44,7 +44,7 @@ is the strict coverage bar plus the framing contract, no longer a refusal to
 search. The router brain additionally holds the ``wiki-recall`` tool and can
 look something up deliberately when the injected context is not enough.
 
-Languages: the matcher carries de/en/es tokens as equal peers (CLAUDE.md §1
+Languages: the matcher carries de/en/es tokens as equal peers (AGENTS.md §1
 closed-list item 3 — speech-recognition input vocabulary, matching data rather
 than prose). Input is case-, umlaut- and accent-folded before matching, so
 the German and Spanish spellings of a word reach the same pattern whether or

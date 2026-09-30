@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from jarvis.agentic_ide import remote
+from jarvis.computers import remote_os
 
 
 def _posix_shell() -> str | None:
@@ -51,6 +52,9 @@ class LocalPool:
 
     async def home(self) -> str:
         return self._home.as_posix()
+
+    async def host(self) -> remote_os.RemoteHost:
+        return remote_os.RemoteHost()
 
     async def run(self, command: str, *, timeout_s: float = 60.0) -> tuple[int, str, str]:
         result = await asyncio.to_thread(

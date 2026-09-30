@@ -7,7 +7,7 @@ On a turn whose language cannot be detected (a bare product name, "42", a
 grunt) the user could get a German refusal followed by an English honesty
 phrase in the same breath.
 
-CLAUDE.md §1: ONE resolver decides the turn for ALL layers, and every locale is
+AGENTS.md §1: ONE resolver decides the turn for ALL layers, and every locale is
 equal — no layer may pin its own default.
 """
 from __future__ import annotations

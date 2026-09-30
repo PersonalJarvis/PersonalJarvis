@@ -6,7 +6,7 @@ This is the guard for the bug class that shipped a broken public installer:
 lockfile) drifted from ``pyproject.toml [project].dependencies``. It listed
 extras-only, native packages (for example ``faster-whisper`` and desktop input
 drivers) that pyproject deliberately keeps in the ``[local-voice]`` /
-``[desktop]`` extras per the cloud-first doctrine (CLAUDE.md §3). The lockfile
+``[desktop]`` extras per the cloud-first doctrine (AGENTS.md §3). The lockfile
 compiler then baked the multi-GB, GPU-specific CUDA-13 wheel stack (``nvidia-*``) into the
 committed lockfile, and the Windows/macOS installer forced every downloader
 through it with ``pip install --require-hashes -r requirements.txt`` — which is

@@ -12,7 +12,7 @@ user sees an option that will not save.
 locales the product *speaks*. But what Jarvis can understand is a different
 question from what it can answer in, and capping recognition at three languages
 meant a Mandarin, Japanese or Arabic speaker could not dictate at all. That is
-the maintainer's-config-is-the-baseline mistake in miniature (CLAUDE.md §3), so
+the maintainer's-config-is-the-baseline mistake in miniature (AGENTS.md §3), so
 the floor is asserted, not assumed.
 """
 from __future__ import annotations

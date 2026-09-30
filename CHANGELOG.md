@@ -11,6 +11,44 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [2.4.4] — 2026-09-30
+
+### Added
+
+- **First run inside the real app.** Onboarding is one morphing card plus a
+  guided tour of the app, and the first-run setup happens in the real
+  interface instead of a separate flow.
+- **Minimal IDE tiles.** Agentic IDE panes default to multiplexer-style tiles
+  with a slim title row; the working pane always wears a blue edge, and the
+  classic cards are one click away in Workspace options.
+- **Jarvis Verse spawn point** in the middle of both floors: drop files or
+  open a new workspace from there. Pane nameplates show the coding CLI's logo
+  on two lines, desk monitors draw a pane the way the IDE does, and the pane
+  window wears the minimal tile look.
+- **Windows computers.** A connected Windows machine now works for agents and
+  the IDE, with a Windows-aware setup prompt, readiness check and quit
+  offload; a cancelled turn ends its CLI there.
+
+### Changed
+
+- Background work stays on subscriptions once one is connected; nothing the
+  user did not start bills an API key on its own.
+- Jarvis' learning notebooks stay small and compacted.
+- AGENTS.md is the only agent instructions file.
+
+### Fixed
+
+- Reopening Jarvis right after closing it no longer stalls for minutes.
+- Remote panes come back safely, fork whole, and never read a stale local
+  transcript aloud.
+- The wake word keeps its primary decoder when a slow sibling is demoted.
+- An agent's Chromium starts only when it is needed.
+- The loop watchdog says when a stall is the machine running out of memory.
+- Clicking into a coding agent's output selects its pane; the repository
+  picker closes as soon as a pick is saved.
+
+---
+
 ## [2.4.3] — 2026-09-30
 
 ### Fixed

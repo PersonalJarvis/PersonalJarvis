@@ -1974,6 +1974,21 @@ def _copy_key(local: str) -> tuple[str, Path | None]:
     return os.path.normcase(os.path.realpath(str(top) if top else local)), top
 
 
+def _changed_since(top: Path, snapshot: str) -> bool:
+    """Whether repo ``top``'s working tree differs from offload ``snapshot``.
+
+    Blocking (git). The same comparison ``remote.pull_code`` makes before it
+    applies a copy's work; a snapshot git cannot read counts as unchanged,
+    as joining did before the check existed.
+    """
+    try:
+        offload_tree = remote._git(top, "rev-parse", f"{snapshot}^{{tree}}")
+        return remote.working_tree_id(top) != offload_tree
+    except (remote.MoveError, OSError) as exc:
+        logger.info("Agentic IDE: offload snapshot {} unreadable: {}", snapshot[:12], exc)
+        return False
+
+
 class Registry:
     """Process-wide holder of the open Agentic-IDE workspaces.
 
@@ -5225,6 +5240,8 @@ class Registry:
         permission_mode: str | None = None,
         computer_id: Any = INHERIT_PLACEMENT,
         folder: str = "",
+        fork_from: ResumeHandle | None = None,
+        branch: str = "",
     ) -> Terminal:
         """Open one more terminal in the running workspace.
 
@@ -5266,7 +5283,9 @@ class Registry:
         of it runs on one computer. A pane for a computer is set up there
         before it can start (:meth:`_place_new`) and removed again if that
         fails. ``folder`` opens it in another folder than the workspace's (a
-        worktree fork).
+        worktree fork); ``fork_from`` and ``branch`` make the pane a fork
+        (:meth:`fork_terminal`) from the moment it exists, so no viewer can
+        spawn it as a fresh chat first.
         """
         selected_id = workspace_id or self.active_id
         async with self._lock:
@@ -5362,6 +5381,8 @@ class Registry:
                 effort=launch_picks.normalize_effort(chosen, effort),
                 permission_mode=launch_picks.normalize_permission(chosen, permission_mode),
                 folder=folder,
+                branch=branch,
+                fork_from=fork_from,
                 computer_id=target,
                 placing=self._placing_note(target) if target else "",
             )
@@ -5470,12 +5491,20 @@ class Registry:
                 f"{term.name} runs on {self._computer_label(term.computer_id)}. "
                 "Bring it back to this computer first."
             )
+        if not target:
+            back, failures, messages = await self._bring_back_group([(session, term)])
+            for failed, error in failures:
+                if failed is term:
+                    raise PlacementError(error)
+            for other in back:
+                if other is not term:
+                    messages.append(
+                        f"{other.name} came back with it: they worked in one copy there."
+                    )
+            return {"moved": True, "message": " ".join(messages), "terminal": term.to_dict()}
         async with term.attach_lock:
             was_live = bool(term.pty_id)
-            if target:
-                message = await self._offload_locked(session, term, target, {})
-            else:
-                message = await self._bring_back_locked(session, term)
+            message = await self._offload_locked(session, term, target, {})
             if was_live:
                 await self._restart_in_place(session, term)
         await self._persist()
@@ -5523,42 +5552,91 @@ class Registry:
         return {"moved": moved, "messages": messages}
 
     async def _bring_workspace_back(self, session: Session) -> dict[str, Any]:
-        """Bring every remote pane of ``session`` home, one folder transfer per folder.
+        """Bring every remote pane of ``session`` home (see :meth:`_bring_back_group`).
+
+        Fails only when no pane came back; otherwise the messages name each
+        pane that stayed on its computer and why.
+        """
+        away = [(session, t) for t in session.terminals if t.computer_id and not t.placing]
+        back, failures, messages = await self._bring_back_group(away)
+        if failures and not back:
+            raise PlacementError(" ".join(messages))
+        return {"moved": [t.key for t in back], "messages": messages}
+
+    async def _bring_back_group(
+        self, panes: list[tuple[Session, Terminal]]
+    ) -> tuple[list[Terminal], list[tuple[Terminal, str]], list[str]]:
+        """Bring ``panes`` home together, one folder transfer per shared copy.
+
+        Returns ``(back, failures, messages)``. Every pane that works in the
+        same copy as one of ``panes`` comes along, from any workspace: a copy
+        is one folder, and returning it for one pane applied a sibling's
+        half-done work here while the sibling kept working there (#253).
 
         Every agent stops BEFORE any folder is packed — a sibling still writing
         while the first pane's copy came home lost its last edits — and the
         panes are gated meanwhile so no viewer restarts one there. Each
         (computer, folder) comes back once however many panes shared it: one
         return per pane used to make a second branch, collide on its name and
-        leave the workspace half moved.
+        leave the workspace half moved. A pane whose return fails stays on its
+        computer and runs there again if it was running; one failure used to
+        abort the loop and strand every later pane stopped on the server (#252).
         """
-        away = [t for t in session.terminals if t.computer_id and not t.placing]
-        moved: list[str] = []
+        panes = await self._with_copy_sharers(panes)
+        back: list[Terminal] = []
+        failures: list[tuple[Terminal, str]] = []
         messages: list[str] = []
-        live: set[str] = set()
+        live: set[int] = set()
         returns: dict[tuple[str, str], remote.Return] = {}
-        for term in away:
+        for _session, term in panes:
             term.placing = "Bringing the work back to this computer…"
         try:
-            for term in away:
+            for _session, term in panes:
                 async with term.attach_lock:
                     if term.pty_id:
-                        live.add(term.key)
+                        live.add(id(term))
                         await self._stop_for_move(term, self._pool(term))
-            for term in away:
+            for session, term in panes:
                 async with term.attach_lock:
-                    message = await self._bring_back_locked(session, term, returns)
+                    where = self._computer_label(term.computer_id)
+                    try:
+                        message = await self._bring_back_locked(session, term, returns)
+                    except Exception as exc:  # noqa: BLE001 - reported per pane, the rest go on
+                        logger.warning("Agentic IDE: {} stays on {}: {}", term.name, where, exc)
+                        message = f"{term.name} stays on {where}: {exc}"
+                        failures.append((term, str(exc)))
+                    else:
+                        back.append(term)
                     term.placing = ""
-                    if term.key in live:
+                    if id(term) in live:
                         await self._restart_in_place(session, term)
-                moved.append(term.key)
                 if message and message not in messages:
                     messages.append(message)
         finally:
-            for term in away:
+            for _session, term in panes:
                 term.placing = ""
             await self._persist()
-        return {"moved": moved, "messages": messages}
+        return back, failures, messages
+
+    async def _with_copy_sharers(
+        self, panes: list[tuple[Session, Terminal]]
+    ) -> list[tuple[Session, Terminal]]:
+        """``panes`` plus every other remote pane that works in one of their copies."""
+        copies: set[tuple[str, str]] = set()
+        for session, term in panes:
+            key, _top = await self._copy_root(term.cwd(session.folder))
+            copies.add((term.computer_id, key))
+        chosen = {id(term) for _session, term in panes}
+        result = list(panes)
+        for session in list(self._sessions.values()):
+            for other in list(session.terminals):
+                if id(other) in chosen or not other.remote_folder or other.placing:
+                    continue
+                key, _top = await self._copy_root(other.cwd(session.folder))
+                if (other.computer_id, key) in copies:
+                    result.append((session, other))
+                    chosen.add(id(other))
+        return result
 
     async def _stop_for_move(self, term: Terminal, pool: Any) -> None:
         """End the pane's current process and wait until its exit is recorded."""
@@ -5695,8 +5773,24 @@ class Registry:
 
         Caller holds the copy lock for ``key``. The same repo seen from another
         subfolder maps to the matching subfolder of the copy.
+
+        A copy another pane made earlier is joined only while this folder is
+        still what that copy started from: after local edits it would run on
+        old code without anyone saying so, and a refresh would rewrite files
+        under the agent working there (#253).
         """
-        known = placements.get(key) or await self._sibling_placement(computer_id, key, exclude)
+        known = placements.get(key)
+        if known is None:
+            known = await self._sibling_placement(computer_id, key, exclude)
+            snapshot = known[0].offload_snapshot if known is not None else None
+            if top is not None and snapshot and await asyncio.to_thread(
+                _changed_since, top, snapshot
+            ):
+                raise remote.MoveError(
+                    f"This folder changed since the copy on {self._computer_label(computer_id)} "
+                    "was made, and another pane still works in that copy. Bring that pane "
+                    "back first, then move this one."
+                )
         if known is None:
             placement = await remote.push_code(pool, Path(local))
             placements[key] = (placement, local)
@@ -5895,13 +5989,12 @@ class Registry:
             effort=source.effort,
             permission_mode=source.permission_mode,
             folder=folder,
+            # Born a fork: a pane for a computer opens its ``placing`` gate
+            # and persists before add_terminal returns, so a viewer can spawn
+            # it inside that await (#254).
+            fork_from=source.resume,
+            branch=branch,
         )
-        # No await between the pane's creation and these, so no viewer can
-        # attach (and spawn) before the pane knows it is a fork. (A pane for
-        # a computer was gated by ``placing`` until add_terminal returned.)
-        term.branch = branch
-        term.fork_from = source.resume
-        await self._persist()
         logger.info(
             "Agentic IDE: forked {} into {}{}",
             source.name,

@@ -4,7 +4,7 @@ A FakeAckProvider implements the :class:`AbstractAckProvider` protocol
 without any network or SDK dependency. Tests can script its responses
 per-utterance (or globally) and inspect call recordings afterwards.
 
-Per project policy (CLAUDE.md "Testing-Konventionen"), tests use Fakes
+Per project policy (AGENTS.md "Testing-Konventionen"), tests use Fakes
 rather than ``unittest.mock`` for protocol-level dependencies. The
 Fakes live here so they can be shared across the integration suite
 without duplication.

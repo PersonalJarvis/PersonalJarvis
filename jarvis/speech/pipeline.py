@@ -494,7 +494,7 @@ _REALTIME_UNAVAILABLE_PHRASE: dict[str, str] = {
 # Honest, cause-aware messaging (live complaint 2026-06-30). The old single
 # phrase ("Sorry, I couldn't finish the answer in time.") explained NOTHING:
 # a slow MCP/plugin tool hung ~35 s, the turn timed out, and Jarvis apologised
-# for "taking too long" with no reason. Honesty over guessing (CLAUDE.md §1.4):
+# for "taking too long" with no reason. Honesty over guessing (AGENTS.md §1.4):
 #   • TOOL-STALL — the turn was beheaded mid-tool-loop (no first audio frame,
 #     i.e. the assistant was blocked waiting on a tool/stage that never
 #     returned) OR a desktop (computer_use) tool was demonstrably active when
@@ -506,7 +506,7 @@ _REALTIME_UNAVAILABLE_PHRASE: dict[str, str] = {
 # Both are short, TTS-clean (``_speak`` does not scrub — no em-dash, two short
 # sentences), and carry all supported locales (de/en/es). String-only: NO LLM
 # call in this timeout/scrub path (AP-11). Resolved through the ONE output-
-# language decision via ``_resolve_timeout_phrase`` below (CLAUDE.md §1 — no
+# language decision via ``_resolve_timeout_phrase`` below (AGENTS.md §1 — no
 # per-layer language re-derivation).
 _TIMEOUT_TOOL_STALL_PHRASE: dict[str, str] = {
     "de": (
@@ -594,7 +594,7 @@ def _resolve_timeout_phrase(site: str, lang: str, *, tool_active: bool) -> str:
     """Pick the honest, cause-aware timeout phrase for ``site``.
 
     Resolves language through the ONE shared decision (``_phrase_lang``) — never
-    a per-layer re-derivation (CLAUDE.md §1). String-only, no LLM call (AP-11).
+    a per-layer re-derivation (AGENTS.md §1). String-only, no LLM call (AP-11).
     Names a tool cause when the turn was beheaded mid-tool-loop (no first frame)
     or a desktop tool was active; otherwise honestly admits no answer was found.
     """
@@ -1150,7 +1150,7 @@ def resolve_dictation_language(*, pinned: str, reported: str, text: str) -> str:
     text while the setting said the cleanup was on.
 
     Everything resolves through the canonical resolver's helpers — no layer
-    invents its own detection (CLAUDE.md §1).
+    invents its own detection (AGENTS.md §1).
     """
     pin = str(pinned or "").strip().lower()
     if pin not in ("", "auto"):
@@ -1161,7 +1161,7 @@ def resolve_dictation_language(*, pinned: str, reported: str, text: str) -> str:
 
         # Points 2 and 3 above live in the canonical resolver, which the voice
         # lane's transcript filter reads too — one decision, not two copies
-        # that drift the first time either is touched (CLAUDE.md §1).
+        # that drift the first time either is touched (AGENTS.md §1).
         code = resolve_transcript_language(tag, text)
         if code != "unknown":
             if code != normalize_language_tag(tag):
@@ -10729,7 +10729,7 @@ class SpeechPipeline:
         **Every refusal is announced**, not just logged: each one publishes a
         ``DictationRefused`` carrying a stable reason token and a finished
         English sentence. Before that, a refused shortcut produced a
-        ``log.info`` in a file the desktop app cannot display (CLAUDE.md §9), so
+        ``log.info`` in a file the desktop app cannot display (AGENTS.md §9), so
         the key simply did nothing and the user had no way to learn why. The
         boolean return is unchanged, so every existing caller (hotkey edge, WS
         handler, REST route) keeps working; ``True`` from the handover path
@@ -15416,7 +15416,7 @@ class SpeechPipeline:
                     self._buffer_is_complete = True
                     self._schedule_completion_timeout(lang, is_complete=True)
                     return None
-            # Precision-over-recall + latency doctrine (CLAUDE.md intent→ACK
+            # Precision-over-recall + latency doctrine (AGENTS.md intent→ACK
             # budget): a COMPLETE utterance goes STRAIGHT to the brain — no
             # buffering, no grace-hold, no added latency. completion.py's own
             # contract is "a complete prompt must NEVER be held back".
@@ -16343,7 +16343,7 @@ class SpeechPipeline:
                 return
             cleaned = scrubbed.cleaned.strip()
             if not cleaned:
-                # Never swallow output silently (CLAUDE.md §7): the answer
+                # Never swallow output silently (AGENTS.md §7): the answer
                 # loses a clause here, so the drop has to be visible.
                 dropped_sentences.append(sentence)
                 log.warning(
@@ -17482,7 +17482,7 @@ class SpeechPipeline:
         English text drove the whole chain English because the pipeline
         re-derived language from text/STT alone). ``auto``/unset mirrors the
         detected input language. Single source for the whole pipeline, per
-        CLAUDE.md "Runtime Output Language". The live pin lives on the
+        AGENTS.md "Runtime Output Language". The live pin lives on the
         BrainManager (hot-reloaded via ``set_reply_language``); the config is
         only consulted when the brain callback does not expose the pin (tests /
         mock brains).

@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import asyncssh
@@ -97,11 +98,14 @@ class _Server(asyncssh.SSHServer):
 class FakeSshServer:
     """Start with :meth:`start`, stop with :meth:`stop`; ``port`` is random."""
 
-    def __init__(self, state: FakeSshState | None = None) -> None:
+    def __init__(self, state: FakeSshState | None = None, *, sftp_root: Path | None = None) -> None:
         self.state = state or FakeSshState()
         self.host_key = asyncssh.generate_private_key("ssh-ed25519")
         self._acceptor: Any = None
         self.port = 0
+        #: A folder that plays the remote home over SFTP (relative paths land
+        #: in it); ``None`` serves no SFTP at all.
+        self.sftp_root = sftp_root
 
     async def _process(self, process: asyncssh.SSHServerProcess) -> None:
         command = process.command or ""
@@ -126,12 +130,18 @@ class FakeSshServer:
         process.exit(0)
 
     async def start(self, port: int = 0) -> None:
+        root = self.sftp_root
         self._acceptor = await asyncssh.listen(
             "127.0.0.1",
             port,
             server_host_keys=[self.host_key],
             server_factory=lambda: _Server(self.state),
             process_factory=self._process,
+            sftp_factory=(
+                (lambda chan: asyncssh.SFTPServer(chan, chroot=str(root)))
+                if root is not None
+                else None
+            ),
         )
         self.port = self._acceptor.sockets[0].getsockname()[1]
 

@@ -307,6 +307,27 @@ export function whenTerminalFontReady(
   });
 }
 
+/**
+ * Start fetching the terminal's display faces before any pane exists.
+ *
+ * A face nothing has drawn with yet is only loaded once asked for, so the
+ * first pane a screen opens pays for the fetch inside `whenTerminalFontReady`
+ * — a few hundred milliseconds on a busy page, and all of it between the click
+ * and the agent's screen. A surface that is about to offer panes (the office's
+ * coding floor) calls this ahead of time. Fire-and-forget, never throws.
+ */
+export function warmTerminalFont(fontSize: number): void {
+  const fonts = browserFonts();
+  if (!fonts) return;
+  for (const weight of WEIGHTS) {
+    try {
+      void fonts.load(`${weight} ${fontSize}px ${DISPLAY_FAMILY}`).catch(() => undefined);
+    } catch {
+      /* a family the engine refuses to parse — the pane's own bounded wait covers it */
+    }
+  }
+}
+
 function browserFonts(): FontFaceSet | null {
   if (typeof document === "undefined") return null;
   return document.fonts ?? null;

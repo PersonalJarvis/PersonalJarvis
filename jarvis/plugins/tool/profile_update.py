@@ -43,7 +43,7 @@ log = logging.getLogger(__name__)
 
 # Canonical field allow-list per cluster. The tool refuses fields outside this
 # map so the brain cannot write fields the Knowledge matrix never renders (that
-# would be silent multi-layer enum drift — BUG-008 class, CLAUDE.md §recurring
+# would be silent multi-layer enum drift — BUG-008 class, AGENTS.md §recurring
 # bugs #2). It must stay BYTE-FOR-BYTE in sync with ProfileView.tsx's
 # CLUSTER_FIELD_KEYS (the UI is the authority for what is visible). The parity is
 # pinned by test_profile_update.py::test_canonical_fields_match_matrix_ui.

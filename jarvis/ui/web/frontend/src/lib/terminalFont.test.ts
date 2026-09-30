@@ -18,6 +18,7 @@ import {
   alignTerminalCells,
   syncTerminalFont,
   terminalFontSettled,
+  warmTerminalFont,
   whenTerminalFontReady,
 } from "./terminalFont";
 
@@ -486,5 +487,24 @@ describe("whenTerminalFontReady", () => {
     });
     await Promise.resolve();
     expect(resolved).toBe(true);
+  });
+});
+
+describe("warmTerminalFont", () => {
+  it("asks for every weight a pane draws with, ahead of any pane", () => {
+    const load = vi.fn(() => Promise.resolve([]));
+    const original = Object.getOwnPropertyDescriptor(document, "fonts");
+    Object.defineProperty(document, "fonts", { configurable: true, value: { load } });
+    try {
+      warmTerminalFont(15);
+      const specs = load.mock.calls.map((call) => String((call as unknown[])[0]));
+      expect(specs).toEqual([
+        expect.stringMatching(/^500 15px "JetBrains Mono"$/),
+        expect.stringMatching(/^700 15px "JetBrains Mono"$/),
+      ]);
+    } finally {
+      if (original) Object.defineProperty(document, "fonts", original);
+      else delete (document as unknown as { fonts?: unknown }).fonts;
+    }
   });
 });

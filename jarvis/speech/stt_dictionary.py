@@ -22,7 +22,7 @@ fivefold "Agentic IDE" on ``text`` into one, which passes for a sentence, while
 the dictation lane transcribes from ``raw_text``, where all five still stand
 (BUG-185, second landing 2026-08-27).
 
-Design constraints (see the plan file and CLAUDE.md):
+Design constraints (see the plan file and AGENTS.md):
 
 - Pure string ops — regex + a bounded edit distance. NO LLM call, NO network:
   this runs on the voice hot path for every utterance (AP-11 doctrine).

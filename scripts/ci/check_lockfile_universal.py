@@ -139,7 +139,7 @@ def main() -> int:
         return 0
 
     print("FAIL: requirements.txt is not safe for an arbitrary, no-GPU downloader.")
-    print("      The base lockfile must be `--universal` and GPU-free (CLAUDE.md §3, AP-23).")
+    print("      The base lockfile must be `--universal` and GPU-free (AGENTS.md §3, AP-23).")
     print("      GPU/local-voice wheels belong only in the opt-in [local-voice] extra.")
     print()
     for p in problems:

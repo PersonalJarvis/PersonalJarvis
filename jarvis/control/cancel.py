@@ -13,7 +13,7 @@ Three components:
 
 3. **KillSwitch** — aggregator. Holds all active tokens, subscribed to
    `KillRequested` on one or more buses (multi-bus support for the
-   two-bus problem described in CLAUDE.md).
+   two-bus problem described in AGENTS.md).
 
 Usage:
 
@@ -123,7 +123,7 @@ class KillSwitch:
     cancels all known tokens with `reason='kill_switch'`.
 
     Two-bus pattern (ADR-0004): `bind(bus)` may be called multiple times —
-    each bus is subscribed. This addresses the case described in CLAUDE.md
+    each bus is subscribed. This addresses the case described in AGENTS.md
     where the `DesktopApp` integration creates a second bus (the
     Brain-Factory bus).
     """
@@ -200,7 +200,7 @@ class KillSwitch:
         """Re-publish a `KillRequested` event onto another bus.
 
         Useful when `DesktopApp._run_backend` starts a second bus
-        (Brain-Factory bus, see CLAUDE.md) and the KillSwitch is subscribed
+        (Brain-Factory bus, see AGENTS.md) and the KillSwitch is subscribed
         only on the UI bus. Call once at startup:
 
             async def _forward(ev):

@@ -1,9 +1,9 @@
 # Architecture & product overview
 
-This file holds the **reference detail** that used to live inline in `CLAUDE.md`:
+This file holds the **reference detail** that used to live inline in `AGENTS.md`:
 the phase status table, the full layer model, the deep architecture subsections,
 the optimistic-execution decisions, the cross-platform desktop ports, and the
-platform/brand/wake specifics. `CLAUDE.md` keeps only the binding rules an agent
+platform/brand/wake specifics. `AGENTS.md` keeps only the binding rules an agent
 must respect on every change and links here for the depth.
 
 Status drift moves fast. The filesystem + `git log -- <module>` is the source of

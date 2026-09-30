@@ -311,7 +311,7 @@ export const MAP_PAINT = {
 
 const FURNITURE_PAINT: Partial<Record<FurnitureKind, string>> = {
   couch: "#4a5366", coffeeTable: "#c89f74", meetingTable: "#c89f74", teamBoard: "#f4f4f0", receptionDesk: "#f2eee6",
-  kiosk: "#3a3f4b", lockers: "#5fa8a0", mirror: "#d6ecf8", coffeeBar: "#8a6240", waterCooler: "#6fb7ea", arcade: "#6a58b0",
+  lockers: "#5fa8a0", mirror: "#d6ecf8", coffeeBar: "#8a6240", waterCooler: "#6fb7ea", arcade: "#6a58b0",
   beanbag: "#e27d60", bookshelf: "#8a6240", plant: MAP_PAINT.plant, rug: MAP_PAINT.rug, elevator: "#c9ced6",
   breakSofa: "#d8cdb9", breakSofaCorner: "#d8cdb9", breakTable: "#d6b98f", breakRug: "#e2c9a8", breakBookcase: "#a88660",
   readingNook: "#93a58a", foosball: "#3f7d4a", breakPlant: MAP_PAINT.plant, arcadeMat: "#2a2548",
@@ -323,6 +323,7 @@ const FURNITURE_PAINT: Partial<Record<FurnitureKind, string>> = {
   roundRug: "#e6ddca",
   brandWall: "#d2b286", agentTotem: "#2b2f33", lobbySofa: "#efe9de", lobbyArmchair: "#a8653a", lobbyTable: "#e7ddcc",
   sideTable: "#f1eeea", lobbyLamp: "#c7a15e", oliveTree: MAP_PAINT.plant, awardCase: "#d2b286", entranceMat: "#3b3a37", lobbyRug: "#e8dfcf",
+  spawnPad: "#d8c08c", spawnTerminal: "#2b2f33",
 };
 
 export const STATE_RING: Record<MinimapAgentState, string> = {
@@ -330,12 +331,13 @@ export const STATE_RING: Record<MinimapAgentState, string> = {
 };
 
 /** Checkpoint icon per checkpoint kind; the same pictures as the 3D tokens (CheckpointMarker). */
-export const CHECKPOINT_ICON_KEYS: Record<CheckpointKind, "plus" | "list" | "team" | "shirt" | "star" | "coffee" | "elevator" | "target"> = {
-  create: "plus", manage: "list", team: "team", wardrobe: "shirt", lead: "star", break: "coffee", elevator: "elevator", mission: "target",
+export const CHECKPOINT_ICON_KEYS: Record<CheckpointKind, "spawn" | "plus" | "list" | "team" | "shirt" | "star" | "coffee" | "elevator" | "target"> = {
+  spawn: "spawn", launch: "spawn", create: "plus", manage: "list", team: "team", wardrobe: "shirt", lead: "star", break: "coffee", elevator: "elevator", mission: "target",
 };
 
 /** Stroke-only icons in a 24 × 24 box; kept in sync with CheckpointMarker's paths. */
 const ICON_PATHS: Record<(typeof CHECKPOINT_ICON_KEYS)[CheckpointKind], string> = {
+  spawn: "M12 8.5v7M8.5 12h7M5.2 7.5A8 8 0 0 1 18.8 7.5M18.8 16.5A8 8 0 0 1 5.2 16.5",
   plus: "M12 5v14M5 12h14",
   list: "M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01",
   team: "M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5M16.5 11a2.5 2.5 0 1 0 0-5M18 14.5c2 .6 3.5 2.4 3.5 5",
@@ -473,11 +475,11 @@ export function drawFloorArt(ctx: Ctx, layout: OfficeLayout, t: MapTransform, ar
     for (const item of layout.furniture) {
       const isRug = item.kind === "rug" || item.kind === "executiveRug" || item.kind === "teamRug"
         || item.kind === "breakRug" || item.kind === "arcadeMat" || item.kind === "lobbyRug"
-        || item.kind === "entranceMat" || item.kind === "roundRug";
+        || item.kind === "entranceMat" || item.kind === "roundRug" || item.kind === "spawnPad";
       if ((pass === "rug") !== isRug) continue;
       const colour = FURNITURE_PAINT[item.kind] ?? MAP_PAINT.furniture;
       const fp = footprint(item);
-      if (item.kind === "plant" || item.kind === "designerPlant" || item.kind === "breakPlant" || item.kind === "beanbag") {
+      if (item.kind === "plant" || item.kind === "designerPlant" || item.kind === "breakPlant" || item.kind === "beanbag" || item.kind === "spawnPad") {
         const c = worldToMap(t, item);
         ctx.beginPath();
         ctx.arc(c.x, c.y, Math.max(1.2, (FURNITURE_SIZE[item.kind].w / 2) * t.scale * 0.85), 0, Math.PI * 2);

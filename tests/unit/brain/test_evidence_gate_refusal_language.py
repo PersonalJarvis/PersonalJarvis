@@ -10,7 +10,7 @@ choose the refusal language. Two consequences:
   back to English.
 
 The refusal is user-facing speech, so it must follow the ONE resolver like
-every other layer (CLAUDE.md §1). ``check_evidence_domain`` now takes the
+every other layer (AGENTS.md §1). ``check_evidence_domain`` now takes the
 already-resolved ``language``; the utterance is only consulted when a caller
 omits it.
 """
@@ -45,7 +45,7 @@ def _refuse(text, *, language=""):
 
 
 def test_every_locale_has_a_complete_refusal_table():
-    """All locales are equal: no table may lag another (CLAUDE.md §1)."""
+    """All locales are equal: no table may lag another (AGENTS.md §1)."""
     assert set(_REFUSAL_ES) == set(_REFUSAL_DE) == set(_REFUSAL_EN)
     assert all(text.strip() for text in _REFUSAL_ES.values())
 

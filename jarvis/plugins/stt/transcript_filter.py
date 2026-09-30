@@ -153,7 +153,7 @@ _WORD_RE = re.compile(r"\w+", re.UNICODE)
 
 # i18n-allow: the table below is speech-recognition vocabulary — the literal
 # tokens a matcher must contain to recognise a mis-transcription. Matching
-# data, not prose (CLAUDE.md §1, category 3).
+# data, not prose (AGENTS.md §1, category 3).
 
 #: Known mis-transcriptions, per language. Replacement is whole-word and
 #: case-insensitive; the replacement inherits nothing from the source casing.
@@ -296,7 +296,7 @@ def resolve_language(text: str, language: str | None) -> str | None:
 
     So the decision goes through the canonical resolver
     (:func:`jarvis.core.turn_language.resolve_transcript_language`) — the same
-    one the dictation lane uses — rather than being re-derived here (CLAUDE.md
+    one the dictation lane uses — rather than being re-derived here (AGENTS.md
     §1: no layer re-derives the language). Fails soft: if that module cannot be
     imported, the provider's tag is normalised on its own, which is the
     behaviour this function replaced.

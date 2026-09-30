@@ -92,4 +92,4 @@ All five must be demonstrably true in code (referenced by line number) before th
 
 ## Pre-existing State
 
-The parent repository (Personal Jarvis) may carry unrelated in-progress working-tree changes. That state is **grandfathered** per the parent's CLAUDE.md doctrine: skillbook commits never touch those files, and `git status` may continue to show them as modified/deleted until the parent team commits or discards them. The "git status clean" criterion in the goal applies to the skillbook scope: no uncommitted skillbook-owned files at completion.
+The parent repository (Personal Jarvis) may carry unrelated in-progress working-tree changes. That state is **grandfathered** per the parent's AGENTS.md doctrine: skillbook commits never touch those files, and `git status` may continue to show them as modified/deleted until the parent team commits or discards them. The "git status clean" criterion in the goal applies to the skillbook scope: no uncommitted skillbook-owned files at completion.

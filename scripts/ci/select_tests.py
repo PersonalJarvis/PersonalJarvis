@@ -44,7 +44,7 @@ _EVERYTHING_FILES = {
     "uv.lock",
     "jarvis/__init__.py",
 }
-# The contract guards CLAUDE.md names: cheap, and they pin the invariants a
+# The contract guards AGENTS.md names: cheap, and they pin the invariants a
 # change anywhere in jarvis/ can break without importing them by name.
 SMOKE = (
     "tests/unit/brain/test_routing.py",

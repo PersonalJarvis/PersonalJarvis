@@ -7,7 +7,7 @@ remembered that, so every retry re-picked gemini — the healthy openrouter key
 one slot further in the SAME loop was never reached. This is the generic
 API-family mirror of ``claude_quota_state`` / ``codex_quota_state``, keyed by
 provider slug and FINGERPRINTED: saving a NEW key in the API-Keys view lifts
-the cooldown instantly (in-app recoverability, CLAUDE.md §3), while the same
+the cooldown instantly (in-app recoverability, AGENTS.md §3), while the same
 dead key stays skipped until the cooldown self-expires.
 """
 from __future__ import annotations

@@ -218,7 +218,7 @@ _META_PREFIX_RE: Final[re.Pattern[str]] = re.compile(
 # i18n-allow: the two non-English tables below are language-frequency DATA — the
 # literal German and Spanish tokens a rarity classifier must contain in order to
 # decide that a German or Spanish word is ordinary rather than a proper noun.
-# Matching data, not prose (CLAUDE.md §1, category 3), exactly like the filler
+# Matching data, not prose (AGENTS.md §1, category 3), exactly like the filler
 # tables in jarvis/dictation/cleanup.py.
 #
 # Only tokens of _RARE_MIN_CHARS or more are ever looked up, so short function

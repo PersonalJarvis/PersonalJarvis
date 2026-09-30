@@ -68,7 +68,7 @@ _TOKEN_RE = re.compile(r"\b[\w']+\b", re.UNICODE)
 
 # Back-compat re-export. This module used to own a private de/en-only
 # top-100-word heuristic (``_TOP_DE`` / ``_TOP_EN``), which is exactly the
-# per-layer language re-derivation CLAUDE.md §1 forbids: it scored the German
+# per-layer language re-derivation AGENTS.md §1 forbids: it scored the German
 # ack "Moment, in Ordnung." as English (the bare token "in" was in the English
 # set) and dropped it, and it classified every Spanish ack containing "no" as
 # English and dropped that too — the user simply heard nothing. The tables are
@@ -326,7 +326,7 @@ class AckGenerator:
 
         # (i) output-language sanity check. ``language`` is ALREADY this turn's
         # resolved output language (``resolve_output_language``, resolved once
-        # by the pipeline) — this layer must never re-derive it (CLAUDE.md §1).
+        # by the pipeline) — this layer must never re-derive it (AGENTS.md §1).
         # ``validate_output_language`` blocks only on a high-confidence
         # mismatch; short, ambiguous, or name-only acks come back
         # ``indeterminate`` and PASS. Dropping user-facing output on a language

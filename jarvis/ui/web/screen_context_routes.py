@@ -12,7 +12,7 @@ Endpoints (mounted by the WebServer in ``_build_app()``):
     PUT    /api/screen-context/settings        → change one or more keys.
 
 Why REST and not only an internal service: under the CLI-first contract
-(CLAUDE.md §5) a capability that exists only inside the voice path is not
+(AGENTS.md §5) a capability that exists only inside the voice path is not
 finished. Mounting this router makes every action a
 ``jarvis api screen-context <op>`` command, which is also how the feature is
 verified on a machine with no display — ``status`` answers honestly instead of

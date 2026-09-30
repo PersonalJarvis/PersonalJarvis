@@ -676,7 +676,7 @@ def test_the_default_dir_is_recognised_without_a_hardcoded_separator(
     """Built from Path.home(), so the home fallback is not Windows-only.
 
     A hand-written "~/.claude" string is a per-OS guess about the separator;
-    this repo ships the same behaviour on macOS and Linux (CLAUDE.md §3).
+    this repo ships the same behaviour on macOS and Linux (AGENTS.md §3).
     """
     home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))

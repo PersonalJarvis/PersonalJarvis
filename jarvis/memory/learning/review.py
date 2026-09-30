@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Final
@@ -278,11 +279,24 @@ class ModelReviewer:
     subscription is connected. A review is background work nobody waits on.
     """
 
-    def __init__(self, config: Any, *, registry: Any = None) -> None:
+    def __init__(
+        self,
+        config: Any,
+        *,
+        registry: Any = None,
+        system: Callable[[], str] = system_prompt,
+        parser: Callable[[str], Any] = parse,
+        max_tokens: int = REVIEW_MAX_TOKENS,
+        label: str = "JarvisLearningReview",
+    ) -> None:
         self._config = config
         self._registry = registry
+        self._system = system
+        self._parse = parser
+        self._max_tokens = max_tokens
+        self._label = label
 
-    async def __call__(self, prompt: str) -> list[dict[str, Any]] | None:
+    async def __call__(self, prompt: str) -> Any | None:
         from jarvis.brain.provider_registry import BrainProviderRegistry
         from jarvis.brain.streaming import aggregate
         from jarvis.core.protocols import BrainMessage, BrainRequest
@@ -317,16 +331,16 @@ class ModelReviewer:
             log.info("learning review: no reachable provider")
             return None
         request = BrainRequest(
-            system=system_prompt(),
+            system=self._system(),
             messages=(BrainMessage(role="user", content=prompt),),
             temperature=0.1,
-            max_tokens=REVIEW_MAX_TOKENS,
+            max_tokens=self._max_tokens,
             stream=True,
         )
 
         def _check(agg: Any) -> str | None:
             try:
-                parse(agg.text)
+                self._parse(agg.text)
             except (ValueError, json.JSONDecodeError) as exc:  # reported as the returned reason
                 return f"malformed review: {exc}"
             return None
@@ -336,7 +350,7 @@ class ModelReviewer:
             chain=chain,
             request=request,
             timeout_s=float(cfg.timeout_s),
-            label="JarvisLearningReview",
+            label=self._label,
             aggregate=aggregate,
             validate=_check,
             record_health=False,
@@ -346,4 +360,4 @@ class ModelReviewer:
             return None
         agg, provider = result
         log.info("learning review answered by %s", provider)
-        return parse(agg.text)
+        return self._parse(agg.text)

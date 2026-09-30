@@ -26,7 +26,7 @@ import sys
 import time
 from pathlib import Path
 
-# Windows cp1252 stdout would mangle the ✓/µ glyphs below (CLAUDE.md Unicode rule).
+# Windows cp1252 stdout would mangle the ✓/µ glyphs below (AGENTS.md Unicode rule).
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
 

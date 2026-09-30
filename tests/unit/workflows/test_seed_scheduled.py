@@ -72,7 +72,7 @@ def test_the_morning_briefing_needs_no_credentials() -> None:
 
 def test_the_morning_briefing_pins_no_language() -> None:
     """The one resolver decides the output language, not the seed
-    (CLAUDE.md §1). This seed used to hardcode German for every downloader."""
+    (AGENTS.md §1). This seed used to hardcode German for every downloader."""
     briefing = _seed("Morning Briefing")
     speak = next(s for s in briefing.steps if isinstance(s, SpeakStep))
     assert speak.language == "auto"

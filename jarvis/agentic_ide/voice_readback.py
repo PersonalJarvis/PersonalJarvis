@@ -183,10 +183,16 @@ def final_report(term: Any) -> str:
 
     Only the answer to the newest user message counts: a transcript whose last
     turn is the user's own has not answered yet.
+
+    A pane on a connected computer writes its transcript THERE; the local copy
+    stopped at the offload and ends with an older job's answer (#250). Such a
+    pane reports ``""`` and the readback falls back to its live screen.
     """
     from . import agent_transcript
     from .session import account_home
 
+    if getattr(term, "computer_id", ""):
+        return ""
     handle = getattr(term, "resume", None)
     agent = str(getattr(term, "agent", "") or "")
     if handle is None or not agent_transcript.can_read(agent):

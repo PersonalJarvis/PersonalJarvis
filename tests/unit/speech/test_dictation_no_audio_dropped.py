@@ -294,7 +294,7 @@ async def test_fillers_are_removed_even_when_the_provider_names_no_language(
 
     pipe._record_dictation = _no_history  # type: ignore[method-assign]
 
-    # The German hesitation sounds ARE the input under test (CLAUDE.md §1 #4):
+    # The German hesitation sounds ARE the input under test (AGENTS.md §1 #4):
     # the filler rules are per-language, so proving they ran needs a sentence
     # in a language that has rules.
     spoken = "Also ähm ich wollte äh kurz Bescheid sagen"  # i18n-allow: input under test

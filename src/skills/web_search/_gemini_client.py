@@ -56,7 +56,7 @@ class DefaultGeminiClient:
     The default model tracks the Personal Jarvis main-brain default
     (``gemini-3.5-flash`` since 2026-05-20, see ``jarvis.toml:187``). Phase 2
     of ADR-021 replaces this hardcode with a read from
-    ``cfg.brain.providers.gemini.flash_model`` — the CLAUDE.md rule
+    ``cfg.brain.providers.gemini.flash_model`` — the AGENTS.md rule
     "NIEMALS hardcoded Flash" applies once the skill is wired into Jarvis.
     """
 

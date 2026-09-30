@@ -219,7 +219,7 @@ _REFUSAL_EN: dict[str, str] = {
 _REFUSAL_EN_FALLBACK = "I have no data access for that right now."
 
 # Spoken Spanish voice replies (TTS-safe, deterministic). All locales are
-# equal (CLAUDE.md §1): a Spanish-speaking user gets the refusal in Spanish,
+# equal (AGENTS.md §1): a Spanish-speaking user gets the refusal in Spanish,
 # not the English table because no Spanish one existed.
 _REFUSAL_ES: dict[str, str] = {
     "calendar": "Ahora mismo no tengo acceso a tu calendario.",  # i18n-allow
@@ -245,7 +245,7 @@ def _refusal_language(resolved: object, text: str) -> str:
     """Which language the deterministic refusal is spoken in.
 
     The turn's ALREADY-resolved output language wins outright — this module
-    must never re-derive it (CLAUDE.md §1: one resolver,
+    must never re-derive it (AGENTS.md §1: one resolver,
     ``resolve_output_language``, decides for all layers). It used to sniff the
     utterance with a private de/en-only heuristic, so an explicit
     ``brain.reply_language`` pin was ignored: a Spanish-pinned user asking in

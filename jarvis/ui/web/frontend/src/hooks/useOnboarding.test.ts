@@ -83,3 +83,21 @@ it("complete() surfaces a failed completion (throws, no event)", async () => {
 
   window.removeEventListener("jarvis:onboarding-changed", onChanged);
 });
+
+it("records the finished tour and never throws on failure", async () => {
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation((url: string) => {
+      calls.push(url);
+      if (url === "/api/onboarding/tour-complete") return Promise.reject(new Error("down"));
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(STATE) });
+    }),
+  );
+  const { result } = renderHook(() => useOnboarding());
+  await waitFor(() => expect(result.current.state).not.toBeNull());
+  await act(async () => {
+    await result.current.completeTour();
+  });
+  expect(calls).toContain("/api/onboarding/tour-complete");
+});

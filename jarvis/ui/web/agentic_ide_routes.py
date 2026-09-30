@@ -4848,7 +4848,7 @@ def _tool_model_option() -> PromptWriterOption:
         )
     # Plain ASCII separator: this label is rendered in the desktop UI but also
     # printed by `jarvis api agentic-ide prompt-writer`, and a terminal's
-    # encoding is not ours to assume (CLAUDE.md §5, Windows defaults to cp1252).
+    # encoding is not ours to assume (AGENTS.md §5, Windows defaults to cp1252).
     detail = f"{_provider_label(provider)}"
     if model:
         detail = f"{detail} - {model}"

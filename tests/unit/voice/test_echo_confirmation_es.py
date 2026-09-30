@@ -1,6 +1,6 @@
 """Spanish coverage for ``echo_confirmation.classify_response``.
 
-Runtime Output Language doctrine (CLAUDE.md): the yes/no classifier must cover
+Runtime Output Language doctrine (AGENTS.md): the yes/no classifier must cover
 de/en/es. Before this, ``language="es"`` silently fell into the German branch, so
 a Spanish "sí"/"no" was misclassified as "unknown" — an es-pinned user could not
 confirm or veto a consequential action by voice. Veto keeps priority over confirm

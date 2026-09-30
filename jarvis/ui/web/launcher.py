@@ -19,6 +19,7 @@ import os
 import re
 import signal
 import sys
+import threading
 import time
 
 from jarvis.core.branding import CONFIG_FILE_NAME
@@ -1135,6 +1136,45 @@ def _health_answers(port: int, *, timeout: float = 2.0) -> bool:
     return response.status_code == 200
 
 
+def _holder_alive(pid: int) -> bool:
+    """False only when ``pid`` has certainly exited; an unknown answer is True.
+
+    Feeds the watcher that closes the "already running" question once the old
+    instance is gone, so a probe that cannot see the process must never claim
+    it left.
+    """
+    try:
+        import psutil
+    except Exception:  # noqa: BLE001 — cannot tell → keep asking, never assume
+        return True
+    try:
+        return psutil.Process(int(pid)).status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:  # the recorded owner is gone: the answer is "not alive"
+        return False
+    except Exception:  # noqa: BLE001 — AccessDenied and friends: it exists
+        return True
+
+
+def _take_lock_after_holder_exit(recheck, sleep, *, attempts: int = 10, delay: float = 0.5):
+    """Take the lock a holder left behind by exiting; ``None`` when it stays held.
+
+    The lock can outlive the process by a moment (the OS releases the handle
+    and the port on its own schedule), so a few short retries separate that
+    from a genuinely taken lock.
+    """
+    for attempt in range(attempts):
+        handled, lock = recheck()
+        if handled:
+            return lock
+        if attempt < attempts - 1:
+            sleep(delay)
+    _report_startup_failure(
+        f"{APP_DISPLAY_NAME} closed, but its start lock is still held. "
+        "Start the app again in a few seconds."
+    )
+    return None
+
+
 def _recover_from_already_running(
     error: Exception,
     *,
@@ -1149,6 +1189,8 @@ def _recover_from_already_running(
     booting_grace: float = 20.0,
     discover_pid=None,
     health=None,
+    holder_alive=None,
+    watch_interval: float = 1.0,
 ):
     """The lock is held. Bring the holder forward — or, with consent, evict it.
 
@@ -1171,6 +1213,10 @@ def _recover_from_already_running(
     A holder that is only a few seconds old and has no window yet (or has a
     window that has not answered health yet) is not stuck — it is still
     booting. Wait out the remaining boot grace before asking.
+
+    A holder that exits while the question is open — typically one that was
+    still quitting — closes the box by itself and this launch starts normally,
+    without a kill and without waiting for a click.
     """
     from loguru import logger
 
@@ -1339,16 +1385,46 @@ def _recover_from_already_running(
             "window that could be brought to the front. It is probably stuck.\n\n"
             "Stop that process and start fresh?"
         )
+    # The question can stay open for minutes. A holder that finishes quitting
+    # meanwhile needs no consent: close the box and start normally. On
+    # 2026-09-30 the box sat on screen for almost five minutes after the old
+    # instance had exited, and the app only started when the user clicked Yes.
+    alive = holder_alive or _holder_alive
+    holder_gone = threading.Event()
+    stop_watch = threading.Event()
+
+    def _watch_holder() -> None:
+        while not stop_watch.wait(watch_interval):
+            try:
+                still_there = bool(alive(pid))
+            except Exception:  # noqa: BLE001 — a failed probe proves nothing
+                still_there = True
+            if not still_there:
+                holder_gone.set()
+                return
+
+    threading.Thread(
+        target=_watch_holder, name="jarvis-launcher-holder-watch", daemon=True
+    ).start()
     consented = False
     try:
         consented = bool(
             ask(
                 f"{APP_DISPLAY_NAME} is already running",
                 stuck_detail,
+                dismiss=holder_gone,
             )
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("launcher: could not ask about the stuck instance: {}", exc)
+    finally:
+        stop_watch.set()
+    if holder_gone.is_set():
+        logger.info(
+            "launcher: holder pid={} exited while the question was open — starting normally",
+            pid,
+        )
+        return _take_lock_after_holder_exit(_recheck_lock, sleep)
     logger.info(
         "launcher: stuck holder pid={} — user {}",
         pid,

@@ -24,7 +24,7 @@ from jarvis.brain.wiki_relevance import should_consult_memory
 @pytest.mark.parametrize(
     "utterance",
     [
-        # de (CLAUDE.md §1, closed-list item 4 — speech input under test)
+        # de (AGENTS.md §1, closed-list item 4 — speech input under test)
         "Was soll ich heute Abend machen?",  # i18n-allow: German input under test
         "Wie komme ich am besten nach Berlin?",  # i18n-allow: German input under test
         "Hast du Ideen fuer das Wochenende?",  # i18n-allow: German input under test

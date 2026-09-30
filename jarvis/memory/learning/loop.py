@@ -82,9 +82,11 @@ class JarvisLearningLoop:
         *,
         review_every_turns: int = 30,
         idle_review_seconds: float = 300.0,
+        compactor: Reviewer | None = None,
     ) -> None:
         self.notebook = notebook
         self._reviewer = reviewer
+        self._compactor = compactor
         self._every = max(1, int(review_every_turns))
         self._idle_s = max(0.0, float(idle_review_seconds))
         self._conversations: dict[str, _Conversation] = {}
@@ -95,6 +97,7 @@ class JarvisLearningLoop:
         self._stopped = False
         #: Model calls made (diagnostics and tests).
         self.review_calls = 0
+        self.compact_calls = 0
 
     # ── wiring ───────────────────────────────────────────────────────────
 
@@ -111,7 +114,11 @@ class JarvisLearningLoop:
         ):
             bus.subscribe(event_type, handler)
             self._subscriptions.append((event_type, handler))
-        self._spawn(asyncio.to_thread(self.notebook.warm), name="jarvis-learning-warm")
+        self._spawn(self._warm_and_compact(), name="jarvis-learning-warm")
+
+    async def _warm_and_compact(self) -> None:
+        await asyncio.to_thread(self.notebook.warm)
+        await self.compact()
 
     async def stop(self, *, timeout_s: float = 5.0) -> None:
         """Detach and let running work finish briefly; explicit requests are already saved."""
@@ -238,10 +245,7 @@ class JarvisLearningLoop:
             conversation.signals[-2] = True
             conversation.unreviewed = max(conversation.unreviewed, 2)
         if request:
-            self._spawn(
-                asyncio.to_thread(self._keep_request, turn.user, request),
-                name="jarvis-learning-remember",
-            )
+            self._spawn(self._remember(turn.user, request), name="jarvis-learning-remember")
         if request == "":
             self._schedule(key, reason="remember request", force=True)
         elif conversation.unreviewed >= self._every:
@@ -348,6 +352,7 @@ class JarvisLearningLoop:
                     conversation.retry_at = 0.0
             if written:
                 log.info("learning: %d notebook change(s) from %s", written, key)
+                await self._compact_locked()
                 await asyncio.to_thread(self.notebook.warm)
             return written
 
@@ -400,10 +405,14 @@ class JarvisLearningLoop:
 
     def _keep_request(self, said: str, content: str) -> int:
         """Save an explicit remember request in the user's own words, dated."""
-        from jarvis.memory.learning.guard import refusal
+        from jarvis.memory.learning.guard import MAX_ENTRY_CHARS, refusal
         from jarvis.society.memory_books import classify
 
-        text = f"On {date.today().isoformat()} the user asked to remember: {content}"
+        prefix = f"{date.today().isoformat()} (the user's words): "
+        room = MAX_ENTRY_CHARS - len(prefix)
+        if len(content) > room:
+            content = content[: room - 1].rsplit(" ", 1)[0] + "…"
+        text = prefix + content
         if refusal(text):
             log.info("learning: explicit remember request refused by the guard")
             return 0
@@ -415,7 +424,107 @@ class JarvisLearningLoop:
             origin="user",
             evidence=said,
             source="explicit remember request",
+            # The user asked for it: a full notebook merges later, it never
+            # refuses this.
+            enforce_budget=False,
         )
+
+    async def _remember(self, said: str, content: str) -> None:
+        if await asyncio.to_thread(self._keep_request, said, content):
+            await self.compact()
+
+    # ── compaction ───────────────────────────────────────────────────────
+
+    async def compact(self, *, force: bool = False) -> int:
+        """Drop duplicates (free) and merge a notebook past its fill trigger."""
+        async with self._lock:
+            return await self._compact_locked(force=force)
+
+    async def _compact_locked(self, *, force: bool = False) -> int:
+        from jarvis.memory.learning import compact
+
+        changed = 0
+        books = await asyncio.to_thread(self.notebook.entries)
+        for target, rows in books.items():
+            for dropped, kept in compact.duplicates(rows):
+                changed += await asyncio.to_thread(
+                    self._write,
+                    target=target,
+                    operation="remove",
+                    entry_id=dropped,
+                    source=f"compaction: duplicate of {kept}",
+                )
+        if changed:
+            books = await asyncio.to_thread(self.notebook.entries)
+        if self._compactor is None:
+            return changed
+        state = await asyncio.to_thread(self.notebook.read_state)
+        now = time.time()
+        for target, (used, budget) in self.notebook.usage(books).items():
+            last = float(state.get(f"compacted:{target}", 0.0))
+            if used < budget * compact.FILL_TRIGGER:
+                continue
+            if not force and now - last < compact.COOLDOWN_S:
+                continue
+            state[f"compacted:{target}"] = now
+            await asyncio.to_thread(self.notebook.write_state, state)
+            changed += await self._merge(target, books[target], used, budget)
+        return changed
+
+    async def _merge(self, target: str, rows: list[Any], used: int, budget: int) -> int:
+        from jarvis.memory.learning import compact
+
+        prompt = compact.build_prompt(rows, target=target, used=used, budget=budget)
+        self.compact_calls += 1
+        log.info("learning: compacting %s (%d/%d chars)", target, used, budget)
+        try:
+            raw = await self._compactor(prompt) if self._compactor else None
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a failed merge leaves the notebook as it was
+            log.warning("learning: compaction failed", exc_info=True)
+            return 0
+        if not isinstance(raw, dict):
+            return 0
+        merges, outdated, rejected = compact.validate(raw, rows)
+        for why in rejected:
+            log.info("learning: rejected a compaction — %s", why)
+        texts = {e.id: e.text for e in rows}
+        changed = 0
+        for merge in merges:
+            added = await asyncio.to_thread(
+                self._write,
+                target=target,
+                operation="add",
+                text=merge.text,
+                importance=merge.importance,
+                origin="compaction",
+                evidence=", ".join(merge.sources),
+                source="compaction: merge",
+                enforce_budget=False,
+            )
+            if not added:
+                continue  # Keep the sources when the merged entry did not land.
+            changed += added
+            for source in merge.sources:
+                changed += await asyncio.to_thread(
+                    self._write,
+                    target=target,
+                    operation="remove",
+                    entry_id=source,
+                    expected=texts[source],
+                    source="compaction: merged",
+                )
+        for entry_id in outdated:
+            changed += await asyncio.to_thread(
+                self._write,
+                target=target,
+                operation="remove",
+                entry_id=entry_id,
+                expected=texts[entry_id],
+                source="compaction: outdated",
+            )
+        return changed
 
     def pending(self) -> dict[str, int]:
         """Unreviewed turns per conversation (diagnostics and tests)."""
@@ -434,6 +543,7 @@ def current_loop() -> JarvisLearningLoop | None:
 def start_learning(config: Any, bus: Any) -> JarvisLearningLoop | None:
     """Wire the loop for this process; ``None`` when it is switched off."""
     global _loop
+    from jarvis.memory.learning import compact
     from jarvis.memory.learning import notebook as notebook_module
     from jarvis.memory.learning.review import ModelReviewer
 
@@ -449,6 +559,13 @@ def start_learning(config: Any, bus: Any) -> JarvisLearningLoop | None:
         ModelReviewer(config),
         review_every_turns=cfg.review_every_turns,
         idle_review_seconds=cfg.idle_review_seconds,
+        compactor=ModelReviewer(
+            config,
+            system=compact.system_prompt,
+            parser=compact.parse,
+            max_tokens=compact.COMPACT_MAX_TOKENS,
+            label="JarvisLearningCompaction",
+        ),
     )
     _loop.start(bus)
     notebook_module.set_active(book)

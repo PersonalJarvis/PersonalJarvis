@@ -10,6 +10,7 @@ def test_reset_onboarding_clears_markers_and_keeps_foreign(tmp_path, monkeypatch
     # A foreign (non-onboarding) flag that must survive the reset.
     st._merge_state({"obsidian_setup_seen_at": "2026-01-01T00:00:00+00:00"}, state_file)
     st.mark_onboarding_complete(state_file)
+    st.mark_tour_complete(state_file)
     assert st.is_onboarding_complete(state_file) is True
 
     monkeypatch.setattr(m.cfg, "DATA_DIR", tmp_path, raising=False)
@@ -19,6 +20,8 @@ def test_reset_onboarding_clears_markers_and_keeps_foreign(tmp_path, monkeypatch
 
     assert rc == 0
     assert st.is_onboarding_complete(state_file) is False
+    # A replayed first run tours the app again.
+    assert st.get_onboarding_state(state_file)["tour_completed_at"] is None
     assert not setup_complete.exists()
     # Foreign key preserved.
     assert st.load_setup_state(state_file)["obsidian_setup_seen_at"] == "2026-01-01T00:00:00+00:00"

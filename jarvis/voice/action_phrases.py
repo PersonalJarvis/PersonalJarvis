@@ -720,7 +720,7 @@ def resolve_ambient_language() -> str:
     no user utterance to detect a language from, so the ONE resolver is fed the
     only honest inputs there are: the explicit ``brain.reply_language`` pin, and
     otherwise ``DEFAULT_LOCALE``. This layer never guesses beyond that
-    (CLAUDE.md §1 — one resolver decides, no layer re-derives). Mirrors
+    (AGENTS.md §1 — one resolver decides, no layer re-derives). Mirrors
     ``jarvis/cu/indicator/controller.py::_resolve_hint_language``, which needs
     the same answer for the same reason.
     """
@@ -929,7 +929,7 @@ def _is_speakable_observation(text: str | None) -> bool:
 
 
 #: Failure families OUR OWN tools emit, mapped to a spoken sentence per
-#: language. Tool error strings are English by contract (CLAUDE.md §1: the
+#: language. Tool error strings are English by contract (AGENTS.md §1: the
 #: model rephrases them for the user), but the rephrasing model is not always
 #: there — no ``[ack_brain]`` provider, a dead key, an exhausted quota, the
 #: breaker open. Live 2026-08-20: the Gemini flash slot answered 404 (stale

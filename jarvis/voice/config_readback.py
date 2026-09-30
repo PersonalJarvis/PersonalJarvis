@@ -7,7 +7,7 @@ brain must never freely phrase "done" for a change that was refused or rolled
 back (the maintainer's original ask: "don't confirm something that wasn't done").
 
 This renders that line directly from the ``set_config_value`` tool result, in
-de/en/es (every supported language — CLAUDE.md "Runtime Output Language"). It is
+de/en/es (every supported language — AGENTS.md "Runtime Output Language"). It is
 separate from ``echo_confirmation.format_outcome`` (the two-turn confirm flow)
 because the failure results here carry no ``PendingMutation``, only an
 ``error_kind``.

@@ -109,6 +109,7 @@ export function JarvisBar({ phase, hint }: { phase: WaveformPhase; hint: string 
       onClick={onCardClick}
       onKeyDown={onCardKey}
       data-testid="jarvis-bar"
+      data-tour="voice-bar"
       data-phase={phase}
       data-active={callActive || undefined}
       className={cn(

@@ -255,7 +255,7 @@ input, fail closed to the classic pipeline (review major #7).
   reconnect with `SessionResumptionConfig`. First-turn "auto" (before any
   transcript) seeds from pin → prior `conversation_language` → `DEFAULT_LOCALE`,
   then self-corrects on the first transcript. One resolver, no per-layer
-  re-derivation, no de/en-only phrase tables (CLAUDE.md §1.4).
+  re-derivation, no de/en-only phrase tables (AGENTS.md §1.4).
 - **Latency marks** (owned in one place — three additions to the single-source
   `LatencyPhase` enum, `events.py:942`): `REALTIME_INPUT_COMMITTED`,
   `REALTIME_FIRST_TRANSCRIPT`, `REALTIME_FIRST_AUDIO`. Reuse `AudioOutFirst`
@@ -308,7 +308,7 @@ input, fail closed to the classic pipeline (review major #7).
 | Headless VPS (no audio) | Desktop realtime = logged no-op; **browser** `/ws/audio` realtime still works (backend holds key, browser owns audio) |
 | HARD leak in a transcript delta | Stop/abort + drain + cancel + localized fallback phrase |
 
-**Three non-maintainer paths (CLAUDE.md §3), verified as one system:** (1) a user
+**Three non-maintainer paths (AGENTS.md §3), verified as one system:** (1) a user
 with only a Gemini key → Gemini Live; only OpenAI → OpenAI Realtime; only
 Anthropic/OpenRouter → `None` → classic pipeline + honest line. (2) headless
 `python:3.11-slim` → base install boots (SDKs are base deps, lazy-imported);

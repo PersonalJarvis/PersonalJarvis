@@ -1,0 +1,88 @@
+{
+  "first_run": {
+    "back": "Zurück",
+    "continue": "Weiter",
+    "step_of": "{current} von {total}",
+    "welcome": {
+      "title": "Willkommen",
+      "lede": "Wir richten deinen Assistenten direkt hier in der App ein. Das dauert etwa zwei Minuten.",
+      "language": "Sprache",
+      "lang_en": "English",
+      "lang_de": "Deutsch",
+      "lang_es": "Español",
+      "fact_commands": "Er führt Befehle aus, öffnet Apps und ändert Dateien für dich.",
+      "fact_screen": "Er kann deinen Bildschirm sehen und darauf handeln, wenn du ihn bittest.",
+      "fact_cloud": "Was du sagst, geht an den KI-Anbieter, den du wählst.",
+      "fact_costs": "Die Nutzung rechnet dieser Anbieter über dein Konto ab.",
+      "fact_mistakes": "Er kann Fehler machen, auch solche, die schwer rückgängig zu machen sind.",
+      "accept": "Ich habe das verstanden und nutze ihn auf eigenes Risiko.",
+      "read_terms": "Die vollständigen Nutzungsbedingungen lesen",
+      "hide_terms": "Nutzungsbedingungen ausblenden",
+      "terms_loading": "Nutzungsbedingungen werden geladen…",
+      "start": "Zustimmen und weiter",
+      "decline": "Ablehnen und beenden",
+      "accept_failed": "Deine Zustimmung konnte nicht gespeichert werden. Prüfe, ob die App läuft, und versuche es noch einmal.",
+      "declined_title": "Die App wird geschlossen",
+      "declined_body": "Du hast abgelehnt, also wurde nichts eingerichtet und nichts gespeichert. Starte die App jederzeit neu, dann fragt sie wieder."
+    },
+    "keys": {
+      "title": "Einen API-Schlüssel eintragen",
+      "lede": "Das ist die Seite API-Keys. Füge einen Schlüssel in eine Anbieter-Karte ein und speichere ihn. Mit OpenAI oder Gemini reicht ein einziger Schlüssel für Live-Sprache.",
+      "waiting": "Warte auf einen Schlüssel…",
+      "connecting": "Alles wird eingeschaltet…",
+      "connected": "Verbunden: {provider}.",
+      "present": "Ein Schlüssel ist gespeichert. Du kannst weiter.",
+      "partial": "Einige Teile wurden nicht umgestellt ({parts}). Du kannst das später auf dieser Seite beheben.",
+      "security": "Schlüssel liegen im Schlüsselbund deines Systems und gehen nur an den Anbieter, den du gewählt hast.",
+      "later": "Ich trage später einen Schlüssel ein"
+    },
+    "permissions": {
+      "title": "Zugriff auf diesem Mac erlauben",
+      "lede": "Das sind die Mac-Berechtigungen. Erlaube die, die du möchtest; jede Zeile aktualisiert sich selbst.",
+      "note": "Du kannst jederzeit in den Einstellungen zurückkommen. Der Neustart am Ende wendet sie an."
+    },
+    "voice": {
+      "title": "Wähle dein Weckwort",
+      "lede": "Tippe hier dein Wort nach „Hey“ ein und speichere es. Das Wort wird auch der Name deines Assistenten. Kein Weckwort? Das Anruf-Kürzel funktioniert immer.",
+      "on": "„{phrase}“ ist an. Sag es jederzeit.",
+      "off": "Noch kein Weckwort. Bis dahin funktioniert das Anruf-Kürzel."
+    },
+    "ready": {
+      "title": "Alles bereit",
+      "lede": "Die App startet einmal neu, damit alles eingeschaltet ist. Danach zeigt dir eine kurze Tour die App.",
+      "row_brain": "Gehirn",
+      "row_voice": "Aktivierung",
+      "no_key": "Noch kein Schlüssel",
+      "shortcut": "Anruf-Kürzel",
+      "autostart": "Bei der Anmeldung starten",
+      "no_key_note": "Ohne Schlüssel bleiben Chat und Sprache aus, bis du auf der Seite API-Keys einen einträgst.",
+      "preview_note": "Das ist eine Wiederholung, deshalb startet nichts neu. Starten öffnet die Tour.",
+      "restart_note": "Der Neustart dauert etwa zehn Sekunden.",
+      "start_failed": "Die Einrichtung konnte nicht abgeschlossen werden. Prüfe, ob die App läuft, und versuche es noch einmal.",
+      "starting": "Startet…",
+      "start": "Starten"
+    }
+  },
+  "app_tour": {
+    "label": "App-Tour",
+    "next": "Weiter",
+    "finish": "Fertig",
+    "skip": "Tour überspringen",
+    "step_of": "{current} von {total}",
+    "replay_title": "App-Tour",
+    "replay_body": "Ein kurzer Rundgang durch die App mit dem Scheinwerfer, derselbe wie nach der Einrichtung.",
+    "replay": "Tour wiederholen",
+    "steps": {
+      "voice": "So sprichst du mit {name}. Klick auf die Leiste, sag dein Weckwort oder drück dein Anruf-Kürzel, dann sprich einfach. Die Welle zeigt, wer gerade redet.",
+      "new_chat": "Lieber tippen? Hier startest du einen neuen Chat, als Text oder mit Stimme. Jedes Gespräch landet unter Letzte Chats.",
+      "agents": "Agenten sind dein Team: Helfer, die größere Aufgaben im Hintergrund übernehmen. Schauen wir rein.",
+      "agents_world": "Das ist das Verse, deine Agenten bei der Arbeit. Klick einen an, um mit ihm zu chatten oder ihm eine Aufgabe zu geben. Weiter bringt dich zurück.",
+      "voice_hub": "Unter Stimme findest du Diktat in jede App, deine eigene Wortliste und gesprochene Kürzel.",
+      "artifacts": "Alles, was {name} erstellt, von Seiten über Bilder bis zu Berichten, liegt unter Artefakte.",
+      "ide": "Die Agentic IDE lässt Coding-Agenten nebeneinander in echten Terminals an deinen Projekten arbeiten.",
+      "plugins": "Plugins, Skills und MCP verbinden {name} mit deinen Apps. Das Laden-Symbol unten öffnet den Marketplace.",
+      "settings": "Hier findest du Einstellungen, API-Schlüssel, Kosten und dein Profil. Die Tour kannst du jederzeit unter Einstellungen → App wiederholen.",
+      "done": "Das war die Tour. Du bist startklar: Sprich mit {name}, wann immer du willst."
+    }
+  }
+}

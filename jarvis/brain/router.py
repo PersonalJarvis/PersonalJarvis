@@ -263,7 +263,7 @@ class RouterBrain:
         return "de"
 
     def _output_locale(self, utterance: str) -> str:
-        """The turn's output language, via the ONE resolver (CLAUDE.md §1.3).
+        """The turn's output language, via the ONE resolver (AGENTS.md §1.3).
 
         Deliberately NOT ``_detect_utterance_language`` above: that helper is a
         de/en-only ack heuristic with a German default, so a Spanish user would

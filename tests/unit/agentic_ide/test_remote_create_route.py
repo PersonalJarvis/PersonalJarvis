@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from jarvis.agentic_ide import remote
 from jarvis.agentic_ide import session as session_mod
 from jarvis.agentic_ide.session import Registry
-from jarvis.computers import remote_terminal
+from jarvis.computers import remote_os, remote_terminal
 from tests.fakes.fake_pty_manager import FakePtyManager
 
 
@@ -33,6 +33,9 @@ class RemotePool(FakePtyManager):
 
     async def run(self, command: str, *, timeout_s: float = 60.0) -> tuple[int, str, str]:
         return 0, self.missing, ""
+
+    async def host(self) -> remote_os.RemoteHost:
+        return remote_os.RemoteHost()
 
 
 @pytest.fixture
