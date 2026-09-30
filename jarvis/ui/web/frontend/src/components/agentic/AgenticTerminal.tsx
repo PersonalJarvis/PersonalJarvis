@@ -2697,7 +2697,8 @@ export function AgenticTerminal({
         // per-appearance literal (`PANE_TILE`), not a class, for the same
         // reason the resting edge is. The pane the reader clicked into must be
         // findable at a glance across a full grid, so its edge is doubled by an
-        // inset line of the same hue (two pixels, no layout shift).
+        // inner line of the same hue — see the focus ring at the end of the
+        // frame for why that line is its own layer.
         borderColor:
           dragging || justDelivered
             ? undefined
@@ -2706,7 +2707,6 @@ export function AgenticTerminal({
               : focused
                 ? undefined
                 : chrome.edge[visibleStatus],
-        boxShadow: minimal && focused && !dragging && !justDelivered ? `inset 0 0 0 1px ${tile.focus}` : undefined,
       }}
       data-pane-style={minimal ? "minimal" : undefined}
       data-testid={`agentic-pane-${name}`}
@@ -2867,6 +2867,21 @@ export function AgenticTerminal({
             )}
           </div>
         </div>
+      )}
+      {/*
+        The focused tile's inner edge line, drawn ABOVE everything in the pane.
+        As an inset shadow on the frame it sat underneath the title row, whose
+        own translucent ground dimmed it: the blue read darker along the top
+        than down the terminal (maintainer, 2026-09-30). One layer on top keeps
+        the line the same brightness all the way round.
+      */}
+      {minimal && focused && !dragging && !justDelivered && (
+        <div
+          aria-hidden="true"
+          data-testid={`pane-focus-ring-${name}`}
+          className="pointer-events-none absolute inset-0 z-[45]"
+          style={{ boxShadow: `inset 0 0 0 1px ${tile.focus}` }}
+        />
       )}
     </div>
   );
