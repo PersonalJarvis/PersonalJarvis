@@ -25,7 +25,7 @@ You can inspect actions, approvals, and output in the app. What runs depends on
 your setup, permissions, and the tools you connect.
 
 **Try it:** [Install on Windows, macOS, or Linux](#install) ·
-[See the app and demos](#see-it-in-action) ·
+[See the agents at work](#jarvis-agents) ·
 [Read the first-run guide](#your-first-steps-in-the-desktop-app)
 
 ## Install
@@ -51,21 +51,6 @@ Re-running the installer updates an existing installation.
 The idea is simple: one place on your computer where you say what you need, and it happens. You talk to Jarvis or type to it, and it works out whether to just answer, do something on your computer for you, or pass the job to an agent that keeps at it while you get on with your day. You can always see what it's doing, and it asks before it touches anything that matters.
 
 It runs on your own machine with whichever model you like, local ones included, and it's free. There's no account to create, and nothing sends your data anywhere you didn't connect yourself.
-
-## See it in action
-
-The [voice demo](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.mp4)
-shows a spoken conversation on the home screen; the [agent demo](#jarvis-agents)
-further down shows a brief, progress, and output. The demos are **illustrative interface
-recreations**, not recordings of a completed live task or timing benchmarks.
-The [demo source and still previews](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/scripts/readme-video/README.md) explain
-what is shown.
-
-<p align="center">
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.mp4">
-    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.png" alt="Illustrative Jarvis home screen during a voice conversation, with the sidebar of agents, artifacts, and plugins" width="850" />
-  </a>
-</p>
 
 ## One request, several ways to get it done
 
