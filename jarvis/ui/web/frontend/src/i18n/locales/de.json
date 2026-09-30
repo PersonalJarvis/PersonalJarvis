@@ -5816,7 +5816,7 @@
       "agents": "Agents",
       "files": "Ordner",
       "changes": "Änderungen",
-      "office": "Büro"
+      "office": "Jarvis Verse"
     },
     "git": {
       "aria": "Branches, Pull Requests und CI",
@@ -5885,7 +5885,7 @@
       "minutes_ago": "vor {n} min"
     },
     "office": {
-      "failed": "Die Büro-Karte konnte nicht laden.",
+      "failed": "Das Jarvis Verse konnte nicht laden.",
       "retry": "Erneut versuchen"
     },
     "agents": {
