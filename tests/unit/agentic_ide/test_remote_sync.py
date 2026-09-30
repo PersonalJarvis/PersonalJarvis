@@ -351,3 +351,22 @@ def test_joined_folder_maps_a_subfolder_into_the_same_copy(tmp_path: Path) -> No
 
     assert from_root == "/h/jw/repo-1/pkg"
     assert from_sub == "/h/jw/repo-1"
+
+
+async def test_a_repo_without_commits_comes_back_too(tmp_path: Path, copies: None) -> None:
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    _git(fresh, "init", "-q", "-b", "main")
+    (fresh / "draft.py").write_text("print('draft')\n", encoding="utf-8")
+    server = tmp_path / "server-home"
+    server.mkdir()
+    pool = LocalPool(server)
+    placement = await remote.push_code(pool, fresh)
+    (Path(placement.remote_folder) / "draft.py").write_text("print('finished')\n", encoding="utf-8")
+
+    outcome = await remote.pull_code(
+        pool, fresh, placement.remote_folder, placement.offload_snapshot, "vps"
+    )
+
+    assert outcome.applied, outcome.message
+    assert (fresh / "draft.py").read_text(encoding="utf-8") == "print('finished')\n"
