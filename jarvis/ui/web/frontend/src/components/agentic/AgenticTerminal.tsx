@@ -84,6 +84,7 @@ import {
   MINIMUM_CONTRAST_RATIO,
   PANE_BRAND,
   PANE_CHROME,
+  PANE_TILE,
   themeFor,
   type TerminalAppearance,
 } from "./terminalThemes";
@@ -505,8 +506,17 @@ interface AgenticTerminalProps {
    * Compact workspace chrome is opt-in; legacy grids retain their existing
    * header. "none" draws the bare terminal for a host that brings its own
    * title bar (the office's pane panel) — no header, no border of its own.
+   * "minimal" is the multiplexer tile: a square 1px frame, no title bar, and
+   * the compact header's controls floating in the top corner while the
+   * pointer is over the pane (see `WorkspaceTerminalHeader`'s overlay).
    */
-  headerMode?: "legacy" | "compact" | "none";
+  headerMode?: "legacy" | "compact" | "minimal" | "none";
+  /**
+   * Minimal tiles only: may the focused pane wear the signal edge? A lone pane
+   * is always "the focused one", so marking it says nothing; the grid turns
+   * this off when it holds a single pane, as tiling multiplexers do.
+   */
+  accentFocus?: boolean;
   /** Compact header only: opens the fork dialog for this pane. */
   onFork?: () => void;
   /** Compact header only: the worktree branch this pane runs on, if any. */
@@ -650,6 +660,7 @@ export function AgenticTerminal({
   workspaceId,
   displayName,
   headerMode = "legacy",
+  accentFocus = true,
   onFork,
   branch,
   computerName,
@@ -2582,10 +2593,39 @@ export function AgenticTerminal({
   }, [attach, name]);
 
   const chrome = PANE_CHROME[appearance];
+  const minimal = headerMode === "minimal";
+  const tile = PANE_TILE[appearance];
+  const headerProps = {
+    name,
+    workspaceId,
+    promptCount,
+    agent: agent ?? "",
+    agentLogoUrl,
+    displayName,
+    status: visibleStatus,
+    appearance,
+    arranging,
+    maximized,
+    addDisabled: splitDisabled,
+    onArrangeStart,
+    onActivate: () => { onFocus?.(); takeOwnershipRef.current?.(); },
+    onToggleMaximize: toggleMaximizeAndFocus,
+    onAdd: onSplit ? (direction: SplitDirection) => onSplit(direction) : undefined,
+    onClose,
+    onRename,
+    onOpenConversation: () => setHistoryOpen(true),
+    onOpenChat,
+    onRestart,
+    onFork,
+    branch,
+    computerName,
+    placementItems,
+  };
 
   return (
     <div
-      onMouseDown={() => {
+      onMouseDown={(event) => {
+        if (event.button !== 0) return;
         onFocus?.();
         takeOwnershipRef.current?.();
       }}
@@ -2603,8 +2643,11 @@ export function AgenticTerminal({
         // On a grid where the focused pane is the one standing accent, that
         // read as a flicker rather than as a pane taking focus.
         "relative flex h-full w-full flex-col overflow-hidden backdrop-blur-[4px]",
+        // Minimal tiles name their hover group so the floating controls can
+        // appear for THIS pane only.
+        minimal && "group/tile",
         headerMode === "none" ? "border-0" : "border",
-        headerMode === "compact" ? "rounded-2xl" : headerMode === "none" ? "rounded-none" : "rounded-lg",
+        headerMode === "compact" ? "rounded-2xl" : headerMode === "none" || minimal ? "rounded-none" : "rounded-lg",
         "transition-[box-shadow,border-color,opacity] duration-150 ease-out motion-reduce:transition-none",
         // Focus steps the RIM one notch, from the structural hairline to
         // `--border-strong`, and stops there. It used to add a translucent
@@ -2613,7 +2656,7 @@ export function AgenticTerminal({
         // call-sign plate, the accent hairline under it, the visible action
         // cluster). A rim is the second separation device, never the first,
         // and a shadow belongs only to something that floats.
-        focused && "border-border-strong",
+        focused && !minimal && "border-border-strong",
         // Being carried, and "a prompt just landed here", are the two states
         // that must be findable across a wall of twelve. They get the fill —
         // a solid `--primary` edge plus the sanctioned focus ring — because
@@ -2644,39 +2687,25 @@ export function AgenticTerminal({
          * red when it failed, unchanged while it is connecting or live. See
          * `PANE_CHROME.edge` for why only those two states are marked.
          */
+        //
+        // A minimal tile paints its focused edge here too: the signal hue is a
+        // per-appearance literal (`PANE_TILE`), not a class, for the same
+        // reason the resting edge is.
         borderColor:
-          focused || dragging || justDelivered
+          dragging || justDelivered
             ? undefined
-            : chrome.edge[visibleStatus],
+            : minimal
+              ? focused && accentFocus ? tile.focus : tile.edge[visibleStatus]
+              : focused
+                ? undefined
+                : chrome.edge[visibleStatus],
       }}
+      data-pane-style={minimal ? "minimal" : undefined}
       data-testid={`agentic-pane-${name}`}
     >
-      {headerMode === "compact" ? <WorkspaceTerminalHeader
-        name={name}
-        workspaceId={workspaceId}
-        promptCount={promptCount}
-        agent={agent ?? ""}
-        agentLogoUrl={agentLogoUrl}
-        displayName={displayName}
-        status={visibleStatus}
-        appearance={appearance}
-        arranging={arranging}
-        maximized={maximized}
-        addDisabled={splitDisabled}
-        onArrangeStart={onArrangeStart}
-        onActivate={() => { onFocus?.(); takeOwnershipRef.current?.(); }}
-        onToggleMaximize={toggleMaximizeAndFocus}
-        onAdd={onSplit ? (direction) => onSplit(direction) : undefined}
-        onClose={onClose}
-        onRename={onRename}
-        onOpenConversation={() => setHistoryOpen(true)}
-        onOpenChat={onOpenChat}
-        onRestart={onRestart}
-        onFork={onFork}
-        branch={branch}
-        computerName={computerName}
-        placementItems={placementItems}
-      /> : headerMode === "none" ? null : <PaneHeader
+      {headerMode === "compact" ? <WorkspaceTerminalHeader {...headerProps} />
+      : minimal ? <WorkspaceTerminalHeader {...headerProps} variant="overlay" />
+      : headerMode === "none" ? null : <PaneHeader
         workspaceId={workspaceId}
         status={visibleStatus}
         statusDetail={statusDetail}
@@ -2730,7 +2759,9 @@ export function AgenticTerminal({
         ref={terminalRegionRef}
         id={terminalRegionId}
         className={cn(
-          "relative min-h-0 flex-1 overflow-hidden px-1.5 pb-0.5 pt-0.5",
+          "relative min-h-0 flex-1 overflow-hidden px-1.5 pb-0.5",
+          // With no title bar the first row would sit on the top edge itself.
+          minimal ? "pt-1" : "pt-0.5",
           active && !tailReady && "invisible",
         )}
       >

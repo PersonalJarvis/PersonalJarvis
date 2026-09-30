@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties, type MouseEvent, type PointerEvent, type SVGProps } from "react";
 import { createPortal } from "react-dom";
-import { Check, GitBranch, Maximize2, Minimize2, MoreHorizontal, Plus, Server, X } from "lucide-react";
+import { Check, GitBranch, GripVertical, Maximize2, Minimize2, MoreHorizontal, Plus, Server, X } from "lucide-react";
 import { AgentMark } from "./AgentMark";
 import { BranchIcon } from "./branchIcon";
 import { usePaneTitle } from "@/store/paneRecaps";
@@ -39,6 +39,14 @@ interface Props {
   computerName?: string;
   /** "Run on …" / "Bring back" entries for the pane's menu. */
   placementItems?: { label: string; run: () => void }[];
+  /**
+   * `bar` is the title bar across the top of the pane. `overlay` is the
+   * minimal tile's chrome: no title, only a small square cluster in the top
+   * corner — move handle, menu, maximize, close — shown while the pointer is
+   * over the pane (or a control in it has keyboard focus). It floats over the
+   * terminal instead of taking a row from it.
+   */
+  variant?: "bar" | "overlay";
 }
 
 type MenuIcon = ComponentType<SVGProps<SVGSVGElement>>;
@@ -58,7 +66,7 @@ export function WorkspaceTerminalHeader({
   name, workspaceId, promptCount = 0, agent, agentLogoUrl, displayName, status, appearance, arranging = false,
   maximized = false, addDisabled = false, onArrangeStart, onActivate, onToggleMaximize,
   onAdd, onClose, onRename, onOpenConversation, onOpenChat, onRestart, onFork, branch,
-  computerName, placementItems,
+  computerName, placementItems, variant = "bar",
 }: Props) {
   const brand = PANE_BRAND[appearance];
   // The pane's goal in a few words, in place of its call-sign; the call-sign
@@ -134,68 +142,28 @@ export function WorkspaceTerminalHeader({
     finally { setSaving(false); }
   };
 
-  return <>
-    <header data-testid={`workspace-terminal-header-${name}`}
-      className="relative flex h-9 min-h-9 shrink-0 select-none items-center gap-1 border-b pl-2.5 pr-1"
-      style={{ ...variables, borderColor: chrome.border, background: chrome.shell, touchAction: onArrangeStart ? "none" : undefined }}
-      onContextMenu={openMenuAt}
-      onPointerDown={(event) => {
-        if (event.button !== 0 || (event.target as HTMLElement).closest("[data-header-control]")) return;
-        setMenuPosition(null);
-        onArrangeStart?.(event);
-      }}>
-      {draft === null ? <button type="button" data-ide-drag-handle="true" data-testid={`pane-move-${name}`}
-        // Pointer selection is handled by the pane's mousedown. Keyboard
-        // activation selects too, while retaining focus for Alt+Arrow moves.
-        onClick={(event) => { if (event.detail === 0) onActivate?.(); }}
-        aria-label={onArrangeStart ? `Move ${name}` : name}
-        aria-describedby={onArrangeStart ? dragHintId : undefined}
-        aria-keyshortcuts={onArrangeStart ? "Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown" : undefined}
-        className={`flex h-full min-w-0 flex-1 items-center gap-2 rounded text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--pane-ink)] ${onArrangeStart ? arranging ? "cursor-grabbing" : "cursor-grab" : "cursor-default"}`}>
-        <span role="img" aria-label={`${name}: ${status}`} className="h-1.5 w-1.5 shrink-0 rounded-full"
-          style={{ background: status === "live" ? theme.green : status === "error" ? theme.red : status === "connecting" ? theme.yellow : brand.inkFaint }} />
-        <AgentMark agent={agent} label={displayName} logoUrl={agentLogoUrl} variant="plain" size="sm"
-          className="!text-[color:var(--pane-ink)] [&>.bg-foreground]:!bg-[color:var(--pane-ink)]" />
-        <span data-testid={`pane-title-${name}`} title={title ? `${title} (${name})` : name} className="truncate">{title || name}</span>
-        {computerName && <span data-testid={`pane-computer-${name}`} title={`Runs on ${computerName}. It keeps working while this app is closed.`}
-          className="flex min-w-0 max-w-[35%] shrink items-center gap-1 rounded bg-[color:var(--pane-chip)] px-1.5 py-0.5 text-[11px] font-normal text-[color:var(--pane-ink-muted)]">
-          <Server className="h-3 w-3 shrink-0" aria-hidden="true" /><span className="truncate">{computerName}</span></span>}
-        {branch && <span data-testid={`pane-branch-${name}`} title={`Runs in its own git worktree on branch ${branch}`}
-          className="flex min-w-0 max-w-[45%] shrink items-center gap-1 rounded bg-[color:var(--pane-chip)] px-1.5 py-0.5 font-mono text-[11px] font-normal text-[color:var(--pane-ink-muted)]">
-          <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" /><span className="truncate">{branch}</span>
-        </span>}
-      </button> : <form data-header-control="true" className="flex min-w-0 flex-1 items-center gap-1"
-        onSubmit={(event) => { event.preventDefault(); void commitRename(); }}>
-        <input autoFocus aria-label={`Name for ${name}`} value={draft} maxLength={40} disabled={saving}
-          aria-invalid={Boolean(renameError)}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setDraft(null); setRenameError(""); } }}
-          className="min-w-0 flex-1 rounded border px-1.5 py-0.5 text-sm outline-none"
-          style={{ borderColor: chrome.border, background: chrome.float, color: brand.ink }} />
-        <button type="submit" aria-label="Save name" disabled={saving} className={ACTION_CLASS}><Check className="h-3.5 w-3.5" /></button>
-        <button type="button" aria-label="Cancel rename" disabled={saving} onClick={() => { setDraft(null); setRenameError(""); }} className={ACTION_CLASS}><X className="h-3.5 w-3.5" /></button>
-      </form>}
-      <span id={dragHintId} className="sr-only">Drag to reorder, or focus this title and press Alt with an arrow key.</span>
-      <div data-header-control="true" className="flex shrink-0 items-center gap-0.5">
-        <button ref={moreRef} type="button" aria-label={`More actions for ${name}`} aria-haspopup="menu" aria-expanded={menuOpen}
-          aria-controls={menuOpen ? menuId : undefined} onClick={toggleMenu}
-          onKeyDown={(event) => { if (event.key === "ArrowDown") { event.preventDefault(); toggleMenu(); } }}
-          className={ACTION_CLASS}><MoreHorizontal className="h-4 w-4" /></button>
-        <button type="button" aria-label={`${maximized ? "Restore" : "Maximize"} ${name}`} disabled={!onToggleMaximize}
-          onClick={onToggleMaximize} className={ACTION_CLASS}>{maximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}</button>
-        {onFork && <button type="button" data-testid={`pane-fork-${name}`} aria-label={`Fork ${name}`} title={`Fork ${name}`}
-          disabled={addDisabled} onClick={onFork} className={`group ${ACTION_CLASS}`}>
-          <BranchIcon className="h-[15px] w-[15px] opacity-75 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" /></button>}
-        <button type="button" aria-label={`Add agent beside ${name}`} disabled={addDisabled || !onAdd}
-          onClick={() => onAdd?.("right")} className={ACTION_CLASS}><Plus className="h-4 w-4" /></button>
-        <button type="button" aria-label={`Close ${name}`} disabled={!onClose} onClick={onClose} className={ACTION_CLASS}><X className="h-4 w-4" /></button>
-      </div>
-    </header>
-    {renameError && <p role="alert" className="px-2 py-1 text-xs" style={{ color: theme.red }}>{renameError}</p>}
-    {createPortal(<div ref={menuRef} id={menuId} role="menu" hidden={!menuOpen} aria-label={`Actions for ${name}`}
-      className="fixed z-[90] w-[200px] rounded-lg border p-1 shadow-lg"
+  // The overlay's buttons are square and a step smaller: they float over the
+  // terminal's own text, so they take as little of it as they can.
+  const action = variant === "overlay" ? ACTION_CLASS.replace("h-7 w-7", "h-6 w-6").replace(" rounded ", " rounded-none ") : ACTION_CLASS;
+
+  const renameForm = draft === null ? null : <form data-header-control="true"
+    className={`flex min-w-0 items-center gap-1 ${variant === "overlay" ? "w-56" : "flex-1"}`}
+    onSubmit={(event) => { event.preventDefault(); void commitRename(); }}>
+    <input autoFocus aria-label={`Name for ${name}`} value={draft} maxLength={40} disabled={saving}
+      aria-invalid={Boolean(renameError)}
+      onChange={(event) => setDraft(event.target.value)}
+      onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setDraft(null); setRenameError(""); } }}
+      className={`min-w-0 flex-1 border px-1.5 py-0.5 text-sm outline-none ${variant === "overlay" ? "rounded-none" : "rounded"}`}
+      style={{ borderColor: chrome.border, background: chrome.float, color: brand.ink }} />
+    <button type="submit" aria-label="Save name" disabled={saving} className={action}><Check className="h-3.5 w-3.5" /></button>
+    <button type="button" aria-label="Cancel rename" disabled={saving} onClick={() => { setDraft(null); setRenameError(""); }} className={action}><X className="h-3.5 w-3.5" /></button>
+  </form>;
+
+  const menu = createPortal(<div ref={menuRef} id={menuId} role="menu" hidden={!menuOpen} aria-label={`Actions for ${name}`}
+      className={`fixed z-[90] w-[200px] border p-1 shadow-lg ${variant === "overlay" ? "rounded-none" : "rounded-lg"}`}
       style={{ ...variables, ...(menuPosition ?? { left: 0, top: 0 }), borderColor: chrome.border, background: chrome.float }}
       onPointerDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
       onBlur={(event) => {
         if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget) && event.relatedTarget !== moreRef.current) setMenuPosition(null);
       }}
@@ -232,6 +200,96 @@ export function WorkspaceTerminalHeader({
       {onClose && <button type="button" role="menuitem" onClick={() => choose(onClose)}
         className="mt-1 flex w-full items-center gap-2 rounded border-t border-[color:var(--pane-chip)] px-2.5 py-2 pt-2 text-left text-xs hover:bg-[color:var(--pane-chip)] focus:bg-[color:var(--pane-chip)] focus:outline-none">
         <X className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />Close pane</button>}
-    </div>, document.body)}
+    </div>, document.body);
+
+  const moreButton = <button ref={moreRef} type="button" aria-label={`More actions for ${name}`} aria-haspopup="menu" aria-expanded={menuOpen}
+    aria-controls={menuOpen ? menuId : undefined} onClick={toggleMenu}
+    onKeyDown={(event) => { if (event.key === "ArrowDown") { event.preventDefault(); toggleMenu(); } }}
+    className={action}><MoreHorizontal className="h-4 w-4" /></button>;
+  const maximizeButton = <button type="button" aria-label={`${maximized ? "Restore" : "Maximize"} ${name}`} disabled={!onToggleMaximize}
+    onClick={onToggleMaximize} className={action}>{maximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}</button>;
+  const closeButton = <button type="button" aria-label={`Close ${name}`} disabled={!onClose} onClick={onClose} className={action}><X className="h-4 w-4" /></button>;
+
+  if (variant === "overlay") {
+    // Held visible while the reader is using it: a menu or rename open, or
+    // the pane being carried. Otherwise it shows only under the pointer.
+    const pinned = menuOpen || draft !== null || arranging;
+    const label = title ? `${title} (${name})` : name;
+    return <>
+      <div data-testid={`workspace-terminal-controls-${name}`} data-header-control="true"
+        className={`absolute right-1 top-1 z-30 flex select-none items-center gap-px border p-px transition-opacity duration-150 motion-reduce:transition-none ${pinned ? "opacity-100" : "opacity-0 focus-within:opacity-100 group-hover/tile:opacity-100"}`}
+        style={{ ...variables, borderColor: chrome.border, background: chrome.float }}
+        onContextMenu={openMenuAt}>
+        {draft === null ? <button type="button" data-ide-drag-handle="true" data-testid={`pane-move-${name}`}
+          onClick={(event) => { if (event.detail === 0) onActivate?.(); }}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            setMenuPosition(null);
+            onArrangeStart?.(event);
+          }}
+          title={onArrangeStart ? `${label} · drag to move` : label}
+          aria-label={onArrangeStart ? `Move ${name}` : name}
+          aria-describedby={onArrangeStart ? dragHintId : undefined}
+          aria-keyshortcuts={onArrangeStart ? "Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown" : undefined}
+          style={{ touchAction: onArrangeStart ? "none" : undefined }}
+          className={`${action} ${onArrangeStart ? arranging ? "cursor-grabbing" : "cursor-grab" : "cursor-default"}`}>
+          <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
+        </button> : renameForm}
+        <span id={dragHintId} className="sr-only">Drag to reorder, or focus this handle and press Alt with an arrow key.</span>
+        {moreButton}
+        {maximizeButton}
+        {closeButton}
+      </div>
+      {renameError && <p role="alert" className="absolute right-1 top-10 z-30 border px-2 py-1 text-xs"
+        style={{ borderColor: chrome.border, background: chrome.float, color: theme.red }}>{renameError}</p>}
+      {menu}
+    </>;
+  }
+
+  return <>
+    <header data-testid={`workspace-terminal-header-${name}`}
+      className="relative flex h-9 min-h-9 shrink-0 select-none items-center gap-1 border-b pl-2.5 pr-1"
+      style={{ ...variables, borderColor: chrome.border, background: chrome.shell, touchAction: onArrangeStart ? "none" : undefined }}
+      onContextMenu={openMenuAt}
+      onPointerDown={(event) => {
+        if (event.button !== 0 || (event.target as HTMLElement).closest("[data-header-control]")) return;
+        setMenuPosition(null);
+        onArrangeStart?.(event);
+      }}>
+      {draft === null ? <button type="button" data-ide-drag-handle="true" data-testid={`pane-move-${name}`}
+        // Pointer selection is handled by the pane's mousedown. Keyboard
+        // activation selects too, while retaining focus for Alt+Arrow moves.
+        onClick={(event) => { if (event.detail === 0) onActivate?.(); }}
+        aria-label={onArrangeStart ? `Move ${name}` : name}
+        aria-describedby={onArrangeStart ? dragHintId : undefined}
+        aria-keyshortcuts={onArrangeStart ? "Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown" : undefined}
+        className={`flex h-full min-w-0 flex-1 items-center gap-2 rounded text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--pane-ink)] ${onArrangeStart ? arranging ? "cursor-grabbing" : "cursor-grab" : "cursor-default"}`}>
+        <span role="img" aria-label={`${name}: ${status}`} className="h-1.5 w-1.5 shrink-0 rounded-full"
+          style={{ background: status === "live" ? theme.green : status === "error" ? theme.red : status === "connecting" ? theme.yellow : brand.inkFaint }} />
+        <AgentMark agent={agent} label={displayName} logoUrl={agentLogoUrl} variant="plain" size="sm"
+          className="!text-[color:var(--pane-ink)] [&>.bg-foreground]:!bg-[color:var(--pane-ink)]" />
+        <span data-testid={`pane-title-${name}`} title={title ? `${title} (${name})` : name} className="truncate">{title || name}</span>
+        {computerName && <span data-testid={`pane-computer-${name}`} title={`Runs on ${computerName}. It keeps working while this app is closed.`}
+          className="flex min-w-0 max-w-[35%] shrink items-center gap-1 rounded bg-[color:var(--pane-chip)] px-1.5 py-0.5 text-[11px] font-normal text-[color:var(--pane-ink-muted)]">
+          <Server className="h-3 w-3 shrink-0" aria-hidden="true" /><span className="truncate">{computerName}</span></span>}
+        {branch && <span data-testid={`pane-branch-${name}`} title={`Runs in its own git worktree on branch ${branch}`}
+          className="flex min-w-0 max-w-[45%] shrink items-center gap-1 rounded bg-[color:var(--pane-chip)] px-1.5 py-0.5 font-mono text-[11px] font-normal text-[color:var(--pane-ink-muted)]">
+          <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" /><span className="truncate">{branch}</span>
+        </span>}
+      </button> : renameForm}
+      <span id={dragHintId} className="sr-only">Drag to reorder, or focus this title and press Alt with an arrow key.</span>
+      <div data-header-control="true" className="flex shrink-0 items-center gap-0.5">
+        {moreButton}
+        {maximizeButton}
+        {onFork && <button type="button" data-testid={`pane-fork-${name}`} aria-label={`Fork ${name}`} title={`Fork ${name}`}
+          disabled={addDisabled} onClick={onFork} className={`group ${ACTION_CLASS}`}>
+          <BranchIcon className="h-[15px] w-[15px] opacity-75 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" /></button>}
+        <button type="button" aria-label={`Add agent beside ${name}`} disabled={addDisabled || !onAdd}
+          onClick={() => onAdd?.("right")} className={ACTION_CLASS}><Plus className="h-4 w-4" /></button>
+        {closeButton}
+      </div>
+    </header>
+    {renameError && <p role="alert" className="px-2 py-1 text-xs" style={{ color: theme.red }}>{renameError}</p>}
+    {menu}
   </>;
 }

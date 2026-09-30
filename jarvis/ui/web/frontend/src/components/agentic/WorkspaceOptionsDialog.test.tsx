@@ -28,3 +28,16 @@ it("disables adding past the workspace limit and closes with Escape", () => {
   fireEvent.keyDown(document, { key: "Escape" });
   expect(props.onOpenChange).toHaveBeenCalledWith(false);
 });
+
+it("switches between the minimal and the classic terminal style", () => {
+  const props = { ...setup(), paneStyle: "minimal" as const, onPaneStyle: vi.fn() };
+  render(<WorkspaceOptionsDialog {...props} />);
+  const minimal = screen.getByRole("button", { name: /Minimal/ });
+  const classic = screen.getByRole("button", { name: /Classic/ });
+  expect(minimal.getAttribute("aria-pressed")).toBe("true");
+  expect(classic.getAttribute("aria-pressed")).toBe("false");
+  fireEvent.click(classic);
+  expect(props.onPaneStyle).toHaveBeenCalledWith("classic");
+  // A style change keeps the dialog open so the reader sees the result.
+  expect(props.onOpenChange).not.toHaveBeenCalled();
+});

@@ -10,6 +10,7 @@ import { useThemeValue } from "@/hooks/useTheme";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
+import type { PaneStyle } from "./terminalThemes";
 import { cn } from "@/lib/utils";
 import { PaneResizer } from "@/components/layout/PaneResizer";
 import { treeLayout, treeLeaves, type LayoutNode, type PaneSeam } from "./treeLayout";
@@ -51,12 +52,17 @@ interface Props {
   disabled?: boolean;
   onMutationStart?: () => void;
   onMutationEnd?: () => void;
+  /**
+   * How the panes are drawn: square multiplexer tiles without title bars, or
+   * rounded cards with one. The reader picks it in Workspace options.
+   */
+  paneStyle?: PaneStyle;
 }
 
 interface DropTarget { id: string; position: PaneMovePosition; allowed: boolean }
 interface DragFeedback { id: string; target: DropTarget | null; x: number; y: number }
 
-export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSelect, selected, maxPanes = MAX_WORKSPACE_PANES, fontSize, appearance, disabled = false, onMutationStart, onMutationEnd }: Props) {
+export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSelect, selected, maxPanes = MAX_WORKSPACE_PANES, fontSize, appearance, disabled = false, onMutationStart, onMutationEnd, paneStyle: look = "classic" }: Props) {
   const theme = useThemeValue();
   const pushToast = useEventStore((state) => state.pushToast);
   // The pane an agent card in the side panel pointed at, framed in blue.
@@ -114,6 +120,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
   const resizing = sizes.dragging !== null;
   const columns = Math.max(1, layoutSpan(tree, "row"));
   const visibleMaximized = maximized && members.includes(maximized) ? maximized : null;
+  const minimal = look === "minimal";
 
   useEffect(() => {
     mounted.current = true;
@@ -366,11 +373,12 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             if (candidates[0]) void move(id, idOf(candidates[0].entry));
           }}
           style={paneStyle(visibleMaximized === id ? { x: 0, y: 0, w: 1, h: 1 } : layout.boxes[index]!)}
-          className={cn("min-h-0 min-w-0 rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          className={cn("min-h-0 min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            minimal ? "rounded-none" : "rounded-2xl",
             drag?.id === id && "opacity-50",
             spotlitPane === terminal.name && "ring-2 ring-accent ring-offset-2 ring-offset-background",
             visibleMaximized && visibleMaximized !== id && "hidden")}>
-          <AgenticTerminal headerMode="compact" agent={terminal.agent}
+          <AgenticTerminal headerMode={minimal ? "minimal" : "compact"} accentFocus={tiles.length > 1} agent={terminal.agent}
             name={terminal.name} workspaceId={session.id} displayName={terminal.display_name}
             recap={terminal.recap} promptCount={terminal.prompts_sent} appearance={appearance ?? theme} fontSize={fontSize}
             focused={selected === terminal.name} onFocus={() => { if (spotlitPane && spotlitPane !== terminal.name) setSpotlight(null); onSelect(terminal.name); }}
@@ -385,7 +393,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             computerName={computerName(terminal)} placementItems={placementItems(terminal)}
             onFork={terminal.accepts_prompts === false ? undefined : () => setForking({ name: terminal.name, agent: terminal.agent, displayName: terminal.display_name, workspaceId: session.id })} />
           {drag?.target?.id === id && <div aria-hidden="true" data-testid="dock-preview" data-position={drag.target.position}
-            className={cn("pointer-events-none absolute z-20 flex items-center justify-center rounded-xl border-2 p-2", drag.target.allowed ? "border-ring/70 bg-accent/[0.15]" : "border-destructive bg-background/80",
+            className={cn("pointer-events-none absolute z-20 flex items-center justify-center border-2 p-2", minimal ? "rounded-none" : "rounded-xl", drag.target.allowed ? "border-ring/70 bg-accent/[0.15]" : "border-destructive bg-background/80",
               drag.target.position === "left" ? "inset-y-1 left-1 w-1/2" : drag.target.position === "right" ? "inset-y-1 right-1 w-1/2" : drag.target.position === "above" ? "inset-x-1 top-1 h-1/2" : drag.target.position === "below" ? "inset-x-1 bottom-1 h-1/2" : "inset-1")}>
             <span className="rounded-md bg-popover px-3 py-2 text-center text-xs font-medium text-popover-foreground shadow-lg">{drag.target.allowed ? DOCK_LABELS[drag.target.position] : `Maximum ${MAX_GRID_COLUMNS} columns × ${MAX_GRID_ROWS} rows`}</span>
           </div>}

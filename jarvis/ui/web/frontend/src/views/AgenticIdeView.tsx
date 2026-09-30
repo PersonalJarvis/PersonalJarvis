@@ -7,6 +7,7 @@ import { WorkspaceAgentSetup } from "@/components/agentic/WorkspaceAgentSetup";
 import { RunOnPicker, storeRunOn, storedRunOn } from "@/components/agentic/RunOnPicker";
 import { WorkspaceOptionsDialog } from "@/components/agentic/WorkspaceOptionsDialog";
 import { FONT_DEFAULT } from "@/components/agentic/paneFont";
+import { storePaneStyle, storedPaneStyle, type PaneStyle } from "@/components/agentic/terminalThemes";
 import { IdeSidePanelFrame } from "@/components/agentic/sidePanel/IdeSidePanel";
 import { GRID_LIMIT_HINT, MAX_WORKSPACE_PANES, canSplitFit, fitsWorkspace, isBalancedWorkspace } from "@/components/agentic/workspaceDocking";
 import { AgentMark } from "@/components/agentic/AgentMark";
@@ -110,6 +111,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     const stored = localStorage.getItem(APPEARANCE_KEY);
     return stored === "light" || stored === "dark" ? stored : null;
   });
+  const [paneStyle, setPaneStyle] = useState<PaneStyle>(storedPaneStyle);
   const handledAction = useRef(0);
   const handledPaneRequest = useRef(0);
   const refreshEpoch = useRef(0);
@@ -410,6 +412,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   });
 
   const saveAppearance = (next: "light" | "dark" | null) => { setAppearance(next); if (next) localStorage.setItem(APPEARANCE_KEY, next); else localStorage.removeItem(APPEARANCE_KEY); };
+  const savePaneStyle = (next: PaneStyle) => { setPaneStyle(next); storePaneStyle(next); };
   const balanceLayout = () => void run(async () => {
     if (!session) return;
     const next = await reorderIdeTerminals(session.id, session.terminals.map((terminal) => terminal.history_id ?? terminal.key));
@@ -475,6 +478,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       count={session?.terminals.length ?? 0} maxPanes={maxPanes} busy={busy} canAdd={installed.length > 0}
       onAdd={openAgentPicker} onBalance={balanceLayout} onRename={() => { setRenameValue(session?.name ?? session?.project.name ?? ""); setRenameOpen(true); }}
       onClose={stopWorkspace} onGit={() => setGitOpen(true)} appearance={appearance} onAppearance={saveAppearance}
+      paneStyle={paneStyle} onPaneStyle={savePaneStyle}
       />
     {session && <GitPanelDialog open={gitOpen} onOpenChange={setGitOpen} folder={session.folder} workspace={session.name ?? session.project.name}
       onOpenWorktree={(tree) => openWorktreeWorkspace(tree.path, tree.branch)} onNewWorktree={newWorktreeWorkspace} />}
@@ -484,7 +488,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       <IdeSidePanelFrame>
       {session ?<WorkspaceTerminalGrid key={session.id} session={session} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
         onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} maxPanes={maxPanes} fontSize={fontSize} appearance={appearance} disabled={busy}
-        onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} />
+        onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} paneStyle={paneStyle} />
       : <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
         <FolderPlus className="h-8 w-8 text-muted-foreground/70" />
         <h1 className="text-lg font-medium">{projects.some((project) => !project.scratch && !project.archived) ? "Choose a workspace" : "Connect a project"}</h1>

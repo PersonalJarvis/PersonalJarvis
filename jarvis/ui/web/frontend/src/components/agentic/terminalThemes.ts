@@ -146,6 +146,46 @@ export function storedTerminalAppearance(): TerminalAppearance | null {
 }
 
 /**
+ * How a workspace draws its panes.
+ *
+ * * `minimal` — the tiling-multiplexer look (herdr, tmux): square 1px frames,
+ *   no title bar, the focused pane marked by the signal hue alone, and the
+ *   pane's controls shown only while the pointer is over it.
+ * * `classic` — rounded cards, each with a title bar naming its goal and
+ *   carrying its controls.
+ *
+ * A reader's preference, kept in this window's storage like the appearance;
+ * `classic` stays one click away in Workspace options for anyone who wants
+ * the titles back.
+ */
+export type PaneStyle = "minimal" | "classic";
+
+/** Where the reader's pane style is kept; no entry means the default. */
+export const PANE_STYLE_KEY = "jarvis.agenticIde.paneStyle";
+
+export const DEFAULT_PANE_STYLE: PaneStyle = "minimal";
+
+/** The stored pane style, or the default when there is none (or storage is blocked). */
+export function storedPaneStyle(): PaneStyle {
+  try {
+    const raw = window.localStorage.getItem(PANE_STYLE_KEY);
+    return raw === "minimal" || raw === "classic" ? raw : DEFAULT_PANE_STYLE;
+  } catch {
+    // Private mode or disabled storage reads as "no preference", never as a failure.
+    return DEFAULT_PANE_STYLE;
+  }
+}
+
+/** Remember the reader's pane style; losing it only costs a click next time. */
+export function storePaneStyle(style: PaneStyle): void {
+  try {
+    window.localStorage.setItem(PANE_STYLE_KEY, style);
+  } catch {
+    // Blocked storage keeps the choice for this session only, which is fine.
+  }
+}
+
+/**
  * The lifecycle a pane's frame reports, mirroring `PaneStatus` in
  * ./AgenticTerminal.
  *
@@ -293,5 +333,49 @@ export const PANE_CHROME: Record<TerminalAppearance, PaneChrome> = {
       exited: "rgba(255,255,255,0.06)",
       error: "rgba(227,70,113,0.55)",
     },
+  },
+};
+
+/** The frame of a pane drawn in the `minimal` style. */
+export interface PaneTileChrome {
+  /** The resting edge per lifecycle, as in `PaneChrome.edge`. */
+  edge: Record<PaneEdgeState, string>;
+  /** The focused pane's edge. */
+  focus: string;
+}
+
+/**
+ * Frame colours for the `minimal` pane style.
+ *
+ * A multiplexer grid is separated by its lines alone — no title bars, no
+ * radius, no elevation — so the resting edge is a full step brighter than
+ * the card style's hairline (herdr draws it in a mid grey). Otherwise every
+ * edge would dissolve into the wallpaper and the grid would read as one
+ * block of text.
+ *
+ * The focused pane wears the app's signal hue (`--accent`: #3D8BFF dark,
+ * #096CDC light), the one colour the product spends on "this is where you
+ * are". It is the only standing accent in the workspace; a failed pane keeps
+ * the fault hue from `PANE_CHROME`, a little stronger to match the brighter
+ * resting line.
+ */
+export const PANE_TILE: Record<TerminalAppearance, PaneTileChrome> = {
+  light: {
+    edge: {
+      connecting: "rgba(38,37,30,0.30)",
+      live: "rgba(38,37,30,0.30)",
+      exited: "rgba(38,37,30,0.14)",
+      error: "rgba(190,23,68,0.65)",
+    },
+    focus: "#096cdc",
+  },
+  dark: {
+    edge: {
+      connecting: "rgba(255,255,255,0.26)",
+      live: "rgba(255,255,255,0.26)",
+      exited: "rgba(255,255,255,0.11)",
+      error: "rgba(227,70,113,0.75)",
+    },
+    focus: "#3d8bff",
   },
 };
