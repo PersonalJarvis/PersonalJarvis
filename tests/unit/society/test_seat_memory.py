@@ -157,11 +157,13 @@ def _queue(rt, turn_id: str = "turn-1") -> None:
 
 
 async def _settle(rt) -> None:
-    for _ in range(10):
-        retry = rt._memory_review_retry
-        if retry is None:
+    """Follow the armed wake-ups until none is left."""
+    for _ in range(20):
+        retry = getattr(rt, "_memory_review_retry", None)
+        if retry is None or retry.done():
             return
         await asyncio.wait_for(retry, 5)
+    raise AssertionError("the review queue kept waking up")
 
 
 async def test_a_seat_that_keeps_failing_drops_the_review_after_bounded_retries(
@@ -189,19 +191,127 @@ async def test_a_seat_that_keeps_failing_drops_the_review_after_bounded_retries(
     assert len(attempts) == review_queue.MAX_ATTEMPTS
 
 
-async def test_a_burst_of_turns_does_not_use_up_the_spaced_retries(rt, monkeypatch):
+async def test_a_burst_of_turns_calls_the_seat_only_for_due_reviews(rt, monkeypatch):
     from jarvis.society import review_queue
 
+    calls = []
+
     async def seat_down(*args):
+        calls.append(True)
         return None
 
     rt.turn_reviewer = seat_down
-    # The retry chain waits; only turn-triggered drains run.
+    # The backoff is long: only turn-triggered drains run during the test.
     monkeypatch.setattr(review_queue.random, "uniform", lambda *args: 3600)
     _queue(rt)
-    for _ in range(review_queue.MAX_ATTEMPTS + 2):
+    for _ in range(10):
         await rt.recover_reviews()
-    assert rt.conversations.review_counts("scout") == {"pending": 1, "done": 0}
+    assert len(calls) == 1  # The failed review waits out its backoff.
+    [pending] = rt.conversations.pending_reviews()
+    assert pending["attempts"] == 1
+
+
+async def test_concurrent_drain_requests_are_coalesced(rt, monkeypatch):
+    from jarvis.society import review_queue
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = []
+
+    async def slow_seat(*args):
+        calls.append(True)
+        started.set()
+        await release.wait()
+        return None
+
+    rt.turn_reviewer = slow_seat
+    monkeypatch.setattr(review_queue.random, "uniform", lambda *args: 3600)
+    for index in range(3):
+        _queue(rt, f"turn-{index}")
+    first = asyncio.create_task(rt.recover_reviews())
+    await asyncio.wait_for(started.wait(), 5)
+    # Ten more finished turns while the seat is still thinking.
+    await asyncio.gather(*(rt.recover_reviews() for _ in range(10)))
+    release.set()
+    await asyncio.wait_for(first, 5)
+    # One call per review: the queued requests became one extra pass, and
+    # that pass found every review waiting out its backoff.
+    assert len(calls) == 3
+    assert [p["attempts"] for p in rt.conversations.pending_reviews()] == [1, 1, 1]
+
+
+async def test_the_attempt_budget_survives_a_restart(tmp_path, monkeypatch):
+    from jarvis.society import review_queue
+    from jarvis.society.runtime import SocietyRuntime
+
+    cfg = SimpleNamespace(wiki=SimpleNamespace(vault_root=str(tmp_path / "vault")))
+    # A previous run: the agent exists and three attempts are already spent.
+    first = SocietyRuntime(tmp_path, cfg=lambda: cfg, seed_starter_team=False)
+    await first.ensure_started()
+    try:
+        await first.roster.create(name="Scout", description="Draft only.")
+        _queue(first)
+        for _ in range(review_queue.MAX_ATTEMPTS - 1):
+            first.conversations.fail_review("society:scout", "turn-1", retry_after_ms=0)
+    finally:
+        await first.close()
+
+    calls = []
+
+    async def seat_down(*args):
+        calls.append(True)
+        return None
+
+    monkeypatch.setattr(review_queue.random, "uniform", lambda *args: 0)
+    runtime = SocietyRuntime(tmp_path, cfg=lambda: cfg, seed_starter_team=False)
+    runtime.turn_reviewer = seat_down
+    await runtime.ensure_started()  # Its startup drain runs the review.
+    try:
+        await runtime.recover_reviews()
+        for _ in range(100):
+            if not runtime.conversations.pending_reviews():
+                break
+            await asyncio.sleep(0.02)
+        await _settle(runtime)
+        assert len(calls) == 1  # Only the last attempt of the budget was left.
+        assert runtime.conversations.review_counts("scout") == {
+            "pending": 0,
+            "done": 0,
+            "dropped": 1,
+        }
+    finally:
+        await runtime.close()
+
+
+def test_an_old_archive_gains_the_retry_columns(tmp_path):
+    import sqlite3
+
+    from jarvis.society.conversation import ConversationArchive
+
+    path = tmp_path / "society-conversations.db"
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "CREATE TABLE reviews (session TEXT NOT NULL, turn_id TEXT NOT NULL, "
+            "events TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', "
+            "PRIMARY KEY(session,turn_id))"
+        )
+        db.execute(
+            "INSERT INTO reviews(session,turn_id,events) VALUES(?,?,?)",
+            ("society:scout", "old-turn", json.dumps({"events": [], "direct_user": True})),
+        )
+    archive = ConversationArchive(path)
+    try:
+        [pending] = archive.pending_reviews()
+        assert (pending["turn_id"], pending["attempts"], pending["retry_after_ms"]) == (
+            "old-turn",
+            0,
+            0,
+        )
+        assert archive.fail_review("society:scout", "old-turn", retry_after_ms=5) == 1
+    finally:
+        archive.close()
+    # Reopening is idempotent.
+    ConversationArchive(path).close()
 
 
 # ── Society skill learning ──────────────────────────────────────────────────
