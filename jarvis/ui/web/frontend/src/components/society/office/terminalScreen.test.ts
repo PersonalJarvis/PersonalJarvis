@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { PaneScreen } from "@/lib/paneScreensApi";
 import {
-  drawTerminalScreen, paneDot, screenChanged, terminalLayout, truncateRow, visibleRows,
+  drawTerminalScreen, monitorPalette, paneDot, rowTones, screenChanged, terminalLayout, truncateRow, visibleRows,
+  type MonitorFace,
 } from "./terminalScreen";
 
 /** A 2D context that records what was drawn. */
@@ -12,7 +13,7 @@ function recordingContext() {
     fillStyle: "", font: "", textAlign: "start", textBaseline: "alphabetic",
     fillRect(x: number, y: number, w: number, h: number) { rects.push({ x, y, w, h, fill: String(this.fillStyle) }); },
     fillText(text: string, x: number, y: number) { texts.push({ text, x, y, fill: String(this.fillStyle) }); },
-    beginPath() {}, arc() {}, fill() {},
+    beginPath() {}, arc() {}, fill() {}, drawImage() {},
     measureText(text: string) { return { width: text.length * 8 }; },
   };
   return { ctx: ctx as unknown as CanvasRenderingContext2D, texts, rects };
@@ -34,12 +35,20 @@ describe("terminal monitor layout", () => {
   it("draws nothing but the cursor row for an empty screen", () => {
     expect(visibleRows(["", "  "], 5, null)).toEqual({ rows: [], first: 0 });
   });
-  it("shrinks the font for wide terminals within bounds", () => {
-    const narrow = terminalLayout(40), wide = terminalLayout(200);
+  it("fits the font to the terminal's width, within bounds", () => {
+    const narrow = terminalLayout(37), wide = terminalLayout(200);
     expect(narrow.font).toBeGreaterThan(wide.font);
-    expect(wide.font).toBeGreaterThanOrEqual(9);
-    expect(narrow.font).toBeLessThanOrEqual(15);
+    expect(wide.font).toBeGreaterThanOrEqual(12);
+    expect(narrow.font).toBeLessThanOrEqual(40);
     expect(wide.fit).toBeGreaterThan(narrow.fit);
+    // A narrow TUI fills the monitor instead of hugging its left edge.
+    expect(narrow.cols).toBeLessThan(60);
+  });
+  it("tones the TUI's rules and the status bar under the composer", () => {
+    const rows = ["answer", "────────────", "> prompt", "────────────", "status bar", "mode"];
+    expect(rowTones(rows)).toEqual(["text", "rule", "text", "rule", "status", "status"]);
+    // A separator high up in the output never mutes what follows it.
+    expect(rowTones(["────────────", "a", "b", "c"])).toEqual(["rule", "text", "text", "text"]);
   });
   it("cuts long rows with an ellipsis", () => {
     expect(truncateRow("abcdef", 4)).toBe("abc…");
@@ -69,31 +78,47 @@ describe("terminal monitor state", () => {
   });
 });
 
+const face = (over: Partial<MonitorFace> = {}): MonitorFace => ({
+  title: "Refactor auth", meta: "Working · 3 min", dot: "working", mark: null, palette: monitorPalette("dark"), ...over,
+});
+
 describe("terminal monitor drawing", () => {
-  it("draws the title, the last rows and a cursor block", () => {
+  it("draws the IDE header, the last rows and a cursor block", () => {
     const { ctx, texts, rects } = recordingContext();
     const lines = Array.from({ length: 40 }, (_, i) => `line ${i}`);
-    drawTerminalScreen(ctx, { name: "Refactor auth", dot: "working" }, screen({ lines, cursor: [39, 7] }));
-    expect(texts[0].text).toBe("Refactor auth");
-    const body = texts.slice(1).map((t) => t.text);
+    drawTerminalScreen(ctx, face(), screen({ lines, cursor: [39, 7] }));
+    const drawn = texts.map((t) => t.text);
+    expect(drawn).toContain("Refactor auth");
+    expect(drawn).toContain("Working · 3 min");
+    // No mark loaded yet: the terminal glyph stands in.
+    expect(drawn).toContain(">_");
+    const body = texts.filter((t) => t.text.startsWith("line ")).map((t) => t.text);
     expect(body.at(-1)).toBe("line 39");
     expect(body).not.toContain("line 0");
-    // Background, title bar, cursor block.
-    expect(rects).toHaveLength(3);
-    const cursor = rects[2];
-    expect(cursor.y).toBeGreaterThan(texts.at(-2)!.y);
+    const cursor = rects.at(-1)!;
+    expect(cursor.fill).toBe(monitorPalette("dark").cursor);
+    expect(cursor.y).toBeGreaterThan(texts.filter((t) => t.text.startsWith("line ")).at(-2)!.y);
+  });
+  it("draws the text in the pane's own ink for either appearance", () => {
+    for (const appearance of ["light", "dark"] as const) {
+      const { ctx, texts } = recordingContext();
+      drawTerminalScreen(ctx, face({ palette: monitorPalette(appearance) }), screen({ lines: ["hello"] }));
+      expect(texts.find((t) => t.text === "hello")?.fill).toBe(monitorPalette(appearance).text);
+    }
+    expect(monitorPalette("light").ground).not.toBe(monitorPalette("dark").ground);
   });
   it("truncates rows wider than the monitor", () => {
     const { ctx, texts } = recordingContext();
-    drawTerminalScreen(ctx, { name: "x", dot: "idle" }, screen({ cols: 240, lines: ["y".repeat(240)] }));
-    expect(texts[1].text.endsWith("…")).toBe(true);
-    expect(texts[1].text.length).toBe(terminalLayout(240).cols);
+    drawTerminalScreen(ctx, face(), screen({ cols: 240, lines: ["y".repeat(240)] }));
+    const row = texts.find((t) => t.text.startsWith("yyy"))!;
+    expect(row.text.endsWith("…")).toBe(true);
+    expect(row.text.length).toBe(terminalLayout(240).cols);
   });
-  it("shows a dim screensaver when no screen has arrived", () => {
-    const { ctx, texts, rects } = recordingContext();
-    drawTerminalScreen(ctx, { name: "Quiet pane", dot: "idle" }, undefined);
-    expect(rects).toHaveLength(1);
-    expect(texts.map((t) => t.text)).toEqual(["Quiet pane", ">_"]);
+  it("keeps the header over a quiet screen when no screen has arrived", () => {
+    const { ctx, texts } = recordingContext();
+    drawTerminalScreen(ctx, face({ title: "Quiet pane", dot: "idle" }), undefined);
+    expect(texts.map((t) => t.text)).toContain("Quiet pane");
+    expect(texts.at(-1)?.text).toBe(">_");
     expect(ctx.textAlign).toBe("start");
   });
 });
