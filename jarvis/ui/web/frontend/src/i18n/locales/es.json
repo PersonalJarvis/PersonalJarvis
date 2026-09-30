@@ -5912,7 +5912,7 @@
       "minutes_ago": "hace {n} min"
     },
     "office": {
-      "failed": "No se pudo cargar el mapa de la oficina.",
+      "failed": "No se pudo cargar el Jarvis Verse.",
       "retry": "Reintentar"
     },
     "agents": {
