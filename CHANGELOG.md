@@ -11,6 +11,23 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [2.4.3] — 2026-09-30
+
+### Fixed
+
+- Raise the urllib3 security floor to 2.8.0 (CVE-2026-97687..97689, published
+  after 2.4.2 was tagged). The strict dependency audit refused 2.4.2's signed
+  install scripts on it; 2.4.3 ships everything 2.4.2 contains plus the fixed
+  dependency, the desktop installers and the signed install scripts.
+
+### Changed
+
+- The README hero video shows Agents, Jarvis Verse and the Agentic IDE.
+- Desktop sections load on navigation intent, so switching sections starts
+  sooner.
+
+---
+
 ## [2.4.2] — 2026-09-30
 
 ### Fixed
