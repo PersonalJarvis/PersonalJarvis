@@ -1037,6 +1037,12 @@ class Terminal:
     computer_id: str = ""
     remote_folder: str = ""
     offload_snapshot: str = ""
+    # Set while the pane's folder is on its way to (or back from) its
+    # computer: a viewer attaching then is told "not yet" instead of starting
+    # the agent in the wrong place. Never persisted.
+    placing: str = ""
+    # The last placement's one-line report for the UI ("Not copied: .env").
+    notice: str = ""
     status: Status = "pending"
     pty_id: str | None = None
     # The geometry the PTY ACTUALLY holds, as last handed to `setwinsize`.
@@ -1931,6 +1937,43 @@ class SessionNotReady(SessionError):
     """
 
 
+class PlacementError(SessionError):
+    """A pane could not be set up on (or brought back from) a computer.
+
+    Its own type so the HTTP layer can answer 502 — the server, the network or
+    the copy failed — instead of blaming the request.
+    """
+
+
+class _Inherit:
+    """ "Run the new pane where its neighbours run" — the default placement."""
+
+    def __repr__(self) -> str:
+        return "INHERIT_PLACEMENT"
+
+
+#: ``add_terminal(computer_id=...)`` default: a split runs where its anchor
+#: runs, any other new pane where the whole workspace runs.
+INHERIT_PLACEMENT: Any = _Inherit()
+
+
+def _remote_commands(terms: Sequence[Terminal]) -> dict[str, str]:
+    """What must be on a computer's PATH before ``terms`` can start there."""
+    needed = {"tmux": "tmux"}
+    for term in terms:
+        spec = workspace_agents.get_agent(term.agent)
+        argv = remote_agent_argv(term.agent)
+        if spec is not None and spec.is_coding_agent and not spec.shell_launch and argv:
+            needed[term.display_name] = argv[0]
+    return needed
+
+
+def _copy_key(local: str) -> tuple[str, Path | None]:
+    """Blocking half of ``Registry._copy_root``: one git call and a realpath."""
+    top = remote.git_toplevel(Path(local))
+    return os.path.normcase(os.path.realpath(str(top) if top else local)), top
+
+
 class Registry:
     """Process-wide holder of the open Agentic-IDE workspaces.
 
@@ -1970,6 +2013,11 @@ class Registry:
         # burst for one account from starving unrelated ``asyncio.to_thread``
         # work (BUG-043).
         self._account_prepare_locks: dict[str, asyncio.Lock] = {}
+        # One gate per (computer, local folder): copies of one folder to one
+        # computer happen one at a time, so a second pane JOINS the first one's
+        # copy — sending it again reset the server's folder under the agent
+        # already working in it.
+        self._copy_locks: dict[tuple[str, str], asyncio.Lock] = {}
         # Admits a few agent cold starts at a time (see COLD_START_LIMIT).
         # Created on first use rather than here: a semaphore belongs to the loop
         # it is first awaited on, and the registry is also built in tests that
@@ -2612,6 +2660,7 @@ class Registry:
         *,
         project_id: str | None = None,
         name: str | None = None,
+        computer_id: str | None = None,
     ) -> Session:
         """Open ``folder`` as a NEW workspace with one terminal per request entry.
 
@@ -2622,6 +2671,12 @@ class Registry:
         stays open with its agents running. The same folder may be opened more
         than once deliberately: each workspace is a separate set of panes and
         conversations, with a distinct tab name.
+
+        ``computer_id`` runs every pane on that connected computer from the
+        start: the server is checked (tmux, each CLI), the folder is copied
+        there once, and only then may a pane start — its CLI never has to be
+        installed on this machine. A failure closes the workspace again and
+        raises :class:`PlacementError`.
         """
         async with self._lock:
             if not requested:
@@ -2667,11 +2722,15 @@ class Registry:
             if unknown:
                 raise SessionError(f"Unknown agent(s): {', '.join(sorted(unknown))}")
 
+            # A workspace that runs on a computer needs its CLIs THERE, not
+            # here — they are checked on the server before anything is copied.
+            launcher = remote_agent_argv if computer_id else agent_argv
             missing = sorted(
-                {str(r.get("agent")) for r in requested if agent_argv(str(r.get("agent"))) is None}
+                {str(r.get("agent")) for r in requested if launcher(str(r.get("agent"))) is None}
             )
             if missing:
                 raise SessionError(" ".join(_unavailable(m) for m in missing))
+            placing = self._placing_note(computer_id) if computer_id else ""
 
             # Call-signs count from T1 WITHIN this workspace, and every
             # workspace counts from T1 again. That is the whole promise of a
@@ -2716,6 +2775,8 @@ class Registry:
                         permission_mode=launch_picks.normalize_permission(
                             agent, entry.get("permission_mode")
                         ),
+                        computer_id=computer_id or "",
+                        placing=placing,
                     )
                 )
 
@@ -2731,7 +2792,15 @@ class Registry:
                 len(terminals),
                 root,
             )
-            return session
+        if computer_id:
+            try:
+                await self._place_new(session, list(session.terminals), computer_id)
+            except BaseException:
+                # Also when the request itself was cancelled: a workspace whose
+                # panes can never start is closed rather than left behind.
+                await self.end(session.id)
+                raise
+        return session
 
     # ------------------------------------------------------- workspace helpers
     def _find_by_folder(self, root: Path) -> Session | None:
@@ -3112,7 +3181,9 @@ class Registry:
                 folder=entry.folder if entry.folder and Path(entry.folder).is_dir() else "",
                 branch=entry.branch if entry.folder and Path(entry.folder).is_dir() else "",
                 fork_from=entry.fork_from,
-                computer_id=entry.computer_id,
+                # A pane saved while its folder was still being copied has no
+                # folder on that computer to start in; it comes back here.
+                computer_id=entry.computer_id if entry.remote_folder else "",
                 remote_folder=entry.remote_folder,
                 offload_snapshot=entry.offload_snapshot,
                 was_running=entry.running,
@@ -3874,6 +3945,10 @@ class Registry:
                 raise SessionNotReady("No Agentic-IDE session is running.")
             raise SessionError(f"Unknown terminal: {key}")
         session, term = found
+        if term.placing:
+            # Its folder is still travelling to the computer it will run on; a
+            # viewer attaching now would start the agent in the wrong place.
+            raise SessionNotReady(term.placing)
         if cols < MIN_VIEWER_COLS or rows < MIN_VIEWER_ROWS:
             # A handshake tile too narrow for the agent to draw in, which is how
             # a whole conversation ends up printed one character per line (the
@@ -5148,6 +5223,8 @@ class Registry:
         model: str | None = None,
         effort: str | None = None,
         permission_mode: str | None = None,
+        computer_id: Any = INHERIT_PLACEMENT,
+        folder: str = "",
     ) -> Terminal:
         """Open one more terminal in the running workspace.
 
@@ -5182,6 +5259,14 @@ class Registry:
         "another one of these settings", and a model quietly carried onto a
         pane somebody opened to try something else is the confusing kind of
         helpful.
+
+        ``computer_id`` says where the pane RUNS: a connected computer's id,
+        ``None`` for this machine, or (the default) where its neighbours run —
+        a split beside its anchor, any other pane with the workspace when all
+        of it runs on one computer. A pane for a computer is set up there
+        before it can start (:meth:`_place_new`) and removed again if that
+        fails. ``folder`` opens it in another folder than the workspace's (a
+        worktree fork).
         """
         selected_id = workspace_id or self.active_id
         async with self._lock:
@@ -5212,7 +5297,9 @@ class Registry:
                 chosen = _prevailing_agent(session)
             if not is_runnable(chosen):
                 raise SessionError(f"Unknown agent: {chosen}")
-            if agent_argv(chosen) is None:
+            target = self._new_pane_computer(session, base if anchor else None, computer_id)
+            launcher = remote_agent_argv if target else agent_argv
+            if launcher(chosen) is None:
                 raise SessionError(_unavailable(chosen))
 
             # Unused within THIS workspace — the scope a positional call-sign
@@ -5274,6 +5361,9 @@ class Registry:
                 model=launch_picks.normalize_model(chosen, model),
                 effort=launch_picks.normalize_effort(chosen, effort),
                 permission_mode=launch_picks.normalize_permission(chosen, permission_mode),
+                folder=folder,
+                computer_id=target,
+                placing=self._placing_note(target) if target else "",
             )
             session.terminals.append(term)
             # Where it goes is the tree's business, and the distinction is the
@@ -5318,7 +5408,16 @@ class Registry:
                 direction,
                 base.name if base else "the grid",
             )
-            return term
+        if term.computer_id:
+            try:
+                await self._place_new(session, [term], term.computer_id)
+            except BaseException:
+                # Nothing ever started (the pane was gated); take it away rather
+                # than leave a pane that can never start — also when the request
+                # itself was cancelled.
+                await self.close_terminals([term.name], workspace_id=session.id)
+                raise
+        return term
 
     def fork_suggestion(self, wanted: str, workspace_id: str | None = None) -> dict[str, Any]:
         """What the fork dialog offers for pane ``wanted``, before anything is made.
@@ -5362,6 +5461,15 @@ class Registry:
         target = computer_id or ""
         if term.computer_id == target:
             return {"moved": False, "message": "The pane already runs there."}
+        if term.placing:
+            raise SessionError(f"{term.name} is being moved already.")
+        if term.computer_id and target:
+            # Straight from one computer to another would copy this machine's
+            # stale folder and end the agent there with its work unreturned.
+            raise SessionError(
+                f"{term.name} runs on {self._computer_label(term.computer_id)}. "
+                "Bring it back to this computer first."
+            )
         async with term.attach_lock:
             was_live = bool(term.pty_id)
             if target:
@@ -5376,29 +5484,80 @@ class Registry:
     async def place_workspace(
         self, workspace_id: str, *, computer_id: str | None
     ) -> dict[str, Any]:
-        """Move every pane of a workspace, one folder transfer per folder."""
+        """Move every pane of a workspace, one folder transfer per folder.
+
+        To a computer: a pane already on ANOTHER computer stays there (the
+        messages say so) — moving it from there would lose its work. Back:
+        see :meth:`_bring_workspace_back`. Whatever moved before a failure is
+        remembered.
+        """
         session = self.get(workspace_id)
         if session is None:
             raise SessionError("Unknown workspace.")
         target = computer_id or ""
-        placements: dict[str, remote.Placement] = {}
+        if not target:
+            return await self._bring_workspace_back(session)
+        placements: dict[str, tuple[remote.Placement, str]] = {}
         moved: list[str] = []
         messages: list[str] = []
-        for term in list(session.terminals):
-            if term.computer_id == target:
-                continue
-            async with term.attach_lock:
-                was_live = bool(term.pty_id)
-                if target:
+        try:
+            for term in list(session.terminals):
+                if term.computer_id == target or term.placing:
+                    continue
+                if term.computer_id:
+                    messages.append(
+                        f"{term.name} stays on {self._computer_label(term.computer_id)}; "
+                        "bring it back first to move it."
+                    )
+                    continue
+                async with term.attach_lock:
+                    was_live = bool(term.pty_id)
                     message = await self._offload_locked(session, term, target, placements)
-                else:
-                    message = await self._bring_back_locked(session, term)
-                if was_live:
-                    await self._restart_in_place(session, term)
-            moved.append(term.key)
-            if message and message not in messages:
-                messages.append(message)
-        await self._persist()
+                    if was_live:
+                        await self._restart_in_place(session, term)
+                moved.append(term.key)
+                if message and message not in messages:
+                    messages.append(message)
+        finally:
+            await self._persist()
+        return {"moved": moved, "messages": messages}
+
+    async def _bring_workspace_back(self, session: Session) -> dict[str, Any]:
+        """Bring every remote pane of ``session`` home, one folder transfer per folder.
+
+        Every agent stops BEFORE any folder is packed — a sibling still writing
+        while the first pane's copy came home lost its last edits — and the
+        panes are gated meanwhile so no viewer restarts one there. Each
+        (computer, folder) comes back once however many panes shared it: one
+        return per pane used to make a second branch, collide on its name and
+        leave the workspace half moved.
+        """
+        away = [t for t in session.terminals if t.computer_id and not t.placing]
+        moved: list[str] = []
+        messages: list[str] = []
+        live: set[str] = set()
+        returns: dict[tuple[str, str], remote.Return] = {}
+        for term in away:
+            term.placing = "Bringing the work back to this computer…"
+        try:
+            for term in away:
+                async with term.attach_lock:
+                    if term.pty_id:
+                        live.add(term.key)
+                        await self._stop_for_move(term, self._pool(term))
+            for term in away:
+                async with term.attach_lock:
+                    message = await self._bring_back_locked(session, term, returns)
+                    term.placing = ""
+                    if term.key in live:
+                        await self._restart_in_place(session, term)
+                moved.append(term.key)
+                if message and message not in messages:
+                    messages.append(message)
+        finally:
+            for term in away:
+                term.placing = ""
+            await self._persist()
         return {"moved": moved, "messages": messages}
 
     async def _stop_for_move(self, term: Terminal, pool: Any) -> None:
@@ -5425,82 +5584,240 @@ class Registry:
         session: Session,
         term: Terminal,
         computer_id: str,
-        placements: dict[str, remote.Placement],
+        placements: dict[str, tuple[remote.Placement, str]],
     ) -> str:
         from jarvis.computers.remote_terminal import pool_for
+        from jarvis.computers.service import ComputerError
 
         pool = pool_for(computer_id)
-        local_folder = Path(term.cwd(session.folder))
-        folder_key = os.path.normcase(str(local_folder))
-        try:
-            placement = placements.get(folder_key)
-            if placement is None:
-                placement = await remote.push_code(pool, local_folder)
-                placements[folder_key] = placement
-            carried = await remote.push_conversation(
-                pool,
-                term.agent,
-                term.resume.id if term.resume else None,
-                placement.remote_folder,
-                account_home(term.agent, term.account),
-            )
-        except remote.MoveError as exc:
-            raise SessionError(str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001 - SSH/SFTP failures become one sentence
-            logger.warning("Agentic IDE: moving {} failed: {}", term.name, exc)
-            raise SessionError(f"The move failed: {exc}") from exc
-        if term.computer_id:
-            await self._stop_for_move(term, pool_for(term.computer_id))
-        else:
+        local = term.cwd(session.folder)
+        where = self._computer_label(computer_id)
+        key, top = await self._copy_root(local)
+        async with self._copy_lock(computer_id, key):
+            try:
+                await remote.preflight(pool, _remote_commands([term]), where)
+                placement, joined = await self._join_or_copy(
+                    pool, computer_id, local, key, top, term, placements
+                )
+                carried = await remote.push_conversation(
+                    pool,
+                    term.agent,
+                    term.resume.id if term.resume else None,
+                    placement.remote_folder,
+                    account_home(term.agent, term.account),
+                )
+            except remote.MoveError as exc:
+                raise PlacementError(str(exc)) from exc
+            except ComputerError as exc:
+                raise PlacementError(exc.message) from exc
+            except Exception as exc:  # noqa: BLE001 - SSH/SFTP failures become one sentence
+                logger.warning("Agentic IDE: moving {} failed: {}", term.name, exc)
+                raise PlacementError(f"The move failed: {exc}") from exc
             await self._stop_for_move(term, self._pty)
-        if not carried:
-            # Nothing to continue from on the server: start clean there rather
-            # than asking the CLI for a conversation it does not have.
-            term.resume = None
-        term.computer_id = computer_id
-        term.remote_folder = placement.remote_folder
-        term.offload_snapshot = placement.offload_snapshot or ""
-        return "Moved with its conversation." if carried else "Moved; the agent starts fresh there."
+            if not carried:
+                # Nothing to continue from on the server: start clean there
+                # rather than asking the CLI for a conversation it does not have.
+                term.resume = None
+            term.computer_id = computer_id
+            term.remote_folder = placement.remote_folder
+            term.offload_snapshot = placement.offload_snapshot or ""
+        moved = (
+            "Moved with its conversation." if carried else "Moved; the agent starts fresh there."
+        )
+        joined_note = f" It works in the copy already on {where}." if joined else ""
+        term.notice = (
+            f"{moved}{joined_note} {remote.left_behind_note(placement.left_behind)}".strip()
+        )
+        return term.notice
 
-    async def _bring_back_locked(self, session: Session, term: Terminal) -> str:
-        from jarvis.computers.remote_terminal import pool_for, tmux_session_name
+    async def _place_new(self, session: Session, terms: list[Terminal], computer_id: str) -> None:
+        """Set up panes created for ``computer_id``: check the server, copy each repo once.
+
+        The panes exist already, gated by ``placing`` so no viewer can start
+        them anywhere yet. The server is asked first whether tmux and every
+        pane's CLI are there — a missing CLI used to show up only as a dead
+        pane after a long upload. A copy another pane already works in on
+        that computer is JOINED, not sent again.
+        """
+        from jarvis.computers.remote_terminal import pool_for
+        from jarvis.computers.service import ComputerError
+
+        pool = pool_for(computer_id)
+        where = self._computer_label(computer_id)
+        placements: dict[str, tuple[remote.Placement, str]] = {}
+        try:
+            await remote.preflight(pool, _remote_commands(terms), where)
+            for term in terms:
+                local = term.cwd(session.folder)
+                key, top = await self._copy_root(local)
+                async with self._copy_lock(computer_id, key):
+                    placement, joined = await self._join_or_copy(
+                        pool, computer_id, local, key, top, term, placements
+                    )
+                    term.remote_folder = placement.remote_folder
+                    term.offload_snapshot = placement.offload_snapshot or ""
+                    term.notice = (
+                        f"Works in the copy already on {where}."
+                        if joined
+                        else f"Copied to {where}. {remote.left_behind_note(placement.left_behind)}"
+                    ).strip()
+                    term.placing = ""
+        except remote.MoveError as exc:
+            raise PlacementError(str(exc)) from exc
+        except ComputerError as exc:
+            raise PlacementError(exc.message) from exc
+        except Exception as exc:  # noqa: BLE001 - SSH/SFTP failures become one sentence
+            logger.warning("Agentic IDE: setting up panes on {} failed: {}", where, exc)
+            raise PlacementError(f"Copying the folder to {where} failed: {exc}") from exc
+        await self._persist()
+
+    async def _copy_root(self, local: str) -> tuple[str, Path | None]:
+        """What one copy on a computer covers: the git repo ``local`` is in, else the folder.
+
+        Returns ``(key, repo top)``. Panes in different subfolders of one repo
+        share ONE copy there (the whole repo is sent), so they must share its
+        lock and join each other: keyed on their own folders, a subfolder pane
+        sent the repo again and reset it under the agent already working in it.
+        """
+        return await asyncio.to_thread(_copy_key, local)
+
+    async def _join_or_copy(
+        self,
+        pool: Any,
+        computer_id: str,
+        local: str,
+        key: str,
+        top: Path | None,
+        exclude: Terminal,
+        placements: dict[str, tuple[remote.Placement, str]],
+    ) -> tuple[remote.Placement, bool]:
+        """The copy ``local`` works in on ``computer_id``, and whether it joined one.
+
+        Caller holds the copy lock for ``key``. The same repo seen from another
+        subfolder maps to the matching subfolder of the copy.
+        """
+        known = placements.get(key) or await self._sibling_placement(computer_id, key, exclude)
+        if known is None:
+            placement = await remote.push_code(pool, Path(local))
+            placements[key] = (placement, local)
+            return placement, False
+        placements[key] = known
+        base, base_local = known
+        if top is None or os.path.normcase(base_local) == os.path.normcase(local):
+            return remote.Placement(base.remote_folder, base.offload_snapshot), True
+        folder = await asyncio.to_thread(
+            remote.joined_folder, base.remote_folder, Path(base_local), Path(local), top
+        )
+        return remote.Placement(folder, base.offload_snapshot), True
+
+    async def _sibling_placement(
+        self, computer_id: str, key: str, exclude: Terminal
+    ) -> tuple[remote.Placement, str] | None:
+        """The copy another pane already works in on ``computer_id``, and that pane's folder."""
+        for session in list(self._sessions.values()):
+            for other in list(session.terminals):
+                if (
+                    other is exclude
+                    or other.computer_id != computer_id
+                    or not other.remote_folder
+                    or other.placing
+                ):
+                    continue
+                other_local = other.cwd(session.folder)
+                other_key, _top = await self._copy_root(other_local)
+                if other_key == key:
+                    placement = remote.Placement(
+                        other.remote_folder, other.offload_snapshot or None
+                    )
+                    return placement, other_local
+        return None
+
+    def _copy_lock(self, computer_id: str, key: str) -> asyncio.Lock:
+        return self._copy_locks.setdefault((computer_id, key), asyncio.Lock())
+
+    @staticmethod
+    def _new_pane_computer(session: Session, anchor: Terminal | None, wanted: Any) -> str:
+        """Where a new pane runs: named, else beside its anchor, else with the workspace."""
+        if wanted is not INHERIT_PLACEMENT:
+            return str(wanted or "")
+        if anchor is not None:
+            return anchor.computer_id
+        places = {t.computer_id for t in session.terminals}
+        return places.pop() if len(places) == 1 else ""
+
+    @staticmethod
+    def _computer_label(computer_id: str) -> str:
+        """The computer's name for messages."""
         from jarvis.computers.service import get_service
 
+        try:
+            return get_service().get(computer_id).name
+        except Exception:  # noqa: BLE001 - a removed or unreadable record still needs a word
+            return "the other computer"
+
+    def _placing_note(self, computer_id: str) -> str:
+        return f"Copying the folder to {self._computer_label(computer_id)}…"
+
+    async def _bring_back_locked(
+        self,
+        session: Session,
+        term: Terminal,
+        returns: dict[tuple[str, str], remote.Return] | None = None,
+    ) -> str:
+        """Bring one pane home; ``returns`` shares one return per copy across calls.
+
+        The pane is gated meanwhile and the copy's lock is held, so no new pane
+        joins a copy that is being packed up.
+        """
+        from jarvis.computers.remote_terminal import pool_for, tmux_session_name
+
         pool = pool_for(term.computer_id)
-        if term.pty_id:
-            await self._stop_for_move(term, pool)
-        else:
-            await pool.run(
-                f"tmux kill-session -t {shlex.quote(tmux_session_name(term.history_id))}"
-                " 2>/dev/null; true",
-                timeout_s=20,
-            )
-        local_folder = Path(term.cwd(session.folder))
+        term.placing = term.placing or "Bringing the work back to this computer…"
         try:
-            name = get_service().get(term.computer_id).name
-        except Exception:  # noqa: BLE001 - a removed computer still has a branch name
-            name = "server"
-        try:
-            outcome = await remote.pull_code(
-                pool, local_folder, term.remote_folder, term.offload_snapshot or None, name
-            )
-            carried = await remote.pull_conversation(
-                pool,
-                term.agent,
-                term.resume.id if term.resume else None,
-                local_folder,
-                account_home(term.agent, term.account),
-            )
-        except remote.MoveError as exc:
-            raise SessionError(str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001 - SSH/SFTP failures become one sentence
-            logger.warning("Agentic IDE: bringing {} back failed: {}", term.name, exc)
-            raise SessionError(f"Bringing the pane back failed: {exc}") from exc
-        if not carried:
-            term.resume = None
-        term.computer_id = ""
-        term.remote_folder = ""
-        term.offload_snapshot = ""
+            if term.pty_id:
+                await self._stop_for_move(term, pool)
+            else:
+                await pool.run(
+                    f"tmux kill-session -t {shlex.quote(tmux_session_name(term.history_id))}"
+                    " 2>/dev/null; true",
+                    timeout_s=20,
+                )
+            local_folder = Path(term.cwd(session.folder))
+            name = self._computer_label(term.computer_id)
+            copy_key, _top = await self._copy_root(str(local_folder))
+            key = (term.computer_id, copy_key)
+            async with self._copy_lock(term.computer_id, copy_key):
+                try:
+                    outcome = returns.get(key) if returns is not None else None
+                    if outcome is None:
+                        outcome = await remote.pull_code(
+                            pool,
+                            local_folder,
+                            term.remote_folder,
+                            term.offload_snapshot or None,
+                            name,
+                        )
+                        if returns is not None:
+                            returns[key] = outcome
+                    carried = await remote.pull_conversation(
+                        pool,
+                        term.agent,
+                        term.resume.id if term.resume else None,
+                        local_folder,
+                        account_home(term.agent, term.account),
+                    )
+                except remote.MoveError as exc:
+                    raise PlacementError(str(exc)) from exc
+                except Exception as exc:  # noqa: BLE001 - SSH/SFTP failures become one sentence
+                    logger.warning("Agentic IDE: bringing {} back failed: {}", term.name, exc)
+                    raise PlacementError(f"Bringing the pane back failed: {exc}") from exc
+                if not carried:
+                    term.resume = None
+                term.computer_id = ""
+                term.remote_folder = ""
+                term.offload_snapshot = ""
+        finally:
+            term.placing = ""
         return outcome.message
 
     async def _restart_in_place(self, session: Session, term: Terminal) -> None:
@@ -5577,10 +5894,11 @@ class Registry:
             model=source.model,
             effort=source.effort,
             permission_mode=source.permission_mode,
+            folder=folder,
         )
         # No await between the pane's creation and these, so no viewer can
-        # attach (and spawn) before the pane knows it is a fork.
-        term.folder = folder
+        # attach (and spawn) before the pane knows it is a fork. (A pane for
+        # a computer was gated by ``placing`` until add_terminal returned.)
         term.branch = branch
         term.fork_from = source.resume
         await self._persist()
@@ -5937,6 +6255,10 @@ class Registry:
                         pool.close(term.pty_id)
                     except Exception:  # noqa: BLE001, S110 - best-effort teardown
                         pass
+                elif term.computer_id and term.remote_folder and hasattr(pool, "end_session"):
+                    # Nobody is watching it, but its agent may still be working
+                    # in tmux on the computer: closing the pane ends it there too.
+                    pool.end_session(term.history_id)
                 term.pty_id = None
                 term.status = "exited"
                 term.viewer_output = None
@@ -6817,7 +7139,9 @@ __all__ = [
     "MAX_GRID_ROWS",
     "MAX_TERMINALS",
     "MAX_WORKSPACES",
+    "INHERIT_PLACEMENT",
     "PLAIN_TERMINAL",
+    "PlacementError",
     "Registry",
     "Session",
     "SessionError",
