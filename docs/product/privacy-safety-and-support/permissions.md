@@ -39,7 +39,7 @@ approvals remain separate.
 
 During first-run setup, an interactive Mac shows all seven rows. **Continue** is
 enabled when every row is ready or is waiting for the final setup restart.
-Choose **Continue with text only** to skip the remaining grants. Completing
+Choose **Skip for now, text only** to skip the remaining grants. Completing
 setup restarts the installed desktop app when that restart is available.
 
 ## Check Your Platform

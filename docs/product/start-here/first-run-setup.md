@@ -1,185 +1,170 @@
 ---
 title: "Complete First-Run Setup"
 slug: first-run-setup
-summary: "Choose languages, a local or connected Brain, permissions, and voice activation without exposing credentials."
+summary: "Agree to the terms, connect one Brain, find your coding agents, choose how voice starts, then take the tour of the app."
 section: "Start here"
 section_order: 1
 order: 3
 diataxis: tutorial
 status: active
 owner: maintainers
-last_reviewed: 2026-07-30
+last_reviewed: 2026-09-30
 phase: "-"
 audience: end-user
-tags: [setup, onboarding, language, permissions, microphone, wake-word, providers]
+tags: [setup, onboarding, tour, language, permissions, microphone, wake-word, providers]
 related: [providers-and-api-keys, audio-and-wake-word, permissions, start-your-first-chat]
 ---
 
-First-run setup accepts the Terms, introduces model choices, checks system
-access, and sets voice activation. You can finish without a cloud account or
-microphone, but chat needs a ready local or connected Brain.
+First-run setup is one card that changes shape from step to step. It asks only
+what the assistant needs before it can work: your agreement, one Brain, how
+voice starts, and (on macOS) system access. Everything else is explained
+afterwards by a short tour of the real app.
 
 ## Before You Start
 
 - Open the installed desktop app. The first launch may take several seconds.
-- For a keyless Brain, start Ollama with one installed model. Connect a
-  microphone only if testing a wake word.
+- Have one API key ready (OpenAI or Google Gemini is the shortest path), or run
+  Ollama with one installed model for a keyless Brain.
 - On macOS, launch the signed app from its application bundle before granting
   access; permissions belong to that exact app identity.
 
-> [!warning] Enter a provider credential only under **API Keys & Providers**
-> after onboarding. Never paste one into chat, speak it, put it in a wake word,
-> add it to configuration, or include it in a screenshot.
+> [!warning] Paste a provider credential only into the masked key field of the
+> setup card or of **API Keys**. Never paste one into chat, speak it, put it in
+> a wake word, add it to configuration, or include it in a screenshot.
 
 ## Complete the Setup
 
-### 1. Accept the risk notice and view the tour
+The dots at the bottom of the card show where you are, and **Step X of Y**
+counts the steps this computer needs (macOS has one more). **Back** returns to
+the previous step, never behind the agreement. If the window reloads, the card
+reopens on the step you were on.
 
-1. On **Before you continue**, read the summary and use **View the full Terms of
-   Use** for the complete text.
-2. Accept the risk checkbox, then select **I understand — continue**. **Decline
-   & quit** closes the app; the notice returns next time.
-3. Play or skip **Watch the 2-minute tour**, then select **Get started** on the
-   welcome screen.
+### 1. Agree to the terms
 
-**Skip setup for now** skips only the welcome step and continues to language.
-It does not dismiss the remaining first-run guide.
+The first card lists what the assistant does on this computer: it runs
+commands and changes files, can see your screen when asked, sends what you say
+to the provider you choose, is billed by that provider, and can make mistakes.
 
-### 2. Choose interface and reply languages
+1. Pick **English**, **Deutsch** or **Español** in the card's corner if you want
+   another interface language. You can change it later under **Settings >
+   Languages**.
+2. Optionally open **Read the full Terms of Use**.
+3. Tick the agreement, then select **Agree and continue**. **Decline and quit**
+   closes the app without saving anything; the card asks again next time.
 
-On **Choose your language**, select **Interface language** and **Reply
-language**, then **Next**. English, German, and Spanish are supported.
+### 2. Give it a brain
 
-Interface language changes menus. Reply language controls answers; **Auto**
-follows the conversation without switching for short interjections. Wake-word
-pronunciation is separate and can be pinned under **Settings > Wake Word**.
+Choose one way to think and talk:
 
-### 3. Choose a Brain path and learn the voice modes
+- **OpenAI GPT-Live** (recommended) or **Gemini Live**: paste that provider's
+  key into the field. The key is tested as soon as it is saved, and live voice
+  plus its thinking model are pointed at it. The card confirms **Connected**.
+- **Another provider**: opens the full list of Brain providers; saving the first
+  key makes that provider the active Brain.
+- **Run on this computer**: uses Ollama with no key. The link reads **Ollama
+  found** when a local server answers; **Use the local model** switches the
+  Brain to it and voice to the listen-think-speak pipeline.
 
-**Set up API keys after onboarding** previews **API Keys & Providers**. It does
-not accept a key, choose a cloud provider, or test an account.
+**Continue** unlocks once one path works. **I'll add a key later** moves on;
+the last step then says that chat and voice stay off until a key exists.
 
-| Voice mode | What the onboarding screen offers |
-|---|---|
-| **Realtime (recommended, research preview)** | One compatible OpenAI or Gemini credential handles listening, reasoning, and speech in one live connection |
-| **Pipeline (not recommended)** | Separate choices handle **Brain**, **Voice Input**, and **Voice Output** |
+### 3. Hand off the big jobs
 
-The same step checks this machine for Ollama:
+The card shows the coding agents this computer is already signed in to (for
+example a subscription you use in a terminal). Connect one with its own
+browser sign-in, or select **Check again** after signing in elsewhere. This
+step is optional: **Continue** is always available.
 
-- **Use local model** appears when Ollama is reachable with a model; it makes
-  Ollama the active Brain without a key.
-- If Ollama is empty, install a model there first. The wizard does not download
-  one.
-- **Get Ollama** appears when no server is detected; you may choose another
-  Brain later.
+### 4. Allow access on this Mac (macOS only)
 
-This button changes only the Brain, not voice, vision, or other model features.
-Select **Continue onboarding** when ready.
+The rows are the same as under **Settings > Privacy permissions**: Microphone,
+Screen Recording, Accessibility, Input Monitoring, Input control, Automation
+and Keychain. Use **Allow** or **Open Settings**, return, and wait for the row
+to update. A grant that only reads back after a restart counts as ready; the
+final restart applies it. **Skip for now, text only** defers all of them.
 
-### 4. Review operating-system permissions
+Windows and Linux do not show this step.
 
-On macOS, **Allow access on this Mac** shows **Microphone**, **Screen
-Recording**, **Accessibility**, **Input Monitoring**, **Input control**, and
-**Keychain (API keys)**. Grant only what you need:
+### 5. Choose how you call it
 
-- Microphone supports voice input; Screen Recording, Accessibility, and Input
-  control support Computer Use; Input Monitoring supports global shortcuts;
-  Keychain stores credentials encrypted.
+- **A wake word**: **Hey** is fixed, you type the rest (at least two letters).
+  The word also becomes the assistant's name; the card shows it as you type,
+  for example **Your assistant will be called Nova**. Tick that you are
+  responsible for the word, then select **Save and continue**. If no local
+  engine can hear that word yet, the card offers the local speech pack, or
+  **Continue with the shortcut for now**.
+- **A keyboard shortcut**: nothing listens until you press the Call keys the
+  card shows (for example **F3 + F4**).
 
-Use **Allow** or **Open Settings**, return, and wait for the status. **Allowed**,
-**Not required**, and **Restart pending** are ready. Pending access applies
-during the final restart. To defer access, select **Continue with text only**.
+**Test microphone** listens for three seconds and fills the level meter. It
+reports a clear, quiet, missing or blocked input and never blocks saving.
 
-Windows and Linux show **No extra desktop privacy permissions are required on
-this operating system**. This does not prove that a microphone, display,
-shortcut, or platform backend is available.
+### 6. All set
 
-### 5. Choose how voice starts and name the assistant
+The last card lists what each step set up and, in plain lines, what is still
+missing. Turn on **Start at login** if the switch appears. **Start** (or
+**Start Nova** with a wake word) saves the setup and restarts the app once so
+every choice takes effect together.
 
-On the activation screen, choose one path:
+## Take the Tour
 
-- **Keyboard shortcut** disables always-listening activation. Use the Call
-  shortcut later. With no wake phrase, the neutral name is **Assistant**.
-- **Wake word** keeps a local listener ready for your phrase. **Hey** is fixed;
-  enter at least two characters for the rest. The phrase also defines the
-  assistant's display name. For example, entering **Nova** shows **Your
-  assistant will be called: Nova**.
+After the restart the app opens with a short guided tour. It dims the window,
+lights up one part of the real interface at a time, and explains it in a small
+card: the voice bar, a new chat, the agents and their world, Voice, Artifacts,
+the Agentic IDE, Plugins and the Marketplace, and Settings.
 
-Accept responsibility for the name, then optionally select **Test your
-microphone** or **Say your wake word once**. Both check the input level and
-report good, quiet, missing, blocked, or temporarily unavailable input. The
-check does not block saving.
-
-Select **Save wake word**. If no local engine supports it, choose **Enable any
-wake word** to install the optional local wake speech pack, then save again.
-This repairs wake detection, not the full Pipeline voice stack. **Continue
-anyway** leaves the Call shortcut as the reliable path until wake is healthy.
-
-### 6. Finish and restart once
-
-On **You're all set!**, review skipped entries. Enable **Start Jarvis
-automatically at login** only if the supported switch appears.
-
-Select **Get started**. Setup is saved before one fresh restart initializes the
-new choices. If it does not restart, reopen the app manually.
-
-## Connect and Test Providers After Setup
-
-Open **API Keys**. Under **Brain**, use Ollama or connect one provider you have.
-For voice, choose **Realtime** or **Pipeline** and connect only its required
-categories. Each card shows its supported sign-in method.
-
-Save credentials only in the masked card, then select **Test**. **Works** proves
-the account, model, quota, and service answered. The app prefers the OS
-credential store; its user-local fallback is not OS-encrypted.
+- **Next** moves on; clicking the highlighted part yourself does the same.
+- The tour navigates by itself where needed (into the agents' world and back)
+  and ends on the home screen. It never starts a call or any work for you.
+- **Skip tour** or **Escape** ends it at any point.
+- Replay it anytime under **Settings > App > App tour**.
 
 ## Recover a Skipped or Deferred Choice
 
-- Change interface and reply languages under **Settings > Languages**.
+- Change the interface and reply languages under **Settings > Languages**.
+- Connect and test models under **API Keys**; the same place connects coding
+  agents by key or subscription.
 - Repair macOS access under **Settings > Privacy permissions**.
 - Change the phrase, spoken wake language, activation switch, or local wake
-  pack under **Settings > Wake Word**.
-- Record or change the Call shortcut under **Settings > Voice Keybinds**.
-- Connect and test models under **API Keys & Providers**; change login startup
-  under **Settings > App settings** where supported.
+  pack under **Settings > Wake Word**, and the Call shortcut under **Settings >
+  Voice Keybinds**.
+- Change login startup under **Settings > App** where supported.
 
 ## How It Fits Together
 
-1. Interface language controls menus; reply language controls answers.
-2. The wake phrase supplies both local activation and the assistant's name.
+1. The agreement is the only consent moment; the installer asks nothing.
+2. One Brain is enough to start. A starter plan points live voice and its
+   thinking model at the same key; any other single Brain key works too.
+3. Coding agents are optional helpers for longer jobs and connect separately.
+4. The wake phrase supplies both local activation and the assistant's name.
    The Call shortcut starts voice without an always-listening wake engine.
-3. Permissions allow an operating-system capability; they do not approve a
+5. Permissions allow an operating-system capability; they do not approve a
    later Computer Use action or bypass its safety check.
-4. The Brain handles chat reasoning. Pipeline adds separate voice input and
-   output; Realtime combines the live voice path.
-5. Ready compatible providers can act as fallbacks; otherwise the affected
-   feature reports that setup is needed.
+6. One restart at the end applies every choice; the tour runs once after it.
 
 ## Check That It Works
 
-1. After **Get started**, confirm the app returns to the main sidebar and the
-   first-run guide stays closed.
+1. After **Start**, confirm the app reopens and the tour begins.
 2. Open **API Keys**, select **Test** on the active Brain card, and look for
    **Works**.
-3. Open **Chats** and send a harmless message. Confirm a reply arrives in the
-   selected reply language.
-4. For voice, verify **Settings > Audio devices** and try the Call shortcut. If
-   wake is enabled, run **Test wake word** and try the phrase after restart.
+3. Start a new chat and send a harmless message. Confirm a reply arrives.
+4. For voice, press the Call shortcut or say your wake word.
 
-On a headless system, verify text chat or the Control API; desktop-only features
-should report their limits rather than prevent startup.
+On a headless system there is no restart; verify text chat or the Control API.
+Desktop-only features report their limits rather than prevent startup.
 
 ## Troubleshooting
 
 | What you see | What it usually means | What to do |
 |---|---|---|
-| **Use local model** does not appear | Ollama was unreachable or empty | Continue, prepare Ollama, then use its Brain card under **API Keys** |
-| **Continue** is disabled on macOS | A permission or stable app-identity check is unresolved | Use **Allow** or **Open Settings**, return and wait for refresh, or choose **Continue with text only** |
-| Microphone check reports quiet, missing, or blocked | The input has no usable signal | Check OS access and **Settings > Audio devices** |
-| Saved wake word does not respond | Its local model, spoken-language pin, microphone, or activation switch is not ready | Use the Call shortcut; under **Settings > Wake Word**, choose the language you speak, install the offered model, and run **Test wake word** |
-| Provider card is active but chat cannot answer | Active does not guarantee a successful live request | Select **Test**, follow the visible error, or configure another compatible provider family |
+| **Continue** stays disabled on the brain step | The key was not saved or its test failed | Read the line under the key field, fix the key, or choose **I'll add a key later** |
+| **Ollama found** does not appear | Ollama was unreachable or has no model | Continue, prepare Ollama, then use its card under **API Keys** |
+| **Continue** is disabled on macOS | A permission or stable app-identity check is unresolved | Use **Allow** or **Open Settings**, return and wait, or choose **Skip for now, text only** |
+| Microphone test reports quiet, missing, or blocked | The input has no usable signal | Check OS access and **Settings > Audio devices** |
+| Saved wake word does not respond | Its local model, language, microphone, or activation switch is not ready | Use the Call shortcut; under **Settings > Wake Word**, install the offered model and run **Test wake word** |
+| The tour does not appear after the restart | The app opened in the Agentic IDE, or the tour was already seen | Leave the IDE, or replay it under **Settings > App** |
 | App does not reopen | The restart could not start a fresh process | Open the app; setup was already saved |
-| First-run setup returns every launch | The completion state is not being read from the same writable data location | Stop repeating setup and follow [Troubleshooting](troubleshooting) for data-directory and version checks |
+| First-run setup returns every launch | The completion state is not read from the same writable data location | Follow [Troubleshooting](troubleshooting) for data-directory and version checks |
 
 ## Next Steps
 

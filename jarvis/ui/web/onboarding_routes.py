@@ -154,4 +154,15 @@ def post_complete(request: Request) -> dict:
     return {"ok": True, "restarting": restarting}
 
 
+@router.post("/tour-complete")
+def post_tour_complete() -> dict:
+    """The guided tour of the real app was finished or skipped.
+
+    No restart and no desktop guard: it only records that the one-time tour
+    has been seen, exactly like the step progress route.
+    """
+    st.mark_tour_complete(_path())
+    return {"ok": True}
+
+
 __all__ = ["router"]

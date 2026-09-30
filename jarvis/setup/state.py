@@ -219,6 +219,9 @@ _ONBOARDING_KEYS = (
     # belong to the first run, so an onboarding reset clears them too.
     "starter_plan",
     "ready_celebrated_at",
+    # The guided tour of the real app, shown once after the completion
+    # restart. Reset with the rest so a replayed first run tours again.
+    "tour_completed_at",
 )
 
 
@@ -271,6 +274,7 @@ def get_onboarding_state(path: Path | None = None) -> dict[str, Any]:
         "terms_accepted_at": s.get("terms_accepted_at") or None,
         "terms_version": s.get("terms_version") or None,
         "wake_word_acknowledged_at": s.get("wake_word_acknowledged_at") or None,
+        "tour_completed_at": s.get("tour_completed_at") or None,
     }
 
 
@@ -298,6 +302,11 @@ def acknowledge_wake_word(path: Path | None = None) -> None:
 
 def mark_onboarding_complete(path: Path | None = None) -> None:
     _merge_state({"onboarding_completed_at": _now_iso()}, path)
+
+
+def mark_tour_complete(path: Path | None = None) -> None:
+    """Record that the guided app tour was finished or skipped."""
+    _merge_state({"tour_completed_at": _now_iso()}, path)
 
 
 def set_starter_plan(plan_id: str, path: Path | None = None) -> None:
@@ -358,6 +367,7 @@ __all__ = [
     "mark_obsidian_seen",
     "get_onboarding_state",
     "is_onboarding_complete",
+    "mark_tour_complete",
     "set_onboarding_step",
     "accept_terms",
     "acknowledge_wake_word",

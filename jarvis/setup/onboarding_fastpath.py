@@ -55,7 +55,7 @@ def state_payload(path: Path | None = None) -> dict:
         s = {
             "completed_at": None, "current_step": None, "skipped_steps": [],
             "terms_accepted_at": None, "terms_version": None,
-            "wake_word_acknowledged_at": None,
+            "wake_word_acknowledged_at": None, "tour_completed_at": None,
         }
 
     legacy_done = False
@@ -78,6 +78,9 @@ def state_payload(path: Path | None = None) -> dict:
             "current_version": CURRENT_TERMS_VERSION,
         },
         "wake_word_acknowledged": s["wake_word_acknowledged_at"] is not None,
+        # The guided tour of the real app runs once, after the completion
+        # restart; the frontend shows it while completed and not yet toured.
+        "tour_completed": s.get("tour_completed_at") is not None,
         "legal_references": WAKE_WORD_LEGAL_REFERENCES,
         "steps": ONBOARDING_STEPS,
     }
@@ -156,6 +159,10 @@ async def handle(scope: dict, receive: Any, send: Any) -> bool:
         return True
     if method == "POST" and sub == "/complete":
         st.mark_onboarding_complete(_path())
+        await _send_json(send, {"ok": True})
+        return True
+    if method == "POST" and sub == "/tour-complete":
+        st.mark_tour_complete(_path())
         await _send_json(send, {"ok": True})
         return True
 

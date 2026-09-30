@@ -339,8 +339,8 @@ export function JarvisAgentSection({
         {hasSubscriptionColumn ? (
           <AgentGroup
             icon={Terminal}
-            title={t("onboarding.api_keys.agents_subscriptions_label")}
-            hint={t("onboarding.api_keys.agents_subscriptions_hint")}
+            title={t("first_run.agents.subscriptions_label")}
+            hint={t("first_run.agents.subscriptions_hint")}
             testId="agent-group-clis"
           >
             {codexRow && (
@@ -360,7 +360,7 @@ export function JarvisAgentSection({
             ))}
           </AgentGroup>
         ) : (
-          <p className="text-sm text-muted-foreground">{t("onboarding.api_keys.agents_unavailable")}</p>
+          <p className="text-sm text-muted-foreground">{t("first_run.agents.unavailable")}</p>
         )}
       </section>
     );

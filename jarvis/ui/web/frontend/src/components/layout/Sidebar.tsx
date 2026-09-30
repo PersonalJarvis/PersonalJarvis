@@ -499,7 +499,7 @@ export function Sidebar({
         </nav> : <nav aria-label={t("sidebar.sections")} className="space-y-1 px-2 py-2">
           <ul className="space-y-1">
             <li><Dialog.Root open={newChatOpen} onOpenChange={(open) => { if (!startingVoiceRef.current) setNewChatOpen(open); }}>
-              <Dialog.Trigger asChild><button type="button" data-testid="sidebar-new-chat"
+              <Dialog.Trigger asChild><button type="button" data-testid="sidebar-new-chat" data-tour="new-chat"
               aria-label={t("sidebar.new_chat")} title={t("sidebar.new_chat")} className={rowClass}>
               <Plus aria-hidden className="h-4 w-4 shrink-0" />
               {!railed && <span>{t("sidebar.new_chat")}</span>}
@@ -550,6 +550,7 @@ export function Sidebar({
         <div className={cn("flex items-center gap-1", railed && "flex-col")}>
           <button type="button" onClick={() => setActive("profile")} title={t("nav.profile")}
             data-testid="sidebar-profile-toggle"
+            data-tour="settings"
             className={cn(rowClass, "min-w-0 flex-1", hubActive && "jarvis-nav-active bg-secondary text-foreground")}>
             <span className="relative shrink-0">
               <UserCircle2 aria-hidden className="h-7 w-7" />
@@ -639,6 +640,7 @@ function NavRow({
         <button
           type="button"
           data-testid={`nav-row-${item.id}`}
+          data-tour={`nav-${item.id}`}
           onClick={onClick}
           title={compact ? `${label}${hint ? ` — ${hint}` : ""}` : hint}
           aria-label={compact ? label : undefined}

@@ -65,12 +65,13 @@ pages:
     file: docs/product/start-here/first-run-setup.md
     title: Complete First-Run Setup
     diataxis: tutorial
-    summary: Choose languages, a local or connected Brain, permissions, and voice activation without exposing credentials.
+    summary: Agree to the terms, connect one Brain, find your coding agents, choose how voice starts, then take the tour of the app.
     authoritative_sources:
-      - jarvis/ui/web/frontend/src/components/onboarding/OnboardingFlow.tsx
-      - jarvis/ui/web/frontend/src/components/onboarding/steps/ApiKeysStep.tsx
-      - jarvis/ui/web/frontend/src/components/onboarding/steps/WakeWordStep.tsx
-      - jarvis/ui/web/frontend/src/components/onboarding/steps/PermissionsStep.tsx
+      - jarvis/ui/web/frontend/src/components/onboarding/WelcomeFlow.tsx
+      - jarvis/ui/web/frontend/src/components/onboarding/beats/BrainBeat.tsx
+      - jarvis/ui/web/frontend/src/components/onboarding/beats/VoiceBeat.tsx
+      - jarvis/ui/web/frontend/src/components/onboarding/beats/PermissionsBeat.tsx
+      - jarvis/ui/web/frontend/src/components/onboarding/tour/tourSteps.ts
       - jarvis/ui/web/onboarding_routes.py
     related:
       - providers-and-api-keys

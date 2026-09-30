@@ -14,23 +14,23 @@ logger = logging.getLogger(__name__)
 
 CURRENT_TERMS_VERSION = "1.0"
 
-# Canonical step order — must match the frontend step REGISTRY keys.
-# The standalone Terms & Disclaimer step was removed (2026-07-03): the legal
-# posture now rests on the up-front risk gate + the MIT-license disclaimer, so
-# first-run stays short. The /terms + /accept-terms routes remain for back-compat
-# but are no longer part of the guided flow.
-# Restart batching (maintainer mandate 2026-07-18): permissions and wake-word
-# sit LAST, directly before finish, because both only take full effect after a
+# Canonical step order — must match the frontend beat list
+# (components/onboarding/beats.ts). The guide is one card that changes shape
+# per step; the tour of the real app runs AFTER the completion restart and is
+# tracked separately (``tour_completed_at`` in jarvis.setup.state).
+# Restart batching (maintainer mandate 2026-07-18): permissions and voice sit
+# LAST, directly before ready, because both only take full effect after a
 # relaunch — and onboarding already ends with one unconditional fresh restart
 # (onboarding_routes._schedule_fresh_restart). One restart covers everything;
-# the guide must never demand a second one mid-flow.
+# the guide must never demand a second one mid-flow. Permissions precede voice
+# so the macOS microphone grant exists before the voice step's mic check.
 ONBOARDING_STEPS: list[str] = [
     "welcome",
-    "language",
-    "api-keys",
+    "brain",
+    "agents",
     "permissions",
-    "wake-word",
-    "finish",
+    "voice",
+    "ready",
 ]
 
 # Informational only; not exhaustive and possibly out of date (stated in the UI).
