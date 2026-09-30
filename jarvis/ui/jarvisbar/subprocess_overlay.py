@@ -694,23 +694,39 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
 
     Same spawn / ready / EOF-degrade plumbing as the bar proxy — the host
     process picks the surface from the init line's ``"surface"`` key and the
-    look from ``"style"`` (``mascot`` or ``voice_orb``). Unlike the bar (which
-    draws no text bubble and no mouth), the orb window renders all of them, so
-    the text/mouth/animation ops are FORWARDED over stdio instead of no-opped
-    locally.
+    look from ``"style"`` (``mascot``, ``voice_orb`` or ``pet``). Unlike the bar
+    (which draws no text bubble and no mouth), the orb window renders all of
+    them, so the text/mouth/animation ops are FORWARDED over stdio instead of
+    no-opped locally. The pet's surface methods (``docs/pets.md``) travel the
+    same way, and its pen comes back up as the ``compose`` event.
     """
 
     _EVENTS_THREAD_NAME = "orb-host-events"
     _STDERR_THREAD_NAME = "orb-host-stderr"
     _RESPAWN_THREAD_NAME = "orb-host-respawn"
 
-    def __init__(self, mascot_path: str | None = None, style: str = "mascot") -> None:
+    def __init__(
+        self,
+        mascot_path: str | None = None,
+        style: str = "mascot",
+        pet_id: str | None = None,
+        pet_scale: float = 1.0,
+        pet_bubble: bool = True,
+    ) -> None:
         super().__init__()
         self._mascot_path = mascot_path
         self._style = str(style or "mascot")
         # OrbOverlay(sticky=False) always starts withdrawn. The base proxy's
         # persistent-bar visibility default does not apply to this surface.
         self._visible = False
+        # The pet's settings ride the init line (a respawn restores them) and
+        # its runtime mirrors are replayed by _reapply_desired_state.
+        self._pet_id = pet_id
+        self._pet_scale = float(pet_scale)
+        self._pet_bubble = bool(pet_bubble)
+        self._speaker_muted = False
+        self._user_visible = True
+        self._on_compose: Callable[[], None] | None = None
 
     def _init_payload(self) -> dict[str, Any]:
         return {
@@ -718,7 +734,85 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
             "surface": "mascot",
             "style": self._style,
             "mascot_path": self._mascot_path,
+            "pet_id": self._pet_id,
+            "pet_scale": self._pet_scale,
+            "pet_bubble": self._pet_bubble,
         }
+
+    @property
+    def wants_status_lines(self) -> bool:
+        """True when the hosted window is the pet, which shows status lines."""
+        return self._style == "pet"
+
+    @property
+    def keeps_visible_when_idle(self) -> bool:
+        """True when the hosted window is the pet, which stays up while idle."""
+        return self._style == "pet"
+
+    @property
+    def pet_user_hidden(self) -> bool:
+        """True while the user hid the pet (this proxy's best knowledge)."""
+        return not self._user_visible
+
+    def set_pet(self, pet_id: str) -> None:
+        self._pet_id = str(pet_id or "")
+        self._send({"op": "set_pet", "pet_id": self._pet_id})
+
+    def set_pet_look(self, scale: float | None = None, bubble: bool | None = None) -> None:
+        if scale is not None:
+            self._pet_scale = float(scale)
+        if bubble is not None:
+            self._pet_bubble = bool(bubble)
+        self._send(
+            {
+                "op": "set_pet_look",
+                "scale": None if scale is None else float(scale),
+                "bubble": None if bubble is None else bool(bubble),
+            }
+        )
+
+    def set_pet_outcome(self, kind: str) -> None:
+        self._send({"op": "set_pet_outcome", "kind": str(kind)})
+
+    def show_status(self, header: str = "", line: str = "") -> None:
+        self._send({"op": "show_status", "header": str(header), "line": str(line)})
+
+    def set_speaker_muted(self, muted: bool) -> None:
+        self._speaker_muted = bool(muted)
+        self._send({"op": "set_speaker_muted", "muted": self._speaker_muted})
+
+    def set_visible(self, visible: bool) -> None:
+        self._user_visible = bool(visible)
+        self._send({"op": "set_visible", "visible": self._user_visible})
+
+    def toggle_visible(self) -> None:
+        # The host knows whether the pet is on screen; this proxy only guesses.
+        # The guess matters for one thing: a respawn replaying a hidden pet.
+        self._user_visible = not self._user_visible
+        self._send({"op": "toggle_visible"})
+
+    def set_on_compose(self, callback: Callable[[], None] | None) -> None:
+        self._on_compose = callback
+
+    def _dispatch_event(self, msg: dict[str, Any]) -> None:
+        if msg.get("event") != "compose":
+            super()._dispatch_event(msg)
+            return
+        # The pen: without a compose callback, raising the window is the
+        # honest fallback (the same one the in-process pet uses).
+        callback = self._on_compose or self._on_show_window
+        try:
+            if callback is not None:
+                callback()
+        except Exception:  # noqa: BLE001 — a bad callback must not kill the pump
+            log.exception("orb host compose callback failed")
+
+    def _reapply_desired_state(self) -> None:
+        super()._reapply_desired_state()
+        if self._speaker_muted:
+            self._send({"op": "set_speaker_muted", "muted": True})
+        if not self._user_visible:
+            self._send({"op": "set_visible", "visible": False})
 
     def set_style(self, style: str) -> None:
         """Re-style the hosted orb window live (mascot <-> voice orb).

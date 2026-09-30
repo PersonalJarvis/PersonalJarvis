@@ -26,6 +26,8 @@ colour on the desktop.
 
 from __future__ import annotations
 
+import functools
+import inspect
 import logging
 import math
 import os
@@ -362,12 +364,311 @@ def render_row(
     return frame
 
 
-def toggle_speaker_mute() -> bool | None:
+# --- The pet's control strip ------------------------------------------------
+# The desktop pet (``docs/pets.md``) carries its controls in a different shape:
+# a pen disc on its own, then ONE pill holding microphone mute, the talk orb and
+# the speaker, separated by thin dividers. Same hard-edge rules as the row
+# above: every silhouette that meets the colour key goes through a binary mask,
+# every glyph is drawn at 4x and downscaled INSIDE its opaque surface.
+
+#: The strip's actions, left to right. The voice orb's ``ACTIONS`` stay as they
+#: are; the two layouts never share a hit-test.
+PET_ACTIONS: tuple[str, ...] = ("compose", "mic_mute", "orb", "speaker")
+
+#: Unscaled geometry, in pixels at 100 % display scaling.
+PET_SLOT = 28
+PET_PEN_GAP = 6
+PET_DIVIDER_W = 1
+PET_PILL_INSET = 4
+PET_STRIP_PADDING = 4
+#: Vertical distance from the figure's bottom edge to the strip.
+PET_STRIP_GAP_FROM_FIGURE = 4
+#: How many steps the orb's pulse is quantised into. A handful is enough to
+#: read as "breathing with the voice" and bounds how often the strip repaints.
+PET_LEVEL_STEPS = 6
+
+#: The talk orb's colours: a small bluish sphere, brighter while engaged.
+PET_ORB_REST = (74, 124, 230)
+PET_ORB_ACTIVE = (98, 152, 255)
+PET_ORB_HIGHLIGHT = (170, 200, 255)
+#: The divider between pill slots — a shade above the border so it reads.
+PET_DIVIDER = (44, 44, 44)
+
+
+def _spx(value: float, scale: float) -> int:
+    """One unscaled length at ``scale``, never below one pixel."""
+    return max(1, int(round(value * max(0.1, float(scale)))))
+
+
+@dataclass(frozen=True)
+class PetStripLayout:
+    """Where everything sits inside the strip window, at one display scale."""
+
+    width: int
+    height: int
+    #: The pen disc: centre and radius.
+    pen: tuple[float, float, float]
+    #: The pill's bounding box ``(x0, y0, x1, y1)``, x1/y1 exclusive.
+    pill: tuple[int, int, int, int]
+    #: Each pill action's horizontal span ``(x0, x1)`` inside the window.
+    slots: tuple[tuple[str, int, int], ...]
+    #: Divider x positions (their left edge) inside the window.
+    dividers: tuple[int, ...]
+
+
+@functools.lru_cache(maxsize=16)
+def pet_strip_layout(scale: float = 1.0) -> PetStripLayout:
+    """The strip's geometry at ``scale`` (the monitor's DPI ratio)."""
+    pad = _spx(PET_STRIP_PADDING, scale)
+    slot = _spx(PET_SLOT, scale)
+    gap = _spx(PET_PEN_GAP, scale)
+    divider = _spx(PET_DIVIDER_W, scale)
+    inset = _spx(PET_PILL_INSET, scale)
+    pen_r = slot / 2.0
+    pen = (pad + pen_r, pad + pen_r, pen_r)
+    pill_x0 = pad + slot + gap
+    pill_w = 2 * inset + 3 * slot + 2 * divider
+    pill = (pill_x0, pad, pill_x0 + pill_w, pad + slot)
+    slots: list[tuple[str, int, int]] = []
+    dividers: list[int] = []
+    x = pill_x0 + inset
+    for index, action in enumerate(PET_ACTIONS[1:]):
+        slots.append((action, x, x + slot))
+        x += slot
+        if index < 2:
+            dividers.append(x)
+            x += divider
+    width = pill[2] + pad
+    height = slot + 2 * pad
+    return PetStripLayout(
+        width=width,
+        height=height,
+        pen=pen,
+        pill=pill,
+        slots=tuple(slots),
+        dividers=tuple(dividers),
+    )
+
+
+def pet_strip_size(scale: float = 1.0) -> tuple[int, int]:
+    """Pixel size of the pet strip window at ``scale``."""
+    layout = pet_strip_layout(scale)
+    return layout.width, layout.height
+
+
+def _inside_stadium(x: float, y: float, box: tuple[int, int, int, int]) -> bool:
+    """Is ``(x, y)`` inside the pill (a rectangle with fully rounded ends)?"""
+    x0, y0, x1, y1 = box
+    r = (y1 - y0) / 2.0
+    cy = y0 + r
+    if y < y0 or y >= y1:
+        return False
+    if x0 + r <= x <= x1 - r:
+        return True
+    cx = x0 + r if x < x0 + r else x1 - r
+    return math.hypot(x - cx, y - cy) <= r
+
+
+def pet_hit_test(x: float, y: float, scale: float = 1.0) -> str | None:
+    """Which pet action a click at ``(x, y)`` lands on, or ``None``.
+
+    Outside the pen disc and the pill is nothing — that empty area is where the
+    user grabs the strip to drag the pet (the only handle when the pet is
+    "None"). Inside the pill every pixel belongs to a slot: a divider resolves
+    to the nearer neighbour instead of eating the click.
+    """
+    layout = pet_strip_layout(scale)
+    pcx, pcy, pr = layout.pen
+    if math.hypot(x - pcx, y - pcy) <= pr:
+        return "compose"
+    if not _inside_stadium(x, y, layout.pill):
+        return None
+    best: str | None = None
+    best_distance = math.inf
+    for action, x0, x1 in layout.slots:
+        if x0 <= x < x1:
+            return action
+        distance = min(abs(x - x0), abs(x - x1))
+        if distance < best_distance:
+            best, best_distance = action, distance
+    return best
+
+
+def quantize_level(level: float | None) -> int:
+    """A 0..1 audio level as one of ``PET_LEVEL_STEPS + 1`` pulse steps."""
+    if level is None:
+        return 0
+    try:
+        value = float(level)
+    except (TypeError, ValueError):
+        return 0
+    if not math.isfinite(value):
+        return 0
+    value = max(0.0, min(1.0, value))
+    return int(round(value * PET_LEVEL_STEPS))
+
+
+@dataclass(frozen=True)
+class PetStripState:
+    """Everything the pet strip needs to paint itself truthfully."""
+
+    #: Jarvis's microphone is muted (``VoiceMuteChanged``).
+    mic_muted: bool = False
+    #: The assistant's voice is muted for this session.
+    speaker_muted: bool = False
+    #: A conversation is running — the orb hangs up instead of starting one.
+    active: bool = False
+    #: The orb's pulse step (``quantize_level``); only drawn while ``active``.
+    level: int = 0
+    #: Which control the pointer is over, if any.
+    hovered: str | None = None
+
+
+def _draw_pen(d: ImageDraw.ImageDraw, cx: float, cy: float, r: float, color, w: int) -> None:
+    """A pencil on the diagonal, tip at the bottom left — "write something"."""
+    dx, dy = math.cos(-math.pi / 4), math.sin(-math.pi / 4)
+    nx, ny = -dy, dx
+    half = r * 0.17
+
+    def p(u: float, v: float) -> tuple[float, float]:
+        return (cx + u * r * dx + v * nx, cy + u * r * dy + v * ny)
+
+    d.polygon(
+        [p(0.70, -half), p(0.70, half), p(-0.45, half), p(-0.78, 0.0), p(-0.45, -half)],
+        outline=color,
+        width=w,
+    )
+    # The ferrule: where the eraser meets the body.
+    d.line([p(0.42, -half), p(0.42, half)], fill=color, width=w)
+
+
+def _draw_orb(
+    d: ImageDraw.ImageDraw,
+    cx: float,
+    cy: float,
+    r: float,
+    *,
+    active: bool,
+    level: int,
+) -> None:
+    """The talk orb: a small sphere that swells with the voice while engaged."""
+    pulse = (level / PET_LEVEL_STEPS) if active else 0.0
+    radius = r * (0.46 + 0.30 * pulse)
+    body = PET_ORB_ACTIVE if active else PET_ORB_REST
+    d.ellipse([cx - radius, cy - radius, cx + radius, cy + radius], fill=body)
+    shine = radius * 0.38
+    sx, sy = cx - radius * 0.32, cy - radius * 0.32
+    d.ellipse([sx - shine, sy - shine, sx + shine, sy + shine], fill=PET_ORB_HIGHLIGHT)
+
+
+def _slash(d: ImageDraw.ImageDraw, cx: float, cy: float, r: float, color, w: int) -> None:
+    s = r * 0.74
+    d.line([(cx - s, cy + s), (cx + s, cy - s)], fill=color, width=w)
+
+
+def _pet_icon_color(action: str, state: PetStripState) -> _Rgb:
+    if state.hovered == action:
+        return BTN_ICON_HOVER
+    return BTN_ICON
+
+
+def _render_pen_disc(state: PetStripState, diameter: int) -> Image.Image:
+    size = diameter * _SS
+    hovered = state.hovered == "compose"
+    layer = Image.new("RGB", (size, size), BTN_BG_HOVER if hovered else BTN_BG)
+    d = ImageDraw.Draw(layer)
+    stroke = max(1, round(1.0 * _SS))
+    d.ellipse(
+        [stroke, stroke, size - 1 - stroke, size - 1 - stroke], outline=BTN_BORDER, width=stroke
+    )
+    glyph_w = max(1, round(1.35 * _SS))
+    _draw_pen(d, size / 2.0, size / 2.0, size * 0.30, _pet_icon_color("compose", state), glyph_w)
+    return layer.resize((diameter, diameter), Image.Resampling.LANCZOS)
+
+
+def _render_pill(state: PetStripState, layout: PetStripLayout) -> Image.Image:
+    x0, y0, x1, y1 = layout.pill
+    width, height = x1 - x0, y1 - y0
+    w_ss, h_ss = width * _SS, height * _SS
+    layer = Image.new("RGB", (w_ss, h_ss), BTN_BG)
+    d = ImageDraw.Draw(layer)
+    stroke = max(1, round(1.0 * _SS))
+    glyph_w = max(1, round(1.35 * _SS))
+    for action, sx0, sx1 in layout.slots:
+        if state.hovered == action:
+            d.rectangle([(sx0 - x0) * _SS, 0, (sx1 - x0) * _SS - 1, h_ss - 1], fill=BTN_BG_HOVER)
+    for dx, (_action, next_x0, _next_x1) in zip(layout.dividers, layout.slots[1:], strict=False):
+        d.rectangle(
+            [(dx - x0) * _SS, h_ss * 0.22, (next_x0 - x0) * _SS - 1, h_ss * 0.78],
+            fill=PET_DIVIDER,
+        )
+    d.rounded_rectangle(
+        [stroke, stroke, w_ss - 1 - stroke, h_ss - 1 - stroke],
+        radius=(h_ss - 2 * stroke) / 2.0,
+        outline=BTN_BORDER,
+        width=stroke,
+    )
+    cy = h_ss / 2.0
+    for action, sx0, sx1 in layout.slots:
+        cx = ((sx0 + sx1) / 2.0 - x0) * _SS
+        radius = (sx1 - sx0) * _SS * 0.30
+        colour = _pet_icon_color(action, state)
+        if action == "mic_mute":
+            _draw_mic(d, cx, cy, radius, colour, glyph_w, slashed=False)
+            if state.mic_muted:
+                _slash(d, cx, cy, radius, BTN_ICON_OFF, glyph_w)
+        elif action == "orb":
+            _draw_orb(d, cx, cy, radius * 1.4, active=state.active, level=state.level)
+        else:
+            _draw_speaker(d, cx, cy, radius, colour, glyph_w, muted=False)
+            if state.speaker_muted:
+                _slash(d, cx, cy, radius, BTN_ICON_OFF, glyph_w)
+    return layer.resize((width, height), Image.Resampling.LANCZOS)
+
+
+def _binary_stadium_mask(width: int, height: int) -> Image.Image:
+    """Aliased pill mask. Binary on purpose — see the module docstring."""
+    mask = Image.new("L", (width, height), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [0, 0, width - 1, height - 1], radius=(height - 1) / 2.0, fill=255
+    )
+    return mask
+
+
+@functools.lru_cache(maxsize=96)
+def render_pet_strip(
+    state: PetStripState,
+    scale: float = 1.0,
+    color_key: tuple[int, int, int] = (255, 0, 255),
+) -> Image.Image:
+    """The pet strip as a colour-keyed RGB frame, ready for a layered window.
+
+    Cached: the state space is small (a few flags, a hovered action and a
+    quantised pulse step), so a strip at rest costs one render per look and a
+    pulsing orb cycles through a handful of cached frames. Callers must not
+    mutate the returned image.
+    """
+    layout = pet_strip_layout(scale)
+    frame = Image.new("RGB", (layout.width, layout.height), color_key)
+    pcx, pcy, pr = layout.pen
+    diameter = int(round(pr * 2))
+    pen = _render_pen_disc(state, diameter)
+    frame.paste(pen, (int(round(pcx - pr)), int(round(pcy - pr))), _disc_mask(diameter))
+    x0, y0, x1, y1 = layout.pill
+    pill = _render_pill(state, layout)
+    frame.paste(pill, (x0, y0), _binary_stadium_mask(x1 - x0, y1 - y0))
+    return frame
+
+
+def toggle_speaker_mute(source: str = "orb") -> bool | None:
     """Mute / unmute the assistant's voice for this session. Returns the new state.
 
     Session-only by design, exactly like the in-app speaker button: a mute the
     user forgot about must not survive a restart and leave Jarvis mysteriously
     silent tomorrow. Nothing is written to ``jarvis.toml``.
+
+    ``source`` names the control for the pipeline's ``VoiceSpeakerMuteChanged``
+    broadcast (``"orb"``, ``"pet"``).
 
     Returns ``None`` when there is no live pipeline to talk to (a headless or
     still-booting host), so the caller can leave the icon alone instead of
@@ -386,10 +687,25 @@ def toggle_speaker_mute() -> bool | None:
     current = _current_tts_volume(pipeline)
     if current > 0.0:
         _remember_volume(pipeline, current)
-        setter(0.0)
+        _apply_volume(setter, 0.0, source)
         return True
-    setter(_remembered_volume(pipeline))
+    _apply_volume(setter, _remembered_volume(pipeline), source)
     return False
+
+
+def _apply_volume(setter: Callable[..., object], volume: float, source: str) -> None:
+    """Call ``set_tts_volume`` with ``source`` when the pipeline takes one."""
+    try:
+        params = inspect.signature(setter).parameters
+    except (TypeError, ValueError):  # a builtin or C callable: no signature
+        params = {}
+    takes_source = "source" in params or any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+    if takes_source:
+        setter(volume, source=source)
+    else:
+        setter(volume)
 
 
 #: Where the pre-mute volume is parked, keyed per pipeline instance so a

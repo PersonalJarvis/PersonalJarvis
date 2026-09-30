@@ -16,14 +16,15 @@ Protocol (UTF-8, one JSON object per line):
   the ``OrbBusBridge`` surface API (``show``, ``hide``, ``set_level``, ...).
   An optional ``"surface"`` key selects what the host renders:
   ``"jarvis_bar"`` (default) or ``"mascot"`` (the OrbOverlay window, whose look
-  comes from the optional ``"style"`` key — ``"mascot"`` or ``"voice_orb"`` —
-  plus an optional ``"mascot_path"`` passthrough).
+  comes from the optional ``"style"`` key — ``"mascot"``, ``"voice_orb"`` or
+  ``"pet"`` — plus optional ``"mascot_path"``, ``"pet_id"``, ``"pet_scale"`` and
+  ``"pet_bubble"`` passthroughs).
   stdin EOF means the parent died or shut down → the host stops the bar and
   exits, so no ownerless bar can linger on the user's desktop.
 - child → parent (stdout): events — ``{"event": "ready"}`` once the surface
   is initialized, plus user interactions (``talk``, ``hangup``,
-  ``mute_toggle``, ``feedback``, ``show_window``, ``drop``). Logging goes to
-  stderr so stdout stays pure protocol.
+  ``mute_toggle``, ``feedback``, ``show_window``, ``drop``, and the pet's
+  ``compose``). Logging goes to stderr so stdout stays pure protocol.
 
 ``drop`` is the one round trip: the child forwards a file/text dropped on the
 hosted surface, the parent runs the intake (the brain lives there), and the
@@ -157,6 +158,29 @@ def dispatch(surface: Any, msg: dict[str, Any]) -> bool:
     elif op == "reset_position":
         # The double-click reset seam.
         _call(surface, "_on_reset_double_click")
+    # The desktop pet's surface methods (docs/pets.md); the bar has none of
+    # them, so there each degrades to the no-op _call() logs.
+    elif op == "set_pet":
+        _call(surface, "set_pet", str(msg.get("pet_id") or ""))
+    elif op == "set_pet_look":
+        scale = msg.get("scale")
+        bubble = msg.get("bubble")
+        _call(
+            surface,
+            "set_pet_look",
+            None if scale is None else float(scale),
+            None if bubble is None else bool(bubble),
+        )
+    elif op == "set_pet_outcome":
+        _call(surface, "set_pet_outcome", str(msg.get("kind", "")))
+    elif op == "show_status":
+        _call(surface, "show_status", str(msg.get("header", "")), str(msg.get("line", "")))
+    elif op == "set_speaker_muted":
+        _call(surface, "set_speaker_muted", bool(msg.get("muted", False)))
+    elif op == "set_visible":
+        _call(surface, "set_visible", bool(msg.get("visible", True)))
+    elif op == "toggle_visible":
+        _call(surface, "toggle_visible")
     else:
         log.warning("bar-host: unknown op %r", op)
     return True
@@ -234,6 +258,7 @@ class _EchoBar:
     def set_feedback_publisher(self, cb: Any) -> None: ...
     def set_on_show_window(self, cb: Any) -> None: ...
     def set_on_speaker_toggle(self, cb: Any) -> None: ...
+    def set_on_compose(self, cb: Any) -> None: ...
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("__"):
@@ -330,14 +355,18 @@ def _build_surface(cfg: dict[str, Any]) -> Any:
             # skips this: QApplication must own its own Cocoa lifecycle.
             _hide_dock_icon()
         orb_overlay_cls = _import_orb_overlay()
+        pet_scale = cfg.get("pet_scale")
         return orb_overlay_cls(
             sticky=False,
             mic_reactive=False,
-            # The look inside the orb window (mascot / voice_orb). Forwarded
-            # verbatim; OrbOverlay owns the one list of known styles and falls
-            # back to the mascot for anything it does not recognise.
+            # The look inside the orb window (mascot / voice_orb / pet).
+            # Forwarded verbatim; OrbOverlay owns the one list of known styles
+            # and falls back to the mascot for anything it does not recognise.
             style=str(cfg.get("style") or "mascot"),
             mascot_path=cfg.get("mascot_path") or None,
+            pet_id=cfg.get("pet_id") or None,
+            pet_scale=1.0 if pet_scale is None else float(pet_scale),
+            pet_bubble=bool(cfg.get("pet_bubble", True)),
         )
     kwargs = {
         key: cfg[key]
@@ -405,6 +434,9 @@ def _wire_surface_events(surface: Any) -> None:
         lambda kind, payload: emit("feedback", kind=kind, payload=payload),
     )
     _call(surface, "set_on_show_window", lambda: emit("show_window"))
+    # The pet's pen: raising the window (and the new chat) happens in the
+    # parent, where the bus and the window live.
+    _call(surface, "set_on_compose", lambda: emit("compose"))
     _wire_drop_forwarding()
 
 
