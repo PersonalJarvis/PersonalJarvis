@@ -506,17 +506,11 @@ interface AgenticTerminalProps {
    * Compact workspace chrome is opt-in; legacy grids retain their existing
    * header. "none" draws the bare terminal for a host that brings its own
    * title bar (the office's pane panel) — no header, no border of its own.
-   * "minimal" is the multiplexer tile: a square 1px frame, no title bar, and
-   * the compact header's controls floating in the top corner while the
-   * pointer is over the pane (see `WorkspaceTerminalHeader`'s overlay).
+   * "minimal" is the multiplexer tile: a square 1px frame, a slim square
+   * title row with the compact header's controls, and the pane the reader
+   * works in outlined in the signal hue.
    */
   headerMode?: "legacy" | "compact" | "minimal" | "none";
-  /**
-   * Minimal tiles only: may the focused pane wear the signal edge? A lone pane
-   * is always "the focused one", so marking it says nothing; the grid turns
-   * this off when it holds a single pane, as tiling multiplexers do.
-   */
-  accentFocus?: boolean;
   /** Compact header only: opens the fork dialog for this pane. */
   onFork?: () => void;
   /** Compact header only: the worktree branch this pane runs on, if any. */
@@ -660,7 +654,6 @@ export function AgenticTerminal({
   workspaceId,
   displayName,
   headerMode = "legacy",
-  accentFocus = true,
   onFork,
   branch,
   computerName,
@@ -2643,9 +2636,6 @@ export function AgenticTerminal({
         // On a grid where the focused pane is the one standing accent, that
         // read as a flicker rather than as a pane taking focus.
         "relative flex h-full w-full flex-col overflow-hidden backdrop-blur-[4px]",
-        // Minimal tiles name their hover group so the floating controls can
-        // appear for THIS pane only.
-        minimal && "group/tile",
         headerMode === "none" ? "border-0" : "border",
         headerMode === "compact" ? "rounded-2xl" : headerMode === "none" || minimal ? "rounded-none" : "rounded-lg",
         "transition-[box-shadow,border-color,opacity] duration-150 ease-out motion-reduce:transition-none",
@@ -2690,21 +2680,24 @@ export function AgenticTerminal({
         //
         // A minimal tile paints its focused edge here too: the signal hue is a
         // per-appearance literal (`PANE_TILE`), not a class, for the same
-        // reason the resting edge is.
+        // reason the resting edge is. The pane the reader clicked into must be
+        // findable at a glance across a full grid, so its edge is doubled by an
+        // inset line of the same hue (two pixels, no layout shift).
         borderColor:
           dragging || justDelivered
             ? undefined
             : minimal
-              ? focused && accentFocus ? tile.focus : tile.edge[visibleStatus]
+              ? focused ? tile.focus : tile.edge[visibleStatus]
               : focused
                 ? undefined
                 : chrome.edge[visibleStatus],
+        boxShadow: minimal && focused && !dragging && !justDelivered ? `inset 0 0 0 1px ${tile.focus}` : undefined,
       }}
       data-pane-style={minimal ? "minimal" : undefined}
       data-testid={`agentic-pane-${name}`}
     >
       {headerMode === "compact" ? <WorkspaceTerminalHeader {...headerProps} />
-      : minimal ? <WorkspaceTerminalHeader {...headerProps} variant="overlay" />
+      : minimal ? <WorkspaceTerminalHeader {...headerProps} variant="tile" focused={focused} />
       : headerMode === "none" ? null : <PaneHeader
         workspaceId={workspaceId}
         status={visibleStatus}
@@ -2759,9 +2752,7 @@ export function AgenticTerminal({
         ref={terminalRegionRef}
         id={terminalRegionId}
         className={cn(
-          "relative min-h-0 flex-1 overflow-hidden px-1.5 pb-0.5",
-          // With no title bar the first row would sit on the top edge itself.
-          minimal ? "pt-1" : "pt-0.5",
+          "relative min-h-0 flex-1 overflow-hidden px-1.5 pb-0.5 pt-0.5",
           active && !tailReady && "invisible",
         )}
       >

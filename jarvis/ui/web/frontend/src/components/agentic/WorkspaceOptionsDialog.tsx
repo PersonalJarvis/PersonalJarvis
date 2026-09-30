@@ -20,14 +20,14 @@ interface Props {
   onGit: () => void;
   appearance: "light" | "dark" | null;
   onAppearance: (appearance: "light" | "dark" | null) => void;
-  /** Square tiles without titles, or rounded cards with a title bar. */
+  /** Square tiles with a slim title row, or rounded cards. */
   paneStyle?: PaneStyle;
   onPaneStyle?: (style: PaneStyle) => void;
 }
 
 const PANE_STYLES: { id: PaneStyle; label: string; hint: string }[] = [
-  { id: "minimal", label: "Minimal", hint: "Square frames, no titles" },
-  { id: "classic", label: "Classic", hint: "Rounded, with a title bar" },
+  { id: "minimal", label: "Minimal", hint: "Square frames, slim title row" },
+  { id: "classic", label: "Classic", hint: "Rounded cards, taller title bar" },
 ];
 
 /** Workspace controls live off-canvas so the terminal area needs no toolbar. */
@@ -46,9 +46,7 @@ export function WorkspaceOptionsDialog(props: Props) {
         <section aria-label="Terminal arrangement" className="space-y-2">
           <button type="button" disabled={props.busy || props.count < 2} onClick={() => choose(props.onBalance)}
             className="flex w-full items-center gap-2 rounded-lg border border-border px-3 py-2.5 text-sm hover:bg-muted disabled:opacity-40"><Columns2 className="h-4 w-4" />Balance layout</button>
-          <p className="text-xs leading-relaxed text-muted-foreground">{props.paneStyle === "minimal"
-            ? "Point at a terminal and drag its handle (top right) to an edge to place it beside, above or below another terminal. Drop in the center to swap positions."
-            : "Drag a terminal title to an edge to place it beside, above or below another terminal. Drop in the center to swap positions."}</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">Drag a terminal title to an edge to place it beside, above or below another terminal. Drop in the center to swap positions.</p>
         </section>
         {props.onPaneStyle && <section aria-label="Terminal style">
           <p className="mb-2 text-sm font-medium">Terminal style</p>
