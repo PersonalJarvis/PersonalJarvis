@@ -45,10 +45,47 @@ def release_scope(session_id: str) -> None:
 
 
 def subscription_seat(provider: str) -> tuple[str, str] | None:
-    """Identity aliases, not model or feature gates."""
-    return {
+    """Identity aliases, not model or feature gates.
+
+    ``claude-api`` is the one Claude slot of the Agents selection. Missions
+    run it on the signed-in Claude subscription whenever one exists
+    (``missions.init`` -> ``claude_direct``), so a chat or scheduled task on the
+    same slot does too; only without that login is it the per-token API row.
+    Live 2026-09-29: the front-page chat answered through a stale Anthropic
+    key while the Agents tab showed Claude Max as active.
+    """
+    seat = {
         "codex": ("openai-codex", "codex-cli"),
         "claude-cli": ("claude-api", "claude-cli"),
         "antigravity": ("antigravity", "agy-cli"),
         "grok-build": ("grok-build", "grok-cli"),
     }.get(provider)
+    if seat is None and provider == "claude-api" and _claude_subscription_ready():
+        seat = ("claude-api", "claude-cli")
+    return seat
+
+
+_CLAUDE_LOGIN_TTL_S = 60.0
+_claude_login: tuple[float, bool] | None = None
+
+
+def _claude_subscription_ready() -> bool:
+    """Whether the Claude CLI is signed in with a subscription (cached 60 s)."""
+    import time
+
+    global _claude_login
+    now = time.monotonic()
+    if _claude_login is not None and now - _claude_login[0] < _CLAUDE_LOGIN_TTL_S:
+        return _claude_login[1]
+    try:
+        from jarvis.claude_auth import ClaudeAuthService
+
+        status = ClaudeAuthService().status()
+        ready = bool(status.connected and status.mode == "subscription")
+    except Exception:  # noqa: BLE001 - no login readable means the API row answers
+        import logging
+
+        logging.getLogger(__name__).info("Claude login probe failed", exc_info=True)
+        ready = False
+    _claude_login = (now, ready)
+    return ready

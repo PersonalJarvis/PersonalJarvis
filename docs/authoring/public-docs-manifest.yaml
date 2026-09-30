@@ -23,7 +23,7 @@ pages:
     file: docs/product/start-here/welcome-to-personal-jarvis.md
     title: Welcome to Personal Jarvis
     diataxis: explanation
-    summary: Understand what Personal Jarvis can do, what stays under your control, and where to begin.
+    summary: See how Jarvis turns your computer into an AI agent, what stays under your control, and where to begin.
     authoritative_sources:
       - README.md
       - CLAUDE.md
@@ -754,7 +754,7 @@ pages:
     diataxis: howto
     summary: Let your assistant inspect one requested screen or window with visible capture, privacy filtering, and short-lived memory.
     authoritative_sources:
-      - jarvis/ui/web/frontend/src/views/settings/ScreenContextGroup.tsx
+      - jarvis/ui/web/frontend/src/views/AppshotsView.tsx
       - jarvis/ui/web/screen_context_routes.py
       - jarvis/screen_context/service.py
       - jarvis/screen_context/intent.py

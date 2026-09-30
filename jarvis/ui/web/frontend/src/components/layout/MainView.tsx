@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { ViewErrorBoundary } from "@/components/ViewErrorBoundary";
 import { DetachedViewPlaceholder } from "@/components/layout/DetachedViewPlaceholder";
 import { SETTINGS_HUB_IDS } from "@/components/layout/navGroups";
+import { loadTurnTrace } from "@/components/home/TurnSteps";
 // Type-only, so the section's chunk stays split out of the entry bundle.
 import type { AgenticIdeViewProps } from "@/views/AgenticIdeView";
 // The default section is the one view that must be on screen the moment React
@@ -56,6 +57,11 @@ type ViewLoader = () => Promise<ViewModule>;
  * props-free shape here would keep `lazyPropView` out of the warm-up.
  */
 const prefetchQueue: (() => Promise<unknown>)[] = [];
+
+// First in line: the turn-trace renderer of the front page's voice stage. It
+// is split out of the entry (see TurnSteps) but belongs to the screen that is
+// already open, so it is warmed before any other section.
+prefetchQueue.push(loadTurnTrace);
 
 function lazyView(loader: ViewLoader): LazyExoticComponent<ComponentType> {
   prefetchQueue.push(loader);

@@ -19,7 +19,7 @@
     "billing": "El tiempo de voz y el razonamiento se facturan por separado. La grabación en la nube está desactivada.",
     "save": "Guardar y usar GPT-Live",
     "saved": "Guardado. La próxima conversación usará estos ajustes.",
-    "use_for_agents": "Usar esta clave y modelo para agentes y chat de texto",
+    "use_for_agents": "Facturar también agentes y chat de texto a esta clave (por token)",
     "agent_saved": "Los agentes y el chat ahora usan este modelo de OpenAI.",
     "setup_title": "Voz y razonamiento",
     "setup_description": "Elige cómo Jarvis escucha, responde y utiliza tus herramientas.",
@@ -30,9 +30,9 @@
     "connect": "Configurar",
     "local_provider": "En tu equipo",
     "show_cloud": "Mostrar proveedores en la nube",
-    "agents_separate": "El chat de texto y las tareas en segundo plano usan tu selección en Agents. La voz tiene sus propios modelos.",
+    "agents_separate": "Tu clave de OpenAI solo paga la llamada de voz y su modelo de razonamiento. El chat, la memoria y todo el trabajo en segundo plano usan el proveedor que elijas en Agents.",
     "shared_key_ready": "OpenAI conectado · una clave para voz y razonamiento",
-    "shared_key_help": "Esta clave de OpenAI sirve a GPT-Live y a su modelo de razonamiento.",
+    "shared_key_help": "Esta clave de OpenAI se usa solo para GPT-Live y su modelo de razonamiento; no se le factura nada más.",
     "manage_key": "Gestionar clave",
     "conversation_heading": "Conversación",
     "conversation_help": "Escucha continua y habla natural, incluso con interrupciones.",
@@ -162,6 +162,7 @@
     "agent_instructions": "{name}.md",
     "wallpaper": "Fondo de pantalla",
     "appshots": "Appshots",
+    "jarvis_actions": "Acciones de Jarvis",
     "marketplace": "Marketplace",
     "agentic_ide": "IDE agéntico",
     "agentic_ide_beta": "Beta",
@@ -537,11 +538,9 @@
     "recent": "Recientes",
     "pin_chat": "Fijar chat",
     "unpin_chat": "Desfijar chat",
-
     "jarvis_tools": "Herramientas Jarvis",
     "scheduled": "Programado",
     "more": "Más",
-
     "instance_dev_hint": "Instancia de desarrollo: una segunda copia de la app que puedes reiniciar libremente, con sus propios datos, puertos e icono. La app normal sigue funcionando al lado.",
     "surface_voice": "Voz",
     "surface_chat": "Chat",
@@ -1914,7 +1913,11 @@
     "managed_speaking_title": "Hablar",
     "managed_voice_unavailable": "aún sin prueba de voz",
     "managed_voice_install_required": "requiere instalar el runtime",
-    "managed_apply_test": "Aplicar y probar la voz",
+    "managed_apply_test": "Aplicar, probar y usar voz local",
+    "managed_protocol_options": "Opciones avanzadas de modelo y voz del servidor",
+    "managed_setup_testing": "Preparando los modelos seleccionados y probando la voz. El primer inicio puede tardar más.",
+    "managed_selected": "Seleccionado para voz. Estos modelos se inician automáticamente con Jarvis.",
+    "managed_not_selected": "Este servidor aún no está seleccionado para voz. Elige dos modelos y aplícalos para usar voz local.",
     "managed_full_catalog": "Explorar todo el catálogo de Ollama",
     "managed_voice_catalog_title": "Explorar modelos de voz de código abierto",
     "managed_voice_catalog_search": "Buscar por modelo, backend, idioma o licencia…",
@@ -2016,7 +2019,7 @@
     "cat_computer_use_desc": "El Tool Model ejecuta tus acciones: enruta comandos de voz, planifica Computer-Use en tu pantalla, inicia agentes en segundo plano y controla la app — independiente de tu Brain de chat.",
     "cat_dictation_desc": "El modelo rápido que ordena el texto dictado: puntuación, muletillas y separación de frases. Opcional: sin clave aquí tu dictado llega tal y como se reconoció.",
     "cat_subagents_title": "{name}-Agents",
-    "cat_subagents_desc": "Elige qué proveedor ejecuta las tareas pesadas en segundo plano.",
+    "cat_subagents_desc": "Ejecuta chat, memoria y tareas de fondo, no tu clave de voz.",
     "advanced_title": "Acceso e integraciones",
     "advanced_desc": "Extras opcionales: el proxy de claves de equipo, telefonía y el proveedor del Wiki de conocimiento.",
     "no_providers_in_tier": "No hay proveedores disponibles en esta categoría.",
@@ -2050,7 +2053,7 @@
     "realtime_options_error": "No se pudieron cargar las opciones de voz.",
     "realtime_options_retry": "Intentar de nuevo",
     "realtime_model_managed": "Gestionado",
-    "realtime_model_managed_hint": "ChatGPT selecciona el modelo de suscripción. Elige un proveedor Realtime por API para fijar un modelo GPT Realtime.",
+    "realtime_model_managed_hint": "Este proveedor gestiona el modelo. Usa los controles de configuración anteriores para cambiar la selección.",
     "guide_realtime_title": "¿Qué modelo debería elegir?",
     "guide_realtime_body": "API de OpenAI: GPT Realtime 2.1 es el modelo insignia actual y 2.1 Mini es la opción económica. Google: Gemini 3.1 Flash Live es el modelo insignia actual de Live.",
     "guide_computer_use_title": "¿Qué proveedor debería impulsar el Tool Model?",
@@ -2993,10 +2996,10 @@
       "summary_accepted": "Condiciones aceptadas"
     },
     "intro": {
-      "scene_1": "Conoce a tu asistente por voz.",
-      "scene_2": "Solo habla — escucha y actúa.",
-      "scene_3": "Sigue trabajando en segundo plano mientras tú no.",
-      "scene_4": "Tus claves, tus datos, tus reglas."
+      "scene_1": "Tu ordenador se convierte en un agente de IA.",
+      "scene_2": "Dale una tarea a Jarvis por chat o voz.",
+      "scene_3": "Puede usar apps, herramientas, modelos y agentes.",
+      "scene_4": "Revisa sus acciones y resultados en un solo lugar."
     },
     "language": {
       "ui_label": "Idioma de la interfaz",
@@ -5160,9 +5163,22 @@
   },
   "society": {
     "groups": {
-      "create": "Nuevo equipo de agentes", "edit": "Editar equipo de agentes", "description": "Agrupa agentes en una entrada lateral. Cada agente conserva su propio chat.",
-      "name": "Nombre del equipo", "members": "Miembros", "cancel": "Cancelar", "save": "Guardar equipo", "delete": "Desagrupar", "delete_confirm": "¿Desagrupar estos agentes? Sus chats individuales permanecerán.",
-      "left_chat": "Chat izquierdo", "right_chat": "Chat derecho", "open": "Abrir", "open_individual": "Abrir el chat individual de {0}", "missing_member": "Selecciona un agente disponible para este chat.", "hold_to_group": "Mantén para agrupar", "release_to_group": "Suelta para agrupar"
+      "create": "Nuevo equipo de agentes",
+      "edit": "Editar equipo de agentes",
+      "description": "Agrupa agentes en una entrada lateral. Cada agente conserva su propio chat.",
+      "name": "Nombre del equipo",
+      "members": "Miembros",
+      "cancel": "Cancelar",
+      "save": "Guardar equipo",
+      "delete": "Desagrupar",
+      "delete_confirm": "¿Desagrupar estos agentes? Sus chats individuales permanecerán.",
+      "left_chat": "Chat izquierdo",
+      "right_chat": "Chat derecho",
+      "open": "Abrir",
+      "open_individual": "Abrir el chat individual de {0}",
+      "missing_member": "Selecciona un agente disponible para este chat.",
+      "hold_to_group": "Mantén para agrupar",
+      "release_to_group": "Suelta para agrupar"
     },
     "chat": {
       "placeholder": "Mensaje a {0}",
@@ -5370,6 +5386,18 @@
       "safe": "Seguro",
       "monitor": "Supervisar",
       "ask": "Preguntar primero"
+    },
+    "approval_mode": {
+      "title": "Permisos del agente",
+      "bypass": "Omitir permisos",
+      "ask": "Preguntar",
+      "always_ask": "Preguntar siempre",
+      "bypass_hint": "Las herramientas de Jarvis se ejecutan sin preguntas; sus bloqueos siguen activos. Las herramientas nativas de una CLI de suscripción siguen sus propias reglas.",
+      "ask_hint": "Lee libremente; pregunta en este chat antes de cambios u otras acciones.",
+      "always_ask_hint": "Pregunta en este chat antes de cada herramienta de Jarvis, incluso para leer.",
+      "legacy_hint": "Este agente conserva los permisos actuales del chat hasta que elijas un modo.",
+      "legacy_ceiling": "Límite de permisos anterior",
+      "unavailable": "Este ejecutor no puede mostrar una aprobación utilizable para este modo."
     },
     "grant": {
       "all": "Todas las herramientas conectadas",
@@ -5815,7 +5843,7 @@
       "agents": "Agentes",
       "files": "Carpeta",
       "changes": "Cambios",
-      "office": "Oficina"
+      "office": "Jarvis Verse"
     },
     "git": {
       "aria": "Ramas, pull requests y CI",
@@ -5884,7 +5912,7 @@
       "minutes_ago": "hace {n} min"
     },
     "office": {
-      "failed": "No se pudo cargar el mapa de la oficina.",
+      "failed": "No se pudo cargar el Jarvis Verse.",
       "retry": "Reintentar"
     },
     "agents": {
@@ -5926,6 +5954,30 @@
         "idle": "Inactivo"
       }
     }
+  },
+  "jarvis_actions": {
+    "title": "Acciones de Jarvis",
+    "subtitle": "Todo lo que Jarvis puede hacer en esta app. Elige por acción si se ejecuta libremente, pregunta antes o nunca se ejecuta.",
+    "search_placeholder": "Buscar acciones",
+    "area_all": "Todas las áreas",
+    "changed_only": "Solo cambiadas",
+    "mode_default": "Predeterminado",
+    "mode_allow": "Permitida",
+    "mode_ask": "Preguntar",
+    "mode_block": "Bloqueada",
+    "tier_safe": "Predeterminado: se ejecuta libremente (solo lectura)",
+    "tier_monitor": "Predeterminado: se ejecuta libremente",
+    "tier_ask": "Predeterminado: pregunta antes",
+    "count": "{shown} de {total} acciones",
+    "show_more": "Mostrar más",
+    "dangerous": "Cambia o elimina algo",
+    "history_title": "Acciones recientes",
+    "history_empty": "Jarvis aún no ha ejecutado ninguna acción de la app.",
+    "outcome_ran": "Ejecutada",
+    "outcome_failed": "Falló",
+    "outcome_blocked": "Bloqueada",
+    "load_error": "No se pudieron cargar las acciones.",
+    "save_error": "No se pudo guardar el cambio."
   },
   "appshots": {
     "title": "Appshots",

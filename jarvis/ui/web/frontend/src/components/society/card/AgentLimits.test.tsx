@@ -103,6 +103,20 @@ describe("the card's limits", () => {
     });
   });
 
+  test("saves an explicit approval mode while preserving the ceiling", async () => {
+    renderCard({ approvalMode: "bypass" });
+    fireEvent.click(await screen.findByTestId("agent-limits-edit"));
+    fireEvent.click(screen.getByText("Always ask"));
+    fireEvent.click(screen.getByText("Save"));
+
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find((call) => call[1]?.method === "PATCH");
+      const body = JSON.parse(String(patch?.[1]?.body));
+      expect(body.approval_mode).toBe("always_ask");
+      expect(body.permission_ceiling).toBe("monitor");
+    });
+  });
+
   test("an empty budget means no cap rather than a broken number", async () => {
     renderCard();
     fireEvent.click(await screen.findByTestId("agent-limits-edit"));

@@ -269,7 +269,7 @@ _DEFAULT_ADMIN_PORT = 47821
 def _fast_admin_port() -> int:
     """Read ``[ui].admin_api_port`` from jarvis.toml with a raw tomllib read (a
     few ms) so the fast-boot bootstrap can bind the REAL port without paying the
-    ~240 ms full ``load_config`` (which drags pydantic + the brain/awareness
+    ~240 ms full ``load_config`` (which drags pydantic + the brain
     imports) on the time-to-serving path. Falls back to the packaged default.
 
     The configured value is the *base*: a non-default instance (``--instance

@@ -31,10 +31,6 @@ from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
 import yaml
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
-# Sub-config from the awareness sub-package. A top-level import is fine because
-# jarvis.awareness.config only knows Pydantic and never calls back into core.* —
-# no circular-import risk.
-from jarvis.awareness.config import AwarenessConfig
 from jarvis.live.config import LiveConfig
 
 # wake_constants is pure stdlib (no jarvis imports) — safe to import from this
@@ -1492,17 +1488,14 @@ class EvidenceDomainsConfig(BaseModel):
                 "guthaben",
                 "billing",
             ],
-            # Local screen / window-activity history. Served by the always-on
-            # internal `awareness-recall` tool (wired into the domain→tool map in
-            # BrainManager._run_evidence_gate, NOT a connected CLI), so a question
-            # like "was hatte ich heute offen / was habe ich gemacht / which
-            # windows were open" deterministically FORCES an awareness-recall call
-            # instead of letting the (esp. fast-tier) model confabulate "der lokale
-            # Verlaufsspeicher ist nicht verfügbar" without ever calling the tool
-            # (live 2026-06-18, proven from the log: no tool execution line, yet the
-            # refusal was spoken). Keywords are PHRASE-specific to opened
-            # windows/apps/today's on-device activity — never a bare "offen"/"open"
-            # token, so "ist die Frage noch offen" can't hijack the domain.
+            # Local screen / window-activity history. Jarvis keeps no such
+            # history (the awareness recorder was removed 2026-09-30), so no
+            # tool serves this domain: a question like "was hatte ich heute
+            # offen / which windows were open" gets the gate's honest "I have
+            # no access to your activity history" instead of a confabulated
+            # timeline. Keywords are PHRASE-specific to opened windows/apps/
+            # today's on-device activity — never a bare "offen"/"open" token,
+            # so "ist die Frage noch offen" can't hijack the domain.
             "activity": [
                 "offen hatte",
                 "offen gehabt",
@@ -1638,20 +1631,18 @@ class BrainConfig(BaseModel):
 class WikiCuratorConfig(BaseModel):
     """Curator LLM settings for the long-term wiki memory (Phase B1).
 
-    The curator turns one new source (a BrainTurnCompleted summary, an
-    EpisodeRecorded entry, a MissionCompleted hand-off) into a small set
+    The curator turns one new source (a BrainTurnCompleted summary or a
+    MissionCompleted hand-off) into a small set
     of structured wiki page updates. The LLM is intentionally provider-
     agnostic: ``provider=""`` falls back to ``brain.primary`` and
     ``model=""`` falls back to the resolved provider's ``model`` field
-    under ``brain.providers``. Pattern mirrors
-    ``AwarenessVerdichterConfig`` (Plan §6).
+    under ``brain.providers``.
     """
 
     model_config = ConfigDict(extra="allow")
 
     provider: str = ""  # "" = fall back to brain.primary
     model: str = ""  # "" = provider default model
-    max_input_tokens: int = 64_000
     # Headroom for a complete proposal; the streaming truncation guard
     # rejects any residual length-capped generation. The Stage-2 judge
     # returns FULL page bodies per add/update, so a batched response
@@ -1860,6 +1851,36 @@ class LegacyCuratorConfig(BaseModel):
     enabled: bool = False
 
 
+class JarvisLearningConfig(BaseModel):
+    """``[memory.learning]`` — Jarvis' own self-learning loop.
+
+    ``jarvis/memory/learning/`` reviews finished voice and chat conversations
+    in the background and keeps two bounded notebooks: USER.md (who the user
+    is, what they prefer, what they are working toward) and MEMORY.md
+    (Jarvis' own working notes and lessons from corrections). Both reach the
+    classic brain prompt and the realtime voice instructions. Every key below
+    is read by ``jarvis.memory.learning`` (AP-31).
+    """
+
+    model_config = {"extra": "allow"}
+
+    #: Master switch: off stops reviews and removes the notebooks from prompts.
+    enabled: bool = True
+    #: A review runs after this many unreviewed user turns ...
+    review_every_turns: int = Field(default=6, ge=1, le=100)
+    #: ... or when a conversation has been quiet this long, or a call ends.
+    idle_review_seconds: float = Field(default=300.0, ge=10.0, le=86_400.0)
+    #: Prompt budget per notebook. Entries beyond it stay on disk; the
+    #: reviewer is told the fill level and consolidates before it overflows.
+    user_budget_chars: int = Field(default=4_000, ge=500, le=40_000)
+    memory_budget_chars: int = Field(default=4_000, ge=500, le=40_000)
+    #: Reviewer model. Empty = the wiki curator's pair, then every other
+    #: reachable provider (subscriptions before per-token keys).
+    provider: str = ""
+    model: str = ""
+    timeout_s: float = Field(default=90.0, ge=5.0, le=600.0)
+
+
 class MemoryConfig(BaseModel):
     recall_store: str = "sqlite"
     # chromadb was removed (2026-06-28); there is no chroma backend in
@@ -1870,6 +1891,7 @@ class MemoryConfig(BaseModel):
     data_dir: str = "./data"
     wiki: WikiMemoryConfig = Field(default_factory=WikiMemoryConfig)
     legacy_curator: LegacyCuratorConfig = Field(default_factory=LegacyCuratorConfig)
+    learning: JarvisLearningConfig = Field(default_factory=JarvisLearningConfig)
 
 
 class SafetyWhitelistConfig(BaseModel):
@@ -2841,7 +2863,7 @@ class PerformanceConfig(BaseModel):
     # keep it whenever in doubt. Cuts the per-turn image tax on cheap turns.
     conditional_vision: bool = True
     # Wave 2 (omni-latency): cache-optimized prompt layout. Static prefix in the
-    # system prompt, per-turn dynamic context (awareness/wiki/date) moved into the
+    # system prompt, per-turn dynamic context (wiki/date) moved into the
     # user message so the provider prompt cache actually hits.
     cache_optimized_prompt: bool = True
 
@@ -4415,9 +4437,6 @@ class JarvisConfig(BaseModel):
     performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
     # Wave 0 (omni-latency) — hot-path latency span instrumentation toggle.
     latency: LatencyConfig = Field(default_factory=LatencyConfig)
-    # Phase A0+: awareness layer (continuous context). Entire subsystem
-    # hot-disabled via [awareness].enabled = false (plan §15).
-    awareness: AwarenessConfig = Field(default_factory=AwarenessConfig)
     # Phase B5 — wiki write-wiring: SessionRollupWorker + WikiCurator bootstrap (Agent A).
     wiki_integration: WikiIntegrationConfig = Field(default_factory=WikiIntegrationConfig)
     # Phase B5 — CuratorScheduler (Agent D). Top-level field — Wave-2 cleanup task

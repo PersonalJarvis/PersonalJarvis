@@ -217,6 +217,8 @@ def list_brain_choices(
     base = _ollama_base()
     if current_model.endswith(_MANAGED_VOICE_SUFFIX):
         current_model = current_model[: -len(_MANAGED_VOICE_SUFFIX)]
+    from jarvis.brain.ollama_inventory import is_hidden_alias
+
     served = _ollama_models(base, timeout)
     reachable = served is not None
     choices: list[dict[str, object]] = []
@@ -225,7 +227,7 @@ def list_brain_choices(
         # The managed 8k alias is an implementation detail derived from its
         # base tag. Listing both made one selection look like two models and
         # encouraged users to select an alias that is recreated automatically.
-        if name.endswith(_MANAGED_VOICE_SUFFIX) or not _usable_tag(name):
+        if (is_hidden_alias(name) and name != current_model) or not _usable_tag(name):
             continue
         seen.add(name)
         fits = _fits(size, usable_gb)

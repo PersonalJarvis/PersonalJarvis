@@ -313,10 +313,16 @@ const FURNITURE_PAINT: Partial<Record<FurnitureKind, string>> = {
   couch: "#4a5366", coffeeTable: "#c89f74", meetingTable: "#c89f74", teamBoard: "#f4f4f0", receptionDesk: "#f2eee6",
   kiosk: "#3a3f4b", lockers: "#5fa8a0", mirror: "#d6ecf8", coffeeBar: "#8a6240", waterCooler: "#6fb7ea", arcade: "#6a58b0",
   beanbag: "#e27d60", bookshelf: "#8a6240", plant: MAP_PAINT.plant, rug: MAP_PAINT.rug, elevator: "#c9ced6",
+  breakSofa: "#d8cdb9", breakSofaCorner: "#d8cdb9", breakTable: "#d6b98f", breakRug: "#e2c9a8", breakBookcase: "#a88660",
+  readingNook: "#93a58a", foosball: "#3f7d4a", breakPlant: MAP_PAINT.plant, arcadeMat: "#2a2548",
   leadWall: "#3a2416", executiveRug: "#26335a", guestChair: "#a9683c", chesterfield: "#7a2c22", loungeTable: "#d8ae52",
   executiveBar: "#5b3a25", globe: "#5f8f96", floorLamp: "#d8ae52", commandWall: "#3a2a20", commandDesk: "#c9b79c",
   serverRack: "#23272e", coldAisle: "#b3bac3", nocConsole: "#2b3038", statusWall: "#1a1d22", ups: "#2b3038", fireSuppression: "#c8262b",
   teamWall: "#6a4631", credenza: "#6a4631", designerPlant: MAP_PAINT.plant, teamRug: "#e6dccb",
+  wardrobeWall: "#d2b187", dressingMirror: "#e9edf0", tailorDummy: "#e8dfcf", dressingBench: "#7e9378", coatStand: "#a88660",
+  roundRug: "#e6ddca",
+  brandWall: "#d2b286", agentTotem: "#2b2f33", lobbySofa: "#efe9de", lobbyArmchair: "#a8653a", lobbyTable: "#e7ddcc",
+  sideTable: "#f1eeea", lobbyLamp: "#c7a15e", oliveTree: MAP_PAINT.plant, awardCase: "#d2b286", entranceMat: "#3b3a37", lobbyRug: "#e8dfcf",
 };
 
 export const STATE_RING: Record<MinimapAgentState, string> = {
@@ -465,11 +471,13 @@ export function drawFloorArt(ctx: Ctx, layout: OfficeLayout, t: MapTransform, ar
   // Furniture: rugs first, then solid pieces; plants and beanbags are round.
   for (const pass of ["rug", "solid"] as const) {
     for (const item of layout.furniture) {
-      const isRug = item.kind === "rug" || item.kind === "executiveRug" || item.kind === "teamRug";
+      const isRug = item.kind === "rug" || item.kind === "executiveRug" || item.kind === "teamRug"
+        || item.kind === "breakRug" || item.kind === "arcadeMat" || item.kind === "lobbyRug"
+        || item.kind === "entranceMat" || item.kind === "roundRug";
       if ((pass === "rug") !== isRug) continue;
       const colour = FURNITURE_PAINT[item.kind] ?? MAP_PAINT.furniture;
       const fp = footprint(item);
-      if (item.kind === "plant" || item.kind === "designerPlant" || item.kind === "beanbag") {
+      if (item.kind === "plant" || item.kind === "designerPlant" || item.kind === "breakPlant" || item.kind === "beanbag") {
         const c = worldToMap(t, item);
         ctx.beginPath();
         ctx.arc(c.x, c.y, Math.max(1.2, (FURNITURE_SIZE[item.kind].w / 2) * t.scale * 0.85), 0, Math.PI * 2);

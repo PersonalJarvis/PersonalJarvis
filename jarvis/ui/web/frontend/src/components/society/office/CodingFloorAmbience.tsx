@@ -27,7 +27,7 @@ import { CODING_SCENE } from "./officePalette";
 // Instancing
 // ---------------------------------------------------------------------------
 
-interface Placement {
+export interface Placement {
   position: [number, number, number];
   scale: [number, number, number];
   /** Rotation (x, y, z) in radians; absent = none. */
@@ -37,8 +37,8 @@ interface Placement {
 
 const _m = new Matrix4(), _q = new Quaternion(), _e = new Euler(), _p = new Vector3(), _s = new Vector3(), _c = new Color();
 
-/** One instanced mesh for every placement of a part. */
-function Instances({ geometry, material, items, cast = true }: {
+/** One instanced mesh for every placement of a part (the agents floor's ambience uses it too). */
+export function Instances({ geometry, material, items, cast = true }: {
   geometry: BufferGeometry; material: Material; items: readonly Placement[]; cast?: boolean;
 }) {
   const ref = useRef<InstancedMesh>(null);

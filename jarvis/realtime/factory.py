@@ -315,17 +315,14 @@ async def realtime_warm_selected_transports(cfg: Any) -> None:
 
 
 async def realtime_prespawn_transports(cfg: Any) -> None:
-    """Fire the spawn-only prestart for every explicitly selected provider.
+    """Prestart the selected primary and only explicitly lightweight fallbacks.
 
     Runs BEFORE the warm worker's gates on purpose: the transport that
     declares this capability today is the managed local server, whose models
     load 45-90 s in a SEPARATE process — the earlier that spawn fires, the
     earlier the first call can connect, and nothing on the boot path ever
-    waits for it. Unlike eager warming, position does not matter here: a
-    prespawn is bounded to starting a process, so an explicitly configured
-    FALLBACK is prestarted too — that fallback sitting stone cold is exactly
-    what stranded the first call of 2026-08-10, when the subscription primary
-    was down and the local fallback had never been started. A capability
+    waits for it. The spawned process still loads models and consumes memory,
+    so fallback prestart follows the same opt-in as eager warming. A capability
     probe, never a provider-id check (AP-21); an installed-but-unselected
     plugin must never spawn a process on its own. Best-effort by contract —
     one broken plugin never stops the others and no failure reaches the
@@ -340,9 +337,13 @@ async def realtime_prespawn_transports(cfg: Any) -> None:
             "configured voice mode."
         )
         return
-    for provider_id in _explicit_provider_ids(cfg):
+    for position, provider_id in enumerate(_explicit_provider_ids(cfg)):
         try:
             provider_cls = load(_GROUP, provider_id, protocol=RealtimeProvider)
+            if position > 0 and not bool(
+                getattr(provider_cls, "eager_warm_as_fallback", False)
+            ):
+                continue
             prespawn = getattr(provider_cls, "prespawn_transport", None)
             if callable(prespawn):
                 await prespawn(cfg)

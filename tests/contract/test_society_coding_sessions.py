@@ -86,8 +86,26 @@ async def test_new_society_agent_gets_grantable_gated_tool(rig, tmp_path):
     cfg = SimpleNamespace(wiki=SimpleNamespace(vault_root=str(tmp_path / "vault")))
     await society_system_extra(cfg, None, session)
     selected = society_tool_filter(session)(society_tools(cfg, None, session))
+    # A new agent defaults to Bypass under an ask ceiling: the gated tool is
+    # there and opening runs without a card.
+    assert selected["coding-session"].risk_tier_for_args({"action": "open"}) == "monitor"
+    assert selected["coding-session"].risk_tier_for_args({"action": "context"}) == "monitor"
+    # An explicit require-approval rule still cards the call under Bypass.
+    await runtime.roster.update(
+        agent.agent_id,
+        {"approval_rules": {"require_approval": ["core:coding-session:open"]}},
+    )
+    await society_system_extra(cfg, None, session)
+    selected = society_tool_filter(session)(society_tools(cfg, None, session))
     assert selected["coding-session"].risk_tier_for_args({"action": "open"}) == "ask"
     assert selected["coding-session"].risk_tier_for_args({"action": "context"}) == "monitor"
+    # Ask mode cards the open; a read above safe also waits for the person.
+    await runtime.roster.update(
+        agent.agent_id, {"approval_mode": "ask", "approval_rules": {"require_approval": []}}
+    )
+    await society_system_extra(cfg, None, session)
+    selected = society_tool_filter(session)(society_tools(cfg, None, session))
+    assert selected["coding-session"].risk_tier_for_args({"action": "open"}) == "ask"
     await runtime.roster.update(agent.agent_id, {"denies": ["core:coding-session"]})
     denied = await rig[4].execute({"action": "discover"}, None)
     assert not denied.success
@@ -222,6 +240,8 @@ async def test_subscription_seat_gets_scoped_catalog_and_executor_gate(rig):
     from jarvis.society.surface import coding_tool_for_session
 
     calls = []
+    # The executor gate follows the agent's explicit Ask mode.
+    await rig[3].roster.update(rig[5].agent_id, {"approval_mode": "ask"})
 
     class Executor:
         async def execute(self, tool, arguments, **kwargs):

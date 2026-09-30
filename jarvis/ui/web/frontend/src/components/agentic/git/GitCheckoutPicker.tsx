@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Dices, FolderGit2, FolderTree, GitBranch, GitBranchPlus, GitFork, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { BrandedSelect } from "@/components/ui/select";
 import { folderName, inspectGit, type GitPlan, type GitPrepareMode, type GitRepoInfo } from "@/lib/gitApi";
 import { GitStatusLine } from "./GitStatusLine";
 
@@ -177,12 +178,11 @@ export function GitCheckoutPicker({ folder, value, onChange, disabled, context, 
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"><Dices className="h-4 w-4" /></button>
         </span>
       </label>
-      <label className="block text-xs text-muted-foreground">Based on
-        <select value={value.base} disabled={disabled || info.unborn} aria-label="Base branch"
-          onChange={(event) => onChange({ ...value, base: event.target.value })} className={cn(field, "mt-1")}>
-          {bases.map((name) => <option key={name} value={name}>{name}{name === info.branch ? " (current)" : name === info.default_branch ? " (default)" : ""}</option>)}
-        </select>
-      </label>
+      <div className="block text-xs text-muted-foreground"><span>Based on</span>
+        <BrandedSelect value={value.base} disabled={disabled || info.unborn} ariaLabel="Base branch"
+          onValueChange={(base) => onChange({ ...value, base })} className="mt-1 h-9"
+          options={bases.map((name) => ({ value: name, label: name, hint: name === info.branch ? "current" : name === info.default_branch ? "default" : undefined }))} />
+      </div>
       <p className="text-xs text-muted-foreground sm:col-span-2">
         {info.unborn ? "This repository has no commit yet — make a first commit before branching."
           : value.mode === "new_worktree" ? <>Creates <span className="font-mono text-foreground">{preview}</span>. Only committed work is copied; an existing branch is reused.</>
@@ -190,19 +190,17 @@ export function GitCheckoutPicker({ folder, value, onChange, disabled, context, 
       </p>
     </div>}
 
-    {info?.is_repo && value.mode === "switch_branch" && <label className="block text-xs text-muted-foreground">Branch
-      <select value={value.branch} disabled={disabled} aria-label="Existing branch" onChange={(event) => onChange({ ...value, branch: event.target.value })} className={cn(field, "mt-1")}>
-        {switchable.map((branch) => <option key={branch.name} value={branch.name}>{branch.name}</option>)}
-      </select>
-    </label>}
+    {info?.is_repo && value.mode === "switch_branch" && <div className="block text-xs text-muted-foreground"><span>Branch</span>
+      <BrandedSelect value={value.branch} disabled={disabled} ariaLabel="Existing branch" onValueChange={(branch) => onChange({ ...value, branch })} className="mt-1 h-9"
+        options={switchable.map((branch) => ({ value: branch.name, label: branch.name }))} />
+    </div>}
 
-    {info?.is_repo && value.mode === "open_worktree" && <label className="block text-xs text-muted-foreground">Worktree
-      <select value={value.base} disabled={disabled} aria-label="Existing worktree"
-        onChange={(event) => { const tree = linked.find((entry) => entry.path === event.target.value); onChange({ ...value, base: event.target.value, branch: tree?.branch ?? "" }); }}
-        className={cn(field, "mt-1")}>
-        {linked.map((tree) => <option key={tree.path} value={tree.path}>{folderName(tree.path)} · {tree.branch || "detached"}</option>)}
-      </select>
-    </label>}
+    {info?.is_repo && value.mode === "open_worktree" && <div className="block text-xs text-muted-foreground"><span>Worktree</span>
+      <BrandedSelect value={value.base} disabled={disabled} ariaLabel="Existing worktree"
+        onValueChange={(path) => { const tree = linked.find((entry) => entry.path === path); onChange({ ...value, base: path, branch: tree?.branch ?? "" }); }}
+        className="mt-1 h-9"
+        options={linked.map((tree) => ({ value: tree.path, label: folderName(tree.path), hint: tree.branch || "detached", searchText: tree.path }))} />
+    </div>}
 
     {value.mode === "init" && <p className="text-xs text-muted-foreground">Creates a repository on <span className="font-mono">main</span> with an empty first commit. Your files are not committed — you decide what goes in.</p>}
   </section>;

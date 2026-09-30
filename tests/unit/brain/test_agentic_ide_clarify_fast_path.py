@@ -56,6 +56,13 @@ def _clean_window() -> None:
 @pytest.fixture
 def registry(monkeypatch: pytest.MonkeyPatch) -> Registry:
     monkeypatch.setattr(session_mod, "agent_argv", lambda name: (f"/usr/bin/{name}",))
+    # Every pane here is attached, and a fake PTY never draws an input line, so
+    # the cold-start gate would hold each slot for its full ceiling: five panes
+    # queued behind a limit of two spent ~15 s per test, and the file outgrew
+    # CI's per-file timeout. The gate itself is covered in
+    # tests/unit/agentic_ide/test_cold_start_gate.py; here it only has to let go.
+    monkeypatch.setattr(session_mod, "COLD_START_SETTLE_S", 0.0)
+    monkeypatch.setattr(session_mod, "COLD_START_HOLD_MAX_S", 0.0)
     reg = Registry(pty_manager=FakePtyManager())
     monkeypatch.setattr(session_mod, "get_registry", lambda: reg)
     return reg

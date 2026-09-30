@@ -1097,12 +1097,9 @@ async def test_warm_transport_never_raises(monkeypatch) -> None:
 
 
 # ── Boot-time prespawn (prespawn_transport capability) ───────────────────
-def test_local_realtime_is_eagerly_warmed_as_a_fallback() -> None:
-    """Live 2026-08-10: with an expired subscription primary, the un-warmed
-    local FALLBACK was still stone cold when the first call arrived — the
-    call died on a machine that could have answered it. A local stack costs
-    no account round-trip to warm, so it must not sit out fallback warming."""
-    assert LocalRealtimeProvider.eager_warm_as_fallback is True
+def test_local_realtime_does_not_load_models_for_an_unselected_fallback() -> None:
+    """Local fallback configuration alone must not reserve the user's GPU/RAM."""
+    assert LocalRealtimeProvider.eager_warm_as_fallback is False
 
 
 async def test_prespawn_spawns_and_arms_the_monitor_without_waiting(

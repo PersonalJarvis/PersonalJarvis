@@ -125,7 +125,13 @@ export function useRemoveComputer() {
  * an older backend, a test without the route — is simply "no computers".
  */
 export function useComputerChoices(): Computer[] {
+  return useComputerChoiceList().computers;
+}
+
+/** The same list, plus whether the one fetch has settled (either way). */
+export function useComputerChoiceList(): { computers: Computer[]; loaded: boolean } {
   const [rows, setRows] = useState<Computer[]>([]);
+  const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     let alive = true;
     try {
@@ -134,13 +140,17 @@ export function useComputerChoices(): Computer[] {
         .then((list) => {
           if (alive && Array.isArray(list)) setRows(list);
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => {
+          if (alive) setLoaded(true);
+        });
     } catch {
       /* fetch unavailable: no computers */
+      setLoaded(true);
     }
     return () => {
       alive = false;
     };
   }, []);
-  return rows;
+  return { computers: rows, loaded };
 }

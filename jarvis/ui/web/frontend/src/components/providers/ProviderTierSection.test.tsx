@@ -1145,6 +1145,40 @@ describe("managed local realtime model setup", () => {
     expect(screen.getByText("MOSS-TTS-Nano 100M")).toBeTruthy();
     expect(screen.getByText("Integration pending")).toBeTruthy();
   });
+
+  it.each([true, false])("activates local voice only after a successful speech test (%s)", async (success) => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      const body = url.endsWith("/model-catalog") ? {
+        brain: { current: "voice-brain", models: [{ id: "voice-brain", label: "Voice brain", installed: true, fits: true, size_gb: 3 }] },
+        current: "voice-tts", models: [{ id: "voice-tts", label: "Voice TTS", selectable: true, runtime_ready: true, languages: ["en"] }],
+        hearing: { label: "Local recognition" },
+      } : url.endsWith("/setup") ? (success ? { smoke: { first_audio_ms: 100 } } : { detail: "Speech test failed" })
+        : url.endsWith("/realtime/switch") ? { ok: true, restart_required: false }
+        : {};
+      return { ok: success || !url.endsWith("/setup"), status: success ? 200 : 409,
+        json: async () => body, text: async () => JSON.stringify(body) } as Response;
+    }));
+    const card = localRealtimeCard();
+    card.active = false;
+    card.experimental = true;
+    card.managed_server!.ready = true;
+    renderCard(card);
+    fireEvent.click(await screen.findByRole("button", { name: "Apply, test & use local voice" }));
+    await waitFor(() => expect(calls.some((url) => url.endsWith("/setup"))).toBe(true));
+    if (success) {
+      await waitFor(() => expect(calls).toContain("/api/realtime/switch"));
+      await waitFor(() => expect(calls).toContain("/api/settings/voice-mode"));
+      expect(calls.findIndex((url) => url.endsWith("/setup"))).toBeLessThan(calls.indexOf("/api/realtime/switch"));
+    } else {
+      await screen.findByText("Speech test failed");
+      expect(calls).not.toContain("/api/realtime/switch");
+      expect(calls).not.toContain("/api/settings/voice-mode");
+      expect(screen.queryByText(enLocale.apikeys_view.managed_setup_testing)).toBeNull();
+    }
+  });
 });
 
 describe("managed server badge", () => {
