@@ -322,23 +322,25 @@ describe("AgenticTerminal layout", () => {
     expect(terminalHarness.focus.mock.calls.length).toBe(focuses);
   });
 
-  it("draws a minimal tile: square frame, no title bar, signal edge only when focus means something", () => {
+  it("draws a minimal tile: square frame, slim title row, and a signal edge on the pane in use", () => {
     const props = { name: "Dana", displayName: "Codex", agent: "codex", appearance: "dark" as const, fontSize: 13, headerMode: "minimal" as const };
     const { rerender } = render(<AgenticTerminal {...props} />);
     const pane = screen.getByTestId("agentic-pane-Dana");
     expect(pane.className).toContain("rounded-none");
     expect(pane.className).not.toContain("rounded-2xl");
     expect(pane.dataset.paneStyle).toBe("minimal");
-    expect(screen.queryByTestId("workspace-terminal-header-Dana")).toBeNull();
+    const header = screen.getByTestId("workspace-terminal-header-Dana");
+    expect(header.dataset.variant).toBe("tile");
+    expect(screen.getByTestId("pane-title-Dana")).toBeTruthy();
     expect(screen.queryByTestId("pane-header-Dana")).toBeNull();
-    expect(screen.queryByTestId("pane-title-Dana")).toBeNull();
-    expect(screen.getByTestId("workspace-terminal-controls-Dana")).toBeTruthy();
     const resting = pane.style.borderColor;
     expect(resting).toBeTruthy();
+    expect(pane.style.boxShadow).toBe("");
     rerender(<AgenticTerminal {...props} focused />);
     expect(pane.style.borderColor).not.toBe(resting);
-    // A lone pane is always the focused one; marking it says nothing.
-    rerender(<AgenticTerminal {...props} focused accentFocus={false} />);
+    expect(pane.style.boxShadow).toContain("inset");
+    // One pane in the grid is still the pane in use: it is marked too.
+    rerender(<AgenticTerminal {...props} focused={false} />);
     expect(pane.style.borderColor).toBe(resting);
   });
 

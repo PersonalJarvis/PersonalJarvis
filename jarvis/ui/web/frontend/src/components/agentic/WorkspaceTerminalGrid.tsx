@@ -53,8 +53,8 @@ interface Props {
   onMutationStart?: () => void;
   onMutationEnd?: () => void;
   /**
-   * How the panes are drawn: square multiplexer tiles without title bars, or
-   * rounded cards with one. The reader picks it in Workspace options.
+   * How the panes are drawn: square multiplexer tiles with a slim title row,
+   * or rounded cards. The reader picks it in Workspace options.
    */
   paneStyle?: PaneStyle;
 }
@@ -378,7 +378,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             drag?.id === id && "opacity-50",
             spotlitPane === terminal.name && "ring-2 ring-accent ring-offset-2 ring-offset-background",
             visibleMaximized && visibleMaximized !== id && "hidden")}>
-          <AgenticTerminal headerMode={minimal ? "minimal" : "compact"} accentFocus={tiles.length > 1} agent={terminal.agent}
+          <AgenticTerminal headerMode={minimal ? "minimal" : "compact"} agent={terminal.agent}
             name={terminal.name} workspaceId={session.id} displayName={terminal.display_name}
             recap={terminal.recap} promptCount={terminal.prompts_sent} appearance={appearance ?? theme} fontSize={fontSize}
             focused={selected === terminal.name} onFocus={() => { if (spotlitPane && spotlitPane !== terminal.name) setSpotlight(null); onSelect(terminal.name); }}

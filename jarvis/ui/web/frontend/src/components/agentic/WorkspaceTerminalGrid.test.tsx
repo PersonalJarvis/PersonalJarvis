@@ -9,8 +9,8 @@ vi.mock("./AgenticTerminal", () => ({ AgenticTerminal: (props: {
   name: string; onToggleMaximize: () => void; onRestart: () => void; restartToken: number;
   onFocus: () => void;
   onArrangeStart?: (event: React.PointerEvent) => void;
-  headerMode?: string; accentFocus?: boolean;
-}) => <div onMouseDown={props.onFocus} data-testid={`pane-${props.name}`} data-header-mode={props.headerMode} data-accent-focus={String(props.accentFocus)}>
+  headerMode?: string;
+}) => <div onMouseDown={props.onFocus} data-testid={`pane-${props.name}`} data-header-mode={props.headerMode}>
   <button onClick={props.onToggleMaximize}>Maximize {props.name}</button>
   <button type="button" data-ide-drag-handle="true" onPointerDown={props.onArrangeStart}>Move {props.name}</button>
   <button onClick={props.onRestart}>Restart {props.name}</button>
@@ -246,18 +246,12 @@ it("hides the seams while a pane is maximized", () => {
   expect(screen.queryAllByRole("separator")).toHaveLength(0);
 });
 
-it("draws square, title-less tiles in the minimal style and cards in the classic one", () => {
+it("draws square tiles in the minimal style and cards in the classic one", () => {
   const { rerender } = render(<WorkspaceTerminalGrid {...props} session={makeSession()} paneStyle="minimal" />);
   const tile = document.querySelector<HTMLElement>('[data-session-id="T1"]')!;
   expect(tile.className).toContain("rounded-none");
   expect(screen.getByTestId("pane-T1").dataset.headerMode).toBe("minimal");
-  expect(screen.getByTestId("pane-T1").dataset.accentFocus).toBe("true");
   rerender(<WorkspaceTerminalGrid {...props} session={makeSession()} paneStyle="classic" />);
   expect(document.querySelector<HTMLElement>('[data-session-id="T1"]')!.className).toContain("rounded-2xl");
   expect(screen.getByTestId("pane-T1").dataset.headerMode).toBe("compact");
-});
-
-it("does not mark focus on a lone pane", () => {
-  render(<WorkspaceTerminalGrid {...props} session={makeSession(["T1"])} paneStyle="minimal" />);
-  expect(screen.getByTestId("pane-T1").dataset.accentFocus).toBe("false");
 });

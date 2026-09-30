@@ -149,10 +149,9 @@ export function storedTerminalAppearance(): TerminalAppearance | null {
  * How a workspace draws its panes.
  *
  * * `minimal` — the tiling-multiplexer look (herdr, tmux): square 1px frames,
- *   no title bar, the focused pane marked by the signal hue alone, and the
- *   pane's controls shown only while the pointer is over it.
- * * `classic` — rounded cards, each with a title bar naming its goal and
- *   carrying its controls.
+ *   a slim square title row carrying the pane's controls, and the pane the
+ *   reader works in outlined in the signal hue.
+ * * `classic` — rounded cards, each with a taller title bar.
  *
  * A reader's preference, kept in this window's storage like the appearance;
  * `classic` stays one click away in Workspace options for anyone who wants
@@ -347,8 +346,8 @@ export interface PaneTileChrome {
 /**
  * Frame colours for the `minimal` pane style.
  *
- * A multiplexer grid is separated by its lines alone — no title bars, no
- * radius, no elevation — so the resting edge is a full step brighter than
+ * A multiplexer grid is separated by its lines alone — no radius, no
+ * elevation — so the resting edge is a full step brighter than
  * the card style's hairline (herdr draws it in a mid grey). Otherwise every
  * edge would dissolve into the wallpaper and the grid would read as one
  * block of text.
