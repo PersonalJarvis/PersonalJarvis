@@ -69,6 +69,31 @@ describe("RosterRail status", () => {
     fireEvent.click(screen.getByTestId("society-group-team"));
     expect(openGroup).toHaveBeenCalledWith("team");
   });
+  it("opens team actions on right-click and only ungroups after confirmation", async () => {
+    const request = vi.fn(async () => ({ ok: true, json: async () => ({}) }));
+    vi.stubGlobal("fetch", request);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><RosterRail {...baseProps} activeAgentId={null}
+      agents={[agent({ agentId: "scout", name: "Scout" }), agent({ agentId: "writer", name: "Writer" })]}
+      groups={[{ group_id: "team", name: "Launch team", members: ["scout", "writer"], created_ms: 1, updated_ms: 1 }]}
+      onOpenGroup={() => undefined} /></QueryClientProvider>);
+
+    const row = screen.getByTestId("society-group-team");
+    fireEvent.contextMenu(row, { clientX: 32, clientY: 56 });
+    expect(screen.getByRole("menu", { name: "Launch team" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "society.groups.edit" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: "society.groups.delete" }));
+    expect(screen.getByRole("dialog", { name: "society.groups.delete" })).toBeTruthy();
+    expect(request).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "society.groups.cancel" }));
+    expect(request).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(row, { clientX: 32, clientY: 56 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "society.groups.delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "society.groups.delete" }));
+    await waitFor(() => expect(request).toHaveBeenCalledWith("/api/society/chat-groups/team", { method: "DELETE" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
   it("shows a loading spinner while an agent is thinking", () => {
     render(
       <RosterRail

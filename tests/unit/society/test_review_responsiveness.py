@@ -15,9 +15,11 @@ from jarvis.society.review import _ask
 @pytest.mark.parametrize("fallback", [False, True])
 async def test_review_provider_resolution_keeps_loop_responsive(monkeypatch, fallback):
     from jarvis.agent_chat import runner_brain
+    from jarvis.brain import resolver
     from jarvis.core import config
     from jarvis.society import learning
 
+    monkeypatch.setattr(resolver, "resolve_subscription_brain", lambda cfg: None)
     loop = asyncio.get_running_loop()
     loop_thread = threading.get_ident()
     entered = asyncio.Event()
@@ -73,11 +75,14 @@ async def test_review_provider_resolution_keeps_loop_responsive(monkeypatch, fal
 @pytest.mark.asyncio
 async def test_unavailable_review_providers_finish_without_stop_iteration(monkeypatch):
     from jarvis.agent_chat import runner_brain
+    from jarvis.brain import resolver
     from jarvis.core import config
     from jarvis.society import learning
 
     def unavailable(*args, **kwargs):
         raise RuntimeError("no usable provider")
+
+    monkeypatch.setattr(resolver, "resolve_subscription_brain", lambda cfg: None)
 
     monkeypatch.setattr(
         runner_brain, "brain_manager", lambda: SimpleNamespace(_get_brain=unavailable)
@@ -87,3 +92,47 @@ async def test_unavailable_review_providers_finish_without_stop_iteration(monkey
     runtime = SimpleNamespace(config=lambda: None, skills_for=lambda agent_id: None)
     agent = SimpleNamespace(provider="primary", model="test", effort="low", agent_id="test")
     assert await asyncio.wait_for(_ask(runtime, agent, "Evidence"), timeout=2) is None
+
+
+@pytest.mark.asyncio
+async def test_connected_subscription_reviews_before_the_keyed_chain(monkeypatch):
+    """Background review spends a subscription before any per-token key."""
+    from jarvis.agent_chat import runner_brain
+    from jarvis.brain import resolver
+    from jarvis.core import config
+    from jarvis.society import learning
+
+    answered = []
+
+    class Provider:
+        def __init__(self, name, *, fails=False):
+            self.name = name
+            self._model = ""
+            self._fails = fails
+
+        async def complete(self, request):
+            answered.append(self.name)
+            if self._fails:
+                raise RuntimeError(f"{self.name} unavailable")
+            yield BrainDelta(content='{"memories": [], "skill": null}')
+
+    class Creator:
+        def _candidate_brains(self):
+            yield Provider("paid-key"), "paid-key"
+
+    def getter(name, model, *, scope):
+        return Provider(name, fails=name == "seat")
+
+    monkeypatch.setattr(runner_brain, "brain_manager", lambda: SimpleNamespace(_get_brain=getter))
+    monkeypatch.setattr(config, "get_jarvis_agent_secret", lambda provider: None)
+    monkeypatch.setattr(learning, "default_creator_factory", lambda cfg: lambda *args: Creator())
+    subscription = Provider("subscription")
+    monkeypatch.setattr(resolver, "resolve_subscription_brain", lambda cfg: subscription)
+    runtime = SimpleNamespace(config=lambda: None, skills_for=lambda agent_id: None)
+    agent = SimpleNamespace(provider="seat", model="", effort="low", agent_id="test")
+
+    assert await asyncio.wait_for(_ask(runtime, agent, "Evidence"), timeout=2) == {
+        "memories": [],
+        "skill": None,
+    }
+    assert answered == ["seat", "subscription"]

@@ -345,7 +345,13 @@ class ChatControls:
         ladder = ladder_key(
             session.surface, resolve_runner(session.provider, surface=session.surface)
         )
-        permission = normalize_permission(ladder, permission)
+        # /plan is a chat control, not a ladder choice: the Society ladder
+        # (bypass / ask / always ask) has no read-only rung, and folding
+        # "plan" onto it would silently leave the turn able to write.
+        folded = normalize_permission(ladder, permission)
+        if permission in ("plan", "read-only") and folded not in ("plan", "read-only"):
+            folded = "plan"
+        permission = folded
         self.service.store.update_session(sid, permission_mode=permission)
         state.mode = "plan" if permission in ("plan", "read-only") else "build"
         set_chat_read_only(sid, state.mode == "plan")

@@ -1,7 +1,11 @@
 /**
- * What sits on (and under) every workstation of the coding floor, and the
- * planter boxes at the ends of each bench. Pure: it says which parts go
- * where; `DeskDressing.tsx` draws them, one instanced mesh per part.
+ * What sits on (and under) every workstation, and the planter boxes at the
+ * ends of each bench. The coding floor carries a developer's kit (laptops,
+ * headphones, a walnut planter); the agents floor, where agents do office
+ * work, an office kit (letter trays, documents, a tablet, a phone dock, pen
+ * cups, a framed photo, takeaway coffee, a pale-oak planter). Pure: it says
+ * which parts go where; `DeskDressing.tsx` draws them, one instanced mesh
+ * per part.
  *
  * A desk's kit is seeded by its id, so the same desk always carries the same
  * things and nothing jumps when the roster refetches. A desk nobody sits at
@@ -26,7 +30,12 @@ export type DressingPart =
   | "pot" | "soil" | "succulent" | "book" | "bottle" | "bottleCap"
   | "notebook" | "notebookBand" | "pen" | "hook" | "headband" | "earCup" | "note"
   | "tray" | "snake" | "puck"
-  | "planterBody" | "planterPlinth" | "planterRail" | "planterSoil" | "foliage" | "blade";
+  | "planterBody" | "planterPlinth" | "planterRail" | "planterSoil" | "foliage" | "blade"
+  // The agents floor's office kit and its oak planters.
+  | "letterTray" | "trayPost" | "paper" | "page" | "folder"
+  | "tabletBody" | "tabletScreen" | "tabletStand" | "phoneBody" | "phoneScreen" | "dock"
+  | "penCup" | "pencil" | "frame" | "photo" | "cup" | "cupLid" | "cupSleeve"
+  | "oakPlanter" | "oakSlat" | "brassTrim";
 
 /**
  * One part in place. `r` is an Euler rotation applied in YXZ order (a yaw,
@@ -278,6 +287,310 @@ export function planterPlacements(rect: Rect, key: string): Placement[] {
       out.push({
         part: "blade", p: [cx + (rand() - 0.5) * 0.08, PLANTER_H + h / 2 - 0.02, tz + (rand() - 0.5) * 0.1],
         r: [(rand() - 0.5) * 0.35, rand() * Math.PI, (rand() - 0.5) * 0.35], s: [0.032, h, 0.012], c: at(DRESSING_COLOURS.blade, Math.floor(rand() * 8)),
+      });
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// The agents floor: an office kit on every bench desk and pale-oak planters.
+// Desk-local space is the same as above, but that floor's `DeskInstances`
+// desk already carries a mug at (-0.52, 0.02) and a pedestal under the right
+// side, so the kit keeps clear of the mug.
+// ---------------------------------------------------------------------------
+
+/** Scandinavian oak, sage, linen and brass: the agents floor's own palette. */
+export const OFFICE_KIT_COLOURS = {
+  tray: ["#c7a064", "#d8c7a6", "#8fa58f", "#2c2e33", "#ece6da"],
+  paper: ["#f6f3ec", "#fbfaf6", "#efe8d9"],
+  folder: ["#dcc497", "#9db09a", "#c98f6f", "#6f86a6", "#e6dccb"],
+  lamp: ["#b8914f", "#ebe6da", "#8fa58f", "#2b2d31", "#c98f6f"],
+  pot: ["#ece6da", "#b8836a", "#8fa58f", "#d8cbb4", "#3a3d42"],
+  leaf: ["#6f9a64", "#86ad73", "#5b8757", "#9dbb86"],
+  penCup: ["#b8914f", "#2b2d31", "#ebe6da", "#8fa58f", "#b8836a"],
+  pencil: ["#e9b44c", "#c8553d", "#4f7cac", "#2b2d31", "#5e9c76", "#ebe6da"],
+  frame: ["#c9a46a", "#d8c7a6", "#2b2d31", "#efe9de", "#8a6a4a"],
+  /** Multiplies the one photo texture: warm, cool, faded and true prints. */
+  photo: ["#ffffff", "#ffe6c8", "#dde8ff", "#efe2f5", "#e8f0dc"],
+  cup: ["#f3efe7", "#c9a27a", "#e7ddd0", "#2f3136"],
+  lid: ["#f6f3ec", "#2b2d31"],
+  foliage: ["#6f9a64", "#557f52", "#8cb07a", "#7a9f6e", "#a3bf8e"],
+  frond: ["#6c9a5e", "#86ad73", "#5a8a55", "#9cc08a"],
+} as const;
+
+/** The things one agents-floor desk carries; decided by the desk id alone (and whether someone sits there). */
+export interface OfficeKit {
+  /** Back-left corner. */
+  corner: "tray" | "plant" | "books" | null;
+  /** Back-right, beside the monitor. */
+  side: "lamp" | "tablet" | "dock" | null;
+  /** Front-left, beside the keyboard (the mug stays behind it). */
+  front: "notebook" | "documents" | null;
+  photo: boolean;
+  penCup: boolean;
+  /** A phone lying face up at the front right (never together with the dock, which holds it). */
+  phone: boolean;
+  cup: boolean;
+  /** A printed page pinned to the felt screen, right of the monitor. */
+  pinned: boolean;
+  /** Sticky notes on the felt screen, 0–2. */
+  notes: number;
+  /** Colour seed shared by the kit's parts. */
+  colour: number;
+  /** Seeded jitter in [-1, 1) for yaw and placement. */
+  jitter: [number, number, number];
+}
+
+/**
+ * The office kit of one desk. As with `dressDesk`, every draw is taken in the
+ * same order either way and the empty desk's choices are prefixes of the
+ * occupied desk's thresholds, so an agent sitting down only adds things.
+ */
+export function dressOfficeDesk(deskId: string, occupied: boolean): OfficeKit {
+  const rand = seeded(`office-desk:${deskId}`);
+  const cornerRoll = rand(), sideRoll = rand(), frontRoll = rand();
+  const photoRoll = rand(), penRoll = rand(), phoneRoll = rand(), cupRoll = rand(), pinRoll = rand();
+  const notes = pick(3, rand());
+  const colour = Math.floor(rand() * 64);
+  const jitter: [number, number, number] = [rand() * 2 - 1, rand() * 2 - 1, rand() * 2 - 1];
+  const corner = cornerRoll < 0.4 ? "tray" : cornerRoll < 0.72 ? "plant" : occupied && cornerRoll < 0.9 ? "books" : null;
+  const side = sideRoll < 0.32 ? "lamp" : occupied && sideRoll < 0.64 ? "tablet" : occupied && sideRoll < 0.86 ? "dock" : null;
+  if (!occupied) {
+    return { corner, side, front: null, photo: false, penCup: penRoll < 0.3, phone: false, cup: false, pinned: false, notes: 0, colour, jitter };
+  }
+  return {
+    corner, side,
+    front: frontRoll < 0.45 ? "notebook" : frontRoll < 0.85 ? "documents" : null,
+    photo: photoRoll < 0.55,
+    penCup: penRoll < 0.65,
+    phone: side !== "dock" && phoneRoll < 0.5,
+    cup: cupRoll < 0.45,
+    pinned: pinRoll < 0.5,
+    notes, colour, jitter,
+  };
+}
+
+/** A sheet's printed face, laid flat on top of a stack (or a folder) at height `y`. */
+const printedFace = (x: number, y: number, z: number, yaw: number, w = 0.19, d = 0.26): Placement =>
+  ({ part: "page", p: [x, y, z], r: [-Math.PI / 2, yaw, 0], s: [w, d, 1] });
+
+/** A one- or two-tier letter tray, open towards the seat (+z), paper in each tier. */
+function letterTray(colour: string, paper: string, tiers: number, jitter: number): Placement[] {
+  const w = 0.24, d = 0.3, gap = 0.075, wall = 0.008;
+  const out: Placement[] = [];
+  for (let t = 0; t < tiers; t += 1) {
+    const y0 = TOP + t * gap;
+    const stack = 0.008 + ((t * 5 + Math.round(jitter * 7) + 7) % 4) * 0.006;
+    const yaw = jitter * 0.05 * (t === 0 ? 1 : -1);
+    out.push(
+      { part: "letterTray", p: [0, y0 + 0.004, 0], s: [w, 0.008, d], c: colour },
+      ...[-1, 1].map((side): Placement => ({ part: "letterTray", p: [side * (w / 2 - wall / 2), y0 + 0.02, 0], s: [wall, 0.032, d], c: colour })),
+      { part: "letterTray", p: [0, y0 + 0.02, -d / 2 + wall / 2], s: [w, 0.032, wall], c: colour },
+      { part: "paper", p: [0, y0 + 0.008 + stack / 2, 0.012], r: [0, yaw, 0], s: [0.205, stack, 0.28], c: paper },
+      printedFace(0, y0 + 0.0085 + stack, 0.012, yaw, 0.2, 0.275),
+    );
+  }
+  if (tiers > 1) {
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        out.push({ part: "trayPost", p: [sx * (w / 2 - 0.012), TOP + 0.008 + gap / 2, sz * (d / 2 - 0.03)], s: [0.006, gap, 0.006] });
+      }
+    }
+  }
+  return out;
+}
+
+/** A manila folder with a few sheets in it and one loose page on top, a little askew. */
+function documents(folder: string, paper: string, jitter: number): Placement[] {
+  return [
+    { part: "folder", p: [0, TOP + 0.003, 0], s: [0.22, 0.006, 0.29], c: folder },
+    { part: "paper", p: [0.006, TOP + 0.009, -0.004], r: [0, 0.04, 0], s: [0.2, 0.006, 0.27], c: paper },
+    { part: "paper", p: [0.03, TOP + 0.0131, 0.012], r: [0, -0.16 + jitter * 0.08, 0], s: [0.2, 0.0022, 0.27], c: paper },
+    printedFace(0.03, TOP + 0.0145, 0.012, -0.16 + jitter * 0.08),
+  ];
+}
+
+/** A tablet leaning back in a brass stand, its calendar facing +z. */
+function tablet(): Placement[] {
+  const tilt = -0.35, half = 0.085, foot = TOP + 0.014;
+  const up = Math.cos(tilt) * half, back = Math.sin(tilt) * half;
+  return [
+    { part: "tabletStand", p: [0, TOP + 0.004, -0.02], s: [0.13, 0.008, 0.11] },
+    { part: "tabletStand", p: [0, TOP + 0.014, 0.008], s: [0.13, 0.014, 0.01] },
+    { part: "tabletStand", p: [0, TOP + 0.045, -0.052], r: [0.5, 0, 0], s: [0.05, 0.08, 0.008] },
+    { part: "tabletBody", p: [0, foot + up, back], r: [tilt, 0, 0] },
+    { part: "tabletScreen", p: [0, foot + up - Math.sin(tilt) * 0.0045, back + Math.cos(tilt) * 0.0045], r: [tilt, 0, 0] },
+  ];
+}
+
+/** A phone standing in a charging dock, its screen facing +z. */
+function phoneDock(): Placement[] {
+  const tilt = -0.3, half = 0.075, foot = TOP + 0.012;
+  const up = Math.cos(tilt) * half, back = Math.sin(tilt) * half;
+  return [
+    { part: "dock", p: [0, TOP + 0.006, -0.005], s: [0.085, 0.012, 0.075] },
+    { part: "dock", p: [0, TOP + 0.04, -0.034], r: [0.3, 0, 0], s: [0.06, 0.07, 0.01] },
+    { part: "phoneBody", p: [0, foot + up, back], r: [tilt, 0, 0] },
+    { part: "phoneScreen", p: [0, foot + up - Math.sin(tilt) * 0.0045, back + Math.cos(tilt) * 0.0045], r: [tilt, 0, 0] },
+  ];
+}
+
+/** A phone lying face up. */
+function phoneFlat(): Placement[] {
+  return [
+    { part: "phoneBody", p: [0, TOP + 0.004, 0], r: [-Math.PI / 2, 0, 0] },
+    { part: "phoneScreen", p: [0, TOP + 0.0085, 0], r: [-Math.PI / 2, 0, 0] },
+  ];
+}
+
+/** A pen cup with a few pencils leaning out of it. */
+function penCup(colour: number): Placement[] {
+  const leans: Vec3[] = [[0.16, 0, 0.08], [-0.1, 0, -0.14], [0.02, 0, 0.2]];
+  return [
+    { part: "penCup", p: [0, TOP + 0.045, 0], s: [0.032, 0.09, 0.032], c: at(OFFICE_KIT_COLOURS.penCup, colour) },
+    ...leans.map(([rx, , rz], i): Placement => ({
+      part: "pencil", p: [-rz * 0.03, TOP + 0.1, rx * 0.03], r: [rx, 0, rz], s: [0.0045, 0.15, 0.0045], c: at(OFFICE_KIT_COLOURS.pencil, colour + i * 2),
+    })),
+  ];
+}
+
+/** A small framed photo leaning back on its strut, facing +z. */
+function photoFrame(frame: string, print: string): Placement[] {
+  const tilt = -0.2, half = 0.07;
+  const up = Math.cos(tilt) * half, back = Math.sin(tilt) * half;
+  return [
+    { part: "frame", p: [0, TOP + up, back], r: [tilt, 0, 0], s: [0.11, 0.14, 0.012], c: frame },
+    { part: "photo", p: [0, TOP + up - Math.sin(tilt) * 0.0065, back + Math.cos(tilt) * 0.0065], r: [tilt, 0, 0], s: [0.086, 0.114, 1], c: print },
+    { part: "frame", p: [0, TOP + 0.048, -0.045], r: [0.38, 0, 0], s: [0.02, 0.1, 0.006], c: frame },
+  ];
+}
+
+/** A takeaway coffee cup: tapered body, kraft sleeve, lid. */
+function takeawayCup(colour: number): Placement[] {
+  return [
+    { part: "cup", p: [0, TOP + 0.055, 0], s: [0.042, 0.11, 0.042], c: at(OFFICE_KIT_COLOURS.cup, colour) },
+    { part: "cupSleeve", p: [0, TOP + 0.06, 0], s: [0.0445, 0.042, 0.0445] },
+    { part: "cupLid", p: [0, TOP + 0.115, 0], s: [0.0445, 0.012, 0.0445], c: at(OFFICE_KIT_COLOURS.lid, colour) },
+  ];
+}
+
+/** A leafy plant in a ceramic pot, a few leaves trailing over the rim. */
+function leafyPlant(colour: number, turn: number): Placement[] {
+  const potH = 0.09;
+  const leaf = (i: number) => at(OFFICE_KIT_COLOURS.leaf, colour + i);
+  const crown = Array.from({ length: 4 }, (_, i): Placement => {
+    const a = turn + (i * 2 * Math.PI) / 4;
+    const size = 0.034 + (i % 2) * 0.01;
+    return { part: "foliage", p: [Math.sin(a) * 0.03, TOP + potH + 0.035 + (i % 2) * 0.02, Math.cos(a) * 0.03], r: [0, a, 0], s: [size, size * 0.85, size], c: leaf(i) };
+  });
+  const trail = Array.from({ length: 3 }, (_, i): Placement => ({
+    part: "succulent", p: [Math.sin(turn) * 0.056, TOP + potH - 0.012 - i * 0.03, Math.cos(turn) * 0.056 + (i - 1) * 0.008],
+    r: [0.4, turn + i, 0.3], s: [0.018, 0.008, 0.024], c: leaf(i + 1),
+  }));
+  return [
+    { part: "pot", p: [0, TOP + potH / 2, 0], s: [0.055, potH, 0.055], c: at(OFFICE_KIT_COLOURS.pot, colour) },
+    { part: "soil", p: [0, TOP + potH + 0.001, 0], s: [0.05, 0.004, 0.05] },
+    ...crown,
+    { part: "foliage", p: [0, TOP + potH + 0.07, 0], s: [0.03, 0.032, 0.03], c: leaf(2) },
+    ...trail,
+  ];
+}
+
+/** Every part of one agents-floor desk's kit, in desk-local space. */
+export function officeKitPlacements(kit: OfficeKit): Placement[] {
+  const [j0, j1, j2] = kit.jitter;
+  const c = kit.colour;
+  const paper = at(OFFICE_KIT_COLOURS.paper, c);
+  const out: Placement[] = [];
+  const cornerX = -0.6 + j2 * 0.02, cornerZ = -0.225;
+  if (kit.corner === "tray") out.push(...assembly(cornerX, cornerZ, j0 * 0.06, letterTray(at(OFFICE_KIT_COLOURS.tray, c), paper, 1 + (c % 2), j1)));
+  if (kit.corner === "plant") out.push(...assembly(cornerX + 0.02, cornerZ - 0.02, 0, leafyPlant(c, j0 * Math.PI)));
+  if (kit.corner === "books") out.push(...assembly(cornerX + 0.02, cornerZ + 0.02, 0.2 + j0 * 0.2, books(c, j1)));
+  if (kit.photo) out.push(...assembly(-0.39, -0.29, 0.22 + j1 * 0.12, photoFrame(at(OFFICE_KIT_COLOURS.frame, c + 1), at(OFFICE_KIT_COLOURS.photo, c + 3))));
+  if (kit.side === "lamp") out.push(...assembly(0.62, -0.27, -1.0 + j1 * 0.15, lamp(at(OFFICE_KIT_COLOURS.lamp, c))));
+  if (kit.side === "tablet") out.push(...assembly(0.56 + j0 * 0.015, -0.15, -0.6 + j1 * 0.08, tablet()));
+  if (kit.side === "dock") out.push(...assembly(0.6, -0.24, -0.45 + j1 * 0.1, phoneDock()));
+  if (kit.penCup) out.push(...assembly(kit.side === "dock" ? 0.47 : 0.43, -0.31, j2, penCup(c + 1)));
+  if (kit.front === "notebook") out.push(...assembly(-0.47, 0.25, 0.12 + j2 * 0.2, notebook(c)));
+  if (kit.front === "documents") out.push(...assembly(-0.47, 0.25, 0.1 + j2 * 0.12, documents(at(OFFICE_KIT_COLOURS.folder, c + 2), paper, j0)));
+  if (kit.phone) out.push(...assembly(0.53, 0.27, -0.25 + j0 * 0.3, phoneFlat()));
+  if (kit.cup) out.push(...assembly(0.64, 0.07 + j1 * 0.02, 0, takeawayCup(c + 2)));
+  if (kit.pinned) {
+    // A printed page pinned to the felt screen right of the monitor, a hair in front of its face.
+    out.push({ part: "page", p: [0.5 + j0 * 0.03, 1.02, -0.3935], r: [0, 0, j1 * 0.06], s: [0.1, 0.135, 1] });
+  }
+  for (let i = 0; i < kit.notes; i += 1) {
+    out.push({
+      part: "note", p: [-0.46 - i * 0.085, 1.03 + ((i * 37 + Math.round(j1 * 10)) % 5) * 0.012, -0.3935],
+      r: [0, 0, (i % 2 === 0 ? 1 : -1) * 0.08 + j0 * 0.05], c: at(DRESSING_COLOURS.note, c + i),
+    });
+  }
+  return out;
+}
+
+/** The agents floor's planter: taller than the coding floor's box, so it also screens the bench end. */
+export const OAK_PLANTER_H = 0.52;
+
+/**
+ * A pale-oak planter on short feet, clad in vertical slats and rimmed in
+ * brass, full of sage-green foliage and arching fronds, filling `rect` (world
+ * space, long side along z). Seeded by `key`.
+ */
+export function oakPlanterPlacements(rect: Rect, key: string): Placement[] {
+  const rand = seeded(`oak-planter:${key}`);
+  const cx = (rect.minX + rect.maxX) / 2, cz = (rect.minZ + rect.maxZ) / 2;
+  const w = rect.maxX - rect.minX, d = rect.maxZ - rect.minZ;
+  const H = OAK_PLANTER_H, feet = 0.06, slat = 0.03, pitch = 0.055, trim = 0.022;
+  const inW = w - 0.02, inD = d - 0.02;
+  const out: Placement[] = [
+    { part: "oakPlanter", p: [cx, feet + (H - feet) / 2, cz], s: [inW - 0.012, H - feet, inD - 0.012] },
+    { part: "planterSoil", p: [cx, H - 0.035, cz], s: [inW - trim * 2, 0.01, inD - trim * 2] },
+  ];
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) out.push({ part: "oakSlat", p: [cx + sx * (inW / 2 - 0.04), feet / 2, cz + sz * (inD / 2 - 0.05)], s: [0.04, feet, 0.04] });
+  }
+  // Slats: along both long sides, then the two short ends.
+  const along = Math.floor(inD / pitch);
+  for (let i = 0; i < along; i += 1) {
+    const z = cz - ((along - 1) * pitch) / 2 + i * pitch;
+    for (const sx of [-1, 1]) out.push({ part: "oakSlat", p: [cx + sx * (inW / 2 - 0.006), feet + (H - feet) / 2, z], s: [0.012, H - feet, slat] });
+  }
+  const across = Math.max(2, Math.floor(inW / pitch));
+  for (let i = 0; i < across; i += 1) {
+    const x = cx - ((across - 1) * pitch) / 2 + i * pitch;
+    for (const sz of [-1, 1]) out.push({ part: "oakSlat", p: [x, feet + (H - feet) / 2, cz + sz * (inD / 2 - 0.006)], s: [slat, H - feet, 0.012] });
+  }
+  // Brass rim, flush over the slats.
+  out.push(
+    { part: "brassTrim", p: [cx - inW / 2 + trim / 2, H + 0.006, cz], s: [trim, 0.012, inD + 0.004] },
+    { part: "brassTrim", p: [cx + inW / 2 - trim / 2, H + 0.006, cz], s: [trim, 0.012, inD + 0.004] },
+    { part: "brassTrim", p: [cx, H + 0.006, cz - inD / 2 + trim / 2], s: [inW - trim * 2, 0.012, trim] },
+    { part: "brassTrim", p: [cx, H + 0.006, cz + inD / 2 - trim / 2], s: [inW - trim * 2, 0.012, trim] },
+  );
+  // Soft mounds of foliage in two staggered rows.
+  const clusters = Math.max(4, Math.round(inD / 0.15));
+  for (let i = 0; i < clusters; i += 1) {
+    const z = rect.minZ + 0.1 + (i + 0.5) * ((d - 0.2) / clusters);
+    const size = 0.07 + rand() * rand() * 0.12;
+    out.push({
+      part: "foliage", p: [cx + (i % 2 === 0 ? -1 : 1) * w * 0.12 + (rand() - 0.5) * 0.04, H + size * 0.45, z],
+      r: [0, rand() * Math.PI, 0], s: [size * 1.15, size * (0.65 + rand() * 0.4), size], c: at(OFFICE_KIT_COLOURS.foliage, Math.floor(rand() * 16)),
+    });
+  }
+  // Arching fronds fanning out of a few crowns, like ferns and soft grasses.
+  const crowns = 3 + Math.floor(rand() * 2);
+  for (let t = 0; t < crowns; t += 1) {
+    const tz = rect.minZ + 0.18 + ((t + 0.5) / crowns) * (d - 0.36);
+    const fronds = 5 + Math.floor(rand() * 3);
+    for (let i = 0; i < fronds; i += 1) {
+      const h = 0.2 + rand() * 0.2;
+      const yaw = (i / fronds) * Math.PI * 2 + rand() * 0.5, lean = 0.45 + rand() * 0.45;
+      // Tilt outwards about the frond's own base, then lift it so the base sits in the soil.
+      const reach = Math.sin(lean) * h * 0.5;
+      out.push({
+        part: "blade", p: [cx + Math.sin(yaw) * reach, H - 0.02 + Math.cos(lean) * h * 0.5, tz + Math.cos(yaw) * reach],
+        r: [lean, yaw, 0], s: [0.03, h, 0.01], c: at(OFFICE_KIT_COLOURS.frond, Math.floor(rand() * 8)),
       });
     }
   }

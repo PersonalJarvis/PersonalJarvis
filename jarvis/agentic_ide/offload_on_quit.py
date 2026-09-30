@@ -54,7 +54,7 @@ async def offload_before_quit(registry: Any) -> list[str]:
     if not computer_id:
         return []
     moved: list[str] = []
-    for workspace in list(registry.sessions()):
+    for workspace in list(registry.sessions):
         running_here = [
             term for term in workspace.terminals if term.pty_id and not term.computer_id
         ]

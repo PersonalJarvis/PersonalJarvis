@@ -16,6 +16,7 @@ from jarvis.society.agent_tools import (
     SHELL_TOOL_NAME,
     WIKI_NOTE_TOOL_NAME,
 )
+from jarvis.society.ask_tool import ASK_USER_TOOL_NAME
 from jarvis.society.learning import RUN_SKILL_TOOL_NAME
 from jarvis.society.runtime import SocietyRuntime
 from jarvis.society.surface import (
@@ -200,8 +201,24 @@ async def test_a_granted_tool_is_gated_by_the_agents_rules(rt: SocietyRuntime, t
     assert gmail.name == "gmail" and gmail.schema == TOOLS["gmail"].schema
     assert gmail.risk_tier_for_args({"action": "list"}) in (None, "monitor")
     assert gmail.risk_tier_for_args({"action": "send"}) == "ask"  # require_approval
-    # Own hands are never wrapped: the society tools gate themselves.
-    assert not hasattr(picked[SHELL_TOOL_NAME], "_capability_id")
+    # Under an explicit approval mode even the own hands ride the gate, so
+    # Always ask can card a read; asking the user is never gated twice.
+    assert hasattr(picked[SHELL_TOOL_NAME], "_capability_id")
+    if ASK_USER_TOOL_NAME in picked:
+        assert not hasattr(picked[ASK_USER_TOOL_NAME], "_capability_id")
+    await rt.roster.update("mailbox", {"approval_mode": "always_ask"})
+    await society_system_extra(cfg, None, session)
+    careful = society_tool_filter(session)({**TOOLS, **society_tools(cfg, None, session)})  # type: ignore[misc]
+    assert careful["gmail"].risk_tier_for_args({"action": "list"}) == "ask"
+    assert careful[SHELL_TOOL_NAME].risk_tier_for_args({}) == "ask"
+    # A pre-migration row (approval_mode NULL) keeps its own hands unwrapped:
+    # the society tools gate themselves, as before the migration.
+    await rt.store.update_agent("mailbox", {"approval_mode": None})
+    await society_system_extra(cfg, None, session)
+    legacy = society_tool_filter(session)({**TOOLS, **society_tools(cfg, None, session)})  # type: ignore[misc]
+    assert not hasattr(legacy[SHELL_TOOL_NAME], "_capability_id")
+    assert legacy["gmail"].risk_tier_for_args({"action": "send"}) == "ask"  # require_approval
+    await rt.roster.update("mailbox", {"approval_mode": "bypass"})
     # An always-allow rule is the person's standing yes: an ask-tier call runs.
     await rt.roster.update(
         "mailbox",

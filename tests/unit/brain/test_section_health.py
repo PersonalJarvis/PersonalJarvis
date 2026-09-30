@@ -328,3 +328,89 @@ class TestSubagentSectionHealth:
         )
         health = pr._jarvis_agent_section_health(self._cfg())
         assert "Claude (API-Key)" in health.detail
+
+
+def _gpt_live_config(mode: str = "realtime") -> SimpleNamespace:
+    return SimpleNamespace(
+        voice=SimpleNamespace(mode=mode),
+        brain=SimpleNamespace(realtime=SimpleNamespace(provider="openai-live")),
+    )
+
+
+async def _brain_probe_flag(monkeypatch, cfg, brain_subject: str) -> bool:
+    """Run the rollup with every check stubbed; return the brain ``probe`` flag."""
+    from jarvis.ui.web import provider_routes as pr
+
+    seen: dict[str, bool] = {}
+
+    async def _tier(cfg, spec, *, probe=True, **kwargs):
+        if spec is not None and spec.id == brain_subject:
+            seen["brain"] = probe
+        return pr.SectionHealth(status=sh.OK, reason="ok")
+
+    async def _other(*args, **kwargs):
+        return pr.SectionHealth(status=sh.OK, reason="ok")
+
+    def _sync_other(*args, **kwargs):
+        return pr.SectionHealth(status=sh.OK, reason="ok")
+
+    monkeypatch.setattr(pr, "_tier_section_health", _tier)
+    monkeypatch.setattr(pr, "_realtime_section_health", _other)
+    monkeypatch.setattr(pr, "_dictation_section_health", _other)
+    monkeypatch.setattr(pr, "_jarvis_agent_section_health", _sync_other)
+    monkeypatch.setattr(pr, "_advanced_section_health", _sync_other)
+    monkeypatch.setattr(pr, "_local_models_section_health", _sync_other)
+    monkeypatch.setattr(pr, "_codex_binary_path", lambda request: None)
+    monkeypatch.setattr(pr, "_polish_enabled", lambda cfg: False)
+    subjects = {key: None for key in pr._SECTION_HEALTH_KEYS}
+    subjects["brain"] = brain_subject
+    await pr._compute_section_health(SimpleNamespace(), cfg, subjects)
+    return seen["brain"]
+
+
+@pytest.mark.asyncio
+async def test_brain_on_the_voice_key_is_not_probed_twice(monkeypatch) -> None:
+    """The realtime section already spends one call on the GPT-Live key; the
+    hidden Brain tab must not spend a second one on the same key (2026-09-29)."""
+    assert await _brain_probe_flag(monkeypatch, _gpt_live_config(), "openai") is False
+
+
+@pytest.mark.asyncio
+async def test_brain_off_the_voice_key_is_still_probed(monkeypatch) -> None:
+    assert await _brain_probe_flag(monkeypatch, _gpt_live_config(), "grok") is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_voice_probes_an_openai_brain(monkeypatch) -> None:
+    cfg = _gpt_live_config(mode="pipeline")
+
+    assert await _brain_probe_flag(monkeypatch, cfg, "openai") is True
+
+
+def test_passive_health_polls_reuse_the_cache_for_minutes() -> None:
+    """Sidebar and dock poll this in every window and every build reloads every
+    window; a sub-minute TTL turned that into a paid probe per minute."""
+    from jarvis.ui.web import provider_routes as pr
+
+    assert pr._SECTION_HEALTH_TTL_S >= 15 * 60
+
+
+@pytest.mark.asyncio
+async def test_composer_health_does_not_spend_the_voice_key(monkeypatch) -> None:
+    """The agent-chat composer sweeps every API row; the GPT-Live key must be
+    reported from configuration, not probed on every sweep (2026-09-29)."""
+    from jarvis.ui.web import provider_routes as pr
+
+    probes: dict[str, bool] = {}
+
+    async def _tier(cfg, spec, *, probe=True, **kwargs):
+        probes[spec.id] = probe
+        return pr.SectionHealth(status=sh.OK, reason="ok", subject_id=spec.id)
+
+    monkeypatch.setattr(pr, "_tier_section_health", _tier)
+    cfg = _gpt_live_config()
+
+    await pr.provider_health(cfg, "openai", probe=True)
+    await pr.provider_health(cfg, "grok", probe=True)
+
+    assert probes == {"openai": False, "grok": True}

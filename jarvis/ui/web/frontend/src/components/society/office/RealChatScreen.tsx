@@ -10,6 +10,7 @@ import { Html } from "@react-three/drei";
 import { QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { createAgentChatStore } from "@/store/agentChat";
 import type { SocietyAgent } from "../data";
+import { useBlendingCanvasLayer } from "./blendingLayer";
 
 const AgentChatPanel = lazy(() => import("../chat/AgentChatPanel").then((m) => ({ default: m.AgentChatPanel })));
 
@@ -17,6 +18,7 @@ const AgentChatPanel = lazy(() => import("../chat/AgentChatPanel").then((m) => (
 export const REAL_CHAT_PX = { w: 880, h: 507 } as const;
 const SCREEN_W_M = 0.66;
 /** drei maps one CSS pixel to distanceFactor / 400 metres in transform mode. */
+const SCREEN_Z_RANGE: [number, number] = [10, 0];
 const DISTANCE_FACTOR = (SCREEN_W_M * 400) / REAL_CHAT_PX.w;
 
 export function RealChatScreen({ agent, roster, position }: {
@@ -28,8 +30,10 @@ export function RealChatScreen({ agent, roster, position }: {
   const store = useMemo(() => createAgentChatStore("society", `office-monitor:${agent.agentId}`), [agent.agentId]);
   // Leaving the monitor closes its socket; the chat itself keeps running on the server.
   useEffect(() => () => store.getState().disconnect(), [store]);
+  // Another <Html> mounting later would drop the canvas under this screen (see blendingLayer).
+  useBlendingCanvasLayer(SCREEN_Z_RANGE);
   return (
-    <Html transform occlude="blending" position={position} distanceFactor={DISTANCE_FACTOR} zIndexRange={[10, 0]}
+    <Html transform occlude="blending" position={position} distanceFactor={DISTANCE_FACTOR} zIndexRange={SCREEN_Z_RANGE}
       style={{ width: REAL_CHAT_PX.w, height: REAL_CHAT_PX.h, pointerEvents: "none" }}>
       <div className="office-real-chat" data-office-ui>
         <QueryClientProvider client={client}>

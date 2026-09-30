@@ -49,7 +49,11 @@ export function storedFontSize(): number | null {
   }
 }
 
-/** The size a pane will actually open at — the stored one, or the default. */
+/**
+ * The size a pane opens at: always the default. The workspace terminals use
+ * one fixed, dense size (maintainer decision 2026-09-28), so a size stored by
+ * an older build is ignored.
+ */
 export function paneFontSize(): number {
-  return storedFontSize() ?? FONT_DEFAULT;
+  return FONT_DEFAULT;
 }

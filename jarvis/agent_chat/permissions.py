@@ -283,6 +283,25 @@ _JARVIS: Final[tuple[PermissionMode, ...]] = (
     ),
 )
 
+_SOCIETY: Final[tuple[PermissionMode, ...]] = (
+    PermissionMode(
+        "bypass",
+        "Bypass permissions",
+        "Run Jarvis tools without prompts. Jarvis blocks, denied capabilities and "
+        "credential boundaries still apply; vendor-native CLI tools use that runner's controls.",
+    ),
+    PermissionMode(
+        "ask",
+        "Ask",
+        "Read freely; show a decision in this chat before an action or write.",
+    ),
+    PermissionMode(
+        "always_ask",
+        "Always ask",
+        "Show a decision in this chat before every Jarvis tool call, including reads.",
+    ),
+)
+
 #: The ladder key of the Jarvis surface — not a runner, but the one word the
 #: front page's composer shows whichever runner answers.
 JARVIS_LADDER: Final[str] = "jarvis"
@@ -302,6 +321,7 @@ _LADDERS: Final[dict[str, tuple[tuple[PermissionMode, ...], str]]] = {
     "cursor-cli": (_CURSOR, "auto"),
     "api": (_API, "ask"),
     JARVIS_LADDER: (_JARVIS, "ask"),
+    "society": (_SOCIETY, "bypass"),
 }
 
 # The universal stance ordering: every ladder is a sub-sequence of this once
@@ -323,6 +343,7 @@ _STANCE: Final[dict[str, int]] = {
     "bypassPermissions": 3,
     "skip-permissions": 3,
     "bypass": 3,
+    "always_ask": 1,
 }
 
 
@@ -367,6 +388,17 @@ def is_permission_mode(runner: str, mode: str) -> bool:
     return mode in permission_ids(runner)
 
 
+def society_mode_supported(runner: str, mode: str) -> bool:
+    """Whether this transport can honor a Society mode without hidden prompts."""
+    if mode == "bypass":
+        return True
+    if mode == "ask":
+        return runner in {"brain", "codex-cli", "claude-cli", "glm-cli"}
+    if mode == "always_ask":
+        return runner in {"brain", "codex-cli"}
+    return False
+
+
 def normalize_permission(runner: str, mode: str | None) -> str:
     """Fold ``mode`` onto the closest mode ``runner`` accepts.
 
@@ -407,5 +439,6 @@ __all__ = [
     "normalize_permission",
     "permission_ids",
     "permission_modes",
+    "society_mode_supported",
     "stance_of",
 ]

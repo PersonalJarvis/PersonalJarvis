@@ -40,6 +40,21 @@ function mockPut(ms: number) {
   });
 }
 
+/**
+ * The slider renders at once — disabled, at the automatic default — and adopts
+ * the fetched value when the GET resolves. A test that drags it before then
+ * acts on the disabled pre-load control, and the late GET overwrites the drag.
+ * Wait until the fetched value is showing and the control is enabled.
+ */
+async function loadedSlider(expectedMs: number): Promise<HTMLInputElement> {
+  const slider = (await screen.findByRole("slider")) as HTMLInputElement;
+  await waitFor(() => {
+    expect(slider.value).toBe(String(expectedMs));
+    expect(slider.disabled).toBe(false);
+  });
+  return slider;
+}
+
 describe("SilenceWindowGroup", () => {
   it("renders the slider at the fetched value", async () => {
     mockGet(1500);
@@ -59,7 +74,7 @@ describe("SilenceWindowGroup", () => {
     // so the slider must not imply a 0.0 s window (maintainer 2026-08-23).
     mockGet(0);
     render(<SilenceWindowGroup />);
-    const slider = (await screen.findByRole("slider")) as HTMLInputElement;
+    const slider = await loadedSlider(0);
     expect(slider.value).toBe("0");
     expect(screen.queryByText("0.0 s")).toBeNull();
     // The word appears in the value badge and again in the caption below it.
@@ -70,11 +85,7 @@ describe("SilenceWindowGroup", () => {
     mockGet(1500);
     mockPut(2500);
     render(<SilenceWindowGroup />);
-    const slider = (await screen.findByRole("slider")) as HTMLInputElement;
-    await waitFor(() => {
-      expect(slider.value).toBe("1500");
-      expect(slider.disabled).toBe(false);
-    });
+    const slider = await loadedSlider(1500);
     // drag (onChange) updates the label but does not PUT yet
     fireEvent.change(slider, { target: { value: "2500" } });
     expect(fetchMock).toHaveBeenCalledTimes(1); // only the GET so far
@@ -93,11 +104,7 @@ describe("SilenceWindowGroup", () => {
     mockGet(1500);
     mockPut(500);
     render(<SilenceWindowGroup />);
-    const slider = (await screen.findByRole("slider")) as HTMLInputElement;
-    await waitFor(() => {
-      expect(slider.value).toBe("1500");
-      expect(slider.disabled).toBe(false);
-    });
+    const slider = await loadedSlider(1500);
     fireEvent.change(slider, { target: { value: "100" } });
     expect(slider.value).toBe("0"); // nearer to automatic
     fireEvent.change(slider, { target: { value: "400" } });
@@ -111,11 +118,7 @@ describe("SilenceWindowGroup", () => {
     mockGet(3000);
     mockPut(0);
     render(<SilenceWindowGroup />);
-    const slider = (await screen.findByRole("slider")) as HTMLInputElement;
-    await waitFor(() => {
-      expect(slider.value).toBe("3000");
-      expect(slider.disabled).toBe(false);
-    });
+    await loadedSlider(3000);
     fireEvent.click(screen.getByRole("button", { name: /reset|zurück|restablecer/i })); // i18n-allow: multilingual button-name regex
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ ms: 0 });

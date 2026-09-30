@@ -256,7 +256,12 @@ export function whenTerminalFontReady(
   const fonts = deps.fonts !== undefined ? deps.fonts : browserFonts();
   if (!fonts || terminalFontSettled(fontSize, { fonts })) return Promise.resolve();
   const timeoutMs = deps.timeoutMs ?? FONT_WAIT_MS;
-  const spec = `400 ${fontSize}px ${DISPLAY_FAMILY}`;
+  // The weight the settled check asks about, never a hard-coded Regular. When
+  // the body weight moved to Medium this still requested 400: the Regular cut
+  // loaded, the Medium one was never asked for, and every pane opened on a
+  // screen that had drawn no terminal yet sat out the whole wait (1.5 s+ on
+  // the office's pane panel, 2026-09-30).
+  const spec = `${TERMINAL_FONT_WEIGHT} ${fontSize}px ${DISPLAY_FAMILY}`;
   return new Promise<void>((resolve) => {
     let done = false;
     let timer: ReturnType<typeof setTimeout> | undefined;

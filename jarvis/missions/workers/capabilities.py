@@ -206,35 +206,17 @@ _UNCONDITIONAL_EXTRA_KNOWLEDGE_TOOLS: tuple[str, ...] = (
 )
 
 
-def _awareness_recall_available() -> bool:
-    """Session memory follows the awareness master switch — fail closed.
-
-    Granting ``awareness-recall`` while ``[awareness].enabled = false`` would
-    hand the worker a phantom tool whose every call errors (the honesty
-    failure ``search_status`` was written to avoid).
-    """
-    try:
-        from jarvis.core.config import load_config  # noqa: PLC0415 — lazy, boot-safe
-
-        return bool(load_config().awareness.enabled)
-    except Exception:  # noqa: BLE001 - config drift must not break missions
-        return False
-
-
 def restricted_worker_knowledge_tools() -> tuple[str, ...]:
     """Read-only knowledge surface granted to Jarvis-Agents (ADR-0030).
 
-    Dynamic, gate-driven: the wiki triple is unconditional; session memory
-    (``awareness-recall``) follows the awareness master switch; ``search_web``
-    and ``contact-lookup`` mirror the voice brain's read-only reach.
+    The wiki triple plus ``search_web`` and ``contact-lookup``, mirroring the
+    voice brain's read-only reach.
     Execution always stays in the supervisor via the ADR-0025 broker — a
     worker never holds
     the tool object — and every gate fails closed so a disabled subsystem
     never yields a phantom tool.
     """
     tools: list[str] = list(RESTRICTED_WORKER_KNOWLEDGE_TOOLS)
-    if _awareness_recall_available():
-        tools.append("awareness-recall")
     tools.extend(_UNCONDITIONAL_EXTRA_KNOWLEDGE_TOOLS)
     return tuple(tools)
 

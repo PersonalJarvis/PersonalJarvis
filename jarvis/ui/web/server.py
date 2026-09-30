@@ -391,6 +391,7 @@ class WebServer:
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
         from .routine_hooks_routes import router as routine_hooks_router
+        from .app_actions_routes import router as app_actions_router
         from .appshot_routes import router as appshot_router
         from .screen_context_routes import router as screen_context_router
         from .self_mod_routes import router as self_mod_router
@@ -568,6 +569,7 @@ class WebServer:
         app.include_router(screen_context_router)
         # Appshots: the front window as conversation context, on a shortcut,
         # a button or a spoken request. Captures through Screen Context.
+        app.include_router(app_actions_router)
         app.include_router(appshot_router)
         # The mission deck's pictures: the last Screen-Context capture (one
         # frame, in memory, TTL) and Computer-Use frames by content hash.
@@ -815,7 +817,7 @@ class WebServer:
             evaluator = AchievementEvaluator(db_path=db_path, bus=self.bus)
             bio_store = BioStore(db_path=db_path)
 
-            # Optional data-source paths (awareness, missions, self-mod).
+            # Optional data-source paths (missions, self-mod).
             # If the file/DB doesn't exist, the block just silently drops out
             # of the prompt — no error. Paths come from ``user_data_dir()``,
             # not relative strings, so an app restart in a different CWD
@@ -2674,6 +2676,17 @@ class WebServer:
                 logger.debug("wiki health.record_bootstrap(False) failed", exc_info=True)
         _boot_mark("wiki_integration")
 
+        # Jarvis' own self-learning loop: two bus subscriptions, nothing else
+        # at boot. Reviews run later in the background (jarvis/memory/learning).
+        try:
+            from jarvis.memory.learning.loop import start_learning
+
+            start_learning(self.cfg, self.bus)
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=exc).warning(
+                "Jarvis learning loop init failed — Jarvis will not learn this run"
+            )
+
         # Reconcile the derived FTS5 index after readiness. This repairs stale
         # rows after a vault switch without extending the startup critical path.
         try:
@@ -3850,6 +3863,13 @@ class WebServer:
                 logger.warning("Society runtime cleanup incomplete ({})", society_shutdown_failure)
         self._mic_level_sessions.clear()
         self._stop_mic_level_bridge()
+
+        try:
+            from jarvis.memory.learning.loop import stop_learning
+
+            await stop_learning()
+        except Exception as exc:  # noqa: BLE001 -- finish independent cleanup below
+            logger.opt(exception=exc).debug("Jarvis learning loop stop failed")
 
         agent_chat = getattr(self.app.state, "agent_chat", None)
         if agent_chat is not None:

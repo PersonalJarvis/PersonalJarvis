@@ -180,9 +180,30 @@ async def test_tool_gates(rt, tmp_path, fake_runner):
     jobs = _jobs(tmp_path, fake_runner)
     tool = BrowserTool(rt, "scout", jobs)
     assert tool.risk_tier_for_args({"task": "delete the old posts"}) == "ask"
+    # An explicit Ask agent queues an acting task for the person.
+    await rt.roster.update("scout", {"approval_mode": "ask"})
     queued = await tool.execute({"task": "send the report to the team"}, CTX)
     assert queued.success is False and queued.output["reason"] == "approval_required"
     assert len(await rt.approvals.pending()) == 1
+    # Bypass still honors an explicit require-approval rule.
+    await rt.roster.update(
+        "scout",
+        {
+            "approval_mode": "bypass",
+            "approval_rules": {"require_approval": ["core:browser:act"], "always_allow": []},
+        },
+    )
+    forced = await tool.execute({"task": "send the report to the team"}, CTX)
+    assert forced.success is False and forced.output["reason"] == "approval_required"
+    assert len(await rt.approvals.pending()) == 2
+    # Bypass under a lower inherited ceiling denies instead of escalating.
+    await rt.roster.update(
+        "scout",
+        {"permission_ceiling": "monitor", "approval_rules": {"require_approval": []}},
+    )
+    denied = await tool.execute({"task": "send the report to the team"}, CTX)
+    assert denied.success is False and denied.output["reason"] == "blocked_by_policy"
+    assert len(await rt.approvals.pending()) == 2
     off = BrowserTool(rt, "scout", _jobs(tmp_path, fake_runner, installed=False))
     not_ready = await off.execute({"task": "read"}, CTX)
     assert not_ready.success is False and "install_action" in not_ready.output

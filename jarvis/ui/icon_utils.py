@@ -1605,7 +1605,7 @@ def ensure_linux_desktop_entry(applications_dir: Path | None = None) -> bool:
             "[Desktop Entry]\n"
             "Type=Application\n"
             f"Name={escape_value(APP_DISPLAY_NAME)}\n"
-            "Comment=Voice-driven meta-orchestrator\n"
+            "Comment=Turn your computer into an AI agent\n"
             f"Exec={exec_value(sys.executable, ('-m', _LAUNCHER_MODULE, *_LAUNCHER_ARGS))}\n"
             f"Path={escape_value(str(PROJECT_ROOT))}\n"
             "Terminal=false\n"

@@ -283,7 +283,7 @@
     "wz_next_ide_body": "En el Agentic IDE, elige «Se ejecuta en: {computer}» al abrir un espacio de trabajo.",
     "wz_open": "Abrir {computer}",
     "cx_title": "Conectar un ordenador",
-    "cx_subtitle": "Escribe la dirección y elige cómo entra {name}. {name} prueba la conexión antes de guardar nada.",
+    "cx_subtitle": "Escribe la dirección. {name} entra con las claves SSH de este PC o te pide lo que falte, y prueba la conexión antes de guardar nada.",
     "cx_address": "Dirección del servidor",
     "cx_address_hint": "La IP que muestra tu proveedor, p. ej. 203.0.113.10, o pega una línea «ssh root@…» completa.",
     "cx_login": "Inicio de sesión",
@@ -345,6 +345,15 @@
     "cx_step_save_warn": "Guardado, pero la comprobación posterior no lo ve en línea.",
     "cx_edit": "Cambiar datos",
     "cx_retry": "Reintentar",
-    "cx_verified_body": "{name} lo alcanzó, entró y ejecutó un comando de prueba."
+    "cx_verified_body": "{name} lo alcanzó, entró y ejecutó un comando de prueba.",
+    "cx_auto_hint": "{name} prueba las claves SSH que este PC ya usa. Si ninguna abre el servidor, te pide la contraseña una vez.",
+    "cx_other_ways": "Otras formas de entrar",
+    "cx_auto_back": "Automático (recomendado)",
+    "cx_ask_password": "Ninguna clave SSH de este PC abre el servidor. Escribe su contraseña una vez: {name} crea su propia clave y olvida la contraseña.",
+    "cx_key_only_title": "Este servidor solo acepta claves que ya conoce",
+    "cx_key_only_body": "Ejecuta esta línea una vez en el servidor, en la consola web de tu proveedor o en cualquier sesión SSH. Añade la clave de {name}. Luego pulsa Reintentar.",
+    "cx_key_only_line": "Línea para el servidor",
+    "cx_key_only_agent": "O deja que lo haga un agente de código en el servidor",
+    "cx_try_again": "Reintentar"
   }
 }

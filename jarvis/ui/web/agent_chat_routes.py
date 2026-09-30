@@ -644,7 +644,7 @@ async def get_provider_health(
 
 
 @router.get("/sessions")
-async def list_sessions(
+def list_sessions(
     request: Request,
     limit: int = Query(200, ge=1, le=1000),
     surface: SurfaceName | None = None,
@@ -661,7 +661,7 @@ async def list_sessions(
 
 
 @router.post("/sessions", status_code=201)
-async def create_session(body: CreateSessionBody, request: Request) -> dict[str, Any]:
+def create_session(body: CreateSessionBody, request: Request) -> dict[str, Any]:
     svc = _service(request)
     ladder = ladder_key(body.surface, resolve_runner(body.provider, surface=body.surface))
     if body.permission_mode and not is_permission_mode(ladder, body.permission_mode):
@@ -691,7 +691,7 @@ async def create_session(body: CreateSessionBody, request: Request) -> dict[str,
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(
+def get_session(
     session_id: str,
     request: Request,
     tail: int | None = Query(

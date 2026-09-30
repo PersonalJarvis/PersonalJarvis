@@ -131,6 +131,15 @@ async def test_split_down_pushes_the_existing_stack_down(
     assert slots[bottom.name] == (0, 2), "the older pane moved down"
 
 
+async def test_split_left_and_above(registry: Registry, tmp_path: Path) -> None:
+    await _open_in_a_row(registry, tmp_path, 2)
+    left_term = await registry.add_terminal(anchor="T1", direction="left")
+    assert _layout(registry)[0][0] == left_term.name
+    above_term = await registry.add_terminal(anchor="T2", direction="above")
+    slots = {name: (column, slot) for name, column, slot in _layout(registry)}
+    assert slots[above_term.name][1] < slots["T2"][1]
+
+
 # --------------------------------------------------------------------- naming
 async def test_new_panes_take_the_next_free_call_sign(registry: Registry, tmp_path: Path) -> None:
     await _open(registry, tmp_path, 2)  # T1, T2

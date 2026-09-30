@@ -122,12 +122,12 @@ describe("IdeSidePanel", () => {
     expect(screen.queryByTestId("ide-side-panel-rail")).toBeNull();
   });
 
-  it("adds the Office tab from + and shows the coding floor in a compact stage", async () => {
+  it("adds the Jarvis Verse tab from + and shows the coding floor in a compact stage", async () => {
     act(() => useIdeSidePanelStore.setState({ open: true, tabs: ["agents"], active: "agents" }));
     render(<Harness />);
     fireEvent.click(screen.getByTestId("ide-side-panel-add"));
     const item = screen.getByTestId("ide-side-panel-add-office");
-    expect(item.textContent).toContain("Office");
+    expect(item.textContent).toContain("Jarvis Verse");
     expect(item.getAttribute("aria-checked")).toBe("false");
     fireEvent.click(item);
     expect(useIdeSidePanelStore.getState()).toMatchObject({ active: "office", tabs: ["agents", "office"] });

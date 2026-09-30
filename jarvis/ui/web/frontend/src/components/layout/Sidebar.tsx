@@ -32,7 +32,8 @@ import { useAgentChatStore } from "@/store/agentChat";
 import { IdeProjectTree } from "@/components/agentic/IdeProjectTree";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useAppInstance } from "@/hooks/useAppInstance";
-import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
+// The query alone, not ./PublishIdentity: the sign-in UI stays out of the entry chunk.
+import { usePublishIdentity } from "@/components/marketplace/publishIdentityQuery";
 import { GigiMark } from "@/components/GigiMark";
 import * as Dialog from "@radix-ui/react-dialog";
 import { startNewVoiceRun } from "@/lib/chatsApi";

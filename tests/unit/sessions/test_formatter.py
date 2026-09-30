@@ -9,7 +9,13 @@ developer tags and the markdown output leaks emojis — both read as
 """
 from __future__ import annotations
 
+import pytest
+
 from jarvis.sessions.formatter import (
+    _fmt_duration,
+    _fmt_ms,
+    _pretty_hangup,
+    _pretty_voice_mode,
     format_session_markdown,
     format_session_plain,
 )
@@ -440,3 +446,80 @@ def test_withheld_event_without_a_spoken_twin_still_renders() -> None:
     out = format_session_plain(_session(), turns, events)
 
     assert "Jarvis: Der Anfang der Antwort, der abgebrochen wurde." in out
+
+
+# --- direct tests for the small pure helpers ---------------------------------
+
+
+def test_fmt_duration_still_running() -> None:
+    assert _fmt_duration(1_000_000, None) == "läuft noch"
+
+
+@pytest.mark.parametrize(
+    ("started_ms", "ended_ms", "expected"),
+    [
+        (0, 0, "0.0 s"),
+        (1_000_000, 1_005_500, "5.5 s"),
+        (0, 59_900, "59.9 s"),
+        (0, 60_000, "1 min 0 s"),
+        (0, 125_000, "2 min 5 s"),
+        (0, 3_599_000, "59 min 59 s"),
+        (0, 3_600_000, "1 h 0 min"),
+        (0, 3_900_000, "1 h 5 min"),
+        (0, 7_500_000, "2 h 5 min"),
+    ],
+)
+def test_fmt_duration(started_ms: int, ended_ms: int, expected: str) -> None:
+    assert _fmt_duration(started_ms, ended_ms) == expected
+
+
+@pytest.mark.parametrize(
+    ("ms", "expected"),
+    [
+        (0, "0 ms"),
+        (999, "999 ms"),
+        (1000, "1.00 s"),
+        (1234, "1.23 s"),
+        (12_000, "12.00 s"),
+    ],
+)
+def test_fmt_ms(ms: int, expected: str) -> None:
+    assert _fmt_ms(ms) == expected
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("voice_pattern", 'Sprachbefehl ("auflegen")'),
+        ("hotkey", "Hotkey (F1+F2)"),
+        ("idle_timeout", "Inaktivität"),
+        ("shutdown", "App-Shutdown"),
+        ("error", "Fehler"),
+    ],
+)
+def test_pretty_hangup_known_reasons(reason: str, expected: str) -> None:
+    assert _pretty_hangup(reason) == expected
+
+
+def test_pretty_hangup_unknown_reason_passes_through() -> None:
+    assert _pretty_hangup("network_drop") == "network_drop"
+
+
+def test_pretty_hangup_empty_reason() -> None:
+    assert _pretty_hangup("") == "unbekannt"
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("push_to_talk", "Push To Talk"),
+        ("hands_free", "Hands Free"),
+        ("wake", "Wake"),
+    ],
+)
+def test_pretty_voice_mode(mode: str, expected: str) -> None:
+    assert _pretty_voice_mode(mode) == expected
+
+
+def test_pretty_voice_mode_empty() -> None:
+    assert _pretty_voice_mode("") == "Unknown"

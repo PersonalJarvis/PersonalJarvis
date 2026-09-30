@@ -974,6 +974,11 @@ class AnnouncementRequested(Event):
     # with detail="exit 5 · <harness reason>" so the log shows the exit code
     # while the voice stays humanized. Mirrors ``SpeechSpoken.detail``.
     detail: str | None = None
+    # Optional raw material behind ``text`` — an agent's own report and the
+    # request it answers. A live (realtime) model is handed this and decides
+    # itself what the user needs to hear; the classic TTS path speaks ``text``,
+    # which stays the complete, deterministic fallback. Never spoken verbatim.
+    report: str | None = None
 
 
 # Mission completion — bridged from the per-mission MissionBus to drive When-Then rules
@@ -2075,91 +2080,18 @@ class BioFeedbackRecorded(Event):
 
 
 # ----------------------------------------------------------------------
-# Awareness Layer (Phase A0+)
+# Idle boundary
 # ----------------------------------------------------------------------
 
 @dataclass(frozen=True, slots=True)
-class FrameUpdated(Event):
-    """A new L1 frame was captured and written to the AwarenessState.
-
-    Emitted by the ``WindowFocusWatcher`` (Phase A1). The PrivacyFilter verdict
-    is already applied — when ``is_capture_allowed=False`` the frame was still
-    registered (window title + process), but deeper capture (pixels, UIA tree)
-    is blocked in later phases.
-    """
-    window_title: str = ""
-    process_name: str = ""
-    pid: int = 0
-    is_capture_allowed: bool = True
-
-
-@dataclass(frozen=True, slots=True)
-class EpisodeRecorded(Event):
-    """An L2 episode was condensed and persisted to SQLite.
-
-    Defined in A0 only; populated by the ``StoryTracker`` in A2.
-    ``summary_preview`` is capped at ~80 characters for the UI pulse;
-    the full ``summary`` text lives in ``awareness_episodes.summary``.
-    """
-    episode_id: int = 0
-    summary_preview: str = ""
-    primary_app: str = ""
-    frame_count: int = 0
-    duration_ms: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class ContextSwitched(Event):
-    """Working-set change: a different project/task context was detected.
-
-    Defined in A0 only; populated by ``WorkingSet`` in A4. Fields contain
-    ``Context.task_label`` values (e.g. ``"pipeline.py - jarvis"``).
-    """
-    from_context: str = ""
-    to_context: str = ""
-
-
-@dataclass(frozen=True, slots=True)
 class IdleEntered(Event):
-    """The user has had no mouse/keyboard input for ``idle_threshold_minutes``.
+    """The user has had no mouse/keyboard input for a while.
 
-    On receiving this event the ``StoryTracker`` (A2) flushes the running
-    episode so it is not lost — idle == episode boundary.
+    The wiki's ``SessionRollupWorker`` flushes a session on it. No built-in
+    watcher publishes it since the awareness recorder was removed
+    (2026-09-30); the explicit flush paths still work without it.
     """
     idle_since_ns: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class IdleExited(Event):
-    """User input detected again after an idle phase."""
-    was_idle_for_ms: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class AwarenessCaptureBlocked(Event):
-    """The PrivacyFilter marked a frame as not capturable.
-
-    ``reason`` is a pattern or default verdict (e.g.
-    ``matched_blocked_title:*Banking*`` or ``default_block_for_browser``).
-    The frame is NOT emitted as ``FrameUpdated`` — anyone who needs both events
-    must use ``subscribe_all()`` (the flight-recorder pattern).
-    """
-    window_title: str = ""
-    process_name: str = ""
-    reason: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class FileSaved(Event):
-    """Phase A5: the FileSystemWatcher detected a file save in an active project root.
-
-    Emitted by the ``FileSystemProbe`` (watchdog). The ``StoryTracker`` subscribes
-    optionally and adds it as a high-salience event to the running builder
-    (``SalienceScorer.score_event('FileSaved') = 40``).
-    """
-    path: str = ""
-    process_name: str = ""    # active process at the time, optional
-    repo_root: str = ""       # project root that was watched
 
 
 # ----------------------------------------------------------------------

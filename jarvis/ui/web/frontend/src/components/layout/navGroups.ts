@@ -34,6 +34,7 @@ import {
   Workflow,
   Image as ImageIcon,
   ScanLine,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 import { OllamaIcon } from "@/components/icons/OllamaIcon";
@@ -273,6 +274,12 @@ export const NAV_FOOTER_ITEMS: NavItem[] = [
  */
 export const SETTINGS_HUB_ONLY_ITEMS: NavItem[] = [
   { id: "appshots", labelKey: "nav.appshots", icon: ScanLine, fallbackLabel: "Appshots" },
+  {
+    id: "jarvis-actions",
+    labelKey: "nav.jarvis_actions",
+    icon: ShieldCheck,
+    fallbackLabel: "Jarvis actions",
+  },
 ];
 
 /**
@@ -300,6 +307,7 @@ export const SETTINGS_HUB_IDS: readonly SectionId[] = [
   "computers",
   "wallpaper",
   "appshots",
+  "jarvis-actions",
   "costs",
   "feedback",
 ];

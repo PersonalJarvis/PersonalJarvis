@@ -439,7 +439,9 @@ export function openPaneSocket(
       // restart plays out, patient afterwards — a workspace restored a quarter
       // of an hour later still finds its panes waiting.
       waits += 1;
-      handlers.onTrouble("Waiting for the workspace to come back…", true);
+      // The server's own sentence when it gave one ("Copying the folder to
+      // vps…" while a pane is set up on a computer); otherwise the restart case.
+      handlers.onTrouble(serverReason || "Waiting for the workspace to come back…", true);
       // Before settling into the slow knock, ask once whether the world still
       // looks the way this pane thinks it does. A workspace that opened while
       // the panes were waiting announces itself, but a pane that has already

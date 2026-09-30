@@ -66,6 +66,8 @@ def _row(computer: Computer) -> dict[str, Any]:
 
 
 AuthLiteral = Literal["key", "password", "private_key"]
+#: What a connect form may ask for; "auto" tries this PC's own SSH keys.
+LoginLiteral = Literal["key", "password", "private_key", "auto"]
 
 
 class AddServerBody(BaseModel):
@@ -73,7 +75,7 @@ class AddServerBody(BaseModel):
     host: str = Field(min_length=1, max_length=253)
     port: int = Field(default=22, ge=1, le=65535)
     username: str = Field(default="root", min_length=1, max_length=64)
-    auth: AuthLiteral = "key"
+    auth: LoginLiteral = "key"
     password: str | None = Field(default=None, max_length=1024)
     keep_password: bool = False
     private_key: str | None = Field(default=None, max_length=32_000)
@@ -86,7 +88,7 @@ class TestBody(BaseModel):
     host: str = Field(min_length=1, max_length=253)
     port: int = Field(default=22, ge=1, le=65535)
     username: str = Field(default="root", min_length=1, max_length=64)
-    auth: AuthLiteral = "key"
+    auth: LoginLiteral = "key"
     password: str | None = Field(default=None, max_length=1024)
     keep_password: bool = False
     private_key: str | None = Field(default=None, max_length=32_000)
@@ -358,7 +360,7 @@ async def check_computer(computer_id: str) -> dict[str, Any]:
         raise _fail(exc) from exc
 
 
-@router.post("/{computer_id}/run")
+@router.post("/{computer_id}/run", openapi_extra={"x-jarvis-dangerous": True})
 async def run_on_computer(computer_id: str, body: RunBody) -> dict[str, Any]:
     try:
         result = await get_service().run(computer_id, body.command, timeout_s=body.timeout_s)
@@ -406,7 +408,7 @@ async def trust_host_key(computer_id: str) -> dict[str, Any]:
         raise _fail(exc) from exc
 
 
-@router.post("/{computer_id}/power")
+@router.post("/{computer_id}/power", openapi_extra={"x-jarvis-dangerous": True})
 async def power_computer(computer_id: str, body: PowerBody) -> dict[str, Any]:
     try:
         return _row(await get_service().power(computer_id, body.action))
@@ -425,7 +427,7 @@ async def computer_readiness(computer_id: str) -> dict[str, Any]:
     return {**readiness.to_dict(), "install": job.to_dict() if job else None}
 
 
-@router.post("/{computer_id}/install", status_code=202)
+@router.post("/{computer_id}/install", status_code=202, openapi_extra={"x-jarvis-dangerous": True})
 async def install_tools(computer_id: str, body: InstallBody) -> dict[str, Any]:
     try:
         job = await toolbox.start_install(computer_id, list(body.items))

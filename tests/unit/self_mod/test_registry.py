@@ -304,8 +304,8 @@ class TestAllowlistFieldParity:
     @pytest.mark.parametrize("spec", SelfModRegistry.list_all(), ids=lambda s: s.path)
     def test_model_and_field_exist(self, spec: MutableSpec) -> None:
         # Resolve the owning model by navigating JarvisConfig along the path,
-        # not getattr(config, name): a submodule section model (e.g.
-        # AwarenessPrivacyConfig) is never re-exported into config, but it is
+        # not getattr(config, name): a submodule section model is never
+        # re-exported into config, but it is
         # still the real owner. This is the stronger anti-drift check.
         model = resolve_model_for_path(spec.path)
         assert issubclass(model, BaseModel)

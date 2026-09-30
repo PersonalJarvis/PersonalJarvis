@@ -962,12 +962,61 @@ class LiveVoiceSession:
             }
         )
 
-    async def deliver_announcement(self, text: str, **_kwargs: Any) -> bool:
+    async def deliver_announcement(
+        self, text: str, *, report: str | None = None, **kwargs: Any
+    ) -> bool:
         if not self.is_active:
             return False
+        if str(report or "").strip():
+            return await self._deliver_report(text, str(report), kwargs)
         await self._connection.send(
             {"type": "session.commentary.append", "delegation_id": None, "content": text[:1000]}
         )
+        return True
+
+    async def _deliver_report(self, text: str, report: str, kwargs: dict[str, Any]) -> bool:
+        """Let the reasoning backend think about an agent's report, then speak.
+
+        A report is not a line to relay: the backend is given the full text and
+        works out what the user needs to hear (``report_prompt``). Refused while
+        a turn is in flight — the caller parks it and retries at the next
+        boundary — so it never talks over the user or a running answer.
+        """
+        if (
+            self._recovering
+            or self._resume_needs_input
+            or self._input_active
+            or self._thinking
+            or self._speaking
+            or self.playback_active
+            or self._has_pending_work()
+        ):
+            return False
+        from jarvis.realtime.report_prompt import report_update_prompt
+
+        language = str(kwargs.get("language") or self._language)
+        prompt = report_update_prompt(
+            text,
+            report,
+            language=language,
+            kind=str(kwargs.get("spoken_kind") or "completion"),
+        )
+        await self._connection.send(
+            {
+                "type": "response.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "[Application event, not the user speaking]\n" + prompt,
+                        }
+                    ],
+                },
+            }
+        )
+        await self._connection.send({"type": "response.create"})
         return True
 
     async def attach_appshot(self, image: bytes, mime: str, note: str) -> bool:
