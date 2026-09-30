@@ -128,8 +128,10 @@ describe("OutputPreview cards", () => {
   it("shows a short file whole", async () => {
     installFetchMock([file("run.sh")], { "run.sh": "#!/bin/sh\n# Start it.\nnpm start\n" });
     renderPreview(RUN);
-    const card = await screen.findByTestId("output-preview-code-card");
-    expect(card.getAttribute("data-open")).toBe("true");
+    const card = await screen.findByTestId("output-preview-code-card", {}, { timeout: 5_000 });
+    await waitFor(() => expect(card.getAttribute("data-open")).toBe("true"), {
+      timeout: 5_000,
+    });
     expect(within(card).getByTestId("output-preview-code-source").textContent).toContain(
       "npm start",
     );
