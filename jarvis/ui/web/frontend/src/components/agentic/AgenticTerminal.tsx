@@ -2585,6 +2585,25 @@ export function AgenticTerminal({
     return () => container.removeEventListener("paste", onPaste, true);
   }, [attach, name]);
 
+  /*
+   * A primary press anywhere on the pane makes it the pane in use.
+   *
+   * The frame's own bubbling handler never saw presses INTO a coding agent's
+   * output: while the CLI tracks the mouse, ./terminalMouseSelection turns a
+   * plain press into a selection press, and xterm's selection service then
+   * stops it from propagating (so the CLI does not get it). The pane stayed
+   * unselected — no highlight, prompts aimed at the previous pane. The
+   * terminal region therefore also listens in the capture phase, which runs
+   * before any of xterm's listeners; the event identity keeps the two
+   * handlers from doing the work twice for one press.
+   */
+  const handledPress = useRef<Event | null>(null);
+  const pressPane = (event: React.MouseEvent) => {
+    if (event.button !== 0 || handledPress.current === event.nativeEvent) return;
+    handledPress.current = event.nativeEvent;
+    onFocus?.();
+    takeOwnershipRef.current?.();
+  };
   const chrome = PANE_CHROME[appearance];
   const minimal = headerMode === "minimal";
   const tile = PANE_TILE[appearance];
@@ -2617,11 +2636,7 @@ export function AgenticTerminal({
 
   return (
     <div
-      onMouseDown={(event) => {
-        if (event.button !== 0) return;
-        onFocus?.();
-        takeOwnershipRef.current?.();
-      }}
+      onMouseDown={pressPane}
       {...dragHandlers}
       className={cn(
         // One quiet border per pane; the focused one carries the workspace's
@@ -2750,6 +2765,7 @@ export function AgenticTerminal({
       */}
       <div
         ref={terminalRegionRef}
+        onMouseDownCapture={pressPane}
         id={terminalRegionId}
         className={cn(
           "relative min-h-0 flex-1 overflow-hidden px-1.5 pb-0.5 pt-0.5",
