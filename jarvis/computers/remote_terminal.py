@@ -247,6 +247,14 @@ class SshPtyPool:
         )
         task.add_done_callback(_log_task_failure)
 
+    def end_session(self, identity: str) -> None:
+        """End the tmux session of a pane nobody is viewing (by its ``history_id``)."""
+        name = tmux_session_name(identity)
+        task = asyncio.get_running_loop().create_task(
+            self._kill_session(name), name=f"ssh-pty-kill-{name}"
+        )
+        task.add_done_callback(_log_task_failure)
+
     def detach(self, terminal_id: str) -> None:
         """Stop viewing the pane; the agent keeps running on the server."""
         pane = self._panes.pop(terminal_id, None)

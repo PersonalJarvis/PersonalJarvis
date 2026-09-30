@@ -10,6 +10,7 @@ recorded stand-in.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -168,3 +169,223 @@ async def test_bringing_back_kills_the_remote_agent_and_runs_here_again(
 def test_remote_argv_uses_the_command_name_only() -> None:
     argv = ide.remote_agent_argv("claude")
     assert argv is not None and argv[0] == "claude"
+
+
+# -- creating panes directly on a computer -------------------------------------
+
+
+def _pushes(moves: list[Any]) -> list[Any]:
+    return [m for m in moves if m[0] == "push"]
+
+
+async def test_a_workspace_opened_on_a_computer_needs_no_local_cli_and_copies_once(
+    pools: tuple[FakePtyManager, RemotePool, list[Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local, far, moves = pools
+    monkeypatch.setattr(ide, "agent_argv", lambda name: None)  # nothing installed here
+    registry = ide.Registry(pty_manager=local)
+
+    session = await registry.start(
+        str(tmp_path), [{"agent": "claude"}, {"agent": "claude"}], computer_id="c_1"
+    )
+
+    assert all(t.computer_id == "c_1" and t.remote_folder for t in session.terminals)
+    assert _pushes(moves) == [("push", Path(str(tmp_path)))], "one copy for both panes"
+    term = session.terminals[0]
+    await registry.attach(term.key, 100, 30, _sink, _gone, workspace_id=session.id)
+    assert local.spawns == [], "nothing starts on this machine"
+    assert far.spawns[-1]["argv"][0] == "claude"
+    assert far.spawns[-1]["cwd"] == "/home/u/jarvis-workspaces/app-abc123"
+
+
+async def test_a_viewer_that_attaches_during_the_copy_is_told_to_wait(
+    pools: tuple[FakePtyManager, RemotePool, list[Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local, far, _moves = pools
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_push(_pool: object, folder: Path) -> remote.Placement:
+        started.set()
+        await release.wait()
+        return remote.Placement("/srv/app", "a" * 40)
+
+    monkeypatch.setattr(remote, "push_code", slow_push)
+    registry = ide.Registry(pty_manager=local)
+    opening = asyncio.create_task(
+        registry.start(str(tmp_path), [{"agent": "claude"}], computer_id="c_1")
+    )
+    await started.wait()
+    [session] = registry.sessions
+    term = session.terminals[0]
+
+    with pytest.raises(ide.SessionNotReady, match="Copying the folder"):
+        await registry.attach(term.key, 100, 30, _sink, _gone, workspace_id=session.id)
+    assert local.spawns == [] and far.spawns == []
+
+    # A restart in the middle of the copy brings the pane back HERE: there is
+    # no folder on the computer yet for it to start in.
+    snapshot = registry.snapshot()
+    assert snapshot is not None
+    again = ide.Registry(pty_manager=FakePtyManager())
+    await again.restore(snapshot)
+    assert again.sessions[0].terminals[0].computer_id == ""
+
+    release.set()
+    await opening
+    await registry.attach(term.key, 100, 30, _sink, _gone, workspace_id=session.id)
+    assert far.spawns[-1]["cwd"] == "/srv/app"
+
+
+async def test_new_panes_run_where_their_neighbours_run_unless_told(
+    pools: tuple[FakePtyManager, RemotePool, list[Any]], tmp_path: Path
+) -> None:
+    local, _far, moves = pools
+    registry = ide.Registry(pty_manager=local)
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}], computer_id="c_1")
+
+    split = await registry.add_terminal(workspace_id=session.id, anchor=session.terminals[0].name)
+    appended = await registry.add_terminal(workspace_id=session.id)
+    here = await registry.add_terminal(workspace_id=session.id, computer_id=None)
+
+    assert split.computer_id == "c_1" and split.remote_folder
+    assert appended.computer_id == "c_1"
+    assert here.computer_id == "" and here.remote_folder == ""
+    assert len(_pushes(moves)) == 1, "new panes join the copy already there"
+    assert "copy already on" in split.notice
+
+    # A workspace running here can still get one pane on the computer.
+    plain = await registry.start(str(tmp_path), [{"agent": "claude"}])
+    far_pane = await registry.add_terminal(workspace_id=plain.id, computer_id="c_1")
+    assert far_pane.computer_id == "c_1"
+    assert plain.terminals[0].computer_id == ""
+
+
+async def test_a_second_placement_of_a_folder_joins_the_running_copy(
+    pools: tuple[FakePtyManager, RemotePool, list[Any]], tmp_path: Path
+) -> None:
+    local, _far, moves = pools
+    registry = ide.Registry(pty_manager=local)
+    first = await registry.start(str(tmp_path), [{"agent": "claude"}], computer_id="c_1")
+    second = await registry.start(str(tmp_path), [{"agent": "claude"}])
+
+    await registry.place_workspace(second.id, computer_id="c_1")
+
+    assert len(_pushes(moves)) == 1, "sending it again reset the server copy under the agent"
+    assert second.terminals[0].remote_folder == first.terminals[0].remote_folder
+
+
+async def test_a_server_without_the_cli_refuses_before_anything_is_copied(
+    pools: tuple[FakePtyManager, RemotePool, list[Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local, far, moves = pools
+
+    async def run(command: str, *, timeout_s: float = 60.0) -> tuple[int, str, str]:
+        far.commands.append(command)
+        return 0, "missing:Claude Code\n", ""
+
+    monkeypatch.setattr(far, "run", run)
+    registry = ide.Registry(pty_manager=local)
+
+    with pytest.raises(ide.PlacementError, match="not installed"):
+        await registry.start(str(tmp_path), [{"agent": "claude"}], computer_id="c_1")
+    assert registry.sessions == [], "the half-made workspace is closed again"
+    assert _pushes(moves) == []
+
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}])
+    with pytest.raises(ide.PlacementError):
+        await registry.add_terminal(workspace_id=session.id, computer_id="c_1")
+    assert len(session.terminals) == 1, "the pane that could never start is gone"
+
+
+async def test_bringing_a_workspace_back_stops_every_agent_then_returns_each_folder_once(
+    pools: tuple[FakePtyManager, RemotePool, list[Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local, far, moves = pools
+    closing = far.close
+
+    def close(terminal_id: str) -> None:
+        moves.append(("stop", terminal_id))
+        closing(terminal_id)
+
+    monkeypatch.setattr(far, "close", close)
+    registry = ide.Registry(pty_manager=local)
+    session = await registry.start(
+        str(tmp_path), [{"agent": "claude"}, {"agent": "claude"}], computer_id="c_1"
+    )
+    for term in session.terminals:
+        await registry.attach(term.key, 100, 30, _sink, _gone, workspace_id=session.id)
+
+    result = await registry.place_workspace(session.id, computer_id=None)
+
+    pulls = [i for i, m in enumerate(moves) if m[0] == "pull"]
+    stops = [i for i, m in enumerate(moves) if m[0] == "stop"]
+    assert len(pulls) == 1, "one return for the shared folder, not one per pane"
+    assert len(stops) == 2 and max(stops) < pulls[0], "both agents stopped before packing"
+    assert all(t.computer_id == "" for t in session.terminals)
+    assert len(local.spawns) == 2, "both run here again"
+    assert result["messages"] == ["back"]
+
+
+async def test_a_workspace_moving_on_leaves_panes_on_another_computer_alone(
+    pools: tuple[FakePtyManager, RemotePool, list[Any]], tmp_path: Path
+) -> None:
+    local, _far, _moves = pools
+    registry = ide.Registry(pty_manager=local)
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}, {"agent": "claude"}])
+    first, second = session.terminals
+    await registry.place_terminal(first.key, workspace_id=session.id, computer_id="c_1")
+
+    result = await registry.place_workspace(session.id, computer_id="c_2")
+
+    assert first.computer_id == "c_1"
+    assert second.computer_id == "c_2"
+    assert any("stays on" in m for m in result["messages"])
+    with pytest.raises(ide.SessionError, match="Bring it back"):
+        await registry.place_terminal(first.key, workspace_id=session.id, computer_id="c_2")
+
+
+async def test_keep_working_on_quit_moves_running_workspaces(
+    pools: tuple[FakePtyManager, RemotePool, list[Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis.agentic_ide import offload_on_quit
+
+    local, far, _moves = pools
+    monkeypatch.setattr(offload_on_quit, "target", lambda: "c_1")
+    registry = ide.Registry(pty_manager=local)
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}])
+    term = session.terminals[0]
+    await registry.attach(term.key, 100, 30, _sink, _gone, workspace_id=session.id)
+
+    moved = await offload_on_quit.offload_before_quit(registry)
+
+    assert moved == [session.id]
+    assert term.computer_id == "c_1" and far.spawns, "the agent runs on the server now"
+
+
+async def test_a_subfolder_of_the_same_repo_joins_the_running_copy(
+    pools: tuple[FakePtyManager, RemotePool, list[Any]], tmp_path: Path
+) -> None:
+    import subprocess
+
+    local, _far, moves = pools
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)  # noqa: S603, S607, ASYNC221
+    (tmp_path / "pkg").mkdir()
+    registry = ide.Registry(pty_manager=local)
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}], computer_id="c_1")
+
+    inner = await registry.add_terminal(
+        workspace_id=session.id, computer_id="c_1", folder=str(tmp_path / "pkg")
+    )
+
+    assert len(_pushes(moves)) == 1, "one repo, one copy — a second send reset it"
+    assert inner.remote_folder == "/home/u/jarvis-workspaces/app-abc123/pkg"
