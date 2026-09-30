@@ -32,7 +32,7 @@ import { AgentMark } from "@/components/agentic/AgentMark";
 import { AgenticTerminal } from "@/components/agentic/AgenticTerminal";
 import { FONT_DEFAULT } from "@/components/agentic/paneFont";
 import { BranchIcon } from "@/components/agentic/branchIcon";
-import { PANE_BRAND, PANE_CHROME, PANE_SOLID, storedTerminalAppearance, themeFor } from "@/components/agentic/terminalThemes";
+import { PANE_BRAND, PANE_CHROME, PANE_SOLID, PANE_TILE, storedPaneStyle, storedTerminalAppearance, themeFor } from "@/components/agentic/terminalThemes";
 import type { PaneOccupant } from "./codingFloor";
 import { player, useOfficeStore } from "./officeStore";
 import { agentPositions } from "./walkerRegistry";
@@ -103,6 +103,9 @@ export function PaneCommandPanel({ occupant, compact = false, onOpen, onClose }:
   const appTheme = useThemeValue();
   // The IDE's pane appearance: the reader's stored choice, else the app's theme.
   const appearance = storedTerminalAppearance() ?? appTheme;
+  // The IDE's pane style (Workspace options): the window wears the same tile
+  // as the panes in the grid — square, slim title row, blue while in use.
+  const paneStyle = storedPaneStyle();
   const brand = PANE_BRAND[appearance];
   const chrome = PANE_CHROME[appearance];
   const ansi = themeFor(appearance);
@@ -271,6 +274,7 @@ export function PaneCommandPanel({ occupant, compact = false, onOpen, onClose }:
     "--pane-float": chrome.float,
     "--pane-ok": ansi.green,
     "--pane-fault": ansi.red,
+    "--pane-focus": PANE_TILE[appearance].focus,
   } as CSSProperties;
   const style: CSSProperties = rect
     ? { ...vars, left: rect.x, top: rect.y, width: rect.w, height: rect.h }
@@ -278,7 +282,7 @@ export function PaneCommandPanel({ occupant, compact = false, onOpen, onClose }:
     : { ...vars, visibility: "hidden" };
 
   return (
-    <aside ref={panel} className="office-pane" data-office-ui data-appearance={appearance}
+    <aside ref={panel} className="office-pane" data-office-ui data-appearance={appearance} data-style={paneStyle}
       data-gesture={dragRect ? (resizing ? "resize" : "move") : undefined}
       style={style} aria-labelledby={headingId} tabIndex={-1}>
       <header className="office-pane-head" title={t("society.office.pane_window_hint")}
@@ -287,7 +291,7 @@ export function PaneCommandPanel({ occupant, compact = false, onOpen, onClose }:
           aria-label={t(`society.office.pane_state_${occupant.stateKey}`)} />
         <AgentMark agent={pane.agent} label={pane.display_name || pane.agent} variant="plain" size="sm"
           className="!text-[color:var(--pane-ink)] [&>.bg-foreground]:!bg-[color:var(--pane-ink)]" />
-        <h2 id={headingId} title={`${title} (${pane.name})`}>{title}</h2>
+        <h2 id={headingId} title={`${title} (${pane.name})`} className={paneStyle === "minimal" ? "font-mono" : undefined}>{title}</h2>
         <span className="office-pane-meta">
           {t(`society.office.pane_state_${occupant.stateKey}`)}{since ? ` · ${since}` : ""}
         </span>
