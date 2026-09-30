@@ -140,8 +140,12 @@ export const useOfficeStore = create<OfficeState>((set) => ({
   requestWalk: (point) => set({ walkTo: { point, seq: ++seq }, follow: true }),
 }));
 
-/** Where the camera looks on the floor, mutated by the camera rig every frame (for the minimap). */
-export const cameraView = { x: 0, z: 0, yaw: 0, halfWidth: 0.5, ready: false };
+/**
+ * Where the camera looks on the floor, mutated by the camera rig every frame (for the minimap).
+ * `firstPerson` is true while the camera is (or glides into) the character's eyes at Mission Control:
+ * whatever flies beside the character, like Gigi, must step out of that view.
+ */
+export const cameraView = { x: 0, z: 0, yaw: 0, halfWidth: 0.5, ready: false, firstPerson: false };
 
 /**
  * What the office remembers while the app runs: where the character stands

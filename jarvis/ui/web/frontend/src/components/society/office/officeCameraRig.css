@@ -1,0 +1,10 @@
+/* Seated first person at Mission Control (the camera rig sets data-first-person
+   on the viewport): the monitors fill the view, so the floating labels of the
+   rest of the floor (names, speech bubbles, place pills, the elevator call)
+   step aside. Seat prompts and the live monitor screens stay. */
+.office-viewport[data-first-person] .office-plate:not(.office-seat-prompt),
+.office-viewport[data-first-person] .office-bubble,
+.office-viewport[data-first-person] .office-checkpoint,
+.office-viewport[data-first-person] .office-call-pill {
+  visibility: hidden;
+}

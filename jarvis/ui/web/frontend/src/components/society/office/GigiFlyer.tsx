@@ -16,6 +16,7 @@ import {
 import { CompanionModel } from "../companion/AgentFollower";
 import { defaultCompanion } from "../companion/appearance";
 import { createGigiFlight, createGigiPose, followAnchor, stepGigiFlight, type GigiFlightMode } from "./gigiFlight";
+import { cameraView } from "./officeStore";
 
 /** Gigi's on-screen height in the office. */
 export const GIGI_OFFICE_SIZE_M = 0.5;
@@ -29,6 +30,8 @@ const TRAIL_SIZE = 24;
 const TRAIL_LIFE_S = 0.8;
 const TRAIL_RATE = 30;
 const MOVING_SPEED = 0.05;
+/** Closer than this to a first-person camera, Gigi would fill the view. */
+const FIRST_PERSON_CLEARANCE_M = 2.5;
 
 /** Local effect colours; the diorama keeps one palette in light and dark mode. */
 const GLOW_WARM = new Color("#ffd98a");
@@ -155,6 +158,11 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
       targetX, targetZ, moving, mode, speaking, t: clock.current, dt, heading: m.heading, reduced, clear,
     }, pose);
 
+    // Gigi hovers at head height beside the person: seated in first person that is right in
+    // front of the eyes, so close by it steps out of the picture until the person stands up.
+    const hidden = cameraView.firstPerson && Math.hypot(pose.x - cameraView.x, pose.z - cameraView.z) < FIRST_PERSON_CLEARANCE_M;
+    if (root.current) root.current.visible = !hidden;
+    if (shadow.current) shadow.current.visible = !hidden;
     if (root.current) root.current.position.set(pose.x, pose.y, pose.z);
     if (body.current) {
       body.current.rotation.set(pose.pitch, pose.yaw, pose.roll, "YXZ");

@@ -8,9 +8,33 @@ export const CAMERA_LIMITS = {
   /** Polar angle from straight down: ~20° (near top-down) to ~72° (near eye level). */
   minPolar: 0.35,
   maxPolar: 1.25,
-  minDistance: 4,
+  /** Close enough to read a desk or a wardrobe shelf, far enough to stay outside the character. */
+  minDistance: 2.5,
   maxDistance: 140,
 } as const;
+
+/**
+ * A press that travelled further than this (CSS px) turned the camera; the
+ * click it ends in is not a click. Measured over the whole press, so a drag
+ * that comes back to where it started still counts as a drag.
+ */
+export const DRAG_CLICK_PX = 6;
+
+/** One mouse-wheel notch, in CSS px, as browsers report it in pixel mode. */
+const WHEEL_NOTCH_PX = 100;
+/** How far one notch zooms, as OrbitControls' zoomSpeed: 0.95^2.4 ≈ 12 % closer or further. */
+const ZOOM_SPEED_PER_NOTCH = 2.4;
+/**
+ * OrbitControls' zoomSpeed for one wheel event, proportional to how far the
+ * wheel turned. The controls zoom a fixed step per event whatever its size:
+ * a mouse notch crawled (~20 notches from the overview to the character) and
+ * a trackpad, which sends dozens of tiny events, raced. `deltaMode` 1 is
+ * lines, 2 pages (Firefox, some mice).
+ */
+export function wheelZoomSpeed(deltaY: number, deltaMode = 0): number {
+  const px = Math.abs(deltaY) * (deltaMode === 1 ? 40 : deltaMode === 2 ? 800 : 1);
+  return Math.min(ZOOM_SPEED_PER_NOTCH * 2.5, Math.max(0.02, (px / WHEEL_NOTCH_PX) * ZOOM_SPEED_PER_NOTCH));
+}
 
 /** Look-down angle below the horizon and yaw east of south for the home view. */
 export const HOME_PITCH_RAD = (40 * Math.PI) / 180;
