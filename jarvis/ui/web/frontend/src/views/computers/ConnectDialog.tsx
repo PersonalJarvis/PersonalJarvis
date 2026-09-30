@@ -1,13 +1,17 @@
 /**
- * "Connect a computer" — one screen, because SSH needs only two things: where
- * the server is, and a way in.
+ * "Connect a computer" — one screen, and usually one field: the address.
  *
  * The address box understands a bare IP, user@host, a whole ssh command, a
  * block with a private key, or the one line our setup instructions end with,
- * so the user never splits anything into fields. Below it, the way in is an
- * explicit choice of three equal tabs — password, SSH key, or "an agent sets
- * it up" — so no method hides behind a text link. Pasting a key or the agent's
- * line switches the tab by itself.
+ * so the user never splits anything into fields.
+ *
+ * The way in is automatic by default: the app's own key and the keys this
+ * PC's ``ssh`` already uses are tried, and one that works plants the app's key
+ * (the user's own key never leaves this PC). Only when none opens the server
+ * does the form ask for exactly what is missing — the password once, or, for
+ * a keys-only server, one line to run there. Password, a pasted key and the
+ * agent route stay reachable under "Other ways to log in"; pasting a key or
+ * the agent's line switches there by itself.
  *
  * "Connect" does not just spin: it opens a visible check (ConnectCheck) that
  * reaches the server, logs in, runs a test command and only then saves, so a
@@ -48,9 +52,11 @@ import { LocalVmStep } from "./wizard/LocalVmStep";
 import { errorText } from "./wizard/shared";
 
 type Screen = { kind: "form" } | { kind: "check" } | { kind: "account"; provider: ProviderInfo } | { kind: "vm" };
-type Method = "password" | "ssh_key" | "agent";
+type Method = "auto" | "password" | "ssh_key" | "agent";
 type KeySource = "own" | "assistant";
-type Login = "password" | "private_key" | "key";
+type Login = "auto" | "password" | "private_key" | "key";
+/** What an automatic attempt found missing, shown in the form. */
+type Missing = "password" | "key_only" | null;
 
 const REACH_FAILURES = new Set(["unreachable", "timeout", "protocol", "host_key_changed"]);
 
@@ -118,7 +124,9 @@ export function ConnectDialog({
   const [screen, setScreen] = useState<Screen>({ kind: "form" });
   const assistantName = useEventStore((s) => s.assistantName) || "Jarvis";
   const [pasted, setPasted] = useState("");
-  const [method, setMethod] = useState<Method>("password");
+  const [method, setMethod] = useState<Method>("auto");
+  const [missing, setMissing] = useState<Missing>(null);
+  const passwordInput = useRef<HTMLInputElement>(null);
   const [keySource, setKeySource] = useState<KeySource>("own");
   const [password, setPassword] = useState("");
   const [privateKey, setPrivateKey] = useState("");
@@ -159,14 +167,35 @@ export function ConnectDialog({
   }, [pastedKey, detected.fromSetupPrompt]);
 
   const login: Login =
-    method === "password" ? "password" : method === "ssh_key" && keySource === "own" ? "private_key" : "key";
+    method === "auto"
+      ? "auto"
+      : method === "password"
+        ? "password"
+        : method === "ssh_key" && keySource === "own"
+          ? "private_key"
+          : "key";
   const effectiveUser = username.trim() || detected.user || "root";
   const effectivePort = Number(port) || detected.port || 22;
   const keyText = pastedKey ?? privateKey;
   const ready =
     Boolean(detected.host) &&
-    (login === "key" || (login === "password" ? password.length > 0 : keyText.trim().length > 0));
-  const plantsKey = login === "password" && !keepPassword;
+    (login === "key" ||
+      login === "auto" ||
+      (login === "password" ? password.length > 0 : keyText.trim().length > 0));
+  const plantsKey = login === "auto" || (login === "password" && !keepPassword);
+
+  // A different server starts over: what one was missing says nothing about the next.
+  useEffect(() => {
+    setMissing(null);
+  }, [detected.host]);
+  useEffect(() => {
+    if (missing === "password" && method === "password") passwordInput.current?.focus();
+  }, [missing, method]);
+
+  const chooseMethod = (next: Method) => {
+    setMethod(next);
+    setMissing(null);
+  };
 
   const stepLabels: Record<StepId, string> = {
     reach: fill(t("computers.cx_step_reach"), {
@@ -210,6 +239,13 @@ export function ConnectDialog({
     // Steps 1-3: a dry-run login that saves and plants nothing.
     try {
       const test = await computersApi.test(input);
+      if (!test.ok && login === "auto" && (test.kind === "needs_password" || test.kind === "key_only")) {
+        // Not a failure to show: the form asks for exactly what is missing.
+        setMissing(test.kind === "needs_password" ? "password" : "key_only");
+        if (test.kind === "needs_password") setMethod("password");
+        setScreen({ kind: "form" });
+        return;
+      }
       if (!test.ok) {
         const note = test.message || t(`computers.cx_fail_${test.kind ?? "protocol"}`);
         const atReach = !test.kind || REACH_FAILURES.has(test.kind);
@@ -392,9 +428,63 @@ export function ConnectDialog({
                 )}
               </div>
 
+              {method === "auto" && (
+                <div className="space-y-3" data-testid="cx-auto">
+                  {missing === "key_only" ? (
+                    <div className="space-y-3 rounded-lg border border-border bg-secondary/40 p-4" data-testid="cx-key-only">
+                      <div className="flex items-center gap-2 text-sm font-medium text-foreground-strong">
+                        <KeyRound className="h-4 w-4 text-muted-foreground" aria-hidden />
+                        {t("computers.cx_key_only_title")}
+                      </div>
+                      <p className="text-sm text-foreground-secondary">{t("computers.cx_key_only_body")}</p>
+                      {identity.data?.install_command && (
+                        <CopyField
+                          value={identity.data.install_command}
+                          label={t("computers.cx_key_only_line")}
+                          copyLabel={t("computers.copy")}
+                          copiedLabel={t("computers.copied")}
+                        />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => chooseMethod("agent")}
+                        className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                      >
+                        {t("computers.cx_key_only_agent")}
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="flex items-start gap-2 text-sm text-muted-foreground">
+                      <KeyRound className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                      {t("computers.cx_auto_hint")}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => chooseMethod("password")}
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                    data-testid="cx-other-ways"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                    {t("computers.cx_other_ways")}
+                  </button>
+                </div>
+              )}
+
+              {method !== "auto" && (
               <div>
-                <div className="mb-1.5 text-sm font-medium text-foreground-secondary" id="cx-login-label">
-                  {t("computers.cx_login_title")}
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <div className="text-sm font-medium text-foreground-secondary" id="cx-login-label">
+                    {t("computers.cx_login_title")}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => chooseMethod("auto")}
+                    className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    data-testid="cx-auto-back"
+                  >
+                    {t("computers.cx_auto_back")}
+                  </button>
                 </div>
                 <div
                   role="tablist"
@@ -403,21 +493,21 @@ export function ConnectDialog({
                 >
                   <MethodTab
                     active={method === "password"}
-                    onClick={() => setMethod("password")}
+                    onClick={() => chooseMethod("password")}
                     icon={<Lock />}
                     label={t("computers.cx_method_password")}
                     testId="cx-method-password"
                   />
                   <MethodTab
                     active={method === "ssh_key"}
-                    onClick={() => setMethod("ssh_key")}
+                    onClick={() => chooseMethod("ssh_key")}
                     icon={<KeyRound />}
                     label={t("computers.cx_method_key")}
                     testId="cx-method-key"
                   />
                   <MethodTab
                     active={method === "agent"}
-                    onClick={() => setMethod("agent")}
+                    onClick={() => chooseMethod("agent")}
                     icon={<SquareTerminal />}
                     label={t("computers.cx_method_agent")}
                     testId="cx-method-agent"
@@ -427,8 +517,14 @@ export function ConnectDialog({
                 <div className="mt-4" role="tabpanel">
                   {method === "password" && (
                     <div className="space-y-3">
+                      {missing === "password" && (
+                        <p className="rounded-md bg-secondary/60 px-3 py-2.5 text-sm text-foreground-secondary" data-testid="cx-ask-password">
+                          {t("computers.cx_ask_password")}
+                        </p>
+                      )}
                       <Field label={t("computers.cx_password")} hint={t("computers.cx_password_hint")}>
                         <input
+                          ref={passwordInput}
                           type="password"
                           className={cn(inputClass, "h-10")}
                           value={password}
@@ -588,6 +684,7 @@ export function ConnectDialog({
                   )}
                 </div>
               </div>
+              )}
 
               <div>
                 <button
@@ -634,7 +731,7 @@ export function ConnectDialog({
               <div>
                 <Button type="submit" className="h-10 w-full" disabled={!ready} data-testid="cx-connect">
                   <Plug />
-                  {t("computers.cx_connect")}
+                  {missing === "key_only" && method === "auto" ? t("computers.cx_try_again") : t("computers.cx_connect")}
                 </Button>
                 <p className="mt-2 text-center text-xs text-muted-foreground">{t("computers.cx_connect_hint")}</p>
               </div>

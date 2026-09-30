@@ -283,7 +283,7 @@
     "wz_next_ide_body": "Wähle in der Agentic IDE beim Öffnen eines Workspaces „Läuft auf: {computer}“.",
     "wz_open": "{computer} öffnen",
     "cx_title": "Computer verbinden",
-    "cx_subtitle": "Gib die Adresse ein und wähle, wie {name} sich anmeldet. {name} testet die Verbindung, bevor etwas gespeichert wird.",
+    "cx_subtitle": "Gib die Adresse ein. {name} meldet sich mit den SSH-Schlüsseln dieses PCs an oder fragt nach dem, was fehlt, und testet die Verbindung, bevor etwas gespeichert wird.",
     "cx_address": "Server-Adresse",
     "cx_address_hint": "Die IP aus deinem Anbieter-Panel, z. B. 203.0.113.10 – oder füge eine ganze „ssh root@…“-Zeile ein.",
     "cx_login": "Anmeldung",
@@ -345,6 +345,15 @@
     "cx_step_save_warn": "Gespeichert, aber die Nachprüfung meldet den Computer nicht als online.",
     "cx_edit": "Angaben ändern",
     "cx_retry": "Erneut versuchen",
-    "cx_verified_body": "{name} hat ihn erreicht, sich angemeldet und einen Testbefehl ausgeführt."
+    "cx_verified_body": "{name} hat ihn erreicht, sich angemeldet und einen Testbefehl ausgeführt.",
+    "cx_auto_hint": "{name} probiert die SSH-Schlüssel, die dieser PC schon benutzt. Öffnet keiner davon den Server, fragt {name} einmal nach dem Passwort.",
+    "cx_other_ways": "Andere Anmeldewege",
+    "cx_auto_back": "Automatisch (empfohlen)",
+    "cx_ask_password": "Keiner der SSH-Schlüssel dieses PCs öffnet den Server. Gib einmal sein Passwort ein: {name} richtet dann seinen eigenen Schlüssel ein und vergisst das Passwort.",
+    "cx_key_only_title": "Dieser Server lässt nur bekannte Schlüssel herein",
+    "cx_key_only_body": "Führe diese Zeile einmal auf dem Server aus, in der Web-Konsole deines Hosting-Panels oder in einer SSH-Sitzung. Sie trägt den Schlüssel von {name} ein. Dann auf „Erneut versuchen“ drücken.",
+    "cx_key_only_line": "Zeile für den Server",
+    "cx_key_only_agent": "Oder lass das einen Coding-Agenten auf dem Server erledigen",
+    "cx_try_again": "Erneut versuchen"
   }
 }
