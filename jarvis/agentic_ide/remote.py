@@ -233,7 +233,7 @@ def _stage_working_tree(top: Path, head: str | None, index: Path) -> tuple[str, 
         try:
             if (top / path).stat().st_size > MAX_FILE_BYTES:
                 held.append(path)
-        except OSError:
+        except OSError:  # vanished since git listed it: nothing to send or hold
             continue
     if held:
         _git_bytes(
@@ -451,7 +451,7 @@ def _tar_plan(folder: Path) -> tuple[int, list[str]]:
             relative = path.relative_to(folder).as_posix()
             try:
                 size = path.stat().st_size
-            except OSError:
+            except OSError:  # vanished or unreadable mid-walk: skip that one file
                 continue
             if is_secret_name(name) or size > MAX_FILE_BYTES:
                 held.append(relative)
@@ -538,7 +538,7 @@ def _free_branch(top: Path, prefix: str) -> str:
     while True:
         try:
             _git(top, "rev-parse", "-q", "--verify", f"refs/heads/{candidate}")
-        except MoveError:
+        except MoveError:  # no such branch: the answer this probe looks for
             return candidate
         counter += 1
         candidate = f"{base}-{counter}"
