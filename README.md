@@ -24,9 +24,9 @@ Personal Jarvis is an open-source desktop assistant for Windows, macOS and Linux
 
 It brings no model and no subscription of its own. It runs on your Claude Code or Codex plan, one API key from any supported provider, or a local model through Ollama. There is no account and no analytics, and your keys, memory and history stay on your machine.
 
-https://github.com/user-attachments/assets/bd2d5f3c-c601-475e-a37e-f532ea6ef6ea
+https://github.com/user-attachments/assets/9930ca95-5015-4ade-9a16-975c77d179fd
 
-<p align="center"><sub>A real, unedited click-through of the app, sped up only where agents are thinking.</sub></p>
+<p align="center"><sub>A real click-through of the app: every frame is recorded, waiting is sped up, and a few moments are zoomed in.</sub></p>
 
 ## Install
 
