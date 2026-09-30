@@ -484,7 +484,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     <CloseAgentDialog target={closeTarget} busy={busy} onCancel={() => setCloseRequest(null)} onConfirm={confirmClose} />
 
     <main className="min-h-0 flex-1">
-      <IdeSidePanelFrame>
+      <IdeSidePanelFrame markInUse={paneStyle === "minimal"}>
       {session ? <WorkspaceTerminalGrid key={session.id} session={session} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
         onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} maxPanes={maxPanes} fontSize={fontSize} appearance={appearance} disabled={busy}
         onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} paneStyle={paneStyle} />

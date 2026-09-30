@@ -84,6 +84,14 @@ interface IdeSidePanelState {
    */
   maximized: boolean;
   setMaximized: (maximized: boolean) => void;
+  /**
+   * The reader is working in the panel: their last press landed in it rather
+   * than in a terminal. The panel then wears the blue "you are here" frame a
+   * focused terminal wears, and the terminal lets go of its own. A press on
+   * a pane hands it back. Not persisted.
+   */
+  inUse: boolean;
+  setInUse: (inUse: boolean) => void;
 }
 
 const initialTabs = storedTabs();
@@ -102,8 +110,10 @@ export const useIdeSidePanelStore = create<IdeSidePanelState>((set, get) => {
     setSpotlight: (spotlight) => set({ spotlight }),
     maximized: false,
     setMaximized: (maximized) => set({ maximized: maximized && get().open }),
+    inUse: false,
+    setInUse: (inUse) => { if (get().inUse !== inUse) set({ inUse: inUse && get().open }); },
     setOpen: (open) => {
-      if (!open) set({ spotlight: null, maximized: false });
+      if (!open) set({ spotlight: null, maximized: false, inUse: false });
       commit({ open });
     },
     toggle: () => get().setOpen(!get().open),
@@ -120,7 +130,7 @@ export const useIdeSidePanelStore = create<IdeSidePanelState>((set, get) => {
       if (index < 0) return;
       const rest = tabs.filter((tab) => tab !== id);
       if (rest.length === 0) {
-        set({ spotlight: null, maximized: false });
+        set({ spotlight: null, maximized: false, inUse: false });
         commit({ open: false, tabs: DEFAULT_TABS, active: DEFAULT_TABS[0] });
         return;
       }

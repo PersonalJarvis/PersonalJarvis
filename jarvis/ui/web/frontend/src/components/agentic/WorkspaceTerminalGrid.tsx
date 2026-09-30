@@ -68,6 +68,10 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
   // The pane an agent card in the side panel pointed at, framed in blue.
   const spotlight = useIdeSidePanelStore((state) => state.spotlight);
   const setSpotlight = useIdeSidePanelStore((state) => state.setSpotlight);
+  // While the reader works in the side panel, the panel wears the blue frame
+  // and the selected pane lets go of its own; a press on a pane takes it back.
+  const panelInUse = useIdeSidePanelStore((state) => state.inUse);
+  const setPanelInUse = useIdeSidePanelStore((state) => state.setInUse);
   const spotlitPane = spotlight?.workspaceId === session.id ? spotlight.pane : null;
   const frame = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<DragFeedback | null>(null);
@@ -381,7 +385,8 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
           <AgenticTerminal headerMode={minimal ? "minimal" : "compact"} agent={terminal.agent}
             name={terminal.name} workspaceId={session.id} displayName={terminal.display_name}
             recap={terminal.recap} promptCount={terminal.prompts_sent} appearance={appearance ?? theme} fontSize={fontSize}
-            focused={selected === terminal.name} onFocus={() => { if (spotlitPane && spotlitPane !== terminal.name) setSpotlight(null); onSelect(terminal.name); }}
+            focused={selected === terminal.name} markFocus={!panelInUse}
+            onFocus={() => { if (spotlitPane && spotlitPane !== terminal.name) setSpotlight(null); setPanelInUse(false); onSelect(terminal.name); }}
             layoutBusy={resizing}
             maximized={visibleMaximized === id} onToggleMaximize={() => setMaximized((current) => current === id ? null : id)}
             onArrangeStart={visibleMaximized || saving || disabled ? undefined : (event) => startDrag(id, event)} arranging={drag?.id === id}
