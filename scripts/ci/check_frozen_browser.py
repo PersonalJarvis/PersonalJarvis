@@ -18,6 +18,7 @@ import socket
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 
 import psutil
@@ -230,6 +231,8 @@ def main() -> int:
     except Exception as exc:
         report["failure"] = type(exc).__name__
         print(f"Frozen browser smoke failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        # The type alone ("OSError: [Errno 22]") does not say which step broke.
+        traceback.print_exc(file=sys.stderr)
         return 1
     finally:
         (output / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
