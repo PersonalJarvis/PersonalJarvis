@@ -1627,6 +1627,7 @@ async def _call_brain(
                         "ComputerUseLoop fallback hit: %s(%s) after %d skipped provider(s)",
                         provider, model, idx,
                     )
+                selector.record_success(provider, model)
                 return text
             except Exception as exc:  # noqa: BLE001
                 selector.record_failure(provider, model, exc)
@@ -1666,6 +1667,7 @@ async def _call_brain(
                         "— normal chain had no vision provider (stale dead-flag?)",
                         provider, model,
                     )
+                    selector.record_success(provider, model)
                     return text
                 except Exception as exc:  # noqa: BLE001
                     selector.record_failure(provider, model, exc)

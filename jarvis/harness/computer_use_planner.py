@@ -152,12 +152,22 @@ class ComputerUsePlannerSelector:
     def record_empty(self, provider: str, model: str | None) -> None:
         self._record(provider, model, "empty", "empty response")
 
+    def record_success(self, provider: str, model: str | None) -> None:
+        """A planner step answered: the Tool Model tab's status dot reads it."""
+        from jarvis.brain import provider_health_ledger as ledger  # noqa: PLC0415
+
+        ledger.record_success(provider, ledger.MODALITY_TOOL, model=model)
+
     def record_failure(
         self, provider: str, model: str | None, exc: Exception,
     ) -> None:
+        from jarvis.brain import provider_health_ledger as ledger  # noqa: PLC0415
+
         detail = str(exc)
         kind = self._classify_failure(exc, detail)
         self._record(provider, model, kind, detail[:200])
+        # Only the classification is kept there, never ``detail`` (AP-34).
+        ledger.record_failure(provider, ledger.MODALITY_TOOL, exc, model=model)
 
         if kind == "rate_limit":
             rate_tracker = getattr(self.manager, "_rate_tracker", None)

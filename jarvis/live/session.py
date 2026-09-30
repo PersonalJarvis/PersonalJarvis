@@ -447,6 +447,7 @@ class LiveVoiceSession:
                                 "Check the selected model and account access."
                             )
             self._pump_task = asyncio.create_task(self._pump(), name="live-events")
+            from jarvis.brain import provider_health_ledger as health_ledger
             from jarvis.core.events import (
                 RealtimeSessionReady,
                 VoiceSessionStarted,
@@ -455,6 +456,11 @@ class LiveVoiceSession:
             from jarvis.live.runtime import register
 
             register(self)
+            # The started session is the Realtime tab's evidence; its status
+            # dot never opens a (billed) session of its own.
+            health_ledger.record_success(
+                self.active_provider, health_ledger.MODALITY_REALTIME, model=profile.model
+            )
             if self._bus is not None:
                 if not self._parent_owned:
                     await self._bus.publish(
@@ -509,6 +515,7 @@ class LiveVoiceSession:
         Live 2026-09-29: an empty API balance made every wake end after a
         second with no word, which read as a broken wake word.
         """
+        from jarvis.brain import provider_health_ledger as health_ledger
         from jarvis.brain.provider_test import (
             NO_CREDITS,
             RATE_LIMITED,
@@ -517,6 +524,9 @@ class LiveVoiceSession:
         from jarvis.realtime.session import _handshake_failure_message
 
         status = classify_provider_error(str(exc))
+        health_ledger.record_status(
+            self.active_provider, health_ledger.MODALITY_REALTIME, status
+        )
         cause = {NO_CREDITS: "no_credits", RATE_LIMITED: "rate_limited"}.get(
             status, "unavailable"
         )

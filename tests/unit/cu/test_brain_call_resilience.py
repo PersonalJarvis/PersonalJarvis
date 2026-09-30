@@ -168,6 +168,23 @@ async def test_account_failures_are_never_retried_in_place(detail: str) -> None:
     assert len(alpha.requests) == 1
 
 
+async def test_tool_model_calls_feed_the_health_record() -> None:
+    """The Tool Model tab's dot reads what real CU steps did — it no longer
+    sends a probe of its own. Only the classification is kept."""
+    from jarvis.brain import provider_health_ledger as ledger
+
+    alpha = _ScriptedBrain([RuntimeError(_BAD_KEY)])
+    beta = _ScriptedBrain([(_COMPLETE, "stop")])
+    manager = _FakeManager({"alpha": alpha, "beta": beta})
+
+    reply = await _call(manager)
+
+    record = ledger.get_ledger()
+    assert reply.provider == "beta"
+    assert record.get("alpha", ledger.MODALITY_TOOL).status == "bad_key"
+    assert record.get("beta", ledger.MODALITY_TOOL).status == "ok"
+
+
 async def test_exhausted_chain_still_raises_the_no_provider_error() -> None:
     """The retry must not swallow a genuinely dead chain — the engine maps this
     exception to exit 3 ("no eyes — check your keys/credit")."""

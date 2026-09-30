@@ -71,6 +71,19 @@ class FallbackTTS:
             speaker, "name", None
         )
 
+    _last_failure: str | None = None
+
+    @property
+    def last_failure(self) -> str | None:
+        """What the asked provider failed with when another voice spoke the
+        last utterance, else ``None``. In memory only: the speech meter hands
+        it to the provider-health record, which keeps just a classification.
+        A primary that fell back internally reports its own ``last_failure``.
+        """
+        if self._last_speaker is self._fallback:
+            return self._last_failure
+        return getattr(self._primary, "last_failure", None)
+
     @property
     def primary(self) -> Any:
         return self._primary
@@ -124,6 +137,7 @@ class FallbackTTS:
 
         produced = 0
         self._last_speaker = self._primary
+        self._last_failure = None
         try:
             async for chunk in self._primary.synthesize(
                 text, voice=voice, language_code=language_code
@@ -131,6 +145,7 @@ class FallbackTTS:
                 produced += 1
                 yield chunk
         except Exception as exc:  # noqa: BLE001 — any primary failure -> fallback
+            self._last_failure = f"{type(exc).__name__}: {exc}"
             if produced:
                 # Audio already reached the speaker; restarting from the
                 # fallback would replay the opening words. Surface the error

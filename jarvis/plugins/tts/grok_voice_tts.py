@@ -201,6 +201,9 @@ class GrokVoiceTTS:
         log = logging.getLogger("jarvis.tts.grok-voice")
         self.last_voice = voice
         self.last_voice_provider = self.name
+        # What this provider failed with when a fallback voice spoke instead
+        # (read by the speech meter for the provider-health dots).
+        self.last_failure: str | None = None
 
         # Cooldown active? First Gemini, then SAPI5 — never stay silent.
         if self._quota_blocked_until and time.monotonic() < self._quota_blocked_until:
@@ -234,6 +237,7 @@ class GrokVoiceTTS:
             except _GrokFatalError as exc:
                 # 401/403/429 → arm the cooldown, cancel remaining tasks,
                 # fall back for the rest of the text.
+                self.last_failure = f"{type(exc).__name__}: {exc}"
                 self._quota_blocked_until = time.monotonic() + _QUOTA_COOLDOWN_S
                 log.warning(
                     "Grok Voice quota/auth error (%s) — falling back for %.0f min.",
