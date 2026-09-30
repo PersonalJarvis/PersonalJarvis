@@ -427,6 +427,63 @@ async def test_repaint_nudges_stop_at_the_bound_and_leave_the_real_size(
     assert sizes[-1] == (80, 24), "the pane must be left at the size it really is"
 
 
+async def _ready_now(_session: object, _term: object) -> bool:
+    return True
+
+
+async def test_a_pane_resized_while_its_agent_loaded_is_repainted_once_ready(
+    registry: Registry,
+    fake_pty: FakePtyManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The grid settles while the CLI boots; its real size must be drawn for.
+
+    Four panes opened together were spawned at the mount-time size and resized
+    a moment later, before Claude Code listened for size changes — so it kept
+    laying out for the old size (2026-09-29). No repaint check can run before
+    the agent takes the whole screen, so the pane is nudged once it is ready.
+    """
+    monkeypatch.setattr(session_mod, "REPAINT_CONFIRM_S", 0.02)
+    monkeypatch.setattr(session_mod, "REPAINT_POLL_S", 0.005)
+    monkeypatch.setattr(registry, "_prompt_ready", _ready_now)
+    session = await _open(registry, tmp_path, [{"agent": "claude"}])
+    term = session.terminals[0]
+    await registry.attach(term.name, 114, 30, _noop_output, _noop_exit)
+    pty = term.pty_id
+    # Still loading: nothing has taken the screen yet.
+    assert registry.resize(term.key, 104, 30, session.id)
+    assert term.resized_while_booting
+    await fake_pty.emit(pty, "\x1b[?1049h\x1b[2J\x1b[Hdrawn for 114 columns")
+    fake_pty.resizes.clear()
+
+    assert await registry._prompt_ready_then_settle(session, term)
+
+    sizes = [(cols, rows) for tid, cols, rows in fake_pty.resizes if tid == pty]
+    assert sizes[:2] == [(104, 29), (104, 30)]
+    assert not term.resized_while_booting
+    await asyncio.gather(*registry._repaint_checks)
+    assert fake_pty.resizes[-1][1:] == (104, 30)
+
+
+async def test_a_pane_never_resized_while_loading_is_not_nudged(
+    registry: Registry,
+    fake_pty: FakePtyManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(registry, "_prompt_ready", _ready_now)
+    session = await _open(registry, tmp_path, [{"agent": "claude"}])
+    term = session.terminals[0]
+    await registry.attach(term.name, 104, 30, _noop_output, _noop_exit)
+    await fake_pty.emit(term.pty_id, "\x1b[?1049h\x1b[2J\x1b[Hdrawn for 104 columns")
+    fake_pty.resizes.clear()
+
+    assert await registry._prompt_ready_then_settle(session, term)
+
+    assert fake_pty.resizes == []
+
+
 async def test_a_viewer_resize_the_agent_ignored_is_nudged_again(
     registry: Registry,
     fake_pty: FakePtyManager,
