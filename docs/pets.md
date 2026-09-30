@@ -186,6 +186,7 @@ Control-strip actions reported back through callbacks: `compose`, `mic_mute`,
 |---|---|
 | `GET /api/pets` | `{active, scale, bubble, visible, pets: [{id, name, description, builtin, frame_size, animations, sheet_url}]}` |
 | `GET /api/pets/{id}/sheet.png` | The sprite sheet |
+| `GET /api/pets/template.png` | The empty sprite-sheet template (48 px cells, rows in state order) |
 | `PUT /api/pets/active` | `{pet_id}` → saves `[ui] pet_id`, applies live |
 | `PUT /api/pets/settings` | `{scale?, bubble?}` → saves, applies live |
 | `POST /api/pets/visibility` | `{visible}` → runtime only |

@@ -72,7 +72,7 @@ Still unrowed (verify with `ls jarvis/ui/web/*routes*.py` + `git log`): `chats`/
 ### 8-Layer model
 
 ```
-L7 UI/UX           Tray, Toasts, Admin-API, Desktop-App (FastAPI+React+pywebview), Orb-Overlay
+L7 UI/UX           Tray, Toasts, Admin-API, Desktop-App (FastAPI+React+pywebview), Orb-Overlay (bar / mascot / voice orb / desktop pet)
 L6 Orchestrator    State-Machine, Router, BrainManager, Supervisor, Mission-Manager
 L5 Harness-Adapter Capability-gated Computer Use and universal Python Script
 L4 Brain           5 providers (Claude-API, OpenRouter, OpenAI, Gemini, NVIDIA) + Ack-Brain sub-second tier
@@ -270,6 +270,7 @@ The six desktop power-user features that were historically Windows-only are now 
 
 - **Dependency reality (AD-14 — do not "fix" this):** `pynput` + `ptyprocess` live in the `[desktop]` extra (`ptyprocess` gated `sys_platform != 'win32'`); `pyobjc-framework-{Quartz,ApplicationServices,Accessibility}` in `[desktop-macos]` (`sys_platform == 'darwin'`). **Linux `pyatspi` is NOT on PyPI — never add it as a pip dependency.** It is GObject-Introspection, distro-packaged (`apt install python3-pyatspi gir1.2-atspi-2.0`), surfaced via the `capabilities.has_ax_tree` runtime probe.
 - **Doctrine intact:** the headless €5-VPS base install ships **none** of these desktop extras and still boots on a fresh `python:3.11-slim` Linux container — every port is extras-gated and degrades to a logged no-op (AD-6) when its capability is absent.
+- **Overlay display styles:** `[ui] orb_style` picks the on-screen surface — the slim Jarvis bar, or one of three looks of the floating orb window (`mascot`, `voice_orb`, `pet`), or none. The vocabulary lives in `jarvis/ui/overlay_styles.py`; `ui/orb/bus_bridge.py` drives every surface from bus events. Orb-window looks swap live; bar ↔ orb window needs a restart (BUG-031). The desktop pet (animated pixel-art sprites, control strip, status bubble) is specified in [`docs/pets.md`](pets.md).
 - **Computer-Use screen indicator (ADR-0028):** while a CU mission drives the
   local mouse/keyboard, a breathing Jarvis-gold border glows on every monitor
   edge with a localized "Esc to cancel" pill. It is a minimal
