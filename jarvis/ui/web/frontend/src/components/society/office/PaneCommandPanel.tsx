@@ -1,16 +1,27 @@
 /**
- * A coding session on the coding floor, shown as the pane it is: the Agentic
- * IDE's title bar (state dot, agent mark, the pane's title, the pane actions as
- * quiet icons) over the IDE's own live terminal. Nothing else — no chips, no
- * toolbar, no side notes, no second prompt box.
+ * A coding session on the coding floor, shown as the pane it is — in a window
+ * over the map: the Agentic IDE's title bar (state dot, agent mark, the pane's
+ * title, the pane actions as quiet icons) over the IDE's own live terminal.
+ * Nothing else — no chips, no toolbar, no side notes, no second prompt box.
+ *
+ * The window opens bottom-right at about half the stage's width, moves by its
+ * title bar, resizes by any edge or corner, and remembers where the reader
+ * left it (./paneWindow). Its size is fixed while nothing is being dragged, so
+ * the terminal inside never resizes the agent on its own.
  *
  * The terminal is the IDE pane's `AgenticTerminal` itself, attached as one more
  * viewer of the same PTY: the same renderer, font and colours, and typed into
- * directly, exactly like the pane in the IDE. Colours come from the pane's own
- * appearance tables (./terminalThemes), so the panel matches the IDE's panes in
- * light and dark, including a light pane in a dark app.
+ * directly, exactly like the pane in the IDE. It opens as the pane's size lead
+ * in this window (../../agentic/paneSizeLead), so the same pane in the IDE grid
+ * behind the office follows this window's size instead of trading it back and
+ * forth. Colours come from the pane's own appearance tables (./terminalThemes),
+ * so the window matches the IDE's panes in light and dark, including a light
+ * pane in a dark app.
  */
-import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect, useId, useLayoutEffect, useMemo, useRef, useState,
+  type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject,
+} from "react";
 import { Footprints, Hand, LocateFixed, Maximize2, Square, Trash2, X } from "lucide-react";
 import { useT } from "@/i18n";
 import { useThemeValue } from "@/hooks/useTheme";
@@ -26,10 +37,17 @@ import type { PaneOccupant } from "./codingFloor";
 import { player, useOfficeStore } from "./officeStore";
 import { agentPositions } from "./walkerRegistry";
 import { CALL_MS } from "./AgentTalkPanel";
+import {
+  defaultRect, loadStoredWindow, moveRect, placeStored, resizeRect, saveStoredWindow, toStored,
+  type ResizeEdge, type StageSize, type WindowRect,
+} from "./paneWindow";
 import "./paneCommand.css";
 
 /** A second press within this window confirms closing the session. */
 const CONFIRM_MS = 4000;
+/** How long a success line stays on the window; an error stays until the next action. */
+const NOTE_MS = 4000;
+const EDGES: readonly ResizeEdge[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
 
 function sinceLabel(at: number | null, t: (key: string) => string): string {
   if (!at) return "";
@@ -41,11 +59,43 @@ function sinceLabel(at: number | null, t: (key: string) => string): string {
 }
 
 type Note = { tone: "ok" | "error"; text: string } | null;
+type Gesture = {
+  kind: "move" | "resize";
+  edge: ResizeEdge;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  start: WindowRect;
+};
 
-export function PaneCommandPanel({ occupant, onOpen, onClose }: { occupant: PaneOccupant; onOpen: () => void; onClose: () => void }) {
+/** The stage the window floats over (its offset parent), measured before paint and on every resize. */
+function useStageSize(panel: RefObject<HTMLElement | null>): StageSize | null {
+  const [stage, setStage] = useState<StageSize | null>(null);
+  useLayoutEffect(() => {
+    const host = panel.current?.parentElement;
+    if (!host) return;
+    const measure = () => {
+      const width = host.clientWidth, height = host.clientHeight;
+      setStage((prev) => (prev && prev.width === width && prev.height === height ? prev : { width, height }));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [panel]);
+  return stage;
+}
+
+export function PaneCommandPanel({ occupant, compact = false, onOpen, onClose }: {
+  occupant: PaneOccupant;
+  /** The office inside the IDE's side panel: the window opens clear of the HUD buttons along the bottom. */
+  compact?: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+}) {
   const t = useT();
   const headingId = useId();
-  const office = useOfficeStore();
   const { agent, pane } = occupant;
   const panel = useRef<HTMLElement>(null);
   const [note, setNote] = useState<Note>(null);
@@ -63,16 +113,33 @@ export function PaneCommandPanel({ occupant, onOpen, onClose }: { occupant: Pane
   const since = sinceLabel(pane.activity_since || null, t);
   const title = paneTitle || pane.recap.trim() || agent.name;
 
+  const stage = useStageSize(panel);
+  const [stored, setStored] = useState(() => loadStoredWindow(compact));
+  // The window mid-drag. Held apart from `stored` so a drag costs one small
+  // render per frame and is written to storage once, when it ends.
+  const [dragRect, setDragRect] = useState<WindowRect | null>(null);
+  const gesture = useRef<Gesture | null>(null);
+  const frame = useRef<number | null>(null);
+  const [resizing, setResizing] = useState(false);
+  const rest = stage ? (stored ? placeStored(stored, stage) : defaultRect(stage, compact)) : null;
+  const rect = dragRect ?? rest;
+
   useEffect(() => { panel.current?.focus({ preventScroll: true }); setNote(null); setConfirmClose(false); }, [agent.agentId]);
   useEffect(() => {
     if (!confirmClose) return;
     const timer = setTimeout(() => setConfirmClose(false), CONFIRM_MS);
     return () => clearTimeout(timer);
   }, [confirmClose]);
+  useEffect(() => {
+    if (note?.tone !== "ok") return;
+    const timer = setTimeout(() => setNote(null), NOTE_MS);
+    return () => clearTimeout(timer);
+  }, [note]);
+  useEffect(() => () => { if (frame.current !== null) cancelAnimationFrame(frame.current); }, []);
 
   const refresh = () => { void useWorkspacePanesStore.getState().load(); };
 
-  /** Run one session action; it answers with the line the panel shows once it is done. */
+  /** Run one session action; it answers with the line the window shows once it is done. */
   const run = async (action: () => Promise<string>) => {
     setNote(null);
     try {
@@ -100,6 +167,77 @@ export function PaneCommandPanel({ occupant, onOpen, onClose }: { occupant: Pane
     });
   };
 
+  /* ---- moving and resizing ------------------------------------------------ */
+
+  const begin = (event: ReactPointerEvent<HTMLElement>, kind: Gesture["kind"], edge: ResizeEdge = "se") => {
+    if (event.button !== 0 || !rest) return;
+    // The title bar's buttons stay buttons.
+    if (kind === "move" && (event.target as HTMLElement).closest("button")) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    gesture.current = { kind, edge, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, start: rest };
+    setDragRect(rest);
+    if (kind === "resize") setResizing(true);
+  };
+
+  const follow = (event: ReactPointerEvent<HTMLElement>) => {
+    const g = gesture.current;
+    if (!g || g.pointerId !== event.pointerId || !stage) return;
+    const dx = event.clientX - g.startX, dy = event.clientY - g.startY;
+    const next = g.kind === "move" ? moveRect(g.start, dx, dy, stage) : resizeRect(g.start, g.edge, dx, dy, stage);
+    // At most one render per frame, however fast the pointer reports.
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(() => { frame.current = null; setDragRect(next); });
+  };
+
+  const finish = (event: ReactPointerEvent<HTMLElement>) => {
+    const g = gesture.current;
+    if (!g || g.pointerId !== event.pointerId) return;
+    gesture.current = null;
+    if (frame.current !== null) { cancelAnimationFrame(frame.current); frame.current = null; }
+    if (stage) {
+      const dx = event.clientX - g.startX, dy = event.clientY - g.startY;
+      const end = g.kind === "move" ? moveRect(g.start, dx, dy, stage) : resizeRect(g.start, g.edge, dx, dy, stage);
+      // A press without a real drag moves nothing and remembers nothing.
+      if (end.x !== g.start.x || end.y !== g.start.y || end.w !== g.start.w || end.h !== g.start.h) {
+        const next = toStored(end, stage);
+        setStored(next);
+        saveStoredWindow(compact, next);
+      }
+    }
+    setDragRect(null);
+    setResizing(false);
+  };
+
+  const gestureHandlers = (kind: Gesture["kind"], edge?: ResizeEdge) => ({
+    onPointerDown: (event: ReactPointerEvent<HTMLElement>) => begin(event, kind, edge),
+    onPointerMove: follow,
+    onPointerUp: finish,
+    onPointerCancel: finish,
+  });
+
+  /** Double-click on the title bar: back to where the window first opened. */
+  const resetPlace = (event: ReactMouseEvent) => {
+    if ((event.target as HTMLElement).closest("button")) return;
+    setStored(null);
+    saveStoredWindow(compact, null);
+  };
+
+  /* ---- the terminal ------------------------------------------------------- */
+
+  // Built once per pane and size state, so the window re-rendering while it is
+  // carried around never re-renders the terminal inside it. Mounted only once
+  // the stage is measured: the first size the agent hears is the window's.
+  const ready = stage !== null;
+  const terminal = useMemo(() => ready ? (
+    // Keyed by the pane, so another session is a fresh socket, never this one's screen under a new name.
+    <AgenticTerminal key={`${pane.workspace_id}/${pane.name}`} headerMode="none" sizeLead
+      name={pane.name} workspaceId={pane.workspace_id} agent={pane.agent}
+      displayName={pane.display_name || pane.agent || agent.name}
+      appearance={appearance} fontSize={FONT_DEFAULT} layoutBusy={resizing}
+      onAttachError={(message) => setNote({ tone: "error", text: message })} />
+  ) : null, [ready, pane.workspace_id, pane.name, pane.agent, pane.display_name, agent.name, appearance, resizing]);
+
   const dot = occupant.dot === "working" ? ansi.green
     : occupant.dot === "waiting" ? ansi.yellow
       : occupant.dot === "error" ? ansi.red : brand.inkFaint;
@@ -115,12 +253,18 @@ export function PaneCommandPanel({ occupant, onOpen, onClose }: { occupant: Pane
     "--pane-float": chrome.float,
     "--pane-ok": ansi.green,
     "--pane-fault": ansi.red,
-    "--pane-caret": ansi.cursor ?? brand.ink,
   } as CSSProperties;
+  const style: CSSProperties = rect
+    ? { ...vars, left: rect.x, top: rect.y, width: rect.w, height: rect.h }
+    // Not placed until the stage is measured, which happens before the first paint.
+    : { ...vars, visibility: "hidden" };
 
   return (
-    <aside ref={panel} className="office-panel office-pane" data-office-ui style={vars} aria-labelledby={headingId} tabIndex={-1}>
-      <header className="office-pane-head">
+    <aside ref={panel} className="office-pane" data-office-ui data-appearance={appearance}
+      data-gesture={dragRect ? (resizing ? "resize" : "move") : undefined}
+      style={style} aria-labelledby={headingId} tabIndex={-1}>
+      <header className="office-pane-head" title={t("society.office.pane_window_hint")}
+        {...gestureHandlers("move")} onDoubleClick={resetPlace}>
         <span className="office-pane-dot" style={{ background: dot }} role="img"
           aria-label={t(`society.office.pane_state_${occupant.stateKey}`)} />
         <AgentMark agent={pane.agent} label={pane.display_name || pane.agent} variant="plain" size="sm"
@@ -138,15 +282,15 @@ export function PaneCommandPanel({ occupant, onOpen, onClose }: { occupant: Pane
           <button type="button" disabled={!live} onClick={fork} title={t("society.office.cmd_fork")} aria-label={t("society.office.cmd_fork")}>
             <BranchIcon aria-hidden />
           </button>
-          <button type="button" disabled={!where} onClick={() => where && office.requestWalk(where)}
+          <button type="button" disabled={!where} onClick={() => where && useOfficeStore.getState().requestWalk(where)}
             title={t("society.office.action_walk")} aria-label={t("society.office.action_walk")}>
             <Footprints aria-hidden />
           </button>
-          <button type="button" onClick={() => office.summon([agent.agentId], { x: player.x, z: player.z }, CALL_MS)}
+          <button type="button" onClick={() => useOfficeStore.getState().summon([agent.agentId], { x: player.x, z: player.z }, CALL_MS)}
             title={t("society.office.action_call")} aria-label={t("society.office.action_call")}>
             <Hand aria-hidden />
           </button>
-          <button type="button" disabled={!where} onClick={() => where && office.focusOn(where)}
+          <button type="button" disabled={!where} onClick={() => where && useOfficeStore.getState().focusOn(where)}
             title={t("society.office.action_focus")} aria-label={t("society.office.action_focus")}>
             <LocateFixed aria-hidden />
           </button>
@@ -165,15 +309,12 @@ export function PaneCommandPanel({ occupant, onOpen, onClose }: { occupant: Pane
         </div>
       </header>
 
-      {/* Keyed by the pane, so another session is a fresh socket, never this one's screen under a new name. */}
-      <div className="office-pane-term">
-        <AgenticTerminal key={`${pane.workspace_id}/${pane.name}`} headerMode="none"
-          name={pane.name} workspaceId={pane.workspace_id} agent={pane.agent}
-          displayName={pane.display_name || pane.agent || agent.name}
-          appearance={appearance} fontSize={FONT_DEFAULT}
-          onAttachError={(message) => setNote({ tone: "error", text: message })} />
-      </div>
-      {note && <p className="office-pane-status" role="status" data-tone={note.tone}>{note.text}</p>}
+      <div className="office-pane-term">{terminal}</div>
+      {/* Over the terminal, never below it: a line that took rows away would resize the agent. */}
+      {note && <p className="office-pane-status" role="status" data-tone={note.tone} onClick={() => setNote(null)}>{note.text}</p>}
+      {EDGES.map((grip) => (
+        <div key={grip} className="office-pane-grip" data-edge={grip} aria-hidden {...gestureHandlers("resize", grip)} />
+      ))}
     </aside>
   );
 }

@@ -392,11 +392,13 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
       </div>
 
       {selection?.kind === "arcade" && <ArcadeCabinet onClose={() => select(null)} />}
-      {selection && selection.kind !== "arcade" && (
+      {/* A coding session is a window of its own on the stage, not a panel in the corner slot. */}
+      {selection?.kind === "agent" && selectedPane && (
+        <PaneCommandPanel occupant={selectedPane} compact={compact} onOpen={() => openPaneSession(selectedPane.pane)} onClose={() => select(null)} />
+      )}
+      {selection && selection.kind !== "arcade" && !(selection.kind === "agent" && selectedPane) && (
         <div className="office-panel-slot" data-wide={receptionOpen || missionOpen || undefined}>
-          {selection.kind === "agent" && selectedAgent && (selectedPane
-            ? <PaneCommandPanel occupant={selectedPane} onOpen={() => openPaneSession(selectedPane.pane)} onClose={() => select(null)} />
-            : <AgentPanel agent={selectedAgent} actions={actions} onClose={() => select(null)} />)}
+          {selection.kind === "agent" && selectedAgent && <AgentPanel agent={selectedAgent} actions={actions} onClose={() => select(null)} />}
           {selection.kind === "checkpoint" && (
             <CheckpointPanel id={selection.id} floor={floor} agents={active} layout={layout} sample={!coding && (roster.data?.sample ?? false)}
               profile={profile} onProfile={updateProfile} actions={actions} onClose={() => select(null)} />
