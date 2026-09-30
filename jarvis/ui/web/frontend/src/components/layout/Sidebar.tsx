@@ -17,6 +17,7 @@ import {
   type NavItem,
 } from "@/components/layout/navGroups";
 import { useEventStore } from "@/store/events";
+import { useSectionPrefetch } from "@/hooks/useSectionPrefetch";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useSectionHealth } from "@/hooks/useProviders";
@@ -168,6 +169,8 @@ export function Sidebar({
   collapsed = false,
 }: SidebarProps = {}) {
   const t = useT();
+  const profilePrefetch = useSectionPrefetch("profile");
+  const marketplacePrefetch = useSectionPrefetch("marketplace");
   const active = useEventStore((s) => s.activeSection);
   const setActive = useEventStore((s) => s.setActiveSection);
   const activeIdeWorkspaceId = useIdeProjectsStore((s) => s.activeWorkspaceId);
@@ -549,7 +552,7 @@ export function Sidebar({
           needs care, must be visible without opening anything. */}
       <div className="shrink-0 border-t border-border p-2">
         <div className={cn("flex items-center gap-1", railed && "flex-col")}>
-          <button type="button" onClick={() => setActive("profile")} title={t("nav.profile")}
+          <button type="button" {...profilePrefetch} onClick={() => setActive("profile")} title={t("nav.profile")}
             data-testid="sidebar-profile-toggle"
             className={cn(rowClass, "min-w-0 flex-1", hubActive && "jarvis-nav-active bg-secondary text-foreground")}>
             <span className="relative shrink-0">
@@ -560,7 +563,7 @@ export function Sidebar({
             </span>
             {!railed && <span className="min-w-0 flex-1 truncate text-left">{identity.data?.signed_in ? identity.data.login || t("nav.profile") : t("nav.profile")}</span>}
           </button>
-          <button type="button" onClick={() => setActive("marketplace")} title={t("nav.marketplace")}
+          <button type="button" {...marketplacePrefetch} onClick={() => setActive("marketplace")} title={t("nav.marketplace")}
             aria-label={t("nav.marketplace")} data-testid="nav-row-marketplace"
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <Store aria-hidden className="h-5 w-5" />
@@ -612,6 +615,7 @@ function NavRow({
   warnTitle?: string;
   onClick: () => void;
 }) {
+  const prefetch = useSectionPrefetch(item.id);
   const Icon = item.icon;
   const hint = alert ? alertTitle : warn ? warnTitle : undefined;
   /*
@@ -640,6 +644,7 @@ function NavRow({
         <button
           type="button"
           data-testid={`nav-row-${item.id}`}
+          {...prefetch}
           onClick={onClick}
           title={compact ? `${label}${hint ? ` — ${hint}` : ""}` : hint}
           aria-label={compact ? label : undefined}
