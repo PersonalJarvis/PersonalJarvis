@@ -21,6 +21,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 from uuid import uuid4
@@ -30,7 +31,7 @@ from jarvis.core.protocols import CodingSessionGateway
 from .approvals import Approvals
 from .bridge import MissionBridge
 from .browser.session import BrowserJobs
-from .capabilities import CapabilityRow, build_catalog
+from .capabilities import CapabilityKind, CapabilityRow, build_catalog
 from .checkpoints import CheckpointEngine
 from .communication import reply_policy, should_report
 from .conversation import ConversationArchive
@@ -53,6 +54,14 @@ __all__ = ["SocietyRuntime", "current_runtime", "set_current_runtime"]
 
 _DB_NAME = "society.db"
 _CLOSE_TASK_TIMEOUT_S = 2.0
+_USABLE_TTL_S = 30.0
+
+
+@dataclass(frozen=True, slots=True)
+class _UsablePlugins:
+    catalog_ids: frozenset[str]
+    ids: frozenset[str]
+    read_at: float
 
 
 class SocietyRuntimeClosed(RuntimeError):
@@ -135,10 +144,15 @@ class SocietyRuntime:
         event_publish: Callable[[Any], Any] | None = None,
         app_bus: Any = None,
         task_services: Callable[[], tuple[Any, Any]] | None = None,
+        # ``(catalog plugin ids, usable plugin ids)``; ``None`` treats every
+        # loaded plugin as connected (tests, headless boxes without keyring).
+        plugin_state: Callable[[], tuple[Iterable[str], Iterable[str]]] | None = None,
     ) -> None:
         self._data_dir = Path(data_dir)
+        self._plugin_state = plugin_state
         self.coding_request_lock = asyncio.Lock()
         self._coding_sessions: CodingSessionGateway | None = None
+        self._usable_cache: _UsablePlugins | None = None
         from .coding_supervision import CodingSupervision
 
         self.coding_supervision = CodingSupervision(self, app_bus)
@@ -703,7 +717,38 @@ class SocietyRuntime:
         except Exception:  # noqa: BLE001 — a broken skill registry costs the skill rows only
             log.warning("society: skill registry unavailable for the catalog", exc_info=True)
             skills = []
-        return build_catalog(tools, skills)
+        usable = self._usable_plugins()
+
+        def connected(tool_name: str, kind: CapabilityKind) -> bool:
+            # Only marketplace plugins carry a credential; everything else the
+            # brain loaded is usable as-is.
+            if kind is not CapabilityKind.PLUGIN or usable is None:
+                return True
+            return tool_name not in usable.catalog_ids or tool_name in usable.ids
+
+        return build_catalog(tools, skills, connected=connected)
+
+    def _usable_plugins(self) -> _UsablePlugins | None:
+        """Credential state of the marketplace plugins, cached briefly: the
+        catalog is read on every agent turn and each id is a keyring read."""
+        import time
+
+        now = time.monotonic()
+        cached = self._usable_cache
+        if cached is not None and now - cached.read_at < _USABLE_TTL_S:
+            return cached
+        if self._plugin_state is None:
+            return None
+        try:
+            catalog_ids, usable_ids = self._plugin_state()
+            fresh = _UsablePlugins(
+                catalog_ids=frozenset(catalog_ids), ids=frozenset(usable_ids), read_at=now
+            )
+        except Exception:  # noqa: BLE001 — unknown state keeps every plugin connected
+            log.warning("society: plugin connection state unavailable", exc_info=True)
+            return None
+        self._usable_cache = fresh
+        return fresh
 
     def derive(self, title: str, description: str) -> tuple[list[str], dict[str, list[str]]]:
         """``(focus, approval_rules)`` for a title/description pair."""

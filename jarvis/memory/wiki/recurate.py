@@ -179,9 +179,9 @@ async def recurate_profile(
     )
 
     from jarvis.memory.wiki.provider_chain import (
+        background_wiki_providers,
         build_wiki_provider_chain,
         complete_with_fallback,
-        credential_ready_wiki_providers,
     )
 
     # An injected registry (tests) skips the credential filter — the same
@@ -198,7 +198,7 @@ async def recurate_profile(
         model_override=wiki_cfg.curator.model,
         available=available,
         credential_ready=(
-            credential_ready_wiki_providers(available=available, config=config)
+            background_wiki_providers(available=available, config=config)
             if credential_filter
             else available
         ),

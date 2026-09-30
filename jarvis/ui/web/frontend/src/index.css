@@ -237,6 +237,61 @@ label,
     }
   }
 
+  /* Appshots page demo: the same shutter the desktop overlay plays — a white
+     flash, then the picture shrinks into the corner, rests, and slides out. */
+  .appshot-demo-flash {
+    animation: appshot-demo-flash 4.8s ease-out infinite;
+  }
+
+  .appshot-demo-card {
+    transform-origin: 100% 100%;
+    animation: appshot-demo-card 4.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .appshot-demo-flash,
+    .appshot-demo-card {
+      animation: none;
+      opacity: 0;
+    }
+  }
+
+  @keyframes appshot-demo-flash {
+    0%,
+    6% {
+      opacity: 0;
+    }
+    9% {
+      opacity: 0.85;
+    }
+    22%,
+    100% {
+      opacity: 0;
+    }
+  }
+
+  @keyframes appshot-demo-card {
+    0%,
+    8% {
+      opacity: 0;
+      transform: translate(0, 0) scale(1);
+    }
+    10% {
+      opacity: 1;
+      transform: translate(0, 0) scale(1);
+    }
+    28%,
+    78% {
+      opacity: 1;
+      transform: translate(-6%, -7%) scale(0.34);
+    }
+    90%,
+    100% {
+      opacity: 0;
+      transform: translate(4%, -7%) scale(0.34);
+    }
+  }
+
   @keyframes agentic-transcript-in {
     from {
       opacity: 0;
@@ -555,6 +610,11 @@ label,
     --diff-del: 344 78% 42%; /* #BE1744 */
     --diff-del-bg: 350 100% 69%; /* #FF617B, read at 22 % */
 
+    /* GitHub's "merged" purple, for the IDE Git tab's merged pull requests and
+       merged-into marks. Open, closed and queued reuse success, destructive
+       and warning; merged is the one GitHub state the set had no hue for. */
+    --gh-merged: 262 69% 58%; /* #8250DF — GitHub light */
+
     --radius: 0.75rem;
 
     /* --- Effect channels (see the note above) ---------------------------- */
@@ -744,6 +804,7 @@ label,
     --diff-add-bg: 143 43% 44%; /* #3FA266, read at 18 % */
     --diff-del: 350 96% 71%; /* #FC6B83 */
     --diff-del-bg: 336 100% 36%; /* #B80049, read at 20 % */
+    --gh-merged: 262 89% 72%; /* #A371F7 — GitHub dark; see :root */
 
     --accent-rgb: 61 139 255;
     --scrim-rgb: 0 0 0;

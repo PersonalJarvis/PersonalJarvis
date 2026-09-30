@@ -65,6 +65,9 @@ loguru>=0.7
 # Secrets (Windows Credential Manager / Linux Secret Service)
 keyring>=25.5
 
+# SSH to the user's own servers and virtual machines (Settings -> Computers)
+asyncssh>=2.21
+
 # Audio I/O
 sounddevice>=0.5
 # Upstream's native dependencies do not publish Windows ARM64 wheels. The

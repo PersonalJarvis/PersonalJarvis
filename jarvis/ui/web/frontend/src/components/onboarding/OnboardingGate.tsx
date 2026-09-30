@@ -27,7 +27,7 @@ const OnboardingFlow = lazy(() =>
  * onboarding/completed state changes until the final step, so the
  * restart-loop bug cannot come back through this path.
  */
-export function OnboardingGate() {
+export function OnboardingGate({ activeSection }: { activeSection?: string } = {}) {
   const onb = useOnboarding();
   // Set once the user completes the guide (the "Start" / complete() path
   // dispatches jarvis:onboarding-changed). It dismisses the stage even under
@@ -48,6 +48,10 @@ export function OnboardingGate() {
     () => new URLSearchParams(window.location.search).get("onboarding") === "force",
     [],
   );
+
+  // The IDE can connect a folder and launch agents without completing app-wide
+  // voice setup. An explicit onboarding preview still opens when requested.
+  if (!forced && ["agentic-ide", "chat-workspace", "agentic-ide-classic"].includes(activeSection ?? "")) return null;
 
   if (onb.loading) return null;
   if (onb.error) return null; // fail open — never trap the user

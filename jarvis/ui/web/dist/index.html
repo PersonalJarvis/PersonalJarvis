@@ -56,13 +56,32 @@
           /* storage blocked — the flat colour is the default anyway */
         }
         root.classList.toggle("jarvis-wallpaper", wallpaper);
+        window.__JARVIS_BOOT_STARTED_AT = performance.now();
       })();
     </script>
     <style>
       /* Boot splash — painted from index.html the instant the window opens, so
          there is NO blank screen while the (large) JS bundle loads + React
-         mounts. React's createRoot clears #root on its first render, so this is
-         replaced by the real UI automatically.
+         mounts. React's createRoot clears #root on its first render; AuthGate
+         then renders the SAME markup (src/components/BootSplash.tsx), carries
+         on in the same animation phase through --jbs-shift, drives the
+         progress line from real milestones, and plays the exit once the app
+         is mounted underneath. Keep the two markups in lockstep.
+
+         Restraint is the design: a flat, neutral ground (docs/BRAND.md — the
+         accent never fills a surface), the mark, the name, and one hairline
+         whose accent fill is the only colour on screen.
+
+         Choreography, measured from the moment the window opens:
+           0.00s  the mark settles in (fade + scale, with its shadow)
+           0.28s  the name rises into place
+           0.48s  the progress line and status fade in
+           ....   the line fills with each milestone (page painted, bundle
+                  running, backend answering, session granted); a soft light
+                  travels along the filled part so a long cold boot never
+                  looks frozen
+           exit   the content steps back and the ground dissolves into the
+                  app underneath (.jbs-exit)
 
          The two grounds match the pywebview window colour for their theme
          (jarvis/ui/theme.py WINDOW_BACKGROUND) and --background in index.css,
@@ -72,54 +91,153 @@
         --jbs-bg: #ffffff;
         --jbs-accent: #096cdc;
         --jbs-ring: rgba(9, 108, 220, 0.22);
+        --jbs-track: rgba(0, 0, 0, 0.07);
+        --jbs-rim: rgba(0, 0, 0, 0.08);
+        --jbs-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 12px 28px -6px rgba(0, 0, 0, 0.22);
         --jbs-name: #171717;
-        --jbs-sub: #666666;
+        --jbs-sub: #757575;
+        --jbs-ease: cubic-bezier(.16, 1, .3, 1);
       }
       :root.dark {
         --jbs-bg: #0a0a0a;
         --jbs-accent: #3d8bff;
         --jbs-ring: rgba(61, 139, 255, 0.2);
+        --jbs-track: rgba(255, 255, 255, 0.08);
+        --jbs-rim: rgba(255, 255, 255, 0.1);
+        --jbs-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 16px 36px -8px rgba(0, 0, 0, 0.8);
         --jbs-name: #fafafa;
-        --jbs-sub: #a1a1a1;
+        --jbs-sub: #7a7a7a;
       }
       html, body { margin: 0; height: 100%; background: var(--jbs-bg); }
       #jarvis-boot-splash {
-        position: fixed; inset: 0; display: flex; flex-direction: column;
-        align-items: center; justify-content: center; gap: 18px;
+        position: fixed; inset: 0; z-index: 2147483000;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 8px;
         background: var(--jbs-bg);
-        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
         color: var(--jbs-accent);
+        cursor: default; -webkit-user-select: none; -moz-user-select: none; user-select: none;
       }
-      #jarvis-boot-splash .ring {
-        width: 38px; height: 38px; border-radius: 50%;
-        border: 3px solid var(--jbs-ring);
-        border-top-color: var(--jbs-accent);
-        animation: jbs-spin 0.8s linear infinite;
+      #jarvis-boot-splash .jbs-group {
+        display: flex; flex-direction: column; align-items: center;
+        /* Optical centre: a touch above the geometric middle. */
+        margin-top: -4vh;
+      }
+      #jarvis-boot-splash .jbs-mark {
+        width: 96px; height: 96px; border-radius: 24%;
+        box-shadow: var(--jbs-shadow), 0 0 0 1px var(--jbs-rim);
+        animation: jbs-mark-in .9s var(--jbs-ease) both;
+        animation-delay: var(--jbs-shift, 0s);
+      }
+      #jarvis-boot-splash .jbs-mark img {
+        display: block; width: 100%; height: 100%;
+        -webkit-user-drag: none;
       }
       #jarvis-boot-splash .name {
-        font-size: 15px; font-weight: 600; letter-spacing: 0.04em;
+        margin-top: 28px;
+        font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -.02em;
         color: var(--jbs-name);
+        animation: jbs-rise .8s var(--jbs-ease) both;
+        animation-delay: calc(.28s + var(--jbs-shift, 0s));
+      }
+      #jarvis-boot-splash .name:empty { display: none; }
+      #jarvis-boot-splash .jbs-progress {
+        position: relative; overflow: hidden;
+        width: 144px; height: 2px; margin-top: 24px; border-radius: 2px;
+        background: var(--jbs-track);
+        animation: jbs-fade-in .6s ease both;
+        animation-delay: calc(.48s + var(--jbs-shift, 0s));
+      }
+      /* The fill. In static HTML it creeps to 30 % on its own — the page is
+         painted and the bundle is on its way. React then sets --jbs-p per
+         milestone (.jbs-live), and the transition carries it there. */
+      #jarvis-boot-splash .jbs-progress i {
+        position: absolute; inset: 0; border-radius: inherit;
+        background: var(--jbs-accent);
+        transform-origin: left center;
+        transform: scaleX(var(--jbs-p, 0));
+        animation: jbs-creep 2.4s cubic-bezier(.2, .7, .2, 1) both;
+        animation-delay: calc(.48s + var(--jbs-shift, 0s));
+      }
+      #jarvis-boot-splash .jbs-progress.jbs-live i {
+        animation: none;
+        transition: transform var(--jbs-pt, .8s) cubic-bezier(.2, .7, .2, 1);
+      }
+      /* A soft light travelling along the track, masked to the filled part by
+         mix-blend: it only shows where the accent is. */
+      #jarvis-boot-splash .jbs-progress::after {
+        content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 40%;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .55), transparent);
+        mix-blend-mode: soft-light;
+        transform: translateX(-100%);
+        animation: jbs-glide 2s cubic-bezier(.45, 0, .25, 1) infinite;
+        animation-delay: calc(1.2s + var(--jbs-shift, 0s));
       }
       #jarvis-boot-splash .sub {
-        font-size: 12px; color: var(--jbs-sub); letter-spacing: 0.06em;
-        text-transform: uppercase;
+        margin-top: 12px;
+        font-size: 12px; line-height: 16px; letter-spacing: .01em;
+        color: var(--jbs-sub); text-align: center;
+        animation: jbs-fade-in .6s ease both;
+        animation-delay: calc(.48s + var(--jbs-shift, 0s));
       }
-      @keyframes jbs-spin { to { transform: rotate(360deg); } }
+      /* Exit — added by AuthGate once the app is mounted underneath. */
+      #jarvis-boot-splash.jbs-exit {
+        pointer-events: none;
+        animation: jbs-fade-out .5s cubic-bezier(.4, 0, .2, 1) .1s forwards;
+      }
+      #jarvis-boot-splash.jbs-exit .jbs-group {
+        animation: jbs-step-back .36s cubic-bezier(.4, 0, 1, 1) forwards;
+      }
+      @keyframes jbs-mark-in {
+        from { opacity: 0; transform: scale(.92); }
+      }
+      @keyframes jbs-rise { from { opacity: 0; transform: translateY(6px); } }
+      @keyframes jbs-fade-in { from { opacity: 0; } }
+      @keyframes jbs-fade-out { to { opacity: 0; } }
+      @keyframes jbs-creep { to { transform: scaleX(.3); } }
+      @keyframes jbs-glide {
+        0% { transform: translateX(-100%); }
+        60%, 100% { transform: translateX(260%); }
+      }
+      @keyframes jbs-step-back {
+        to { opacity: 0; transform: scale(.97) translateY(-4px); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #jarvis-boot-splash .jbs-mark,
+        #jarvis-boot-splash .name,
+        #jarvis-boot-splash .jbs-progress,
+        #jarvis-boot-splash .sub,
+        #jarvis-boot-splash .jbs-progress::after,
+        #jarvis-boot-splash.jbs-exit .jbs-group { animation: none; }
+        #jarvis-boot-splash .jbs-progress i { animation: none; --jbs-p: .3; }
+        #jarvis-boot-splash .jbs-progress.jbs-live i { transition: none; }
+        #jarvis-boot-splash.jbs-exit { animation: jbs-fade-out .2s ease forwards; }
+      }
+      @media (max-height: 420px) {
+        #jarvis-boot-splash .jbs-mark { width: 64px; height: 64px; }
+        #jarvis-boot-splash .name { margin-top: 16px; }
+      }
     </style>
-    <script type="module" crossorigin src="/assets/index-pwdWfVvY.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BRlPX6Rw.css">
+    <script type="module" crossorigin src="/assets/index-iV84FIEE.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CSeBJn50.css">
   </head>
   <body>
     <div id="root">
       <div id="jarvis-boot-splash">
-        <div class="ring"></div>
-        <!-- Painted synchronously by the inline script below from the cached
-             assistant name (the user's chosen wake word, e.g. "Nico"). Left
-             empty in static HTML so the very first run — before any name is
-             cached — shows only the spinner, never a hardcoded / trademarked
-             name. -->
-        <div class="name"></div>
-        <div class="sub">Starting…</div>
+        <div class="jbs-group">
+          <div class="jbs-mark" aria-hidden="true">
+            <img src="/jarvis-gigi-256.png" alt="" width="256" height="256" />
+          </div>
+          <!-- Painted synchronously by the inline script below from the cached
+               assistant name (the user's chosen wake word, e.g. "Nico"). Left
+               empty in static HTML so the very first run — before any name is
+               cached — shows only the emblem, never a hardcoded / trademarked
+               name. -->
+          <div class="name"></div>
+          <div class="jbs-progress" aria-hidden="true"><i></i></div>
+          <div class="sub" role="status" aria-live="polite">Starting up…</div>
+        </div>
       </div>
     </div>
     <script>
@@ -129,7 +247,7 @@
       // adds effectively zero startup latency. The cache is written by the app
       // after each name resolve (see src/lib/assistantNameCache.ts; keep this
       // storage key in lockstep). On the very first run the cache is empty and
-      // the splash keeps just its spinner. A trademarked placeholder such as
+      // the splash keeps just its emblem. A trademarked placeholder such as
       // "Jarvis" is never painted here.
       (function () {
         try {
@@ -321,21 +439,32 @@
           if (!root || root.childElementCount > 0) return;
           var box = document.createElement("div");
           box.id = "jarvis-boot-splash";
-          var ring = document.createElement("div");
-          ring.className = "ring";
+          var group = document.createElement("div");
+          group.className = "jbs-group";
+          var mark = document.createElement("div");
+          mark.className = "jbs-mark";
+          mark.setAttribute("aria-hidden", "true");
+          mark.innerHTML = '<img src="/jarvis-gigi-256.png" alt="" width="256" height="256">';
+          var progress = document.createElement("div");
+          progress.className = "jbs-progress";
+          progress.setAttribute("aria-hidden", "true");
+          progress.appendChild(document.createElement("i"));
           var name = document.createElement("div");
           name.className = "name";
           try {
             name.textContent = (localStorage.getItem("jarvis.assistantName") || "").trim();
           } catch (e) {
-            /* storage blocked — the spinner alone is enough */
+            /* storage blocked — the emblem alone is enough */
           }
           var sub = document.createElement("div");
           sub.className = "sub";
-          sub.textContent = "Updating…";
-          box.appendChild(ring);
-          box.appendChild(name);
-          box.appendChild(sub);
+          sub.setAttribute("role", "status");
+          sub.textContent = "Updating interface…";
+          group.appendChild(mark);
+          group.appendChild(name);
+          group.appendChild(progress);
+          group.appendChild(sub);
+          box.appendChild(group);
           root.appendChild(box);
         }
 

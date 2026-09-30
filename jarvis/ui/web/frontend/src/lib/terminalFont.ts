@@ -47,8 +47,24 @@ export const TERMINAL_FONT_STACK =
 /** The display font at the head of the stack — the one that arrives late. */
 const DISPLAY_FAMILY = '"JetBrains Mono"';
 
+/**
+ * The weight body text draws with: Medium, not Regular.
+ *
+ * xterm's WebGL renderer rasterises glyphs with greyscale anti-aliasing, which
+ * draws JetBrains Mono Regular with a thin, grey stem — a native terminal's
+ * DirectWrite/Core Text pass renders the same size visibly fuller. Measured on
+ * 2026-09-29 against a pane in Windows Terminal (Cascadia Mono 12pt): its
+ * text had roughly eight times as many fully-inked pixels per line as ours,
+ * even though our foreground is the brighter colour. The Medium cut closes
+ * that gap without touching the palette; the cut ships in ../index.css.
+ */
+export const TERMINAL_FONT_WEIGHT = 500;
+
+/** The weight a TUI's bold spans draw with — still clearly above the body. */
+export const TERMINAL_FONT_WEIGHT_BOLD = 700;
+
 /** The weights xterm paints with: body text, and the bold spans a TUI uses. */
-const WEIGHTS = [400, 700] as const;
+const WEIGHTS = [TERMINAL_FONT_WEIGHT, TERMINAL_FONT_WEIGHT_BOLD] as const;
 
 /** Measured over a run of glyphs so per-character rounding cannot dominate. */
 const SAMPLE = "W".repeat(32);
@@ -206,7 +222,7 @@ export function terminalFontSettled(
   const fonts = deps.fonts !== undefined ? deps.fonts : browserFonts();
   if (!fonts) return true;
   try {
-    return displayFaceDeclared(fonts) && fonts.check(`400 ${fontSize}px ${DISPLAY_FAMILY}`);
+    return displayFaceDeclared(fonts) && fonts.check(`${TERMINAL_FONT_WEIGHT} ${fontSize}px ${DISPLAY_FAMILY}`);
   } catch {
     return true;
   }

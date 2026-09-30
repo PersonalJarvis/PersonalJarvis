@@ -135,6 +135,7 @@ class TaskRunner:
         | None = None,
         workflow_services: Any = None,
         owned_action_guard: Callable[[tuple[str, ...]], Awaitable[None]] | None = None,
+        agent_brain_wait_s: float = 120.0,
     ) -> None:
         self._store = store
         self._bus = bus
@@ -143,6 +144,8 @@ class TaskRunner:
         self._executor = tool_executor
         self._tools = tool_registry
         self._brain = agent_brain
+        #: How long an agent run waits for a brain wired after boot.
+        self._agent_brain_wait_s = agent_brain_wait_s
         self._approver = auto_approver
         #: ``(tags, text, status)`` after an agent action — where a tagged
         #: task's result also goes (a society agent's routine reports into its
@@ -234,18 +237,23 @@ class TaskRunner:
             log.exception("Task %s failed after %dms", task_id, duration_ms)
             tags = tuple(str(tag) for tag in spec.tags)
             if self._result_sink is not None and tags:
+                # The owner's chat gets a sentence; ``last_error`` keeps the
+                # precise ``Type: message`` line for the Runs tab.
+                notice = routine_failure_sentence(str(getattr(spec, "title", "") or ""), error_msg)
                 try:
-                    await self._result_sink(tags, error_msg, "failed")
+                    await self._result_sink(tags, notice, "failed")
                 except Exception:  # noqa: BLE001 — the run already failed; delivery is best effort
                     log.warning(
                         "task %s: failure sink failed for tags %s", task_id, tags, exc_info=True
                     )
             fail_ctx = {**ctx, "error": error_msg}
+            # Only an explicitly configured failure announcement speaks (and
+            # the voice holds it until the user's next call). An agent
+            # routine's failure goes to its own chat above, never to the voice
+            # unasked (RUB-95; it used to be read aloud as "RuntimeError: …").
             template = getattr(spec, "announce_on_failure", None)
             if template:
                 await self._announce(template, fail_ctx)
-            elif "society" in tags:
-                await self._announce(error_msg, fail_ctx)
             return
 
         duration_ms = int((time.perf_counter() - start) * 1000)
@@ -545,6 +553,19 @@ class TaskRunner:
             TaskStepRecorded(task_id=task_id, seq=seq, kind="log", source_layer="tasks.runner")
         )
 
+    async def _await_agent_brain(self, cancel_token: CancelToken | None) -> None:
+        """Give the agent brain time to arrive when a run starts before it.
+
+        The brain is wired after the deferred boot build, while the scheduler
+        is already firing the runs it missed: a routine due at startup died
+        with "Agent brain not configured" seconds before the brain existed
+        (live 2026-09-27 18:28:30). It waits, cancellable, instead.
+        """
+        deadline = time.monotonic() + self._agent_brain_wait_s
+        while self._brain is None and time.monotonic() < deadline:
+            self._check_cancel(cancel_token)
+            await asyncio.sleep(0.5)
+
     async def _run_agent(
         self,
         task_id: str,
@@ -621,6 +642,8 @@ class TaskRunner:
                         task_id=task_id, seq=seq, kind="log", source_layer="tasks.runner"
                     )
                 )
+        if self._brain is None and owned_result is None and owned_failed is None:
+            await self._await_agent_brain(cancel_token)
         if self._brain is None and owned_result is None:
             if owned_failed is not None:
                 raise RuntimeError(_seat_then_no_path(owned_failed)) from owned_failed
@@ -870,6 +893,28 @@ def _event_context(trigger_event: dict[str, Any] | None) -> dict[str, Any]:
         return {}
     drop = {"trace_id", "timestamp_ns", "source_layer"}
     return {k: v for k, v in trigger_event.items() if k not in drop}
+
+
+_EXCEPTION_PREFIX_RE = re.compile(r"^(?:[A-Za-z_][\w.]*(?:Error|Exception)):\s*")
+_EXCEPTION_NAME_RE = re.compile(r"[A-Za-z_][\w.]*(?:Error|Exception)")
+_AGENT_TITLE_TAG_RE = re.compile(r"^\s*\[agent:[^\]]*\]\s*")
+_ROUTINE_WRAPPER_RE = re.compile(r"^The routine chat failed:\s*", re.IGNORECASE)
+
+
+def routine_failure_sentence(title: str, error: str) -> str:
+    """How a failed routine is reported to a person: which one, and why.
+
+    ``last_error`` keeps the precise ``Type: message`` line for the Runs tab;
+    a reader of the agent's chat gets neither the exception class nor the
+    "The routine chat failed:" wrapper.
+    """
+    reason = _EXCEPTION_PREFIX_RE.sub("", error.strip())
+    reason = _ROUTINE_WRAPPER_RE.sub("", reason).strip().rstrip(".")
+    if _EXCEPTION_NAME_RE.fullmatch(reason):
+        reason = ""  # a bare class name tells a listener nothing
+    name = _AGENT_TITLE_TAG_RE.sub("", title).strip()
+    head = f'The routine "{name}" failed' if name else "A routine failed"
+    return f"{head}: {reason}." if reason else f"{head}."
 
 
 def _safe_format(template: str, ctx: dict[str, Any]) -> str:

@@ -162,7 +162,11 @@ def _society_profile_properties() -> dict[str, Any]:
     """Voice-editable profile fields; execution uses the existing roster REST route."""
     return {
         "title": _str_param("The agent's responsibility or role.", max_length=120),
-        "description": _str_param("Detailed responsibilities and instructions.", max_length=20_000),
+        "description": _str_param(
+            "Extra standing instructions in prose; the brief fields below are preferred.",
+            max_length=20_000,
+        ),
+        **_agent_brief_properties(),
         "tier": _str_param("Team role.", enum=["specialist", "orchestrator"]),
         "focus": {
             "type": "array", "items": {"type": "string"},
@@ -180,6 +184,75 @@ def _society_profile_properties() -> dict[str, Any]:
             "type": "integer", "minimum": 1,
             "description": "Maximum simultaneous assignments.",
         },
+        "permission_ceiling": _str_param(
+            "Highest risk tier it may run unasked.", enum=["safe", "monitor", "ask"],
+        ),
+        "grant_mode": _str_param(
+            "all = every connected capability; allowlist = only grants.",
+            enum=["all", "allowlist"],
+        ),
+        "grants": _str_list("Capability ids for an allowlist, only when requested."),
+        "denies": _str_list("Capability ids the agent must never use."),
+    }
+
+
+def _str_list(description: str) -> dict[str, Any]:
+    return {"type": "array", "items": {"type": "string"}, "description": description}
+
+
+def _agent_brief_properties() -> dict[str, Any]:
+    """The structured brief rendered into the agent's standing instructions."""
+    return {
+        "mission": _str_param("One sentence: what the agent exists for.", max_length=2_000),
+        "responsibilities": _str_list("Concrete recurring duties, each one actionable."),
+        "working_rules": _str_list("Step-by-step method: sources to read, order, priorities."),
+        "output_format": _str_param(
+            "Shape of every result: medium (artifact, chat, mail), length, sections.",
+            max_length=2_000,
+        ),
+        "boundaries": _str_list("What it must never do or only after approval."),
+        "success_criteria": _str_param("How a good result is recognised.", max_length=2_000),
+    }
+
+
+_AGENT_DESIGN_GUIDE = (
+    "Design the agent before calling: turn the user's words into a complete brief — "
+    "mission, 3-6 responsibilities, working rules naming the data sources, output "
+    "format and boundaries — inferring sensible defaults instead of copying the "
+    "request verbatim. Read readback.not_connected and tell the user which services "
+    "to connect. A requested schedule is a separate society-create-routine call."
+)
+
+
+def _routine_schedule_param(*, examples: bool = True) -> dict[str, Any]:
+    if not examples:
+        return {**_routine_schedule_param(), "description": "Same shape as in creation."}
+    return {
+        "type": "object",
+        "description": (
+            'When it runs. "every day at 8" = {"kind":"calendar","local_time":"08:00"}; '
+            'weekdays add "days":["mon","tue","wed","thu","fri"]; '
+            '"every 2 hours" = {"kind":"every","interval_seconds":7200}; '
+            'once = {"kind":"at_time","iso_timestamp":"2026-10-01T08:00:00"}. '
+            "timezone is filled from the user's device; pass it only when they name one."
+        ),
+        "properties": {
+            "kind": {"type": "string", "enum": ["calendar", "cron", "every", "at_time"]},
+            "local_time": {"type": "string", "description": "HH:MM on the user's clock."},
+            "days": _str_list("Weekdays mon..sun; omit for every day."),
+            "interval_seconds": {"type": "number", "minimum": 60},
+            "expression": {"type": "string", "description": "Five-field cron."},
+            "iso_timestamp": {"type": "string"},
+            "timezone": {"type": "string", "description": "IANA zone, e.g. Europe/Berlin."},
+        },
+        "required": ["kind"],
+    }
+
+
+def _routine_ref_params() -> dict[str, Any]:
+    return {
+        "agent_id": _str_param("Agent id or exact name.", min_length=1),
+        "task_id": _str_param("Routine id from society-list-routines.", min_length=1),
     }
 
 
@@ -199,7 +272,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "(ceiling, grant mode, grants, denies) and cannot exceed them. Read the "
                 "returned agent and created flag: an existing name is adopted, never "
                 "duplicated. Use society-switch-agent-model only if a different provider "
-                "is requested."
+                "is requested. " + _AGENT_DESIGN_GUIDE
             ),
             method="POST", path="/api/society/agents", ui_section="agents",
             params={"type": "object", "properties": {
@@ -288,6 +361,112 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "de": ("wechsle das modell von Scout",),  # i18n-allow: input vocab
                 "en": ("change Scout's model",),
                 "es": ("cambia el modelo de Scout",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="society-archive-agent",
+            title="Archive a team agent",
+            description=(
+                "Archive (remove from the team) one agent on explicit user request; its "
+                "chat history is kept. Delete its routines first with "
+                "society-routine-operation so none keeps firing."
+            ),
+            method="DELETE", path="/api/society/agents/{agent_id}",
+            path_params=("agent_id",), ui_section="agents", dangerous=True,
+            params={"type": "object", "properties": {
+                "agent_id": _str_param("Agent id or exact name.", min_length=1),
+            }, "required": ["agent_id"]},
+            voice_aliases={
+                "de": ("lösche den agenten Scout",),  # i18n-allow: input vocab
+                "en": ("delete the agent Scout",),
+                "es": ("elimina el agente Scout",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="society-list-routines",
+            title="List an agent's routines",
+            description=(
+                "List one agent's scheduled routines with ids, schedules, state and next run."
+            ),
+            method="GET", path="/api/society/agents/{agent_id}/routines",
+            path_params=("agent_id",), ui_section="agents",
+            params={"type": "object", "properties": {
+                "agent_id": _str_param("Agent id or exact name.", min_length=1),
+            }, "required": ["agent_id"]},
+            voice_aliases={
+                "de": ("welche routinen hat Scout",),  # i18n-allow: input vocab
+                "en": ("which routines does Scout have",),
+                "es": ("qué rutinas tiene Scout",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="society-create-routine",
+            title="Schedule a routine for an agent",
+            description=(
+                "The ONLY way to make an agent do something on a schedule (daily briefing, "
+                "weekly report, every morning at 8). Never use create-skill for this. The "
+                "prompt is the complete task the agent runs each time: sources, steps, "
+                "output. Speak the returned next_run; on timezone_required ask the user."
+            ),
+            method="POST", path="/api/society/agents/{agent_id}/routines",
+            path_params=("agent_id",), ui_section="agents", dangerous=True,
+            params={"type": "object", "properties": {
+                "agent_id": _str_param("Agent id or exact name.", min_length=1),
+                "title": _str_param("Short routine name.", min_length=1, max_length=200),
+                "prompt": _str_param(
+                    "Self-contained instructions for each run.", min_length=1, max_length=16_000,
+                ),
+                "schedule": _routine_schedule_param(),
+                "announce_on_success": _str_param(
+                    "Optional line Jarvis says when a run finishes.", max_length=500,
+                ),
+            }, "required": ["agent_id", "title", "prompt", "schedule"]},
+            voice_aliases={
+                "de": ("gib mir jeden morgen um acht ein briefing",),  # i18n-allow: input vocab
+                "en": ("give me a briefing every morning at eight",),
+                "es": ("dame un resumen cada mañana a las ocho",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="society-update-routine",
+            title="Change an agent's routine",
+            description=(
+                "Change a routine's title, prompt or schedule. Send all three: read the "
+                "current values with society-list-routines and change only what was asked."
+            ),
+            method="PATCH", path="/api/society/agents/{agent_id}/routines/{task_id}",
+            path_params=("agent_id", "task_id"), ui_section="agents",
+            params={"type": "object", "properties": {
+                **_routine_ref_params(),
+                "title": _str_param("Routine name.", min_length=1, max_length=200),
+                "prompt": _str_param("Full instructions.", min_length=1, max_length=16_000),
+                "schedule": _routine_schedule_param(examples=False),
+            }, "required": ["agent_id", "task_id", "title", "prompt", "schedule"]},
+            voice_aliases={
+                "de": ("verschieb das briefing auf sieben uhr",),  # i18n-allow: input vocab
+                "en": ("move the briefing to seven",),
+                "es": ("mueve el resumen a las siete",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="society-routine-operation",
+            title="Pause, resume, delete or run a routine",
+            description=(
+                "Pause, resume, delete or run-now one agent routine on user request."
+            ),
+            method="POST",
+            path="/api/society/agents/{agent_id}/routines/{task_id}/operation",
+            path_params=("agent_id", "task_id"), ui_section="agents", dangerous=True,
+            params={"type": "object", "properties": {
+                **_routine_ref_params(),
+                "operation": _str_param(
+                    "What to do.", enum=["pause", "resume", "delete", "run"],
+                ),
+            }, "required": ["agent_id", "task_id", "operation"]},
+            voice_aliases={
+                "de": ("pausiere das morgenbriefing",),  # i18n-allow: input vocab
+                "en": ("pause the morning briefing",),
+                "es": ("pausa el resumen de la mañana",),  # i18n-allow: input vocab
             },
         ),
         # ------------------------------------------------------ providers
@@ -1476,78 +1655,6 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "de": ("stell meine terminals wieder her",),  # i18n-allow: input vocab
                 "en": ("resume all my coding sessions",),
                 "es": ("restaura mis terminales",),  # i18n-allow: input vocab
-            },
-        ),
-        AppCommand(
-            id="agentic-ide-interrupted",
-            title="List interrupted Agentic-IDE sessions",
-            description=(
-                "Which coding terminals came back holding their conversation "
-                "and have been told nothing since. That is what a restart "
-                "leaves behind: reopening a workspace reconnects each pane to "
-                "the conversation it was having, but the coding CLI reads that "
-                "transcript and then WAITS at its prompt — so an agent stopped "
-                "mid-task looks exactly like one that finished. Use this to "
-                "answer 'what was interrupted?' before continuing anything. "
-                "'continuable' is per pane: a pane whose agent is not running "
-                "cannot be typed into, and 'blocked_reason' says why."
-            ),
-            method="GET",
-            path="/api/agentic-ide/interrupted",
-            ui_section="agentic-ide",
-            voice_aliases={
-                "de": ("was wurde unterbrochen",),  # i18n-allow: input vocab
-                "en": ("which coding sessions were interrupted",),
-                "es": ("qué sesiones se interrumpieron",),  # i18n-allow: input vocab
-            },
-        ),
-        AppCommand(
-            id="agentic-ide-continue-interrupted",
-            title="Continue interrupted Agentic-IDE sessions",
-            description=(
-                "Tell the coding terminals a restart left standing still to "
-                "carry on: 'continue' is typed into each one and submitted. "
-                "With no names, every interrupted pane in every open workspace "
-                "— which is the shape of the problem, since a restart stops "
-                "them all at once. CHECK THE REPLY: 'continued' really started, "
-                "'queued' had not finished starting yet and will carry on by "
-                "itself within seconds (say 'shortly', not 'done'), "
-                "'unconfirmed' had the text typed in without a confirmed "
-                "submit (it may be sitting in the input box — tell the user to "
-                "look at that pane), and 'failed' names what refused and why. "
-                "Reporting an unconfirmed or queued pane as running is the one "
-                "wrong thing to do with this answer. Pressing twice is safe: "
-                "each pane is claimed before anything is typed, so a repeat "
-                "call cannot send a second 'continue' into the same agent."
-            ),
-            method="POST",
-            path="/api/agentic-ide/interrupted/continue",
-            params={
-                "type": "object",
-                "properties": {
-                    "names": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "Call-signs to continue. Omit or leave empty to "
-                            "continue every interrupted pane."
-                        ),
-                    },
-                    "prompt": {
-                        "type": "string",
-                        "description": (
-                            "What to send instead of the default 'continue'. "
-                            "The agent still holds its whole conversation, so "
-                            "short beats elaborate."
-                        ),
-                    },
-                },
-            },
-            ui_section="agentic-ide",
-            voice_aliases={
-                "de": ("mach mit den unterbrochenen sitzungen weiter",),  # i18n-allow: input vocab
-                "en": ("continue the interrupted coding sessions",),
-                "es": ("continúa las sesiones interrumpidas",),  # i18n-allow: input vocab
             },
         ),
     )

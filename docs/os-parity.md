@@ -1,5 +1,80 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Persistent Agentic IDE terminals (2026-09-28, T3)
+
+Coding-agent panes now live in a separate PTY host process
+(`jarvis/terminal/pty_host.py`) instead of the app process, so closing, quitting
+or restarting the app detaches from the agents rather than killing them. The
+next start attaches to the host, reopens the last open workspaces in their
+saved layout, and re-joins every pane whose agent is still running (with its
+screen replayed). A reboot ends the host with everything in it; those panes
+then continue through the existing `--resume` path. Closing a pane or a
+workspace still ends its agent.
+
+One capability probe, `pty_host_client.host_available()` (a PTY backend exists
+and the build is not frozen), decides it on every OS. The host is spawned
+detached through `jarvis.ui.relauncher.spawn_detached`: on Windows with
+`DETACHED_PROCESS | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB` (retried
+without breakaway when a parent job forbids it), on macOS and Linux with
+`start_new_session`. It owns the ConPTY / POSIX PTYs and their kill-on-close
+containers (Job Object / process group), listens on 127.0.0.1 with a random
+token handed over in the environment, and exits after 60 s with no terminal
+and no client. Where the probe fails, or the host cannot start, the registry
+keeps the in-process pool: terminals work as before and die with the app. A
+headless `python:3.11-slim` without `ptyprocess` reports the same missing-PTY
+error it always did.
+
+After a power-off the host is gone, so the next start resumes every agent that
+was running on its own conversation (each CLI's resume argument), in every
+workspace. Jarvis types nothing into any pane: Claude Code panes are resumed
+with the CLI's own `CLAUDE_CODE_RESUME_INTERRUPTED_TURN`, which finishes a
+turn the power cut interrupted (measured: killed at step 26 of 30, resumed to
+30 with nothing typed; without it the pane waited). That path is identical on
+every OS; it depends only on login autostart, which is on by default on
+Windows, macOS and Linux (and a no-op on a headless host).
+
+Which conversation a Claude pane is on is tracked the way Herdr tracks it: each
+pane is launched with `--settings` adding a `SessionStart` hook
+(`jarvis/agentic_ide/claude_session_hook.py`, stdlib only, forward-slash
+command that runs under bash or cmd) that records every conversation start,
+including `/clear`, `/resume` and compaction, so a reboot resumes the current
+one rather than the launch id (herdrdev/herdr#4059). Verified live on Windows
+with Claude Code 2.1.283; POSIX runs the same script through `sys.executable`.
+
+"Rebooted" is measured, not guessed: the host records the machine's boot time
+(`psutil.boot_time()`, all three OSes), and a host whose process is alive in
+this boot but slow to answer raises `HostUnreachable` — the app waits instead
+of resuming a second copy of each agent. Windows only: the host is started
+with `CREATE_BREAKAWAY_FROM_JOB`, and when the app's job refuses breakaway,
+through WMI `Win32_Process.Create` (verified: parent `WmiPrvSE.exe`, ConPTY
+output works); POSIX uses `start_new_session`, which no job semantics can
+override. A host that dies under a running app is replaced and its agents
+resumed the same way.
+
+Evidence: Windows verified live — the host survives its client's hard exit
+with the same PIDs and a replayed screen, and a real Claude Code pane killed
+together with its host came back `--resume`d on the same session id and
+recalled its conversation. Linux: the host process test and the client suite
+pass in `python:3.11-slim` (kernel 6.6, `ptyprocess`). macOS runs the same
+`ptyprocess` path and has not had a live run yet.
+
+## iGentic project workspaces (T3)
+
+Project ownership, workspace snapshots, eight-session ordering and addressed
+task receipts use portable Python/SQLite and the same browser UI on all three
+OSes. Terminal capability is checked through `workspace.agents.pty_available`:
+Windows retains ConPTY, Linux and macOS retain the existing POSIX backend, and
+an unavailable backend is reported without importing a new native dependency.
+ChatGPT Live and native Gemini/local voice use the same supervisor tool and
+permission boundary. There is no OS-specific routing or credential path.
+
+`tests/contract/test_workspace_orchestration.py` covers explicit and ambient
+resolution, ambiguous references, background dispatch, immutable targets and
+durable retry behavior. Native macOS desktop/PTY acceptance and real-device
+audio are not established by the portable tests. See
+[workspace architecture](igentic-workspaces.md) for the product and execution
+contract.
+
 ## Window caption (2026-09-21, T2)
 
 The desktop window is frameless on Windows, macOS and Linux. The page draws
@@ -457,12 +532,16 @@ implementations, not stubs.
 |---|---|
 | Computer-Use / desktop actions (click, type, hotkey, scroll, drag, windows, apps, screenshots, UI trees) | Full per-OS backends (Win32/UIA, Quartz/AX, xdotool/AT-SPI); honest degradation on Wayland/headless/missing TCC grants |
 | On-demand Screen Context | One-shot capture is wired into the production brain on Windows, macOS, and Linux/X11; UIA/AX/AT-SPI text is source-filtered, the indicator precedes capture, and Wayland/headless/missing grants refuse honestly |
+| Appshots (front-window capture on a shortcut, button or request) | Capture, privacy and delivery are OS-neutral (Screen Context engine, `jarvis/appshot`). The both-Alt shortcut reads key state per OS: Windows `GetAsyncKeyState`, macOS `CGEventSourceKeyState` (Input Monitoring grant), Linux/X11 `XQueryKeymap`; Wayland/headless report it unavailable on the Appshots page. The flash is the PySide6 overlay where one can run. Verified live on Windows only; see `docs/appshots.md` |
 | Voice / audio (capture, playback, VAD, wake, STT, TTS, realtime) | Clean; headless disables voice honestly; WASAPI logic is inert-by-data off Windows |
 | Core (launcher, config, keyring, restart, autostart, tray, elevation, paths) | Clean; per-OS autostart (Registry / LaunchAgent / XDG `.desktop`), keyring falls back to a 0600 file on headless hosts |
 | Data / agents (wiki, contacts, telephony, sessions, missions, skills, self-mod, channels, MCP) | Clean; mission workers run on POSIX with a real process-group reaper |
 | Agent society hands (own shell, browser via browser-use, learned skills) | Shell: local subprocess in the agent's workspace on every OS (Git Bash/PowerShell/bash/sh pick as the chat's folder tools), no container by decision. Browser: browser-use lives in a managed venv under the data dir (its pins collide with the app's), installed on demand — `uv`/`venv`, a 3.11–3.13 interpreter preferred, Chromium downloaded once; headless runs need no display, so a headless Linux box runs agents' browsers; the headed login session needs a display (409 without one is the follow-up); attach mode needs a running Chrome with `--remote-debugging-port`. Learning is pure files + the brain, OS-neutral |
 | Agent society substrate (roster, typed board, scheduler, rooms, mission bridge, `/api/society`) | Clean; pure asyncio + SQLite (`data/society.db`, WAL) and FastAPI, no OS API, no GPU, no audio. Full REST parity from a headless `python:3.11-slim` (`tests/contract/test_society_substrate.py` covers messages, rename with stable agent/chat IDs, and archive). The agent sidebar's hide choice is a browser-local display preference on every desktop OS; it does not change roster state. The dynamic `jarvis api society …` CLI layer covers every route. FTS5 over knowledge summaries is optional — a SQLite without it degrades to plain reads (same class as P-05). Per-agent screens (`agent_screen`) are M6 and keep their own per-OS probes |
+
 | Typed chat on the Jarvis surface (brain runner, folder tools, approval card, CLI seats as Jarvis) | Clean; pure asyncio + SQLite, no OS API. Every CLI spawn keeps `NO_WINDOW_CREATIONFLAGS` and UTF-8 stdio. The identity for a Claude Code seat travels as a FILE under the app data dir (`jarvis_harness.write_identity_file`, removed after the turn) because Windows caps a command line at 32 767 characters; Codex and agy take it on stdin (no limit), Grok Build a compact cut on argv (`COMPACT_MAX_CHARS`). The MCP session header and the approval bridge are transport-level and OS-neutral |
+
+Persistent Society agent teams use the same SQLite and FastAPI capability on Windows, macOS, and Linux. Membership lives in `society.db`; the frontend opens two existing canonical agent chats side by side with separate socket stores. Grouping never changes agent permissions, routing, or chat history. Headless membership persistence is covered by `tests/contract/test_society_substrate.py::test_persistent_group_membership_headless`.
 
 ## Open parity gaps
 

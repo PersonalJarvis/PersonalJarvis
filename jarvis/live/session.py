@@ -497,9 +497,42 @@ class LiveVoiceSession:
                     "continuous": True,
                 }
             )
-        except BaseException:
+        except BaseException as exc:
+            if isinstance(exc, Exception):
+                await self._announce_start_failure(exc)
             await self.end(reason="error")
             raise
+
+    async def _announce_start_failure(self, exc: Exception) -> None:
+        """Say why the call ends instead of hanging up in silence.
+
+        Live 2026-09-29: an empty API balance made every wake end after a
+        second with no word, which read as a broken wake word.
+        """
+        from jarvis.brain.provider_test import (
+            NO_CREDITS,
+            RATE_LIMITED,
+            classify_provider_error,
+        )
+        from jarvis.realtime.session import _handshake_failure_message
+
+        status = classify_provider_error(str(exc))
+        cause = {NO_CREDITS: "no_credits", RATE_LIMITED: "rate_limited"}.get(
+            status, "unavailable"
+        )
+        log.warning("Live session could not start (cause=%s): %s", cause, exc)
+        try:
+            await self._send_json(
+                {
+                    "type": "error_spoken",
+                    "text": _handshake_failure_message(cause, self._language),
+                    "language": self._language,
+                    "spoken_kind": "reply",
+                    "provider": self.active_provider,
+                }
+            )
+        except Exception:  # noqa: BLE001 — the start failure still propagates
+            log.warning("Live start failure notice could not be sent", exc_info=True)
 
     def _take_initial_context(self) -> list[dict]:
         from jarvis.core.runtime_refs import get_brain_manager
@@ -934,6 +967,46 @@ class LiveVoiceSession:
             return False
         await self._connection.send(
             {"type": "session.commentary.append", "delegation_id": None, "content": text[:1000]}
+        )
+        return True
+
+    async def attach_appshot(self, image: bytes, mime: str, note: str) -> bool:
+        """Put an appshot into the thinking backend's context, silently.
+
+        The voice model only hears that it exists; the picture itself goes to
+        the backend conversation, which answers every question about it. No
+        response is requested: the user's next words are the question.
+        """
+        if not self.is_active or self._recovering or self._resume_needs_input:
+            return False
+        await self._connection.send(
+            {
+                "type": "session.thinking.append",
+                "delegation_id": None,
+                "content": (
+                    "The user just took an appshot of their front window. It is "
+                    "in your backend's context. Delegate any question about what "
+                    "they are looking at; do not describe it yourself, and do "
+                    "not comment on the appshot unless asked."
+                ),
+            }
+        )
+        await self._connection.send(
+            {
+                "type": "response.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": note},
+                        {
+                            "type": "input_image",
+                            "image_url": f"data:{mime};base64,"
+                            + base64.b64encode(image).decode("ascii"),
+                        },
+                    ],
+                },
+            }
         )
         return True
 

@@ -87,16 +87,6 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   promptTerminal: vi.fn(),
   // Reached from the toolbar's settings panel, which the grid always renders.
   setIdeActiveAccount: vi.fn(),
-  // Polled by the toolbar's "Continue" control, which the grid also always
-  // renders. Answers "nothing was interrupted" so these tests see the ordinary
-  // toolbar rather than a badge none of them are about.
-  fetchInterrupted: vi.fn(async () => ({
-    count: 0,
-    continuable_count: 0,
-    prompt: "continue",
-    panes: [],
-  })),
-  continueInterrupted: vi.fn(),
   // Polled by the header bell, which the grid also always renders. Answers
   // "nothing has stopped" so these tests see a plain toolbar rather than a
   // badge none of them are about.
@@ -791,6 +781,39 @@ describe("maximize", () => {
     // Nova is hidden, never removed — removing it would kill its agent.
     expect(screen.getByTestId("pane-Nova")).toBeTruthy();
     expect(screen.getByTestId("pane-cell-Nova").className).toContain("hidden");
+  });
+
+  it("zooms with a compositor transform, never the layout glide", () => {
+    // Every element measures as the whole 1000x600 workspace, so the maximized
+    // pane ends at the full surface and starts at its (smaller) tile.
+    const rect = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockReturnValue(DOMRect.fromRect({ x: 0, y: 0, width: 1000, height: 600 }));
+    const calls: { element: Element; keyframes: Keyframe[] }[] = [];
+    const original = HTMLElement.prototype.animate;
+    HTMLElement.prototype.animate = function (this: HTMLElement, keyframes) {
+      calls.push({ element: this, keyframes: keyframes as Keyframe[] });
+      return { cancel() {}, onfinish: null, oncancel: null } as unknown as Animation;
+    };
+    try {
+      renderGrid();
+      fireEvent.click(screen.getByTestId("pane-maximize-Mika"));
+      const cell = screen.getByTestId("pane-cell-Mika");
+      const zoom = calls.find((call) => call.element === cell);
+      expect(String(zoom?.keyframes[0].transform)).toMatch(/scale\(/);
+      calls.length = 0;
+      fireEvent.click(screen.getByTestId("pane-maximize-Mika"));
+      // The commit that swaps the box back must not also start the
+      // left/top/width/height transition.
+      expect(cell.className).not.toContain("transition-[left,top,width,height]");
+      // The neighbours fade back in on opacity alone.
+      const nova = screen.getByTestId("pane-cell-Nova");
+      const fade = calls.find((call) => call.element === nova);
+      expect(fade?.keyframes[0].opacity).toBe(0);
+    } finally {
+      HTMLElement.prototype.animate = original;
+      rect.mockRestore();
+    }
   });
 });
 
@@ -2654,11 +2677,11 @@ describe("terminal text size", () => {
     // implementation, so a size one test stores would still be answered to the
     // next one.
     vi.mocked(api.fetchTerminalUiPreferences).mockResolvedValue({
-      terminal_font_size: 13,
+      terminal_font_size: 15,
       stored: false,
       min: 10,
       max: 20,
-      default: 13,
+      default: 15,
     });
   });
 
@@ -2675,7 +2698,7 @@ describe("terminal text size", () => {
       stored: true,
       min: 10,
       max: 20,
-      default: 13,
+      default: 15,
     });
     renderGrid();
 
@@ -2692,8 +2715,8 @@ describe("terminal text size", () => {
 
     fireEvent.click(screen.getByLabelText("Larger terminal text"));
 
-    await waitFor(() => expect(api.saveTerminalFontSize).toHaveBeenCalledWith(14));
-    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("14");
+    await waitFor(() => expect(api.saveTerminalFontSize).toHaveBeenCalledWith(16));
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("16");
   });
 
   it("adopts a size chosen before the backend remembered them", async () => {
@@ -2716,7 +2739,7 @@ describe("terminal text size", () => {
 
     await waitFor(() => expect(warn).toHaveBeenCalled());
     fireEvent.click(screen.getByLabelText("Smaller terminal text"));
-    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("12");
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("14");
     warn.mockRestore();
   });
 
@@ -2728,17 +2751,17 @@ describe("terminal text size", () => {
     const pane = () => screen.getByTestId("pane-Mika").getAttribute("data-font-size");
 
     fireEvent.keyDown(window, { key: "+", ctrlKey: true });
-    await waitFor(() => expect(pane()).toBe("14"));
+    await waitFor(() => expect(pane()).toBe("16"));
     fireEvent.keyDown(window, { key: "+", ctrlKey: true });
-    expect(pane()).toBe("15");
-    expect(screen.getByTestId("agentic-font-size-value").textContent).toBe("15");
+    expect(pane()).toBe("17");
+    expect(screen.getByTestId("agentic-font-size-value").textContent).toBe("17");
 
     fireEvent.keyDown(window, { key: "-", ctrlKey: true });
-    expect(pane()).toBe("14");
+    expect(pane()).toBe("16");
 
     fireEvent.keyDown(window, { key: "0", ctrlKey: true });
-    expect(pane()).toBe("13");
-    await waitFor(() => expect(api.saveTerminalFontSize).toHaveBeenLastCalledWith(13));
+    expect(pane()).toBe("15");
+    await waitFor(() => expect(api.saveTerminalFontSize).toHaveBeenLastCalledWith(15));
   });
 
   it("claims the chord so the WebView does not zoom the whole window as well", async () => {
@@ -2754,7 +2777,7 @@ describe("terminal text size", () => {
 
     // AltGr arrives as Ctrl+Alt, and the character has to reach the agent.
     expect(fireEvent.keyDown(window, { key: "+", ctrlKey: true, altKey: true })).toBe(true);
-    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("13");
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("15");
   });
 
   it("leaves the chord alone while another section is on screen", async () => {
@@ -2764,7 +2787,7 @@ describe("terminal text size", () => {
     await waitFor(() => expect(api.fetchTerminalUiPreferences).toHaveBeenCalled());
 
     fireEvent.keyDown(window, { key: "+", ctrlKey: true });
-    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("13");
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("15");
   });
 
   it("stops at the supported bounds instead of stepping past them", async () => {
@@ -2773,7 +2796,7 @@ describe("terminal text size", () => {
       stored: true,
       min: 10,
       max: 20,
-      default: 13,
+      default: 15,
     });
     renderGrid();
     await waitFor(() =>
@@ -2794,7 +2817,7 @@ describe("terminal text size", () => {
       stored: true,
       min: 10,
       max: 20,
-      default: 13,
+      default: 15,
     });
     renderGrid();
 

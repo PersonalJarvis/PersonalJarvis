@@ -289,3 +289,10 @@ class TestTheRealAppServesTheHoldingPage:
 
         dist = _dist(tmp_path, index=False)
         assert isinstance(self._response(monkeypatch, dist), HTMLResponse)
+
+
+def test_a_missing_index_during_a_rebuild_is_not_a_conflict(tmp_path, caplog) -> None:
+    """A rebuild deletes index.html for a moment: that is the holding-page case,
+    not a conflicted merge, and it logged a warning with a traceback each time."""
+    assert recover_conflicted_index(tmp_path / "index.html", tmp_path) is None
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]

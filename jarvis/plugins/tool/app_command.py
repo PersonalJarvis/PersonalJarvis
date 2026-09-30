@@ -320,7 +320,11 @@ class RegistryCommandTool:
         if key:
             headers["Authorization"] = f"Bearer {key}"
         from jarvis.society.inherit import caller_session_id
+        from jarvis.tasks.context import CLIENT_TIMEZONE_HEADER, turn_timezone
 
+        zone = turn_timezone()
+        if zone:
+            headers[CLIENT_TIMEZONE_HEADER] = zone
         session_id = caller_session_id()
         if session_id:
             from jarvis.agent_chat.jarvis_harness import HEADER_NAME
@@ -353,6 +357,12 @@ class RegistryCommandTool:
 
         if resp.status_code >= 400:
             detail = data.get("detail", data) if isinstance(data, dict) else data
+            # The app's own validation message, so a refused voice command is
+            # diagnosable after the fact (it is not a provider error body).
+            log.info(
+                "app command %s refused: HTTP %s %s",
+                cmd.id, resp.status_code, str(detail)[:500],
+            )
             return ToolResult(
                 success=False,
                 output={"command_id": cmd.id, "status": resp.status_code},

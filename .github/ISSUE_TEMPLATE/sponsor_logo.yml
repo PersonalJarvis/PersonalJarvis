@@ -1,0 +1,51 @@
+name: Sponsor logo
+description: Galaxy sponsors — upload the logo for the Sponsors line at the bottom of the README.
+title: "[Sponsor logo]: "
+labels: ["sponsor"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for sponsoring Personal Jarvis! 🌌
+
+        This form is for the **Galaxy tier** ($12,000 a month) or a custom agreement.
+        We check every submission against an active sponsorship before anything goes into the README.
+        By default we use the avatar of the GitHub account that sponsors — only fill this in if you want a different logo.
+  - type: input
+    id: sponsor_account
+    attributes:
+      label: Sponsoring GitHub account
+      description: The user or organization account that pays the sponsorship.
+      placeholder: "@your-company"
+    validations:
+      required: true
+  - type: input
+    id: display_name
+    attributes:
+      label: Name to show
+      description: Used as the logo's alt text.
+      placeholder: "Your Company"
+    validations:
+      required: true
+  - type: input
+    id: link
+    attributes:
+      label: Link
+      description: Where the logo should point. Plain URL, no tracking parameters.
+      placeholder: "https://example.com"
+    validations:
+      required: true
+  - type: textarea
+    id: logo
+    attributes:
+      label: Logo
+      description: Drag and drop your logo here. SVG preferred, otherwise a PNG at least 400 px wide with a transparent background. One version for light and one for dark backgrounds is ideal.
+    validations:
+      required: true
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Terms
+      options:
+        - label: I have read the README sponsor terms in [SPONSORS.md](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SPONSORS.md) — the maintainer may decline or end the placement at any time; it stays until the end of the month already paid.
+          required: true

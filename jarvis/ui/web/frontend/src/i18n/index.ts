@@ -98,7 +98,7 @@ export function loadUiLocale(lang: UiLanguage): Promise<void> {
  * it mounts. Until the chunk has arrived, `t()` returns the key, so a view
  * that cares waits for `ready` before it paints.
  */
-export type LocaleChunk = "marketplace" | "local_models" | "society";
+export type LocaleChunk = "marketplace" | "local_models" | "society" | "computers";
 
 const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknown>>> = {
   marketplace: {
@@ -115,6 +115,11 @@ const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknow
     en: () => import("./locales/society/en.json"),
     de: () => import("./locales/society/de.json"),
     es: () => import("./locales/society/es.json"),
+  },
+  computers: {
+    en: () => import("./locales/computers/en.json"),
+    de: () => import("./locales/computers/de.json"),
+    es: () => import("./locales/computers/es.json"),
   },
 };
 

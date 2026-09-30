@@ -37,9 +37,11 @@ from jarvis.artifacts.design_guide import (
     CHARTS,
     DESIGN_SYSTEM,
     DONE_MEANS,
+    PAGE_ANATOMY,
     READ_THE_REQUEST,
     THEME_BOOTSTRAP_JS,
     THEME_CSS,
+    WRITING,
 )
 
 # How much of a previous version rides along on a revision. The worker rewrites
@@ -220,6 +222,8 @@ def build_artifact_brief(
         FACTS_RULE,
         *([source_data.strip()] if source_data and source_data.strip() else []),
         READ_THE_REQUEST,
+        PAGE_ANATOMY,
+        WRITING,
         DESIGN_SYSTEM,
         "\n".join(
             [

@@ -218,6 +218,32 @@ def credential_ready_wiki_providers(
     return ready
 
 
+def background_wiki_providers(
+    *,
+    available: set[str] | frozenset[str],
+    config: Any,
+    is_subscription: Callable[[str], bool] | None = None,
+) -> set[str]:
+    """Providers wiki background work may bill: subscriptions before any key.
+
+    Memory curation is background work the user never waits on, so while any
+    subscription login is connected it runs ONLY on subscriptions plus keyless
+    local providers and never touches a per-token key (live 2026-09-29: an
+    OpenAI key added for voice paid ~$0.30 of wiki calls after a two-minute
+    chat). With no subscription connected the full credential-ready set stays
+    in play, so a single-key install keeps a working wiki (AP-21/AP-22).
+    """
+    from jarvis.core.config import PROVIDER_SECRET_CANDIDATES
+
+    ready = credential_ready_wiki_providers(available=available, config=config)
+    probe = is_subscription or (lambda name: subscription_login_ready(name) is True)
+    subscriptions = {name for name in ready if probe(name)}
+    if not subscriptions:
+        return ready
+    keyless = {name for name in ready if name not in PROVIDER_SECRET_CANDIDATES}
+    return subscriptions | keyless
+
+
 def build_wiki_provider_chain(
     *,
     primary: str,
@@ -617,6 +643,7 @@ async def complete_with_fallback(
 
 
 __all__ = [
+    "background_wiki_providers",
     "build_wiki_provider_chain",
     "complete_with_fallback",
     "credential_ready_wiki_providers",

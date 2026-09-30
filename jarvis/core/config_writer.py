@@ -993,6 +993,41 @@ def set_screen_context_settings(
         _atomic_write(path, out)
 
 
+#: Keys ``[appshot]`` accepts — same allowlist reasoning as Screen Context.
+#: The master switch is ``[screen_context].enabled``, written by the setter above.
+APPSHOT_SETTING_KEYS: frozenset[str] = frozenset({"hotkey", "target", "sound", "effect"})
+
+
+def set_appshot_settings(
+    values: dict[str, str | bool],
+    *,
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist a validated ``[appshot]`` patch in one atomic replacement."""
+    unknown = set(values).difference(APPSHOT_SETTING_KEYS)
+    if unknown:
+        raise ValueError(f"unknown appshot setting(s): {sorted(unknown)!r}")
+    if not values:
+        return
+    path = _ensure_writable_config_path(path)
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+        section = doc.get("appshot")
+        if section is None:
+            section = tomlkit.table()
+            doc["appshot"] = section
+        for key, value in values.items():
+            section[key] = value
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+
 def set_reply_language(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the user-facing reply-language pin in ``[brain] reply_language``.
 

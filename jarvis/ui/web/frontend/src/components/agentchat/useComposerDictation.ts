@@ -16,6 +16,11 @@ import { useEventStore } from "@/store/events";
  * started by the keyboard shortcut never calls `start`, so its final text
  * appends to whatever the box holds at that moment (the functional update
  * reads it without dragging `value` into a dependency array).
+ *
+ * The setter is read through a ref: callers pass an inline wrapper (the
+ * society composer mirrors into its chip field), and with that wrapper in the
+ * effect deps the mirror re-ran — and re-wrote the field, jumping the caret —
+ * on every render of the composer, not only when the transcript changed.
  */
 export function useComposerDictation(
   value: string,
@@ -28,25 +33,27 @@ export function useComposerDictation(
   const baseRef = useRef("");
   const mirroringRef = useRef(false);
   const lastCommitSeqRef = useRef(dictationCommitSeq);
+  const setValueRef = useRef(setValue);
+  setValueRef.current = setValue;
 
   useEffect(() => {
     if (!dictating) return;
     const base = baseRef.current;
     const sep = base && dictationText ? " " : "";
-    setValue(base + sep + dictationText);
-  }, [dictating, dictationText, setValue]);
+    setValueRef.current(base + sep + dictationText);
+  }, [dictating, dictationText]);
 
   useEffect(() => {
     if (dictationCommitSeq === lastCommitSeqRef.current) return;
     lastCommitSeqRef.current = dictationCommitSeq;
     const finalText = useEventStore.getState().dictationCommitText;
-    setValue((current) => {
+    setValueRef.current((current) => {
       const base = mirroringRef.current ? baseRef.current : current;
       const sep = base && finalText ? " " : "";
       return base + sep + finalText;
     });
     mirroringRef.current = false;
-  }, [dictationCommitSeq, setValue]);
+  }, [dictationCommitSeq]);
 
   const start = useCallback(() => {
     baseRef.current = value;

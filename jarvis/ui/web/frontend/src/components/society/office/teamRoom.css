@@ -1,0 +1,24 @@
+/* Team room panel: theme tokens only, so light and dark mode both work. Member badges use each agent's own colour. */
+.team-cards { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:7px; }
+.team-card { display:flex; flex-direction:column; gap:7px; padding:9px 10px; border:1px solid hsl(var(--border)); border-radius:11px; background:hsl(var(--background) / .6); }
+.team-card[data-meeting] { border-color:hsl(var(--success) / .7); box-shadow:inset 3px 0 0 hsl(var(--success)); }
+.team-card-head { display:flex; flex-direction:column; gap:1px; min-width:0; }
+.team-card-name { font-size:13px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.team-badges { display:flex; flex-wrap:wrap; gap:4px; }
+.team-badge { position:relative; display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:50%; color:#fff; font-size:10px; font-weight:700; letter-spacing:.02em; text-shadow:0 1px 1px rgb(0 0 0 / .35); box-shadow:inset 0 0 0 1px rgb(0 0 0 / .15); }
+.team-badge .office-dot { position:absolute; right:-1px; bottom:-1px; width:9px; height:9px; box-shadow:0 0 0 2px hsl(var(--popover)); }
+.team-badge .office-dot[data-state="paused"] { background:hsl(var(--popover)); box-shadow:0 0 0 2px hsl(var(--popover)), inset 0 0 0 1.5px hsl(var(--muted-foreground)); }
+.team-editor, .team-composer, .team-picker { display:flex; flex-direction:column; gap:7px; }
+.team-composer { padding-top:4px; border-top:1px solid hsl(var(--border)); }
+.team-picker .office-actions { align-items:center; }
+.team-picker .office-mini:disabled { opacity:.5; cursor:not-allowed; }
+.team-picker-count { margin-left:auto; }
+.team-picker-title { flex:none; max-width:45%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; color:hsl(var(--muted-foreground)); }
+.team-picker .office-list { max-height:190px; }
+.team-danger { border-color:hsl(var(--destructive)); color:hsl(var(--destructive)); font-weight:600; }
+.team-danger:hover:not(:disabled) { background:hsl(var(--destructive) / .1); }
+.team-meeting { display:flex; flex-direction:column; gap:5px; padding:9px 10px; border-radius:11px; border:1px solid hsl(var(--success) / .55); background:hsl(var(--success) / .1); }
+.team-meeting-title { display:flex; align-items:center; gap:7px; font-weight:700; overflow-wrap:anywhere; }
+.team-meeting-live { flex:none; width:8px; height:8px; border-radius:50%; background:hsl(var(--success)); animation:team-live 1.6s ease-in-out infinite; }
+@keyframes team-live { 50% { opacity:.35; } }
+@media (prefers-reduced-motion: reduce) { .team-meeting-live { animation:none; } }

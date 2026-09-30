@@ -1096,7 +1096,8 @@ def _codex_events(session_id: str, home: Path | None, live: bool) -> list[dict[s
                 log.text(joined, item_id, ts)
             # `developer` is the harness briefing the model — not conversation.
         elif ptype in ("function_call", "local_shell_call", "custom_tool_call"):
-            arguments = payload.get("arguments")
+            # A custom tool (apply_patch) carries its body as `input`, not `arguments`.
+            arguments = payload.get("arguments", payload.get("input"))
             if isinstance(arguments, str):
                 try:
                     arguments = json.loads(arguments)

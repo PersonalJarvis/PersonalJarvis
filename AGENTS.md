@@ -19,7 +19,9 @@ These cost real bugs. Nothing catches them but you.
 
 - **Restore trap.** A fix works in tests and changes nothing after restart:
   live Python imports from elsewhere. New worktree → `pwsh scripts/preflight.ps1`,
-  then `python -c "import jarvis; print(jarvis.__file__)"`. (AP-8)
+  then `python -c "import jarvis; print(jarvis.__file__)"`. (AP-8) Never
+  `pip install -e` from a linked worktree: that pin is the user's desktop app,
+  and their next restart boots your branch with an empty `data/`. (BUG-219)
 - **The working tree is SHARED** with other agent sessions. Stage only YOUR
   paths — `git add -p` or an explicit pathspec, and `git commit --only -- <paths>`.
   `git add -A` sweeps someone else's half-finished work into your commit.

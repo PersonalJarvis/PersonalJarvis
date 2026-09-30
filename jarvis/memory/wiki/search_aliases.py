@@ -262,9 +262,9 @@ async def generate_aliases(
 
     from jarvis.core.protocols import BrainMessage, BrainRequest  # noqa: PLC0415
     from jarvis.memory.wiki.provider_chain import (  # noqa: PLC0415
+        background_wiki_providers,
         build_wiki_provider_chain,
         complete_with_fallback,
-        credential_ready_wiki_providers,
     )
 
     # Same key-aware chain the curator uses: lead with the configured wiki
@@ -272,11 +272,15 @@ async def generate_aliases(
     # credential (AP-22 — never a single-provider brick).
     try:
         available = set(registry.available())
+        curator = getattr(getattr(getattr(cfg, "memory", None), "wiki", None), "curator", None)
+        primary = str(getattr(curator, "provider", "") or "").strip() or str(
+            getattr(getattr(cfg, "brain", None), "primary", "") or ""
+        )
         chain = build_wiki_provider_chain(
-            primary=str(getattr(getattr(cfg, "brain", None), "primary", "") or ""),
+            primary=primary,
             model_override="",
             available=available,
-            credential_ready=credential_ready_wiki_providers(
+            credential_ready=background_wiki_providers(
                 available=available, config=cfg
             ),
         )

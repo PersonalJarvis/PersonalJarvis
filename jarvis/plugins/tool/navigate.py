@@ -43,6 +43,8 @@ KNOWN: frozenset[str] = frozenset(
         "apikeys",
         # Local models: the Ollama server, installed models and the catalogue.
         "local-models",
+        # Computers: the user's servers and local VMs, reached over SSH.
+        "computers",
         "settings",
         "telephony",
         "telephony-setup",
@@ -52,6 +54,8 @@ KNOWN: frozenset[str] = frozenset(
         "feedback",
         "agent-instructions",
         "wallpaper",
+        # Appshots: the shortcut and destination for showing the front window.
+        "appshots",
         "dictionary",
         "dictation",
         "voice-shortcuts",
@@ -159,6 +163,15 @@ _ALIASES: dict[str, str] = {
     "wiki": "memory",
     "local models": "local-models",
     "local-models": "local-models",
+    "computers": "computers",
+    "servers": "computers",
+    "vps": "computers",
+    "virtual machines": "computers",
+    "virtual machine": "computers",
+    "vms": "computers",
+    "virtuelle maschinen": "computers",  # i18n-allow: input vocab
+    "ordenadores": "computers",  # i18n-allow: input vocab
+    "servidores": "computers",  # i18n-allow: input vocab
     "local model": "local-models",
     "ollama": "local-models",
     "lokale modelle": "local-models",  # i18n-allow: input vocab
@@ -188,6 +201,9 @@ _ALIASES: dict[str, str] = {
     "hintergrund": "wallpaper",  # i18n-allow: input vocab
     "hintergrundbild": "wallpaper",  # i18n-allow: input vocab
     "fondo de pantalla": "wallpaper",  # i18n-allow: input vocab
+    "appshot": "appshots",
+    "app shots": "appshots",
+    "app shot": "appshots",
     "task bar": "taskbar",
     "taskleiste": "taskbar",
     # The Artifacts section (section id kept as "visualization" — its 2026-08

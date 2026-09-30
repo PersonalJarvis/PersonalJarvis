@@ -188,6 +188,11 @@ def codex_config_args(session_id: str | None = None) -> list[str]:
                 f'mcp_servers.{_SERVER_NAME}.http_headers={{"{HEADER_NAME}"="{session_id}"}}',
                 "-c",
                 f"mcp_servers.{_SERVER_NAME}.required=true",
+                # Codex cuts an MCP call off after 60 s by default. An agent's
+                # question card waits up to five minutes for the person
+                # (agent_chat/questions.py), and a browser task can run long.
+                "-c",
+                f"mcp_servers.{_SERVER_NAME}.tool_timeout_sec=600",
                 # The entrypoint delegates actual actions to Jarvis' executor
                 # and approval UI, including on the root chat's browser.
                 "-c",

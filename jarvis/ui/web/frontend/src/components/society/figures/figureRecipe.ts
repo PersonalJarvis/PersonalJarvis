@@ -54,6 +54,14 @@ export interface FigureRecipe {
   model?: string;
   /** The style the look was picked from — metadata for the creator, never read by the runtime. */
   style?: string;
+  /** The toy figure's hair or hat ("short", "spiky", "bun", …); absent = derived from the rest of the recipe. */
+  hairStyle?: string;
+  /** The toy figure's outfit ("tee", "suit", "leather", …); absent = the casual tee. */
+  outfit?: string;
+  /** The shirt colour under a jacket or vest (#rrggbb); absent = white. */
+  inner?: string;
+  /** "none" | "glasses" | "shades"; absent = none. */
+  eyewear?: string;
 }
 
 /** The biped's default look — the built sheet's own strip, for a natural first figure. */
@@ -200,6 +208,12 @@ export function resolvePalette(
   return out;
 }
 
+/** The toy wardrobe's part of the key; empty for a recipe without one, so older keys stay unchanged. */
+function wardrobeKey(recipe: FigureRecipe): string {
+  const fields = [recipe.outfit, recipe.inner, recipe.eyewear];
+  return fields.some(Boolean) ? `|${fields.map((v) => v ?? "").join("|")}` : "";
+}
+
 /** A stable key for caching painted sheets and face crops per look. */
 export function recipeKey(recipe: FigureRecipe): string {
   const palette = PALETTE_CELLS.map((c) => recipe.palette?.[c] ?? "").join(",");
@@ -208,7 +222,7 @@ export function recipeKey(recipe: FigureRecipe): string {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, v]) => `${k}=${v}`)
     .join(";");
-  return `${recipe.archetype}/${recipe.base}|${recipe.model ?? ""}|${parts}|${palette}|${recipe.heightM ?? ""}`;
+  return `${recipe.archetype}/${recipe.base}|${recipe.model ?? ""}|${parts}|${palette}|${recipe.heightM ?? ""}|${recipe.hairStyle ?? ""}${wardrobeKey(recipe)}`;
 }
 
 /**

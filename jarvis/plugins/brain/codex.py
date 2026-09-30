@@ -745,6 +745,33 @@ class CodexBrain:
             return
 
         api_key = self._api_key()
+        # Background structured work (wiki extraction, judge, briefs) is plain
+        # JSON text with no tools, and the ChatGPT subscription answers it at
+        # no per-token charge. The key lookup above also accepts the generic
+        # OPENAI_API_KEY, so without this a key added for voice silently
+        # billed every memory pass on the most expensive model (live
+        # 2026-09-29: ~$0.30 of wiki calls after a two-minute voice chat).
+        # A failed subscription turn raises instead of crossing to the key:
+        # background callers walk their own chain to the next subscription,
+        # and the maintainer wants the key spent only on the live voice call.
+        if (
+            api_key
+            and self._structured_prompts
+            and not req.tools
+            and await asyncio.to_thread(_codex_oauth_connected)
+        ):
+            log.info(
+                "CodexBrain.complete: structured request on the ChatGPT subscription (model=%s)",
+                self._cli_model or "default",
+            )
+            stream = (
+                self._complete_via_cli(req)
+                if self._subscription_text_only
+                else self._complete_via_app_server(req)
+            )
+            async for delta in stream:
+                yield delta
+            return
         if api_key:
             log.info("CodexBrain.complete: API-key path (model=%s)", self._model)
             client = self._ensure_client(api_key)

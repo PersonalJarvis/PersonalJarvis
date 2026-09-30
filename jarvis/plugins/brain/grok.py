@@ -20,6 +20,10 @@ class GrokBrain:
 
     name: str = "grok"
     context_window: int = 1_000_000
+    # xAI refuses the whole request above this many tools ("Maximum tools
+    # limit reached. 378 tools have been provided but the maximum is 350",
+    # live 2026-09-29); the manager trims the surface to it.
+    max_tools: int = 350
     supports_tools: bool = True
     # xAI's OpenAI-compatible chat API accepts ``image_url`` data URIs on
     # grok-4.x. A False here made Screen Context / Computer-Use skip a live

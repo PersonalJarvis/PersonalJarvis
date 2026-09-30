@@ -42,6 +42,11 @@ export interface PaneRequest {
   workspaceId: string;
   pane: string;
   nonce: number;
+  /**
+   * Also fill the grid with that pane (the office's "show me that terminal").
+   * The grid clears it once it has obeyed, so a later remount never maximizes again.
+   */
+  maximize?: boolean;
 }
 
 /**
@@ -120,7 +125,9 @@ interface IdeChatStore {
   setView: (next: WorkspaceView) => void;
   setWorkspace: (next: IdeWorkspace | null) => void;
   /** Bring a pane to the front, switching workspace first when it lives elsewhere. */
-  requestPane: (workspaceId: string, pane: string) => void;
+  requestPane: (workspaceId: string, pane: string, options?: { maximize?: boolean }) => void;
+  /** The grid maximized request `nonce`; drop its maximize flag. */
+  settlePaneMaximize: (nonce: number) => void;
   setStagedPane: (pane: string | null) => void;
   setWorkspaces: (rows: IdeWorkspaceRow[]) => void;
   setAgents: (agents: SplitAgentChoice[]) => void;
@@ -154,10 +161,21 @@ export const useIdeChatStore = create<IdeChatStore>((set) => ({
   },
 
   setWorkspace: (next) => set({ workspace: next }),
-  requestPane: (workspaceId, pane) =>
+  requestPane: (workspaceId, pane, options) =>
     set((state) => ({
-      paneRequest: { workspaceId, pane, nonce: (state.paneRequest?.nonce ?? 0) + 1 },
+      paneRequest: {
+        workspaceId,
+        pane,
+        nonce: (state.paneRequest?.nonce ?? 0) + 1,
+        ...(options?.maximize ? { maximize: true } : {}),
+      },
     })),
+  settlePaneMaximize: (nonce) =>
+    set((state) =>
+      state.paneRequest?.nonce === nonce && state.paneRequest.maximize
+        ? { paneRequest: { ...state.paneRequest, maximize: false } }
+        : state,
+    ),
   setStagedPane: (pane) =>
     // Guarded: the grid publishes this from an effect that runs on every poll,
     // and an unconditional set would wake every subscriber each time.

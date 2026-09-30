@@ -13,14 +13,16 @@
  * the five-layer parity test (AP-4).
  */
 import { useCallback, useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { MentionPlugin } from "./chat/mentionItems";
 
 import type { Checkpoint, SocietyAgentRow } from "@/lib/societyApi";
+import { NEUTRAL_ASSISTANT_NAME } from "@/lib/assistantNameCache";
+import { useEventStore } from "@/store/events";
 
 import { PALETTE_PRESETS, resolvePalette, type FigureRecipe } from "./figures/figureRecipe";
 import { SAMPLE_ROSTER } from "./mockRoster";
-import { beginRetirement, retirementRunning } from "./world/retireStore";
+import { beginRetirement, retirementRunning, retirementStageMounted } from "./world/retireStore";
 import { announceSpawn } from "./world/spawnStore";
 
 /** MASTERPLAN §2.5 — exactly one lead (Jarvis), orchestrators may ASSIGN. */
@@ -100,6 +102,8 @@ export interface SocietyAgent {
   effort: string;
   /** Stored subscription login; empty means the platform's active account. */
   accountId?: string;
+  /** Where the agent runs: null/absent = this computer, else a connected computer id. */
+  computerId?: string | null;
   /** The character: archetype, base, parts, palette. null = the palette tile. */
   figure: FigureRecipe | null;
   palette: AgentPalette;
@@ -144,6 +148,8 @@ export interface NewAgentInput {
   effort: string;
   /** The stored subscription login of a CLI seat; "" = that platform's active account. */
   accountId: string;
+  /** "" = this computer; otherwise the connected computer the agent runs on. */
+  computerId: string;
   grantMode: GrantMode;
   toolGrants: string[];
   focus: string[];
@@ -220,6 +226,7 @@ export function rowToAgent(row: SocietyAgentRow): SocietyAgent {
     providerLabel: row.provider ? (PROVIDER_LABELS[row.provider] ?? row.provider) : "",
     model: row.model,
     accountId: row.account_id,
+    computerId: row.computer_id ?? null,
     effort: row.effort,
     figure,
     palette: paletteFor(figure),
@@ -275,10 +282,40 @@ async function fetchSocietyRoster(): Promise<RosterData> {
   return { agents: rows, sample: true };
 }
 
+/**
+ * Apply a change to the cached roster right away, then refresh it in the
+ * background. A create or a retirement shows on the rail the moment the
+ * server said yes, instead of after a second full `GET /agents`.
+ */
+function patchRoster(
+  client: QueryClient,
+  change: (agents: readonly SocietyAgent[]) => SocietyAgent[],
+): void {
+  client.setQueryData<RosterData>(ROSTER_QUERY_KEY, (prev) =>
+    prev && !prev.sample ? { ...prev, agents: change(prev.agents) } : prev,
+  );
+  void client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+}
+
+/**
+ * The lead is the assistant itself, so it wears the name the user gave it
+ * through the wake phrase ("George"), not the roster row's seeded name. The
+ * neutral fallback never replaces a real row name while the seed is pending.
+ */
+export function withLeadName(data: RosterData, assistantName: string): RosterData {
+  const name = assistantName.trim();
+  if (!name || name === NEUTRAL_ASSISTANT_NAME) return data;
+  if (!data.agents.some((a) => a.tier === "lead" && a.name !== name)) return data;
+  return { ...data, agents: data.agents.map((a) => (a.tier === "lead" ? { ...a, name } : a)) };
+}
+
 export function useSocietyRoster() {
+  const assistantName = useEventStore((s) => s.assistantName) ?? "";
+  const select = useCallback((data: RosterData) => withLeadName(data, assistantName), [assistantName]);
   return useQuery({
     queryKey: ROSTER_QUERY_KEY,
     queryFn: fetchSocietyRoster,
+    select,
     staleTime: 15_000,
     // A refetch mid-ceremony would delete the figure being carried to the
     // mine out from under the animation; the commit invalidates instead.
@@ -374,6 +411,7 @@ export function useCreateAgent() {
         model: input.model || undefined,
         effort: input.effort || undefined,
         account_id: input.accountId || undefined,
+        computer_id: input.computerId || undefined,
         avatar: input.figure,
         grant_mode: input.grantMode,
         grants: input.grantMode === "allowlist" ? input.toolGrants : undefined,
@@ -391,8 +429,12 @@ export function useCreateAgent() {
           const created = (await res.json()) as { agent: SocietyAgentRow };
           // The island owes this row an entrance: it walks out of the foundry.
           announceSpawn(created.agent.agent_id);
-          await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
-          return rowToAgent(created.agent);
+          const agent = rowToAgent(created.agent);
+          patchRoster(client, (agents) => [
+            ...agents.filter((a) => a.agentId !== agent.agentId),
+            agent,
+          ]);
+          return agent;
         }
         if (res.status !== 404 && res.status !== 503) {
           const detail = (await res.json().catch(() => null)) as { detail?: unknown } | null;
@@ -561,6 +603,33 @@ export function useUpdateAgentLimits() {
   );
 }
 
+/** Move an agent to another computer (`PATCH computer_id`); "" = this computer. */
+export function useSetAgentComputer() {
+  const client = useQueryClient();
+  return useCallback(
+    async (agent: SocietyAgent, computerId: string): Promise<void> => {
+      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      if (sample) {
+        agent.computerId = computerId || null;
+      } else {
+        const res = await fetch(`/api/society/agents/${encodeURIComponent(agent.agentId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ computer_id: computerId }),
+        });
+        if (!res.ok) {
+          const detail = (await res.json().catch(() => null)) as { detail?: unknown } | null;
+          const inner = detail?.detail as { detail?: unknown } | string | undefined;
+          const message = typeof inner === "string" ? inner : typeof inner?.detail === "string" ? inner.detail : "";
+          throw new Error(message || `computer ${res.status}`);
+        }
+      }
+      await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+    },
+    [client],
+  );
+}
+
 /** Pause or resume an agent (`PATCH /api/society/agents/{id}`); sample rows flip locally. */
 export function useSetAgentPaused() {
   const client = useQueryClient();
@@ -617,6 +686,13 @@ export function useRetireAgent() {
               : String(detail?.detail ?? res.status);
           throw new Error(`retire ${reason}`);
         }
+      }
+      // No island on screen (the Agents ledger, the office): there is no
+      // ceremony to wait for, so the row leaves the rail now.
+      if (sample || !retirementStageMounted()) {
+        patchRoster(client, (agents) => agents.filter((a) => a.agentId !== agent.agentId));
+        if (sample) await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+        return;
       }
       const started = beginRetirement({
         agentId: agent.agentId,

@@ -119,6 +119,75 @@ async def test_complete_raises_without_any_key_or_oauth(
             pass
 
 
+def _key_and_subscription(monkeypatch: pytest.MonkeyPatch, api_calls: list[str]) -> None:
+    monkeypatch.setattr("jarvis.core.config.get_provider_secret", lambda _p: "sk-paid")
+    monkeypatch.setattr("jarvis.plugins.brain.codex._codex_oauth_connected", lambda: True)
+
+    async def _api_stream(_client, _model, _req) -> AsyncIterator[BrainDelta]:
+        api_calls.append("api")
+        yield BrainDelta(content="from-api")
+
+    monkeypatch.setattr("jarvis.plugins.brain.codex.stream_complete", _api_stream)
+    monkeypatch.setattr(CodexBrain, "_ensure_client", lambda self, _key: object())
+
+
+@pytest.mark.asyncio
+async def test_structured_request_prefers_subscription_over_paid_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api_calls: list[str] = []
+    _key_and_subscription(monkeypatch, api_calls)
+
+    async def _subscription(self, _req) -> AsyncIterator[BrainDelta]:
+        yield BrainDelta(content="from-subscription")
+
+    monkeypatch.setattr(CodexBrain, "_complete_via_app_server", _subscription)
+    brain = CodexBrain(structured_prompts=True)
+    req = BrainRequest(messages=(BrainMessage(role="user", content="extract facts"),))
+
+    text = "".join([d.content or "" async for d in brain.complete(req)])
+
+    assert text == "from-subscription"
+    assert api_calls == []
+
+
+@pytest.mark.asyncio
+async def test_structured_request_never_crosses_to_the_paid_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api_calls: list[str] = []
+    _key_and_subscription(monkeypatch, api_calls)
+
+    async def _broken(self, _req) -> AsyncIterator[BrainDelta]:
+        raise RuntimeError("app server down")
+        yield BrainDelta()  # pragma: no cover - makes this an async generator
+
+    monkeypatch.setattr(CodexBrain, "_complete_via_app_server", _broken)
+    brain = CodexBrain(structured_prompts=True)
+    req = BrainRequest(messages=(BrainMessage(role="user", content="extract facts"),))
+
+    with pytest.raises(RuntimeError, match="app server down"):
+        async for _delta in brain.complete(req):
+            pass
+
+    assert api_calls == []
+
+
+@pytest.mark.asyncio
+async def test_conversational_request_keeps_the_api_key_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api_calls: list[str] = []
+    _key_and_subscription(monkeypatch, api_calls)
+    brain = CodexBrain()
+    req = BrainRequest(messages=(BrainMessage(role="user", content="hello"),))
+
+    text = "".join([d.content or "" async for d in brain.complete(req)])
+
+    assert text == "from-api"
+    assert api_calls == ["api"]
+
+
 def test_ensure_client_uses_given_key(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, str] = {}
 

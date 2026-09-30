@@ -85,35 +85,50 @@ def generate_ready_pcm(
     return (np.clip(wave, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
 
 
+#: Silence ahead of the appshot cue. ``play_pcm`` opens a fresh output stream
+#: per cue, and its 5 ms edge fade plus the device's start-up swallow the first
+#: few milliseconds; a cue that starts at sample 0 loses its onset there.
+SCREEN_CAPTURE_PREROLL_S: float = 0.045
+
+
 def generate_screen_capture_pcm(
     sample_rate: int = 24_000,
-    amplitude: float = 0.42,
+    amplitude: float = 0.22,
 ) -> bytes:
-    """Generate an original mechanical-camera shutter cue.
+    """Generate the appshot cue: a crisp, tactile "click-clack".
 
-    Two short deterministic noise transients form the shutter blades, with a
-    quiet resonant body underneath. The sound is synthesized in memory so it
-    is portable and carries no third-party recording or licensing baggage.
+    Two short clicks, like a phone camera shutter. Each one is a damped high
+    tick (a few kHz) over a whisper of band-limited noise, with a 1 ms attack
+    so it snaps without a digital edge; the second is a touch lower and
+    softer. Every onset sits after ``SCREEN_CAPTURE_PREROLL_S`` of silence,
+    because a freshly opened stream fades and swallows its first milliseconds.
+    Synthesized in memory: portable and free of third-party recordings.
+
+    The peak stays low on purpose: the player's master volume adds up to 4x
+    makeup gain, and a louder source would ride the peak limiter.
     """
-    duration_s = 0.16
-    n = int(duration_s * sample_rate)
-    t = np.arange(n, dtype=np.float32) / float(sample_rate)
+    preroll = int(SCREEN_CAPTURE_PREROLL_S * sample_rate)
+    body_s = 0.12
+    n = int(body_s * sample_rate)
+    t = np.arange(n, dtype=np.float64) / float(sample_rate)
     rng = np.random.default_rng(0x5C4E_454E)
-    noise = rng.uniform(-1.0, 1.0, n).astype(np.float32)
+    # Differentiated noise tilts the spectrum up: an airy tick, not a hiss.
+    noise = np.diff(rng.uniform(-1.0, 1.0, n + 1))
 
-    wave = np.zeros(n, dtype=np.float32)
-    for onset, strength, decay in ((0.0, 1.0, 150.0), (0.052, 0.78, 115.0)):
+    def _click(onset: float, pitch: float, strength: float) -> np.ndarray:
         local_t = np.maximum(t - onset, 0.0)
-        active = (t >= onset).astype(np.float32)
-        transient = noise * np.exp(-local_t * decay) * active
-        resonance = np.sin(2.0 * np.pi * 1850.0 * local_t) * np.exp(
-            -local_t * (decay * 0.62)
-        ) * active
-        wave += strength * (0.78 * transient + 0.22 * resonance)
+        active = t >= onset
+        attack = np.clip(local_t / 0.001, 0.0, 1.0)
+        tick = np.sin(2.0 * np.pi * pitch * local_t) * np.exp(-local_t * 260.0)
+        body = np.sin(2.0 * np.pi * pitch * 0.5 * local_t) * np.exp(-local_t * 140.0)
+        air = noise * np.exp(-local_t * 420.0)
+        return strength * attack * (0.55 * tick + 0.25 * body + 0.35 * air) * active
 
-    # A short fade avoids a digital edge while preserving the crisp first hit.
-    fade_out = np.minimum((duration_s - t) * 180.0, 1.0)
-    wave *= np.clip(fade_out, 0.0, 1.0) * amplitude
+    wave = _click(0.0, 3400.0, 1.0) + _click(0.048, 2600.0, 0.7)
+    fade_out = np.clip((body_s - t) / 0.01, 0.0, 1.0)
+    wave *= fade_out
+    wave *= amplitude / max(float(np.max(np.abs(wave))), 1e-9)
+    wave = np.concatenate([np.zeros(preroll), wave])
     return (np.clip(wave, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
 
 

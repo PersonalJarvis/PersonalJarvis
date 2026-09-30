@@ -99,7 +99,7 @@ export const DARK_TERMINAL_THEME: ITheme = {
   // #12141a at alpha 0 — the deep-slate ground the backend also reports to the
   // CLI (jarvis/agentic_ide/terminal_input.py); see the light theme's note.
   background: "rgba(18, 20, 26, 0)",
-  foreground: "#e8e8ec",
+  foreground: "#f4f4f6",
   cursor: "#ffffff",
   cursorAccent: "#12141a",
   selectionBackground: "#3a4252",
@@ -114,7 +114,7 @@ export const DARK_TERMINAL_THEME: ITheme = {
   blue: "#81a1c1",
   magenta: "#b48ead",
   cyan: "#88c0d0",
-  white: "#c8c8c8",
+  white: "#dcdcdc",
   brightBlack: "#8a8a8a",
   brightRed: "#ff8fa3",
   brightGreen: "#70b489",
@@ -129,6 +129,20 @@ export type TerminalAppearance = "light" | "dark";
 
 export function themeFor(appearance: TerminalAppearance): ITheme {
   return appearance === "dark" ? DARK_TERMINAL_THEME : LIGHT_TERMINAL_THEME;
+}
+
+/** Where the reader's pane appearance is kept; no entry means "follow the app". */
+export const TERMINAL_APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
+
+/** The stored pane appearance, or null when there is none (or storage is blocked). */
+export function storedTerminalAppearance(): TerminalAppearance | null {
+  try {
+    const raw = window.localStorage.getItem(TERMINAL_APPEARANCE_KEY);
+    return raw === "light" || raw === "dark" ? raw : null;
+  } catch {
+    // Private mode or disabled storage reads as "no preference", never as a failure.
+    return null;
+  }
 }
 
 /**
@@ -246,6 +260,15 @@ export const PANE_BRAND: Record<TerminalAppearance, PaneBrand> = {
     inkFaint: "#7a7a7a",
     chip: "rgba(255,255,255,0.14)",
   },
+};
+
+/**
+ * The pane's ground made near-opaque, for a pane floated over a busy scene
+ * (the office map) where the translucent `shell` would let the world through.
+ */
+export const PANE_SOLID: Record<TerminalAppearance, string> = {
+  light: "rgba(252, 251, 248, 0.94)",
+  dark: "rgba(18, 18, 18, 0.92)",
 };
 
 export const PANE_CHROME: Record<TerminalAppearance, PaneChrome> = {

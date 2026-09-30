@@ -912,8 +912,6 @@ _AGENTIC_IDE_WORKSPACE_TOOL_NAMES: frozenset[str] = frozenset({
     "agentic-ide-move-terminal",
     "agentic-ide-close-agent-terminals",
     "agentic-ide-focus",
-    "agentic-ide-interrupted",
-    "agentic-ide-continue-interrupted",
 })
 
 # Consequential action tools a signalless turn must never INHERIT from the
@@ -1880,6 +1878,17 @@ _ACTION_UNFULFILLED_PHRASES: dict[str, dict[str, str]] = {
             "No se ejecutó la acción de guardarla."  # i18n-allow: runtime output
         ),
     },
+    "society-create-routine": {
+        "de": (
+            "Die Routine wurde nicht erstellt. "  # i18n-allow: runtime output
+            "Der Speichervorgang wurde nicht ausgeführt."  # i18n-allow: runtime output
+        ),
+        "en": "The routine was not created. The save action did not run.",
+        "es": (
+            "La rutina no se creó. "  # i18n-allow: runtime output
+            "No se ejecutó la acción de guardarla."  # i18n-allow: runtime output
+        ),
+    },
     "contact-upsert": {
         "de": (
             "Ich hab den Kontakt noch nicht gespeichert — sag mir die Angaben "  # i18n-allow: German TTS
@@ -2697,6 +2706,25 @@ _MID_ANSWER_ERROR_PHRASES: dict[str, str] = {
         "Vuelve a preguntarme en un momento."
     ),
 }
+
+
+#: Source layers that run without a person waiting on the reply. An appshot
+#: parked for "the next message" belongs to the user's next message, never to
+#: a scheduled task or a background worker that happens to run first.
+_AUTOMATED_LAYER_PREFIXES = (
+    "tasks",
+    "workflows",
+    "skills",
+    "missions",
+    "society",
+    "supervisor",
+    "tool.",
+)
+
+
+def _takes_pending_appshot(source_layer: str | None) -> bool:
+    layer = (source_layer or "").strip().lower()
+    return not layer.startswith(_AUTOMATED_LAYER_PREFIXES)
 
 
 class BrainManager:
@@ -5791,6 +5819,18 @@ class BrainManager:
                 )
                 return explicit_skill
 
+            # Channel 0.4 (2026-09-29): scheduled work for an agent ("a briefing
+            # every day at 8", "create a routine that …") is an agent routine.
+            # No skill captures it — neither the skill-creator (it wrote an
+            # inactive draft skill live) nor a briefing skill that would run
+            # once now instead of scheduling.
+            if "society-create-routine" in self._live_tool_names():
+                from jarvis.society.routine_intent import wants_agent_routine
+
+                if wants_agent_routine(user_text):
+                    log.info("scheduled agent work — society-create-routine owns this turn")
+                    return None
+
             # Channel 0.5 (2026-08-18): the user asked to CREATE a skill
             # ("erstell mir einen neuen Skill, der … mit YouTube Music …").
             # Every service named inside that sentence is the CONTENT of the
@@ -6761,7 +6801,11 @@ class BrainManager:
             window = int(getattr(brain, "context_window", 0) or 0)
         except (TypeError, ValueError):
             window = 0
-        if window <= 0:
+        try:
+            max_tools = int(getattr(brain, "max_tools", 0) or 0)
+        except (TypeError, ValueError):
+            max_tools = 0
+        if window <= 0 and max_tools <= 0:
             return tools
         used = (
             _approx_tokens(system_prompt)
@@ -6775,17 +6819,18 @@ class BrainManager:
         if getattr(self, "_skill_turn_match", None) is not None:
             keep.add("run-skill")
         fitted, dropped = _fit_tools_to_context_window(
-            tools, context_window=window, used_tokens=used, keep=keep
+            tools, context_window=window, used_tokens=used, keep=keep, max_tools=max_tools
         )
         if dropped:
             log.warning(
                 "Tool surface trimmed for %s: %d of %d tools hidden this turn so "
-                "the request fits the model's %d-token window (prompt+history "
-                "~%d tokens, budget for tools %d). First hidden: %s",
+                "the request fits the model's %d-token window and %s-tool cap "
+                "(prompt+history ~%d tokens, budget for tools %d). First hidden: %s",
                 getattr(brain, "name", type(brain).__name__),
                 len(dropped),
                 len(tools),
                 window,
+                max_tools or "no",
                 used,
                 max(window - used, 0),
                 ", ".join(dropped[:5]),
@@ -10025,6 +10070,7 @@ class BrainManager:
             locale=locale,
             bus=self._bus,
             trace_id=trace_id,
+            allow_pending_appshot=_takes_pending_appshot(source_layer),
         )
         if outcome.status == "clarify":
             pending_map[confirm_key] = _PendingScreenConfirm(
@@ -11624,6 +11670,31 @@ class BrainManager:
                 self._evidence_required_domain = "routine"
                 log.info("Society routine creation intent — mandating society_propose_change")
 
+        # Jarvis itself (voice and the lead chat) schedules an agent's
+        # recurring work through the society-create-routine app command. A
+        # request like "a briefing every day at 8" never says "routine" and
+        # used to end as an inactive draft skill (live 2026-09-29), so the
+        # recurrence alone makes the save mandatory.
+        if (
+            not self._evidence_required_tool
+            and "society-create-routine" in self._live_tool_names()
+        ):
+            from jarvis.society.routine_intent import wants_agent_routine
+
+            if wants_agent_routine(user_text):
+                self._evidence_directive = (
+                    "MANDATORY THIS TURN: the user wants work done on a schedule. "
+                    "If the agent does not exist yet, create it with society-create-agent "
+                    "first. Then call society-create-routine for that agent with a "
+                    "self-contained prompt and the schedule. Never use create-skill for "
+                    "scheduled work. Speak the returned next_run; if the tool fails, say "
+                    "the routine was not created."
+                )
+                self._evidence_required_tool = "society-create-routine"
+                self._evidence_required_is_write = True
+                self._evidence_required_domain = "routine"
+                log.info("Recurring-work intent — mandating society-create-routine")
+
         # Phase 5 / ADR-0006: pre-call budget gate. Block rather than request
         # when cooldown is active or the task/daily budget is exhausted.
         trace_uuid = turn_trace_id
@@ -12055,6 +12126,14 @@ class BrainManager:
                 _turn_tools = self._hide_run_skill_on_pc_control_turn(
                     _turn_tools, user_text
                 )
+            # Scheduled work for an agent is a routine, never a draft skill
+            # with a cron line (live 2026-09-29: "every day at 8" became an
+            # inactive skill while the routine was reported as set up).
+            if (
+                isinstance(_turn_tools, dict)
+                and self._evidence_required_tool == "society-create-routine"
+            ):
+                _turn_tools = {n: t for n, t in _turn_tools.items() if n != "create-skill"}
             # AI Pointer: on a deictic pointer turn the cursor crop is already the
             # only attached image, so drop the redundant ``inspect-pointer`` PULL
             # tool (calling it produced an empty spoken answer — observed live).
@@ -13485,6 +13564,14 @@ class BrainManager:
         """
         del prefer_api
         intent = "deep" if model_tier == "deep" else "fast"
+        # A routine whose prompt asks for its result as an artifact is granted
+        # the builder for that turn — the same explicit-word rule the chat gate
+        # applies, so "every morning at 8, my briefing as an artifact" works
+        # without the person knowing the tool has a grant of its own.
+        from jarvis.brain.artifact_gate import wants_artifact  # noqa: PLC0415
+
+        if wants_artifact(prompt) and _ARTIFACT_TOOL_NAME not in allowed_tools:
+            allowed_tools = (*allowed_tools, _ARTIFACT_TOOL_NAME)
         tools = self._select_task_tools(allowed_tools)
         from jarvis.core.model_selection import operation_model, worker_selection
         from jarvis.core.task_agent import run_selected, subscription_seat
@@ -13872,13 +13959,14 @@ def _fit_tools_to_context_window(
     context_window: int,
     used_tokens: int,
     keep: Iterable[str] = (),
+    max_tools: int = 0,
 ) -> tuple[dict[str, Tool], list[str]]:
-    """Shrink a tool surface until it fits ``context_window``.
+    """Shrink a tool surface until it fits ``context_window`` and ``max_tools``.
 
-    Returns ``(surviving tools, dropped names in drop order)``. A window of
-    ``0`` or less means the brain declared none, and the surface comes back
-    untouched. ``used_tokens`` is everything else the request carries (system
-    prompt, history, reserve); what remains is the budget for tools.
+    Returns ``(surviving tools, dropped names in drop order)``. A window or a
+    tool cap of ``0`` or less means the brain declared none. ``used_tokens``
+    is everything else the request carries (system prompt, history,
+    reserve); what remains is the budget for tools.
 
     Drop order, deliberately: connected-server tools first — they are
     additions to Jarvis's own surface, each one a full JSON schema, and on a
@@ -13888,12 +13976,13 @@ def _fit_tools_to_context_window(
     When even the prompt alone exceeds the window every droppable tool goes
     and the caller's log says so; the request still fails, but honestly.
     """
-    if context_window <= 0 or not tools:
+    if (context_window <= 0 and max_tools <= 0) or not tools:
         return tools, []
     costs = {name: _tool_surface_tokens(name, tool) for name, tool in tools.items()}
-    budget = context_window - used_tokens
+    budget = context_window - used_tokens if context_window > 0 else sum(costs.values())
     total = sum(costs.values())
-    if total <= budget:
+    count_cap = max_tools if max_tools > 0 else len(tools)
+    if total <= budget and len(tools) <= count_cap:
         return tools, []
     kept = set(keep)
     droppable = [name for name in tools if name not in kept]
@@ -13905,10 +13994,12 @@ def _fit_tools_to_context_window(
         )
     )
     dropped: list[str] = []
+    remaining = len(tools)
     for name in droppable:
-        if total <= budget:
+        if total <= budget and remaining <= count_cap:
             break
         total -= costs[name]
+        remaining -= 1
         dropped.append(name)
     gone = set(dropped)
     return {name: tool for name, tool in tools.items() if name not in gone}, dropped

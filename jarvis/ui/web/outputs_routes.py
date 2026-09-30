@@ -32,6 +32,7 @@ from starlette.responses import FileResponse, HTMLResponse
 from jarvis.missions.kontrollierer.deliverable_paths import (
     is_nondeliverable_scratch,
 )
+from jarvis.missions.standalone_run import is_chat_attachment
 from jarvis.missions.standalone_run import marker_label as standalone_marker_label
 from jarvis.missions.standalone_run import read_marker as read_standalone_marker
 from jarvis.missions.state_machine import MissionState, is_terminal
@@ -507,6 +508,13 @@ async def list_outputs(request: Request) -> OutputsResponse:
         exc = read_errors[0]
         raise HTTPException(status_code=500, detail=f"Outputs root not readable: {exc}") from exc
     entries = sorted(entries_by_name.values(), key=lambda path: path.name, reverse=True)
+    # A chat's parked media is served by URL, never listed as a run — see
+    # CHAT_ATTACHMENT_KINDS for the "Chat media" flood this prevents.
+    entries = [
+        entry
+        for entry in entries
+        if not is_chat_attachment(read_standalone_marker(entry) or {})
+    ]
 
     # Artifact archives can contain entire generated projects.  Walking them is
     # blocking filesystem work and must never run on the ASGI event-loop thread:

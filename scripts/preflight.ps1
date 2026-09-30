@@ -13,7 +13,8 @@
     Five sequential checks, each printing a [GREEN] or [RED] label:
 
       1. Git worktree assertion
-      2. Editable install repins to the current worktree
+      2. Editable install repins to the current checkout -- primary
+         checkout ONLY; a linked worktree leaves the shared pin alone
       3. import jarvis resolves from under the current worktree
       4. Stale __editable__*.pth scan (user site-packages)
       5. Summary line + exit code
@@ -93,15 +94,47 @@ try {
 }
 
 # ---------------------------------------------------------------------------
+# Linked-worktree detection.
+#
+# In a linked worktree `--git-dir` (.git/worktrees/<name>) differs from
+# `--git-common-dir` (the primary checkout's .git). In the primary
+# checkout both are the same directory.
+# ---------------------------------------------------------------------------
+$IsLinkedWorktree = $false
+Push-Location $WorktreeRoot
+try {
+    $gd = (git rev-parse --path-format=absolute --git-dir 2>$null)
+    $gc = (git rev-parse --path-format=absolute --git-common-dir 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $gd -and $gc) {
+        $gdAbs = [System.IO.Path]::GetFullPath((($gd -join "") -as [string]).Trim())
+        $gcAbs = [System.IO.Path]::GetFullPath((($gc -join "") -as [string]).Trim())
+        $IsLinkedWorktree = ($gdAbs.TrimEnd([char[]]'\/').ToLowerInvariant() -ne $gcAbs.TrimEnd([char[]]'\/').ToLowerInvariant())
+    }
+} finally {
+    Pop-Location
+}
+
+# ---------------------------------------------------------------------------
 # Check 2: Editable install.
 #
-# Running `pip install -e . --no-deps -q` at the worktree root re-pins
+# Running `pip install -e . --no-deps -q` at the checkout root re-pins
 # the editable-install entry in the active interpreter's site-packages
-# to THIS worktree. If the pin was stale, this fixes it as a side
+# to THIS checkout. If the pin was stale, this fixes it as a side
 # effect; if it was already correct, the call is a fast no-op.
 # A non-zero exit means setup.py / pyproject.toml is broken or the
 # interpreter is wrong -- both are wave-blockers.
+#
+# NEVER from a linked worktree (BUG-219). That pin is shared by the whole
+# machine: the installed desktop app imports jarvis through it. An agent
+# worktree that repinned it silently turned the user's next app restart
+# into a boot of the agent's stale branch, with that worktree's empty
+# data/ folder -- onboarding again, settings "gone", panes gone. Tests
+# in a worktree do not need the pin: pytest puts the rootdir on sys.path
+# (pyproject `pythonpath = ["."]`), and Check 3 proves the import below.
 # ---------------------------------------------------------------------------
+if ($IsLinkedWorktree) {
+    Write-Check "GREEN" "Linked worktree -- shared editable install left alone (BUG-219)"
+} else {
 Push-Location $WorktreeRoot
 try {
     $pipOut  = pip install -e . --no-deps -q 2>&1
@@ -118,6 +151,7 @@ try {
 } finally {
     Pop-Location
 }
+}
 
 # ---------------------------------------------------------------------------
 # Check 3: Import path assertion.
@@ -129,9 +163,21 @@ try {
 #
 # Comparison is case-insensitive (Windows filesystem) and runs on
 # canonical absolute paths (GetFullPath).
+#
+# A linked worktree checks with its root on PYTHONPATH -- the way pytest
+# and `python -m` from the root see it -- because the shared pin
+# deliberately still points at the primary checkout.
 # ---------------------------------------------------------------------------
-$pyOut  = python -c "import jarvis; print(jarvis.__file__)" 2>$null
-$pyExit = $LASTEXITCODE
+$savedPythonPath = $env:PYTHONPATH
+Push-Location $WorktreeRoot
+try {
+    if ($IsLinkedWorktree) { $env:PYTHONPATH = $WorktreeRoot }
+    $pyOut  = python -c "import jarvis; print(jarvis.__file__)" 2>$null
+    $pyExit = $LASTEXITCODE
+} finally {
+    $env:PYTHONPATH = $savedPythonPath
+    Pop-Location
+}
 if ($pyExit -ne 0 -or [string]::IsNullOrWhiteSpace($pyOut)) {
     Write-Check "RED" "Cannot import jarvis package (python exit $pyExit)"
 } else {

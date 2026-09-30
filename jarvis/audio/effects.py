@@ -17,7 +17,10 @@ from jarvis.core.events import ScreenCaptureGrabbed
 
 log = logging.getLogger(__name__)
 
-_PLAYBACK_TIMEOUT_S = 1.0
+# Covers stream open + the ~0.4 s cue + draining a high-latency (~0.4 s)
+# output buffer. A timeout aborts the shared player's native stream, so it must
+# never fire on a healthy device.
+_PLAYBACK_TIMEOUT_S = 2.5
 
 
 class AudioEffectsService:
@@ -64,6 +67,10 @@ class AudioEffectsService:
         try:
             config = await asyncio.to_thread(self._load_config)
             if not bool(getattr(getattr(config, "ui", None), "sound_effects", True)):
+                return
+            # Every shared-service capture is an appshot to the user, so the
+            # Appshots page's "play sound" switch owns this cue.
+            if not bool(getattr(getattr(config, "appshot", None), "sound", True)):
                 return
             player = self._bound_player()
             if player is None:

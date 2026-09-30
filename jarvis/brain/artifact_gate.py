@@ -101,17 +101,30 @@ _EXPLICIT_RE = re.compile(
 )
 
 
+# --- 0. The capability pinned by its tool name — an explicit ask ------------
+# An agent chat's @mention pins it as ``[tools: plugin:create_artifact]`` and an
+# agent routine that must deliver a page says ``create_artifact`` in its
+# instructions (jarvis/society/routines.py). Both are written by a person's
+# explicit choice, so they open the gate before rules 1 and 2 — a routine's
+# standing instructions may well contain "what is …". The ``_`` makes the
+# word rule below blind to it (``_`` is a word character), hence its own rule.
+_PIN_RE = re.compile(r"(?<![\w-])(?:plugin:)?create_artifact\b")
+
+
 def wants_artifact(text: str) -> bool:
     """True when the utterance literally names an artifact to be built.
 
     The single WORD decision point for offering the ``create_artifact`` tool
-    at all. See the module docstring for the three rules. The Add-menu pin
-    is the second path and bypasses this function through the turn
+    at all. See the module docstring for the three rules; a pin of the tool
+    by name (rule 0 above) counts as the request. The Jarvis chat's Add-menu
+    pin is the other path and bypasses this function through the turn
     override's extra hands.
     """
     t = (text or "").strip()
     if not t:
         return False
+    if _PIN_RE.search(t):
+        return True
     if _NAVIGATION_RE.search(t):
         return False
     if _DEFINITION_RE.search(t):

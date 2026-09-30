@@ -765,6 +765,14 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         # hint rows. The key-hint half of the footer already matches the shared
         # "shift+tab" fragment.
         chrome_fragments=("🌿", "tip: use"),
+        # Clicks stay with the pane. With its fullscreen renderer on (a user's
+        # ``CLAUDE_CODE_NO_FLICKER``) the CLI captures every click and pointer
+        # move: hovering highlights blocks, a click expands or collapses tool
+        # output and starts its own selection, and each of those re-lays the
+        # whole screen out — the pane jumped and resized under every click in
+        # the IDE (reported 2026-09-28). This keeps wheel scrolling and drops
+        # click and motion capture; it changes nothing outside that renderer.
+        spawn_env=(("CLAUDE_CODE_DISABLE_MOUSE_CLICKS", "1"),),
         spoken_aliases=("claude", "cloude", "claud", "clode", "klaude", "kloude"),
         spoken_aliases_needing_suffix=(
             "cloud",
@@ -931,6 +939,8 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         instruction_filename="CLAUDE.md",
         # Resolved fresh on every spawn AND every resume — see the docstring.
         spawn_env_factory=glm_spawn_env,
+        # Same binary, same click capture — see the Claude Code entry.
+        spawn_env=(("CLAUDE_CODE_DISABLE_MOUSE_CLICKS", "1"),),
         spoken_aliases=("glm", "g l m", "gee ell em", "jlm"),
     ),
     "grok-build": make_cli_agent(

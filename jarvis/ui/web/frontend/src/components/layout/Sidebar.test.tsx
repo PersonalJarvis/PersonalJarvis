@@ -12,6 +12,41 @@ import { NAV_GROUPS, NAV_FOOTER_ITEMS, SETTINGS_HUB_IDS } from "@/components/lay
 import { isSectionId, useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { useIdeChatStore } from "@/store/ideChat";
+import { useIdeProjectsStore } from "@/store/ideProjects";
+
+test("IDE rail keeps workspace options and Jarvis Live reachable", () => {
+  act(() => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+    useIdeProjectsStore.setState({ activeWorkspaceId: null, action: null });
+  });
+  renderSidebar(SIDEBAR_RAIL_WIDTH);
+  expect(screen.queryByTestId("ide-project-tree")).toBeNull();
+  const options = screen.getByRole("button", { name: "Workspace options" }) as HTMLButtonElement;
+  expect(options.disabled).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Jarvis Live" }));
+  expect(useIdeProjectsStore.getState().action?.kind).toBe("toggle-voice");
+  act(() => useIdeProjectsStore.setState({ activeWorkspaceId: "w1" }));
+  expect(options.disabled).toBe(false);
+  fireEvent.click(options);
+  expect(useIdeProjectsStore.getState().action).toMatchObject({ kind: "workspace-options", workspaceId: "w1" });
+  fireEvent.click(screen.getByTestId("ide-back-to-jarvis"));
+  expect(useEventStore.getState().activeSection).toBe("chats");
+  cleanup();
+});
+
+test("IDE sidebar puts Projects first and returns to the normal chat navigation", () => {
+  act(() => useEventStore.setState({ activeSection: "agentic-ide" }));
+  renderSidebar();
+  expect(screen.getByTestId("ide-project-tree")).toBeDefined();
+  // The agents list lives in the IDE's right-hand side panel now.
+  expect(screen.queryByTestId("ide-workspace-agents")).toBeNull();
+  expect(screen.queryByTestId("sidebar-new-chat")).toBeNull();
+  expect(screen.queryByTestId("nav-row-agentic-ide")).toBeNull();
+  fireEvent.click(screen.getByTestId("ide-back-to-jarvis"));
+  expect(useEventStore.getState().activeSection).toBe("chats");
+  expect(screen.getByTestId("sidebar-new-chat")).toBeDefined();
+  cleanup();
+});
 
 // The sidebar header avatar must mirror the chosen on-screen display style:
 // the ghost mascot ONLY when the user explicitly picked "mascot"; the slim bar
@@ -412,7 +447,10 @@ describe("Sidebar voice-boot indicator", () => {
 
     const { container } = renderSidebar();
 
-    expect(screen.getByText("Ready")).toBeTruthy();
+    // At rest the dot alone says "fine"; the word lives in its accessible
+    // name and hover, not as a second line of visible text.
+    expect(screen.getByRole("img", { name: "Ready" })).toBeTruthy();
+    expect(screen.queryByText("Ready")).toBeNull();
     expect(screen.queryByText("Voice starting…")).toBeNull();
     expect(container.querySelector('[data-testid="voice-starting-spinner"]')).toBeNull();
   });
@@ -616,7 +654,7 @@ describe("compact sidebar navigation", () => {
 
   test("keeps core destinations above visible recent chats", () => {
     renderSidebar();
-    for (const id of ["agents", "dictation", "visualization", "tasks", "plugins", "marketplace"]) {
+    for (const id of ["agents", "dictation", "visualization", "agentic-ide", "plugins", "marketplace"]) {
       expect(screen.getByTestId(`nav-row-${id}`)).toBeTruthy();
     }
     expect(screen.getByTestId("recent-chats")).toBeTruthy();

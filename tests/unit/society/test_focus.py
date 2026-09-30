@@ -15,7 +15,7 @@ def _tool(name: str, desc: str = "x.") -> SimpleNamespace:
 CATALOG = build_catalog(
     {
         "gmail": _tool("gmail", "Read and send mail."),
-        "google-calendar": _tool("google-calendar", "Calendar events."),
+        "google_calendar": _tool("google_calendar", "Calendar events."),
         "cli_gh": _tool("cli_gh", "GitHub CLI."),
         "search-web": _tool("search-web", "Search the web."),
         "wiki-recall": _tool("wiki-recall", "Search the wiki."),
@@ -39,9 +39,9 @@ def test_german_description_works_too():
         "Du liest mein Postfach und trägst Termine in den Kalender ein.",  # i18n-allow: sample
         CATALOG,
     )
-    assert focus[:2] == ["plugin:gmail", "plugin:google-calendar"] or set(focus[:2]) == {
+    assert focus[:2] == ["plugin:gmail", "plugin:google_calendar"] or set(focus[:2]) == {
         "plugin:gmail",
-        "plugin:google-calendar",
+        "plugin:google_calendar",
     }
 
 

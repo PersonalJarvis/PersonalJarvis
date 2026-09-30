@@ -461,29 +461,22 @@ async def test_a_question_clears_the_restart_checkpoint_immediately(
     assert watcher.take_resume_dirty() is True
 
 
-async def test_a_restored_pane_painting_itself_keeps_its_continue_offer(
+async def test_a_restored_pane_painting_itself_is_not_checkpointed_as_working(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """The regression that broke the Continue button outright.
+    """A restored CLI redraws its banner and old transcript before it settles.
 
-    A restored CLI redraws its banner and its old transcript for several seconds
-    before it settles, and this detector reads MOVEMENT — so that burst is
-    frame-for-frame an agent at work. Retracting `continuation_pending` for it
-    took every restored pane off the Continue list within two sweeps of coming
-    back, and the dialog reported "nothing was interrupted" for ever.
-
-    Movement only counts once the pane has been SEEN standing still.
+    This detector reads MOVEMENT, so that burst is frame-for-frame an agent at
+    work — but nobody gave it a task, so it must not be recorded as a job the
+    next restart would report as interrupted.
     """
     watcher = notifications.watcher()
     _session, term = await _pane(registry, tmp_path)
-    # What a restore leaves behind: the pane picked its conversation back up and
-    # nobody has told it anything since.
-    term.continuation_pending = True
     assert term.idle_seen is False, "a freshly spawned process has settled nothing"
 
     _busy(watcher, registry, term, start=100.0, tasked=False)
 
-    assert term.continuation_pending is True, "a CLI drawing itself is not the agent working"
+    assert term.resume_continuation_needed is False, "a CLI drawing itself is not working"
 
 
 async def test_a_new_process_for_the_same_pane_discards_the_old_screen_observation(
@@ -496,7 +489,6 @@ async def test_a_new_process_for_the_same_pane_discards_the_old_screen_observati
     _rest(watcher, registry, term, IDLE_SCREEN, at=100.0, emit=False)
     assert term.idle_seen is True
 
-    term.continuation_pending = True
     term.resume_continuation_needed = False
     term.process_generation += 1
     term.idle_seen = False
@@ -504,32 +496,29 @@ async def test_a_new_process_for_the_same_pane_discards_the_old_screen_observati
     # A replacement CLI initially redraws the same prompt as its predecessor.
     watcher.poll(registry, now=200.0, emit=False)
     assert term.idle_seen is False
-    assert term.continuation_pending is True
     assert term.resume_continuation_needed is False
 
     term.transcript.clear()
     _draw(term, BUSY_SCREEN)
     watcher.poll(registry, now=200.0 + notifications.SWEEP_INTERVAL_S, emit=False)
-    assert term.continuation_pending is True
     assert term.resume_continuation_needed is False
 
 
-async def test_a_new_submission_after_settle_retracts_the_offer(
+async def test_a_new_submission_after_settle_is_checkpointed_as_working(
     registry: Registry, tmp_path: Path
 ) -> None:
     """A generation-stamped task, not prior stillness, proves resumed work."""
     watcher = notifications.watcher()
     _session, term = await _pane(registry, tmp_path)
-    term.continuation_pending = True
 
     # It comes up, paints itself, and settles at its prompt.
     _rest(watcher, registry, term, IDLE_SCREEN, at=100.0, emit=False)
     assert term.idle_seen is True
-    assert term.continuation_pending is True, "sitting at a prompt is what waiting looks like"
+    assert term.resume_continuation_needed is False, "sitting at a prompt is not working"
 
     _busy(watcher, registry, term, start=100.0 + STILL_S + 2)
 
-    assert term.continuation_pending is False
+    assert term.resume_continuation_needed is True
 
 
 async def test_a_pane_that_was_never_busy_is_never_reported(

@@ -192,6 +192,19 @@ describe("work trace", () => {
     expect(screen.getAllByText("Upload failed").length).toBeGreaterThan(0);
   });
 
+  it("keeps a failed question poll visible after a conversation completes", () => {
+    const failedPoll = tool("poll", {
+      name: "society_ask_user",
+      input: { wait_for: "closed-question" },
+      isError: true,
+      output: "The question is closed.",
+    });
+    const { container } = render(<WorkTrace {...props} conversation blocks={[tool("a"), failedPoll, reply("done", "I could not get an answer.")]} />);
+    expect(container.querySelector('[data-trace-tool="poll"]')).toBeTruthy();
+    expect(screen.getByText("The question is closed.")).toBeTruthy();
+    expect(screen.getByTestId("tool-failure-warning")).toBeTruthy();
+  });
+
   it("treats a tool-only turn as work", () => {
     expect(splitConversationTurn([tool("a")])).toEqual({ work: [tool("a")], answer: [], after: [] });
   });

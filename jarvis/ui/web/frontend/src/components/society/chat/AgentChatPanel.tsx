@@ -38,7 +38,7 @@ import { ComposerChipField, type ComposerChipFieldHandle } from "@/components/ag
 import { MessageWithChips } from "@/components/agentchat/ToolChoiceChips";
 import { choiceToken } from "@/components/agentchat/composerChips";
 import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
-import { DictationStatus } from "@/components/agentchat/DictationStatus";
+import { DictationButton } from "@/components/agentchat/DictationButton";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
@@ -55,7 +55,8 @@ import { VoiceStage } from "@/components/home/VoiceStage";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { createAgentChatStore, useAgentChatStore } from "@/store/agentChat";
+import { societyDisplayName } from "@/lib/societyDisplayName";
+import { createAgentChatStore, useAgentChatStore, type AgentChatStoreHook } from "@/store/agentChat";
 import type { AgentChatSurface, ApprovalDecision } from "@/lib/agentChatApi";
 
 import { AgentSwatch } from "../AgentSwatch";
@@ -101,6 +102,8 @@ let onboardingAsked = false;
 export interface AgentChatPanelProps {
   agent: SocietyAgent;
   roster: SocietyAgent[];
+  /** An isolated store lets two canonical agent sessions remain open side by side. */
+  chatStore?: AgentChatStoreHook;
 }
 
 /**
@@ -142,14 +145,15 @@ export function itemsForOpenSession(
 
 export function AgentChatPanel(props: AgentChatPanelProps) {
   const disconnect = useCallback(() => {
-    (props.agent.tier === "lead" ? useAgentChatStore : useSocietyChatStore).getState().disconnect();
-  }, [props.agent.tier]);
-  return <PairConversationBoundary key={props.agent.agentId} recipient={{ id: props.agent.agentId, name: props.agent.name }}>
+    (props.agent.tier === "lead" ? useAgentChatStore : props.chatStore ?? useSocietyChatStore).getState().disconnect();
+  }, [props.agent.tier, props.chatStore]);
+  const assistantName = useEventStore((state) => state.assistantName);
+  return <PairConversationBoundary key={props.agent.agentId} recipient={{ id: props.agent.agentId, name: societyDisplayName(props.agent, assistantName) }}>
     <RoutineChatHost agentId={props.agent.agentId} onOpen={disconnect}><AgentChatPanelContent {...props} /></RoutineChatHost>
   </PairConversationBoundary>;
 }
 
-function AgentChatPanelContent({ agent, roster }: AgentChatPanelProps) {
+function AgentChatPanelContent({ agent, roster, chatStore }: AgentChatPanelProps) {
   if (agent.tier === "lead") {
     return (
       <AgentChatStoreProvider store={useAgentChatStore}>
@@ -159,7 +163,7 @@ function AgentChatPanelContent({ agent, roster }: AgentChatPanelProps) {
   }
   if (!agent.chatSessionId) return <NotBoundYet />;
   return (
-    <AgentChatStoreProvider store={useSocietyChatStore}>
+    <AgentChatStoreProvider store={chatStore ?? useSocietyChatStore}>
       <SpecialistChat agent={agent} roster={roster} />
     </AgentChatStoreProvider>
   );
@@ -1182,7 +1186,6 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
       <div className={CHAT_MEASURE}>
         <ChatAttachmentStrip attachments={attachments.attachments} analyzing={attachments.analyzing} onRemove={attachments.remove} />
       </div>
-      <DictationStatus onStop={dictation.stop} className={cn(CHAT_MEASURE, "mb-1.5")} />
       <MentionPicker
         anchorRef={composerRef}
         open={pickerOpen}
@@ -1201,7 +1204,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           attachments.dragging && "border-border-strong",
           // The whole composer reads as armed while the mic is open, not just
           // the 32px button someone has to go looking for.
-          dictation.dictating && "border-success/40 ring-1 ring-success/25",
+          dictation.dictating && "border-success/35 focus-within:border-success/50",
         )}
         {...attachments.dragHandlers}
       >
@@ -1269,7 +1272,11 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
         </div>
         <ComposerChipField
           ref={fieldRef}
-          placeholder={t("society.chat.placeholder").replace("{0}", agent.name)}
+          placeholder={
+            dictation.dictating
+              ? t("chats_view.dictation_listening")
+              : t("society.chat.placeholder").replace("{0}", agent.name)
+          }
           disabled={false}
           onSubmit={() => void submit()}
           onDraftChange={onDraftChange}
@@ -1305,23 +1312,18 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           }}
           className="max-h-[180px]"
         />
-        {surface === "society" ? <div className="flex h-8 min-w-0 max-w-[40%] shrink-0 items-center">
+        {/* Hidden, not unmounted, while recording: the pill needs the room,
+            and a save in flight must still report back. */}
+        {surface === "society" ? <div className={cn("h-8 min-w-0 max-w-[40%] shrink-0 items-center", dictation.dictating ? "hidden" : "flex")}>
           <AgentModelPicker key={agent.agentId} agent={agent} busy={busy} onSavingChange={setModelSaving} />
         </div> : null}
-        <button
-          type="button"
-          onClick={dictation.toggle}
-          aria-label={dictation.dictating ? t("society.chat.stop_recording") : t("society.chat.record")}
-          aria-pressed={dictation.dictating}
-          className={cn(
-            "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-            dictation.dictating
-              ? "bg-secondary text-success motion-safe:animate-jarvis-pulse"
-              : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-          )}
-        >
-          {dictation.dictating ? <Square className="h-4 w-4" aria-hidden /> : <Mic className="h-4 w-4" aria-hidden />}
-        </button>
+        <DictationButton
+          dictating={dictation.dictating}
+          onToggle={dictation.toggle}
+          startLabel={t("society.chat.record")}
+          stopLabel={t("society.chat.stop_recording")}
+          shape="round"
+        />
         {live && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
           <button
             type="button"

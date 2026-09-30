@@ -365,3 +365,29 @@ async def test_multi_sentence_brain_response_keeps_one_stream(monkeypatch) -> No
         f"no closes until stop() or rate-change — got {len(closes)} closes"
     )
     assert len(writes) == 5, f"all 5 sentences must reach the writer, got {writes}"
+
+
+class _LatencyStream:
+    latency = 0.4
+
+
+@pytest.mark.asyncio
+async def test_one_shot_blob_is_followed_by_a_buffer_deep_silent_tail(monkeypatch) -> None:
+    """WASAPI's blocking stop() discards the device buffer instead of draining it.
+
+    A cue shorter than the buffer was accepted instantly and thrown away
+    unheard, so ``play_pcm`` must write trailing silence one buffer deep.
+    """
+    player, _events = _make_player(monkeypatch)
+    written: list[int] = []
+    monkeypatch.setattr(
+        player, "_open_output_stream", lambda rate: (_LatencyStream(), rate)
+    )
+    monkeypatch.setattr(
+        player,
+        "_write_samples",
+        lambda stream, arr, src, dev, **_k: written.append(int(arr.size)),
+    )
+    blob_samples = 2_400  # 100 ms at 24 kHz, well under the 0.4 s buffer
+    await player.play_pcm(b"\x10\x00" * blob_samples, sample_rate=24_000)
+    assert written == [blob_samples + int(24_000 * 0.45)]

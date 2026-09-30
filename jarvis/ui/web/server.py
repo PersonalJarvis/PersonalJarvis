@@ -333,6 +333,7 @@ class WebServer:
         from .agent_accounts_routes import router as agent_accounts_router
         from .agent_chat_routes import router as agent_chat_router
         from .agent_mcp_routes import router as agent_mcp_router
+        from .agentic_ide_git_routes import router as agentic_ide_git_router
         from .agentic_ide_routes import router as agentic_ide_router
         from .antigravity_routes import router as antigravity_router
         from .board_routes import (
@@ -348,6 +349,7 @@ class WebServer:
         from .clipboard_routes import router as clipboard_router
         from .commands_routes import router as commands_router
         from .computer_use_routes import router as computer_use_router
+        from .computers_routes import router as computers_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
         from .costs_routes import router as costs_router
@@ -389,6 +391,7 @@ class WebServer:
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
         from .routine_hooks_routes import router as routine_hooks_router
+        from .appshot_routes import router as appshot_router
         from .screen_context_routes import router as screen_context_router
         from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
@@ -525,6 +528,8 @@ class WebServer:
         # doing?") and promptable from Jarvis. Reuses the same PTY stack as the
         # workspace above; adds the folder picker, call-signs, transcripts, and
         # the focused coding mode.
+        # Before the IDE router, so its /{…} paths never shadow /git/….
+        app.include_router(agentic_ide_git_router)
         app.include_router(agentic_ide_router)
         # The pane-activity sweep has no bus of its own (the registry is a plain
         # holder by design); this is the one place that holds one, so the sweep
@@ -539,6 +544,8 @@ class WebServer:
         app.include_router(chat_library_router)
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
+        # Settings -> Computers: the user's own servers and local VMs over SSH.
+        app.include_router(computers_router)
         app.include_router(dictionary_router)
         # Dictation mode — hold to speak, text lands in the focused field.
         # Mounted so every action is also `jarvis api dictation <op>`, which is
@@ -559,6 +566,9 @@ class WebServer:
         # machine with no display, so `jarvis api screen-context status` is a
         # valid capability probe everywhere.
         app.include_router(screen_context_router)
+        # Appshots: the front window as conversation context, on a shortcut,
+        # a button or a spoken request. Captures through Screen Context.
+        app.include_router(appshot_router)
         # The mission deck's pictures: the last Screen-Context capture (one
         # frame, in memory, TTL) and Computer-Use frames by content hash.
         app.include_router(deck_router)
@@ -2392,6 +2402,30 @@ class WebServer:
             "will be renewed in the background."
         )
 
+    def _schedule_appshot_shortcut(self) -> None:
+        """Arm the global appshot shortcut once the wake model has loaded.
+
+        Off the boot path (AP-26): the key reader and the hotkey backend load
+        native libraries. Headless hosts arm nothing and say so in the log.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug("Appshot shortcut not scheduled — no running event loop.")
+            return
+
+        async def _arm() -> None:
+            from jarvis.appshot.hotkey import start_appshot_shortcut
+            from jarvis.core import runtime_refs as _rr
+
+            await _rr.await_wake_model_ready(timeout=12.0)
+            try:
+                await start_appshot_shortcut(self.bus)
+            except Exception as exc:  # noqa: BLE001 - voice/chat work without it
+                logger.opt(exception=exc).warning("Appshot shortcut could not start")
+
+        self._appshot_shortcut_task = loop.create_task(_arm(), name="appshot-shortcut")
+
     def _schedule_realtime_transport_warm(self) -> None:
         """Pre-open the selected realtime transports off the boot path.
 
@@ -2831,6 +2865,7 @@ class WebServer:
         # browser-only install has no desktop shell to warm the realtime
         # transport for it.
         self._schedule_realtime_transport_warm()
+        self._schedule_appshot_shortcut()
         # Defer provisioning until the boot chain returns control to the server.
         async def prepare_browser() -> None:
             from jarvis.society.browser import install
@@ -3730,6 +3765,12 @@ class WebServer:
             lambda: _service_from_state(state),
             lambda: self.cfg,
         )
+        def _society_plugin_state() -> tuple[list[str], set[str]]:
+            from jarvis.marketplace.catalog_data import load_catalog
+            from jarvis.marketplace.connect_helpers import usable_plugin_ids
+
+            return [spec.id for spec in load_catalog().plugins], usable_plugin_ids()
+
         state.society = SocietyRuntime(
             data_dir,
             mission_manager=_manager,
@@ -3742,6 +3783,7 @@ class WebServer:
             cfg=lambda: self.cfg,
             # The island learns of a figure's new place through the app bus the
             # WebSocket forwards (SocietyCheckpointChanged).
+            plugin_state=_society_plugin_state,
             event_publish=self.bus.publish,
             app_bus=self.bus,
             task_services=lambda: (

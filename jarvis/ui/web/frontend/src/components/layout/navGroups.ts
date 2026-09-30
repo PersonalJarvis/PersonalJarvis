@@ -21,6 +21,7 @@ import {
   Mic,
   Notebook,
   ScrollText,
+  Server,
   Settings,
   Shapes,
   Share2,
@@ -32,6 +33,7 @@ import {
   Wallet,
   Workflow,
   Image as ImageIcon,
+  ScanLine,
   type LucideIcon,
 } from "lucide-react";
 import { OllamaIcon } from "@/components/icons/OllamaIcon";
@@ -199,6 +201,15 @@ export const NAV_GROUPS: NavItem[][] = [
   // Telefonie" voice command lands on the "telephony" id. Settings likewise
   // fronts the former "Taskbar" + "Languages" sections.
   [
+    // Computers: the servers and virtual machines the assistant and its agents
+    // can work on besides this one (a rented VPS, a hosting-account import, a
+    // local VM). A Settings-hub entry, first under System.
+    {
+      id: "computers",
+      labelKey: "nav.computers",
+      icon: Server,
+      fallbackLabel: "Computers",
+    },
     {
       id: "apikeys",
       labelKey: "nav.apikeys",
@@ -256,6 +267,15 @@ export const NAV_FOOTER_ITEMS: NavItem[] = [
 ];
 
 /**
+ * Rows that exist only inside the Settings hub's own navigation, not in the
+ * app sidebar: settings for one feature, reached through Settings the way the
+ * Appshots page is.
+ */
+export const SETTINGS_HUB_ONLY_ITEMS: NavItem[] = [
+  { id: "appshots", labelKey: "nav.appshots", icon: ScanLine, fallbackLabel: "Appshots" },
+];
+
+/**
  * Every section id rendered inside the Settings hub (`SettingsHubView`).
  *
  * The ids keep their meaning — deep links, voice commands, the deck and the
@@ -277,7 +297,9 @@ export const SETTINGS_HUB_IDS: readonly SectionId[] = [
   "telephony",
   "telephony-setup",
   "local-models",
+  "computers",
   "wallpaper",
+  "appshots",
   "costs",
   "feedback",
 ];

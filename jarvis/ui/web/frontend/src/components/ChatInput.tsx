@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowUp, Mic, Square } from "lucide-react";
+import { ArrowUp } from "lucide-react";
 import { getWSClient } from "@/hooks/useWebSocket";
 import { useVoiceEngineDisplay } from "@/hooks/useVoiceEngineDisplay";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
-import { DictationStatus } from "@/components/agentchat/DictationStatus";
+import { DictationButton } from "@/components/agentchat/DictationButton";
 
 // Safety net: if the brain doesn't respond within 60s (no reply, no error event),
 // we revert the indicator. A backend hang must not leave the UI stuck in the
@@ -177,9 +177,6 @@ export function ChatInput() {
         "transition-[box-shadow] focus-within:ring-2 focus-within:ring-border-strong",
       )}
     >
-      {/* Listening is a live state, and life is green — the shared strip owns
-          that rule now, plus the clock and its own way out. */}
-      <DictationStatus onStop={stopDictation} />
       <textarea
         // Marks the composer as the app's fallback dictation sink. The
         // delivery path needs to know whether it is on screen at all before
@@ -191,7 +188,9 @@ export function ChatInput() {
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={onKeyDown}
         placeholder={
-          connected
+          dictating
+            ? t("chats_view.dictation_listening")
+            : connected
             ? t("chats_view.input_placeholder")
             : wsWarming
               ? t("voice_state.booting")
@@ -204,22 +203,13 @@ export function ChatInput() {
         className="max-h-[50vh] w-full resize-none bg-transparent px-1 py-1 text-reading text-foreground scrollbar-jarvis placeholder:text-faint-foreground focus-visible:outline-none disabled:opacity-50"
       />
       <div className="flex items-center gap-row">
-        <button
-          type="button"
-          data-jarvis-dictation-trigger
-          onClick={toggleDictation}
+        <DictationButton
+          dictating={dictating}
+          onToggle={toggleDictation}
           disabled={!connected}
-          aria-label={dictating ? t("chats_view.dictation_stop") : t("chats_view.dictation_start")}
-          title={dictating ? t("chats_view.dictation_stop") : t("chats_view.dictation_start")}
-          className={cn(
-            "inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors disabled:opacity-50",
-            dictating
-              ? "animate-jarvis-pulse bg-secondary text-success"
-              : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-          )}
-        >
-          {dictating ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-        </button>
+          startLabel={t("chats_view.dictation_start")}
+          stopLabel={t("chats_view.dictation_stop")}
+        />
         <span className="flex-1" />
         <button
           type="button"

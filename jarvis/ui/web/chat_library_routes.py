@@ -4,6 +4,7 @@ Endpoints (mounted by the WebServer in ``_build_app()``):
 
     GET    /api/chat-library/projects                       → every project
     POST   /api/chat-library/projects                       → open/create one
+    PUT    /api/chat-library/projects/order                 → reorder projects via drag and drop
     PATCH  /api/chat-library/projects/{pid}                 → rename, pin, archive
     DELETE /api/chat-library/projects/{pid}                 → forget it and its chats
     GET    /api/chat-library/projects/{pid}/chats           → that project's chats
@@ -36,10 +37,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from jarvis.agentic_ide import library
+from jarvis.agentic_ide import library, resume_store
 
 router = APIRouter(prefix="/api/chat-library", tags=["chat-library"])
 
@@ -57,6 +58,8 @@ class ProjectOut(BaseModel):
     name: str
     color: str | None = None
     pinned: bool = False
+    #: Manual sidebar position, set by drag and drop. 0.0 until arranged.
+    position: float = 0.0
     archived: bool = False
     created_at: float = 0.0
     last_opened_at: float = 0.0
@@ -85,6 +88,12 @@ class PatchProjectIn(BaseModel):
     color: str | None = None
     pinned: bool | None = None
     archived: bool | None = None
+
+
+class ProjectOrderIn(BaseModel):
+    project_ids: list[str] = Field(
+        description="Visible project ids front to back, in sidebar order.",
+    )
 
 
 class ChatOut(BaseModel):
@@ -220,6 +229,16 @@ def open_scratch() -> ProjectOut:
     return _project_out(library.ensure_scratch())
 
 
+@router.put("/projects/order", response_model=ProjectsOut, summary="Reorder projects")
+def reorder_projects(body: ProjectOrderIn) -> ProjectsOut:
+    """Persist a drag-and-drop sidebar order. Nothing is renamed or moved on disk."""
+    try:
+        ordered = library.reorder_projects(body.project_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ProjectsOut(projects=[_project_out(p) for p in ordered])
+
+
 @router.patch(
     "/projects/{project_id}", response_model=ProjectOut, summary="Rename, pin or archive a project"
 )
@@ -245,7 +264,155 @@ def patch_project(project_id: str, body: PatchProjectIn) -> ProjectOut:
     openapi_extra={"x-jarvis-dangerous": True},
 )
 def delete_project(project_id: str) -> RemovedOut:
-    return RemovedOut(removed=library.delete_project(project_id))
+    # The IDE sidebar re-derives a project row from every remembered workspace
+    # in its folder, so the remembered ones have to go too or the project comes
+    # straight back. Open workspaces are the caller's to close first.
+    removed = library.delete_project(project_id)
+    forgotten = resume_store.forget(project_id=project_id)
+    return RemovedOut(removed=removed or forgotten > 0)
+
+
+class RevealedOut(BaseModel):
+    opened: bool
+
+
+def _project_folder(project_id: str) -> str | None:
+    """The folder of a project, including one known only from its workspaces.
+
+    Older installs derive a project row from a remembered workspace without a
+    library entry, and the sidebar offers the same actions on both kinds.
+    """
+    project = library.get_project(project_id)
+    if project is not None:
+        return project.path
+    from jarvis.agentic_ide import workspace_catalog
+    from jarvis.agentic_ide.session import get_registry
+
+    for entry in workspace_catalog.project_graph(get_registry())["projects"]:
+        if entry["id"] == project_id:
+            return str(entry["path"])
+    return None
+
+
+@router.post(
+    "/projects/{project_id}/reveal",
+    response_model=RevealedOut,
+    summary="Open a project's folder in the file manager",
+)
+def reveal_project(request: Request, project_id: str) -> RevealedOut:
+    """Open the project's folder in Explorer, Finder or the Linux file manager.
+
+    Desktop-only: on a headless host the folder is on the server, not in front
+    of the user, so the route 404s there like the other native file actions.
+    The path comes from the stored project, never from the client.
+    """
+    folder = _require_folder(request, project_id)
+    from jarvis.platform.open_path import open_file
+
+    return RevealedOut(opened=open_file(Path(folder)))
+
+
+class LauncherOut(BaseModel):
+    id: str
+    label: str
+
+
+class LaunchersOut(BaseModel):
+    """Where this project can be opened right now, so the menu offers only those."""
+
+    file_manager: bool
+    editors: list[LauncherOut]
+    remote_url: str | None = None
+    remote_label: str | None = None
+
+
+class OpenInIn(BaseModel):
+    target: str = Field(
+        min_length=1,
+        max_length=40,
+        description='An editor id from ``/launchers`` or ``"remote"``.',
+    )
+
+
+def _require_folder(request: Request, project_id: str) -> str:
+    if not bool(getattr(request.app.state, "native_file_actions", False)):
+        raise HTTPException(status_code=404, detail="native-file-actions-disabled")
+    folder = _project_folder(project_id)
+    if folder is None:
+        raise HTTPException(status_code=404, detail="No such project")
+    if not _folder_exists(folder):
+        raise HTTPException(status_code=404, detail="The project folder is not reachable.")
+    return folder
+
+
+@router.get(
+    "/projects/{project_id}/launchers",
+    response_model=LaunchersOut,
+    summary="Editors and web pages a project's folder can be opened in",
+)
+def project_launchers(request: Request, project_id: str) -> LaunchersOut:
+    """Installed code editors, and the folder's hosted git remote if it has one.
+
+    Asked when the sidebar's menu opens, so the menu shows "Open in Cursor" only
+    where Cursor is installed and "Open on GitHub" only where there is a GitHub
+    remote. A headless host has no local apps: every list comes back empty.
+    """
+    if not bool(getattr(request.app.state, "native_file_actions", False)):
+        return LaunchersOut(file_manager=False, editors=[])
+    folder = _project_folder(project_id)
+    if folder is None:
+        raise HTTPException(status_code=404, detail="No such project")
+    if not _folder_exists(folder):
+        return LaunchersOut(file_manager=False, editors=[])
+    from jarvis.agentic_ide import project_links
+    from jarvis.ui.web import outputs_routes
+
+    editor_ids = {oid for oid, _ in outputs_routes._OPENER_EDITORS}
+    editors = [
+        LauncherOut(id=entry["id"], label=entry["label"])
+        for entry in outputs_routes._available_openers()
+        if entry["id"] in editor_ids
+    ]
+    remote = project_links.remote_web_url(folder)
+    return LaunchersOut(
+        file_manager=True,
+        editors=editors,
+        remote_url=remote,
+        remote_label=project_links.host_label(remote) if remote else None,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/open-in",
+    response_model=RevealedOut,
+    summary="Open a project's folder in an editor or its web page",
+)
+def open_project_in(request: Request, project_id: str, body: OpenInIn) -> RevealedOut:
+    """Open the folder in an installed editor, or the remote's page in the browser.
+
+    ``target`` is a closed id — never a path or a URL from the client — so this
+    cannot launch an arbitrary program or page.
+    """
+    folder = _require_folder(request, project_id)
+    from jarvis.agentic_ide import project_links
+
+    if body.target == "remote":
+        url = project_links.remote_web_url(folder)
+        if url is None:
+            raise HTTPException(status_code=404, detail="This folder has no hosted git remote.")
+        import webbrowser
+
+        return RevealedOut(opened=webbrowser.open(url))
+    from jarvis.platform.open_path import open_file_with
+    from jarvis.ui.web import outputs_routes
+
+    if body.target not in {oid for oid, _ in outputs_routes._OPENER_EDITORS}:
+        raise HTTPException(status_code=400, detail="Unknown editor.")
+    resolved = outputs_routes._resolve_opener(body.target)
+    if resolved is None:
+        raise HTTPException(status_code=409, detail="That editor is not installed.")
+    kind, value = resolved
+    return RevealedOut(opened=open_file_with(Path(folder), kind, value))
 
 
 # --------------------------------------------------------------------------- #

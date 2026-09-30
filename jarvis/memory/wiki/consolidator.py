@@ -499,9 +499,9 @@ class Consolidator:
 
         start_ns = time.time_ns()
         from jarvis.memory.wiki.provider_chain import (
+            background_wiki_providers,
             build_wiki_provider_chain,
             complete_with_fallback,
-            credential_ready_wiki_providers,
         )
 
         available = set(self._registry.available())
@@ -510,7 +510,7 @@ class Consolidator:
             model_override=self._curator_cfg.model,
             available=available,
             credential_ready=(
-                credential_ready_wiki_providers(
+                background_wiki_providers(
                     available=available,
                     config=self._root_cfg,
                 )

@@ -111,8 +111,17 @@ class OpenAILiveProvider:
                     json={"session": session, "transport": {"type": "webrtc", "sdp": offer}},
                 )
                 if response.status_code >= 400:
+                    from jarvis.brain.provider_test import classify_provider_error
+
+                    # Only the classification leaves this scope, never the
+                    # provider's body (AP-34): "no_credits" and "rate_limited"
+                    # share HTTP 429 and need different words for the user.
+                    cause = classify_provider_error(
+                        f"HTTP {response.status_code} {response.text[:2000]}"
+                    )
                     raise RuntimeError(
-                        f"OpenAI Live session creation failed (HTTP {response.status_code})."
+                        "OpenAI Live session creation failed "
+                        f"(HTTP {response.status_code}, {cause})."
                     )
                 payload = response.json()
                 session_id = payload["session"]["id"]

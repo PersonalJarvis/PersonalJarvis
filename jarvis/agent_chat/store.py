@@ -409,13 +409,36 @@ class AgentChatStore:
             "payload": json.loads(row["payload"]),
         }
 
-    def list_events(self, session_id: str, *, after_seq: int = 0) -> list[dict[str, Any]]:
+    def turn_has_text_before(self, session_id: str, turn_id: str, before_seq: int) -> bool:
+        """Whether this exact turn wrote a nonblank answer before its terminal."""
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT seq, ts_ms, kind, payload FROM agent_chat_events "
-                "WHERE session_id = ? AND seq > ? ORDER BY seq ASC",
-                (session_id, int(after_seq)),
-            ).fetchall()
+            row = self._conn.execute(
+                "SELECT 1 FROM agent_chat_events WHERE session_id = ? AND seq < ? "
+                "AND kind = 'assistant_text' AND json_extract(payload, '$.turn_id') = ? "
+                "AND trim(coalesce(json_extract(payload, '$.text'), '')) <> '' LIMIT 1",
+                (session_id, before_seq, turn_id),
+            ).fetchone()
+        return row is not None
+
+    def list_events(
+        self, session_id: str, *, after_seq: int = 0, tail: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Events in order; ``tail`` keeps only the newest N (still oldest first)."""
+        with self._lock:
+            if tail is not None:
+                rows = self._conn.execute(
+                    "SELECT seq, ts_ms, kind, payload FROM ("
+                    "SELECT seq, ts_ms, kind, payload FROM agent_chat_events "
+                    "WHERE session_id = ? AND seq > ? ORDER BY seq DESC LIMIT ?"
+                    ") ORDER BY seq ASC",
+                    (session_id, int(after_seq), max(0, int(tail))),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT seq, ts_ms, kind, payload FROM agent_chat_events "
+                    "WHERE session_id = ? AND seq > ? ORDER BY seq ASC",
+                    (session_id, int(after_seq)),
+                ).fetchall()
         out: list[dict[str, Any]] = []
         for r in rows:
             try:

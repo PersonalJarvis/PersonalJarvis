@@ -33,23 +33,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from jarvis.agentic_ide.drops import DropSource
 
 log = logging.getLogger(__name__)
 
 __all__ = [
-    "MAX_TOTAL_BYTES",
     "AttachmentError",
     "compose",
     "ingest",
     "to_analysis",
 ]
-
-#: Total cap for one attach gesture, shared with the terminal drop path so the
-#: two surfaces cannot disagree about what is too large.
-MAX_TOTAL_BYTES = 100 * 1024 * 1024
-
 
 class AttachmentError(RuntimeError):
     """The attach carried nothing usable, or the copies could not be written."""
@@ -59,7 +57,7 @@ async def ingest(
     cwd: str | Path,
     *,
     paths: list[str] | None = None,
-    uploads: list[tuple[str, bytes]] | None = None,
+    uploads: Sequence[tuple[str, DropSource]] | None = None,
     provider: str = "",
 ) -> list[Any]:
     """Store what was dropped in ``cwd`` and read what is in it.
@@ -68,7 +66,8 @@ async def ingest(
     or Finder drag usually carries them, and inside the desktop shell the host
     resolves them for every drop). ``uploads`` are ``(name, bytes)`` for
     everything with no path at all — a pasted screenshot, an image dragged off
-    a web page.
+    a web page. An upload may also be an open binary file (the web server's
+    spooled copy), so a large one streams to disk instead of into memory.
 
     A path already inside ``cwd`` is referenced where it lies; anything else is
     copied in, because an agent's reach outside its working directory is
@@ -89,7 +88,7 @@ async def ingest(
     # (name, bytes, reference) for everything attached — the reference travels
     # with the bytes so a description can never drift onto another file.
     readable: list[tuple[str, bytes, str]] = []
-    to_copy: list[tuple[str, bytes]] = []
+    to_copy: list[tuple[str, DropSource]] = []
 
     for raw in paths or []:
         candidate = (raw or "").strip()
@@ -100,45 +99,43 @@ async def ingest(
             reference = drops.reference(inside, agent=provider)
             references.append(reference)
             try:
-                body = await asyncio.to_thread((folder / inside).read_bytes)
+                body = await asyncio.to_thread(drops.read_for_analysis, folder / inside)
             except OSError as exc:
                 # The reference still ships; the file simply goes undescribed.
                 log.info("chat attach: %r not readable for analysis (%s)", inside, exc)
             else:
-                readable.append((Path(inside).name, body, reference))
+                if body is not None:
+                    readable.append((Path(inside).name, body, reference))
             continue
-        # expanduser() is string work; the read itself goes to a worker thread
-        # (a dropped file may live on a slow network share).
+        # expanduser() is string work; the stat itself goes to a worker thread
+        # (a dropped file may live on a slow network share). The copy streams
+        # from the path, so a large recording is never held in memory.
         resolved = Path(candidate).expanduser()  # noqa: ASYNC240
-        try:
-            data = await asyncio.to_thread(resolved.read_bytes)
-        except OSError as exc:
-            log.info("chat attach: unreadable dropped path %r (%s)", candidate, exc)
+        if not await asyncio.to_thread(resolved.is_file):
+            log.info("chat attach: unreadable dropped path %r", candidate)
             continue
-        to_copy.append((resolved.name, data))
+        to_copy.append((resolved.name, resolved))
 
-    total = sum(len(data) for _name, data in to_copy)
-    for name, data in uploads or []:
-        total += len(data)
-        if total > MAX_TOTAL_BYTES:
-            megabytes = MAX_TOTAL_BYTES // (1024 * 1024)
-            raise AttachmentError(f"That attachment is too large (max {megabytes} MB in total).")
-        if data:
-            to_copy.append((name or "file", data))
+    for name, source in uploads or []:
+        to_copy.append((name or "file", source))
 
     # ``store`` skips empty entries silently, so they are dropped HERE instead —
     # that keeps ``stored[i]`` paired with ``to_copy[i]`` positionally.
-    to_copy = [(name, data) for name, data in to_copy if data]
+    sizes = await asyncio.to_thread(lambda: [drops.size_of(src) for _n, src in to_copy])
+    to_copy = [pair for pair, size in zip(to_copy, sizes, strict=True) if size != 0]
 
     if to_copy:
         try:
             stored = await asyncio.to_thread(drops.store, folder, to_copy)
         except drops.DropError as exc:
             raise AttachmentError(str(exc)) from exc
-        for item, (_original, data) in zip(stored, to_copy, strict=True):
+        for item, (_original, source) in zip(stored, to_copy, strict=True):
             reference = drops.reference(item.relative_path, agent=provider)
             references.append(reference)
-            readable.append((item.name, data, reference))
+            # A file too large to analyse still ships; it goes undescribed.
+            body = await asyncio.to_thread(drops.read_for_analysis, source)
+            if body is not None:
+                readable.append((item.name, body, reference))
 
     if not references:
         raise AttachmentError("That attachment carried nothing this chat could use.")

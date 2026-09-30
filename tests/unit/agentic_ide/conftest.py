@@ -56,6 +56,22 @@ def _resume_store_in_tmp(
 
 
 @pytest.fixture(autouse=True)
+def _pane_sessions_in_tmp(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point the panes' session-hook records (and the hook settings) at a temp dir.
+
+    A spawned Claude pane writes its hook settings file; without this every
+    test that spawns one would write into the developer's own data folder.
+    """
+    from jarvis.agentic_ide import pane_sessions
+
+    target = tmp_path_factory.mktemp("pane-sessions") / "pane_sessions"
+    monkeypatch.setattr(pane_sessions, "_state_dir", lambda: target)
+    return target
+
+
+@pytest.fixture(autouse=True)
 def _ui_prefs_in_tmp(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Path:

@@ -15,6 +15,8 @@ import type { Group } from "three";
 import { AgentFollower } from "../companion/AgentFollower";
 import { resolveCompanion } from "../companion/appearance";
 import type { AgentCheckpoint, AgentRunState, SocietyAgent } from "../data";
+import { societyDisplayName } from "@/lib/societyDisplayName";
+import { useEventStore } from "@/store/events";
 import { useBuildingPoses } from "./buildingPoses";
 import { useCameraStore } from "./cameraStore";
 import {
@@ -152,6 +154,8 @@ function Walker({
   const anim = useRef<WalkerAnim>({ mode: "rest", speed: 0 });
   const gl = useThree((s) => s.gl);
   const [hover, setHover] = useState(false);
+  const assistantName = useEventStore((s) => s.assistantName);
+  const displayName = societyDisplayName(agent, assistantName);
   const offset = useMemo(() => lateralOffset(agent.agentId), [agent.agentId]);
   /** The building-pose generation this walker last planned against. */
   const poseGen = useRef(useBuildingPoses.getState().generation);
@@ -276,7 +280,7 @@ function Walker({
         x: staged.x,
         z: staged.z,
         color: agent.palette.accent,
-        name: agent.name,
+        name: displayName,
       });
       return;
     }
@@ -365,7 +369,7 @@ function Walker({
     anim.current.mode = s.mode;
     g.position.set(s.x, s.y, s.z);
     g.rotation.y = s.heading;
-    setWalkerPin(agent.agentId, { x: s.x, z: s.z, color: agent.palette.accent, name: agent.name });
+    setWalkerPin(agent.agentId, { x: s.x, z: s.z, color: agent.palette.accent, name: displayName });
   });
 
   useEffect(() => {
@@ -397,7 +401,7 @@ function Walker({
       <Html position={[0, (agent.figure ? (agent.figure.heightM ?? 1.75) * WORLD_HERO_SCALE : 2.0) + 0.35, 0]} center zIndexRange={[30, 10]} style={{ pointerEvents: "none" }}>
         <div className="sw-nameplate" data-state={agent.state} data-selected={selected || undefined}>
           <span className="sw-nameplate-dot" style={{ background: agent.palette.accent }} />
-          {agent.name}
+          {displayName}
         </div>
       </Html>
     </group>

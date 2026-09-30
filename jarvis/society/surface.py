@@ -35,6 +35,7 @@ from .agent_tools import (
     ShellTool,
     WikiNoteTool,
 )
+from .ask_tool import ASK_USER_TOOL_NAME, AskUserTool
 from .capabilities import CapabilityKind, CapabilityRow, capability_id_for_tool, select_tools
 from .coding_tool import CodingSessionTool
 from .communication import COMMUNICATION_GUIDANCE
@@ -42,6 +43,7 @@ from .conversation_tool import ConversationRecallTool, RoutineInvokeTool, Routin
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
 from .roster import AgentRecord, canonical_session_id
+from .routine_runner import is_routine_session
 from .runtime import current_runtime
 
 log = logging.getLogger(__name__)
@@ -84,6 +86,10 @@ Opening and sending obey your approval rules. Read recorded context before claim
 answer, propose). Compose it yourself. When handing work to a teammate, include the result, \
 its location and any unresolved dependency they need to continue. A reply to the user is a \
 natural conversation, not a mandatory handoff checklist; mention only relevant details.
+- Questions: only when a decision genuinely belongs to the user, ask with society_ask_user: \
+all related questions in ONE call (max 4, usually 1), 2-4 prepared answers each, your \
+recommendation first with its reason. Unanswered questions take your recommendation after five \
+minutes. Never ask what you can infer or look up; decide everything else yourself.
 - Shell: society_shell runs commands in YOUR workspace folder only (relative paths stay inside it; \
 outside paths are refused). Destructive commands ask the user first.
 - Learning: after a finished task you may gain a learned skill of your own (listed \
@@ -340,6 +346,10 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
             ),
         }
     )
+    session_id = str(getattr(session, "session_id", "") or "")
+    # A routine runs unattended: it never gets a way to ask the user.
+    if not is_routine_session(session_id):
+        tools[ASK_USER_TOOL_NAME] = cast(Tool, AskUserTool(rt, agent_id, session_id=session_id))
     if rt.browser.is_installed() or rt.browser.live.model_resolver is not None:
         from .browser.tool import BrowserTool
 

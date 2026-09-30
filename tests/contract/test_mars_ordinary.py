@@ -26,6 +26,7 @@ class ControlledChat(AgentChatService):
         self.sent: list[dict] = []
         self.cancel_calls: list[tuple[str, str | None]] = []
         self.cancel_status: str | None = "cancelled"
+        self.cancel_text = "Turn completed."
 
     async def send(self, session_id, text, **kwargs):
         self.sent.append({"session_id": session_id, "text": text, **kwargs})
@@ -35,6 +36,14 @@ class ControlledChat(AgentChatService):
         """Controlled terminal race; no real runner/provider or wall-clock sleep."""
         self.cancel_calls.append((session_id, expected_turn_id))
         if self.cancel_status is not None:
+            if self.cancel_status == "done" and self.cancel_text:
+                await self._emit(
+                    session_id,
+                    {
+                        "kind": "assistant_text",
+                        "payload": {"turn_id": expected_turn_id, "text": self.cancel_text},
+                    },
+                )
             await self._emit(
                 session_id,
                 {
@@ -163,6 +172,19 @@ async def test_cancel_rechecks_exact_durable_terminal_after_grace_period(
     # A replay reads the recorded terminal and does not issue another stop.
     replay = await adapter.cancel(**args, task_ref=active["task_ref"])
     assert replay["state"] == expected and replay["cancel_attempt"] == "not_attempted"
+    assert len(service.cancel_calls) == 1
+
+
+async def test_empty_done_terminal_stays_failed_on_cancel_replay(ordinary):
+    _, service, adapter = ordinary
+    args = {"agent_id": "comms", "command_id": "empty-done", "trace_id": "mars:empty-done"}
+    active = await adapter.dispatch(**args, draft="Draft a meeting invitation.")
+    service.cancel_status = "done"
+    service.cancel_text = "   "
+    outcome = await adapter.cancel(**args, task_ref=active["task_ref"])
+    assert outcome["state"] == "failed" and outcome["cancel_attempt"] == "attempted"
+    replay = await adapter.cancel(**args, task_ref=active["task_ref"])
+    assert replay["state"] == "failed" and replay["cancel_attempt"] == "not_attempted"
     assert len(service.cancel_calls) == 1
 
 

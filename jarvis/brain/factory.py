@@ -20,6 +20,10 @@ from typing import Any, Literal
 
 log = logging.getLogger(__name__)
 
+# Deadline for one awareness summary on a subscription CLI: a CLI turn spends
+# seconds on process start before the model even answers.
+_VERDICHTER_SUBSCRIPTION_TIMEOUT_S = 60.0
+
 BrainCallback = Callable[[str], Awaitable[str]]
 
 # Router-tier: pure-dispatcher set (grown via documented ADR-0011 amendments;
@@ -848,7 +852,19 @@ def _register_runtime_manager(manager: Any) -> None:
     """Publish one Brain Manager and its public tool gateway for all surfaces."""
     try:
         from jarvis.brain.tool_gateway import BrainSupervisorToolGateway
+        from jarvis.brain.workspace_tool import WorkspaceOrchestrationTool
         from jarvis.core import runtime_refs
+
+        class WorkspaceGateway:
+            async def run(self, args: dict[str, Any], *, trace_id: str = "") -> dict[str, Any]:
+                # Resolve lazily, off the boot path and event loop. The runtime
+                # keeps the durable receipt store; providers receive a protocol.
+                import asyncio
+
+                from jarvis.agentic_ide.orchestration import get_orchestrator
+
+                orchestrator = await asyncio.to_thread(get_orchestrator)
+                return await orchestrator.run(args, trace_id=trace_id)
 
         async def session_tool(session_id: str) -> Any:
             # Compose the optional society hand lazily; no society import at boot.
@@ -873,6 +889,7 @@ def _register_runtime_manager(manager: Any) -> None:
                 session_tool=session_tool,
                 browser_tool=browser_tool,
                 session_tools=session_tools,
+                workspace_tool=WorkspaceOrchestrationTool(WorkspaceGateway()),
             )
         )
     except Exception as exc:  # noqa: BLE001 - registration never blocks boot
@@ -1040,7 +1057,21 @@ def _phase2_full_brain(
                         )
 
                 v_registry = BrainProviderRegistry()
-                v_brain = v_registry.instantiate(v_provider, model=v_model)
+                from jarvis.brain.resolver import SubscriptionFirstBrain
+
+                # Episode summaries are background work: a connected
+                # subscription writes them, the keyed brain above only when
+                # none is signed in. A CLI turn takes seconds, so the call
+                # deadline is widened to the subscription budget.
+                v_brain = SubscriptionFirstBrain(
+                    config,
+                    v_registry.instantiate(v_provider, model=v_model),
+                    cli_timeout_s=_VERDICHTER_SUBSCRIPTION_TIMEOUT_S,
+                )
+                if v_cfg.timeout_s < _VERDICHTER_SUBSCRIPTION_TIMEOUT_S:
+                    v_cfg = v_cfg.model_copy(
+                        update={"timeout_s": _VERDICHTER_SUBSCRIPTION_TIMEOUT_S}
+                    )
                 awareness_manager._verdichter = Verdichter(    # noqa: SLF001
                     brain=v_brain, config=v_cfg,
                 )

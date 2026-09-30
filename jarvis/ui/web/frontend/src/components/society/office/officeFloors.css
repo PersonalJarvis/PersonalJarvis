@@ -1,0 +1,42 @@
+/* Floors, the elevator ride and the compact (IDE side panel) HUD. Theme tokens only: light and dark mode both work. */
+
+/* The elevator: two doors slide shut over the scene, the floor switches behind them, they slide open. */
+.office-elevator { position:absolute; inset:0; z-index:62; pointer-events:none; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+.office-elevator-door { position:absolute; top:0; bottom:0; width:50%; background:linear-gradient(90deg, hsl(var(--secondary)), hsl(var(--muted))); box-shadow:inset 0 0 0 1px hsl(var(--border)); transition:transform 480ms cubic-bezier(.6,0,.3,1); }
+.office-elevator-door[data-side="left"] { left:0; transform:translateX(-100%); }
+.office-elevator-door[data-side="right"] { right:0; transform:translateX(100%); }
+.office-elevator[data-phase="closing"] .office-elevator-door,
+.office-elevator[data-phase="riding"] .office-elevator-door { transform:translateX(0); }
+/* A fresh mount starts open, so closing animates from open; opening animates back out. */
+.office-elevator[data-phase="closing"] .office-elevator-door { animation:office-door-close 480ms cubic-bezier(.6,0,.3,1); }
+@keyframes office-door-close { from { transform:translateX(var(--office-door-from, 0)); } }
+.office-elevator[data-phase="closing"] .office-elevator-door[data-side="left"] { --office-door-from:-100%; }
+.office-elevator[data-phase="closing"] .office-elevator-door[data-side="right"] { --office-door-from:100%; }
+.office-elevator-sign { position:relative; padding:6px 14px; border-radius:999px; border:1px solid hsl(var(--border)); background:hsl(var(--popover)); color:hsl(var(--popover-foreground)); font-size:13px; font-weight:600; opacity:0; transition:opacity 200ms ease; }
+.office-elevator[data-phase="riding"] .office-elevator-sign { opacity:1; }
+@media (prefers-reduced-motion: reduce) {
+  .office-elevator-door { transition:none; animation:none !important; }
+  .office-elevator-sign { transition:none; }
+}
+
+/* The pill over the elevator's call button. Like the name pills it is part of the diorama, which keeps one palette in both modes. */
+.office-call-pill { display:inline-flex; flex-direction:column; align-items:center; gap:1px; padding:4px 10px; border-radius:10px; background:rgb(24 26 32 / .86); color:#f8fafc; white-space:nowrap; user-select:none; pointer-events:none; box-shadow:0 2px 8px rgb(0 0 0 / .35); }
+.office-call-pill b { font-size:12px; font-weight:700; }
+.office-call-pill small { font-size:10px; color:#f5b83d; font-weight:600; }
+
+/* A coding session's facts in its panel. */
+.office-facts { display:grid; grid-template-columns:auto 1fr; gap:3px 10px; margin:0; }
+.office-facts dt { color:hsl(var(--muted-foreground)); font-size:11px; }
+.office-facts dd { margin:0; min-width:0; overflow-wrap:anywhere; }
+.office-facts-quote { display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden; font-style:italic; }
+.office-dot[data-dot="error"] { background:hsl(var(--destructive)); }
+
+/* Compact: the office inside a narrow side panel. No minimap or compass; cards and buttons shrink. */
+.office-stage-compact .office-hud-left { left:8px; top:8px; gap:5px; max-width:calc(100% - 16px); }
+.office-stage-compact .office-title { padding:5px 9px; font-size:12px; }
+.office-stage-compact .office-counts { gap:8px; padding:4px 9px; font-size:11px; flex-wrap:wrap; }
+.office-stage-compact .office-hud-right { right:8px; top:auto; bottom:8px; flex-direction:row; flex-wrap:wrap; justify-content:flex-end; max-width:calc(100% - 16px); }
+.office-stage-compact .office-button { padding:4px 8px; font-size:11px; }
+.office-stage-compact .office-panel-slot { top:auto; bottom:48px; right:8px; width:calc(100% - 16px); max-height:62%; }
+.office-stage-compact .office-prompt { bottom:48px; max-width:calc(100% - 16px); font-size:12px; }
+.office-stage-compact .office-note { font-size:11px; }

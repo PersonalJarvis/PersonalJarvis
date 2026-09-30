@@ -55,6 +55,7 @@ HEALTH_FILE_NAME = "local_models_health.json"
 
 ProbeFn = Callable[[str], Awaitable[dict[str, Any]]]
 GenerateFn = Callable[[Any, str], Awaitable[Any]]
+InUseFn = Callable[[Any], tuple[bool, str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,6 +225,12 @@ async def _default_probe(root: str) -> dict[str, Any]:
     return await probe_host(root)
 
 
+def _default_in_use(cfg: Any) -> tuple[bool, str]:
+    from jarvis.local_models.autostart import in_use
+
+    return in_use(cfg)
+
+
 async def _default_generate(cfg: Any, model: str) -> Any:
     from jarvis.brain import provider_test
 
@@ -239,8 +246,14 @@ async def check_once(
     probe: ProbeFn | None = None,
     generate: GenerateFn | None = None,
     persist: bool = True,
+    in_use: InUseFn | None = None,
 ) -> dict[str, Any] | None:
-    """One self-check; returns the record written, or ``None`` when skipped."""
+    """One self-check; returns the record written, or ``None`` when skipped.
+
+    The real generation only runs while local models are SELECTED (the active
+    brain or voice, see ``autostart.in_use``); otherwise the check stops at
+    the server probe.
+    """
     root = root or _server_root(cfg)
     roles = _configured_roles(cfg)
     server = await (probe or _default_probe)(root)
@@ -253,7 +266,18 @@ async def check_once(
         status, reason = "needs_setup", "Ollama runs, but no role is configured."
     else:
         model = roles.get("chat") or roles.get("deep") or roles.get("tools_screen") or ""
+        used, why = (in_use or _default_in_use)(cfg)
         if not model:
+            status, reason = "ok", ""
+        elif not used:
+            # A generation LOADS the model, and it stays resident behind its
+            # keep-alive: a 14B chat pick put ~11 GB on the accelerator and in
+            # RAM ten minutes after every boot, for half an hour, on a box whose
+            # brain was a hosted provider — memory the WebView and the agents
+            # needed (2026-09-28). The same trap as BUG-204, reached through
+            # the badge instead of autostart. A server that answers is all the
+            # badge can honestly claim for picks nothing uses.
+            log.debug("health monitor: %s not generated — %s", model, why)
             status, reason = "ok", ""
         else:
             try:
