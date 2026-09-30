@@ -18,6 +18,7 @@ import { TEAM_RENDERERS } from "./TeamRoomDecor";
 import { BREAK_RENDERERS } from "./BreakLounge";
 import { WARDROBE_RENDERERS } from "./WardrobeRoom";
 import { LOBBY_RENDERERS } from "./LobbyDecor";
+import { SPAWN_RENDERERS } from "./SpawnPoint";
 import { MeetingChair } from "./OfficeChairs";
 import { Bookshelf, Box, Couch, GEO, MAT, matte, Plant, Rounded, Rug } from "./OfficeFurniture";
 import { FURNITURE_SIZE, type Furniture, type FurnitureKind } from "./officeLayout";
@@ -33,39 +34,6 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.arcTo(x, y + h, x, y, r);
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
-}
-
-/** Kiosk screen: a list of agents with a gold header and an add button. */
-function drawKioskList(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-  const grad = ctx.createLinearGradient(0, 0, 0, h);
-  grad.addColorStop(0, "#22345a");
-  grad.addColorStop(1, "#16223b");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = "#f5b83d";
-  ctx.fillRect(0, 0, w, 56);
-  ctx.fillStyle = "#2a1d0a";
-  ctx.fillRect(24, 22, 150, 12);
-  const dots = ["#4ade80", "#fbbf24", "#e8ecf2", "#4ade80"];
-  dots.forEach((colour, i) => {
-    const y = 92 + i * 62;
-    ctx.fillStyle = "rgba(255,255,255,0.08)";
-    roundRect(ctx, 20, y - 24, w - 40, 48, 10);
-    ctx.fill();
-    ctx.fillStyle = colour;
-    ctx.beginPath();
-    ctx.arc(48, y, 10, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,0.85)";
-    ctx.fillRect(72, y - 6, 180 + ((i * 53) % 120), 12);
-  });
-  ctx.fillStyle = "#f5b83d";
-  ctx.beginPath();
-  ctx.arc(w - 50, h - 42, 24, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#2a1d0a";
-  ctx.fillRect(w - 62, h - 45, 24, 6);
-  ctx.fillRect(w - 53, h - 54, 6, 24);
 }
 
 /**
@@ -294,8 +262,7 @@ const PM = {
   arcadeButtons: P.arcadeButtons.map((c) => matte(c, { emissive: c, emissiveIntensity: 0.35 })),
   bell: matte(P.bell, { roughness: 0.35, metalness: 0.3 }),
   boardFrame: matte(P.boardFrame),
-  kioskBody: matte(P.kioskBody),
-  kioskHead: matte(P.kioskHead, { roughness: 0.5 }),
+  displayFrame: matte(P.displayFrame, { roughness: 0.5 }),
   paper: matte(P.paper),
   rugInner: matte(P.rugInner),
   gold: matte("#f5b83d", { emissive: "#f5b83d", emissiveIntensity: 0.6 }),
@@ -304,7 +271,6 @@ const PM = {
 };
 
 const lazy = {
-  kiosk: () => canvasMaterial("prop:kiosk", 512, 360, drawKioskList, { glow: 0.85, fallback: "#1b2a44", roughness: 0.4 }),
   receptionHelp: () => canvasMaterial("prop:receptionHelp", 512, 192, drawReceptionHelp, { glow: 0.85, fallback: "#1a2742", roughness: 0.4 }),
   infoSign: () => canvasMaterial("prop:infoSign", 256, 256, drawInfoSign, { glow: 0.7, fallback: "#f5b83d", roughness: 0.4 }),
   arcade: () => canvasMaterial("prop:arcade", 256, 200, drawArcade, { glow: 1, fallback: "#07060f", roughness: 0.4 }),
@@ -382,7 +348,7 @@ function ReceptionDesk() {
       <Box size={[2.8, 0.05, 0.1]} position={[0, 2.125, -0.405]} material={MAT.woodDark} />
       <Box size={[2.7, 0.018, 0.02]} position={[0, 2.09, -0.345]} material={PM.gold} cast={false} />
       {/* Help display on the wall, facing the visitors. */}
-      <Rounded size={[1.56, 0.64, 0.05]} radius={0.03} position={[0, 1.62, -0.34]} material={PM.kioskHead} />
+      <Rounded size={[1.56, 0.64, 0.05]} radius={0.03} position={[0, 1.62, -0.34]} material={PM.displayFrame} />
       <Panel size={[1.46, 0.548]} position={[0, 1.62, -0.3135]} material={lazy.receptionHelp()} />
       <Box size={[0.6, 0.02, 0.012]} position={[0, 1.95, -0.32]} material={PM.gold} cast={false} />
 
@@ -410,7 +376,7 @@ function ReceptionDesk() {
       <Cyl radius={0.07} height={0.012} position={[0.95, 1.036, 0.26]} material={MAT.monitor} />
       <mesh geometry={PGEO.dome} material={PM.bell} position={[0.95, 1.042, 0.26]} scale={0.055} castShadow />
       <mesh geometry={PGEO.sphere} material={PM.bell} position={[0.95, 1.1, 0.26]} scale={0.012} />
-      <Box size={[0.34, 0.02, 0.12]} position={[-0.9, 1.04, 0.24]} material={PM.kioskHead} />
+      <Box size={[0.34, 0.02, 0.12]} position={[-0.9, 1.04, 0.24]} material={PM.displayFrame} />
       {P.lockers.slice(0, 3).map((colour, i) => (
         <group key={colour} position={[-1.01 + i * 0.11, 1.11, 0.24]} rotation={[-0.2, 0, 0]}>
           <Box size={[0.085, 0.13, 0.01]} position={[0, 0, 0]} material={PM.brochures[i]!} />
@@ -419,21 +385,6 @@ function ReceptionDesk() {
       <Cyl radius={0.05} height={0.07} position={[-0.35, 1.065, 0.3]} material={MAT.pot} />
       <mesh geometry={GEO.blob} material={MAT.leaf} position={[-0.35, 1.13, 0.3]} scale={[0.07, 0.06, 0.07]} castShadow />
       <mesh geometry={GEO.blob} material={MAT.leafDark} position={[-0.32, 1.17, 0.29]} scale={0.035} castShadow />
-    </group>
-  );
-}
-
-/** Standing touch terminal; the screen (a list of agents) faces +z, tilted slightly up. */
-function Kiosk() {
-  return (
-    <group>
-      <Rounded size={[0.6, 0.05, 0.42]} radius={0.02} position={[0, 0.025, 0]} material={PM.kioskBody} />
-      <Rounded size={[0.24, 1.1, 0.18]} radius={0.05} position={[0, 0.6, -0.04]} material={PM.kioskBody} />
-      <group position={[0, 1.43, 0]} rotation={[-0.12, 0, 0]}>
-        <Rounded size={[0.9, 0.66, 0.1]} radius={0.04} position={[0, 0, 0]} material={PM.kioskHead} />
-        <Panel size={[0.8, 0.56]} position={[0, 0, 0.051]} material={lazy.kiosk()} />
-        <Box size={[0.5, 0.03, 0.04]} position={[0, 0.345, 0]} material={PM.gold} cast={false} />
-      </group>
     </group>
   );
 }
@@ -591,7 +542,6 @@ const COUCH_FIT_X = FURNITURE_SIZE.couch.w / 2.36;
 /** Every furniture kind maps to exactly one renderer (the Record type keeps this exhaustive). */
 export const PROP_RENDERERS: Record<FurnitureKind, (props: { item: Furniture }) => JSX.Element> = {
   receptionDesk: () => <ReceptionDesk />,
-  kiosk: () => <Kiosk />,
   lockers: () => <Lockers />,
   mirror: () => <Mirror />,
   coffeeBar: () => <CoffeeBar />,
@@ -613,6 +563,7 @@ export const PROP_RENDERERS: Record<FurnitureKind, (props: { item: Furniture }) 
   ...BREAK_RENDERERS,
   ...WARDROBE_RENDERERS,
   ...LOBBY_RENDERERS,
+  ...SPAWN_RENDERERS,
 };
 
 /** One furniture item, placed at (x, 0, z) and turned by `rotationY` (0 = front faces +z). */

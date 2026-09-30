@@ -64,7 +64,8 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function StartAgent() {
+/** Start coding agents: CLI, workspace, how many and an optional first task. Also the coding floor's spawn point. */
+export function StartAgent() {
   const t = useT();
   const [workspaces, setWorkspaces] = useState<WorkspaceCard[] | null>(null);
   const [agents, setAgents] = useState<AgentStatus[] | null>(null);

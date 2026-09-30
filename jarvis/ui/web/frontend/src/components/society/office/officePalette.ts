@@ -152,8 +152,8 @@ export const PROP_COLOURS = {
   bell: "#e0b64a",
   boardFrame: "#d7d9dd",
   boardWhite: "#fbfbf8",
-  kioskBody: "#f4f2ee",
-  kioskHead: "#2a2e36",
+  /** The dark frame of the reception's help display (and the counter's brochure tray). */
+  displayFrame: "#2a2e36",
   paper: "#fdfcf9",
   rugInner: "#c9b28f",
 } as const;

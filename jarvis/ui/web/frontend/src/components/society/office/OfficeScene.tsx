@@ -31,6 +31,7 @@ import { TeamRoomFittings } from "./TeamRoomDecor";
 import { BreakLoungeFittings } from "./BreakLounge";
 import { WardrobeFittings } from "./WardrobeRoom";
 import { LobbyFittings } from "./LobbyDecor";
+import { SpawnFittings } from "./SpawnPoint";
 import { RoomFloors, RoomSign, RoomWalls } from "./OfficeRooms";
 import { CHECKPOINT_ICON, CheckpointMarker } from "./CheckpointMarker";
 import { ElevatorCallButton } from "./ElevatorCallButton";
@@ -123,6 +124,7 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
   const board = layout.furniture.find((f) => f.kind === "teamBoard");
   const wardrobeRug = layout.furniture.find((f) => f.kind === "roundRug" && f.room === "wardrobe");
   const lobbyLamp = layout.furniture.find((f) => f.kind === "lobbyLamp");
+  const spawnTerminal = layout.furniture.find((f) => f.kind === "spawnTerminal");
   const onFloorClick = (event: ThreeEvent<MouseEvent>) => {
     // A drag that ends on the floor rotated the camera; only a real click walks.
     if (event.delta > 6) return;
@@ -167,6 +169,7 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
       {breakRoom && <BreakLoungeFittings room={breakRoom} furniture={layout.furniture} />}
       {wardrobeRug && <WardrobeFittings rug={wardrobeRug} />}
       {lobbyLamp && <LobbyFittings lamp={lobbyLamp} />}
+      {spawnTerminal && <SpawnFittings terminal={spawnTerminal} arrival={layout.arrival} floor={floor} newcomers={newcomers} animate={awake && !reduced} />}
       {/* At the elevator its call button takes over from the floating token, which would hide it. */}
       {layout.checkpoints.filter((cp) => cp.id !== "elevator" || !atLift).map((cp) => (
         <CheckpointMarker key={cp.id} checkpoint={cp} label={t(`society.office.cp_${cp.id}`)} icon={CHECKPOINT_ICON[cp.id]}
