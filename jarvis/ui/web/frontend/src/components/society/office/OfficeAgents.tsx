@@ -36,6 +36,7 @@ import { officeTalkChat, useOfficeTalk } from "./officeTalk";
 import { deliverySpot, ERRAND_SPEED, useErrandFeed, useGigiErrands } from "./gigiErrands";
 import { isPaneAgentId, plateTitle } from "./codingFloor";
 import { promptOpening } from "@/components/agentic/sessionTitle";
+import { agentLogoAsset } from "@/components/agentic/AgentMark";
 
 /** The agent's symbol walks behind it as a little pet, about a fifth of its height. */
 export const PET_SIZE_M = 0.26;
@@ -93,6 +94,7 @@ function Nameplate({ agent, activity, selected, onSelect, height = OFFICE_FIGURE
   const [open, setOpen] = useState(false);
   const detail = agent.state !== "idle" ? t(`society.office.state_${agent.state}`) : activity ? t(`society.office.activity_${activity}`) : "";
   const pane = isPaneAgentId(agent.agentId);
+  const logo = pane ? agentLogoAsset(agent.provider) : null;
   const state = (
     <span className="office-plate-state" title={t(`society.office.state_${agent.state}`)}>
       <i aria-hidden />{detail ? <em>{detail}</em> : null}
@@ -108,9 +110,11 @@ function Nameplate({ agent, activity, selected, onSelect, height = OFFICE_FIGURE
           onPointerEnter={() => setOpen(true)} onPointerLeave={() => setOpen(false)}
           onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
           aria-label={t("society.office.open_agent").replace("{0}", agent.name)}>
-          <span className="office-plate-badge" style={{ background: agent.palette.primary }} aria-hidden>
-            {agent.tier === "lead" ? "★" : (pane ? agent.provider : agent.name).slice(0, 1).toUpperCase()}
-          </span>
+          {pane && logo ? <PaneLogo url={logo.url} ground={logo.ground} /> : (
+            <span className="office-plate-badge" style={{ background: agent.palette.primary }} aria-hidden>
+              {agent.tier === "lead" ? "★" : (pane ? agent.provider : agent.name).slice(0, 1).toUpperCase()}
+            </span>
+          )}
           {pane ? <PanePlateText agent={agent} open={open} state={state} /> : (
             <>
               <span className="office-plate-name" title={agent.name}>{agent.name}</span>
@@ -121,6 +125,22 @@ function Nameplate({ agent, activity, selected, onSelect, height = OFFICE_FIGURE
       </Html>
     </group>
   );
+}
+
+/**
+ * The coding CLI's own mark in front of a pane's plate, instead of a lettered
+ * hexagon: a floor of Claude panes read "C", "C", "C", which named nothing.
+ * Drawn here rather than with `AgentMark`, whose `ink` marks follow the app
+ * theme's text colour — the plate is dark in both themes, so a light-mode ink
+ * mark would vanish on it. An `ink` mark is masked in the plate's own white;
+ * a full-colour lockup keeps its colours on a dark tile it can sit on.
+ */
+function PaneLogo({ url, ground }: { url: string; ground: "ink" | "dark" | "any" }) {
+  if (ground === "ink") {
+    const mask = { WebkitMaskImage: `url("${url}")`, maskImage: `url("${url}")` };
+    return <span className="office-plate-logo" data-ground="ink" aria-hidden><i style={mask} /></span>;
+  }
+  return <span className="office-plate-logo" data-ground={ground} aria-hidden><img src={url} alt="" draggable={false} /></span>;
 }
 
 /**
