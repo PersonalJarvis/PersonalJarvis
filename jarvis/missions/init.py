@@ -1321,19 +1321,10 @@ async def bootstrap_missions(
     # the listener is the direct-TTS fallback.
     _readback_mode = _resolve_readback_mode(tts_speak_fn=tts_speak_fn, speech_bus=speech_bus)
 
-    # Context-aware readback composer (maintainer mandate: no fixed stock
-    # phrases). One instance shared by whichever readback path is active. Built
-    # in fallback-only mode when the flash path is off, so the spoken line is the
-    # existing canned/signed text unless [ack_brain] is enabled. Lazy import +
-    # best-effort so an import cycle / wiring fault never blocks the bootstrap.
-    _readback_composer = None
-    try:
-        from jarvis.brain.factory import build_readback_composer
-
-        _readback_composer = build_readback_composer()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Mission readback composer wiring skipped: %s", exc)
-
+    # The spoken line is the mission's own signed summary or a fixed status
+    # phrase — no extra model call rephrases it (2026-09-30: the flash
+    # composer billed an API key for every background result). Inside a live
+    # call the realtime model already words the announcement itself.
     voice_listener: MissionVoiceListener | None = None
     if _readback_mode == "listener":
         voice_listener = MissionVoiceListener(
@@ -1343,7 +1334,6 @@ async def bootstrap_missions(
             tts_speak_fn=tts_speak_fn,
             announce_critic_loop=voice_announce_critic_loop,
             language_default=voice_language_default,  # type: ignore[arg-type]
-            readback_composer=_readback_composer,
         )
         await voice_listener.start()
         logger.info("Phase-6 voice listener active (direct-TTS readback)")
@@ -1367,7 +1357,6 @@ async def bootstrap_missions(
             speech_bus=speech_bus,
             announce_critic_loop=voice_announce_critic_loop,
             language_default=voice_language_default,  # type: ignore[arg-type]
-            readback_composer=_readback_composer,
         )
         await mission_announcer.start()
         logger.info("Phase-6 mission-announcer active (mission-bus -> speech-bus)")
