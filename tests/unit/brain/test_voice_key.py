@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
+from jarvis.brain import voice_key
 from jarvis.brain.voice_key import bills_voice_key, voice_key_slots, without_voice_key
 
 
@@ -52,7 +55,12 @@ def test_chain_keeps_the_voice_key_when_nothing_else_can_answer() -> None:
     assert kept == chain
 
 
-def test_chain_keeps_a_named_entry_and_subscription_brains() -> None:
+def test_chain_keeps_a_named_entry_and_subscription_brains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Codex is signed in on its plan here. The real probe reads this machine's
+    # login, which a CI runner does not have, so the test states it instead.
+    monkeypatch.setattr(voice_key, "_signed_in_on_subscription", lambda p: p == "codex")
     cfg = _cfg("realtime", "openai-live")
     lead = ("openai", "gpt-5.5")
     chain = [lead, ("codex", None), ("grok", "grok-4.3")]

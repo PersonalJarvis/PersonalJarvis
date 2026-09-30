@@ -13,6 +13,8 @@ export type ProviderId = string;
 /** A provider whose API can list and import servers. */
 export type CloudProviderId = string;
 export type AuthMethod = "key" | "password" | "private_key";
+/** How a connect form asks to log in; "auto" tries this PC's own SSH keys. */
+export type LoginMode = AuthMethod | "auto";
 export type HealthStatus =
   | "unknown"
   | "online"
@@ -72,6 +74,8 @@ export interface Identity {
   public_key: string;
   fingerprint: string;
   algorithm: string;
+  /** One shell line that adds this key to a server's authorized_keys. */
+  install_command?: string;
 }
 
 export interface CloudProvider {
@@ -130,7 +134,7 @@ export interface AddServerInput {
   host: string;
   port: number;
   username: string;
-  auth: AuthMethod;
+  auth: LoginMode;
   password?: string;
   keep_password?: boolean;
   /** The user's own private key (OpenSSH/PEM text), for ``auth: "private_key"``. */
@@ -169,7 +173,11 @@ export type TestKind =
   | "timeout"
   | "host_key_changed"
   | "protocol"
-  | "bad_key";
+  | "bad_key"
+  /** "auto" found no key that opens the server; its password would. */
+  | "needs_password"
+  /** "auto" found no key that opens the server, and it takes no password. */
+  | "key_only";
 
 /** A connection test that saves nothing. */
 export interface ConnectionTest {

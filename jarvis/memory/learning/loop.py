@@ -1,11 +1,18 @@
-"""The loop: collect finished turns, review them in the background, write, refresh.
+"""The loop: collect finished turns, keep what matters, cheaply and reliably.
 
-Triggers (every one fire-and-forget, never on the voice path, AP-9):
+What it costs:
 
-* ``review_every_turns`` unreviewed user turns in one conversation;
-* an explicit "remember ..." request, reviewed right away so the next turn
-  already knows it;
-* a call ending (``VoiceSessionEnded``) or ``idle_review_seconds`` of quiet.
+* nothing for an ordinary turn. A deterministic filter
+  (:mod:`jarvis.memory.learning.signals`) marks the few turns in which the
+  user talks about themselves, a preference, a correction or a plan; a
+  conversation without such a turn is never shown to a model;
+* nothing for "remember that X": an explicit request with its content is
+  saved at once in the user's own words, without a model, so it can never be
+  lost to a provider failure;
+* one small model call per conversation that did hold a signal, when the
+  call ends (``VoiceSessionEnded``), after ``idle_review_seconds`` of quiet,
+  or after ``review_every_turns`` turns in a very long conversation. A bare
+  "remember that" (pointing at something said before) is reviewed at once.
 
 Voice turns arrive as ``VoiceTurnCompleted`` (every voice engine publishes it).
 Typed turns on Jarvis' own chat arrive through the chat surface's completion
@@ -13,10 +20,8 @@ hook (:meth:`JarvisLearningLoop.chat_turn_completed`). Society agents have
 their own loop and never feed this one.
 
 Turns stay pending until a review has really looked at them: a failed or
-cancelled review hands them back, and a reviewer that keeps failing is retried
-with a growing pause instead of on every turn. An explicit remember request
-is never lost: without any reviewer, and on shutdown, it is kept in the
-user's own words.
+cancelled review hands them back, and a failing reviewer is retried after a
+growing pause, never on every turn. Nothing here runs on the voice path.
 """
 
 from __future__ import annotations
@@ -31,19 +36,17 @@ from datetime import date
 from typing import Any, Final
 
 from jarvis.memory.learning.notebook import JarvisNotebook
-from jarvis.memory.learning.review import Proposal, Turn, build_prompt, validate
+from jarvis.memory.learning.review import Proposal, Turn, build_prompt, excerpt, validate
+from jarvis.memory.learning.signals import has_signal
 
 log = logging.getLogger(__name__)
 
 Reviewer = Callable[[str], Awaitable[list[dict[str, Any]] | None]]
 
-#: Turns kept per conversation (reviewed ones serve as context for the next review).
+#: Turns kept per conversation (enough for any review window).
 _KEEP_TURNS: Final[int] = 40
-#: Earlier, already reviewed turns shown to the reviewer as context.
-_CONTEXT_TURNS: Final[int] = 4
-#: Below this many characters of user text a review is not worth a model call
-#: ("ja", "stopp"); such turns stay pending until more is said.
-_MIN_REVIEW_CHARS: Final[int] = 12
+#: Signal turns shown to one review; a conversation rarely has more.
+_MAX_SIGNAL_TURNS: Final[int] = 8
 #: Conversations tracked at once; the least recently active one goes beyond this.
 _MAX_CONVERSATIONS: Final[int] = 32
 #: Pause after a failed review, doubled per consecutive failure up to the cap.
@@ -54,13 +57,19 @@ _BACKOFF_CAP_S: Final[float] = 3_600.0
 @dataclass
 class _Conversation:
     turns: list[Turn] = field(default_factory=list)
+    #: Parallel to ``turns``: did the signal filter pick this turn?
+    signals: list[bool] = field(default_factory=list)
     unreviewed: int = 0
-    requests: list[str] = field(default_factory=list)
     timer: asyncio.TimerHandle | None = None
     last_seen: float = 0.0
     failures: int = 0
     retry_at: float = 0.0
     reviewing: bool = False
+
+    def picked(self) -> list[int]:
+        """Indices of the unreviewed turns the signal filter picked."""
+        start = len(self.turns) - self.unreviewed
+        return [i for i in range(start, len(self.turns)) if self.signals[i]]
 
 
 class JarvisLearningLoop:
@@ -71,21 +80,21 @@ class JarvisLearningLoop:
         notebook: JarvisNotebook,
         reviewer: Reviewer,
         *,
-        review_every_turns: int = 6,
+        review_every_turns: int = 30,
         idle_review_seconds: float = 300.0,
-        already_known: Callable[[], str] | None = None,
     ) -> None:
         self.notebook = notebook
         self._reviewer = reviewer
         self._every = max(1, int(review_every_turns))
         self._idle_s = max(0.0, float(idle_review_seconds))
-        self._already_known = already_known or (lambda: "")
         self._conversations: dict[str, _Conversation] = {}
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[Any]] = set()
         self._subscriptions: list[tuple[type[Any], Any]] = []
         self._bus: Any = None
         self._stopped = False
+        #: Model calls made (diagnostics and tests).
+        self.review_calls = 0
 
     # ── wiring ───────────────────────────────────────────────────────────
 
@@ -105,7 +114,7 @@ class JarvisLearningLoop:
         self._spawn(asyncio.to_thread(self.notebook.warm), name="jarvis-learning-warm")
 
     async def stop(self, *, timeout_s: float = 5.0) -> None:
-        """Detach, cancel reviews, and keep every explicit request that is still open."""
+        """Detach and let running work finish briefly; explicit requests are already saved."""
         self._stopped = True
         for event_type, handler in self._subscriptions:
             try:
@@ -119,15 +128,14 @@ class JarvisLearningLoop:
                 conversation.timer.cancel()
                 conversation.timer = None
         tasks = tuple(self._tasks)
-        for task in tasks:
-            task.cancel()
         if tasks:
-            await asyncio.wait(tasks, timeout=timeout_s)
-        # A cancelled review handed its requests back; keep them now, no model.
-        for conversation in self._conversations.values():
-            for request in conversation.requests:
-                await asyncio.to_thread(self._keep_request, request)
-            conversation.requests.clear()
+            # Let a deterministic save that is already writing finish; a model
+            # review still waiting on its provider is cancelled.
+            _, pending = await asyncio.wait(tasks, timeout=min(1.0, timeout_s))
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.wait(pending, timeout=timeout_s)
 
     def _spawn(self, work: Awaitable[Any], *, name: str) -> None:
         try:
@@ -216,14 +224,28 @@ class JarvisLearningLoop:
             self._make_room()
             conversation = self._conversations[key] = _Conversation()
         conversation.last_seen = time.monotonic()
+        request = requested_memory(turn.user)
+        # A self-contained request is saved right here; only a bare "remember
+        # that" still needs the model to see what "that" was.
+        signal = request == "" or (request is None and has_signal(turn.user))
         conversation.turns.append(turn)
+        conversation.signals.append(signal)
         del conversation.turns[:-_KEEP_TURNS]
+        del conversation.signals[:-_KEEP_TURNS]
         conversation.unreviewed = min(conversation.unreviewed + 1, _KEEP_TURNS)
-        if requested_memory(turn.user) is not None:
-            conversation.requests.append(turn.user)
-            self._schedule(key, reason="explicit remember request", force=True)
+        if request == "" and len(conversation.turns) > 1:
+            # "Remember that" points at what was said just before: show it too.
+            conversation.signals[-2] = True
+            conversation.unreviewed = max(conversation.unreviewed, 2)
+        if request:
+            self._spawn(
+                asyncio.to_thread(self._keep_request, turn.user, request),
+                name="jarvis-learning-remember",
+            )
+        if request == "":
+            self._schedule(key, reason="remember request", force=True)
         elif conversation.unreviewed >= self._every:
-            self._schedule(key, reason=f"{conversation.unreviewed} new turns")
+            self._schedule(key, reason=f"{conversation.unreviewed} turns")
         else:
             self._arm_idle(key, conversation)
 
@@ -257,8 +279,9 @@ class JarvisLearningLoop:
     ) -> None:
         """Start a background review; ``drop`` forgets the conversation after it.
 
-        ``force`` ignores the failure pause (a call ended, the user asked to
-        remember, the conversation went quiet); turn counting respects it.
+        A conversation whose unreviewed turns hold no signal is settled here,
+        without a task and without a model call. ``force`` ignores the pause
+        after a failed review (a call ended, the conversation went quiet).
         """
         conversation = self._conversations.get(key)
         if conversation is None or self._stopped:
@@ -266,6 +289,8 @@ class JarvisLearningLoop:
         if conversation.timer is not None:
             conversation.timer.cancel()
             conversation.timer = None
+        if conversation.unreviewed and not conversation.picked() and not conversation.reviewing:
+            conversation.unreviewed = 0  # Nothing worth a model call was said.
         if not conversation.unreviewed:
             if drop and not conversation.reviewing:
                 self._conversations.pop(key, None)
@@ -292,28 +317,25 @@ class JarvisLearningLoop:
     # ── the review ───────────────────────────────────────────────────────
 
     async def review(self, key: str, *, reason: str = "manual") -> int:
-        """Review the unreviewed turns of ``key``; returns the changes written."""
+        """Review the picked turns of ``key``; returns the changes written."""
         async with self._lock:  # One writer; a later review sees the earlier result.
             conversation = self._conversations.get(key)
             if conversation is None or not conversation.unreviewed:
                 return 0
             count = conversation.unreviewed
-            turns = conversation.turns[-count:]
-            requests = list(conversation.requests)
-            if not requests and sum(len(t.user) for t in turns) < _MIN_REVIEW_CHARS:
-                return 0  # Too little said; wait for more.
-            context = conversation.turns[-count - _CONTEXT_TURNS : -count]
+            picked = conversation.picked()[-_MAX_SIGNAL_TURNS:]
+            if not picked:
+                conversation.unreviewed = 0
+                return 0
+            said = excerpt(conversation.turns, picked)
             conversation.unreviewed = 0
-            conversation.requests.clear()
             conversation.reviewing = True
-            answered = handled = False
+            answered = False
+            written = 0
             try:
-                written, answered = await self._review_turns(turns, context, requests, reason)
-                handled = True  # Every request was saved by the review or kept verbatim.
+                written, answered = await self._review_said(said, reason)
             finally:
                 conversation.reviewing = False
-                if not handled:
-                    conversation.requests[:0] = requests
                 if not answered:
                     # Hand the turns back for the next attempt, after a pause.
                     conversation.unreviewed = min(conversation.unreviewed + count, _KEEP_TURNS)
@@ -329,24 +351,12 @@ class JarvisLearningLoop:
                 await asyncio.to_thread(self.notebook.warm)
             return written
 
-    async def _review_turns(
-        self, turns: list[Turn], context: list[Turn], requests: list[str], reason: str
-    ) -> tuple[int, bool]:
+    async def _review_said(self, said: list[dict[str, str]], reason: str) -> tuple[int, bool]:
         """``(changes written, a reviewer answered)``; raises only on I/O faults."""
         entries = await asyncio.to_thread(self.notebook.entries)
-        try:
-            known = await asyncio.to_thread(self._already_known)
-        except Exception:  # noqa: BLE001 — the known profile only reduces duplicates
-            log.debug("learning: known profile unavailable", exc_info=True)
-            known = ""
-        prompt = build_prompt(
-            turns,
-            context=context,
-            entries=entries,
-            usage=self.notebook.usage(entries),
-            already_known=known,
-        )
-        log.info("learning: reviewing %d turn(s) (%s)", len(turns), reason)
+        prompt = build_prompt(said, entries=entries, usage=self.notebook.usage(entries))
+        log.info("learning: reviewing %d picked turn(s) (%s)", len(said), reason)
+        self.review_calls += 1
         try:
             raw = await self._reviewer(prompt)
         except asyncio.CancelledError:
@@ -354,24 +364,18 @@ class JarvisLearningLoop:
         except Exception:  # noqa: BLE001 — a provider fault is a failed review, retried later
             log.warning("learning: reviewer failed", exc_info=True)
             raw = None
+        if raw is None:
+            return 0, False
+        # Evidence may come from the picked turns only: nothing else was shown.
         accepted, rejected = validate(
-            raw or [],
-            user_texts=[t.user for t in (*context, *turns)],
-            entries=entries,
-            trusted=known,
+            raw, user_texts=[row["user"] for row in said], entries=entries
         )
         for why in rejected:
             log.info("learning: rejected a proposal — %s", why)
         written = 0
-        satisfied: set[str] = set()
         for proposal in accepted:
             written += await asyncio.to_thread(self._apply_proposal, proposal, reason)
-            folded = " ".join(proposal.evidence.split()).casefold()
-            satisfied.update(r for r in requests if folded in " ".join(r.split()).casefold())
-        for request in requests:
-            if request not in satisfied:
-                written += await asyncio.to_thread(self._keep_request, request)
-        return written, raw is not None
+        return written, True
 
     def _apply_proposal(self, proposal: Proposal, reason: str) -> int:
         return self._write(
@@ -394,15 +398,11 @@ class JarvisLearningLoop:
             return 0
         return 1 if written is not None else 0
 
-    def _keep_request(self, request: str) -> int:
-        """Keep an explicit remember request verbatim when no review covered it."""
+    def _keep_request(self, said: str, content: str) -> int:
+        """Save an explicit remember request in the user's own words, dated."""
         from jarvis.memory.learning.guard import refusal
         from jarvis.society.memory_books import classify
-        from jarvis.society.memory_intent import requested_memory
 
-        content = requested_memory(request) or ""
-        if not content:
-            return 0  # "remember that" without a resolvable referent: never guess.
         text = f"On {date.today().isoformat()} the user asked to remember: {content}"
         if refusal(text):
             log.info("learning: explicit remember request refused by the guard")
@@ -413,7 +413,7 @@ class JarvisLearningLoop:
             text=text,
             importance=9,
             origin="user",
-            evidence=request,
+            evidence=said,
             source="explicit remember request",
         )
 
@@ -444,18 +444,11 @@ def start_learning(config: Any, bus: Any) -> JarvisLearningLoop | None:
     if _loop is not None:
         return _loop
     book = notebook_module.notebook_from_config(config)
-
-    def _known() -> str:
-        from jarvis.brain.identity_card import identity_card_block
-
-        return identity_card_block(config) or ""
-
     _loop = JarvisLearningLoop(
         book,
         ModelReviewer(config),
         review_every_turns=cfg.review_every_turns,
         idle_review_seconds=cfg.idle_review_seconds,
-        already_known=_known,
     )
     _loop.start(bus)
     notebook_module.set_active(book)

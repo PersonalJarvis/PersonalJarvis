@@ -1866,16 +1866,18 @@ class JarvisLearningConfig(BaseModel):
 
     #: Master switch: off stops reviews and removes the notebooks from prompts.
     enabled: bool = True
-    #: A review runs after this many unreviewed user turns ...
-    review_every_turns: int = Field(default=6, ge=1, le=100)
-    #: ... or when a conversation has been quiet this long, or a call ends.
+    #: A conversation is reviewed once, when a call ends or it has been quiet
+    #: this long, and only if a deterministic filter found a personal fact,
+    #: preference, correction or plan in it (most conversations cost nothing).
     idle_review_seconds: float = Field(default=300.0, ge=10.0, le=86_400.0)
-    #: Prompt budget per notebook. Entries beyond it stay on disk; the
-    #: reviewer is told the fill level and consolidates before it overflows.
-    user_budget_chars: int = Field(default=4_000, ge=500, le=40_000)
-    memory_budget_chars: int = Field(default=4_000, ge=500, le=40_000)
-    #: Reviewer model. Empty = the wiki curator's pair, then every other
-    #: reachable provider (subscriptions before per-token keys).
+    #: Safety net for very long conversations: also review after this many turns.
+    review_every_turns: int = Field(default=30, ge=1, le=200)
+    #: Prompt budget per notebook: this text rides along on every turn, so it
+    #: stays small. At 125 % new entries are refused until the reviewer merges.
+    user_budget_chars: int = Field(default=1_500, ge=300, le=40_000)
+    memory_budget_chars: int = Field(default=1_000, ge=300, le=40_000)
+    #: Reviewer provider/model. Empty = the wiki curator's provider on its cheap
+    #: model, then every other reachable provider (subscriptions before keys).
     provider: str = ""
     model: str = ""
     timeout_s: float = Field(default=90.0, ge=5.0, le=600.0)
