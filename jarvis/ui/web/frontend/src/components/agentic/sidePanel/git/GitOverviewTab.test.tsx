@@ -88,6 +88,8 @@ const OVERVIEW: RepoOverview = {
 
 let answer: unknown = OVERVIEW;
 let status = 200;
+/** Holds overview answers back, like a slow GitHub read. */
+let gate: Promise<void> | null = null;
 const calls: string[] = [];
 const puts: string[] = [];
 const REPOS = {
@@ -104,6 +106,7 @@ const REPOS = {
 beforeEach(() => {
   answer = OVERVIEW;
   status = 200;
+  gate = null;
   calls.length = 0;
   puts.length = 0;
   vi.stubGlobal(
@@ -119,6 +122,7 @@ beforeEach(() => {
         answer = OVERVIEW;
         return json({ ok: true, repo: "o/r" });
       }
+      if (gate) await gate;
       return json(answer, status);
     }),
   );
@@ -224,6 +228,25 @@ describe("GitOverviewTab", () => {
     await vi.waitFor(() => expect(puts).toEqual([JSON.stringify({ workspace_id: "w1", repo: "o/r" })]));
     expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(6);
     expect(screen.queryByTestId("git-repo-picker")).toBeNull();
+  });
+
+  it("leaves the picker at once after a pick, while GitHub is still being read", async () => {
+    answer = { ...OVERVIEW, github: { ...OVERVIEW.github, available: false, code: "needs_repo", repo: "", repo_url: "" } };
+    render(<GitOverviewTab />);
+    await vi.waitFor(() => expect(screen.getAllByTestId("git-repo-choice")).toHaveLength(2));
+    let release: () => void = () => {};
+    gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    fireEvent.click(screen.getAllByTestId("git-repo-choice")[0]);
+    // The local branches and the choice show before GitHub has answered.
+    expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(6);
+    expect(screen.queryByTestId("git-repo-picker")).toBeNull();
+    const state = screen.getByTestId("git-github-state");
+    expect(state.textContent).toContain("o/r");
+    expect(state.textContent).toContain("Reading pull requests and CI from GitHub");
+    release();
+    await vi.waitFor(() => expect(screen.getByTestId("git-github-state").textContent).toContain("GitHub status from"));
   });
 
   it("reopens the pick from the repository name to change it", async () => {

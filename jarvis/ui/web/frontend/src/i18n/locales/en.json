@@ -5913,6 +5913,7 @@
       "ci_stale": "These checks ran on {commit}; newer local commits are not pushed yet.",
       "click_ci": "Click to open the CI run.",
       "github_updated": "GitHub status from {when}",
+      "github_reading": "Reading pull requests and CI from GitHub…",
       "github_off": "No GitHub status: {reason}",
       "seconds_ago": "{n} s ago",
       "minutes_ago": "{n} min ago"

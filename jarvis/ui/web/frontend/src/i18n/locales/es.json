@@ -5880,6 +5880,7 @@
       "ci_stale": "Estas comprobaciones se ejecutaron en {commit}; hay commits locales más nuevos sin subir.",
       "click_ci": "Haz clic para abrir la ejecución de CI.",
       "github_updated": "Estado de GitHub de {when}",
+      "github_reading": "Leyendo pull requests y CI de GitHub…",
       "github_off": "Sin estado de GitHub: {reason}",
       "seconds_ago": "hace {n} s",
       "minutes_ago": "hace {n} min"

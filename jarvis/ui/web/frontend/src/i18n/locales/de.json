@@ -5880,6 +5880,7 @@
       "ci_stale": "Diese Prüfungen liefen auf {commit}; neuere lokale Commits sind noch nicht gepusht.",
       "click_ci": "Klicken, um den CI-Lauf zu öffnen.",
       "github_updated": "GitHub-Stand von {when}",
+      "github_reading": "Pull Requests und CI werden von GitHub gelesen…",
       "github_off": "Kein GitHub-Status: {reason}",
       "seconds_ago": "vor {n} s",
       "minutes_ago": "vor {n} min"
