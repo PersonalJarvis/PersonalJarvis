@@ -98,6 +98,7 @@ def _bcrypt_kdf_available() -> bool:
     try:
         import bcrypt
     except ImportError:
+        # The answer IS the missing module; the caller turns it into a sentence.
         return False
     return hasattr(bcrypt, "kdf")
 
