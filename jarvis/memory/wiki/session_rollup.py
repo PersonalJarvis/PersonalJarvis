@@ -436,19 +436,51 @@ class SessionRollupWorker:
             self._cfg, self._config
         )
 
+        # The rollup is background work nobody waits on (and dead by default:
+        # ``wiki_write_enabled`` is off and no built-in watcher publishes
+        # ``IdleEntered``). Should it ever fire, it obeys the same rules as
+        # the rest of the wiki: the background billing policy and the daily
+        # runaway cap. A provider that may not bill now skips the digest.
+        from jarvis.brain.background_policy import (
+            BackgroundDeferred,
+            background_providers,
+        )
+        from jarvis.memory.wiki.background_guard import guard
+        from jarvis.memory.wiki.curator_llm import instantiate_curator_brain
+        from jarvis.memory.wiki.provider_chain import subscription_provider_options
+
+        try:
+            guard.check_ready(self._config)
+            decision = background_providers([provider_name])
+            if not decision.permits(provider_name):
+                raise BackgroundDeferred(decision.reason)
+            guard.reserve_call(self._config, label="session-rollup")
+        except BackgroundDeferred as exc:
+            log.info("SessionRollupWorker: digest skipped — %s", exc)
+            return None
+        pinned = subscription_provider_options(decision, self._registry).get(
+            provider_name
+        )
+
         try:
             async with self._brain_lock:
-                if self._brain is None:
+                if pinned:
+                    # A subscription pin must reach the live instance; never
+                    # reuse one built before the install ran on a subscription.
+                    self._brain = await asyncio.to_thread(
+                        instantiate_curator_brain,
+                        self._registry,
+                        provider_name,
+                        model,
+                        provider_options=pinned,
+                    )
+                elif self._brain is None:
                     # Same curator-tier instantiation as the extractor/judge:
                     # disables Gemini thinking AND flags structured prompts so
                     # a subscription-CLI brain forwards the digest instructions
                     # verbatim instead of the conversational "1-3 short
                     # sentences" wrapper that contradicts the requested
                     # flowing paragraph.
-                    from jarvis.memory.wiki.curator_llm import (
-                        instantiate_curator_brain,
-                    )
-
                     self._brain = await asyncio.to_thread(
                         instantiate_curator_brain,
                         self._registry,

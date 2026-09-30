@@ -24,6 +24,7 @@ class WikiHealth:
         self._last_write: dict[str, Any] | None = None
         self._last_index: dict[str, Any] | None = None
         self._last_chain_failure: dict[str, Any] | None = None
+        self._background_wait: dict[str, Any] | None = None
         self._journal_backlog: int = 0
 
     def record_bootstrap(self, ok: bool, error: str | None = None) -> None:
@@ -64,6 +65,37 @@ class WikiHealth:
         with self._lock:
             self._last_chain_failure = None
 
+    def record_background_wait(
+        self, state: str, *, detail: str, retry_at: float | None = None,
+    ) -> None:
+        """Background memory work is waiting on purpose, not broken.
+
+        ``state`` is ``waiting_for_subscription`` (the install runs on a
+        subscription that cannot take the work right now, and it never slides
+        onto an API key) or ``daily_cap_reached`` (the runaway guard stopped
+        background model calls until tomorrow). Deliberately separate from
+        ``last_chain_failure``: waiting is the designed behaviour, so it must
+        not paint the red provider-failure banner.
+        """
+        from jarvis.core.redact import safe_preview
+
+        with self._lock:
+            since = (
+                self._background_wait["since"]
+                if self._background_wait and self._background_wait.get("state") == state
+                else time.time()
+            )
+            self._background_wait = {
+                "state": state,
+                "detail": safe_preview(detail, max_chars=300),
+                "since": since,
+                "retry_at": retry_at,
+            }
+
+    def clear_background_wait(self) -> None:
+        with self._lock:
+            self._background_wait = None
+
     def record_index(
         self,
         ok: bool,
@@ -102,6 +134,9 @@ class WikiHealth:
                 "last_chain_failure": (
                     dict(self._last_chain_failure)
                     if self._last_chain_failure else None
+                ),
+                "background_wait": (
+                    dict(self._background_wait) if self._background_wait else None
                 ),
                 "journal_backlog": self._journal_backlog,
             }

@@ -1,4 +1,8 @@
-"""Realtime transcript review reaches real Markdown pages without manual flush."""
+"""Explicitly saved realtime turns reach real Markdown pages without a manual flush.
+
+Since 2026-09-30 only turns the brain acknowledged saving ("Noted.") are
+reviewed; there is no automatic per-turn review and no end-of-call sweep.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -38,12 +42,10 @@ from jarvis.memory.wiki.voice_bridge import VoiceFactBridge
 class _ReviewBrain:
     """Script both review stages while keeping the production pipeline real.
 
-    Responses are routed by REQUEST KIND, not by call order: per-turn
-    extraction is deferred to the session-end boundary (AP-9, 2026-07-21),
-    where the completeness sweep runs concurrently with the judge rounds
-    that freshly journaled candidates trigger — a strict call-order script
-    would race those two. Sweeps re-read already-reviewed turns and answer
-    with an empty candidate array.
+    Responses are routed by REQUEST KIND, not by call order: a turn's
+    extraction and the judge round its candidates trigger run as
+    background tasks, and the write-time alias lookups interleave with
+    them, so a strict call-order script would race.
     """
 
     name = "review-brain"
@@ -73,8 +75,6 @@ class _ReviewBrain:
         )
         if "You generate SEARCH ALIASES" in text:
             self.alias_requests.append(request)
-            payload = "[]"
-        elif "completeness sweep" in text:
             payload = "[]"
         elif "Evidence user turn [" in text:
             self.judge_requests.append(request)
@@ -143,7 +143,7 @@ def _turn(
     turn_id: str,
     provider: str,
     text: str,
-    assistant_text: str = "Thanks for telling me.",
+    assistant_text: str = "Noted, thanks for telling me.",
     session_id: str = "realtime-session",
 ) -> VoiceTurnCompleted:
     return VoiceTurnCompleted(
@@ -208,7 +208,6 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
         # 2026-07-28 cost audit).
         wiki_scheduler=SchedulerConfig(consolidate_after_candidates=1),
     )
-    assert config.memory.wiki.voice_bridge.rate_limit_seconds == 0
     assert config.wiki_scheduler.consolidate_after_candidates == 1
 
     facts = [
@@ -365,18 +364,11 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
         consolidate_after=config.wiki_scheduler.consolidate_after_candidates,
     )
     bus = EventBus()
-    bridge = VoiceFactBridge(
-        bus=bus,
-        curator=curator,
-        config=config.memory.wiki.voice_bridge,
-        extractor=extractor,
-    )
+    bridge = VoiceFactBridge(bus=bus, extractor=extractor)
     bridge.start()
 
     async def _speak_and_hang_up(turn: VoiceTurnCompleted) -> None:
-        """One short call per fact: extraction is deferred to session end
-        (AP-9, 2026-07-21), so the turn only reaches the extractor once its
-        session closes."""
+        """One short call per fact; hanging up runs nothing extra."""
         await bus.publish(turn)
         await bus.publish(
             VoiceSessionEnded(
@@ -426,17 +418,17 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                 session_id="call-4",
             )
         )
-        await _wait_for_idle(brain, journal, calls=15)
+        await _wait_for_idle(brain, journal, calls=11)
         await _speak_and_hang_up(
             _turn(
                 turn_id="assistant-guess-turn",
                 provider="openai-realtime",
                 text="What do you think I own?",
-                assistant_text="Perhaps you own a demo glider.",
+                assistant_text="Perhaps you own a demo glider. Noted.",
                 session_id="call-5",
             )
         )
-        await _wait_for_idle(brain, journal, calls=18)
+        await _wait_for_idle(brain, journal, calls=13)
     finally:
         bridge.stop()
         journal.close()
@@ -468,8 +460,8 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
     assert "Evidence user turn [assistant-guess-turn]" in final_judge_prompt
     assert "What do you think I own?" in final_judge_prompt
     assert "Perhaps you own a demo glider." not in final_judge_prompt
-    # 5 deferred turn extractions + 5 judge rounds + 5 session sweeps,
-    # plus one separate alias lookup for each page that was written.
+    # 5 turn extractions + 5 judge rounds, no session sweeps, plus one
+    # separate alias lookup for each page that was written.
     assert len(brain.alias_requests) == 3
-    assert brain.calls == 15 + len(brain.alias_requests)
+    assert brain.calls == 10 + len(brain.alias_requests)
     assert journal.backlog_count() == 0

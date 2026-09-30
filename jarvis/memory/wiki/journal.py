@@ -59,6 +59,10 @@ _CAPTURE_STATUSES = frozenset({"started", "filtered", "empty", "candidates", "fa
 _CAPTURE_TERMINAL_STATUSES = frozenset({"filtered", "empty", "candidates"})
 _CAPTURE_FINISH_STATUSES = frozenset({"filtered", "empty", "candidates", "failed"})
 _CAPTURE_STALE_AFTER_MS = 5 * 60 * 1000
+# A review that keeps failing is retried at most this many times in total.
+# Every retry is a paid model call; before the bound the periodic
+# auto-backfill re-claimed failed reviews forever.
+_MAX_CAPTURE_ATTEMPTS = 5
 _MAX_FACT_CHARS = 2_000
 _MAX_EVIDENCE_CHARS = 1_200
 _MAX_SUBJECTS = 12
@@ -449,8 +453,9 @@ class CandidateJournal:
         """Atomically claim one extraction review.
 
         A new key is claimed immediately. ``failed`` rows and ``started`` rows
-        older than five minutes are retried with an incremented attempt count.
-        Fresh in-flight or terminal rows are left untouched and return ``False``.
+        older than five minutes are retried with an incremented attempt count,
+        up to :data:`_MAX_CAPTURE_ATTEMPTS` attempts in total. Fresh in-flight,
+        terminal, or exhausted rows are left untouched and return ``False``.
         """
         key = _safe_identifier(review_key, allow_empty=False)
         now_ms = self._now_ms()
@@ -482,9 +487,10 @@ class CandidateJournal:
                     updated_ms = excluded.updated_ms,
                     started_ms = excluded.started_ms,
                     finished_ms = NULL
-                WHERE wiki_extraction_audit.status = 'failed'
-                   OR (wiki_extraction_audit.status = 'started'
-                       AND wiki_extraction_audit.updated_ms <= ?)
+                WHERE wiki_extraction_audit.attempts < ?
+                  AND (wiki_extraction_audit.status = 'failed'
+                       OR (wiki_extraction_audit.status = 'started'
+                           AND wiki_extraction_audit.updated_ms <= ?))
                 """,
                 (
                     key,
@@ -496,6 +502,7 @@ class CandidateJournal:
                     now_ms,
                     now_ms,
                     now_ms,
+                    _MAX_CAPTURE_ATTEMPTS,
                     stale_before_ms,
                 ),
             )

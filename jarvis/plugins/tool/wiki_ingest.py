@@ -5,9 +5,9 @@ B5 follow-up (post-merge).  Router-tier tool with write semantics.
 Why this tool exists alongside the voice-bridge
 -----------------------------------------------
 :class:`jarvis.memory.wiki.voice_bridge.VoiceFactBridge` already pushes
-voice-spoken facts to the wiki via two heuristics: the *ack path* (brain
-reply acknowledges a saved fact) and the *aggressive path*
-(every user turn >= ``min_user_chars`` is curator-filtered).
+voice-spoken facts to the wiki via one heuristic: the *ack path* (brain
+reply acknowledges a saved fact). The former *aggressive path* that
+reviewed every user turn was removed on 2026-09-30.
 
 Heuristics drift.  When the brain consciously decides "this is worth
 storing" (e.g. user typed something into chat, or the brain is

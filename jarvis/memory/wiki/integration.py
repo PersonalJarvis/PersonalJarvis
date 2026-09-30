@@ -46,7 +46,7 @@ from jarvis.core.events import IdleEntered, WikiPageChanged
 
 if TYPE_CHECKING:
     from jarvis.core.bus import EventBus
-    from jarvis.core.config import VoiceBridgeConfig, WikiIntegrationConfig
+    from jarvis.core.config import WikiIntegrationConfig
     from jarvis.memory.wiki.protocols import PageRepository
     from jarvis.memory.wiki.scheduler import CuratorScheduler
 
@@ -263,7 +263,6 @@ async def bootstrap_wiki_integration(
     config: WikiIntegrationConfig,
     brain_caller: Callable[[str, str], Awaitable[str]] | None = None,
     scheduler_factory: Callable[..., CuratorScheduler] | None = None,
-    voice_bridge_config: VoiceBridgeConfig | None = None,
 ) -> WikiIntegrationHandle:
     """Wire ``SessionRollupWorker`` → (Scheduler →) ``WikiCurator`` and
     subscribe to ``IdleEntered``.
@@ -452,18 +451,12 @@ async def bootstrap_wiki_integration(
         handle._unsubscribe_idle = _unsubscribe  # noqa: SLF001
 
     # ------------------------------------------------------------------
-    # B5 follow-up (2026-05-13): VoiceFactBridge — listens for voice turns
-    # where the brain replies with an acknowledgement keyword and pushes
-    # the user-spoken fact straight to the curator. Without this, voice
-    # turns never reach the wiki because:
-    #   - voice_turns live in sessions.db, not in awareness_episodes
-    #   - SessionRollupWorker reads awareness_episodes only at idle
-    # The bridge closes that gap with an explicit "brain said notiert"
-    # heuristic.
-    # ------------------------------------------------------------------
     # Wave-2 Stage 1: candidate journal + conversation fact extractor.
-    # Guarded: any failure degrades to the legacy direct-ingest bridge
-    # (extractor=None) so the conversation->wiki path never goes dark.
+    # Since 2026-09-30 the extractor reviews only turns the user explicitly
+    # asked to keep (the VoiceFactBridge acknowledgement path below) and the
+    # user-started backfill; nothing reviews every turn any more. Guarded:
+    # a failure leaves the explicit wiki-ingest tool as the save path.
+    # ------------------------------------------------------------------
     extractor = None
     journal = None
     try:
@@ -506,19 +499,22 @@ async def bootstrap_wiki_integration(
         else:
             log.info(
                 "wiki_integration: [memory.wiki.extractor] disabled — "
-                "bridge keeps the legacy direct curator ingest"
+                "acknowledged saves are not reviewed; the wiki-ingest tool "
+                "remains the explicit save path"
             )
     except Exception as exc:  # noqa: BLE001
         extractor = None
         if journal is not None:
             try:
                 journal.close()
-            except Exception:  # noqa: BLE001, S110
-                pass
+            except Exception:  # noqa: BLE001 - the extractor failure is what gets reported
+                log.debug("wiki_integration: journal.close() after a failed build", exc_info=True)
             journal = None
         log.warning(
-            "wiki_integration: Stage-1 extractor unavailable (%s) — "
-            "falling back to the legacy direct curator ingest", exc,
+            "wiki_integration: Stage-1 extractor unavailable (%s) — acknowledged "
+            "saves are not reviewed; the wiki-ingest tool remains the explicit "
+            "save path",
+            exc,
         )
 
     # Wave-2 Stage 2: body-aware consolidator, drained via the scheduler's
@@ -564,9 +560,18 @@ async def bootstrap_wiki_integration(
             # otherwise sit pending forever (not enough NEW conversation
             # ever arrives to cross consolidate_after_candidates). Start a
             # background age-check loop, same fire-and-forget conventions
-            # as the hourly telemetry loop started below (AP-9/AP-26).
+            # as the hourly telemetry loop started below (AP-9/AP-26). It
+            # also retries explicit saves the bridge had to hold, and it
+            # waits out the runaway guard's backoff instead of re-triggering
+            # a failing judge every tick.
             handle._journal_age_flush_task = asyncio.create_task(  # noqa: SLF001
-                _journal_age_flush_loop(journal, scheduler, root_cfg.wiki_scheduler),
+                _journal_age_flush_loop(
+                    journal,
+                    scheduler,
+                    root_cfg.wiki_scheduler,
+                    root_config=root_cfg,
+                    held_saves=lambda: handle._voice_bridge,  # noqa: SLF001
+                ),
                 name="wiki-journal-age-flush",
             )
             log.info("wiki_integration: age-based journal flush loop started")
@@ -588,8 +593,9 @@ async def bootstrap_wiki_integration(
         _set_running_capture_runtime(None)
         if extractor is not None:
             log.warning(
-                "wiki_integration: Stage-2 unavailable; live bridge uses guarded "
-                "direct ingest instead of accumulating undrainable candidates"
+                "wiki_integration: Stage-2 unavailable; acknowledged saves are "
+                "not reviewed rather than piling up candidates nothing can "
+                "consolidate — the wiki-ingest tool remains the explicit save path"
             )
 
     # B7: make sure the self-documentation page exists from first boot.
@@ -625,24 +631,23 @@ async def bootstrap_wiki_integration(
     except Exception as exc:  # noqa: BLE001 — contacts absent ≠ wiki broken
         log.warning("wiki_integration: contact mirror not wired — %s", exc)
 
-    try:
-        from jarvis.memory.wiki.voice_bridge import VoiceFactBridge
-        voice_bridge = VoiceFactBridge(
-            bus=bus,
-            curator=curator,
-            config=voice_bridge_config,
-            extractor=extractor if capture_ready else None,
-        )
-        voice_bridge.start()
-        handle._voice_bridge = voice_bridge  # noqa: SLF001
-        log.info(
-            "wiki_integration: VoiceFactBridge attached "
-            "(aggressive_mode=%s, extractor=%s)",
-            getattr(voice_bridge_config, "aggressive_mode", "default(True)"),
-            "stage-1" if extractor is not None else "legacy-direct",
-        )
-    except Exception as exc:  # noqa: BLE001
-        log.warning("wiki_integration: VoiceFactBridge failed to start: %s", exc)
+    # ------------------------------------------------------------------
+    # VoiceFactBridge — explicit saves only. When the brain acknowledges a
+    # save ("notiert", "noted", ...) the user's turn goes to the Stage-1
+    # extractor. Nothing reviews ordinary turns or runs at hangup any more
+    # (removed 2026-09-30: it billed paid keys around the clock). Without a
+    # working Stage 1 + Stage 2 the bridge is not started at all.
+    # ------------------------------------------------------------------
+    if extractor is not None and capture_ready:
+        try:
+            from jarvis.memory.wiki.voice_bridge import VoiceFactBridge
+
+            voice_bridge = VoiceFactBridge(bus=bus, extractor=extractor)
+            voice_bridge.start()
+            handle._voice_bridge = voice_bridge  # noqa: SLF001
+            log.info("wiki_integration: VoiceFactBridge attached (explicit saves only)")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("wiki_integration: VoiceFactBridge failed to start: %s", exc)
 
     # ------------------------------------------------------------------
     # B8.7 — telemetry hourly-summary loop. Cheap, in-memory; the only
@@ -927,36 +932,80 @@ def _should_age_flush(oldest_ms: int | None, now_ms: int, max_age_min: int) -> b
     return age_min >= max_age_min
 
 
-async def _journal_age_flush_loop(journal: Any, scheduler: Any, sched_cfg: Any) -> None:
+async def _journal_age_flush_tick(
+    journal: Any,
+    scheduler: Any,
+    *,
+    max_age_min: int,
+    root_config: Any = None,
+    held_saves: Callable[[], Any] | None = None,
+) -> bool:
+    """One pass of the age flush. Returns whether a JOURNAL trigger fired.
+
+    Nothing happens while the runaway guard says the wiki must not call a
+    model (backoff window after a failed or waiting judge run, or the daily
+    call cap): the candidates simply stay pending. This is what stops the
+    old failure mode — a failing judge re-billed every two minutes.
+    """
+    from jarvis.memory.wiki.background_guard import guard
+    from jarvis.memory.wiki.scheduler import fire_journal_trigger
+
+    if not guard.ready(root_config):
+        return False
+    bridge = held_saves() if held_saves is not None else None
+    if bridge is not None and getattr(bridge, "waiting_count", 0):
+        await bridge.retry_waiting()
+    if max_age_min <= 0:
+        return False
+    oldest = await asyncio.to_thread(journal.oldest_pending_ms)
+    if not _should_age_flush(oldest, int(time.time() * 1000), max_age_min):
+        return False
+    if not guard.ready(root_config):
+        return False
+    fire_journal_trigger(
+        scheduler,
+        name="wiki-journal-age-flush-trigger",
+        log_context="age-based journal flush",
+    )
+    return True
+
+
+async def _journal_age_flush_loop(
+    journal: Any,
+    scheduler: Any,
+    sched_cfg: Any,
+    *,
+    root_config: Any = None,
+    held_saves: Callable[[], Any] | None = None,
+) -> None:
     """Fire a JOURNAL trigger when the oldest pending candidate exceeds the
-    configured age (spec A4).
+    configured age (spec A4), and retry explicit saves the bridge held.
 
     Below-threshold backlogs on a quiet install never cross
     ``consolidate_after_candidates`` on their own — this loop is the
     backstop that still gets them written, the below-threshold counterpart
     to the extractor's count-gated trigger (both go through the shared
-    :func:`~jarvis.memory.wiki.scheduler.fire_journal_trigger`). Runs off
+    :func:`~jarvis.memory.wiki.scheduler.fire_journal_trigger`). Every tick
+    first asks the runaway guard (:mod:`jarvis.memory.wiki.background_guard`)
+    and does nothing inside a backoff window or past the daily cap. Runs off
     the voice hot path (AP-9) and was started off the boot critical path
     (AP-26); cancelled in :meth:`WikiIntegrationHandle.shutdown` exactly
     like the hourly telemetry loop. Never raises — a check failure is
     logged and the loop keeps polling.
     """
-    from jarvis.memory.wiki.scheduler import fire_journal_trigger
-
     max_age_min = int(getattr(sched_cfg, "flush_pending_max_age_minutes", 10))
     if max_age_min <= 0:
         log.debug("wiki_integration: age-based journal flush disabled (max_age<=0)")
-        return
     while True:
         await asyncio.sleep(120)
         try:
-            oldest = journal.oldest_pending_ms()
-            if _should_age_flush(oldest, int(time.time() * 1000), max_age_min):
-                fire_journal_trigger(
-                    scheduler,
-                    name="wiki-journal-age-flush-trigger",
-                    log_context="age-based journal flush",
-                )
+            await _journal_age_flush_tick(
+                journal,
+                scheduler,
+                max_age_min=max_age_min,
+                root_config=root_config,
+                held_saves=held_saves,
+            )
         except Exception:  # noqa: BLE001 — never kill the loop
             log.debug("wiki_integration: journal age flush check failed", exc_info=True)
 

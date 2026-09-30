@@ -320,8 +320,14 @@ This project has an auto-memory at `~/.claude/projects/<your-claude-project-dir>
 The Knowledge Wiki is the long-term memory tier (B0/B1/B5/B7/B8/B9 live). Three router-tier tools: `wiki-recall` (search), `wiki-page-read` (read by vault path), `wiki-ingest` (deterministic save-fact). Vault root configured in `[wiki_integration].vault_root`; default `wiki/obsidian-vault/`. Telemetry snapshot at `GET /api/wiki/telemetry`. Trigger contract in ADR-0014.
 
 Realtime and chat memory use a durable two-stage path. A recall-biased extractor
-reviews each eligible user turn in the background and performs an overlapping,
-chunked whole-session sweep at session end. Candidates carry an exact user-turn
+reviews a turn only when the user explicitly asked to keep it (the brain
+acknowledged the save) or when the user starts a backfill; the automatic review
+of every turn, the end-of-call sweep and the periodic auto-backfill were removed
+on 2026-09-30 because they billed paid keys around the clock. Every model call
+the wiki makes on its own bills only what background work may bill
+(`jarvis/brain/background_policy.py`) and passes the runaway guard in
+`jarvis/memory/wiki/background_guard.py` (backoff plus a daily cap on the number
+of calls, default 200). Candidates carry an exact user-turn
 ID plus a bounded, secret-redacted user-only evidence excerpt in
 `data/jarvis.db`; assistant text can resolve a reference but is never evidence.
 The body-aware consolidator is the binding cleanliness gate: it compares that

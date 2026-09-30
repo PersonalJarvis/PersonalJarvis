@@ -164,6 +164,26 @@ def _reset_provider_failure_memory():
     reset_provider_failure_memory()
 
 
+@pytest.fixture(autouse=True)
+def background_billing(tmp_path_factory, monkeypatch):  # noqa: ANN001, ANN201
+    """Key-only install by default: no subscription, nothing spent today.
+
+    The background billing policy and the wiki's runaway guard would
+    otherwise read the developer's real subscription marker and call counter.
+    Tests that need subscription mode script it through the returned fake.
+    """
+    from tests.fakes.fake_background_billing import (
+        isolate_background_billing,
+        reset_background_billing,
+    )
+
+    billing = isolate_background_billing(
+        monkeypatch, tmp_path_factory.mktemp("background-billing")
+    )
+    yield billing
+    reset_background_billing()
+
+
 @pytest.fixture
 def fake_repo() -> FakePageRepository:
     """A fresh ``FakePageRepository`` per test."""

@@ -23,6 +23,13 @@ Every candidate leaves the batch with an explicit journal status —
 ``consolidated`` / ``rejected`` / ``skipped`` — nothing is dropped
 silently. Runs only inside the CuratorScheduler's lock+cooldown gates
 as a background task (AP-9).
+
+Nobody waits on the judge, so it bills only what background work may bill
+(:mod:`jarvis.brain.background_policy`): once a subscription is connected,
+subscriptions and local models only. When none of them can take the batch,
+every candidate stays pending and the run reports ``judge-deferred``; the
+shared runaway guard (:mod:`jarvis.memory.wiki.background_guard`) backs the
+next attempt off and caps the number of judge calls per day.
 """
 from __future__ import annotations
 
@@ -36,15 +43,13 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+from jarvis.brain.background_policy import BackgroundDeferred
 from jarvis.brain.provider_registry import BrainProviderRegistry
 from jarvis.brain.streaming import aggregate, is_length_truncated
 from jarvis.core.protocols import BrainMessage, BrainRequest
+from jarvis.memory.wiki.background_guard import guard as background_guard
 from jarvis.memory.wiki.constants import CURATOR_DECISIONS, INFERRED_MARKER
-from jarvis.memory.wiki.curator_llm import (
-    _extract_json_array,
-    _resolve_provider_and_model,
-    instantiate_curator_brain,
-)
+from jarvis.memory.wiki.curator_llm import _extract_json_array
 from jarvis.memory.wiki.intent import match_wiki_intent
 from jarvis.memory.wiki.journal import JournalRow, normalise_subjects
 from jarvis.memory.wiki.page import normalise_sources_section
@@ -154,6 +159,10 @@ class _BatchOutcome:
     unavailable: bool = False
     truncated: bool = False
     rejected: int = 0
+    # No provider background work may bill could take the batch (subscription
+    # not usable, backoff window, daily cap): nothing was judged, every row
+    # stays pending, and the caller must stop instead of retrying now.
+    waiting: bool = False
 
     def merge(self, other: _BatchOutcome) -> _BatchOutcome:
         return _BatchOutcome(
@@ -163,6 +172,7 @@ class _BatchOutcome:
             unavailable=self.unavailable or other.unavailable,
             truncated=self.truncated or other.truncated,
             rejected=self.rejected + other.rejected,
+            waiting=self.waiting or other.waiting,
         )
 
 
@@ -175,8 +185,11 @@ class Consolidator:
     # live 2026-07-21 wedge re-judged three rows for ~16 hours. Bound it:
     # back off between rounds, and park the row as ``skipped`` after this
     # many judge-rejected rounds so the queue stays honest and cheap. A
+    # single-row answer that hit the output cap and a judged row whose write
+    # did not land count as rounds too: each retry is a full judge call. A
     # process restart grants a fresh set of rounds, so a code/prompt fix
-    # re-opens the row automatically.
+    # re-opens the row automatically; the daily call cap in
+    # ``background_guard`` bounds even a crash-restart loop.
     _MAX_JUDGE_REJECTION_ROUNDS = 3
     _JUDGE_REJECTION_BACKOFF_S = 600.0
 
@@ -211,7 +224,6 @@ class Consolidator:
         # Optional callback fired after a completed run (B7 wires the
         # self-documentation refresh here). Called best-effort.
         self._on_run_complete = on_run_complete
-        self._brain: Any = None
         self._resolved_provider: str | None = None
         # Per-row judge-rejection history: id -> (rounds, last monotonic ts).
         # In-memory by design: bounds the burn within one process life while
@@ -254,6 +266,15 @@ class Consolidator:
         if not rows:
             return f"journal-rejection-backoff:{len(cooling)}"
 
+        # Runaway guard pre-flight: inside a backoff window or past the daily
+        # cap nothing is judged and nothing is marked — every candidate stays
+        # pending for a later run. No provider probe, no model call.
+        try:
+            background_guard.check_ready(self._root_cfg)
+        except BackgroundDeferred as exc:
+            log.info("Consolidator: %d candidate(s) stay pending — %s", len(rows), exc)
+            return "judge-deferred"
+
         # A captured row without persisted user evidence predates the grounded
         # policy. It is unsafe to let Stage 2 guess, and a policy-v3 backfill can
         # recreate it from the transcript. Direct/internal journal rows without
@@ -284,6 +305,8 @@ class Consolidator:
             except Exception as exc:  # noqa: BLE001
                 log.warning("Consolidator: on_run_complete hook failed: %s", exc)
 
+        if outcome.waiting:
+            return "judge-deferred"
         if outcome.truncated:
             return "judge-truncated"
         if outcome.unavailable:
@@ -312,6 +335,10 @@ class Consolidator:
         # on the event loop.
         neighbours = await asyncio.to_thread(self._collect_neighbours, rows)
         decisions = await self._judge(rows, neighbours)
+        if decisions == "deferred":
+            # Nothing may bill right now: keep every candidate pending, and do
+            # not bisect — each half would only be told to wait again.
+            return _BatchOutcome(waiting=True)
         if decisions is None:
             # Provider timeout/unavailability is not a content verdict. Keep
             # every candidate pending for the next bounded trigger.
@@ -320,29 +347,41 @@ class Consolidator:
             if len(rows) == 1:
                 # A single overlong or judge-rejected result remains
                 # observable and retryable; never convert it into terminal
-                # data loss. Retryable is still bounded: repeat rejections
-                # back off, then park the row (see _note_judge_rejection).
+                # data loss. Retryable is still bounded: repeat rounds back
+                # off, then park the row (see _note_judge_rejection). An
+                # overlong single-row answer used to stay pending forever and
+                # re-bill the whole chain on every trigger.
+                await self._note_judge_rejection(rows[0])
                 if decisions == "rejected":
-                    await self._note_judge_rejection(rows[0])
                     return _BatchOutcome(rejected=1)
                 return _BatchOutcome(truncated=True)
+            # Split-and-retry: every half is a new judge call and counts
+            # against the daily cap like any other attempt.
             midpoint = len(rows) // 2
             left = await self._process_rows(rows[:midpoint])
+            if left.waiting:
+                return left
             right = await self._process_rows(rows[midpoint:])
             return left.merge(right)
 
-        for row in rows:
-            self._judge_rejections.pop(row.id, None)
         deferred, transient = await self._execute(
             rows,
             decisions,
             f"journal-batch:{len(rows)}",
             neighbours=neighbours,
         )
+        for row in rows:
+            if row.id in transient:
+                # Judged, but the write did not land (a recent human edit or
+                # an incomplete writer outcome). It stays pending, and every
+                # retry is another judge call — bounded like a rejection.
+                await self._note_judge_rejection(row)
+            else:
+                self._judge_rejections.pop(row.id, None)
         return _BatchOutcome(
-            processed=len(rows) - deferred - transient,
-            deferred=deferred,
-            transient=transient,
+            processed=len(rows) - len(deferred) - len(transient),
+            deferred=len(deferred),
+            transient=len(transient),
         )
 
     async def _mark(
@@ -477,7 +516,9 @@ class Consolidator:
 
         Returns the decision list, ``"truncated"`` (output-cap hit),
         ``"rejected"`` (every provider answered but failed validation),
-        or ``None`` (no provider reachable).
+        ``"deferred"`` (nothing background work may bill can take it now —
+        see :mod:`jarvis.brain.background_policy`), or ``None`` (no provider
+        reachable on a key-only install).
         """
         user_slug = resolve_user_entity_slug(
             getattr(
@@ -499,25 +540,23 @@ class Consolidator:
 
         start_ns = time.time_ns()
         from jarvis.memory.wiki.provider_chain import (
-            background_wiki_providers,
-            build_wiki_provider_chain,
+            build_background_wiki_chain,
             complete_with_fallback,
         )
 
-        available = set(self._registry.available())
-        chain = build_wiki_provider_chain(
-            primary=(self._curator_cfg.provider.strip() or self._root_cfg.brain.primary),
-            model_override=self._curator_cfg.model,
-            available=available,
-            credential_ready=(
-                background_wiki_providers(
-                    available=available,
-                    config=self._root_cfg,
-                )
-                if self._credential_filter
-                else available
-            ),
-        )
+        try:
+            background = build_background_wiki_chain(
+                registry=self._registry,
+                config=self._root_cfg,
+                primary=(
+                    self._curator_cfg.provider.strip() or self._root_cfg.brain.primary
+                ),
+                model_override=self._curator_cfg.model,
+                credential_filter=self._credential_filter,
+            )
+        except BackgroundDeferred as exc:  # waiting is recorded on the health strip below
+            background_guard.note_waiting(str(exc))
+            return "deferred"
         rejection_reasons: list[str] = []
         # Reasons where the model produced WELL-FORMED JSON but the judged
         # decision merely violated a curation rule (companion page missing,
@@ -549,16 +588,29 @@ class Consolidator:
                 return reason
             return None
 
-        result = await complete_with_fallback(
-            registry=self._registry,
-            chain=chain,
-            request=request,
-            timeout_s=float(self._curator_cfg.timeout_s),
-            label="Consolidator",
-            aggregate=aggregate,
-            validate=_validate_response,
-            content_verdict=lambda reason: reason in content_verdict_reasons,
-        )
+        try:
+            result = await complete_with_fallback(
+                registry=self._registry,
+                chain=background.chain,
+                request=request,
+                timeout_s=float(self._curator_cfg.timeout_s),
+                label="Consolidator",
+                aggregate=aggregate,
+                validate=_validate_response,
+                content_verdict=lambda reason: reason in content_verdict_reasons,
+                provider_options=background.provider_options,
+                before_attempt=background_guard.hook(self._root_cfg, "consolidator"),
+                record_chain_failure=not background.subscription_mode,
+            )
+        except BackgroundDeferred as exc:
+            # The daily cap was reached between two attempts; the guard has
+            # already logged it and recorded the waiting state.
+            log.info("Consolidator: judge deferred — %s", exc)
+            return "deferred"
+        if result is not None or rejection_reasons:
+            # A provider answered (even if its answer was unusable): the
+            # install is not waiting on anything.
+            background_guard.note_progress()
         if result is None:
             if any(reason.startswith("truncated") for reason in rejection_reasons):
                 log.warning(
@@ -575,6 +627,12 @@ class Consolidator:
                 # the queue keeps draining.
                 telemetry.inc("wiki_writes_blocked_rejected")
                 return "rejected"
+            if background.subscription_mode:
+                # Logged out, out of credit, rate limited — whatever it is, the
+                # subscription did not take the batch. Wait; never a key.
+                background_guard.note_waiting("the subscription did not answer")
+                return "deferred"
+            background_guard.note_failure("every wiki provider failed")
             return None
         agg, self._resolved_provider = result
 
@@ -615,8 +673,8 @@ class Consolidator:
         label: str,
         *,
         neighbours: dict[str, str],
-    ) -> tuple[int, int]:
-        """Apply one judged batch and return ``(deferred, transient)`` counts."""
+    ) -> tuple[set[int], set[int]]:
+        """Apply one judged batch and return the ``(deferred, transient)`` row ids."""
         validation_error = self._validate_decisions(
             decisions,
             rows,
@@ -631,7 +689,7 @@ class Consolidator:
                 "leaving every candidate pending",
                 validation_error,
             )
-            return 0, len(rows)
+            return set(), {row.id for row in rows}
 
         by_id = {row.id: row for row in rows}
         row_order = {row.id: index for index, row in enumerate(rows)}
@@ -911,7 +969,7 @@ class Consolidator:
                     cid,
                 )
 
-        return len(deferred_ids), len(transient_ids)
+        return deferred_ids, transient_ids
 
     # ------------------------------------------------------------------
     # helpers
@@ -1580,34 +1638,6 @@ class Consolidator:
             return abs_path.resolve().relative_to(self._vault_root).as_posix()
         except ValueError:
             return abs_path.as_posix()
-
-    def _ensure_brain(self) -> Any:
-        if self._brain is not None:
-            return self._brain
-        provider, model = _resolve_provider_and_model(self._curator_cfg, self._root_cfg)
-        try:
-            # Thinking disabled for Gemini non-pro: the judge must spend its
-            # token budget on page bodies, not on internal reasoning (see
-            # instantiate_curator_brain).
-            self._brain = instantiate_curator_brain(
-                self._registry,
-                provider,
-                model,
-                cli_timeout_s=float(self._curator_cfg.timeout_s),
-            )
-            self._resolved_provider = provider
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "Consolidator: provider %r unavailable (%s) — batch stays pending",
-                provider, exc,
-            )
-            self._brain = None
-        return self._brain
-
-    def reset_brain(self) -> None:
-        """Drop the cached brain (provider switch via the Wiki settings card)."""
-        self._brain = None
-        self._resolved_provider = None
 
 
 __all__ = ["Consolidator"]
