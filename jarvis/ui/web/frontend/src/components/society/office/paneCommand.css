@@ -54,6 +54,23 @@
 .office-pane-grip[data-edge="se"]::after { content:""; position:absolute; right:4px; bottom:4px; width:8px; height:8px; opacity:.55; background:linear-gradient(135deg, transparent 0 45%, var(--pane-ink-faint) 45% 55%, transparent 55% 70%, var(--pane-ink-faint) 70% 80%, transparent 80%); }
 .office-pane:hover .office-pane-grip[data-edge="se"]::after { opacity:.9; }
 
+/* The minimal pane style (the IDE's Workspace options): the window is a tile
+   like the panes in the grid — square, a slim title row in the terminal font,
+   square controls — and while the reader works in it (keyboard focus anywhere
+   inside, the terminal included) its edge and title take the signal hue. The
+   inner half of that two-pixel edge is its own layer over everything, so the
+   title row's ground cannot dim it along the top. */
+.office-pane[data-style="minimal"] { border-radius:0; }
+.office-pane[data-style="minimal"] .office-pane-head { height:28px; min-height:28px; padding:0 2px 0 10px; gap:7px; }
+.office-pane[data-style="minimal"] .office-pane-head h2 { font-size:12px; }
+.office-pane[data-style="minimal"] .office-pane-actions button { width:24px; height:24px; border-radius:0; }
+.office-pane[data-style="minimal"] .office-pane-actions button svg { width:14px; height:14px; }
+.office-pane[data-style="minimal"] .office-pane-status { border-radius:0; }
+.office-pane[data-style="minimal"]:focus-within { border-color:var(--pane-focus); }
+.office-pane[data-style="minimal"]:focus-within::after { content:""; position:absolute; inset:0; z-index:4; pointer-events:none; box-shadow:inset 0 0 0 1px var(--pane-focus); }
+.office-pane[data-style="minimal"]:focus-within .office-pane-head h2 { color:var(--pane-focus); font-weight:600; }
+.office-pane[data-style="minimal"]:focus-visible { outline:none; }
+
 /* Mission Control's still screens of the sessions (./PaneLiveScreen). Fixed
    height, rows absolutely placed: the grid is fitted to this box, so the text
    can never feed back into its size. */
