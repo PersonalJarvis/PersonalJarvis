@@ -817,7 +817,7 @@ class WebServer:
             evaluator = AchievementEvaluator(db_path=db_path, bus=self.bus)
             bio_store = BioStore(db_path=db_path)
 
-            # Optional data-source paths (awareness, missions, self-mod).
+            # Optional data-source paths (missions, self-mod).
             # If the file/DB doesn't exist, the block just silently drops out
             # of the prompt — no error. Paths come from ``user_data_dir()``,
             # not relative strings, so an app restart in a different CWD

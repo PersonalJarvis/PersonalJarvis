@@ -203,34 +203,3 @@ def test_every_subscription_card_can_answer_the_connection_probe() -> None:
             getattr(brain_cls, "subscription_connected", None)
         ), f"{spec.id} has no subscription_connected probe"
 
-
-class _TextBrain:
-    def __init__(self, text: str) -> None:
-        self.text = text
-
-    async def complete(self, _req: Any):  # noqa: ANN201
-        yield self.text
-
-
-async def _collect(brain: Any) -> list[str]:
-    return [delta async for delta in brain.complete(object())]
-
-
-def test_background_brain_prefers_a_connected_subscription(monkeypatch) -> None:
-    import asyncio
-
-    monkeypatch.setattr(
-        resolver, "resolve_subscription_brain", lambda cfg, **_kw: _TextBrain("subscription")
-    )
-    brain = resolver.SubscriptionFirstBrain(_cfg(), _TextBrain("paid-key"))
-
-    assert asyncio.run(_collect(brain)) == ["subscription"]
-
-
-def test_background_brain_uses_the_key_without_a_subscription(monkeypatch) -> None:
-    import asyncio
-
-    monkeypatch.setattr(resolver, "resolve_subscription_brain", lambda cfg, **_kw: None)
-    brain = resolver.SubscriptionFirstBrain(_cfg(), _TextBrain("paid-key"))
-
-    assert asyncio.run(_collect(brain)) == ["paid-key"]

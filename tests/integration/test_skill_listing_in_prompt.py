@@ -9,9 +9,6 @@ These tests:
 1. Verify the section appears with real skills loaded from disk.
 2. Verify the section is absent when the context is unset (Headless-Mock-Mode).
 3. Verify a renderer crash does not break the prompt build (defense-in-depth).
-
-Pattern reference: ``tests/unit/awareness/test_system_prompt_injection.py``
-mirrors this same structure for the Awareness snapshot.
 """
 from __future__ import annotations
 
@@ -76,7 +73,7 @@ def _reset_skill_context() -> Iterator[None]:
 
 
 def _make_brain_manager() -> BrainManager:
-    """BrainManager with no awareness/memory — minimal harness for prompt tests."""
+    """BrainManager with no memory — minimal harness for prompt tests."""
     return BrainManager(config=JarvisConfig(), bus=EventBus(), tools={})
 
 

@@ -1409,3 +1409,22 @@ ASGI transport as `app-command`.
 `tests/unit/brain/test_routing.py` (exact router set) and
 `tests/unit/app_actions/` (catalog exclusions, policy tiers, blocked calls,
 parameter mapping).
+
+## Amendment 2026-09-30 — Awareness tools retired
+
+`awareness-snapshot` and `awareness-recall` leave `ROUTER_TOOLS` together with
+the awareness layer that fed them (ADR-0009, ADR-0012). The layer watched the
+foreground window, summarised each stretch of work with a model call, and
+put a live snapshot into every turn's context. That cost tokens on every
+turn and in the background for a recall feature the product no longer wants.
+
+The evidence gate keeps its `activity` domain. No tool serves it now, so a
+question like "what did I have open today?" gets the gate's honest refusal
+("I don't keep a history of your activity") instead of an invented timeline.
+Mission workers lose the `awareness-recall` grant (ADR-0030).
+
+### Regression guards
+
+- `tests/unit/brain/test_routing.py` (exact router set)
+- `tests/unit/brain/test_evidence_gate.py`, `tests/unit/brain/test_evidence_gate_wiring.py` (honest refusal for the `activity` domain)
+- `tests/missions/test_worker_capability_parity.py` (the worker grant)

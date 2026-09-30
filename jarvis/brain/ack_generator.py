@@ -20,7 +20,7 @@ Design constraints:
   user knows the right intent was understood — generic "okay, one moment"
   variants only as fallback for tools whose args are too noisy to echo
   (raw shell commands, long harness tasks).
-* **Skip-list.** Passive state reads (awareness-snapshot, screen-snapshot,
+* **Skip-list.** Passive state reads (screen-snapshot,
   wiki lookups) and low-latency individual UI events (click, hotkey,
   type-text) return ``None`` because a chat-style ack would chatter or feel
   uncanny.
@@ -117,7 +117,6 @@ def is_voice_control_utterance(utterance: str | None) -> bool:
 #       sequence (type-text streams characters; click is single-pixel).
 ACK_SKIP_TOOLS: frozenset[str] = frozenset({
     # passive observations
-    "awareness_snapshot",
     "screen_snapshot",
     "whoami",
     # fast passive memory reads (2026-07-06: wiki-recall answered in 72 ms —

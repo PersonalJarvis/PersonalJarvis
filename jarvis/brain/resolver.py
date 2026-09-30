@@ -571,48 +571,6 @@ def resolve_subscription_brain(
 # Internal — Chain-Building
 # ----------------------------------------------------------------------
 
-class SubscriptionFirstBrain:
-    """Background brain: a connected subscription first, the keyed brain otherwise.
-
-    For background callers built at boot (awareness summaries). The login probe
-    spawns CLIs, so it runs lazily on the first call, off the event loop, and
-    is re-checked after :attr:`RECHECK_S` so a later sign-in or sign-out is
-    honoured. A key is spent only while no subscription is connected, which
-    keeps a single-key install working (AP-22) without billing the voice key
-    for work nobody waits on (live 2026-09-29).
-    """
-
-    RECHECK_S = 600.0
-
-    def __init__(
-        self, config: JarvisConfig, fallback: Brain, *, cli_timeout_s: float | None = None
-    ) -> None:
-        self._config = config
-        self._fallback = fallback
-        self._cli_timeout_s = cli_timeout_s
-        self._chosen: Any = None
-        self._checked_at = float("-inf")
-        self.name = getattr(fallback, "name", "")
-
-    async def _pick(self) -> Any:
-        import asyncio
-        import time
-
-        now = time.monotonic()
-        if self._chosen is None or now - self._checked_at >= self.RECHECK_S:
-            subscription = await asyncio.to_thread(
-                resolve_subscription_brain, self._config, cli_timeout_s=self._cli_timeout_s
-            )
-            self._chosen = subscription if subscription is not None else self._fallback
-            self._checked_at = now
-        return self._chosen
-
-    async def complete(self, req: Any) -> Any:
-        brain = await self._pick()
-        async for delta in brain.complete(req):
-            yield delta
-
-
 def _resolve_chain(config: JarvisConfig) -> list[tuple[str, str | None]]:
     """Builds the ordered (provider, model) list for the fallback chain.
 

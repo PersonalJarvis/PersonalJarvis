@@ -35,7 +35,7 @@ _FALLBACK = "system"
 
 # Substring rules, evaluated in this order — FIRST hit wins. Order matters:
 # "knowledge" is placed before "community" so that the "recall" substring in
-# ``awareness-recall`` / ``wiki-recall`` is not mis-caught by the "call" needle
+# ``wiki-recall`` is not mis-caught by the "call" needle
 # of the community bucket.
 _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (

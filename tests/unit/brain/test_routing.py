@@ -1861,9 +1861,6 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # Enum-constrained + schema-validated; dangerous -> risk "ask".
             # Never a spawn (AP-5/AP-14). ADR-0011 amendment "app-command tool".
             "app-command",
-            "awareness-snapshot",
-            # Awareness Phase A3 (BM25 search over recent episode log).
-            "awareness-recall",
             # Skills-Brain-Integration (also in SUB_TOOLS — structural D9 protection)
             "run-skill",
             # Skill authoring by voice/chat (2026-08-18): the brain writes a NEW
