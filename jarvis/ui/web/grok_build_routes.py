@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from jarvis.brain import background_policy
 from jarvis.core.interactive_terminal import InteractiveTerminalUnavailable
 from jarvis.grok_build_auth import (
     GrokBuildAuthService,
@@ -89,4 +90,7 @@ async def grok_build_logout() -> dict[str, Any]:
     ok, error = await asyncio.to_thread(service.logout_blocking)
     if not ok:
         raise HTTPException(status_code=500, detail=error or "Grok Build logout failed")
+    # A deliberate sign-out ends subscription mode for background work now,
+    # not after the 30-day memory in background_policy.
+    await asyncio.to_thread(background_policy.forget, "grok-build")
     return {"ok": True, "message": "Grok Build was disconnected"}

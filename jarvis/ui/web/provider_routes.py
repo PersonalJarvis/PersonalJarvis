@@ -28,6 +28,7 @@ from typing import Any, Final, Literal, get_args
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from jarvis.brain import background_policy
 from jarvis.brain import provider_test as _provider_test
 from jarvis.brain import section_health as _section_health
 from jarvis.brain.model_catalog import ModelInfo, catalog_spec, classify_model
@@ -3986,6 +3987,9 @@ async def codex_logout(request: Request) -> dict[str, Any]:
     ok, error = await asyncio.to_thread(service.logout_blocking)
     if not ok:
         raise HTTPException(status_code=500, detail=error or "Codex logout failed")
+    # A deliberate sign-out ends subscription mode for background work now,
+    # not after the 30-day memory in background_policy.
+    await asyncio.to_thread(background_policy.forget, "codex")
     return {"ok": True, "message": "Codex was disconnected"}
 
 
