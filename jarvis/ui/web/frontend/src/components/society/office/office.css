@@ -46,7 +46,8 @@
 .office-plate-line .office-plate-state { flex:none; }
 .office-plate-sign { font-size:10px; font-weight:600; color:#94a3b8; }
 .office-plate-asked { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; max-width:20em; margin-top:2px; font-size:11px; font-style:italic; font-weight:500; color:#cbd5e1; white-space:normal; }
-.office-plate[data-pane][data-open] { background:rgb(24 26 32 / .96); }
+/* max-content: the Html anchor has no width, so an opened plate would otherwise wrap after every word. */
+.office-plate[data-pane][data-open] { width:max-content; max-width:22em; background:rgb(24 26 32 / .96); }
 .office-plate[data-pane][data-open] .office-plate-name,
 .office-plate[data-pane][data-open] .office-plate-result { max-width:20em; white-space:normal; overflow:visible; }
 .office-plate[data-pane][data-open] .office-plate-line { max-width:none; }
