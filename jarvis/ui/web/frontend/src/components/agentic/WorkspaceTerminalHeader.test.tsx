@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { WorkspaceTerminalHeader } from "./WorkspaceTerminalHeader";
-import { PANE_BRAND, PANE_CHROME, themeFor } from "./terminalThemes";
+import { PANE_BRAND, PANE_CHROME, PANE_TILE, themeFor } from "./terminalThemes";
 
 const BASE = { name: "Dana", agent: "codex", displayName: "Codex", appearance: "dark" as const, status: "live" as const };
 
@@ -158,5 +158,40 @@ describe("compact workspace terminal header", () => {
     fireEvent.click(screen.getByRole("button", { name: "More actions for Dana" }));
     pressPointer(screen.getByRole("button", { name: "Outside" }));
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+});
+
+describe("minimal tile title row", () => {
+  it("keeps every control of the card header in a slimmer, square row", () => {
+    render(<WorkspaceTerminalHeader {...BASE} variant="tile" onFork={() => {}} onAdd={() => {}} onToggleMaximize={() => {}} onClose={() => {}} />);
+    const header = screen.getByTestId("workspace-terminal-header-Dana");
+    expect(header.className).toContain("h-7");
+    expect(header.className).not.toContain("h-9");
+    expect(within(header).getByTestId("pane-title-Dana").textContent).toBe("Dana");
+    for (const label of ["More actions for Dana", "Maximize Dana", "Fork Dana", "Add agent beside Dana", "Close Dana"]) {
+      expect(within(header).getByRole("button", { name: label }).className).toContain("rounded-none");
+    }
+  });
+
+  it("lights the title of the pane in use in the signal hue", () => {
+    const { rerender } = render(<WorkspaceTerminalHeader {...BASE} variant="tile" />);
+    const expected = document.createElement("span");
+    expected.style.color = PANE_BRAND.dark.inkMuted;
+    expect(screen.getByTestId("pane-title-Dana").style.color).toBe(expected.style.color);
+    rerender(<WorkspaceTerminalHeader {...BASE} variant="tile" focused />);
+    expected.style.color = PANE_TILE.dark.focus;
+    expect(screen.getByTestId("pane-title-Dana").style.color).toBe(expected.style.color);
+    expect(screen.getByTestId("pane-title-Dana").className).toContain("font-semibold");
+  });
+
+  it("starts a move from the title and opens a square menu", () => {
+    const arrange = vi.fn();
+    render(<WorkspaceTerminalHeader {...BASE} variant="tile" onArrangeStart={arrange} onOpenConversation={() => {}} />);
+    pressPointer(screen.getByText("Dana"));
+    expect(arrange).toHaveBeenCalledTimes(1);
+    pressPointer(screen.getByRole("button", { name: "More actions for Dana" }));
+    expect(arrange).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "More actions for Dana" }));
+    expect(screen.getByRole("menu").className).toContain("rounded-none");
   });
 });
