@@ -543,13 +543,12 @@ class AgentChatService:
         if session.surface == "jarvis":
             from jarvis.core.model_selection import worker_selection
             from jarvis.core.runtime_refs import get_brain_manager
-            from jarvis.core.task_agent import subscription_seat
+            from jarvis.core.task_agent import subscription_seat_off_loop
 
             manager = get_brain_manager()
             selection = worker_selection(getattr(manager, "_config", None))
             if selection is not None:
-                # The Claude slot probes the CLI login (cached); keep it off the loop.
-                seat = await asyncio.to_thread(subscription_seat, selection.provider)
+                seat = await subscription_seat_off_loop(selection.provider)
                 provider, selected_runner = seat or (selection.provider, "brain")
                 if (session.provider, session.model) != (provider, selection.model or ""):
                     session = replace(

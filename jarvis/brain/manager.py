@@ -13522,10 +13522,13 @@ class BrainManager:
             allowed_tools = (*allowed_tools, _ARTIFACT_TOOL_NAME)
         tools = self._select_task_tools(allowed_tools)
         from jarvis.core.model_selection import operation_model, worker_selection
-        from jarvis.core.task_agent import run_selected, subscription_seat
+        from jarvis.core.task_agent import run_selected, subscription_seat_off_loop
 
         selected = operation_model.get() or worker_selection(self._config)
-        if selected is not None and subscription_seat(selected.provider) is not None:
+        if (
+            selected is not None
+            and await subscription_seat_off_loop(selected.provider) is not None
+        ):
             return await run_selected(
                 selection=selected, prompt=prompt, tool_names=tuple(tools), trace_id=trace_id
             )
