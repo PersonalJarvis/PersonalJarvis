@@ -884,8 +884,8 @@ export function AgenticTerminal({
 
   // Only the focused pane's cursor blinks. A blinking cursor repaints its pane
   // twice a second forever, and on a wall of a dozen idle terminals that was
-  // the renderer's biggest standing cost (CPU diet, 2026-08-22). The unfocused
-  // panes keep a steady cursor, so where the agent is typing stays visible.
+  // the renderer's biggest standing cost (CPU diet, 2026-08-22). Unfocused
+  // panes draw no cursor at all — see `cursorInactiveStyle` below.
   useEffect(() => {
     const term = termRef.current;
     if (term) term.options.cursorBlink = focused;
@@ -983,6 +983,10 @@ export function AgenticTerminal({
       // Only the focused pane blinks — see the `focused` effect above.
       cursorBlink: focusedRef.current,
       cursorStyle: "bar",
+      // xterm's default for a terminal without keyboard focus is a hollow box.
+      // On a wall of panes that box sat in every idle prompt and read as a
+      // stray glyph; the agent's own prompt already marks where input goes.
+      cursorInactiveStyle: "none",
       scrollback: 10000,
       // Required by the Unicode 11 width provider below.
       allowProposedApi: true,
