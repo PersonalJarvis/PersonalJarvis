@@ -169,11 +169,9 @@ class ChatApprovalBridge:
     ) -> str | None:
         """The ``approved_by`` label when the stance decides without a card, else None."""
         name = _bare(tool_name)
-        if grant.stance == "always_ask":
+        if grant.stance == "always_ask" or grant.force_ask(name, args or {}):
             return None
         if grant.stance == "bypass":
-            if grant.force_ask(name, args or {}):
-                return None
             return "chat-bypass"
         if name in grant.always_allowed:
             return "user"

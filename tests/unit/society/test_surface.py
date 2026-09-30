@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from jarvis.agent_chat.approval_bridge import ChatApprovalBridge, ChatGrant, approval_ref
+from jarvis.core.bus import EventBus
+from jarvis.core.config import SafetyConfig
+from jarvis.core.protocols import ToolResult
 from jarvis.core.response_style import KEEP_GOING_ON_TOOL_FAILURE
+from jarvis.safety.approval import ApprovalWorkflow
+from jarvis.safety.risk_tier import RiskTierEvaluator
+from jarvis.safety.tool_executor import ToolExecutor
 from jarvis.society import runtime as runtime_mod
 from jarvis.society.agent_tools import (
     MEMORY_RECALL_TOOL_NAME,
@@ -19,6 +27,7 @@ from jarvis.society.agent_tools import (
 from jarvis.society.ask_tool import ASK_USER_TOOL_NAME
 from jarvis.society.learning import RUN_SKILL_TOOL_NAME
 from jarvis.society.runtime import SocietyRuntime
+from jarvis.society.shell import ShellResult
 from jarvis.society.surface import (
     agent_id_of,
     build_briefing,
@@ -228,6 +237,165 @@ async def test_a_granted_tool_is_gated_by_the_agents_rules(rt: SocietyRuntime, t
     gmail = society_tool_filter(session)({**TOOLS})["gmail"]  # type: ignore[misc]
     gmail.risk_tier = "ask"
     assert gmail.risk_tier_for_args({"action": "send"}) == "monitor"
+
+
+async def test_bound_chat_always_ask_cards_a_safe_read(rt: SocietyRuntime, tmp_path: Path):
+    await rt.roster.create(name="Reader", approval_mode="bypass", permission_ceiling="safe")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "note.txt").write_text("hello", encoding="utf-8")
+    session = SimpleNamespace(
+        session_id="society:reader", permission_mode="always_ask", cwd=str(workspace)
+    )
+    cfg = SimpleNamespace(wiki=SimpleNamespace(vault_root=str(tmp_path / "vault")))
+    await society_system_extra(cfg, None, session)
+    filt = society_tool_filter(session)
+    assert filt is not None
+    read = filt(society_tools(cfg, None, session))["Read"]
+    assert read.risk_tier == "safe"
+    assert read.risk_tier_for_args({"file_path": "note.txt"}) == "ask"
+    bus = EventBus()
+    executor = ToolExecutor(bus, RiskTierEvaluator(SafetyConfig()), ApprovalWorkflow(bus))
+    bridge = ChatApprovalBridge(bus)
+    asked = asyncio.Event()
+    release = asyncio.Event()
+    seen: list[str] = []
+
+    async def card(_call_id: str, name: str, _args: dict, _summary: str) -> str:
+        seen.append(name)
+        asked.set()
+        await release.wait()
+        return "allow"
+
+    ref = approval_ref(session.session_id)
+    bridge.arm(
+        ref,
+        ChatGrant(
+            session_id=session.session_id,
+            turn_id="turn-1",
+            stance="always_ask",
+            always_allowed=set(),
+            ask=card,
+        ),
+    )
+    running = asyncio.create_task(
+        executor.execute(
+            read,
+            {"file_path": "note.txt"},
+            config_snapshot={
+                "approval_surface": "interactive",
+                "approval_ref": ref,
+                "approval_timeout_s": 5,
+            },
+        )
+    )
+    try:
+        await asyncio.wait_for(asked.wait(), timeout=5)
+        assert seen == ["Read"]
+        assert not running.done(), "the tool waits for the person's card"
+    finally:
+        release.set()
+    result = await asyncio.wait_for(running, timeout=5)
+    assert result.success, result.error
+
+
+async def test_bound_chat_ask_gates_monitor_without_widening_roster(rt: SocietyRuntime):
+    await rt.roster.create(name="Mailbox", approval_mode="bypass", permission_ceiling="monitor")
+    for mode, expected in (("bypass", "monitor"), ("ask", "ask"), ("always_ask", "ask")):
+        session = SimpleNamespace(session_id="society:mailbox", permission_mode=mode)
+        await society_system_extra(None, None, session)
+        filt = society_tool_filter(session)
+        assert filt is not None
+        assert filt(TOOLS)["gmail"].risk_tier_for_args({"action": "list"}) == expected
+
+    await rt.roster.update("mailbox", {"approval_mode": "ask"})
+    session = SimpleNamespace(session_id="society:mailbox", permission_mode="bypass")
+    await society_system_extra(None, None, session)
+    filt = society_tool_filter(session)
+    assert filt is not None
+    assert filt(TOOLS)["gmail"].risk_tier_for_args({"action": "list"}) == "ask"
+
+
+async def test_in_flight_tool_stops_after_kill_or_agent_pause(rt: SocietyRuntime):
+    await rt.roster.create(name="Mailer", approval_mode="bypass")
+    session = SimpleNamespace(session_id="society:mailer", permission_mode="bypass")
+    await society_system_extra(None, None, session)
+    calls: list[dict] = []
+
+    async def execute(args: dict, _ctx: object) -> ToolResult:
+        calls.append(args)
+        return ToolResult(True, "ok", None)
+
+    tool = _tool("gmail")
+    tool.execute = execute
+    filt = society_tool_filter(session)
+    assert filt is not None
+    gated = filt({"gmail": tool})["gmail"]
+    ctx = SimpleNamespace(approved_by="auto")
+    assert (await gated.execute({"action": "list"}, ctx)).success
+    await rt.store.set_kill_switch(True)
+    killed = await gated.execute({"action": "list"}, ctx)
+    assert not killed.success and killed.output["reason"] == "kill_switch"
+    await rt.store.set_kill_switch(False)
+    await rt.roster.update("mailer", {"state": "paused"})
+    paused = await gated.execute({"action": "list"}, ctx)
+    assert not paused.success and paused.output["reason"] == "blocked_by_policy"
+    assert calls == [{"action": "list"}]
+
+
+async def test_shell_uses_one_chat_approval_for_one_command(rt: SocietyRuntime, tmp_path: Path):
+    await rt.roster.create(name="Runner", approval_mode="ask")
+    workspace = tmp_path / "workspace"
+    session = SimpleNamespace(
+        session_id="society:runner", permission_mode="ask", cwd=str(workspace)
+    )
+    await society_system_extra(None, None, session)
+    from jarvis.society.agent_tools import ShellTool
+
+    class Backend:
+        name = "fake"
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def run(self, command: str, *, cwd: Path, timeout_s: float) -> ShellResult:
+            self.calls.append(command)
+            return ShellResult(output="ok", exit_code=0, seconds=0.01)
+
+    backend = Backend()
+    shell = ShellTool(rt, "runner", workspace=workspace, backend=backend)
+    filt = society_tool_filter(session)
+    assert filt is not None
+    gated = filt({SHELL_TOOL_NAME: shell})[SHELL_TOOL_NAME]
+    bus = EventBus()
+    executor = ToolExecutor(bus, RiskTierEvaluator(SafetyConfig()), ApprovalWorkflow(bus))
+    bridge = ChatApprovalBridge(bus)
+    cards: list[str] = []
+
+    async def card(_call_id: str, name: str, _args: dict, _summary: str) -> str:
+        cards.append(name)
+        return "allow"
+
+    ref = approval_ref(session.session_id)
+    bridge.arm(
+        ref,
+        ChatGrant(
+            session_id=session.session_id,
+            turn_id="turn-1",
+            stance="ask",
+            always_allowed=set(),
+            ask=card,
+        ),
+    )
+    result = await executor.execute(
+        gated,
+        {"command": "echo hi"},
+        config_snapshot={"approval_surface": "interactive", "approval_ref": ref},
+    )
+    assert result.success, result.error
+    assert cards == [SHELL_TOOL_NAME]
+    assert backend.calls == ["echo hi"]
+    assert await rt.approvals.pending() == []
 
 
 async def test_always_allow_writes_the_agents_own_rule(rt: SocietyRuntime):

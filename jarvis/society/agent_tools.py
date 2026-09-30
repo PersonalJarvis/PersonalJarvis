@@ -645,7 +645,7 @@ class ShellTool:
         verdict = decide(caller, "core:shell", tier, verb=level)
         if verdict is Verdict.BLOCK:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "command class is blocked")
-        if verdict is Verdict.QUEUE:
+        if verdict is Verdict.QUEUE and getattr(ctx, "approved_by", None) != "user":
             item = await rt.approvals.enqueue(
                 agent_id=caller.agent_id,
                 trace_id=f"shell:{caller.agent_id}:{getattr(ctx, 'trace_id', '')}"[:120],

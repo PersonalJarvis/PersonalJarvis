@@ -71,9 +71,9 @@ receive the content required for their requests. See [privacy and local data](ht
 
 [Website](https://personaljarvis.ai) · [Docs](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/welcome-to-personal-jarvis.md) · [Getting started](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/first-run-setup.md) · [How it works](#how-it-works) · [Discord](https://discord.gg/x7USduHxbc) · [X](https://x.com/PersonalJarvis)
 
-https://github.com/user-attachments/assets/2078e032-f1f0-40fa-a200-73773b099fd2
+https://github.com/user-attachments/assets/9930ca95-5015-4ade-9a16-975c77d179fd
 
-<p align="center"><sub>Jarvis Agents, the Jarvis Verse and the Agentic IDE, filmed from the app's own interface with a sample team; the chat and terminal output are scripted.</sub></p>
+<p align="center"><sub>A real click-through of the app: every frame is recorded, waiting is sped up, and a few moments are zoomed in.</sub></p>
 
 ## install
 
@@ -102,20 +102,6 @@ Build a team you can return to. Each agent has an identity, a direct conversatio
 standing instructions, and access to the tools you grant it. Pick a connected
 model or supported agent account for the work, and keep the conversations in
 one workspace.
-
-<br />
-
-<p align="center">
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-agents-v4.mp4">
-    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/jarvis-agents-v4.gif" alt="Agents workspace recreation: send a brief, watch the live thinking trace, then read the streaming reply and completed plan" width="1000" />
-  </a>
-</p>
-
-<p align="center">
-  <sub>An illustrative agent conversation, from brief to draft. The GIF plays once and holds the reply; click to replay the video.</sub>
-</p>
-
-<br />
 
 - **Talk directly to a specialist.** Select an agent from the roster and continue its chat.
 - **Give it a standing brief.** Configure its instructions, model access, and tools.

@@ -204,6 +204,26 @@ async def test_bypass_still_cards_an_explicit_require_approval_rule(tmp_path: Pa
     assert len(card.asked) == 1
 
 
+async def test_require_approval_overrides_remembered_grants_in_every_stance(tmp_path: Path):
+    """An agent's explicit rule still asks after an earlier Always allow."""
+    for stance in ("ask", "bypass"):
+        executor, bridge, _ = _stack()
+        card = _Card("deny")
+        grant = _grant(card, stance, {"RunCommand"})
+        grant.pre_approved.add("RunCommand")
+        grant.force_ask = lambda _name, _args: True
+        bridge.arm(REF, grant)
+
+        run = ft.folder_tools(tmp_path)["RunCommand"]
+        result = await executor.execute(
+            run, {"command": "echo hi"}, config_snapshot=_snapshot()
+        )
+
+        assert not result.success and result.error, stance
+        assert result.error.startswith(APPROVAL_DENIED_PREFIX), stance
+        assert [asked[1] for asked in card.asked] == ["RunCommand"], stance
+
+
 async def test_always_ask_cards_even_a_remembered_tool(tmp_path: Path):
     executor, bridge, _ = _stack()
     card = _Card("deny")

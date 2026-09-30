@@ -677,14 +677,12 @@ def agy_model_args(
         # Default model: agy accepts ``--effort`` alone.
         return ["--effort", effort] if effort in _AGY_EFFORT_SUFFIXES else []
     row = by_id.get(model)
+    if (row is None or not row.get("efforts")) and _is_base_gemini_id(model):
+        # A newer Gemini base id still requires --effort when discovery failed
+        # or returned a bare id without its suffixed variants.
+        level = effort if effort in _AGY_EFFORT_SUFFIXES else _AGY_DEFAULT_EFFORT
+        return ["--model", model, "--effort", level]
     if row is None:
-        if _is_base_gemini_id(model):
-            # A Gemini release newer than the catalog Jarvis holds (live
-            # 2026-09: "gemini-3.8-flash" in a routine). agy refuses a base id
-            # without a level ("requires --effort"), and nobody picks efforts
-            # by hand, so the chosen one or agy's own default is filled in.
-            level = effort if effort in _AGY_EFFORT_SUFFIXES else _AGY_DEFAULT_EFFORT
-            return ["--model", model, "--effort", level]
         # A suffixed or non-Gemini unknown id: pass it through untouched.
         return ["--model", model]
     ladder = list(row.get("efforts") or [])
