@@ -88,6 +88,20 @@ def _forget_secrets(computer_id: str, *, keep: str | None = None) -> None:
         delete_secret(_passphrase_slot(computer_id))
 
 
+def _bcrypt_kdf_available() -> bool:
+    """Whether a passphrase-protected OpenSSH key can be unlocked here.
+
+    ssh-keygen's default key format derives the encryption key with bcrypt's
+    KDF. It is a declared dependency (``asyncssh[bcrypt]``), but an install
+    that lost it must say THAT rather than blame the user's passphrase.
+    """
+    try:
+        import bcrypt
+    except ImportError:
+        return False
+    return hasattr(bcrypt, "kdf")
+
+
 def import_private_key(pem: str | None, passphrase: str | None) -> Any:
     """The user's own SSH key as an asyncssh key; a 400 sentence when unusable."""
     import asyncssh
@@ -103,6 +117,13 @@ def import_private_key(pem: str | None, passphrase: str | None) -> Any:
     try:
         return asyncssh.import_private_key(text + "\n", passphrase or None)
     except asyncssh.KeyEncryptionError as exc:
+        if passphrase and not _bcrypt_kdf_available():
+            raise ComputerError(
+                "This protected key cannot be unlocked on this install: the "
+                "bcrypt package is missing. Reinstall Personal Jarvis, or add "
+                "the key without a passphrase.",
+                kind="bad_key",
+            ) from exc
         raise ComputerError(
             "The passphrase does not unlock this key."
             if passphrase
