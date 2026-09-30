@@ -21,33 +21,34 @@ def bus() -> EventBus:
     return EventBus()
 
 
-def test_registry_loads_all_3_builtin_skills(builtin_root: Path, bus: EventBus) -> None:
+def test_registry_loads_the_base_builtin_skills(builtin_root: Path, bus: EventBus) -> None:
     reg = SkillRegistry(builtin_root, bus)
     reg.reload_sync()
     names = [s.frontmatter.name for s in reg.list() if s.frontmatter is not None]
-    assert "morning-routine" in names
     assert "deep-work-mode" in names
     assert "memory-save" in names
+    # Retired 2026-09-30: no shipped routine runs by itself.
+    assert "morning-routine" not in names
 
 
 def test_trigger_matcher_matches_voice_de(builtin_root: Path, bus: EventBus) -> None:
     reg = SkillRegistry(builtin_root, bus)
     reg.reload_sync()
     matcher = TriggerMatcher(reg)
-    skill = matcher.match_voice("guten morgen", lang="de")
+    skill = matcher.match_voice("konzentrationsmodus", lang="de")
     assert skill is not None
     assert skill.frontmatter is not None
-    assert skill.frontmatter.name == "morning-routine"
+    assert skill.frontmatter.name == "deep-work-mode"
 
 
 def test_trigger_matcher_matches_voice_en(builtin_root: Path, bus: EventBus) -> None:
     reg = SkillRegistry(builtin_root, bus)
     reg.reload_sync()
     matcher = TriggerMatcher(reg)
-    skill = matcher.match_voice("good morning", lang="en")
+    skill = matcher.match_voice("deep work", lang="en")
     assert skill is not None
     assert skill.frontmatter is not None
-    assert skill.frontmatter.name == "morning-routine"
+    assert skill.frontmatter.name == "deep-work-mode"
 
 
 def test_trigger_matcher_hotkey_deep_work(builtin_root: Path, bus: EventBus) -> None:

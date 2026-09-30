@@ -8,7 +8,6 @@ copied into `user_skills_dir()` by
 that location.
 
 List of bundled skills:
-  - morning-routine   calendar / mail / weather morning briefing
   - deep-work-mode    DND + focus timer via hotkey/voice
   - memory-save       "remember that ..." saved to memory-MCP
   - skill-creator     meta-skill for building further skills
@@ -53,7 +52,10 @@ _PLUGIN_PAIRED_SKILLS: tuple[str, ...] = (
 )
 
 BUILTIN_SKILL_NAMES: tuple[str, ...] = (
-    "morning-routine",
+    # No shipped routine: a daily briefing ran a full brain turn at 07:00 on
+    # every install, and routines are the user's own to make (2026-09-30).
+    # The bootstrap retires an unedited copy of the old ``morning-routine``
+    # (``jarvis.skills.bootstrap._RETIRED_SHIPPED_HASHES``).
     "deep-work-mode",
     "memory-save",
     "skill-creator",

@@ -290,13 +290,13 @@ def test_user_skill_wins_tie_against_builtin_name(tmp_path: Path) -> None:
     """A voice-authored replacement must beat the bundled skill on the same phrase."""
     _write_skill(
         tmp_path,
-        "morning-routine",
+        "deep-work-mode",
         """---
 schema_version: "1"
-name: morning-routine
+name: deep-work-mode
 triggers:
   - type: voice
-    pattern: "(morning routine|morgenroutine)"
+    pattern: "(focus mode|fokusmodus)"
     language: ["de", "en"]
 ---
 body
@@ -304,13 +304,13 @@ body
     )
     _write_skill(
         tmp_path,
-        "morning-routine-2",
+        "deep-work-mode-2",
         """---
 schema_version: "1"
-name: Morning Routine 2
+name: Deep Work Mode 2
 triggers:
   - type: voice
-    pattern: "(morning routine|morgenroutine|starte morning routine)"
+    pattern: "(focus mode|fokusmodus|starte focus mode)"
     language: ["de", "en"]
 ---
 body
@@ -319,9 +319,9 @@ body
     reg = SkillRegistry(tmp_path)
     reg.reload_sync()
     m = TriggerMatcher(reg)
-    sk = m.match_voice("Morning Routine", lang="en")
+    sk = m.match_voice("Focus Mode", lang="en")
     assert sk is not None
-    assert sk.name == "Morning Routine 2"
-    sk2 = m.match_voice("Morgenroutine", lang="de")
+    assert sk.name == "Deep Work Mode 2"
+    sk2 = m.match_voice("Fokusmodus", lang="de")
     assert sk2 is not None
-    assert sk2.name == "Morning Routine 2"
+    assert sk2.name == "Deep Work Mode 2"

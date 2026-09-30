@@ -1087,3 +1087,18 @@ def _entry(entry_id: str) -> notifications.Notification:
         detail="",
         created_at=1.0,
     )
+
+
+def test_a_finished_pane_job_is_shown_never_spoken() -> None:
+    """Maintainer decision 2026-09-30: how a pane's job ended is shown (badge,
+    bell entry) and never read aloud. The spoken readback also cost a model
+    call on an API key per job; nothing may bring it back unnoticed."""
+    import importlib.util
+    import inspect
+
+    from jarvis.speech.pipeline import _HELD_FOR_CALL_SOURCES
+
+    assert importlib.util.find_spec("jarvis.agentic_ide.voice_readback") is None
+    assert "readback" not in inspect.signature(Registry.send_prompt).parameters
+    assert not hasattr(notifications.watcher(), "take_readbacks")
+    assert "agentic_ide.readback" not in _HELD_FOR_CALL_SOURCES

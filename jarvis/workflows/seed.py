@@ -1,20 +1,23 @@
 """Seed workflows — planted into the DB on first startup.
 
 Philosophy: **small, immediately functional, demoable.** We want the
-user, after the first launch, to open the WorkflowsView and see 3
+user, after the first launch, to open the WorkflowsView and see
 meaningful examples, be able to click "Run", and get a result right away.
 
-- *Morning Briefing* (cron 30 7 * * *, **enabled**) — brain_prompt → speak
-  chain. An isolated agent turn over the read-only tools that are connected
-  (calendar, mail, memory, web/weather) produces a spoken day briefing. It
-  needs no credentials to run at all, which is exactly why it is the only
-  cron seed that ships switched on.
+**Nothing here runs by itself.** Every seed is either manual or a cron
+example that ships switched off; a schedule is the user's own decision
+(2026-09-30 — the Morning Briefing, the one cron seed that shipped on, was
+retired, see ``_retire_morning_briefing``).
+
 - *Code Review* (manual) — git diff capture followed by a brain review.
 - *URL Summary* (manual, input field ``url``) — brain_prompt with the
   template variable {{input.url}}. Demos input binding.
+- *Email Digest* / *Git Standup via Telegram* (cron, **off**) — need a
+  configured Telegram bot before anyone would switch them on.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 from uuid import UUID
@@ -44,102 +47,24 @@ _WF_EMAIL_DIGEST = UUID("4a0f9e01-5c11-4c57-9c1d-10aabb000004")
 _WF_GIT_STANDUP = UUID("4a0f9e01-5c11-4c57-9c1d-10aabb000005")
 
 
-def _morning_briefing() -> WorkflowDef:
-    """The one scheduled workflow that ships ON.
+#: The Morning Briefing no longer ships (2026-09-30). It was the one seed that
+#: ran by itself — a full agent turn every day at 07:30 on every install — and
+#: routines are the user's own to make. An existing install still carries the
+#: seeded row; ``_retire_morning_briefing`` removes it when it is still exactly
+#: what shipped. These are the only traces kept to recognise that row.
+_MORNING_BRIEFING_NAME = "Morning Briefing"
+_MORNING_BRIEFING_CRON = "30 7 * * *"
 
-    Every other cron seed here needs something a fresh install does not have
-    (a configured Telegram bot, an authenticated ``gws`` CLI), so shipping
-    them enabled would only produce failing runs. This one needs nothing but
-    a brain and a voice — both of which the app already requires — so it is
-    the honest default for "Jarvis does things without being asked"
-    (audit AU-02: with every cron seed disabled, the scheduler polled an
-    empty list forever and a fresh install did nothing on a schedule).
-
-    Language is NOT pinned here: the prompt asks for the configured output
-    language and the speak step passes ``auto``, so the one resolver decides
-    (AGENTS.md §1). The seed used to hardcode German for everyone.
-
-    Version 2 (BUG-212): the first seed asked for "a short, friendly morning
-    announcement" and got exactly that — a greeting and a motivational
-    phrase, no facts. The step now runs as an isolated agent turn with a
-    read-only tool allowlist (calendar, mail, memory, web + weather) and a
-    prompt that grounds every sentence in tool output. Tools that are not
-    connected on an install are simply skipped, so a fresh box still gets a
-    briefing — an honest one about what is and is not connected.
-    """
-    now_ns = time.time_ns()
-    return WorkflowDef(
-        id=_WF_MORNING_BRIEFING,
-        name="Morning Briefing",
-        description=(
-            "Daily 07:30 spoken briefing: today's calendar, mail that matters, "
-            "what you noted for today, headlines and weather — from the tools "
-            "that are connected, nothing invented."
-        ),
-        trigger=CronTrigger(expression="30 7 * * *"),
-        steps=(
-            BrainPromptStep(
-                label="Compile the briefing",
-                prompt=_MORNING_BRIEFING_PROMPT,
-                max_output_chars=1_600,
-                tools=MORNING_BRIEFING_TOOLS,
-                model_tier="auto",
-            ),
-            SpeakStep(
-                label="Speak the briefing",
-                text="{{prev.output}}",
-                priority="normal",
-                language="auto",
-            ),
-        ),
-        enabled=True,
-        created_at_ns=now_ns,
-        created_by="seed",
-        tags=("demo", "brain", "speak"),
-    )
-
-
-#: Read-side grants for the briefing. Every name is a live tool name or a
-#: plugin prefix (``grant_matches``); a name that is not connected is skipped
-#: by ``BrainManager._select_task_tools``. No tool here can send, write or
-#: delete anything, so an unattended 07:30 run never waits on an approval.
-MORNING_BRIEFING_TOOLS: tuple[str, ...] = (
-    "google_calendar", "gmail", "wiki-recall", "search_web",
-)
-
-#: Marker of the shipped v1 prompt — how the migration recognises the old
-#: seed row (and ONLY that row: a user's own edit never carries it).
+#: Marker of the shipped v1 prompt (a greeting, no tools). A user's own edit
+#: never carries it.
 _LEGACY_MORNING_BRIEFING_MARKER = "Compose a short, friendly morning announcement"
 
-_MORNING_BRIEFING_PROMPT = """\
-You are Jarvis, compiling the user's daily briefing that will be SPOKEN aloud.
-The current date and time are in your context: open with the greeting that fits
-the actual time of day (morning, afternoon or evening) and name the weekday.
-
-Gather the facts with the tools you actually have in this turn. Every sentence
-below must come from tool output. When a tool for an area is not available,
-skip that area in one short clause (e.g. "the calendar is not connected yet")
-and move on. Never invent an event, a mail, a headline or a city.
-
-1. Calendar (a calendar tool): today's events. No events: the day is free.
-   One: name it with its time. Several: the count plus the next one with its
-   time. If the next event starts within the hour, say so.
-2. Mail (a mail tool): unread mail. Name at most three that matter, each as
-   sender and subject in one clause. Never read a mail body out.
-3. Memory (wiki-recall): anything the user noted as due or planned for today.
-4. World (search_web): the two or three headlines that matter most for the
-   user's interests, each with its source named. Weather ONLY if a tool result
-   in this turn explicitly names the user's home city: then one clause from
-   search_web ("weather <city> today": current conditions, high and low).
-   Never choose a city yourself, never take one from a headline or a mail; if
-   no home city came back from a tool, say nothing about the weather at all.
-
-Then write the briefing: 5 to 8 short sentences, most important first, plain
-prose for speech — no bullets, no headings, no emojis, no markdown, no URLs.
-Close with one sentence on what matters most today. Do not describe your
-process and do not say that you searched. Write in the configured output
-language.
-"""
+#: SHA-256 of each shipped v2 prompt (BUG-212: the tool-grounded briefing, and
+#: its revision that stopped guessing a weather city).
+_SHIPPED_MORNING_BRIEFING_PROMPTS: frozenset[str] = frozenset({
+    "780f3e1405af25fe00b7683b68ae65c773b39624cc4c2b01648edb4e86b44a54",
+    "c000ce3b8f2a2f6febd3efcfb1fb78f2deb5c632edd0bb76acb20839ece54fdf",
+})
 
 
 def _code_review() -> WorkflowDef:
@@ -323,7 +248,6 @@ def _git_standup_telegram() -> WorkflowDef:
 
 
 SEED_WORKFLOWS: tuple[WorkflowDef, ...] = (
-    _morning_briefing(),
     _code_review(),
     _url_summary(),
     _email_digest_telegram(),
@@ -343,12 +267,7 @@ async def ensure_seed_workflows(store: WorkflowStore) -> int:
     for wf in SEED_WORKFLOWS:
         existing = await store.get_workflow(str(wf.id))
         if existing is not None:
-            legacy = (
-                (wf.id == _WF_CODE_REVIEW and _is_legacy_code_review(existing))
-                or (wf.id == _WF_MORNING_BRIEFING
-                    and _is_legacy_morning_briefing(existing))
-            )
-            if legacy:
+            if wf.id == _WF_CODE_REVIEW and _is_legacy_code_review(existing):
                 await store.upsert_workflow(wf)
                 # The user's on/off choice outlives a seed upgrade: an upsert
                 # writes the seed's ``enabled``, so restore the row's own.
@@ -361,21 +280,55 @@ async def ensure_seed_workflows(store: WorkflowStore) -> int:
         log.info("Seed workflows written: %d new", added)
     if migrated:
         log.info("Legacy unavailable seed workflows migrated: %d", migrated)
+    await _retire_morning_briefing(store)
     return added
 
 
-def _is_legacy_morning_briefing(row: dict[str, object]) -> bool:
-    """Identify only the shipped v1 greeting seed, never a user's own edit."""
+async def _retire_morning_briefing(store: WorkflowStore) -> bool:
+    """Remove the seeded Morning Briefing while it is still exactly what shipped.
+
+    Removed rather than switched off: it no longer ships, a seed cannot be
+    deleted from the desktop, and a switched-off row would be re-disabled on
+    every boot the moment its owner turned it back on. A row the user edited
+    (name, schedule, steps or prompt) is theirs and stays untouched.
+    """
+    wid = str(_WF_MORNING_BRIEFING)
+    row = await store.get_workflow(wid)
+    if row is None or not _is_shipped_morning_briefing(row):
+        return False
+    removed = await store.delete_workflow(wid)
+    if removed:
+        log.info(
+            "Retired the shipped Morning Briefing seed (unedited, was %s)",
+            "on" if row.get("enabled") else "off",
+        )
+    return removed
+
+
+def _is_shipped_morning_briefing(row: dict[str, object]) -> bool:
+    """True only for the seeded briefing as it shipped, never a user's edit."""
     if row.get("created_by") != "seed":
         return False
     try:
         definition = WorkflowDef.model_validate_json(str(row.get("def_json") or ""))
     except Exception:  # noqa: BLE001 - malformed legacy data stays user-owned
         return False
-    return any(
-        isinstance(step, BrainPromptStep)
-        and _LEGACY_MORNING_BRIEFING_MARKER in step.prompt
-        for step in definition.steps
+    trigger = definition.trigger
+    if (
+        definition.name != _MORNING_BRIEFING_NAME
+        or not isinstance(trigger, CronTrigger)
+        or trigger.expression != _MORNING_BRIEFING_CRON
+        or len(definition.steps) != 2
+    ):
+        return False
+    prompt_step, speak_step = definition.steps
+    if not isinstance(prompt_step, BrainPromptStep) or not isinstance(speak_step, SpeakStep):
+        return False
+    prompt = prompt_step.prompt
+    return (
+        _LEGACY_MORNING_BRIEFING_MARKER in prompt
+        or hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        in _SHIPPED_MORNING_BRIEFING_PROMPTS
     )
 
 

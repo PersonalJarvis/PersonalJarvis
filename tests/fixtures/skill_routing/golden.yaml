@@ -56,27 +56,6 @@ skills:
       - text: "erzaehl mir was ueber konzentration und produktivitaet"
         reason: knowledge question, no activation intent
 
-  morning-routine:
-    positives:
-      - text: "gib mir bitte den tagesueberblick"
-        channel: trigger
-        lang: de
-        min_band: narrow
-        source: authored
-      - text: "mach mir mein morgen briefing"
-        channel: trigger
-        lang: de
-        min_band: narrow
-        source: authored
-      - text: "run my morning briefing please"
-        channel: trigger
-        lang: en
-        min_band: narrow
-        source: authored
-    hard_negatives:
-      - text: "was ist eine morgenroutine ueberhaupt"
-        reason: definitional question
-
   plugin-gmail:
     positives:
       - text: "lies mir meine neuen nachrichten im posteingang vor"

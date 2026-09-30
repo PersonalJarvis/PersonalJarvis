@@ -107,3 +107,106 @@ def test_up_to_date_copy_untouched(env) -> None:
     bootstrap.ensure_user_skills_dir()
 
     assert (old / "SKILL.md").stat().st_mtime_ns == before_mtime
+
+
+# ----------------------------------------------------------------------
+# Retirement: a builtin that no longer ships (morning-routine, 2026-09-30)
+# ----------------------------------------------------------------------
+
+_SHIPPED_ROUTINE = "---\nname: retired-demo\n---\nshipped body\n"
+
+
+@pytest.fixture()
+def retired(env, monkeypatch: pytest.MonkeyPatch):
+    """``retired-demo`` shipped once and is gone from BUILTIN_SKILL_NAMES."""
+    _, dst_root = env
+    lf_hash = hashlib.sha256(_SHIPPED_ROUTINE.encode()).hexdigest()
+    monkeypatch.setattr(
+        bootstrap, "_RETIRED_SHIPPED_HASHES", {"retired-demo": frozenset({lf_hash})}
+    )
+    forgotten: list[str] = []
+    monkeypatch.setattr(bootstrap, "_forget_prefs", forgotten.append)
+    return dst_root, forgotten
+
+
+def _install_copy(dst_root: Path, content: bytes) -> Path:
+    folder = dst_root / "retired-demo"
+    folder.mkdir()
+    (folder / "SKILL.md").write_bytes(content)
+    return folder
+
+
+def test_the_retired_routine_is_no_longer_shipped() -> None:
+    from jarvis.skills.builtin import BUILTIN_SKILL_NAMES, BUILTIN_SKILLS_DIR
+
+    assert "morning-routine" not in BUILTIN_SKILL_NAMES
+    assert not (BUILTIN_SKILLS_DIR / "morning-routine").exists()
+    shipped_versions = bootstrap._RETIRED_SHIPPED_HASHES["morning-routine"]
+    # The v2-era copy every older install carries is recognised as unedited.
+    assert bootstrap._V2_SHIPPED_HASHES["morning-routine"] in shipped_versions
+
+
+def test_an_unedited_copy_of_a_retired_builtin_is_removed(retired) -> None:
+    dst_root, forgotten = retired
+    folder = _install_copy(dst_root, _SHIPPED_ROUTINE.encode())
+
+    bootstrap.ensure_user_skills_dir()
+
+    assert not folder.exists()
+    assert forgotten == ["retired-demo"]
+
+
+def test_a_crlf_checkout_of_the_retired_builtin_counts_as_unedited(retired) -> None:
+    dst_root, _ = retired
+    folder = _install_copy(dst_root, _SHIPPED_ROUTINE.replace("\n", "\r\n").encode())
+
+    bootstrap.ensure_user_skills_dir()
+
+    assert not folder.exists()
+
+
+def test_the_manifest_entry_also_proves_a_copy_unedited(retired, monkeypatch) -> None:
+    dst_root, _ = retired
+    monkeypatch.setattr(bootstrap, "_RETIRED_SHIPPED_HASHES", {"retired-demo": frozenset()})
+    content = b"a version this map never listed"
+    folder = _install_copy(dst_root, content)
+    (dst_root / ".shipped-hashes.json").write_text(
+        json.dumps({"retired-demo": hashlib.sha256(content).hexdigest()}), encoding="utf-8"
+    )
+
+    bootstrap.ensure_user_skills_dir()
+
+    assert not folder.exists()
+    manifest = json.loads((dst_root / ".shipped-hashes.json").read_text(encoding="utf-8"))
+    assert "retired-demo" not in manifest
+
+
+def test_an_edited_copy_of_a_retired_builtin_stays_the_users(retired) -> None:
+    dst_root, forgotten = retired
+    folder = _install_copy(dst_root, b"---\nname: retired-demo\n---\nmy own briefing\n")
+
+    bootstrap.ensure_user_skills_dir()
+
+    assert (folder / "SKILL.md").read_bytes().endswith(b"my own briefing\n")
+    assert forgotten == []
+
+
+def test_a_file_the_user_added_survives_the_retirement(retired) -> None:
+    dst_root, _ = retired
+    folder = _install_copy(dst_root, _SHIPPED_ROUTINE.encode())
+    (folder / "notes.txt").write_text("mine", encoding="utf-8")
+
+    bootstrap.ensure_user_skills_dir()
+
+    assert not (folder / "SKILL.md").exists()
+    assert (folder / "notes.txt").read_text(encoding="utf-8") == "mine"
+
+
+def test_a_retired_name_that_ships_again_is_not_retired(retired, monkeypatch) -> None:
+    dst_root, _ = retired
+    monkeypatch.setattr(bootstrap, "BUILTIN_SKILL_NAMES", ("demo-skill", "retired-demo"))
+    folder = _install_copy(dst_root, _SHIPPED_ROUTINE.encode())
+
+    bootstrap.ensure_user_skills_dir()
+
+    assert (folder / "SKILL.md").exists()

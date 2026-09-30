@@ -115,7 +115,11 @@ dialog from registry metadata.
 5. **Open Recent runs.** Expand a run to see the saved output or error for each
    step. A failure ends the sequence; later steps do not run.
 
-6. **Control future runs.** Enable a cron workflow to let the local scheduler
+6. **Control future runs.** Nothing Jarvis ships runs on a schedule by
+   itself: the scheduled examples arrive switched off, and a schedule starts
+   only once you enable it. Earlier versions shipped a **Morning Briefing**
+   that was switched on; an update removes it unless you changed it. Enable a
+   cron workflow to let the local scheduler
    start it while Jarvis is running. Schedules currently use the Jarvis host's
    local time, and the next-run value can take up to one minute to appear.
    Disable it to clear the next automatic run. **Run now** still works for a

@@ -225,7 +225,10 @@ spoken-language filter.
 
 Scheduled triggers can exist in an installed skill, but the scheduler starts
 with the voice pipeline, so they do not run in a headless API-only session or
-while Jarvis is stopped. Hotkey definitions can be stored and displayed, but no
+while Jarvis is stopped. No built-in skill carries a schedule: a skill runs on
+its own only when you gave it a schedule yourself. Earlier versions shipped a
+morning-routine skill that ran every morning; an update removes it unless you
+edited it, in which case it stays as your own skill. Hotkey definitions can be stored and displayed, but no
 live skill-hotkey handler is connected to them; do not rely on one to start
 work.
 
