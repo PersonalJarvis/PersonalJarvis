@@ -11,6 +11,18 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [2.4.1] — 2026-09-30
+
+### Fixed
+
+- Raise the pyjwt security floor to 2.14.0 (locked 2.15.1). pyjwt 2.13.0,
+  pulled in by the MCP SDK and Twilio, carries ten advisories; the
+  sign-installer workflow's strict dependency audit refused 2.4.0 on it, so
+  2.4.0 reached PyPI without signed install scripts. 2.4.1 is the same
+  application with the fixed dependency.
+
+---
+
 ## [2.4.0] — 2026-09-30
 
 ### Added
