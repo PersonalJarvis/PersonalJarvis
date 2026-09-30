@@ -22,7 +22,8 @@ versioning per [SemVer](https://semver.org/).
   pane appears as a figure with a live terminal you can type into, opened
   as a movable, resizable window.
 - **Computers.** Settings > System > Computers connects servers and local VMs
-  over SSH (address plus key or password, 14 provider presets). IDE panes,
+  over SSH — the connect dialog asks only for the address and works out the
+  way in (key, password or a provider's API; 14 provider presets). IDE panes,
   workspaces and Jarvis agents can run on a connected computer, chosen when
   the agent or workspace is added.
 - **Agentic IDE.** Git tab with branches, pull requests and CI state; an

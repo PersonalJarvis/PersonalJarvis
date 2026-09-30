@@ -52,6 +52,7 @@ const IDENTITY = {
   public_key: "ssh-ed25519 AAAAC3Nza personal-jarvis@desk",
   fingerprint: "SHA256:abc",
   algorithm: "ssh-ed25519",
+  install_command: "umask 077 && mkdir -p ~/.ssh && echo 'ssh-ed25519 AAAAC3Nza' >> ~/.ssh/authorized_keys",
 };
 
 const VPS: Computer = {
@@ -141,7 +142,7 @@ describe("ComputersView", () => {
     expect(screen.getByTestId("computers-add-first")).toBeTruthy();
   });
 
-  it("connects a server from just its address and password", async () => {
+  it("connects a server from nothing but its address", async () => {
     let rows: Computer[] = [];
     const calls = installFetch({
       "GET /api/computers": () => ({ computers: rows }),
@@ -167,7 +168,9 @@ describe("ComputersView", () => {
     expect((connect as HTMLButtonElement).disabled).toBe(true);
     // A whole "ssh user@host:port" line is understood.
     fireEvent.change(screen.getByTestId("cx-address"), { target: { value: "ssh admin@203.0.113.15:2222" } });
-    fireEvent.change(screen.getByTestId("cx-password"), { target: { value: "hunter2" } });
+    // No login question up front: this PC's SSH keys are tried first.
+    expect(screen.queryByTestId("cx-password")).toBeNull();
+    expect(screen.getByTestId("cx-auto")).toBeTruthy();
     fireEvent.click(connect);
 
     // The check is visible: every step resolves, the machine's facts prove it.
@@ -183,9 +186,75 @@ describe("ComputersView", () => {
       host: "203.0.113.15",
       port: 2222,
       username: "admin",
-      auth: "password",
-      password: "hunter2",
+      auth: "auto",
     });
+  });
+
+  it("asks for the password only when no key of this PC opens the server", async () => {
+    let rows: Computer[] = [];
+    const calls = installFetch({
+      "GET /api/computers": () => ({ computers: rows }),
+      "GET /api/computers/providers": () => ({ providers: PROVIDERS }),
+      "GET /api/computers/identity": () => IDENTITY,
+      "POST /api/computers/test": (body) =>
+        (body as { auth: string }).auth === "auto"
+          ? { ok: false, kind: "needs_password", message: "x", host_fingerprint: null, facts: null, latency_ms: null }
+          : { ok: true, kind: null, message: null, host_fingerprint: "SHA256:s", facts: VPS.facts, latency_ms: 9 },
+      "POST /api/computers": () => {
+        rows = [VPS];
+        return VPS;
+      },
+    });
+    renderView();
+
+    fireEvent.click(await screen.findByTestId("computers-add-first"));
+    fireEvent.change(await screen.findByTestId("cx-address"), { target: { value: "203.0.113.15" } });
+    fireEvent.click(screen.getByTestId("cx-connect"));
+
+    // Back on the form, asking for exactly the one thing missing.
+    expect(await screen.findByTestId("cx-ask-password")).toBeTruthy();
+    const password = screen.getByTestId("cx-password");
+    await waitFor(() => expect(document.activeElement).toBe(password));
+    fireEvent.change(password, { target: { value: "hunter2" } });
+    fireEvent.click(screen.getByTestId("cx-connect"));
+
+    fireEvent.click(await screen.findByTestId("cx-open"));
+    const post = calls.find((c) => c.method === "POST" && c.url === "/api/computers");
+    expect(post?.body).toMatchObject({ host: "203.0.113.15", auth: "password", password: "hunter2" });
+  });
+
+  it("gives a keys-only server the one line to run, then tries again", async () => {
+    let rows: Computer[] = [];
+    let attempts = 0;
+    const calls = installFetch({
+      "GET /api/computers": () => ({ computers: rows }),
+      "GET /api/computers/providers": () => ({ providers: PROVIDERS }),
+      "GET /api/computers/identity": () => IDENTITY,
+      "POST /api/computers/test": () =>
+        ++attempts === 1
+          ? { ok: false, kind: "key_only", message: "x", host_fingerprint: null, facts: null, latency_ms: null }
+          : { ok: true, kind: null, message: null, host_fingerprint: "SHA256:s", facts: VPS.facts, latency_ms: 9 },
+      "POST /api/computers": () => {
+        rows = [VPS];
+        return VPS;
+      },
+    });
+    renderView();
+
+    fireEvent.click(await screen.findByTestId("computers-add-first"));
+    fireEvent.change(await screen.findByTestId("cx-address"), { target: { value: "203.0.113.15" } });
+    fireEvent.click(screen.getByTestId("cx-connect"));
+
+    const panel = await screen.findByTestId("cx-key-only");
+    expect(panel.textContent).toContain("authorized_keys");
+    expect(screen.queryByTestId("cx-password")).toBeNull();
+    const retry = screen.getByTestId("cx-connect");
+    expect(retry.textContent).toMatch(/Try again/);
+    fireEvent.click(retry);
+
+    fireEvent.click(await screen.findByTestId("cx-open"));
+    const post = calls.find((c) => c.method === "POST" && c.url === "/api/computers");
+    expect(post?.body).toMatchObject({ host: "203.0.113.15", auth: "auto" });
   });
 
   it("takes a pasted agent answer with a key and needs no password", async () => {
@@ -257,6 +326,7 @@ describe("ComputersView", () => {
 
     fireEvent.click(await screen.findByTestId("computers-add-first"));
     fireEvent.change(await screen.findByTestId("cx-address"), { target: { value: "192.168.1.20" } });
+    fireEvent.click(screen.getByTestId("cx-other-ways"));
     fireEvent.change(screen.getByTestId("cx-password"), { target: { value: "wrong" } });
     fireEvent.click(screen.getByTestId("cx-connect"));
 
@@ -270,7 +340,7 @@ describe("ComputersView", () => {
     expect((screen.getByTestId("cx-password") as HTMLInputElement).value).toBe("wrong");
   });
 
-  it("shows every way in as a visible choice", async () => {
+  it("keeps every other way in one click away", async () => {
     installFetch({
       "GET /api/computers": () => ({ computers: [] }),
       "GET /api/computers/providers": () => ({ providers: PROVIDERS }),
@@ -281,6 +351,7 @@ describe("ComputersView", () => {
     fireEvent.click(await screen.findByTestId("computers-add-first"));
     fireEvent.change(await screen.findByTestId("cx-address"), { target: { value: "192.168.1.20" } });
 
+    fireEvent.click(screen.getByTestId("cx-other-ways"));
     fireEvent.click(screen.getByTestId("cx-method-key"));
     expect(screen.getByTestId("cx-private-key")).toBeTruthy();
     fireEvent.click(screen.getByTestId("cx-key-assistant"));
@@ -294,6 +365,10 @@ describe("ComputersView", () => {
       target: { value: "Done.\nJARVIS-CONNECT ruben@192.168.1.20:22" },
     });
     expect(screen.getByTestId("cx-agent").textContent).toMatch(/key is on that computer/);
+
+    // And back to the automatic way.
+    fireEvent.click(screen.getByTestId("cx-auto-back"));
+    expect(screen.getByTestId("cx-auto")).toBeTruthy();
   });
 
   it("lists a machine, opens it and runs a console command", async () => {

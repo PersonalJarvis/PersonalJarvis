@@ -25,6 +25,9 @@ ProviderId = str
 #: recommended path); ``password`` keeps a password in the OS keyring;
 #: ``private_key`` is the user's own SSH key, kept in the OS keyring.
 AuthMethod = Literal["key", "password", "private_key"]
+#: How a form asks to log in. ``auto`` is not stored: it tries the app's key
+#: and this PC's own SSH keys, then plants the app's key (auth becomes "key").
+LoginMode = Literal["key", "password", "private_key", "auto"]
 
 #: The state a check leaves behind. ``provisioning`` belongs to a local VM that
 #: is still being created; ``stopped`` to a local VM that is powered off.

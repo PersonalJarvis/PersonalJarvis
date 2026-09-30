@@ -13,7 +13,7 @@ longer work, and bring the result back to one workspace.
   <a href="https://github.com/PersonalJarvis/PersonalJarvis/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PersonalJarvis/PersonalJarvis/actions/workflows/ci.yml/badge.svg" /></a>
 </p>
 
-![Flow from a user request through Jarvis to the computer, browser, apps, agents, models, and services, then back as a result with run history.](assets/brand/request-to-result.svg)
+![Flow from a user request through Jarvis to the computer, browser, apps, agents, models, and services, then back as a result with run history.](https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/request-to-result.svg)
 
 **Why it is different:** Jarvis coordinates the tools you already have. A request
 can move from voice or chat to [computer use](#computer-use-and-connected-channels),
@@ -54,16 +54,16 @@ It runs on your own machine with whichever model you like, local ones included, 
 
 ## See it in action
 
-The [desktop screenshot](assets/screenshots/home-2026-09-09.webp) shows the
-workspace; the [agent demo](assets/demo/readme-2026-09/jarvis-agents-v4.mp4)
+The [desktop screenshot](https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/home-2026-09-09.webp) shows the
+workspace; the [agent demo](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-agents-v4.mp4)
 shows a brief, progress, and output. The demos are **illustrative interface
 recreations**, not recordings of a completed live task or timing benchmarks.
-The [demo source and still previews](scripts/readme-video/README.md) explain
+The [demo source and still previews](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/scripts/readme-video/README.md) explain
 what is shown.
 
 <p align="center">
-  <a href="assets/demo/readme-2026-09/jarvis-agents-v4.mp4">
-    <img src="assets/demo/readme-2026-09/jarvis-agents-v4.png" alt="Illustrative Jarvis Agents workspace showing a brief, agent activity, and a resulting plan" width="850" />
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-agents-v4.mp4">
+    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/jarvis-agents-v4.png" alt="Illustrative Jarvis Agents workspace showing a brief, agent activity, and a resulting plan" width="850" />
   </a>
 </p>
 
@@ -80,15 +80,15 @@ what is shown.
 The app runs on Windows, macOS, and Linux, with headless use for server-capable
 features. Desktop control needs a supported graphical session and OS permission.
 Local models and speech are optional; hosted providers and connected services
-receive the content required for their requests. See [privacy and local data](docs/product/privacy-safety-and-support/privacy-and-local-data.md).
+receive the content required for their requests. See [privacy and local data](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/privacy-and-local-data.md).
 
 ## Start with chat or voice
 
 [Website](https://personaljarvis.ai) · [Docs](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/welcome-to-personal-jarvis.md) · [Getting started](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/first-run-setup.md) · [How it works](#how-it-works) · [Discord](https://discord.gg/x7USduHxbc) · [X](https://x.com/PersonalJarvis)
 
-https://github.com/user-attachments/assets/bd2d5f3c-c601-475e-a37e-f532ea6ef6ea
+https://github.com/user-attachments/assets/9930ca95-5015-4ade-9a16-975c77d179fd
 
-<p align="center"><sub>A real, unedited click-through of the app, sped up only where agents are thinking.</sub></p>
+<p align="center"><sub>A real click-through of the app: every frame is recorded, waiting is sped up, and a few moments are zoomed in.</sub></p>
 
 ## install
 

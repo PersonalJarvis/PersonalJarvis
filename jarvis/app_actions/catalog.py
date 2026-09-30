@@ -17,12 +17,13 @@ __all__ = [
 _METHODS: Final[tuple[str, ...]] = ("get", "post", "put", "patch", "delete")
 
 #: Never offered to the brain: credentials and sign-ins (voice must never carry
-#: a secret, AP-2), the raw control plane, webhooks, self-modification, and the
-#: action policy itself — Jarvis never edits its own permissions.
+#: a secret, AP-2), the raw control plane, webhooks, self-modification, the
+#: action policy itself — Jarvis never edits its own permissions — and the
+#: main-brain switch, which only the person may flip (the provider lock).
 _EXCLUDED: Final[re.Pattern[str]] = re.compile(
     r"(secret|api-?keys?|/keys?(/|$)|install-key|host-key|use-key|token|password|"
     r"credential|oauth|/auth(/|$)|login|pairing|/callback|/hooks/|openapi|/ws$|"
-    r"^/api/control/|^/api/self-mod|^/api/app-actions)",
+    r"^/api/control/|^/api/self-mod|^/api/app-actions|^/api/brain/switch$)",
     re.IGNORECASE,
 )
 

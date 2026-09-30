@@ -66,9 +66,15 @@ def public_key_line() -> str:
 
 def describe() -> dict[str, Any]:
     """Public key plus fingerprint for the UI; creates the key when missing."""
+    from jarvis.computers.ssh import authorize_key_command
+
     key = private_key()
+    public = key.export_public_key("openssh").decode("utf-8").strip()
     return {
-        "public_key": key.export_public_key("openssh").decode("utf-8").strip(),
+        "public_key": public,
         "fingerprint": key.get_fingerprint("sha256"),
         "algorithm": key.get_algorithm(),
+        # Run once on the server (hosting web console or any SSH session) for
+        # a server that lets in known keys only.
+        "install_command": authorize_key_command(public),
     }
