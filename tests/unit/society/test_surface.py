@@ -226,3 +226,25 @@ async def test_always_allow_writes_the_agents_own_rule(rt: SocietyRuntime):
     assert (await rt.roster.get("mailbox")).approval_rules["always_allow"] == ["plugin:gmail:send"]
     assert await remember_always_allow(session, "spawn-worker", {}) is False
     assert await remember_always_allow(SimpleNamespace(session_id="agent:x"), "gmail", {}) is False
+
+
+async def test_a_cache_miss_keeps_the_agents_own_reporting_tools(
+    rt: SocietyRuntime, tmp_path: Path
+):
+    """#255: a turn without the briefing (a CLI/MCP turn, a runtime restart)
+    finds no cached record. Its mode and grants are unknown, so no granted
+    hand and no write — but stripping its own safe tools left it unable to
+    report back or ask the user, and the job stalled silently."""
+    await rt.roster.create(name="Courier", title="Runner", description="Run errands.")
+    cfg = SimpleNamespace(wiki=SimpleNamespace(vault_root=str(tmp_path / "vault")))
+    session = SimpleNamespace(session_id="society:courier")
+    own = society_tools(cfg, None, session)
+    assert rt.cached_agent("courier") is None, "no briefing ran"
+
+    filt = society_tool_filter(session)
+    assert filt is not None
+    picked = set(filt({**TOOLS, **own}))
+
+    assert {MESSAGE_TOOL_NAME, "society_ask_user", MEMORY_RECALL_TOOL_NAME} <= picked
+    assert SHELL_TOOL_NAME not in picked and WIKI_NOTE_TOOL_NAME not in picked, "no writes"
+    assert not picked & set(TOOLS), "no granted hands while the grants are unknown"
