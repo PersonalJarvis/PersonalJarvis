@@ -1,39 +1,68 @@
 /**
- * "Runs on" — where a new workspace's agents run: this computer, or one of the
- * connected computers (a VPS, a local VM; see the Computers section). On a
- * computer the agents live in tmux there and keep working while this PC is
- * off; the folder is copied there when the workspace opens.
+ * "Runs on" — where new agents run: this computer, or one of the connected
+ * computers (a VPS, a local VM; see the Computers section). On a computer the
+ * agents live in tmux there and keep working while this PC is off; the folder
+ * is copied there first (new files that look like secrets stay here).
  */
+import { useEffect } from "react";
 import { Laptop, Server } from "lucide-react";
-import { useComputerChoices } from "@/hooks/useComputers";
+import { useComputerChoiceList } from "@/hooks/useComputers";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
+
+const RUN_ON_KEY = "jarvis.agenticIde.runOn.";
+
+/** The computer last chosen for a project's new workspaces; storage may be blocked. */
+export function storedRunOn(projectId: string | undefined): string | null {
+  if (!projectId) return null;
+  try { return localStorage.getItem(RUN_ON_KEY + projectId) || null; } catch { return null; }
+}
+export function storeRunOn(projectId: string | undefined, computerId: string | null): void {
+  if (!projectId) return;
+  try {
+    if (computerId) localStorage.setItem(RUN_ON_KEY + projectId, computerId);
+    else localStorage.removeItem(RUN_ON_KEY + projectId);
+  } catch { /* a convenience only */ }
+}
+
+function detailFor(status: string): string {
+  if (status === "online") return "Keeps running while this PC is off";
+  if (status === "unknown") return "Not checked yet";
+  return "Not reachable right now";
+}
 
 export function RunOnPicker({
   value,
   onChange,
   disabled,
+  hideWhenNone = false,
 }: {
   value: string | null;
   onChange: (computerId: string | null) => void;
   disabled?: boolean;
+  /** Show nothing (instead of a "Connect a server" hint) when no computer is connected. */
+  hideWhenNone?: boolean;
 }) {
-  const computers = useComputerChoices();
+  const { computers, loaded } = useComputerChoiceList();
   const setActiveSection = useEventStore((state) => state.setActiveSection);
+  const usable = computers.filter((computer) => computer.health.status !== "provisioning");
   const options = [
     { id: null as string | null, name: "This computer", detail: "Stops when this PC sleeps or shuts down", online: true, icon: Laptop },
-    ...computers
-      .filter((computer) => computer.health.status !== "provisioning")
-      .map((computer) => ({
-        id: computer.id as string | null,
-        name: computer.name,
-        detail: computer.health.status === "online"
-          ? "Keeps running while this PC is off"
-          : "Not reachable right now",
-        online: computer.health.status === "online",
-        icon: Server,
-      })),
+    ...usable.map((computer) => ({
+      id: computer.id as string | null,
+      name: computer.name,
+      detail: detailFor(computer.health.status),
+      online: computer.health.status === "online",
+      icon: Server,
+    })),
   ];
+  // A remembered computer that has been removed since falls back to this PC,
+  // rather than leaving no choice selected and failing on create.
+  const missing = loaded && value !== null && !usable.some((computer) => computer.id === value);
+  useEffect(() => { if (missing) onChange(null); }, [missing, onChange]);
+
+  if (hideWhenNone && usable.length === 0) return null;
+  const chosen = usable.find((computer) => computer.id === value);
   return (
     <fieldset data-testid="ide-run-on" disabled={disabled}>
       <legend className="text-xs font-medium text-muted-foreground">Runs on</legend>
@@ -72,7 +101,13 @@ export function RunOnPicker({
           );
         })}
       </div>
-      {computers.length === 0 && (
+      {chosen && (
+        <p data-testid="ide-run-on-note" className="mt-2 text-xs text-muted-foreground">
+          The folder is copied to {chosen.name} first, uncommitted changes included. Files like .env
+          and private keys stay on this PC. The coding CLI must be installed there.
+        </p>
+      )}
+      {usable.length === 0 && (
         <p className="mt-2 text-xs text-muted-foreground">
           Want agents that keep working while this PC is off?{" "}
           <button type="button" onClick={() => setActiveSection("computers")}
