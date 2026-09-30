@@ -992,7 +992,7 @@ def plan_turn(
     # Recall of the user's own past is STRONG evidence, deliberately outside
     # the suppressors: "wann war ich zuletzt beim Zahnarzt?" reads as
     # first-person smalltalk to every weak heuristic, yet only the
-    # orchestrator (Wiki memory / awareness episodes) can answer
+    # orchestrator (Wiki memory) can answer
     # it.  # i18n-allow: quoted German recall utterance
     if _RECALL_RE is not None and _RECALL_RE.search(normalized):
         reasons.add(TurnReason.PRIVATE_DATA)

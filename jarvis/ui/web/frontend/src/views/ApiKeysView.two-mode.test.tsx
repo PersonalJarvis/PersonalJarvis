@@ -99,7 +99,7 @@ describe("ApiKeysView two-mode", () => {
     expect(screen.queryByRole("tab", { name: /tool model/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
     expect(screen.queryByRole("tab", { name: /tool model/i })).toBeNull();
-    expect(screen.getByText(/Text chat and background tasks use your selection in Agents/)).toBeTruthy();
+    expect(screen.getByText(/Chat, memory and all background work run on the provider you choose under Agents/)).toBeTruthy();
   });
 
   it("defaults to Pipeline mode showing Brain/Voice/Subagents tabs, no Realtime tab", () => {

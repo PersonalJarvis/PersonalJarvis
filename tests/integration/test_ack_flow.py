@@ -8,7 +8,7 @@ These tests cover the spec's §8 "Test Strategy" integration scenarios:
 2. Voice-control bypass ("sei still") — no Flash-Brain call.
 3. Provider error → no AnnouncementRequested → main response still emits.
 4. Audio order: ack publish timestamp strictly before main-response timestamp.
-5. ACK_SKIP_TOOLS scenario: passive read tool (awareness_snapshot) does not
+5. ACK_SKIP_TOOLS scenario: passive read tool (screen_snapshot) does not
    emit a router-side ack.
 6. Concurrent launch: both tasks scheduled in the same event-loop tick.
 

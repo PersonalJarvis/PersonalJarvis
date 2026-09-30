@@ -42,9 +42,8 @@ __all__ = [
 
 SURFACE: Final[str] = "society"
 
-#: Permission ceiling → the Jarvis-ladder stance the session runs in
-#: (``jarvis/agent_chat/permissions.py``): safe reads only, monitor may edit
-#: and runs commands after asking, ask asks for everything mutating.
+#: Legacy permission ceiling → the pre-migration Jarvis stance. Explicit
+#: approval modes instead come from the roster's own persisted choice.
 _CEILING_TO_MODE: Final[dict[str, str]] = {
     str(PermissionCeiling.SAFE): "plan",
     str(PermissionCeiling.MONITOR): "accept-edits",
@@ -81,15 +80,42 @@ def _workspace(cfg: Any, agent: AgentRecord) -> str:
 def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
     """The agent's canonical session, created or re-seated to the roster row."""
     from jarvis.agent_chat.effort import default_effort
-    from jarvis.agent_chat.permissions import ladder_key, normalize_permission, stance_of
+    from jarvis.agent_chat.permissions import (
+        ladder_key,
+        normalize_permission,
+        society_mode_supported,
+        stance_of,
+    )
     from jarvis.agent_chat.service import resolve_runner
 
     provider, model, effort = pair_for(cfg, agent)
+    runner = resolve_runner(provider, surface=SURFACE)
+    legacy_mode = ""
+    if agent.approval_mode is None:
+        legacy_mode = normalize_permission(
+            "jarvis", _CEILING_TO_MODE[str(agent.permission_ceiling)]
+        )
+        if legacy_mode not in ("plan", "read-only") and not society_mode_supported(
+            runner, "ask"
+        ):
+            raise PermissionError(
+                f"{runner} cannot provide an actionable approval for this legacy agent"
+            )
+    if agent.approval_mode is not None and not society_mode_supported(
+        runner, str(agent.approval_mode)
+    ):
+        raise PermissionError(
+            f"{runner} cannot provide an actionable approval for {agent.approval_mode}"
+        )
     session_id = agent.session_id
     existing = svc.store.get_session(session_id)
     if existing is None:
-        ladder = ladder_key(SURFACE, resolve_runner(provider, surface=SURFACE))
-        mode = normalize_permission(ladder, _CEILING_TO_MODE[str(agent.permission_ceiling)])
+        ladder = ladder_key(SURFACE, runner)
+        if agent.approval_mode is None:
+            # A pre-migration row keeps the old Jarvis ladder, including Plan.
+            mode = legacy_mode
+        else:
+            mode = normalize_permission(ladder, str(agent.approval_mode))
         return svc.store.create_session(
             provider=provider,
             model=model,
@@ -109,7 +135,12 @@ def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
         svc.store.reseat_session(session_id, provider=provider, model=model)
         existing = svc.store.get_session(session_id)
     ladder = ladder_key(SURFACE, resolve_runner(provider, surface=SURFACE))
-    mode = normalize_permission(ladder, _CEILING_TO_MODE[str(agent.permission_ceiling)])
+    if agent.approval_mode is None:
+        # Legacy roster rows encoded their chat stance in permission_ceiling.
+        mode = legacy_mode
+    else:
+        # Current rows keep chat prompts separate from the per-tool risk ceiling.
+        mode = normalize_permission(ladder, str(agent.approval_mode))
     override = svc.store.permission_override(session_id)
     if not override and existing.permission_mode in ("plan", "read-only"):
         # Older sessions recorded /plan in the control state before the
@@ -121,9 +152,15 @@ def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
                 override = existing.permission_mode
                 svc.store.set_permission_override(session_id, override)
     if override:
-        chosen = normalize_permission(ladder, override)
-        # The roster is the ceiling; a narrower user choice survives rebinding.
-        if stance_of(chosen) < stance_of(mode):
+        chosen = (
+            "plan" if override in ("plan", "read-only")
+            else normalize_permission(ladder, override)
+        )
+        if chosen not in ("plan", "read-only") and not society_mode_supported(runner, chosen):
+            raise PermissionError(f"{runner} cannot provide an actionable approval for {chosen}")
+        # A narrower chat choice survives rebinding. Always ask is stricter
+        # than Ask even though both share the universal ask-first stance.
+        if stance_of(chosen) < stance_of(mode) or (chosen == "always_ask" and mode == "ask"):
             mode = chosen
     updates: dict[str, str] = {}
     if getattr(existing, "account_id", "") != agent.account_id:
@@ -157,14 +194,17 @@ async def bind_society_session(svc: Any, session_id: str, *, routine_run: bool =
     session = svc.store.get_session(session_id)
     if agent is None or session is None or session.surface != SURFACE:
         raise PermissionError("Society agent is unavailable")
+    inactive = str(agent.state) != "active" or await runtime.store.kill_switch()
     if session_id.startswith(f"{agent.session_id}:routine:"):
-        if not routine_run or str(agent.state) != "active" or await runtime.store.kill_switch():
+        if not routine_run or inactive:
             raise PermissionError("Routine chat requires an active scheduled run")
         # Each scheduled run has its own explicitly pinned seat and permission
         # contract. The internal caller has revalidated its live owner.
         return session
     if agent.session_id != session_id:
         raise PermissionError("Society agent is unavailable")
+    if inactive:
+        raise PermissionError("Society agent is paused or disabled")
     return ensure_session(svc, runtime.config(), agent)
 
 

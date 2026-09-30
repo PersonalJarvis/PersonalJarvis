@@ -1,5 +1,13 @@
 # Private, evidence-backed agent learning
 
+> **Status (2026-09-30):** the experience journal described below
+> (`jarvis/society/experience.py`, `learning/LEARNING.md`, the lead's voice
+> learning snapshot and `tests/contract/test_agent_learning_loop.py`) is not
+> in the current tree; a history reconciliation merge removed it. Society
+> agents learn through their `USER.md`/`MEMORY.md` notebooks and the turn
+> review in `jarvis/society/review.py`. Jarvis' own learning is
+> `docs/jarvis-learning.md`.
+
 Tier: **T3 capability**. Jarvis and every Society agent use the same portable
 learning loop, with separate ownership, files, review locks and provider scopes.
 

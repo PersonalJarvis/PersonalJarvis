@@ -74,6 +74,14 @@ async def _ask(runtime: Any, agent: Any, prompt: str) -> dict[str, Any] | None:
                 yield getter(provider_name, model or None, scope=f"society-review:{agent.agent_id}")
             except Exception:
                 log.info("society: selected seat has no review provider", exc_info=True)
+            # A review is background work nobody waits on: a connected
+            # subscription answers before any per-token key (mandate
+            # 2026-09-29), and the keyed chain below stays the fallback.
+            from jarvis.brain.resolver import resolve_subscription_brain
+
+            subscription = resolve_subscription_brain(runtime.config())
+            if subscription is not None:
+                yield subscription
             # Reuse the established authoring fallback chain, but allocate a
             # separate scoped instance so native engines never share callers.
             from .learning import default_creator_factory

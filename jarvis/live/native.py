@@ -370,9 +370,25 @@ class NativeLiveVoiceSession(LiveVoiceSession):
         else:
             await super().handle_control(message)
 
-    async def deliver_announcement(self, text: str, **_kwargs: Any) -> bool:
+    async def deliver_announcement(
+        self, text: str, *, report: str | None = None, **kwargs: Any
+    ) -> bool:
         if not self.is_active:
             return False
+        if str(report or "").strip():
+            # The model reasons over the agent's full report before speaking
+            # (``report_prompt``); refused mid-turn so the caller retries at
+            # the next boundary instead of talking over anyone.
+            if self._thinking or self._speaking or self.playback_active or self._input_active:
+                return False
+            from jarvis.realtime.report_prompt import report_update_prompt
+
+            text = report_update_prompt(
+                text,
+                str(report),
+                language=str(kwargs.get("language") or self._language),
+                kind=str(kwargs.get("spoken_kind") or "completion"),
+            )
         await self._connection.send_text(text)
         return True
 

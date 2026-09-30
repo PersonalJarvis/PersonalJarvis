@@ -198,7 +198,7 @@ class ClientTimezoneBody(BaseModel):
 
 
 @router.post("/client-timezone")
-async def report_client_timezone(body: ClientTimezoneBody) -> dict[str, Any]:
+def report_client_timezone(body: ClientTimezoneBody) -> dict[str, Any]:
     """The UI reports the person's IANA zone once per load. Voice turns carry
     no client, so their calendar routines use this zone instead of guessing."""
     from jarvis.tasks.calendar import calendar_zone

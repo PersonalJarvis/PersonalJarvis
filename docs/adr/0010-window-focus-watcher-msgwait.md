@@ -1,6 +1,7 @@
 # ADR-0010 — WindowFocusWatcher: MsgWaitForMultipleObjects instead of PumpMessages
 
-**Status:** Accepted (2026-04-25)
+**Status:** Superseded (2026-09-30) — the window-focus watcher left with the awareness layer (ADR-0009).
+**Accepted:** 2026-04-25
 **Phase:** A1 — L1 Live Frame
 **Related:** ADR-0009 (Awareness-layer architecture)
 

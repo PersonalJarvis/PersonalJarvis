@@ -173,8 +173,9 @@ describe("office layout", () => {
     const chairZ = deskZ - COMMAND_DESK.chairZ;
     expect(isWalkable(grid, { x: stop.x, z: deskZ })).toBe(false);
     expect(isWalkable(grid, { x: stop.x, z: chairZ })).toBe(false);
-    expect(isWalkable(grid, { x: stop.x + 0.75, z: chairZ })).toBe(true);
-    expect(isWalkable(grid, { x: stop.x - 0.75, z: chairZ })).toBe(true);
+    // Beside the chair, a step back from the desk edge, the floor is open on both sides.
+    expect(isWalkable(grid, { x: stop.x + 0.75, z: chairZ - 0.25 })).toBe(true);
+    expect(isWalkable(grid, { x: stop.x - 0.75, z: chairZ - 0.25 })).toBe(true);
     expect(isWalkable(grid, stop.approach!)).toBe(true);
   });
 

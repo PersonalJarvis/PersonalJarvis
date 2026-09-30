@@ -90,6 +90,64 @@ _LEAD_MESSAGE: dict[str, str] = {
     "es": "{name} informa: {text}",
 }
 
+#: The situation the readback composer is told about, per case. The agent's own
+#: text is the only content it may use; the spoken line is Jarvis passing it on
+#: in one short sentence, not the raw text clipped at a character count.
+_LEAD_DONE_SITUATION = (
+    "The user's Jarvis agent named {name} finished a task the user gave it through "
+    "you. Tell the user what it did or found, based only on its report. Name the agent."
+)
+_LEAD_BLOCKED_SITUATION = (
+    "The user's Jarvis agent named {name} could not finish a task the user gave it "
+    "through you. Tell the user what stopped it, based only on its report. Name the agent."
+)
+_LEAD_MESSAGE_SITUATION: dict[MsgType, str] = {
+    MsgType.SAY: (
+        "The user's Jarvis agent named {name} sent a message. Pass it on to the "
+        "user in your own words. Name the agent."
+    ),
+    MsgType.QUERY: (
+        "The user's Jarvis agent named {name} is asking the user a question. Pass "
+        "the question on in your own words, keeping what exactly it asks. Name the agent."
+    ),
+    MsgType.ANSWER: (
+        "The user's Jarvis agent named {name} answered. Tell the user its answer in "
+        "your own words. Name the agent."
+    ),
+    MsgType.PROPOSE: (
+        "The user's Jarvis agent named {name} proposes something. Tell the user what "
+        "it proposes in your own words. Name the agent."
+    ),
+}
+
+
+def _lead_report_material(name: str, env: Any, status: str, summary: str) -> str:
+    """What a live voice model gets to think about for a lead-assigned result."""
+    task = str(getattr(env, "text", "") or env.payload.get("text") or "").strip()
+    outcome = "finished" if status == "done" else "could not finish"
+    parts = [f"Agent: {name} ({outcome} the task)"]
+    if task:
+        parts.append(f"What the user asked for:\n{task}")
+    parts.append(f"The agent's report:\n{summary}")
+    return "\n\n".join(parts)
+
+
+async def _spoken_report(
+    *, instruction: str, language: str, line: str, name: str, report: str
+) -> str:
+    """The agent's report as one short spoken sentence; ``line`` is the fallback."""
+    from jarvis.voice.report_readback import compose_report, plain_excerpt
+
+    excerpt = plain_excerpt(report, max_words=40)
+    return await compose_report(
+        instruction=instruction,
+        language=language,
+        canned=lambda: line.format(name=name, text=excerpt),
+        report=report,
+        facts={"agent": name},
+    )
+
+
 #: Board types that are somebody TALKING to the lead. RESULT stays out: chat
 #: runs announce it via report_to_lead and mission runs via MissionAnnouncer —
 #: announcing it here as well would speak every completion twice.
@@ -400,7 +458,6 @@ class SocietyRuntime:
             return
         lang = await self._lead_message_lang(env)
         line = _LEAD_MESSAGE.get(lang, _LEAD_MESSAGE["en"])
-        text = line.format(name=sender.name, text=summary[:400])
         svc = self._get_chat()
         post = getattr(svc, "post_notice", None)
         if svc is not None and post is not None:
@@ -426,6 +483,17 @@ class SocietyRuntime:
                 )
         if self._publish_event is None:
             return
+        # Phrased after the chat notice: the notice carries the full text
+        # and must not wait on the composer.
+        text = await _spoken_report(
+            instruction=_LEAD_MESSAGE_SITUATION.get(
+                env.msg_type, _LEAD_MESSAGE_SITUATION[MsgType.SAY]
+            ).format(name=sender.name),
+            language=lang,
+            line=line,
+            name=sender.name,
+            report=summary,
+        )
         try:
             from jarvis.core.events import AnnouncementRequested
 
@@ -441,6 +509,8 @@ class SocietyRuntime:
                         f"trace={env.trace_id} "
                         f"msg={str(env.msg_type).lower()}"
                     ),
+                    # The live voice model thinks about the full message.
+                    report=f"Message from {sender.name} ({str(env.msg_type).lower()}):\n{summary}",
                 )
             )
             if asyncio.iscoroutine(maybe):
@@ -994,7 +1064,6 @@ class SocietyRuntime:
         line = (_LEAD_DONE if status == "done" else _LEAD_BLOCKED).get(
             lang, (_LEAD_DONE if status == "done" else _LEAD_BLOCKED)["en"]
         )
-        text = line.format(name=target.name, text=" ".join(summary.split())[:400])
         svc = self._get_chat()
         post = getattr(svc, "post_notice", None)
         if svc is not None and post is not None:
@@ -1017,6 +1086,17 @@ class SocietyRuntime:
                 log.warning("society: result notice for the lead chat failed", exc_info=True)
         if self._publish_event is None:
             return
+        # Phrased after the chat notice: the notice carries the full text
+        # and must not wait on the composer.
+        text = await _spoken_report(
+            instruction=(
+                _LEAD_DONE_SITUATION if status == "done" else _LEAD_BLOCKED_SITUATION
+            ).format(name=target.name),
+            language=lang if lang in _LEAD_DONE else "en",
+            line=line,
+            name=target.name,
+            report=summary,
+        )
         try:
             from jarvis.core.events import AnnouncementRequested
 
@@ -1028,6 +1108,8 @@ class SocietyRuntime:
                     language=lang if lang in _LEAD_DONE else "en",
                     kind="completion",
                     detail=f"agent={target.agent_id} trace={env.trace_id}",
+                    # The live voice model thinks about the full report.
+                    report=_lead_report_material(target.name, env, status, summary),
                 )
             )
             if asyncio.iscoroutine(maybe):
@@ -1090,9 +1172,46 @@ class SocietyRuntime:
 
     # ------------------------------------------------------------ controls
 
+    async def _cancel_active_society_chats(self) -> None:
+        service = self.chat_service()
+        if service is None or not callable(getattr(service, "cancel", None)):
+            return
+        # AgentChatService exposes is_running but not a public active-id list.
+        # Snapshot its live turns; a store query could miss an older active chat.
+        running = tuple(getattr(service, "_running", {}).items())
+        targets: list[str] = []
+        for session_id, run in running:
+            session = service.store.get_session(session_id)
+            if (
+                session is None
+                or session.surface != "society"
+                or not session_id.startswith("society:")
+            ):
+                continue
+            signal = getattr(service, "signal_cancel", None)
+            if callable(signal):
+                signal(session_id)
+            # The kill switch can be invoked from an agent's own turn. Signal
+            # it, but never await that turn from inside itself.
+            if getattr(run, "task", None) is asyncio.current_task():
+                continue
+            targets.append(session_id)
+        if not targets:
+            return
+        results = await asyncio.gather(
+            *(service.cancel(session_id) for session_id in targets),
+            return_exceptions=True,
+        )
+        for session_id, result in zip(targets, results, strict=True):
+            if isinstance(result, BaseException):
+                log.warning(
+                    "society kill switch: chat %s did not stop", session_id, exc_info=result
+                )
+
     async def engage_kill_switch(self) -> dict[str, Any]:
         await self.store.set_kill_switch(True)
         halted = await self.scheduler.halt_all()
+        await self._cancel_active_society_chats()
         await self.browser.close()
         settled = 0
         for room in await self.rooms.list(state=RoomState.RUNNING):

@@ -46,7 +46,7 @@ import {
   type AgentConnectionRow,
   type CuratedModel,
 } from "@/lib/agentChatApi";
-import { fetchSocietyProviders, type SocietyProviderRow } from "@/lib/societyApi";
+import { AGENT_APPROVAL_MODES, fetchSocietyProviders, type AgentApprovalMode, type SocietyProviderRow } from "@/lib/societyApi";
 import { cn } from "@/lib/utils";
 import { joinProviderOptions } from "@/store/agentChat";
 
@@ -60,7 +60,7 @@ import {
   type BrainSeat,
 } from "./brainPicker";
 import { modelSeats } from "../chat/modelChoices";
-import { useCreateAgent, type PermissionCeiling } from "../data";
+import { useCreateAgent } from "../data";
 import { CompanionEditor } from "../companion/CompanionEditor";
 import { resolveCompanion } from "../companion/appearance";
 import { AgentFigureViewer } from "../figures/AgentFigureViewer";
@@ -84,8 +84,6 @@ import {
   CATALOG,
 } from "../figures/figureRegistry";
 import type { FigureArchetype } from "../figures/figureRecipe";
-
-const CEILINGS: readonly PermissionCeiling[] = ["safe", "monitor", "ask"];
 
 /**
  * How tall a figure may be made, per archetype. One 1.5–2.1 m band fits a
@@ -131,7 +129,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
   const [accountId, setAccountId] = useState("");
   // "" = this computer; otherwise a connected computer (VPS / local VM) id.
   const [computerId, setComputerId] = useState("");
-  const [ceiling, setCeiling] = useState<PermissionCeiling>("monitor");
+  const [approvalMode, setApprovalMode] = useState<AgentApprovalMode>("bypass");
   const [budget, setBudget] = useState("2");
   // A cap is the default because an agent that can spend without one is the
   // surprising case, not the ordinary one. Off sends 0, which is exactly what
@@ -226,6 +224,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     setModel(next ? next.provider.default_model || modelsFor(next)[0]?.id || "" : "");
     setEffort(next?.provider.default_effort ?? "");
     setAccountId("");
+    setApprovalMode("bypass");
   };
 
   // A fresh dialog starts on the brain marked active, else the first seat —
@@ -252,6 +251,7 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
     setModel("");
     setEffort("");
     setAccountId("");
+    setApprovalMode("bypass");
     setImportProblems(null);
     setImportedName(null);
     setError(null);
@@ -381,7 +381,8 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
         grantMode: "all",
         toolGrants: [],
         focus: [],
-        permissionCeiling: ceiling,
+        permissionCeiling: "ask",
+        approvalMode,
         dailyBudgetUsd: budgetOn ? Math.max(0, Number.parseFloat(budget) || 0) : 0,
       });
       onCreated(agent.agentId);
@@ -587,7 +588,9 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                       type="button"
                       className="flex w-full items-center justify-between rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-secondary"
                     >
-                      {t("society.create.advanced")}
+                      <span>
+                        {t("society.create.advanced")} · {t(`society.approval_mode.${approvalMode}`)}
+                      </span>
                       <ChevronDown
                         className={cn("h-4 w-4 transition-transform", advanced && "rotate-180")}
                         aria-hidden
@@ -596,12 +599,23 @@ export function CreateAgentDialog({ open, onClose, onCreated }: CreateAgentDialo
                   </Collapsible.Trigger>
                   <Collapsible.Content className="flex flex-col gap-4 pt-4">
                     <div>
-                      <span className={labelClass}>{t("society.create.ceiling")}</span>
+                      <span className={labelClass}>{t("society.approval_mode.title")}</span>
                       <Segmented
-                        value={ceiling}
-                        options={CEILINGS.map((c) => ({ value: c, label: t(`society.ceiling.${c}`) }))}
-                        onChange={(v) => setCeiling(v as PermissionCeiling)}
+                        value={approvalMode}
+                        options={AGENT_APPROVAL_MODES.map((mode) => ({
+                          value: mode,
+                          label: t(`society.approval_mode.${mode}`),
+                          disabled: mode === "always_ask"
+                            ? seat?.kind === "subscription" && seat.provider.runner !== "codex-cli"
+                            : mode === "ask" && seat?.kind === "subscription"
+                              && !["codex-cli", "claude-cli", "glm-cli"].includes(seat.provider.runner),
+                          hint: t(`society.approval_mode.${mode}_hint`),
+                        }))}
+                        onChange={(v) => setApprovalMode(v as AgentApprovalMode)}
                       />
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t(`society.approval_mode.${approvalMode}_hint`)}
+                      </p>
                     </div>
                     <div>
                       <div className="mb-2 flex items-center gap-2">

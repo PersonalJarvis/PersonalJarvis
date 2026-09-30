@@ -1575,6 +1575,47 @@ async def test_slow_first_output_uses_the_declared_response_start_budget(
 
 
 @pytest.mark.asyncio
+async def test_local_text_does_not_expire_the_first_audio_budget(monkeypatch) -> None:
+    """A transcript may precede local TTS audio by more than eight seconds."""
+    client = _FakeAsyncOpenAI(api_key="local")
+    session = await openai_realtime._open_realtime_session(
+        client, RealtimeSessionConfig(model="local"), model="local",
+        response_start_timeout_s=90.0,
+    )
+    try:
+        await session.request_response()
+        marker = session._conn.response_create_payloads[0]["response"]["metadata"][
+            "jarvis_request_id"
+        ]
+        created = SimpleNamespace(
+            type="response.created",
+            response=SimpleNamespace(id="local-answer", metadata={"jarvis_request_id": marker}),
+        )
+        _ = [event async for event in session._dispatch_event(created)]
+        transcript = SimpleNamespace(
+            type="response.output_audio_transcript.delta", response_id="local-answer", delta="Five."
+        )
+        _ = [event async for event in session._dispatch_event(transcript)]
+        text_at = session._last_response_activity
+        monkeypatch.setattr(openai_realtime.time, "monotonic", lambda: text_at + 20)
+        assert not session._response_lifecycle_stalled()
+        monkeypatch.setattr(openai_realtime.time, "monotonic", lambda: text_at + 91)
+        assert session._response_lifecycle_stalled(), "Missing audio still has a finite deadline"
+        audio = SimpleNamespace(
+            type="response.output_audio.delta", response_id="local-answer", delta="AAA="
+        )
+        _ = [event async for event in session._dispatch_event(audio)]
+        audio_at = session._last_response_activity
+        monkeypatch.setattr(openai_realtime.time, "monotonic", lambda: audio_at + 9)
+        assert session._response_lifecycle_stalled(), "Started audio retains the strict guard"
+        session._response_idle.set()
+        await session.request_response()
+        assert not session._response_audio_started, "Every response gets a fresh audio clock"
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
 async def test_serial_rebuild_releases_single_slot_before_retrying() -> None:
     """The managed server owns one pipeline slot. A rebuild must disconnect
     the old socket first, then tolerate its asynchronous drain before retrying

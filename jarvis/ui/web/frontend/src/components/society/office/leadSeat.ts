@@ -1,13 +1,15 @@
 /**
- * The person's character can take the lead's executive chair: walk up and press
- * E (or click the chair), sit, then click the monitors to open the lead agent.
+ * The person's character can take an executive chair: the lead's downstairs,
+ * Mission Control's upstairs. Walk up and press E (or click the chair), sit,
+ * then click the monitors (the lead agent, or the Mission Control panel).
+ * Seated at Mission Control the view turns first person onto its monitors.
  * Any movement stands the character up again.
  *
- * Kept apart from the general office store: only the executive chair is
- * sittable, and its prompt lives in the scene next to the chair.
+ * Kept apart from the general office store: only executive chairs are
+ * sittable, and each chair's prompt lives in the scene next to it.
  */
 import { create } from "zustand";
-import { seatOf, type DeskSlot, type Point } from "./officeLayout";
+import { seatOf, type DeskSlot, type OfficeLayout, type Point } from "./officeLayout";
 
 /** How close the character must stand to the chair to sit down with E, in metres. */
 export const SEAT_REACH = 1.1;
@@ -32,7 +34,12 @@ export const useLeadSeat = create<LeadSeatState>((set) => ({
   set: (patch) => set((s) => (Object.entries(patch).every(([k, v]) => s[k as keyof typeof patch] === v) ? s : patch)),
 }));
 
-/** The lead chair within reach of `at`, if any (lead desks carry a size; bench desks never do). */
+/** Every desk whose chair the person can take on this floor: the lead desks, and Mission Control's. */
+export function seatDesks(layout: Pick<OfficeLayout, "lead" | "command">): DeskSlot[] {
+  return layout.command ? [...layout.lead.desks, layout.command] : layout.lead.desks;
+}
+
+/** The executive chair within reach of `at`, if any (sittable desks carry a size; bench desks never do). */
 export function chairInReach(desks: readonly DeskSlot[], at: Point): DeskSlot | null {
   let best: DeskSlot | null = null;
   let bestDistance = SEAT_REACH;

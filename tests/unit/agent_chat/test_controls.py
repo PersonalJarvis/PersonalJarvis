@@ -34,6 +34,10 @@ class FakeService:
     def is_running(self, sid: str) -> bool:
         return sid in self.running
 
+    async def bind_society_session(self, sid: str):
+        # This unit fake has no roster; return its current stored seat.
+        return self.store.get_session(sid)
+
     async def send(self, sid: str, text: str, **kwargs: Any) -> str:
         assert sid not in self.running
         self.sent.append((text, kwargs))

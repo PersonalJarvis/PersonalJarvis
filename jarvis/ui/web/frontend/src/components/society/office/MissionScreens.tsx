@@ -34,6 +34,7 @@ import { paneLabel, paneOccupants, type PaneOccupant } from "./codingFloor";
 import { PaneScreenView } from "./PaneLiveScreen";
 import { screenChanged } from "./terminalScreen";
 import type { MonitorSection } from "./officeStore";
+import { useBlendingCanvasLayer } from "./blendingLayer";
 import "./paneCommand.css";
 import "./missionScreens.css";
 
@@ -53,6 +54,8 @@ export function preloadMissionScreens(): void {
 
 /** The sections are laid out at this window size, then scaled onto the monitor. */
 export const MISSION_SCREEN_PX = { w: 1240, h: 723 } as const;
+
+const SCREEN_Z_RANGE: [number, number] = [10, 0];
 
 /** One terminal poll for every tile at once, jittered (AP-33). */
 const POLL_MIN_MS = 900;
@@ -247,8 +250,10 @@ export function MissionLiveScreen({ section, widthM, position }: {
   const client = useQueryClient();
   // drei maps one CSS pixel to distanceFactor / 400 metres in transform mode.
   const distanceFactor = (widthM * 400) / MISSION_SCREEN_PX.w;
+  // Another <Html> mounting later would drop the canvas under this screen (see blendingLayer).
+  useBlendingCanvasLayer(SCREEN_Z_RANGE);
   return (
-    <Html transform occlude="blending" position={position} distanceFactor={distanceFactor} zIndexRange={[10, 0]}
+    <Html transform occlude="blending" position={position} distanceFactor={distanceFactor} zIndexRange={SCREEN_Z_RANGE}
       style={{ width: MISSION_SCREEN_PX.w, height: MISSION_SCREEN_PX.h, pointerEvents: "none" }}>
       <div className="office-mission-screen" data-office-ui>
         <QueryClientProvider client={client}>

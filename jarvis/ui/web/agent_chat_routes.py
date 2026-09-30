@@ -62,6 +62,7 @@ from jarvis.agent_chat.permissions import (
     ladder_key,
     normalize_permission,
     permission_modes,
+    society_mode_supported,
 )
 from jarvis.agent_chat.service import (
     DECISIONS,
@@ -644,7 +645,7 @@ async def get_provider_health(
 
 
 @router.get("/sessions")
-async def list_sessions(
+def list_sessions(
     request: Request,
     limit: int = Query(200, ge=1, le=1000),
     surface: SurfaceName | None = None,
@@ -661,7 +662,7 @@ async def list_sessions(
 
 
 @router.post("/sessions", status_code=201)
-async def create_session(body: CreateSessionBody, request: Request) -> dict[str, Any]:
+def create_session(body: CreateSessionBody, request: Request) -> dict[str, Any]:
     svc = _service(request)
     ladder = ladder_key(body.surface, resolve_runner(body.provider, surface=body.surface))
     if body.permission_mode and not is_permission_mode(ladder, body.permission_mode):
@@ -691,7 +692,7 @@ async def create_session(body: CreateSessionBody, request: Request) -> dict[str,
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(
+def get_session(
     session_id: str,
     request: Request,
     tail: int | None = Query(
@@ -753,6 +754,13 @@ async def patch_session(
                     + ", ".join(m.id for m in permission_modes(ladder))
                 ),
             )
+        if current.surface == "society" and not society_mode_supported(
+            runner, body.permission_mode
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=f"{runner} cannot provide an actionable approval for {body.permission_mode}",
+            )
         fields["permission_mode"] = body.permission_mode
     elif "provider" in fields:
         # A provider change folds the old mode onto the new runner's ladder
@@ -785,6 +793,10 @@ async def patch_session(
         binder = getattr(svc, "bind_society_session", None)
         if binder is not None:
             session = await binder(session_id)
+            if body.permission_mode is not None:
+                # Persist the effective choice, not a requested escalation that
+                # the roster narrowed during binding.
+                svc.store.set_permission_override(session_id, session.permission_mode)
     changed = {key: getattr(session, key) for key in fields if key != "vendor_session"}
     if changed:
         await svc._emit(session_id, make_event("session_updated", changed))  # noqa: SLF001 — same package boundary

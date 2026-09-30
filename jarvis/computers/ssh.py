@@ -28,6 +28,9 @@ log = logging.getLogger(__name__)
 SshErrorKind = Literal["unreachable", "timeout", "auth", "host_key_changed", "protocol"]
 
 CONNECT_TIMEOUT_S = 12.0
+#: Keepalive probes: a silent connection counts as dead after about 45 s.
+KEEPALIVE_INTERVAL_S = 15
+KEEPALIVE_COUNT_MAX = 3
 #: Longest a user command may run from the UI console.
 MAX_COMMAND_TIMEOUT_S = 300.0
 #: Output beyond this is cut (per stream) so one ``cat`` cannot flood the UI.
@@ -41,6 +44,9 @@ class SshError(Exception):
         super().__init__(message)
         self.kind: SshErrorKind = kind
         self.message = message
+        #: Set on a refused login that tried this PC's keys: did the server
+        #: offer a password (or keyboard-interactive) login as well?
+        self.password_offered: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +59,10 @@ class SshTarget:
     #: Pinned OpenSSH host-key line; ``None`` on first contact (TOFU).
     host_key: str | None = None
     password: str | None = None
+    #: Also offer the keys this PC's own ``ssh`` would use: the default files
+    #: in ``~/.ssh`` (encrypted ones skipped) and the running SSH agent. Used
+    #: once, to plant the app's own key; never stored.
+    use_this_pc: bool = False
     client_key: asyncssh.SSHKey | None = None
 
 
@@ -73,6 +83,34 @@ class Session:
     host_key: str
     host_fingerprint: str
     latency_ms: int
+
+
+#: The agent for ``use_this_pc``: ``()`` finds it the way ``ssh`` does
+#: (SSH_AUTH_SOCK, else Pageant or the Windows OpenSSH agent). Tests set None.
+THIS_PC_AGENT: Any = ()
+
+
+def this_pc_keys() -> list[Any]:
+    """The key files this PC's ``ssh`` would offer (``~/.ssh`` defaults)."""
+    from asyncssh.public_key import load_default_keypairs
+
+    return list(load_default_keypairs())
+
+
+def _password_probe(offered: list[bool]) -> Any:
+    """An SSH client that notes whether the server would take a password."""
+    import asyncssh
+
+    class _Probe(asyncssh.SSHClient):
+        def password_auth_requested(self) -> None:
+            offered.append(True)
+            return None
+
+        def kbdint_auth_requested(self) -> None:
+            offered.append(True)
+            return None
+
+    return _Probe
 
 
 def _classify(exc: BaseException) -> SshError:
@@ -133,9 +171,22 @@ async def open_session(target: SshTarget, *, timeout_s: float = CONNECT_TIMEOUT_
         "password": target.password,
         "connect_timeout": timeout_s,
         "login_timeout": timeout_s,
+        # A connection that went quiet (laptop sleep, a NAT idle timeout) is
+        # found dead within a minute instead of freezing every pane on it:
+        # its close is what makes the terminal pool reconnect.
+        "keepalive_interval": KEEPALIVE_INTERVAL_S,
+        "keepalive_count_max": KEEPALIVE_COUNT_MAX,
     }
     if target.client_key is None:
         options["preferred_auth"] = "password,keyboard-interactive"
+    offered: list[bool] = []
+    if target.use_this_pc:
+        own = [target.client_key] if target.client_key is not None else []
+        options["client_keys"] = [*own, *this_pc_keys()] or ()
+        options["agent_path"] = THIS_PC_AGENT
+        # Keys only; a password offer is noted, never answered.
+        options["preferred_auth"] = "publickey,keyboard-interactive,password"
+        options["client_factory"] = _password_probe(offered)
     started = time.perf_counter()
     try:
         conn = await asyncssh.connect(target.host, **options)
@@ -143,6 +194,8 @@ async def open_session(target: SshTarget, *, timeout_s: float = CONNECT_TIMEOUT_
         if isinstance(exc, asyncio.CancelledError):
             raise
         error = _classify(exc)
+        if target.use_this_pc:
+            error.password_offered = bool(offered)
         log.info(
             "computers: ssh %s@%s:%s failed (%s)",
             target.username,
@@ -196,13 +249,21 @@ async def run_command(session: Session, command: str, *, timeout_s: float) -> Co
 
 
 def authorize_key_command(public_key: str) -> str:
-    """The idempotent shell command that adds ``public_key`` to authorized_keys."""
+    """The idempotent shell command that adds ``public_key`` to authorized_keys.
+
+    A file whose last line has no newline (hand-edited, or written by a panel)
+    gets one first: appending straight onto it would glue the new key to the
+    end of the last existing one and break both — the server would then refuse
+    the key just planted, and the user's own key too.
+    """
     quoted = shlex.quote(public_key.strip())
+    keys = "~/.ssh/authorized_keys"
     return (
-        "umask 077 && mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && "
-        f"(grep -qxF {quoted} ~/.ssh/authorized_keys || "
-        f"printf '%s\\n' {quoted} >> ~/.ssh/authorized_keys) && "
-        "chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys"
+        f"umask 077 && mkdir -p ~/.ssh && touch {keys} && "
+        f"(grep -qxF {quoted} {keys} || "
+        f'{{ if [ -s {keys} ] && [ -n "$(tail -c 1 {keys})" ]; then echo >> {keys}; fi; '
+        f"printf '%s\\n' {quoted} >> {keys}; }}) && "
+        f"chmod 700 ~/.ssh && chmod 600 {keys}"
     )
 
 

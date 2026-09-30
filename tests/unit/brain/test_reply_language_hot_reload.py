@@ -27,7 +27,6 @@ def _manager_with_bus(bus: EventBus, reply_language: str) -> BrainManager:
     m._user_profile = None
     m._people = None
     m._core_memory = None
-    m._awareness_manager = None
     m._system_prompt_extra = "ROUTER DISCIPLINE BLOCK"
     m._wiki_context_suffix = ""
     m._reply_language = reply_language

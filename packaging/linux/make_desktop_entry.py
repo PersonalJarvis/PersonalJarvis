@@ -41,7 +41,7 @@ from jarvis.core.branding import (  # noqa: E402
 from jarvis.core.desktop_entry import escape_value, exec_value  # noqa: E402
 
 #: Same one-line summary the source install's menu entry uses.
-COMMENT = "Voice-driven meta-orchestrator"
+COMMENT = "Turn your computer into an AI agent"
 
 #: Freedesktop main category. "Utility" is what the source install already
 #: registers; changing it would move the app in the menu between install kinds.

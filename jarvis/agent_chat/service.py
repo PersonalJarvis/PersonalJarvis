@@ -559,10 +559,9 @@ class AgentChatService:
             manager = get_brain_manager()
             selection = worker_selection(getattr(manager, "_config", None))
             if selection is not None:
-                provider, selected_runner = subscription_seat(selection.provider) or (
-                    selection.provider,
-                    "brain",
-                )
+                # The Claude slot probes the CLI login (cached); keep it off the loop.
+                seat = await asyncio.to_thread(subscription_seat, selection.provider)
+                provider, selected_runner = seat or (selection.provider, "brain")
                 if (session.provider, session.model) != (provider, selection.model or ""):
                     session = replace(
                         session,

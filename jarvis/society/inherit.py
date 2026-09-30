@@ -3,13 +3,14 @@
 When a society agent creates a teammate — typed chat or a subscription CLI
 calling ``society-create-agent`` — the new row starts on the creator's model
 seat (provider, model, effort, subscription account) and may not exceed the
-creator's permission ceiling, grant mode, grants or denies. The Agents UI
+creator's explicit approval mode, permission ceiling, grant mode, grants or denies. The Agents UI
 sends those fields itself, so an explicit choice still wins, and a blank
 create from the UI (no society session) keeps the usual defaults.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from .events import GrantMode, PermissionCeiling
@@ -21,6 +22,8 @@ __all__ = [
     "inherit_creator_fields",
     "session_agent_id",
 ]
+
+log = logging.getLogger(__name__)
 
 _CEILING_RANK: dict[str, int] = {
     str(PermissionCeiling.SAFE): 0,
@@ -52,7 +55,7 @@ def caller_session_id() -> str | None:
         if stamped:
             return str(stamped)
     except Exception:  # noqa: BLE001 — optional; a missing MCP server is not a create failure
-        pass
+        log.debug("Society caller has no MCP session context", exc_info=True)
     try:
         from jarvis.core.chat_turn import current_chat_turn
 
@@ -60,7 +63,7 @@ def caller_session_id() -> str | None:
         if turn is not None and turn.session_id:
             return str(turn.session_id)
     except Exception:  # noqa: BLE001 — optional; a missing turn is not a create failure
-        pass
+        log.debug("Society caller has no chat turn context", exc_info=True)
     return None
 
 
@@ -103,6 +106,18 @@ def inherit_creator_fields(fields: dict[str, Any], creator: AgentRecord) -> dict
         _capped_ceiling(requested_ceiling, creator_ceiling)
         if requested_ceiling
         else creator_ceiling
+    )
+
+    # A child may ask more often, but cannot silently bypass a parent's
+    # explicit Ask setting. Legacy parents made no approval-mode choice, so
+    # their children use the new Bypass default under the inherited ceiling.
+    creator_approval = str(creator.approval_mode or "bypass")
+    requested_approval = str(fields.get("approval_mode") or creator_approval)
+    approval_rank = {"always_ask": 0, "ask": 1, "bypass": 2}
+    if requested_approval not in approval_rank:
+        requested_approval = creator_approval
+    fields["approval_mode"] = min(
+        (creator_approval, requested_approval), key=lambda mode: approval_rank[mode]
     )
 
     creator_mode = str(creator.grant_mode)

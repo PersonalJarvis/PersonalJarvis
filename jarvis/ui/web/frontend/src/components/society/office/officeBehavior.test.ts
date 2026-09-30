@@ -66,7 +66,8 @@ describe("planFor", () => {
   it("sends paused agents to sleep, then to the couch, then to their desk", () => {
     const book = new SpotBook();
     const sleepSpots = layout.spots.filter((s) => s.pose === "sleep").length;
-    const couchSeats = layout.spots.filter((s) => s.kind === "couch" && s.pose !== "sleep").length;
+    // More seats than paused agents: the couches fill up with whoever is left after the beds.
+    const couchSeats = Math.min(layout.spots.filter((s) => s.kind === "couch" && s.pose !== "sleep").length, roster.length - sleepSpots);
     const plans = roster.map((a) => planFor(input(a.agentId, "paused", { book })));
     expect(plans.every((p) => p.kind === "nap" && p.dwellMs === Infinity)).toBe(true);
     expect(plans.filter((p) => p.pose === "sleep")).toHaveLength(sleepSpots);

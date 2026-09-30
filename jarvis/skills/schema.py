@@ -347,9 +347,8 @@ class SkillDirectTriggered(Event):
 
     Complementary to SkillStarted: SkillDirectTriggered marks the
     *activation decision* (brain bypassed), SkillStarted marks the
-    actual run start in the SkillRunner. Forward-compatible with the
-    awareness layer (A0-A5) via ``trigger_type`` as the activation-path
-    discriminator.
+    actual run start in the SkillRunner. ``trigger_type`` is the
+    activation-path discriminator.
     """
     skill_name: str = ""
     trigger_type: str = ""   # "voice_direct" | "hotkey" | "cron"

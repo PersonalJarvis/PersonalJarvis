@@ -260,6 +260,16 @@ class _Runtime:
             return None
 
 
+def _remember(command_id: str, outcome: str, detail: str) -> None:
+    """Show the command on the Jarvis-actions page's recent list."""
+    try:
+        from jarvis.app_actions import history
+
+        history.record(command_id, outcome, detail, via="app-command")
+    except Exception:  # noqa: BLE001 — the log is advisory; the command's result stands
+        log.warning("app-actions history unavailable", exc_info=True)
+
+
 class RegistryCommandTool:
     """One registry command as a flat, schema-validated brain tool."""
 
@@ -280,6 +290,28 @@ class RegistryCommandTool:
         self.schema: dict[str, Any] = command.params or {
             "type": "object", "properties": {},
         }
+
+    def risk_tier_for_args(self, args: dict[str, Any]) -> str:
+        """The person's Jarvis-actions choice for this command's endpoint wins
+        over the registry's own tier; without one the registry tier stands."""
+        from jarvis.app_actions.catalog import live_catalog
+        from jarvis.app_actions.policy import effective_tier, load_policy
+
+        policy = load_policy()
+        if not policy:
+            return self.risk_tier
+        method = self._cmd.method.upper()
+        for entry in live_catalog().values():
+            if entry.method == method and entry.path == self._cmd.path:
+                if entry.id not in policy:
+                    return self.risk_tier
+                tier = effective_tier(entry, policy)
+                if tier == "block":
+                    from jarvis.app_actions import history
+
+                    history.record(entry.id, "blocked", "Blocked in Jarvis actions", via=self.name)
+                return tier
+        return self.risk_tier
 
     async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
         cmd = self._cmd
@@ -363,12 +395,14 @@ class RegistryCommandTool:
                 "app command %s refused: HTTP %s %s",
                 cmd.id, resp.status_code, str(detail)[:500],
             )
+            _remember(cmd.id, "failed", f"HTTP {resp.status_code}: {detail}")
             return ToolResult(
                 success=False,
                 output={"command_id": cmd.id, "status": resp.status_code},
                 error=f"{cmd.title} failed: HTTP {resp.status_code}: {detail}",
             )
 
+        _remember(cmd.id, "ran", cmd.title)
         return ToolResult(
             success=True,
             output={

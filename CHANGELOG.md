@@ -9,10 +9,73 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [2.4.0] — 2026-09-30
+
+### Added
+
+- **Jarvis Verse.** The Jarvis agents now live on a walkable 3D office map:
+  toy-style figures with an outfit wardrobe, a lead executive suite, a team
+  meeting room, a break lounge, Mission Control with live Spend, Agents and IDE
+  monitors, and a coding floor (reached by elevator) where every Agentic IDE
+  pane appears as a figure with a live terminal you can type into, opened
+  as a movable, resizable window.
+- **Computers.** Settings > System > Computers connects servers and local VMs
+  over SSH — the connect dialog asks only for the address and works out the
+  way in (key, password or a provider's API; 14 provider presets). IDE panes,
+  workspaces and Jarvis agents can run on a connected computer, chosen when
+  the agent or workspace is added.
+- **Agentic IDE.** Git tab with branches, pull requests and CI state; an
+  explorer with git changes and diffs; fork a coding agent's chat into its own
+  worktree; coding agents keep running across app restarts and resume after a
+  power-off; a live agents side panel; drag-and-drop ordering; up to 16 agents
+  per workspace.
+- **Voice readback.** Jarvis reports back when a pane or agent finishes a job,
+  and the live voice model can reason about those reports on the next call.
+- **Agent chat.** Agents can ask short multiple-choice question series; group
+  chats of several agents; per-agent approval modes (Bypass, Ask, Always ask).
+  New agents start on Bypass; blocks, denied capabilities and explicit
+  require-approval rules still apply.
+- **App actions.** Jarvis can run any app action under a per-action
+  allow / ask / block policy (Settings > Jarvis actions).
+- **Appshots.** Show the assistant the front window on a shortcut, a button or
+  a spoken request.
+- Model discovery through a public feed, so subscription model pickers gain new
+  frontier releases without an app update.
+- Jarvis keeps its own self-learning loop in memory.
+- A restrained, milestone-driven boot splash.
+
 ### Changed
 
-- Center API Keys settings and show provider cards in two columns when the
-  window is wide enough, with a single column in narrower windows.
+- The settings hub opens as a centred dialog over the app; API Keys shows
+  provider cards in two columns on wide windows.
+- The lead agent carries the wake-word name on every surface.
+- Local realtime voice setup: one "apply, test and use" step that starts the
+  selected models with Jarvis.
+- README and product description rewritten around "your computer becomes an AI
+  agent".
+- CI rebuilt as a lane-gated orchestrator with one required `CI gate` check;
+  a release tag is only admitted after `CI gate` passed on that exact commit.
+
+### Removed
+
+- The activity recorder (awareness layer) and its recall tools: it put a
+  snapshot into every turn and summarised work in the background at a token
+  cost the product no longer wants. Old `[awareness]` config tables are
+  ignored.
+
+### Fixed
+
+- The GPT-Live API key is reserved for the voice call; background work runs on
+  subscriptions.
+- Around 110 fixes across the Agentic IDE (glyph soup after maximize, shredded
+  panes after minimize, blank repaint areas), the office map, agent chat,
+  Computers, voice and the desktop shell.
+- Passphrase-protected SSH keys can be added (bcrypt is now a dependency).
+- Silent exception handlers and blocking async routes introduced since 2.3.2
+  are logged, explained or moved off the event loop; native select popups are
+  replaced by the branded dropdown.
 
 ---
 

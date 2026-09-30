@@ -19,7 +19,7 @@
     "billing": "Voice time and thinking usage are billed separately. Cloud recording is off.",
     "save": "Save and use GPT-Live",
     "saved": "Saved. Your next call will use these settings.",
-    "use_for_agents": "Use this key and model for agents and text chat",
+    "use_for_agents": "Also bill agents and text chat to this key (per token)",
     "agent_saved": "Agents and text chat now use this OpenAI model.",
     "setup_title": "Voice & thinking",
     "setup_description": "Choose how Jarvis listens, responds and uses your tools.",
@@ -30,9 +30,9 @@
     "connect": "Set up",
     "local_provider": "On your hardware",
     "show_cloud": "Show cloud providers",
-    "agents_separate": "Text chat and background tasks use your selection in Agents. Voice has its own model settings.",
+    "agents_separate": "Your OpenAI key pays only for the voice call and its thinking model. Chat, memory and all background work run on the provider you choose under Agents.",
     "shared_key_ready": "OpenAI connected · one key for voice and thinking",
-    "shared_key_help": "This OpenAI key serves both GPT-Live and its thinking model.",
+    "shared_key_help": "This OpenAI key is used only for GPT-Live and its thinking model — nothing else is billed to it.",
     "manage_key": "Manage key",
     "conversation_heading": "Conversation",
     "conversation_help": "Continuous listening and natural speech, including interruptions.",
@@ -162,6 +162,7 @@
     "agent_instructions": "{name}.md",
     "wallpaper": "Wallpaper",
     "appshots": "Appshots",
+    "jarvis_actions": "Jarvis actions",
     "marketplace": "Marketplace",
     "agentic_ide": "Agentic IDE",
     "agentic_ide_beta": "Beta",
@@ -537,11 +538,9 @@
     "recent": "Recent",
     "pin_chat": "Pin chat",
     "unpin_chat": "Unpin chat",
-
     "jarvis_tools": "Jarvis Tools",
     "scheduled": "Scheduled",
     "more": "More",
-
     "instance_dev_hint": "Dev instance — a second, freely restartable copy of the app with its own data, ports and icon. The regular app keeps running beside it.",
     "surface_voice": "Voice",
     "surface_chat": "Chat",
@@ -1947,7 +1946,11 @@
     "managed_speaking_title": "Speak",
     "managed_voice_unavailable": "not voice-tested yet",
     "managed_voice_install_required": "runtime install required",
-    "managed_apply_test": "Apply & voice-test",
+    "managed_apply_test": "Apply, test & use local voice",
+    "managed_protocol_options": "Advanced server model and voice options",
+    "managed_setup_testing": "Preparing the selected models and testing speech. This can take longer on the first start.",
+    "managed_selected": "Selected for voice. These models start automatically with Jarvis.",
+    "managed_not_selected": "This server is not selected for voice yet. Choose two models and apply them to use local voice.",
     "managed_full_catalog": "Browse the full Ollama catalog",
     "managed_voice_catalog_title": "Browse open-source speech models",
     "managed_voice_catalog_search": "Search by model, backend, language, or license…",
@@ -2049,7 +2052,7 @@
     "cat_computer_use_desc": "The Tool Model runs your actions: it routes spoken commands, plans Computer-Use on your screen, starts background agents, and drives app controls — independent of your chat Brain.",
     "cat_dictation_desc": "The fast model that tidies up dictated text — punctuation, filler words and sentence breaks. Optional: with no key here your dictation is delivered exactly as it was recognized.",
     "cat_subagents_title": "{name}-Agents",
-    "cat_subagents_desc": "Choose which provider runs heavy background tasks.",
+    "cat_subagents_desc": "Runs chat, memory and background tasks — not your voice key.",
     "advanced_title": "Access & Integrations",
     "advanced_desc": "Optional extras: the team key proxy, telephony, and the knowledge Wiki provider.",
     "no_providers_in_tier": "No providers available in this category.",
@@ -2084,7 +2087,7 @@
     "realtime_options_error": "Voice options could not be loaded.",
     "realtime_options_retry": "Try again",
     "realtime_model_managed": "Managed",
-    "realtime_model_managed_hint": "ChatGPT selects the subscription model. Choose an API Realtime provider to pin a GPT Realtime model.",
+    "realtime_model_managed_hint": "This provider manages the model. Use its setup controls above to change the selection.",
     "guide_realtime_title": "Which model should I pick?",
     "guide_realtime_body": "OpenAI API: GPT Realtime 2.1 is the current flagship and 2.1 Mini is the budget pick. Google: Gemini 3.1 Flash Live is the current Live flagship.",
     "guide_computer_use_title": "Which provider should power the Tool Model?",
@@ -3026,10 +3029,10 @@
       "summary_accepted": "Terms accepted"
     },
     "intro": {
-      "scene_1": "Meet your voice-first assistant.",
-      "scene_2": "Just talk — it listens and acts.",
-      "scene_3": "It keeps working in the background while you don't.",
-      "scene_4": "Your keys, your data, your rules."
+      "scene_1": "Your computer becomes an AI agent.",
+      "scene_2": "Give Jarvis a task by chat or voice.",
+      "scene_3": "It can use apps, tools, models, and agents.",
+      "scene_4": "Review its actions and results in one place."
     },
     "language": {
       "ui_label": "Interface language",
@@ -5193,9 +5196,22 @@
   },
   "society": {
     "groups": {
-      "create": "New agent team", "edit": "Edit agent team", "description": "Bundle agents in one sidebar entry. Each agent keeps its own conversation.",
-      "name": "Team name", "members": "Members", "cancel": "Cancel", "save": "Save team", "delete": "Ungroup", "delete_confirm": "Ungroup these agents? Their individual chats will remain.",
-      "left_chat": "Left chat", "right_chat": "Right chat", "open": "Open", "open_individual": "Open {0}'s individual chat", "missing_member": "Select an available agent to view this chat.", "hold_to_group": "Hold to group", "release_to_group": "Release to group"
+      "create": "New agent team",
+      "edit": "Edit agent team",
+      "description": "Bundle agents in one sidebar entry. Each agent keeps its own conversation.",
+      "name": "Team name",
+      "members": "Members",
+      "cancel": "Cancel",
+      "save": "Save team",
+      "delete": "Ungroup",
+      "delete_confirm": "Ungroup these agents? Their individual chats will remain.",
+      "left_chat": "Left chat",
+      "right_chat": "Right chat",
+      "open": "Open",
+      "open_individual": "Open {0}'s individual chat",
+      "missing_member": "Select an available agent to view this chat.",
+      "hold_to_group": "Hold to group",
+      "release_to_group": "Release to group"
     },
     "chat": {
       "placeholder": "Message {0}",
@@ -5403,6 +5419,18 @@
       "safe": "Safe",
       "monitor": "Monitor",
       "ask": "Ask first"
+    },
+    "approval_mode": {
+      "title": "Agent permissions",
+      "bypass": "Bypass permissions",
+      "ask": "Ask",
+      "always_ask": "Always ask",
+      "bypass_hint": "Jarvis tools run without prompts; Jarvis blocks and denied tools still apply. A subscription CLI's native tools follow that runner's controls.",
+      "ask_hint": "Read freely; ask in this chat before changes or other actions.",
+      "always_ask_hint": "Ask in this chat before every Jarvis tool call, including reads.",
+      "legacy_hint": "This agent keeps its existing chat permissions until you choose a mode.",
+      "legacy_ceiling": "Existing permission ceiling",
+      "unavailable": "This runner cannot show a usable approval card for this mode."
     },
     "grant": {
       "all": "All connected tools",
@@ -5849,7 +5877,7 @@
       "agents": "Agents",
       "files": "Folder",
       "changes": "Changes",
-      "office": "Office"
+      "office": "Jarvis Verse"
     },
     "git": {
       "aria": "Branches, pull requests and CI",
@@ -5918,7 +5946,7 @@
       "minutes_ago": "{n} min ago"
     },
     "office": {
-      "failed": "The office map could not load.",
+      "failed": "The Jarvis Verse could not load.",
       "retry": "Try again"
     },
     "agents": {
@@ -5960,6 +5988,30 @@
         "idle": "Idle"
       }
     }
+  },
+  "jarvis_actions": {
+    "title": "Jarvis actions",
+    "subtitle": "Everything Jarvis can do in this app. Choose per action whether it runs freely, asks you first, or never runs.",
+    "search_placeholder": "Search actions",
+    "area_all": "All areas",
+    "changed_only": "Only changed",
+    "mode_default": "Default",
+    "mode_allow": "Allowed",
+    "mode_ask": "Ask",
+    "mode_block": "Blocked",
+    "tier_safe": "Default: runs freely (reads only)",
+    "tier_monitor": "Default: runs freely",
+    "tier_ask": "Default: asks first",
+    "count": "{shown} of {total} actions",
+    "show_more": "Show more",
+    "dangerous": "Changes or deletes something",
+    "history_title": "Recent actions",
+    "history_empty": "Jarvis has not run any app action yet.",
+    "outcome_ran": "Ran",
+    "outcome_failed": "Failed",
+    "outcome_blocked": "Blocked",
+    "load_error": "Could not load the actions.",
+    "save_error": "Could not save the change."
   },
   "appshots": {
     "title": "Appshots",

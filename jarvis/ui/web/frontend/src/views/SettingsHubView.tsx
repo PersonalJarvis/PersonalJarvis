@@ -79,6 +79,9 @@ const ComputersTab = lazy(() =>
 const WallpaperTab = lazy(() =>
   import("@/views/WallpaperView").then((m) => ({ default: m.WallpaperView })),
 );
+const JarvisActionsTab = lazy(() =>
+  import("@/views/JarvisActionsView").then((m) => ({ default: m.JarvisActionsView })),
+);
 const AppshotsTab = lazy(() =>
   import("@/views/AppshotsView").then((m) => ({ default: m.AppshotsView })),
 );
@@ -102,6 +105,7 @@ type HubNavId =
   | "apikeys"
   | "local-models"
   | "computers"
+  | "jarvis-actions"
   | "wallpaper"
   | "costs"
   | "feedback";
@@ -113,7 +117,7 @@ const HUB_NAV_GROUPS: readonly { labelKey: string; ids: readonly HubNavId[] }[] 
   },
   {
     labelKey: "settings_hub.group_system",
-    ids: ["computers", "apikeys", "local-models", "wallpaper"],
+    ids: ["computers", "apikeys", "local-models", "jarvis-actions", "wallpaper"],
   },
   {
     labelKey: "settings_hub.group_activity",
@@ -133,6 +137,7 @@ const TAB_CONTENT: Record<HubNavId | "telephony-setup", LazyExoticComponent<Comp
   computers: ComputersTab,
   wallpaper: WallpaperTab,
   appshots: AppshotsTab,
+  "jarvis-actions": JarvisActionsTab,
   costs: CostsTab,
   feedback: FeedbackTab,
 };
@@ -165,6 +170,8 @@ function resolveHubTab(active: string): { content: HubNavId | "telephony-setup";
       return { content: "wallpaper", highlight: "wallpaper" };
     case "appshots":
       return { content: "appshots", highlight: "appshots" };
+    case "jarvis-actions":
+      return { content: "jarvis-actions", highlight: "jarvis-actions" };
     case "costs":
       return { content: "costs", highlight: "costs" };
     case "feedback":

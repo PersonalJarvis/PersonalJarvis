@@ -986,8 +986,7 @@ def _build_session(
 # creates-and-drops a coroutine without ever running it. Fire-and-forget via
 # asyncio.create_task instead, keeping a strong reference here so the event
 # loop can't garbage-collect the task mid-flight (each self-discards on
-# completion) — the same pattern used for FileSaved publishes in
-# jarvis/awareness/probes/filesystem.py.
+# completion).
 _PENDING_PUBLISH_TASKS: set[asyncio.Task[Any]] = set()
 
 

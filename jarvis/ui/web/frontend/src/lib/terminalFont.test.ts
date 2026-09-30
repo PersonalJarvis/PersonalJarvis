@@ -426,6 +426,39 @@ describe("whenTerminalFontReady", () => {
     }
   });
 
+  it("asks for the weight it waits on, so a Medium body cut does not sit out the timeout", async () => {
+    // Every weight is declared, only the ones asked for by name get loaded —
+    // the way a browser treats @font-face faces nothing has drawn with yet.
+    const requested = new Set<string>();
+    const listeners = new Set<() => void>();
+    const weightOf = (spec: string) => spec.trim().split(/\s+/)[0];
+    const set = {
+      check: vi.fn((spec: string) => requested.has(weightOf(spec))),
+      load: vi.fn((spec: string) => {
+        requested.add(weightOf(spec));
+        return Promise.resolve([]);
+      }),
+      addEventListener: (type: string, fn: () => void) => {
+        if (type === "loadingdone") listeners.add(fn);
+      },
+      removeEventListener: (_type: string, fn: () => void) => {
+        listeners.delete(fn);
+      },
+      [Symbol.iterator]: () => [{ family: '"JetBrains Mono"' }][Symbol.iterator](),
+    } as unknown as FontFaceSet;
+    vi.useFakeTimers();
+    try {
+      let resolved = false;
+      void whenTerminalFontReady(15, { fonts: set }).then(() => {
+        resolved = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(resolved).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("gives up after the bounded wait, so an offline pane still opens", async () => {
     vi.useFakeTimers();
     try {

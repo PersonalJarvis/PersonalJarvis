@@ -386,7 +386,7 @@ Verified against the actual file tree (not just CLAUDE.md claims):
 | 5 Vision/Action/Admin/Async/Control + Tiered Routing | live | `jarvis/{vision,admin,tasks,control,telemetry}/`, `ROUTER_TOOLS` frozenset, ADR-0001..0011 |
 | 6 Self-Healing Worker-Critic | live | `jarvis/missions/{manager,kontrollierer,critic,workers,isolation,worker_runtime,voice,safety}/`. 458 mission tests. Wired via `bootstrap_missions` |
 | 7 Self-Mod (foundation + writer + tools) | live | `jarvis/core/self_mod/` (audit, errors, pending, registry, schema, writer). `spawn-skill-author` is **NOT** reachable from the brain — see §25; the brain-reachable authoring path is the `create-skill` router tool (2026-08-18) over the same `SkillCreatorService` as `POST /api/skills/creator/*` and `jarvis skills create` |
-| Awareness A0–A5 | live | `jarvis/awareness/` (state, story, salience, verdichter, working_set, episode, watchers, probes). A1 + A3 router tools registered |
+| Awareness A0–A5 | removed 2026-09-30 | Package and both router tools deleted (token cost, no longer wanted). ADR-0011 amendment "Awareness tools retired" |
 | Wiki B0/B1/B2/B3/B5/B7/B8/B9 | live | `jarvis/memory/wiki/` (curator, atomic_writer, page, integration, scheduler, session_rollup, voice_bridge, telemetry, vault_index, watcher, search). 3 router tools |
 | Wiki B4 (legacy Curator) | soft-disabled | `factory.py:736-757` gates on `cfg.memory.legacy_curator.enabled` (default `false` since 2026-05-17). `data/workspace/` snapshot stays on disk for 35 reader sites |
 | Wiki B6 | not started | — |
@@ -519,7 +519,7 @@ npm run build     # tsc -b && vite build --outDir ../dist --emptyOutDir
 npm run test      # vitest
 ```
 
-Line length 100. Target `py311`. One per-file `E501` exception (`jarvis/awareness/prompts.py` — long few-shot strings).
+Line length 100. Target `py311`.
 
 ---
 
@@ -541,7 +541,7 @@ Line length 100. Target `py311`. One per-file `E501` exception (`jarvis/awarenes
 **Smoke / probe (manual):**
 - `smoke_brain_e2e.py`, `smoke_frontier.py`, `smoke_phase6_p{1,2,2_jobkill,3,3_real}.py`, `smoke-test-ack.ps1`.
 - `voice_e2e_probe.py`, `voice_compare.py`, `tts_brain_endtoend.py`, `tts_output_sanity.py`, `warm_keep_bench.py`.
-- `awareness_smoke_a{1,2}.py`, `vision_smoke.py`.
+- `vision_smoke.py`.
 - `diag_audio_devices.py`, `diag_mic_{live,mute,wasapi}.py`, `verify_orb_{appears,mute_toggle,drag}.py`, `snap_orb.py` — audio/orb debugging.
 
 **Migration / one-time:**
@@ -660,7 +660,6 @@ Self-mod writeup: [`docs/self_mod.md`](docs/self_mod.md) — 8 mutable settings 
 | `jarvis/missions/workers/{base,claude_direct_worker,codex_worker,gemini_worker,subjarvis_worker,supervisor}.py` | Worker variants — `WorkerProtocol` structural contract. |
 | `jarvis/missions/isolation/{worktree,job_object,env}.py` | Git-worktree manager + Windows Job Object kill-on-close. |
 | `jarvis/harness/screenshot_only_loop.py` | Screenshot-only POAV loop — the sole `computer_use` engine (vision picks pixel targets; cross-platform `mss` + `pyautogui`). |
-| `jarvis/awareness/manager.py` | `AwarenessManager` — state holder; **never on voice critical path** (AP-9). |
 | `jarvis/memory/wiki/integration.py` | `bootstrap_wiki_integration` — wires SessionRollupWorker (B7) + WikiCurator (B1). |
 | `jarvis/sessions/constants.py` | `HANGUP_REASONS` single source of truth — canonical 5-layer enum example. |
 | `jarvis/speech/pipeline.py` | Voice pipeline — wake→VAD→STT→Brain→TTS, scrub_for_voice at lines 647 and 1330. |
