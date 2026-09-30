@@ -6,16 +6,15 @@ Two invariants:
    that would previously have triggered a session-page write produces NO
    page on disk and reports ``disabled_wiki_write`` — while the awareness
    episodes themselves are untouched (read, not deleted).
-2. The conversation path (``VoiceFactBridge`` -> curator) still reaches the
-   curator, so retiring the session feed does not silence the wiki.
+2. Re-enabling the flag restores the page write.
+
+Explicit conversation saves are pinned in ``test_conversation_observer``.
 """
 from __future__ import annotations
 
-import asyncio
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -23,14 +22,13 @@ import pytest_asyncio
 
 from jarvis.core.bus import EventBus
 from jarvis.core.config import load_config
-from jarvis.core.events import IdleEntered, ResponseGenerated, TranscriptFinal
-from jarvis.core.protocols import BrainDelta, BrainRequest, Transcript
+from jarvis.core.events import IdleEntered
+from jarvis.core.protocols import BrainDelta, BrainRequest
 from jarvis.memory.recall import RecallStore
 from jarvis.memory.wiki.atomic_writer import AtomicWriter
 from jarvis.memory.wiki.log_writer import LogWriter
 from jarvis.memory.wiki.page import MarkdownPageRepository
 from jarvis.memory.wiki.session_rollup import SessionRollupWorker
-from jarvis.memory.wiki.voice_bridge import VoiceFactBridge
 
 NS_PER_MIN = 60 * 1_000_000_000
 
@@ -153,35 +151,3 @@ async def test_reenabling_flag_restores_the_page_write(worker_stack):
     assert result.status == "ok"
     assert brain.call_count == 1
     assert list((vault_root / "sessions").glob("*.md"))
-
-
-@pytest.mark.asyncio
-async def test_voice_bridge_conversation_path_still_reaches_curator(tmp_path: Path):
-    """Retiring the session feed must NOT silence the conversation -> curator path."""
-    bus = EventBus()
-    ingested: list[str] = []
-
-    class _FakeCurator:
-        async def ingest(self, source_content: str, source_label: str) -> Any:
-            ingested.append(source_content)
-            # Minimal WriteResult-shaped object the bridge tolerates.
-            return MagicMock(applied=[], skipped_due_to_recent_edit=[], failed_validation=[])
-
-    bridge = VoiceFactBridge(bus=bus, curator=_FakeCurator(), config=None)
-    bridge.start()
-    try:
-        user_text = "Remember that my dentist appointment is on Friday at 3pm in Munich."
-        await bus.publish(TranscriptFinal(
-            transcript=Transcript(text=user_text, language="en", confidence=0.95),
-        ))
-        await bus.publish(ResponseGenerated(text="Noted.", language="en"))
-        # The bridge fires fire-and-forget tasks; let them run.
-        for _ in range(20):
-            await asyncio.sleep(0.02)
-            if ingested:
-                break
-    finally:
-        bridge.stop()
-
-    assert ingested, "VoiceFactBridge must still forward conversation turns to the curator"
-    assert any("dentist" in text for text in ingested)

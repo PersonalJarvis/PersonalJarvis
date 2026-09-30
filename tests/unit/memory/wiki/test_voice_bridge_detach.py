@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 
 from jarvis.core.bus import EventBus
-from jarvis.core.config import VoiceBridgeConfig
 from jarvis.core.events import (
     MessageSent,
     ResponseGenerated,
@@ -35,9 +34,8 @@ SUBSCRIBED_EVENTS = (
 
 
 def _bridge(bus: EventBus) -> VoiceFactBridge:
-    return VoiceFactBridge(
-        bus=bus, curator=None, config=VoiceBridgeConfig(), extractor=None
-    )
+    # The detach contract never reaches the extractor; a placeholder suffices.
+    return VoiceFactBridge(bus=bus, extractor=object())  # type: ignore[arg-type]
 
 
 def _attached(bus: EventBus) -> int:

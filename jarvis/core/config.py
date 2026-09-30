@@ -1753,39 +1753,6 @@ class SchedulerConfig(BaseModel):
     flush_pending_max_age_minutes: int = 10
 
 
-class VoiceBridgeConfig(BaseModel):
-    """``VoiceFactBridge`` settings (Phase B8 — aggressive-ingest mode).
-
-    The bridge has two paths from voice turn -> wiki:
-
-    * **Ack path** (always on): ingest when the brain reply contains an
-      explicit "notiert" / "vermerkt" / ... keyword. Narrow, false-positive
-      free.
-    * **Aggressive path** (this section's toggle): every user turn with
-      at least ``min_user_chars`` characters is handed to the curator
-      regardless of how the brain replied. The curator's prompt is the
-      salience filter -- smalltalk returns an empty list, facts produce
-      pages.
-
-    The aggressive path is the safety net for the case "user states a
-    fact, brain replies conversationally without an ack-keyword". B1 §3.8
-    planned this but never activated it; this section turns it on by
-    default.
-
-    ``rate_limit_seconds`` is an opt-in cost control. The default reviews every
-    eligible completed turn so a second durable fact in the same realtime
-    conversation is not silently discarded.
-    """
-
-    model_config = ConfigDict(extra="allow")
-
-    aggressive_mode: bool = True
-    # Keep this aligned with ExtractorConfig.min_user_chars. Stage 2 remains
-    # the quality gate; a 12-character ownership statement can be durable.
-    min_user_chars: int = 12
-    rate_limit_seconds: int = 0
-
-
 class ExtractorConfig(BaseModel):
     """Settings for the Stage-1 ``ConversationFactExtractor`` (Wave 2).
 
@@ -1793,6 +1760,9 @@ class ExtractorConfig(BaseModel):
     configured here — both curator stages resolve through the single
     ``[memory.wiki.curator]`` provider/model pair (the Wiki settings card
     drives them together). This section only holds the extraction gates.
+    The extractor reviews only explicitly saved turns (the voice bridge's
+    acknowledgement path) and user-started backfills; ``enabled = false``
+    turns both off.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -1815,19 +1785,23 @@ class ExtractorConfig(BaseModel):
 
 
 class WikiMemoryConfig(BaseModel):
-    """Root of the ``[memory.wiki]`` block (Phase B1+B7+B8 + Wave 2).
+    """Root of the ``[memory.wiki]`` block (Phase B1+B7 + Wave 2).
 
-    Holds the Curator LLM section (B1), the session-rollup section (B7),
-    the voice-bridge section (B8 aggressive ingest), and the Stage-1
-    extractor section (Wave 2). Defaults are chosen so a config without
-    the section loads cleanly as ``WikiMemoryConfig()``.
+    Holds the Curator LLM section (B1), the session-rollup section (B7) and
+    the Stage-1 extractor section (Wave 2). Defaults are chosen so a config
+    without the section loads cleanly as ``WikiMemoryConfig()``.
+
+    The former ``[memory.wiki.voice_bridge]`` table (``aggressive_mode``,
+    ``min_user_chars``, ``rate_limit_seconds``) configured the automatic
+    review of every user turn, removed 2026-09-30. An old ``jarvis.toml``
+    that still carries it keeps validating through ``extra="allow"`` (AP-16)
+    and the values are ignored.
     """
 
     model_config = ConfigDict(extra="allow")
 
     curator: WikiCuratorConfig = Field(default_factory=WikiCuratorConfig)
     session_rollup: SessionRollupConfig = Field(default_factory=SessionRollupConfig)
-    voice_bridge: VoiceBridgeConfig = Field(default_factory=VoiceBridgeConfig)
     extractor: ExtractorConfig = Field(default_factory=ExtractorConfig)
 
 
@@ -3011,7 +2985,7 @@ class WikiContextConfig(BaseModel):
     and migrate callers off the top-level ``cfg.wiki_context`` field.
 
     ``extra="allow"`` is mandatory and matches every sibling wiki sub-table
-    (WikiCurator/SessionRollup/Scheduler/VoiceBridge/WikiMemory/
+    (WikiCurator/SessionRollup/Scheduler/Extractor/WikiMemory/
     WikiIntegration): a self-mod or drift-guard write of an unknown future
     key must survive validation rather than being silently dropped (AP-16).
     """

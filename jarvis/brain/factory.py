@@ -152,7 +152,7 @@ ROUTER_TOOLS = frozenset({
     "wiki-list",
     # Phase B5 follow-up: deterministic ingest path. Lets the brain
     # explicitly store a fact ("merk dir: …") rather than relying on the
-    # aggressive-mode VoiceFactBridge heuristic.
+    # VoiceFactBridge acknowledgement heuristic.
     "wiki-ingest",
     # CLI-Integration (2026-05-24): virtual loader that expands to one
     # ``cli_<name>`` tool per connected & usable CLI (gcloud, gh, docker, …).
