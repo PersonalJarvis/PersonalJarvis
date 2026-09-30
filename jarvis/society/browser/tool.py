@@ -63,7 +63,11 @@ def lead_browser_tools(session: Any = None, *, read_only: bool = False) -> dict[
     runtime = current_runtime()
     if runtime is None:
         return {}
-    pick = (session.provider, session.model) if session is not None else None
+    # Not every surface passes a full ChatSession (the jarvis-chat kit hands
+    # over a lightweight namespace), so only pin a model when both are known.
+    provider = getattr(session, "provider", None)
+    model = getattr(session, "model", None)
+    pick = (provider, model) if provider and model else None
     return {
         BROWSER_TOOL_NAME: BrowserTool(
             runtime,
