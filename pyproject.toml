@@ -92,6 +92,9 @@ dependencies = [
     # is what unlocks a passphrase-protected OpenSSH key (ssh-keygen's default
     # format), so a user's own protected key can be added at all.
     "asyncssh[bcrypt]>=2.21",
+    # Security floor for a transitive dependency (mcp, twilio): 2.13.0 carries
+    # ten advisories fixed in 2.14.0 (CVE-2026-101917, CVE-2026-102265..102274).
+    "pyjwt>=2.14.0",
     "sounddevice>=0.5",  # PortAudio binding; needs system libportaudio2 on Linux
     # ChatGPT-Live (Codex subscription voice) carries audio ONLY on a WebRTC
     # media track — its protocol has no audio event at all. Jarvis owns that
