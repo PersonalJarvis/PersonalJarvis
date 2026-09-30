@@ -392,13 +392,11 @@ _READBACK_KINDS: frozenset[str] = frozenset(
 
 #: Readback sources that never speak outside a call (see ``_is_agent_reply``).
 #: A mission the user just asked for is not here: its answer may still punch
-#: through the hangup gate (AD-OE5/OE6).
+#: through the hangup gate (AD-OE5/OE6). A coding pane or a Jarvis agent that
+#: finishes is not here either: since 2026-09-30 neither is spoken at all, only
+#: shown (pane badge and bell, the agent chat notice).
 _HELD_FOR_CALL_SOURCES: frozenset[str] = frozenset(
     {
-        "society.lead",
-        # A pane finishing a job Jarvis handed it (jarvis/agentic_ide/
-        # voice_readback.py): spoken inside the call, else at the next one.
-        "agentic_ide.readback",
         "tasks.runner",
         "workflows.runner",
         "workflows.scheduler",

@@ -149,7 +149,8 @@ async def test_question_returns_once_and_answer_ends_exchange(world):
     assert answers[0].text == "Navigation and reading succeeded."
     assert reply_policy(answers[0]) == "none"
     assert "No reply is requested" in frame_incoming(answers[0], "Scout")
-    assert len(chat.notices) == len(published) == 1
+    assert len(chat.notices) == 1
+    assert published == [], "a reply to the lead is shown, never spoken"
     refused = await MessageAgentTool(rt, "jarvis").execute(
         {
             "target": "scout",
@@ -209,7 +210,8 @@ async def test_message_reporting_matrix(world, policy, status, expected):
     rt, chat, published = world
     request = await send(rt, reply_policy=policy)
     await finish_message(rt, chat, request, status=status)
-    assert len(chat.notices) == len(published) == expected
+    assert len(chat.notices) == expected
+    assert published == [], "a reply to the lead is shown, never spoken"
     if expected and status == "error":
         replies = await rt.store.events_for_trace(request.trace_id)
         assert replies[-1].payload["reply_status"] == "blocked"
@@ -275,7 +277,7 @@ async def test_assignment_reporting_preserves_result_and_releases_slot(
             ctx(),
         )
         assert reported.success
-        assert not published  # The watcher owns the single completion announcement.
+        assert not published  # Nothing to the lead is spoken.
         assert not any(
             chat.store.incoming_message(session.session_id, reported.output["message_id"])
             for session in chat.store.list_sessions(surface="jarvis")
@@ -290,7 +292,8 @@ async def test_assignment_reporting_preserves_result_and_releases_slot(
     ]
     assert len(results) == 1 and results[0].payload["status"] == status
     assert rt.scheduler.active_runs("scout") == 0
-    assert len(chat.notices) == len(published) == expected
+    assert len(chat.notices) == expected
+    assert published == [], "a reply to the lead is shown, never spoken"
 
 
 @pytest.mark.parametrize(

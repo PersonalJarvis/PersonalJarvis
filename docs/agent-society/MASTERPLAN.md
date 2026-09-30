@@ -32,7 +32,7 @@ carries the team card (roster + hands, byte-stable, current on the next turn aft
 write), the router's decision table has a DELEGATE way ahead of `spawn_worker`, the realtime
 session gets a names directive and the turn planner a `SOCIETY` reason, `delegate_to_agent`
 picks the fitting agent when no name is given, and a lead-assigned result comes back as a
-spoken completion plus a notice in the front-page chat (`agent-definition.md` §3.5). **M3
+notice in the front-page chat, not spoken (2026-09-30; `agent-definition.md` §3.5). **M3
 world** is the maintainer's parallel track. Open in M4: rooms live under the scheduler, the
 curator.
 
