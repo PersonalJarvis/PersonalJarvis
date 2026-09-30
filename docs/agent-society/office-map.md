@@ -1,7 +1,11 @@
-# Agent office map
+# Agent office map (Jarvis Verse)
+
+Product name: **Jarvis Verse** (since 2026-09-30). The interface calls the
+whole map, the Map tab and the IDE side-panel tab "Jarvis Verse"; the code keeps
+its `office` identifiers, and rooms and floors inside it keep their own names.
 
 Status: **walkable prototype built 2026-09-28, awaiting the maintainer's visual review.**
-It replaces the Mars colony as the renderer behind **Agents > Map**. The Mars
+It replaces the Mars colony as the renderer behind **Agents > Jarvis Verse**. The Mars
 code, its backend contracts and the communications station remain in the tree
 and reachable from the Agents workspace; only the map surface changed.
 
