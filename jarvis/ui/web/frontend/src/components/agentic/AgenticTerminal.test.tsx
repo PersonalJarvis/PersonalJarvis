@@ -344,6 +344,24 @@ describe("AgenticTerminal layout", () => {
     expect(pane.style.borderColor).toBe(resting);
   });
 
+  it("selects the pane on a press into the terminal even when xterm swallows it", () => {
+    const onFocus = vi.fn();
+    render(<AgenticTerminal name="Dana" displayName="Codex" appearance="dark" fontSize={13} headerMode="minimal" onFocus={onFocus} />);
+    const host = screen.getByTestId("agentic-terminal-host-Dana");
+    // xterm's selection service stops a press it turns into a selection.
+    const swallow = (event: Event) => event.stopPropagation();
+    host.addEventListener("mousedown", swallow);
+    fireEvent.mouseDown(host, { button: 0 });
+    expect(onFocus).toHaveBeenCalledTimes(1);
+    host.removeEventListener("mousedown", swallow);
+    // A press that bubbles normally reaches both handlers but counts once.
+    fireEvent.mouseDown(host, { button: 0 });
+    expect(onFocus).toHaveBeenCalledTimes(2);
+    // Only the primary button selects; a right-click is the pane menu's.
+    fireEvent.mouseDown(host, { button: 2 });
+    expect(onFocus).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps the wheel on terminal history even while the CLI tracks the mouse", () => {
     render(
       <AgenticTerminal
