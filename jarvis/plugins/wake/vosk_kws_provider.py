@@ -1334,12 +1334,21 @@ class VoskKwsProvider:
         """Feed one chunk to stage 1 off the loop and apply the CPU budget.
 
         Returns the hit (if any) and the recognizer set to continue with —
-        rebuilt without the demoted model when the budget rule fired.
+        without the demoted model when the budget rule fired.
+
+        The surviving recognizers are KEPT, never rebuilt: the demotion fires
+        exactly when the box is busiest, which is also when the user is mid-
+        phrase. Rebuilding every recognizer threw away the primary's decode of
+        the "Hey" it had already heard, so the rest of the call could never
+        match again — the wake was lost silently, with no candidate and no
+        suppression line (bench 2026-09-30: every pos_isolated miss coincided
+        with a demotion).
         """
         self._last_stage1_cost = (0.0, 0.0)
         found = await _in_pool(self._grammar_hit_all, recs, pcm)
         if self._note_stage1_cost(*self._last_stage1_cost):
-            recs = self._fresh_recs()
+            active = set(self._stage1_paths)
+            recs = {path: rec for path, rec in recs.items() if path in active}
         return found, recs
 
     def _verify_candidate(
