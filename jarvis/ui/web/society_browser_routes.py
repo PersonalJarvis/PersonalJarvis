@@ -87,6 +87,18 @@ async def ensure_agent_browser(agent_id: str, request: Request) -> dict[str, Any
     return install.snapshot(rt.data_dir)
 
 
+@router.get("/agents/{agent_id}/browser/open")
+async def agent_browser_open(agent_id: str, request: Request) -> dict[str, Any]:
+    """Whether this agent's browser is running — a read that never launches one."""
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, "Agent not found")
+    session = rt.browser.live.sessions.get(agent.agent_id)
+    is_open = session is not None and not session.closed
+    return {"open": is_open, "running": is_open and session.run_lock.locked()}
+
+
 @router.post("/browser/repair", openapi_extra={"x-jarvis-dangerous": True})
 async def repair_browser(request: Request) -> dict[str, Any]:
     """Rebuild and verify the managed browser environment."""

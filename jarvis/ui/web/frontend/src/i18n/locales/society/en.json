@@ -557,7 +557,10 @@
       "approval": "Allow browser action?",
       "allow": "Allow",
       "deny": "Deny",
-      "repair": "Repair browser"
+      "repair": "Repair browser",
+      "off": "Browser off",
+      "off_hint": "The browser starts only when {0} needs it.",
+      "open": "Open browser"
     },
     "mars": {
       "rover_title": "Agent rover",

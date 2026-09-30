@@ -557,7 +557,10 @@
       "approval": "¿Permitir la acción?",
       "allow": "Permitir",
       "deny": "Denegar",
-      "repair": "Reparar navegador"
+      "repair": "Reparar navegador",
+      "off": "Navegador apagado",
+      "off_hint": "El navegador solo se inicia cuando {0} lo necesita.",
+      "open": "Abrir navegador"
     },
     "mars": {
       "rover_title": "Rover de agentes",

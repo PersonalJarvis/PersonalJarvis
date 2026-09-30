@@ -2880,19 +2880,14 @@ class WebServer:
         self._schedule_realtime_transport_warm()
         self._schedule_appshot_shortcut()
         # Defer provisioning until the boot chain returns control to the server.
+        # Only the install is prepared here: a Chromium costs hundreds of MB,
+        # so an agent's browser launches when the agent first uses it or the
+        # person opens its view, never pre-warmed at boot.
         async def prepare_browser() -> None:
             from jarvis.society.browser import install
             data_dir = Path(getattr(self.cfg.memory, "data_dir", None) or "data")
             try:
                 install.start_install(data_dir)
-                while install.snapshot(data_dir)["running"]:
-                    await asyncio.sleep(1)
-                if install.is_installed(data_dir):
-                    runtime = self._build_society_runtime()
-                    await runtime.ensure_started()
-                    lead = await runtime.roster.get("jarvis")
-                    if lead is not None:
-                        await runtime.browser.live.ensure(lead)
             except Exception:
                 logger.debug("Browser preparation deferred after failure", exc_info=True)
         self._browser_prepare_task = asyncio.create_task(prepare_browser(), name="browser-prepare")
