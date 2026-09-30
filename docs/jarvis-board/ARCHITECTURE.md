@@ -61,7 +61,7 @@
 | Phase | Code | Persistence | Responsibility |
 |---|---|---|---|
 | **A — Personal Dashboard** | `jarvis/board/aggregator.py`, `store.py` | `data/board/personal.db` (SQLite, sync) | FlightRecorder-JSONL → daily_stats / personal_records. Read-only API. |
-| **B — Achievements + AI-Bio** | `jarvis/board/achievements.py`, `evaluator.py`, `profile.py`, `scheduler.py` | same `personal.db` (additive) | Live-EventBus subscriber unlocks achievements. Bio rewritten on achievement unlocks or on request, billed to a subscription once one is connected. |
+| **B — Achievements + AI-Bio** | `jarvis/board/achievements.py`, `evaluator.py`, `profile.py`, `scheduler.py` | same `personal.db` (additive) | Live-EventBus subscriber unlocks achievements. Bio rewritten on achievement unlocks or on request, billed to a subscription once one is connected. `[board.bio].override_provider/override_model` is the user's deliberate pin and the only way the bio bills a per-token key while a subscription is connected. |
 | **C — Federation Backend** | `board-backend/` (separate subproject) | `/data/board.db` (in the container) | Standalone service. Receives signed pushes from the local Jarvis. |
 | **D — Friends** | extends `board-backend/` + `jarvis/ui/web/federation_proxy_routes.py` | same `board.db` (additive) | Pair, Activity, Reactions, Stories, Federation-Pull. |
 

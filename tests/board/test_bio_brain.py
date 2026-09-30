@@ -29,11 +29,16 @@ class _FakeRegistry:
     """Records every instantiation; a keyed one in subscription mode is the bug."""
 
     def __init__(
-        self, available: list[str], connected: tuple[str, ...] = (), fail: tuple[str, ...] = (),
+        self,
+        available: list[str],
+        connected: tuple[str, ...] = (),
+        fail: tuple[str, ...] = (),
+        no_probe: tuple[str, ...] = (),
     ) -> None:
         self._available = list(available)
         self._connected = set(connected)
         self._fail = set(fail)
+        self._no_probe = set(no_probe)
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     def available(self) -> list[str]:
@@ -41,14 +46,10 @@ class _FakeRegistry:
 
     def get_class(self, name: str) -> type:
         connected = name in self._connected
-        return type(
-            "FakeBrainClass",
-            (),
-            {
-                "native_system_prompt": True,
-                "subscription_connected": staticmethod(lambda: connected),
-            },
-        )
+        attrs: dict[str, Any] = {"native_system_prompt": True}
+        if name not in self._no_probe:
+            attrs["subscription_connected"] = staticmethod(lambda: connected)
+        return type("FakeBrainClass", (), attrs)
 
     def instantiate(self, name: str, **kwargs: Any) -> _Brain:
         self.calls.append((name, dict(kwargs)))
@@ -76,10 +77,12 @@ def _world(
     available: list[str],
     connected: tuple[str, ...] = (),
     fail: tuple[str, ...] = (),
+    no_probe: tuple[str, ...] = (),
 ) -> _FakeRegistry:
-    registry = _FakeRegistry(available, connected, fail)
+    """A provider in ``no_probe`` has no login probe: its login is unknown."""
+    registry = _FakeRegistry(available, connected, fail, no_probe)
     monkeypatch.setattr(resolver, "_get_registry", lambda: registry)
-    policy._probe_override = lambda name: name in connected
+    policy._probe_override = lambda name: None if name in no_probe else name in connected
     return registry
 
 
@@ -153,13 +156,59 @@ def test_no_usable_subscription_defers_without_touching_a_key(
     assert registry.calls == []
 
 
-def test_override_is_honoured_as_is_in_subscription_mode(
+def test_a_refused_subscription_does_not_hide_the_next_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """antigravity comes first by card order and has no login probe; with an
+    API-key slot and an unknown login the policy refuses it. The bio must still
+    reach the signed-in claude-cli instead of deferring."""
+    registry = _world(
+        monkeypatch,
+        available=["openai", "antigravity", "claude-cli"],
+        connected=("claude-cli",),
+        no_probe=("antigravity",),
+    )
+    _frontier_must_not_run(monkeypatch)
+
+    brain = bio_brain.resolve_bio_brain(JarvisConfig())
+
+    assert brain.name == "claude-cli"
+    assert registry.names() == ["claude-cli"]
+
+
+def test_every_allowed_subscription_is_tried_before_deferring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = _world(
+        monkeypatch,
+        available=["openai", "grok-build", "claude-cli"],
+        connected=("claude-cli",),
+        no_probe=("grok-build",),
+        fail=("grok-build",),
+    )
+    _frontier_must_not_run(monkeypatch)
+
+    brain = bio_brain.resolve_bio_brain(JarvisConfig())
+
+    assert brain.name == "claude-cli"
+    assert registry.names() == ["grok-build", "claude-cli"]
+
+
+def test_override_is_the_only_way_the_bio_bills_a_key_while_subscribed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The override is the user's deliberate pin and is honoured even when it
+    names a keyed provider; without it the same install never touches a key."""
     registry = _world(
         monkeypatch, available=["openai", "claude-cli"], connected=("claude-cli",),
     )
     _frontier_must_not_run(monkeypatch)
+    assert policy._billing("openai") == "api"
+
+    assert bio_brain.resolve_bio_brain(JarvisConfig()).name == "claude-cli"
+    assert _keyed(registry.names()) == []
+
+    registry.calls.clear()
     cfg = JarvisConfig()
     cfg.board.bio.override_provider = "openai"
     cfg.board.bio.override_model = "picked-model"
