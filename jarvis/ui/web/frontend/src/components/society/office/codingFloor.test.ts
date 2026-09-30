@@ -10,7 +10,7 @@ import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
 import { resetWorkspacePanesPoll, useWorkspacePanesStore } from "@/store/workspacePanes";
 
 import {
-  isPaneAgentId, paneAgentId, paneFigure, paneLabel, paneOccupants, panePlateName, paneRunState, useCodingFloorOccupants,
+  isPaneAgentId, paneAgentId, paneFigure, paneLabel, paneOccupants, panePlateName, paneRunState, plateTitle, useCodingFloorOccupants,
 } from "./codingFloor";
 import { allDesks, buildOfficeLayout } from "./officeLayout";
 import { toyLookFor } from "./toyFigureModel";
@@ -79,6 +79,15 @@ describe("coding floor roster", () => {
     expect(occupant.agent.tier).toBe("specialist");
     expect(occupant.agent.chatSessionId).toBeNull();
     expect(occupant.agent.createdMs).toBe(100_000);
+  });
+
+  it("splits a recap into subject and result for the two-line plate", () => {
+    expect(plateTitle("Office map camera — controls fix")).toEqual({ subject: "Office map camera", result: "controls fix" });
+    expect(plateTitle("Terminal tabs – rename without restart")).toEqual({ subject: "Terminal tabs", result: "rename without restart" });
+    expect(plateTitle("Login test - flaky on CI")).toEqual({ subject: "Login test", result: "flaky on CI" });
+    expect(plateTitle("Fix the login test")).toEqual({ subject: "Fix the login test", result: "" });
+    expect(plateTitle("self-hosted runner")).toEqual({ subject: "self-hosted runner", result: "" });
+    expect(plateTitle(" — dangling")).toEqual({ subject: "— dangling", result: "" });
   });
 
   it("gives same-named workspaces their own departments", () => {
