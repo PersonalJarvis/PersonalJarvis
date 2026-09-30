@@ -94,6 +94,33 @@ export function panePlateName(
   return title && title !== pane.display_name && title !== pane.name ? title : paneLabel(pane);
 }
 
+/** The two halves of a plate: what the pane is about, and where it stands. */
+export interface PlateTitle {
+  subject: string;
+  result: string;
+}
+
+/** " — ", " – " or a spaced " - ": the break the recap contract asks the model for. */
+const TITLE_BREAK = /\s+[—–-]\s+/;
+
+/**
+ * A pane title split for a two-line plate.
+ *
+ * Recaps are written as "subject — result" ("Office map camera — controls
+ * fix"), and one line clipped the result away: four plates read "Office
+ * screens — live worker te…", so the half that told the panes apart was
+ * the half nobody could see. The subject goes on top, the result below it,
+ * each with its own width. A title with no break stays one line.
+ */
+export function plateTitle(title: string): PlateTitle {
+  const text = title.trim();
+  const found = TITLE_BREAK.exec(text);
+  if (!found) return { subject: text, result: "" };
+  const subject = text.slice(0, found.index).trim();
+  const result = text.slice(found.index + found[0].length).trim();
+  return subject && result ? { subject, result } : { subject: text, result: "" };
+}
+
 function workspaceLabel(pane: WorkspacePaneRow): string {
   const name = pane.workspace_name.trim();
   if (name) return name;
