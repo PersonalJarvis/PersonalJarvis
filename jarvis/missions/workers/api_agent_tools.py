@@ -756,7 +756,9 @@ async def _terminate_windows_tree(proc: asyncio.subprocess.Process) -> None:
         for process in reversed(processes):
             with contextlib_suppress(psutil.Error):
                 process.terminate()
-        _, alive = await asyncio.to_thread(psutil.wait_procs, processes, timeout=0.25)
+        from jarvis.core.process_utils import wait_procs  # noqa: PLC0415
+
+        _, alive = await asyncio.to_thread(wait_procs, processes, 0.25)
         for process in alive:
             with contextlib_suppress(psutil.Error):
                 process.kill()

@@ -30,7 +30,7 @@ sys.path.insert(0, str(ROOT))
 
 from jarvis.core.config_writer import _WRITE_LOCK, _atomic_write  # noqa: E402
 from jarvis.core.instance import DEV_PORT_OFFSET  # noqa: E402
-from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: E402
+from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS, wait_procs  # noqa: E402
 
 
 def isolated_env(profile: Path, port: int, key: str) -> dict[str, str]:
@@ -88,13 +88,13 @@ def stop_owned_tree(process: subprocess.Popen) -> None:
             child.terminate()
         except psutil.NoSuchProcess:
             pass  # Browser containment can close descendants concurrently.
-    _, alive = psutil.wait_procs(owned, timeout=8)
+    _, alive = wait_procs(owned, timeout=8)
     for child in alive:
         try:
             child.kill()
         except psutil.NoSuchProcess:
             pass  # A pending graceful shutdown may win the race.
-    _, alive = psutil.wait_procs(alive, timeout=5)
+    _, alive = wait_procs(alive, timeout=5)
     if alive:
         raise RuntimeError("Frozen app left owned processes running")
     process.wait(timeout=5)

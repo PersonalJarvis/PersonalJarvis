@@ -71,9 +71,9 @@ receive the content required for their requests. See [privacy and local data](ht
 
 [Website](https://personaljarvis.ai) · [Docs](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/welcome-to-personal-jarvis.md) · [Getting started](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/first-run-setup.md) · [How it works](#how-it-works) · [Discord](https://discord.gg/x7USduHxbc) · [X](https://x.com/PersonalJarvis)
 
-https://github.com/user-attachments/assets/9930ca95-5015-4ade-9a16-975c77d179fd
+https://github.com/user-attachments/assets/2078e032-f1f0-40fa-a200-73773b099fd2
 
-<p align="center"><sub>A real click-through of the app: every frame is recorded, waiting is sped up, and a few moments are zoomed in.</sub></p>
+<p align="center"><sub>Jarvis Agents, the Jarvis Verse and the Agentic IDE, filmed from the app's own interface with a sample team; the chat and terminal output are scripted.</sub></p>
 
 ## install
 
