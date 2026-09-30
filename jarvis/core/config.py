@@ -2495,14 +2495,18 @@ class BoardFederationConfig(BaseModel):
 class BoardBioConfig(BaseModel):
     """Knobs for the AI profile generator (BioGenerator).
 
-    Important: NO provider/model default. The bio dynamically uses the
-    frontier model of the currently configured primary provider
-    (see ``jarvis/brain/resolver.py:resolve_frontier_brain``). A user with
-    only a Gemini API key gets a Gemini bio; a user with Claude configured gets
-    Opus. Multi-provider compliance is mandatory.
+    Important: NO provider/model default. The bio is background work and
+    follows the background billing rule (``jarvis/board/bio_brain.py``): once
+    a subscription is connected it is written on a subscription or a free
+    local model, never a per-token key; a key-only install uses the frontier
+    model of its primary provider. Multi-provider compliance is mandatory.
 
     ``override_provider`` / ``override_model`` are power-user fields for
     explicitly pinning a model for the bio only. Leave empty in 99% of cases.
+
+    The bio is rewritten on board events (achievements) and on request, never
+    on a timer. The retired ``cold_start_min_days`` key still loads from old
+    configs (``extra="allow"``) and is ignored.
     """
 
     model_config = {"extra": "allow"}
@@ -2511,9 +2515,6 @@ class BoardBioConfig(BaseModel):
     max_tokens: int = Field(default=400, ge=80, le=2000)
     override_provider: str | None = None
     override_model: str | None = None
-    # Cold start: trigger the first bio after this minimum age in days
-    # (instead of waiting until Sunday when no bio exists yet).
-    cold_start_min_days: int = Field(default=1, ge=0, le=14)
 
 
 class BoardConfig(BaseModel):

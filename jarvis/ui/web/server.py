@@ -790,11 +790,11 @@ class WebServer:
         """
         try:
             from jarvis.board.aggregator import BoardAggregator
+            from jarvis.board.bio_brain import BIO_TIMEOUT_S, resolve_bio_brain
             from jarvis.board.evaluator import AchievementEvaluator
             from jarvis.board.profile import BioGenerator, BioStore
             from jarvis.board.scheduler import BioScheduler
             from jarvis.board.store import BoardStore
-            from jarvis.brain.resolver import resolve_frontier_brain
             from jarvis.core.paths import board_db_path, user_data_dir, user_logs_dir
 
             db_path = board_db_path()
@@ -834,7 +834,9 @@ class WebServer:
                 # Lazy: capture cfg + bus from the closure, so a later
                 # provider switch via the UI takes effect immediately
                 # (the resolver invalidates its cache via ConfigReloaded).
-                return resolve_frontier_brain(cfg, bus=self.bus)
+                # Background billing rule: subscription or local model once a
+                # subscription is connected, never a per-token key.
+                return resolve_bio_brain(cfg, bus=self.bus)
 
             bio_generator = BioGenerator(
                 brain_resolver=_bio_brain_resolver,
@@ -846,14 +848,14 @@ class WebServer:
                 self_mod_log_path=self_mod_log,
                 temperature=bio_cfg.temperature,
                 max_tokens=bio_cfg.max_tokens,
+                timeout_s=BIO_TIMEOUT_S,
             )
+            # Hook-driven: rewrites the bio on unlocked achievements, never on
+            # a timer or at boot.
             scheduler = BioScheduler(
                 generator=bio_generator,
-                db_path=db_path,
-                bus=self.bus,
                 bio_store=bio_store,
-                board_store=store,
-                cold_start_min_days=bio_cfg.cold_start_min_days,
+                bus=self.bus,
             )
 
             self._board_aggregator = aggregator
@@ -2793,10 +2795,9 @@ class WebServer:
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning("AchievementEvaluator.attach() failed")
 
-        # Bio scheduler — weekly + master achievement trigger.
-        # The brain isn't finalized here yet (app.state.brain usually
-        # arrives later). BioGenerator.brain stays None until the caller
-        # sets it — the scheduler handles a None brain gracefully.
+        # Bio scheduler — subscribes to achievement unlocks only. It starts no
+        # task and generates nothing here; the brain is resolved per
+        # generation, when a board event actually asks for one.
         if self._bio_scheduler is not None:
             try:
                 self._bio_scheduler.start()

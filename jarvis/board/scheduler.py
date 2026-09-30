@@ -1,238 +1,195 @@
-"""BioScheduler — triggers the BioGenerator on a regular schedule (phase B).
+"""BioScheduler — rewrites the Board bio when something meaningful happens.
 
-Two trigger types:
+There is no timer. The bio used to be regenerated every Sunday at 18:00, on
+every boot of an install without a bio, and on ``*_master`` achievements —
+on the primary provider's deep model, usually a paid key, whether or not
+anything had changed. Maintainer decision (2026-09-30): update the bio on real
+board events and bill it to the subscription (see ``bio_brain.py``).
 
-1. **Weekly** (default: Sunday 18:00 local time). An ``asyncio`` loop ticks
-   every 60 s and checks: is it Sunday within the 18:00–18:05 window and
-   has regeneration not yet run *today*? The date guard stored in
-   ``aggregator_meta[last_bio_run_date]`` prevents double-runs even when
-   the app is restarted inside the window.
+Hooks:
 
-2. **Master achievement**: a second bus subscriber listens for
-   ``AchievementUnlocked`` and triggers regeneration for every
-   ``*_master`` ID — e.g. ``tool_master``.
+1. **Achievement unlocked** — every ``AchievementUnlocked`` on the bus. The
+   evaluator publishes each achievement exactly once (``INSERT OR IGNORE``),
+   so these are the board's milestones.
+2. **Explicit refresh** — ``POST /api/board/bio/regenerate`` calls the
+   generator directly and is never held back by the spacing below.
 
-No APScheduler dependency (project pattern, see RECON.md §4).
+A burst of hooks (one tool call can unlock two achievements) is debounced into
+ONE generation, and a hook-driven generation keeps at least
+:attr:`BioScheduler.MIN_SPACING_S` after the newest bio. A hook inside that
+window is not dropped: the pending generation waits for the window to close.
+A bio written after the first pending hook — the user refreshed by hand —
+already covers it, so the pending run then ends without generating again.
+
+A failed or deferred generation (no subscription usable right now) is not
+retried on a timer; the next board event tries again. Pending work lives in
+memory only, and nothing is generated at boot: an install without a bio gets
+its first one at its first achievement or refresh click.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-import sqlite3
-from datetime import datetime
-from pathlib import Path
-from typing import Any
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 from jarvis.core.bus import EventBus
-from jarvis.core.events import AchievementUnlocked, Event
+from jarvis.core.events import AchievementUnlocked
 
 from .profile import BioGenerator, BioStore
-from .store import BoardStore
 
 log = logging.getLogger(__name__)
 
 
 class BioScheduler:
-    """Orchestrates bio regeneration.
+    """Turns board events into (at most) one bio generation at a time."""
 
-    Uses the same DB as the aggregator and evaluator — an additional
-    ``meta`` key (``last_bio_run_date``) guarantees idempotency.
-    """
-
-    # Default config — can be overridden in the future via cfg.board.ai_profile
-    # (plan §5-B Ultrathink #3).
-    DEFAULT_WEEKDAY = 6     # Sonntag (Mon=0)
-    DEFAULT_HOUR = 18
-    WINDOW_MINUTES = 5
+    #: Quiet period that folds a burst of hooks into one generation.
+    DEBOUNCE_S = 30.0
+    #: Minimum distance between the newest bio and a hook-driven generation.
+    MIN_SPACING_S = 24 * 3600.0
 
     def __init__(
         self,
         *,
         generator: BioGenerator,
-        db_path: Path,
+        bio_store: BioStore,
         bus: EventBus | None = None,
-        weekday: int | None = None,
-        hour: int | None = None,
-        tick_interval_s: float = 60.0,
-        memory_text_provider: Any = None,
-        soul_text_provider: Any = None,
-        bio_store: BioStore | None = None,
-        board_store: BoardStore | None = None,
-        cold_start_min_days: int = 1,
+        debounce_s: float | None = None,
+        min_spacing_s: float | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._gen = generator
-        self._db_path = Path(db_path)
-        self._bus = bus
-        self._weekday = self.DEFAULT_WEEKDAY if weekday is None else weekday
-        self._hour = self.DEFAULT_HOUR if hour is None else hour
-        self._tick_s = tick_interval_s
-        self._memory_provider = memory_text_provider
-        self._soul_provider = soul_text_provider
-        self._task: asyncio.Task[None] | None = None
-        self._subscribed = False
-        # Cold-start: fires once when no bio exists AND the user already has
-        # at least ``cold_start_min_days`` days of activity.
         self._bio_store = bio_store
-        self._board_store = board_store
-        self._cold_start_min_days = max(0, int(cold_start_min_days))
-        self._cold_start_done = False
+        self._bus = bus
+        self._debounce_s = self.DEBOUNCE_S if debounce_s is None else max(0.0, debounce_s)
+        self._min_spacing_s = (
+            self.MIN_SPACING_S if min_spacing_s is None else max(0.0, min_spacing_s)
+        )
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self._subscribed = False
+        self._closed = False
+        self._pending: asyncio.Task[None] | None = None
+        self._reasons: list[str] = []
+        self._first_hook_at: datetime | None = None
 
     # --------------- Lifecycle ---------------
 
     def start(self) -> None:
+        """Subscribes to the hooks. Starts no task and generates nothing."""
+        self._closed = False
         if self._bus is not None and not self._subscribed:
-            self._bus.subscribe_all(self._on_event)
+            self._bus.subscribe(AchievementUnlocked, self._on_achievement)
             self._subscribed = True
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._loop(), name="bio-scheduler")
 
     async def stop(self) -> None:
+        self._closed = True
         if self._bus is not None and self._subscribed:
-            try:
-                self._bus._wildcard_subscribers.remove(self._on_event)  # type: ignore[attr-defined]
-            except (AttributeError, ValueError):
-                pass
+            self._bus.unsubscribe(AchievementUnlocked, self._on_achievement)
             self._subscribed = False
-        if self._task is not None:
-            self._task.cancel()
+        task, self._pending = self._pending, None
+        if task is not None and not task.done():
+            task.cancel()
             try:
-                await self._task
-            except (asyncio.CancelledError, Exception):
-                pass
-            self._task = None
+                await task
+            except asyncio.CancelledError:
+                pass  # the cancellation requested just above
+        self._reasons.clear()
+        self._first_hook_at = None
 
-    # --------------- Weekly loop ---------------
+    # --------------- Hooks ---------------
 
-    async def _loop(self) -> None:
+    async def _on_achievement(self, event: AchievementUnlocked) -> None:
+        """Bus callback: only records the hook, never waits on a brain."""
+        achievement = (event.achievement_id or "").strip()
+        self.notify(f"milestone:{achievement}" if achievement else "milestone")
+
+    def notify(self, reason: str) -> None:
+        """Records one meaningful board event. Call on the event loop."""
+        if self._closed:
+            return
+        if not self._reasons:
+            self._first_hook_at = self._clock()
+        self._reasons.append(reason)
+        if self._pending is None or self._pending.done():
+            self._pending = asyncio.create_task(
+                self._run_pending(), name="board-bio-refresh",
+            )
+
+    # --------------- Pending generation ---------------
+
+    async def _run_pending(self) -> None:
+        try:
+            await self._wait_then_generate()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - one failed run must not kill later hooks
+            log.exception("BioScheduler: hook-driven bio generation failed")
+        # Hooks that arrived while this run was generating get their own run;
+        # it finds the fresh bio and ends unless they came after it.
+        if self._reasons and not self._closed:
+            self._pending = asyncio.create_task(
+                self._run_pending(), name="board-bio-refresh",
+            )
+        else:
+            self._pending = None
+
+    async def _wait_then_generate(self) -> None:
+        if self._debounce_s > 0:
+            await asyncio.sleep(self._debounce_s)
         while True:
-            try:
-                await self._maybe_run_cold_start()
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001
-                log.exception("BioScheduler cold-start tick failed")
-            try:
-                await self._maybe_run_weekly()
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001
-                log.exception("BioScheduler weekly tick failed")
-            try:
-                await asyncio.sleep(self._tick_s)
-            except asyncio.CancelledError:
-                raise
+            wait_s = await asyncio.to_thread(self._seconds_until_due)
+            if wait_s is None:
+                log.info(
+                    "BioScheduler: a newer bio already covers %s", ", ".join(self._reasons),
+                )
+                self._drain()
+                return
+            if wait_s <= 0:
+                break
+            log.info(
+                "BioScheduler: %s waits %.0f s for the %.0f h spacing",
+                ", ".join(self._reasons), wait_s, self._min_spacing_s / 3600,
+            )
+            await asyncio.sleep(wait_s)
 
-    async def _maybe_run_cold_start(self) -> None:
-        """Fires once when no bio exists yet.
+        reasons = self._drain()
+        result = await self._gen.generate_bio(triggered_by=reasons[0])
+        if result is None:
+            log.info(
+                "BioScheduler: bio not rewritten (trigger=%s); the next board event retries",
+                ", ".join(reasons),
+            )
+        else:
+            log.info("BioScheduler: bio rewritten (trigger=%s)", ", ".join(reasons))
 
-        The check ticks every minute (cheap), but the flag ``_cold_start_done``
-        prevents multiple triggers within the same app session.
-        Persistent idempotency is inherited from ``last_bio_run_date`` — once
-        the cold-start bio is written, ``BioStore.latest()`` is no longer
-        ``None``, so the path does not trigger again.
-        """
-        if self._cold_start_done:
-            return
-        if self._bio_store is None or self._board_store is None:
-            self._cold_start_done = True       # Stack is incomplete, abort
-            return
+    def _seconds_until_due(self) -> float | None:
+        """Seconds until a generation may run; ``None`` if a newer bio covers it."""
         latest = self._bio_store.latest()
-        if latest is not None:
-            self._cold_start_done = True       # bio already exists
-            return
-        try:
-            days = self._board_store.days_observed()
-        except Exception:  # noqa: BLE001
-            return
-        if days < self._cold_start_min_days:
-            return
-        today_iso = datetime.now().astimezone().date().isoformat()
-        await self._run_and_mark(triggered_by="cold_start", today_iso=today_iso)
-        self._cold_start_done = True
+        generated_at = _parse_iso((latest or {}).get("generated_at"))
+        if generated_at is None:
+            return 0.0
+        first_hook_at = self._first_hook_at
+        if first_hook_at is not None and generated_at >= first_hook_at:
+            return None
+        due = generated_at + timedelta(seconds=self._min_spacing_s)
+        return max(0.0, (due - self._clock()).total_seconds())
 
-    async def _maybe_run_weekly(self) -> None:
-        now = datetime.now().astimezone()
-        if now.weekday() != self._weekday:
-            return
-        if now.hour != self._hour:
-            return
-        if now.minute >= self.WINDOW_MINUTES:
-            return
-        today_iso = now.date().isoformat()
-        if self._read_meta("last_bio_run_date") == today_iso:
-            return
-        await self._run_and_mark(triggered_by="weekly", today_iso=today_iso)
-
-    async def _run_and_mark(self, *, triggered_by: str, today_iso: str) -> None:
-        memory = await _call(self._memory_provider, default="")
-        soul = await _call(self._soul_provider, default="")
-        result = await self._gen.generate_bio(
-            memory_text=memory,
-            soul_text=soul,
-            triggered_by=triggered_by,
-        )
-        if result is not None:
-            self._write_meta("last_bio_run_date", today_iso)
-            log.info("BioScheduler: Bio regeneriert (trigger=%s)", triggered_by)
-
-    # --------------- Achievement-driven trigger ---------------
-
-    async def _on_event(self, event: Event) -> None:
-        """Bus callback for ``AchievementUnlocked`` events with id *_master."""
-        try:
-            if not isinstance(event, AchievementUnlocked):
-                return
-            if not event.achievement_id.endswith("_master"):
-                return
-            today_iso = datetime.now().astimezone().date().isoformat()
-            # Milestone regeneration is NOT blocked by the date guard —
-            # if the user reaches tool_master on a Sunday, they should
-            # receive the fresh bio immediately, not next week.
-            await self._gen.generate_bio(
-                memory_text=await _call(self._memory_provider, default=""),
-                soul_text=await _call(self._soul_provider, default=""),
-                triggered_by=f"milestone:{event.achievement_id}",
-            )
-            self._write_meta("last_bio_run_date", today_iso)
-        except Exception:  # noqa: BLE001
-            log.exception("BioScheduler milestone trigger failed")
-
-    # --------------- DB helpers ---------------
-
-    def _conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path, isolation_level=None)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def _read_meta(self, key: str) -> str | None:
-        conn = self._conn()
-        try:
-            row = conn.execute(
-                "SELECT value FROM aggregator_meta WHERE key = ?", (key,),
-            ).fetchone()
-            return row["value"] if row is not None else None
-        finally:
-            conn.close()
-
-    def _write_meta(self, key: str, value: str) -> None:
-        conn = self._conn()
-        try:
-            conn.execute(
-                "INSERT INTO aggregator_meta (key, value) VALUES (?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (key, value),
-            )
-        finally:
-            conn.close()
+    def _drain(self) -> list[str]:
+        reasons = list(self._reasons) or ["milestone"]
+        self._reasons.clear()
+        self._first_hook_at = None
+        return reasons
 
 
-async def _call(provider: Any, *, default: str) -> str:
-    """Accepts a callable, a coroutine-callable, or a plain string as provider."""
-    if provider is None:
-        return default
-    if callable(provider):
-        result = provider()
-        if asyncio.iscoroutine(result):
-            result = await result
-        return str(result) if result is not None else default
-    return str(provider)
+def _parse_iso(value: object) -> datetime | None:
+    """An aware datetime from a stored ISO timestamp, or None."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        log.warning("BioScheduler: unreadable bio timestamp %r, treating as no bio", value)
+        return None
+    # BioStore writes local time with its offset; a naive value is local too.
+    return parsed if parsed.tzinfo is not None else parsed.astimezone()
