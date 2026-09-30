@@ -83,6 +83,7 @@ vi.mock("@/views/TelephonyView", () => ({
 vi.mock("@/views/LocalModelsView", () => ({
   LocalModelsView: stub("TAB_LOCAL_MODELS"),
 }));
+vi.mock("@/views/PetsView", () => ({ PetsView: stub("TAB_PETS") }));
 vi.mock("@/views/CostsView", () => ({ CostsView: stub("TAB_COSTS") }));
 vi.mock("@/views/feedback/FeedbackView", () => ({
   FeedbackView: stub("TAB_FEEDBACK"),
@@ -95,6 +96,7 @@ const SettingsHubView = () => <HubView onClose={noop} />;
 
 const NAV_IDS = [
   "settings",
+  "pets",
   "profile",
   "agent-instructions",
   "contacts",
@@ -150,7 +152,7 @@ describe("SettingsHubView header and navigation", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("lists all ten entries in the left navigation", async () => {
+  it("lists every mocked entry in the left navigation", async () => {
     render(<SettingsHubView />);
 
     for (const id of NAV_IDS) {
@@ -191,6 +193,7 @@ describe("SettingsHubView tab resolution", () => {
     ["socials", "TAB_SOCIALS"],
     ["apikeys", "TAB_APIKEYS"],
     ["local-models", "TAB_LOCAL_MODELS"],
+    ["pets", "TAB_PETS"],
     ["costs", "TAB_COSTS"],
     ["feedback", "TAB_FEEDBACK"],
     // Merged-in ids land on the tab hosting their content.

@@ -161,6 +161,7 @@
     "group_system": "System",
     "agent_instructions": "{name}.md",
     "appshots": "Appshots",
+    "pets": "Meine Pets",
     "jarvis_actions": "Jarvis-Aktionen",
     "marketplace": "Marketplace",
     "agentic_ide": "Agentic IDE",
@@ -2540,7 +2541,7 @@
     },
     "overlay_style": {
       "title": "Anzeige-Stil",
-      "description": "Wähle, wie {name} bei Sprachaktivität auf dem Bildschirm erscheint. Die Bar ist der schlanke Standard; das Maskottchen ist der klassische Begleiter; der Voice-Orb ist eine leuchtende Kugel; oder ganz ausblenden. Jeder schwebende Stil lässt sich auf jeden Monitor ziehen.",
+      "description": "Wähle, wie {name} bei Sprachaktivität auf dem Bildschirm erscheint. Die Bar ist der schlanke Standard; das Maskottchen ist der klassische Begleiter; der Voice-Orb ist eine leuchtende Kugel; das Pet ist ein Pixel-Begleiter, der sichtbar bleibt; oder ganz ausblenden. Jeder schwebende Stil lässt sich auf jeden Monitor ziehen.",
       "label": "Stil",
       "save": "Speichern",
       "saved": "Anzeige-Stil gewechselt.",
@@ -2549,6 +2550,7 @@
         "jarvis_bar": "Bar (Standard)",
         "mascot": "Maskottchen",
         "voice_orb": "Voice-Orb",
+        "pet": "Pet",
         "none": "Keins (ausgeblendet)"
       }
     },
@@ -2586,6 +2588,7 @@
       "hangup_label": "Auflegen",
       "dictate_label": "Diktat (halten und sprechen, Text landet dort, wo du tippst)",
       "paste_last_label": "Letztes Diktat erneut einfügen",
+      "pet_toggle_label": "Pet ein- oder ausblenden",
       "record": "Aufnehmen",
       "stop": "Stopp",
       "recording": "Drücke deine Tasten…",
@@ -5797,5 +5800,96 @@
     "save_error": "Speichern fehlgeschlagen: {0}",
     "toast_refused": "Kein Appshot: {0}",
     "chip_label": "Appshot an deine Nachricht gehängt"
+  },
+  "pets": {
+    "title": "Meine Pets",
+    "subtitle": "Ein kleiner Pixel-Begleiter, der auf deinem Desktop schwebt und reagiert, während {name} zuhört, nachdenkt und spricht. Mit {0} blendest du ihn aus oder wieder ein.",
+    "subtitle_no_shortcut": "Ein kleiner Pixel-Begleiter, der auf deinem Desktop schwebt und reagiert, während {name} zuhört, nachdenkt und spricht. Unter „Anpassen“ legst du ein Tastenkürzel zum Aus- und Einblenden fest.",
+    "hide": "Pet ausblenden",
+    "show": "Pet einblenden",
+    "open_settings": "Pet auswählen",
+    "style_notice_title": "Das Pet ist noch nicht auf deinem Desktop",
+    "style_notice_body": "Dein Anzeige-Stil ist „{0}“. Wechsle zum Pet, um es auf deinem Desktop zu sehen. Das Pet, das du unten auswählst, bleibt so oder so gespeichert.",
+    "use_pet": "Pet auf dem Desktop nutzen",
+    "style_saved": "Das Pet ist jetzt auf deinem Desktop.",
+    "restart_hint": "Gespeichert. Starte {name} neu, damit das Pet auf deinem Desktop erscheint.",
+    "load_error": "Deine Pets konnten nicht geladen werden: {0}",
+    "save_error": "Das wurde nicht gespeichert: {0}",
+    "preview_title": "Aktives Pet",
+    "customize": "Anpassen",
+    "size_label": "Größe",
+    "size_hint": "Wie groß das Pet auf deinem Desktop ist.",
+    "bubble_label": "Status-Blase",
+    "bubble_hint": "Kurze Zeilen unter dem Pet, die zeigen, was {name} gerade tut.",
+    "shortcut_hint": "Blendet das Pet aus oder holt es wieder nach vorn.",
+    "my_pets": "Meine Pets",
+    "create": "Pet erstellen",
+    "created": "{0} ist fertig.",
+    "none_name": "Keins",
+    "none_description": "Nur die Steuerleiste",
+    "selected": "Ausgewählt",
+    "delete": "Pet löschen",
+    "delete_named": "{0} löschen",
+    "delete_title": "{0} löschen?",
+    "delete_body": "Das Pet und sein Sprite-Sheet werden von diesem Computer entfernt. Das lässt sich nicht rückgängig machen.",
+    "deleted": "{0} wurde gelöscht.",
+    "states": {
+      "idle": "Wartet",
+      "listening": "Hört zu",
+      "thinking": "Denkt nach",
+      "talking": "Spricht",
+      "success": "Geschafft",
+      "error": "Fehler",
+      "sleeping": "Schläft"
+    },
+    "builtin": {
+      "gigi": {
+        "description": "Der Geist von {name}, acht Bit groß."
+      },
+      "miso": {
+        "description": "Eine Katze: spitzt beim Zuhören die Ohren und rollt sich zum Schlafen ein."
+      },
+      "brew": {
+        "description": "Eine Teekanne: dampft beim Nachdenken und pfeift beim Sprechen."
+      },
+      "bolt": {
+        "description": "Eine Batterie: lädt beim Nachdenken, sprüht bei Erfolg Funken und ist im Schlaf leer."
+      },
+      "mochi": {
+        "description": "Ein Wackelpudding, der beim Zuhören wabbelt."
+      },
+      "shelly": {
+        "description": "Eine Schnecke: das Haus dreht sich beim Nachdenken, zum Schlafen zieht sie sich zurück."
+      }
+    },
+    "create_dialog": {
+      "title": "Pet erstellen",
+      "description": "Lade ein Sprite-Sheet hoch, gib deinem Pet einen Namen, und es kommt zu deinen Pets.",
+      "name_label": "Name",
+      "name_placeholder": "Zum Beispiel: Pixel",
+      "description_label": "Beschreibung",
+      "description_placeholder": "Ein Satz über dein Pet",
+      "sheet_label": "Sprite-Sheet (PNG)",
+      "sheet_preview_alt": "Vorschau des gewählten Sprite-Sheets",
+      "sheet_hint": "Ein PNG mit transparentem Hintergrund, höchstens 2 MB und 512 × 512 Pixel.",
+      "sheet_choose": "PNG auswählen",
+      "sheet_change": "Anderes auswählen",
+      "frame_size_label": "Bildgröße",
+      "frame_size_option": "{0} × {0} px",
+      "layout_title": "So ist das Sheet aufgebaut",
+      "layout_body": "Das Sheet ist ein Raster aus quadratischen Bildern. Jede Zeile ist ein Zustand, von oben nach unten in dieser Reihenfolge, mit bis zu {0} Bildern von links nach rechts:",
+      "template_download": "Vorlage herunterladen",
+      "manifest_label": "Manifest (optional)",
+      "manifest_hint": "Eine pet.json legt für jede Zeile Bilder, Tempo und Wiederholung fest. Ohne sie werden die Zeilen in der Reihenfolge oben gelesen und die Bilder jeder Zeile gezählt.",
+      "manifest_choose": "pet.json hinzufügen",
+      "manifest_remove": "Entfernen",
+      "error_name": "Gib deinem Pet einen Namen.",
+      "error_no_sheet": "Wähle ein Sprite-Sheet aus.",
+      "error_not_png": "Wähle ein PNG-Bild aus.",
+      "error_too_big": "Dieses Bild ist größer als 2 MB.",
+      "error_manifest": "Das Manifest muss eine .json-Datei sein.",
+      "create": "Pet erstellen",
+      "creating": "Wird erstellt…"
+    }
   }
 }

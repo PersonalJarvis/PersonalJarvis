@@ -18,7 +18,7 @@ import {
 
 /**
  * Shared visual previews for the on-screen overlay styles (Bar / Mascot /
- * Voice orb / None).
+ * Voice orb / Pet / None).
  *
  * Lifted out of ``views/settings/OverlayTaskbarGroup.tsx`` so both the Settings
  * panel and the onboarding "System Style" step can render the same graphics
@@ -55,6 +55,7 @@ export function StylePreview({ style }: { style: OverlayStyle }) {
   // runs, at thumbnail size. Held at "idle" so the picker shows the calm
   // resting look rather than pretending a session is live.
   if (style === "voice_orb") return <VoiceOrb state="idle" size={46} />;
+  if (style === "pet") return <PetPreview />;
   if (style === "jarvis_bar") return <BarPreview />;
   return <NonePreview />;
 }
@@ -87,6 +88,56 @@ export function BarPreview() {
           />
         );
       })}
+    </svg>
+  );
+}
+
+/*
+ * A pixel pet, one row per string: "#" is a filled pixel. Drawn here rather
+ * than cut from a real sprite sheet because the picker renders before (and
+ * without) the pets API; the page that picks the actual pet shows the real one.
+ */
+const PET_PIXELS = [
+  "..####..",
+  ".######.",
+  "########",
+  "##.##.##",
+  "########",
+  "########",
+  "#..##..#",
+];
+const PET_PX = 3;
+
+/**
+ * The pet style: a pixel companion above its control strip — the pen disc,
+ * then the pill with microphone, talk orb and speaker. Same desktop palette as
+ * the bar thumbnail, for the same reason.
+ */
+export function PetPreview() {
+  const petW = PET_PIXELS[0].length * PET_PX;
+  const petX = (56 - petW) / 2;
+  return (
+    <svg viewBox="0 0 56 46" className="h-14" aria-hidden="true">
+      {PET_PIXELS.flatMap((line, y) =>
+        [...line].map((cell, x) =>
+          cell === "#" ? (
+            <rect
+              key={`px-${x}-${y}`}
+              x={petX + x * PET_PX}
+              y={2 + y * PET_PX}
+              width={PET_PX}
+              height={PET_PX}
+              fill={PREVIEW_BAR}
+            />
+          ) : null,
+        ),
+      )}
+      <circle cx="11" cy="37" r="5.5" fill={PREVIEW_BG} stroke={PREVIEW_RIM} strokeWidth="1" />
+      <rect x="9.5" y="34.5" width="3" height="5" rx="0.8" fill={PREVIEW_BAR} transform="rotate(35 11 37)" />
+      <rect x="19" y="31.5" width="33" height="11" rx="5.5" fill={PREVIEW_BG} stroke={PREVIEW_RIM} strokeWidth="1" />
+      <rect x="25" y="34.5" width="3" height="5" rx="1.5" fill={PREVIEW_BAR} />
+      <circle cx="35.5" cy="37" r="3.2" fill={PREVIEW_BAR} />
+      <path d="M43 35.5h1.6l2-1.8v6.6l-2-1.8H43z" fill={PREVIEW_BAR} />
     </svg>
   );
 }

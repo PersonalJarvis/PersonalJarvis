@@ -496,13 +496,15 @@ export function validateCombo(
 
 // Mirrors KEYBIND_ACTIONS in jarvis/core/config_writer.py — keep in sync.
 // "dictate" is push-to-talk (hold), "dictate_toggle" is hands-free (press once
-// to start, again to stop), "paste_last" re-inserts the last transcription.
+// to start, again to stop), "paste_last" re-inserts the last transcription,
+// "pet_toggle" hides the desktop pet or brings it back (Settings → My Pets).
 export type KeybindAction =
   | "call"
   | "hangup"
   | "dictate"
   | "dictate_toggle"
-  | "paste_last";
+  | "paste_last"
+  | "pet_toggle";
 
 /**
  * Response of GET /api/settings/keybinds.

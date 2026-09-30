@@ -26,7 +26,6 @@ import { cn } from "@/lib/utils";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import { RecentChats } from "@/components/home/RecentChats";
-import { useConversations } from "@/hooks/useConversations";
 import { useHomeStore } from "@/store/home";
 import { useAgentChatStore } from "@/store/agentChat";
 import { IdeProjectTree } from "@/components/agentic/IdeProjectTree";
@@ -36,6 +35,7 @@ import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
 import { GigiMark } from "@/components/GigiMark";
 import * as Dialog from "@radix-ui/react-dialog";
 import { startNewVoiceRun } from "@/lib/chatsApi";
+import { startNewTextChat } from "@/lib/newChat";
 
 /*
  * Why `clsx` and not `cn` on the rows below.
@@ -180,7 +180,6 @@ export function Sidebar({
   const appInstance = useAppInstance();
   const devTag = appInstance?.isDev ? appInstance.name.toUpperCase() : null;
   // New chat offers both conversation types independently of the current view.
-  const { newChat } = useConversations();
   const newAgentChat = useAgentChatStore((s) => s.newChat);
   const setSurface = useHomeStore((s) => s.setSurface);
   // The front page's nav row names the face the switch picked (Voice / Chat),
@@ -226,10 +225,7 @@ export function Sidebar({
   const startingVoiceRef = useRef(false);
   const identity = usePublishIdentity();
   const startNewChat = () => {
-    newChat();
-    newAgentChat();
-    setSurface("chat");
-    setActive("chats");
+    startNewTextChat();
     setNewChatOpen(false);
   };
   const startVoiceChat = async () => {

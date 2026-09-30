@@ -31,6 +31,7 @@ const SEARCH_PAGES = [
   { id: "socials", keys: ["socials"] },
   { id: "apikeys", keys: ["apikeys_view", "apikeys_voice", "apikeys_model", "apikeys_cu_model"] },
   { id: "appshots", keys: ["appshots"] },
+  { id: "pets", keys: ["pets"] },
   { id: "jarvis-actions", keys: ["jarvis_actions"] },
   { id: "costs", keys: ["costs_view"] },
   { id: "feedback", keys: ["feedback"] },

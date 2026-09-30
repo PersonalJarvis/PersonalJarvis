@@ -161,6 +161,7 @@
     "group_system": "System",
     "agent_instructions": "{name}.md",
     "appshots": "Appshots",
+    "pets": "My Pets",
     "jarvis_actions": "Jarvis actions",
     "marketplace": "Marketplace",
     "agentic_ide": "Agentic IDE",
@@ -2573,7 +2574,7 @@
     },
     "overlay_style": {
       "title": "Display style",
-      "description": "Choose how {name} appears on screen during voice activity. The bar is the slim default; the mascot is the classic companion; the voice orb is a glowing sphere; or hide it entirely. Every floating style can be dragged to any monitor.",
+      "description": "Choose how {name} appears on screen during voice activity. The bar is the slim default; the mascot is the classic companion; the voice orb is a glowing sphere; the pet is a pixel companion that stays on screen; or hide it entirely. Every floating style can be dragged to any monitor.",
       "label": "Style",
       "save": "Save",
       "saved": "Display style switched.",
@@ -2582,6 +2583,7 @@
         "jarvis_bar": "Bar (default)",
         "mascot": "Mascot",
         "voice_orb": "Voice orb",
+        "pet": "Pet",
         "none": "None (hidden)"
       }
     },
@@ -2619,6 +2621,7 @@
       "hangup_label": "Hangup",
       "dictate_label": "Dictation (hold to speak, text lands where you type)",
       "paste_last_label": "Paste the last dictation again",
+      "pet_toggle_label": "Show or hide the pet",
       "record": "Record",
       "stop": "Stop",
       "recording": "Press your keys…",
@@ -5830,5 +5833,96 @@
     "save_error": "Could not save: {0}",
     "toast_refused": "No appshot: {0}",
     "chip_label": "Appshot added to your message"
+  },
+  "pets": {
+    "title": "My Pets",
+    "subtitle": "A small pixel companion that floats on your desktop and reacts as {name} listens, thinks and talks. Press {0} to hide or show it.",
+    "subtitle_no_shortcut": "A small pixel companion that floats on your desktop and reacts as {name} listens, thinks and talks. Set a shortcut under Customize to hide or show it.",
+    "hide": "Hide pet",
+    "show": "Show pet",
+    "open_settings": "Choose your pet",
+    "style_notice_title": "The pet is not on your desktop yet",
+    "style_notice_body": "Your display style is “{0}”. Switch to the pet to see it on your desktop. The pet you pick below is kept either way.",
+    "use_pet": "Use pet on desktop",
+    "style_saved": "The pet is now on your desktop.",
+    "restart_hint": "Saved. Restart {name} to bring the pet to your desktop.",
+    "load_error": "Your pets could not be loaded: {0}",
+    "save_error": "That did not save: {0}",
+    "preview_title": "Active pet",
+    "customize": "Customize",
+    "size_label": "Size",
+    "size_hint": "How big the pet is on your desktop.",
+    "bubble_label": "Status bubble",
+    "bubble_hint": "Short lines under the pet that say what {name} is doing.",
+    "shortcut_hint": "Hides the pet, or brings it back to the front.",
+    "my_pets": "My pets",
+    "create": "Create pet",
+    "created": "{0} is ready.",
+    "none_name": "None",
+    "none_description": "Just the control strip",
+    "selected": "Selected",
+    "delete": "Delete pet",
+    "delete_named": "Delete {0}",
+    "delete_title": "Delete {0}?",
+    "delete_body": "The pet and its sprite sheet are removed from this computer. This cannot be undone.",
+    "deleted": "{0} was deleted.",
+    "states": {
+      "idle": "Idle",
+      "listening": "Listening",
+      "thinking": "Thinking",
+      "talking": "Talking",
+      "success": "Success",
+      "error": "Error",
+      "sleeping": "Sleeping"
+    },
+    "builtin": {
+      "gigi": {
+        "description": "The ghost of {name}, eight bits tall."
+      },
+      "miso": {
+        "description": "A cat: ears up while listening, curls up to sleep."
+      },
+      "brew": {
+        "description": "A teapot: steams while thinking, whistles while talking."
+      },
+      "bolt": {
+        "description": "A battery: charges while thinking, sparks on success, runs flat asleep."
+      },
+      "mochi": {
+        "description": "A jelly blob that wobbles while listening."
+      },
+      "shelly": {
+        "description": "A snail: the shell spins while thinking, it withdraws to sleep."
+      }
+    },
+    "create_dialog": {
+      "title": "Create pet",
+      "description": "Upload a sprite sheet, give your pet a name, and it joins your pets.",
+      "name_label": "Name",
+      "name_placeholder": "For example: Pixel",
+      "description_label": "Description",
+      "description_placeholder": "One sentence about your pet",
+      "sheet_label": "Sprite sheet (PNG)",
+      "sheet_preview_alt": "Preview of the chosen sprite sheet",
+      "sheet_hint": "A PNG with a transparent background, up to 2 MB and 512 × 512 pixels.",
+      "sheet_choose": "Choose PNG",
+      "sheet_change": "Choose another",
+      "frame_size_label": "Frame size",
+      "frame_size_option": "{0} × {0} px",
+      "layout_title": "How the sheet is laid out",
+      "layout_body": "The sheet is a grid of square frames. Each row is one state, top to bottom in this order, with up to {0} frames from left to right:",
+      "template_download": "Download template",
+      "manifest_label": "Manifest (optional)",
+      "manifest_hint": "A pet.json sets each row's frames, speed and looping. Without one, the rows are read in the order above and the frames of each row are counted.",
+      "manifest_choose": "Add pet.json",
+      "manifest_remove": "Remove",
+      "error_name": "Give your pet a name.",
+      "error_no_sheet": "Choose a sprite sheet.",
+      "error_not_png": "Choose a PNG image.",
+      "error_too_big": "This image is larger than 2 MB.",
+      "error_manifest": "The manifest must be a .json file.",
+      "create": "Create pet",
+      "creating": "Creating…"
+    }
   }
 }

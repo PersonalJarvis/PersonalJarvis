@@ -161,6 +161,7 @@
     "group_system": "Sistema",
     "agent_instructions": "{name}.md",
     "appshots": "Appshots",
+    "pets": "Mis mascotas",
     "jarvis_actions": "Acciones de Jarvis",
     "marketplace": "Marketplace",
     "agentic_ide": "IDE agéntico",
@@ -2540,7 +2541,7 @@
     },
     "overlay_style": {
       "title": "Estilo de visualización",
-      "description": "Elige cómo aparece {name} en pantalla durante la actividad de voz. La barra es el valor predeterminado; la mascota es el acompañante clásico; el orbe de voz es una esfera luminosa; o ocúltalo por completo. Cualquier estilo flotante se puede arrastrar a cualquier monitor.",
+      "description": "Elige cómo aparece {name} en pantalla durante la actividad de voz. La barra es el valor predeterminado; la mascota es el acompañante clásico; el orbe de voz es una esfera luminosa; la mascota es un compañero de píxeles que permanece en pantalla; o ocúltalo por completo. Cualquier estilo flotante se puede arrastrar a cualquier monitor.",
       "label": "Estilo",
       "save": "Guardar",
       "saved": "Estilo de visualización cambiado.",
@@ -2549,6 +2550,7 @@
         "jarvis_bar": "Barra (predeterminado)",
         "mascot": "Mascota",
         "voice_orb": "Orbe de voz",
+        "pet": "Mascota",
         "none": "Ninguno (oculto)"
       }
     },
@@ -2586,6 +2588,7 @@
       "hangup_label": "Colgar",
       "dictate_label": "Dictado (mantén pulsado y habla, el texto va donde escribes)",
       "paste_last_label": "Pegar de nuevo el último dictado",
+      "pet_toggle_label": "Mostrar u ocultar la mascota",
       "record": "Grabar",
       "stop": "Detener",
       "recording": "Presiona tus teclas…",
@@ -5797,5 +5800,96 @@
     "save_error": "No se pudo guardar: {0}",
     "toast_refused": "Sin appshot: {0}",
     "chip_label": "Appshot añadido a tu mensaje"
+  },
+  "pets": {
+    "title": "Mis mascotas",
+    "subtitle": "Un pequeño compañero de píxeles que flota en tu escritorio y reacciona mientras {name} escucha, piensa y habla. Pulsa {0} para ocultarlo o mostrarlo.",
+    "subtitle_no_shortcut": "Un pequeño compañero de píxeles que flota en tu escritorio y reacciona mientras {name} escucha, piensa y habla. Asigna un atajo en Personalizar para ocultarlo o mostrarlo.",
+    "hide": "Ocultar mascota",
+    "show": "Mostrar mascota",
+    "open_settings": "Elegir mascota",
+    "style_notice_title": "La mascota aún no está en tu escritorio",
+    "style_notice_body": "Tu estilo de visualización es «{0}». Cambia a la mascota para verla en tu escritorio. La mascota que elijas abajo se guarda de todos modos.",
+    "use_pet": "Usar mascota en el escritorio",
+    "style_saved": "La mascota ya está en tu escritorio.",
+    "restart_hint": "Guardado. Reinicia {name} para ver la mascota en tu escritorio.",
+    "load_error": "No se pudieron cargar tus mascotas: {0}",
+    "save_error": "No se pudo guardar: {0}",
+    "preview_title": "Mascota activa",
+    "customize": "Personalizar",
+    "size_label": "Tamaño",
+    "size_hint": "Qué tan grande se ve la mascota en tu escritorio.",
+    "bubble_label": "Burbuja de estado",
+    "bubble_hint": "Líneas breves bajo la mascota que dicen qué está haciendo {name}.",
+    "shortcut_hint": "Oculta la mascota o la trae de nuevo al frente.",
+    "my_pets": "Mis mascotas",
+    "create": "Crear mascota",
+    "created": "{0} está lista.",
+    "none_name": "Ninguna",
+    "none_description": "Solo la barra de controles",
+    "selected": "Seleccionada",
+    "delete": "Eliminar mascota",
+    "delete_named": "Eliminar {0}",
+    "delete_title": "¿Eliminar {0}?",
+    "delete_body": "La mascota y su hoja de sprites se eliminan de este ordenador. No se puede deshacer.",
+    "deleted": "{0} se eliminó.",
+    "states": {
+      "idle": "En reposo",
+      "listening": "Escuchando",
+      "thinking": "Pensando",
+      "talking": "Hablando",
+      "success": "Éxito",
+      "error": "Error",
+      "sleeping": "Durmiendo"
+    },
+    "builtin": {
+      "gigi": {
+        "description": "El fantasma de {name}, de ocho bits."
+      },
+      "miso": {
+        "description": "Un gato: levanta las orejas al escuchar y se acurruca para dormir."
+      },
+      "brew": {
+        "description": "Una tetera: echa vapor al pensar y silba al hablar."
+      },
+      "bolt": {
+        "description": "Una batería: se carga al pensar, echa chispas al acertar y se agota al dormir."
+      },
+      "mochi": {
+        "description": "Una gelatina que tiembla al escuchar."
+      },
+      "shelly": {
+        "description": "Un caracol: la concha gira al pensar y se esconde para dormir."
+      }
+    },
+    "create_dialog": {
+      "title": "Crear mascota",
+      "description": "Sube una hoja de sprites, ponle nombre a tu mascota y se unirá a las demás.",
+      "name_label": "Nombre",
+      "name_placeholder": "Por ejemplo: Pixel",
+      "description_label": "Descripción",
+      "description_placeholder": "Una frase sobre tu mascota",
+      "sheet_label": "Hoja de sprites (PNG)",
+      "sheet_preview_alt": "Vista previa de la hoja de sprites elegida",
+      "sheet_hint": "Un PNG con fondo transparente, de hasta 2 MB y 512 × 512 píxeles.",
+      "sheet_choose": "Elegir PNG",
+      "sheet_change": "Elegir otra",
+      "frame_size_label": "Tamaño de fotograma",
+      "frame_size_option": "{0} × {0} px",
+      "layout_title": "Cómo se organiza la hoja",
+      "layout_body": "La hoja es una cuadrícula de fotogramas cuadrados. Cada fila es un estado, de arriba abajo en este orden, con hasta {0} fotogramas de izquierda a derecha:",
+      "template_download": "Descargar plantilla",
+      "manifest_label": "Manifiesto (opcional)",
+      "manifest_hint": "Un pet.json fija los fotogramas, la velocidad y la repetición de cada fila. Sin él, las filas se leen en el orden de arriba y se cuentan los fotogramas de cada fila.",
+      "manifest_choose": "Añadir pet.json",
+      "manifest_remove": "Quitar",
+      "error_name": "Ponle un nombre a tu mascota.",
+      "error_no_sheet": "Elige una hoja de sprites.",
+      "error_not_png": "Elige una imagen PNG.",
+      "error_too_big": "Esta imagen ocupa más de 2 MB.",
+      "error_manifest": "El manifiesto debe ser un archivo .json.",
+      "create": "Crear mascota",
+      "creating": "Creando…"
+    }
   }
 }

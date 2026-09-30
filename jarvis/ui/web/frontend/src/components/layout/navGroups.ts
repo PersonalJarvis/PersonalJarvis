@@ -32,6 +32,7 @@ import {
   Users,
   Wallet,
   Workflow,
+  PawPrint,
   ScanLine,
   ShieldCheck,
   type LucideIcon,
@@ -267,6 +268,7 @@ export const NAV_FOOTER_ITEMS: NavItem[] = [
  */
 export const SETTINGS_HUB_ONLY_ITEMS: NavItem[] = [
   { id: "appshots", labelKey: "nav.appshots", icon: ScanLine, fallbackLabel: "Appshots" },
+  { id: "pets", labelKey: "nav.pets", icon: PawPrint, fallbackLabel: "My Pets" },
   {
     id: "jarvis-actions",
     labelKey: "nav.jarvis_actions",
@@ -299,6 +301,7 @@ export const SETTINGS_HUB_IDS: readonly SectionId[] = [
   "local-models",
   "computers",
   "appshots",
+  "pets",
   "jarvis-actions",
   "costs",
   "feedback",

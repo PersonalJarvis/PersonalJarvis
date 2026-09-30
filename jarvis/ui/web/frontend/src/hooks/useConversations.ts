@@ -3,6 +3,7 @@ import { useCallback, useEffect } from "react";
 import { useEventStore, type ChatMessage, type ConversationKind } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { requestVoiceHangup } from "@/lib/voiceApi";
+import { resetTextConversation } from "@/lib/newChat";
 import {
   deleteTextConversation,
   detailToMessages,
@@ -115,11 +116,7 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
     [seedThinkingTraces, setActiveConversation, setMessages],
   );
 
-  const newChat = useCallback(() => {
-    setActiveConversation("text", null);
-    seedThinkingTraces({});
-    setMessages([]);
-  }, [seedThinkingTraces, setActiveConversation, setMessages]);
+  const newChat = useCallback(() => resetTextConversation(), []);
 
   /**
    * Start a fresh voice run: drop the open voice thread here and tell the
