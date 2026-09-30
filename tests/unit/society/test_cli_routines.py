@@ -174,6 +174,21 @@ async def test_read_only_session_can_inspect_but_not_schedule(world):
     assert world.tasks.rows == []
 
 
+async def test_cli_catalog_uses_bound_chat_approval_mode(world):
+    world.store.update_session("society:scout", permission_mode="always_ask")
+    catalog = {tool.name: tool for tool in await world.gateway.session_catalog("society:scout")}
+    assert catalog["Read"].risk_tier == "safe"
+    assert catalog["Read"].risk_tier_for_args({"file_path": "note.txt"}) == "ask"
+
+
+async def test_legacy_cli_agent_honors_explicit_chat_override(world):
+    await world.rt.store.update_agent("scout", {"approval_mode": None})
+    world.store.set_permission_override("society:scout", "always_ask")
+    world.store.update_session("society:scout", permission_mode="always_ask")
+    catalog = {tool.name: tool for tool in await world.gateway.session_catalog("society:scout")}
+    assert catalog["Read"].risk_tier_for_args({"file_path": "note.txt"}) == "ask"
+
+
 async def test_grants_are_checked_again_at_call_time(world):
     tool = SimpleNamespace(name="gmail", schema={}, description="Mail", risk_tier="ask")
 

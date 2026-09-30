@@ -73,14 +73,14 @@ it("keeps live and interrupted conversation tools in the left lane", () => {
   expect(screen.getByTestId("work-trace").className).toMatch(/self-start/);
 });
 
-it("folds a failure with the surrounding work, keeping only the reply out", () => {
+it("keeps a failed tool visible while folding the surrounding work", () => {
   const tool: ToolBlock = { kind: "tool", callId: "a", name: "read_file", input: { path: "report.csv" }, output: "Report contents", isError: false, durationMs: 100, approval: null, startedMs: 0 };
   render(<WorkTrace conversation status="done" startedMs={0} durationMs={2000} blocks={[
     tool,
     { ...tool, callId: "error", isError: true, output: "Upload failed" },
     { kind: "text", id: "reply", text: "I could not finish." },
   ]} />);
-  expect(screen.queryByText("Upload failed")).toBeNull();
+  expect(screen.getByText("Upload failed")).toBeTruthy();
   expect(screen.getByText("I could not finish.")).toBeTruthy();
   expect(screen.queryByText("Report contents")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Thought for 2.0s" }));
@@ -89,18 +89,17 @@ it("folds a failure with the surrounding work, keeping only the reply out", () =
   expect(screen.getByText("Report contents")).toBeTruthy();
 });
 
-it("folds failures but keeps pending approvals visible in the conversation style", () => {
+it("keeps failures and pending approvals visible in the conversation style", () => {
   const base: ToolBlock = { kind: "tool", callId: "failure", name: "send_message", input: {}, output: "Delivery failed", isError: true, durationMs: 100, approval: null, startedMs: 0 };
   render(<WorkTrace conversation status="done" startedMs={0} durationMs={1000} blocks={[
     base,
     { ...base, callId: "approval", isError: false, output: null, approval: { approvalId: "ap", summary: "Send this message?", decision: null } },
   ]} onDecide={() => undefined} />);
-  expect(screen.queryByText("Delivery failed")).toBeNull();
+  expect(screen.getByText("Delivery failed")).toBeTruthy();
   expect(screen.getByText("Send this message?")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Thought for 1.0s" }));
-  expect(screen.getAllByText("Delivery failed").length).toBeGreaterThan(0);
-  // The approval card survives opening the fold — it still needs a tap.
+  // With no other work to fold, both items stay in place and need no toggle.
+  expect(screen.queryByTestId("conversation-work-fold")).toBeNull();
   expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
 });
 
@@ -116,7 +115,7 @@ it("shows agent message direction and truthful delivery state without preview cl
   expect(screen.getByRole("alert").textContent).toBe("Connection closed");
 });
 
-it("folds successful work and post-reply errors behind one toggle without reordering the conversation", () => {
+it("folds successful work while showing post-reply errors without reordering the conversation", () => {
   const tool: ToolBlock = { kind: "tool", callId: "a", name: "read_file", input: { path: "report.csv" }, output: "Report contents", isError: false, durationMs: 100, approval: null, startedMs: 0 };
   const blocks = [tool, { ...tool, callId: "b", name: "write_file" }, { kind: "text" as const, id: "reply", text: "Your report is ready." }, { ...tool, callId: "error", isError: true, output: "Upload failed" }];
   const { rerender } = render(<WorkTrace conversation status="running" startedMs={0} durationMs={null} blocks={blocks} />);
@@ -128,7 +127,7 @@ it("folds successful work and post-reply errors behind one toggle without reorde
   expect(screen.queryByRole("button", { name: "Reading files Creating files" })).toBeNull();
   expect(screen.queryByRole("button", { name: /Write file/ })).toBeNull();
   expect(screen.getByText("Your report is ready.")).toBeTruthy();
-  expect(screen.queryByText("Upload failed")).toBeNull();
+  expect(screen.getByText("Upload failed")).toBeTruthy();
   expect(screen.queryByText("Report contents")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Thought for 1.0s" }));
   // One tap opens the whole chain: the post-reply error and the tool details.

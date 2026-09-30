@@ -5691,6 +5691,7 @@
     "unanswered": "Nicht beantwortet – der Durchlauf wurde beendet."
   },
   "work_trace": {
+    "tool_failed": "Eine Tool-Aktion ist fehlgeschlagen",
     "question": "Wartet auf deine Antwort",
     "integration_used": "{service} verwendet",
     "activity_command": "Befehle ausgeführt",

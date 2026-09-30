@@ -211,6 +211,22 @@ async def test_tool_gates(rt, tmp_path, fake_runner):
     assert (await tool.execute({"task": "read"}, CTX)).output["reason"] == "kill_switch"
 
 
+async def test_browser_does_not_queue_after_tool_executor_approval(
+    rt, tmp_path, fake_runner, monkeypatch
+):
+    """The fake browser job runs after the chat approved the same tool call."""
+    monkeypatch.setattr(
+        "jarvis.society.browser.tool.llm_spec_for",
+        lambda provider, model="", **kw: llm_spec_for(provider, model, secret=lambda p: "k"),
+    )
+    await rt.roster.update("scout", {"approval_mode": "ask"})
+    tool = BrowserTool(rt, "scout", _jobs(tmp_path, fake_runner))
+    approved_ctx = SimpleNamespace(**vars(CTX), approved_by="user")
+    result = await tool.execute({"task": "read the headlines"}, approved_ctx)
+    assert result.success, result.error
+    assert await rt.approvals.pending() == []
+
+
 async def test_briefing_and_surface_reflect_the_browser(rt, tmp_path, fake_runner):
     from jarvis.society.surface import society_system_extra, society_tools
 

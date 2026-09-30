@@ -5724,6 +5724,7 @@
     "unanswered": "Not answered — the turn ended."
   },
   "work_trace": {
+    "tool_failed": "A tool action failed",
     "question": "Waiting for your answer",
     "integration_used": "Used {service}",
     "activity_command": "Ran commands",

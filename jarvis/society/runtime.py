@@ -154,6 +154,7 @@ async def _spoken_report(
 _LEAD_INCOMING_TYPES: Final[frozenset[MsgType]] = frozenset(
     {MsgType.SAY, MsgType.QUERY, MsgType.ANSWER, MsgType.PROPOSE}
 )
+_WATCH_EVENT_POLL_SECONDS: Final[float] = 2.0
 
 _current: SocietyRuntime | None = None
 
@@ -910,33 +911,78 @@ class SocietyRuntime:
         error = ""
         tool_steps: list[str] = []
         used_browser = False
+        last_seq = 0
+        read_failures = 0
         quest_trace = env.trace_id.startswith("quest:")
         try:
             while True:
-                event = await queue.get()
-                kind = event.get("kind")
-                payload = event.get("payload") or {}
-                if payload.get("turn_id") not in (None, turn_id):
-                    continue
-                if kind == "assistant_text":
-                    final_text = str(payload.get("text") or final_text)
-                    if quest_trace:
-                        await self.quests.note_progress(env.trace_id, "", live=final_text)
-                elif kind == "tool_call":
-                    name = str(payload.get("name") or payload.get("tool") or "tool")
-                    summary = str(payload.get("summary") or "")[:120]
-                    step = f"{name}: {summary}" if summary else name
-                    tool_steps.append(step)
-                    if quest_trace:
-                        await self.quests.note_progress(env.trace_id, step)
-                    if name == "society_browser":
-                        used_browser = True
-                elif kind == "error":
-                    status, error = "blocked", str(payload.get("message") or "error")
-                elif kind == "turn_finished":
-                    if payload.get("status") not in (None, "ok", "done", "completed"):
+                try:
+                    events = [
+                        await asyncio.wait_for(queue.get(), timeout=_WATCH_EVENT_POLL_SECONDS)
+                    ]
+                except TimeoutError:
+                    # The service drops a subscriber whose queue overflows. Its
+                    # events remain durable, so recover the missing terminal.
+                    try:
+                        events = await asyncio.to_thread(
+                            svc.store.list_events, session_id, after_seq=last_seq
+                        )
+                    except Exception:  # noqa: BLE001 - a broken chat store must release the slot
+                        read_failures += 1
+                        log.warning(
+                            "society: durable turn recovery failed for %s (%s/3)",
+                            run_id,
+                            read_failures,
+                            exc_info=True,
+                        )
+                        if read_failures < 3:
+                            continue
                         status = "blocked"
-                        error = str(payload.get("error") or payload.get("status") or "")
+                        error = "Agent result could not be recovered from chat history."
+                        try:
+                            await svc.cancel(session_id, expected_turn_id=turn_id)
+                        except Exception:  # noqa: BLE001 - still release the board slot
+                            log.warning(
+                                "society: turn %s could not be cancelled after recovery failure",
+                                run_id,
+                                exc_info=True,
+                            )
+                        break
+                    read_failures = 0
+                else:
+                    read_failures = 0
+                finished = False
+                for event in events:
+                    seq = int(event.get("seq") or 0)
+                    if seq and seq <= last_seq:
+                        continue
+                    last_seq = max(last_seq, seq)
+                    kind = event.get("kind")
+                    payload = event.get("payload") or {}
+                    if payload.get("turn_id") not in (None, turn_id):
+                        continue
+                    if kind == "assistant_text":
+                        final_text = str(payload.get("text") or final_text)
+                        if quest_trace:
+                            await self.quests.note_progress(env.trace_id, "", live=final_text)
+                    elif kind == "tool_call":
+                        name = str(payload.get("name") or payload.get("tool") or "tool")
+                        summary = str(payload.get("summary") or "")[:120]
+                        step = f"{name}: {summary}" if summary else name
+                        tool_steps.append(step)
+                        if quest_trace:
+                            await self.quests.note_progress(env.trace_id, step)
+                        if name == "society_browser":
+                            used_browser = True
+                    elif kind == "error":
+                        status, error = "blocked", str(payload.get("message") or "error")
+                    elif kind == "turn_finished":
+                        if payload.get("status") not in (None, "ok", "done", "completed"):
+                            status = "blocked"
+                            error = str(payload.get("error") or payload.get("status") or "")
+                        finished = True
+                        break
+                if finished:
                     break
         except asyncio.CancelledError:  # Session cancellation is normal shutdown.
             return
@@ -958,6 +1004,9 @@ class SocietyRuntime:
         if reports:
             status = "blocked"
             error = summary = reports[-1].text
+        elif status == "done" and not final_text.strip():
+            status = "blocked"
+            error = summary = "Agent finished without a result report."
         try:
             await self.store.append_and_publish(
                 SocietyEnvelope(
@@ -1123,9 +1172,46 @@ class SocietyRuntime:
 
     # ------------------------------------------------------------ controls
 
+    async def _cancel_active_society_chats(self) -> None:
+        service = self.chat_service()
+        if service is None or not callable(getattr(service, "cancel", None)):
+            return
+        # AgentChatService exposes is_running but not a public active-id list.
+        # Snapshot its live turns; a store query could miss an older active chat.
+        running = tuple(getattr(service, "_running", {}).items())
+        targets: list[str] = []
+        for session_id, run in running:
+            session = service.store.get_session(session_id)
+            if (
+                session is None
+                or session.surface != "society"
+                or not session_id.startswith("society:")
+            ):
+                continue
+            signal = getattr(service, "signal_cancel", None)
+            if callable(signal):
+                signal(session_id)
+            # The kill switch can be invoked from an agent's own turn. Signal
+            # it, but never await that turn from inside itself.
+            if getattr(run, "task", None) is asyncio.current_task():
+                continue
+            targets.append(session_id)
+        if not targets:
+            return
+        results = await asyncio.gather(
+            *(service.cancel(session_id) for session_id in targets),
+            return_exceptions=True,
+        )
+        for session_id, result in zip(targets, results, strict=True):
+            if isinstance(result, BaseException):
+                log.warning(
+                    "society kill switch: chat %s did not stop", session_id, exc_info=result
+                )
+
     async def engage_kill_switch(self) -> dict[str, Any]:
         await self.store.set_kill_switch(True)
         halted = await self.scheduler.halt_all()
+        await self._cancel_active_society_chats()
         await self.browser.close()
         settled = 0
         for room in await self.rooms.list(state=RoomState.RUNNING):

@@ -26,10 +26,25 @@ class FakeService:
     async def _emit(self, session_id, event):
         self.store.append_event(session_id, event)
 
+    async def post_notice(self, session_id, payload):
+        from jarvis.agent_chat.events import make_event
+
+        await self._emit(session_id, make_event("notice", payload))
+
+    async def cancel(self, _session_id, *, expected_turn_id=None):
+        self.cancelled_turns.append(expected_turn_id)
+        return False
+
+    async def bind_society_session(self, session_id):
+        from jarvis.society.chat_binding import bind_society_session
+
+        return await bind_society_session(self, session_id)
+
     def __init__(self, store: AgentChatStore) -> None:
         self.store = store
         self.sent: list[tuple[str, str]] = []
         self.busy: set[str] = set()
+        self.cancelled_turns: list[str | None] = []
 
     def is_running(self, session_id: str) -> bool:
         return session_id in self.busy
@@ -41,14 +56,20 @@ class FakeService:
 
 @pytest.fixture
 async def world(tmp_path: Path):
-    runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    runtime = SocietyRuntime(tmp_path, seed_starter_team=False, cfg=lambda: cfg)
     await runtime.ensure_started()
     svc = FakeService(AgentChatStore(tmp_path / "agent_chat.db"))
-    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
     try:
         yield runtime, svc, cfg
     finally:
         await runtime.close()
+
+
+async def _legacy_agent(rt: SocietyRuntime, agent):
+    """Model a saved pre-approval-mode roster row in both stores."""
+    await rt.store.update_agent(agent.agent_id, {"approval_mode": None})
+    return dataclasses.replace(agent, approval_mode=None)
 
 
 def test_society_is_a_surface():
@@ -89,11 +110,469 @@ async def test_legacy_ceiling_maps_to_stance(world):
     assert ensure_session(svc, cfg, ask).permission_mode == "ask"
 
 
+async def test_existing_session_follows_roster_permissions_name_and_workspace(world):
+    rt, svc, cfg = world
+    agent, _ = await rt.roster.create(name="Scout", provider="openai")
+    agent = await _legacy_agent(rt, agent)
+    first = ensure_session(svc, cfg, agent)
+    updated = await rt.roster.update(
+        agent.agent_id,
+        {
+            "name": "Research Scout",
+            "permission_ceiling": "safe",
+            "workspace_dir": "society/scout/research",
+        },
+    )
+
+    session = ensure_session(svc, cfg, updated)
+    assert session.session_id == first.session_id
+    assert session.permission_mode == "plan"
+    assert session.title == "Research Scout"
+    assert Path(session.cwd).name == "research"
+    assert len(svc.store.list_sessions(surface="society")) == 1
+
+
+async def test_rebinding_preserves_a_more_restrictive_user_stance(world):
+    rt, svc, cfg = world
+    agent, _ = await rt.roster.create(name="Scout", provider="openai")
+    agent = await _legacy_agent(rt, agent)
+    first = ensure_session(svc, cfg, agent)
+    assert first.permission_mode == "ask"
+
+    svc.store.update_session(first.session_id, permission_mode="plan")
+    svc.store.set_permission_override(first.session_id, "plan")
+    assert ensure_session(svc, cfg, agent).permission_mode == "plan"
+
+    svc.store.update_session(first.session_id, permission_mode="ask")
+    svc.store.set_permission_override(first.session_id, "ask")
+    assert ensure_session(svc, cfg, agent).permission_mode == "ask"
+
+
+async def test_relaxed_roster_ceiling_restores_default_without_user_override(world):
+    rt, svc, cfg = world
+    agent, _ = await rt.roster.create(name="Reader", provider="openai", permission_ceiling="safe")
+    agent = await _legacy_agent(rt, agent)
+    first = ensure_session(svc, cfg, agent)
+    assert first.permission_mode == "plan"
+
+    updated = await rt.roster.update(agent.agent_id, {"permission_ceiling": "monitor"})
+    assert ensure_session(svc, cfg, updated).permission_mode == "accept-edits"
+
+    svc.store.set_permission_override(first.session_id, "plan")
+    assert ensure_session(svc, cfg, updated).permission_mode == "plan"
+
+
+async def test_chat_route_records_an_explicit_permission_choice(world):
+    from jarvis.ui.web.agent_chat_routes import router
+
+    rt, svc, cfg = world
+    agent, _ = await rt.roster.create(name="Scout", provider="openai")
+    session = ensure_session(svc, cfg, agent)
+    svc.controls = SimpleNamespace(state=lambda _sid: SimpleNamespace(goal=None))
+    app = FastAPI()
+    app.include_router(router)
+    app.state.agent_chat = svc
+
+    with TestClient(app) as client:
+        response = client.patch(
+            f"/api/agent-chat/sessions/{session.session_id}",
+            json={"permission_mode": "ask"},
+        )
+        stale_model = client.patch(
+            f"/api/agent-chat/sessions/{session.session_id}",
+            json={"model": "not-the-roster-model"},
+        )
+    assert response.status_code == 200
+    assert svc.store.permission_override(session.session_id) == "ask"
+    assert ensure_session(svc, cfg, agent).permission_mode == "ask"
+    assert stale_model.status_code == 200
+    assert stale_model.json()["model"] == agent.model
+    updates = [
+        event["payload"]
+        for event in svc.store.list_events(session.session_id)
+        if event["kind"] == "session_updated"
+    ]
+    assert {"model": agent.model} in updates
+
+
+async def test_safe_agent_route_clamps_a_requested_bypass(world):
+    from jarvis.ui.web.agent_chat_routes import router
+
+    rt, svc, cfg = world
+    agent, _ = await rt.roster.create(name="Reader", provider="openai", permission_ceiling="safe")
+    agent = await _legacy_agent(rt, agent)
+    session = ensure_session(svc, cfg, agent)
+    svc.controls = SimpleNamespace(state=lambda _sid: SimpleNamespace(goal=None))
+    app = FastAPI()
+    app.include_router(router)
+    app.state.agent_chat = svc
+
+    with TestClient(app) as client:
+        response = client.patch(
+            f"/api/agent-chat/sessions/{session.session_id}",
+            json={"permission_mode": "bypass"},
+        )
+    assert response.status_code == 200
+    assert response.json()["permission_mode"] == "plan"
+    assert svc.store.get_session(session.session_id).permission_mode == "plan"
+    assert svc.store.permission_override(session.session_id) == "plan"
+    assert any(
+        event["kind"] == "session_updated" and event["payload"].get("permission_mode") == "plan"
+        for event in svc.store.list_events(session.session_id)
+    )
+
+
+async def test_society_route_rejects_an_unsupported_ask_before_storage(world, monkeypatch):
+    from jarvis.ui.web import agent_chat_routes
+
+    rt, svc, cfg = world
+    agent, _ = await rt.roster.create(name="Scout", provider="openai")
+    session = ensure_session(svc, cfg, agent)
+    monkeypatch.setattr(agent_chat_routes, "resolve_runner", lambda *_args, **_kw: "grok-cli")
+    app = FastAPI()
+    app.include_router(agent_chat_routes.router)
+    app.state.agent_chat = svc
+
+    with TestClient(app) as client:
+        response = client.patch(
+            f"/api/agent-chat/sessions/{session.session_id}",
+            json={"permission_mode": "ask"},
+        )
+    assert response.status_code == 422
+    assert svc.store.permission_override(session.session_id) == ""
+    assert svc.store.get_session(session.session_id).permission_mode == "bypass"
+
+
+async def test_society_patch_does_not_reseat_if_a_turn_starts_during_cleanup(world):
+    from jarvis.ui.web.agent_chat_routes import router
+
+    rt, svc, cfg = world
+    agent, _ = await rt.roster.create(name="Scout", provider="openai")
+    session = ensure_session(svc, cfg, agent)
+
+    async def begin_turn(_session_id):
+        svc.busy.add(session.session_id)
+
+    svc.controls = SimpleNamespace(
+        state=lambda _sid: SimpleNamespace(goal=None),
+        _clear_saved_native=begin_turn,
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.state.agent_chat = svc
+    with TestClient(app) as client:
+        response = client.patch(
+            f"/api/agent-chat/sessions/{session.session_id}",
+            json={"provider": "gemini"},
+        )
+    assert response.status_code == 409
+    assert svc.store.get_session(session.session_id).provider == "openai"
+
+
+async def test_direct_send_rebinds_safe_agent_before_runner(tmp_path: Path):
+    from jarvis.agent_chat.service import AgentChatService
+
+    store = AgentChatStore(tmp_path / "agent_chat.db")
+    svc = AgentChatService(store, assistant_name=lambda: "Test")
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        agent, _ = await rt.roster.create(
+            name="Reader", provider="openai", permission_ceiling="safe"
+        )
+        agent = await _legacy_agent(rt, agent)
+        session = ensure_session(svc, cfg, agent)
+        store.update_session(session.session_id, permission_mode="bypass")
+        store.set_permission_override(session.session_id, "bypass")
+        observed: list[str] = []
+
+        async def capture(handle, _text):
+            observed.append(handle.session.permission_mode)
+
+        await svc.send(
+            session.session_id,
+            "Read the note",
+            control_runner=capture,
+            control_owned=True,
+            direct_user=False,
+        )
+        await svc.wait_turn(session.session_id)
+        assert observed == ["plan"]
+        assert store.get_session(session.session_id).permission_mode == "plan"
+    finally:
+        await svc.cancel_all()
+        await rt.close()
+
+
+async def test_routine_chat_rejects_direct_messages_and_inactive_owner(tmp_path: Path):
+    from jarvis.agent_chat.service import AgentChatService
+    from jarvis.ui.web.agent_chat_routes import router
+
+    store = AgentChatStore(tmp_path / "agent_chat.db")
+    svc = AgentChatService(store, assistant_name=lambda: "Test")
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        agent, _ = await rt.roster.create(name="Scout", provider="openai")
+        routine = store.create_session(
+            session_id=f"{agent.session_id}:routine:task-1:run-1",
+            surface="society",
+            provider="openai",
+            model="",
+            effort="low",
+            cwd=str(tmp_path),
+            permission_mode="bypass",
+        )
+        app = FastAPI()
+        app.include_router(router)
+        app.state.agent_chat = svc
+        with TestClient(app) as client:
+            response = client.post(
+                f"/api/agent-chat/sessions/{routine.session_id}/messages",
+                json={"text": "Do something unrelated"},
+            )
+        assert response.status_code == 403
+        assert store.list_events(routine.session_id) == []
+
+        await rt.roster.update(agent.agent_id, {"state": "paused"})
+        with pytest.raises(PermissionError, match="active scheduled run"):
+            await svc.send(
+                routine.session_id, "Scheduled task", direct_user=False, routine_run=True
+            )
+    finally:
+        await svc.cancel_all()
+        await rt.close()
+
+
+async def test_busy_turn_defers_provider_reseat_until_it_finishes(tmp_path: Path):
+    import asyncio
+
+    from jarvis.agent_chat.control_types import CommandRequest
+    from jarvis.agent_chat.service import AgentChatService, SessionBusy
+
+    store = AgentChatStore(tmp_path / "agent_chat.db")
+    svc = AgentChatService(store, assistant_name=lambda: "Test")
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    try:
+        agent, _ = await rt.roster.create(name="Scout", provider="openai", model="old")
+        session = ensure_session(svc, cfg, agent)
+
+        async def held_runner(_handle, _text):
+            started.set()
+            await release.wait()
+            return "old-vendor-session"
+
+        await svc.send(
+            session.session_id,
+            "First task",
+            control_runner=held_runner,
+            control_owned=True,
+            direct_user=False,
+        )
+        await asyncio.wait_for(started.wait(), timeout=3)
+        await rt.roster.update(agent.agent_id, {"provider": "gemini", "model": "new"})
+        with pytest.raises(SessionBusy):
+            await svc.send(session.session_id, "Second task")
+        command = await svc.controls.execute(
+            session.session_id, CommandRequest(command="status", request_id="busy-status")
+        )
+        assert command.status == "done"
+        assert command.data["running"] is True
+        assert store.get_session(session.session_id).provider == "openai"
+
+        release.set()
+        await svc.wait_turn(session.session_id)
+        assert store.get_session(session.session_id).vendor_session == "old-vendor-session"
+        moved = await svc.bind_society_session(session.session_id)
+        assert moved.provider == "gemini" and moved.model == "new"
+        assert moved.vendor_session == ""
+    finally:
+        release.set()
+        await svc.cancel_all()
+        await rt.close()
+
+
+async def test_build_cannot_raise_a_safe_agent_above_its_ceiling(world):
+    from jarvis.agent_chat.control import ChatControls
+    from jarvis.agent_chat.control_types import CommandRequest
+
+    rt, svc, cfg = world
+    agent, _ = await rt.roster.create(name="Scout", provider="openai")
+    agent = await _legacy_agent(rt, agent)
+    session = ensure_session(svc, cfg, agent)
+    controls = ChatControls(svc, adapters=[])
+    svc.controls = controls
+    plan = await controls.execute(
+        session.session_id, CommandRequest(command="plan", request_id="plan-1")
+    )
+    assert plan.status == "done"
+    updated = await rt.roster.update(agent.agent_id, {"permission_ceiling": "safe"})
+    assert updated.permission_ceiling == "safe"
+    build = await controls.execute(
+        session.session_id, CommandRequest(command="build", request_id="build-1")
+    )
+    assert build.status == "failed"
+    assert svc.store.get_session(session.session_id).permission_mode == "plan"
+    assert svc.store.permission_override(session.session_id) == "plan"
+
+
+async def test_build_sees_a_relaxed_roster_ceiling_before_checking_plan(world):
+    from jarvis.agent_chat.control import ChatControls
+    from jarvis.agent_chat.control_types import CommandRequest
+
+    rt, svc, cfg = world
+    agent, _ = await rt.roster.create(name="Reader", provider="openai", permission_ceiling="safe")
+    agent = await _legacy_agent(rt, agent)
+    session = ensure_session(svc, cfg, agent)
+    controls = ChatControls(svc, adapters=[])
+    svc.controls = controls
+    await rt.roster.update(agent.agent_id, {"permission_ceiling": "monitor"})
+
+    result = await controls.execute(
+        session.session_id, CommandRequest(command="build", request_id="build-after-roster")
+    )
+    assert result.status == "done"
+    assert svc.store.get_session(session.session_id).permission_mode == "ask"
+
+
+async def test_provider_change_with_default_model_discards_old_provider_model(world):
+    rt, svc, cfg = world
+    agent, _ = await rt.roster.create(name="Scout", provider="openai", model="gpt-5.2")
+    first = ensure_session(svc, cfg, agent)
+    assert first.model == "gpt-5.2"
+
+    updated = await rt.roster.update(agent.agent_id, {"provider": "gemini", "model": ""})
+    session = ensure_session(svc, cfg, updated)
+    assert session.provider == "gemini"
+    assert session.model == ""
+    assert session.session_id == first.session_id
+
+
 async def test_explicit_approval_mode_wins(world):
     rt, svc, cfg = world
     asker, _ = await rt.roster.create(name="Asker", provider="openai")
     asker = await rt.roster.update("asker", {"approval_mode": "ask"})
     assert ensure_session(svc, cfg, asker).permission_mode == "ask"
+
+
+async def test_explicit_chat_mode_stays_separate_from_tool_ceiling(world):
+    rt, svc, cfg = world
+    agent, _ = await rt.roster.create(
+        name="Reader", provider="openai", permission_ceiling="safe"
+    )
+    session = ensure_session(svc, cfg, agent)
+    assert session.permission_mode == "bypass"
+
+    agent = await rt.roster.update(agent.agent_id, {"approval_mode": "ask"})
+    assert ensure_session(svc, cfg, agent).permission_mode == "ask"
+
+    svc.store.set_permission_override(session.session_id, "always_ask")
+    assert ensure_session(svc, cfg, agent).permission_mode == "always_ask"
+
+
+async def test_legacy_ask_agent_refuses_runner_without_actionable_approvals(world, monkeypatch):
+    rt, svc, cfg = world
+    agent, _ = await rt.roster.create(name="Legacy", provider="openai")
+    agent = await _legacy_agent(rt, agent)
+    monkeypatch.setattr(
+        "jarvis.agent_chat.service.resolve_runner", lambda *_args, **_kw: "grok-cli"
+    )
+
+    with pytest.raises(PermissionError, match="actionable approval"):
+        ensure_session(svc, cfg, agent)
+    assert svc.store.get_session(agent.session_id) is None
+
+
+@pytest.mark.parametrize("blocked_by", ["paused", "kill_switch"])
+async def test_inactive_agent_cannot_bind_canonical_chat(world, blocked_by):
+    from jarvis.society.chat_binding import bind_society_session
+
+    rt, svc, cfg = world
+    agent, _ = await rt.roster.create(name="Scout", provider="openai")
+    ensure_session(svc, cfg, agent)
+    if blocked_by == "paused":
+        await rt.roster.update(agent.agent_id, {"state": "paused"})
+    else:
+        await rt.store.set_kill_switch(True)
+
+    with pytest.raises(PermissionError, match="paused or disabled"):
+        await bind_society_session(svc, agent.session_id)
+
+
+async def test_roster_mode_edit_defers_busy_chat_and_preserves_override(world, monkeypatch):
+    from jarvis.ui.web.society_routes import router
+
+    rt, svc, cfg = world
+    monkeypatch.setattr(rt, "_get_chat", lambda: svc)
+    agent, _ = await rt.roster.create(name="Scout", provider="openai", approval_mode="ask")
+    session = ensure_session(svc, cfg, agent)
+    svc.store.set_permission_override(session.session_id, "always_ask")
+    assert ensure_session(svc, cfg, agent).permission_mode == "always_ask"
+    svc.busy.add(session.session_id)
+
+    app = FastAPI()
+    app.include_router(router)
+    app.state.society = rt
+    with TestClient(app) as client:
+        response = client.patch(
+            f"/api/society/agents/{agent.agent_id}",
+            json={"approval_mode": "bypass"},
+        )
+    assert response.status_code == 200, response.text
+    assert svc.store.get_session(session.session_id).permission_mode == "always_ask"
+
+    svc.busy.remove(session.session_id)
+    updated = await rt.roster.get(agent.agent_id)
+    assert ensure_session(svc, cfg, updated).permission_mode == "always_ask"
+
+
+@pytest.mark.parametrize(
+    ("method", "suffix", "payload"),
+    [
+        ("POST", "/model", {"provider": "grok", "model": "grok-test"}),
+        ("PATCH", "", {"provider": "grok"}),
+    ],
+)
+async def test_runner_change_rejects_incompatible_chat_override(
+    world, monkeypatch, method, suffix, payload
+):
+    from jarvis.ui.web.society_routes import router
+
+    rt, svc, cfg = world
+    monkeypatch.setattr(rt, "_get_chat", lambda: svc)
+    agent, _ = await rt.roster.create(name="Scout", provider="openai")
+    session = ensure_session(svc, cfg, agent)
+    svc.store.set_permission_override(session.session_id, "always_ask")
+    assert ensure_session(svc, cfg, agent).permission_mode == "always_ask"
+    monkeypatch.setattr(
+        "jarvis.agent_chat.service.resolve_runner",
+        lambda provider, **_kw: "grok-cli" if provider == "grok" else "brain",
+    )
+
+    app = FastAPI()
+    app.include_router(router)
+    app.state.society = rt
+    with TestClient(app) as client:
+        response = client.request(
+            method,
+            f"/api/society/agents/{agent.agent_id}{suffix}",
+            json=payload,
+        )
+    assert response.status_code == 422
+    assert (await rt.roster.get(agent.agent_id)).provider == "openai"
+    assert svc.store.get_session(session.session_id).provider == "openai"
 
 
 async def test_without_provider_the_agents_tier_answers(world, monkeypatch):
@@ -213,7 +692,9 @@ class FakeTurnService(FakeService):
         return q
 
     def unsubscribe(self, session_id: str, q) -> None:
-        self.queues.get(session_id, []).remove(q)
+        subscribers = self.queues.get(session_id, [])
+        if q in subscribers:
+            subscribers.remove(q)
 
     async def send(self, session_id: str, text: str, attachments=None, *, incoming=None) -> str:
         self.sent.append((session_id, text))
@@ -276,5 +757,110 @@ async def test_failed_turn_becomes_a_blocked_result(tmp_path: Path):
         result = (await rt.store.events_for_trace(env.trace_id))[-1]
         assert result.msg_type is MsgType.RESULT and result.payload["status"] == "blocked"
         assert result.payload["open"]
+    finally:
+        await rt.close()
+
+
+async def test_empty_successful_turn_does_not_claim_task_completion(tmp_path: Path):
+    import asyncio
+
+    svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Scout", provider="openai")
+        env = await rt.say(from_agent="user", to_agent="scout", text="x", msg_type=MsgType.ASSIGN)
+        await svc.finish("society:scout", "")
+        await asyncio.sleep(0.05)
+        result = (await rt.store.events_for_trace(env.trace_id))[-1]
+        assert result.msg_type is MsgType.RESULT
+        assert result.payload["status"] == "blocked"
+        assert result.payload["open"] == ["Agent finished without a result report."]
+    finally:
+        await rt.close()
+
+
+async def test_lost_subscriber_recovers_the_durable_turn_result(tmp_path: Path, monkeypatch):
+    import asyncio
+
+    import jarvis.society.runtime as runtime_module
+    from jarvis.agent_chat.events import make_event
+
+    monkeypatch.setattr(runtime_module, "_WATCH_EVENT_POLL_SECONDS", 0.01)
+    svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Scout", provider="openai")
+        env = await rt.say(
+            from_agent="user", to_agent="scout", text="Find the answer", msg_type=MsgType.ASSIGN
+        )
+        # A full subscriber queue is detached by the service. The terminal
+        # event still lives in the chat store but never reaches this queue.
+        svc.queues["society:scout"].clear()
+        svc.store.append_event(
+            "society:scout",
+            make_event("assistant_text", {"turn_id": "turn-1", "text": "Found the answer."}),
+        )
+        svc.store.append_event(
+            "society:scout",
+            make_event("turn_finished", {"turn_id": "turn-1", "status": "done"}),
+        )
+        for _ in range(20):
+            thread = await rt.store.events_for_trace(env.trace_id)
+            if thread[-1].msg_type is MsgType.RESULT:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("watcher did not recover the durable terminal event")
+        assert thread[-1].payload["status"] == "done"
+        assert thread[-1].payload["done"] == "Found the answer."
+        assert rt.scheduler.running == {}
+    finally:
+        await rt.close()
+
+
+async def test_durable_read_failure_releases_the_agent_slot(tmp_path: Path, monkeypatch):
+    import asyncio
+
+    import jarvis.society.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "_WATCH_EVENT_POLL_SECONDS", 0.01)
+    svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Scout", provider="openai")
+        env = await rt.say(
+            from_agent="user", to_agent="scout", text="Find the answer", msg_type=MsgType.ASSIGN
+        )
+        svc.queues["society:scout"].clear()
+
+        def unreadable(_session_id, *, after_seq=0):
+            raise OSError("chat history unavailable")
+
+        monkeypatch.setattr(svc.store, "list_events", unreadable)
+        for _ in range(30):
+            thread = await rt.store.events_for_trace(env.trace_id)
+            if thread[-1].msg_type is MsgType.RESULT:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("watcher did not release the slot after durable read failure")
+        assert thread[-1].payload["status"] == "blocked"
+        assert thread[-1].payload["open"] == [
+            "Agent result could not be recovered from chat history."
+        ]
+        assert svc.cancelled_turns == ["turn-1"]
+        assert rt.scheduler.running == {}
     finally:
         await rt.close()

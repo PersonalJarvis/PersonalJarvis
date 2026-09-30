@@ -5691,6 +5691,7 @@
     "unanswered": "Sin responder: el turno terminó."
   },
   "work_trace": {
+    "tool_failed": "Falló una acción de herramienta",
     "question": "Esperando tu respuesta",
     "integration_used": "Usó {service}",
     "activity_command": "Ejecutó comandos",

@@ -25,7 +25,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final, cast
 
-from jarvis.core.protocols import Tool
+from jarvis.core.protocols import Tool, ToolResult
 from jarvis.core.response_style import CONVERSATIONAL_RESPONSE_STYLE, KEEP_GOING_ON_TOOL_FAILURE
 
 from .agent_tools import (
@@ -243,6 +243,7 @@ async def _scoped_tool_for_session(session_id: str, capability: str) -> Tool | N
         return None
     read_only = str(agent.permission_ceiling) == "safe"
     service = rt.chat_service()
+    session = None
     if service is not None:
         session = service.store.get_session(session_id)
         if session is None:
@@ -273,7 +274,16 @@ async def _scoped_tool_for_session(session_id: str, capability: str) -> Tool | N
     )
     if tool.name not in picked:
         return None
-    return cast(Tool, _GatedTool(tool, agent, capability))
+    return cast(
+        Tool,
+        _GatedTool(
+            tool,
+            agent,
+            capability,
+            _effective_approval_mode(agent, session, _permission_override(rt, session)),
+            rt,
+        ),
+    )
 
 
 async def tools_for_cli_session(
@@ -387,17 +397,27 @@ class _GatedTool:
     """A granted tool wrapped with the agent's approval rules.
 
     The executor asks ``risk_tier_for_args`` before every call; this wrapper
-    answers with ``approvals.decide`` over the roster row's rules and ceiling:
+    answers with ``approvals.decide`` over the bound chat mode, the roster
+    row's rules and ceiling:
     a require-approval match or a call above the ceiling reads as ``ask`` (the
     chat card appears), an always-allow match lets an ask-tier call run, a
     blocked class stays ``block``. Everything else — schema, flags, execute —
     is the inner tool's own.
     """
 
-    def __init__(self, inner: Any, agent: AgentRecord, capability_id: str) -> None:
+    def __init__(
+        self,
+        inner: Any,
+        agent: AgentRecord,
+        capability_id: str,
+        approval_mode: str | None,
+        runtime: Any,
+    ) -> None:
         self._inner = inner
         self._agent = agent
         self._capability_id = capability_id
+        self._approval_mode = approval_mode
+        self._runtime = runtime
         self.name = inner.name
         self.description = inner.description
         self.schema = inner.schema
@@ -420,7 +440,13 @@ class _GatedTool:
             if isinstance(own, str) and own:
                 base = own
         try:
-            verdict = decide(self._agent, self._capability_id, base, verb=_verb_of(args))
+            verdict = decide(
+                self._agent,
+                self._capability_id,
+                base,
+                verb=_verb_of(args),
+                approval_mode=self._approval_mode,
+            )
         except Exception:  # noqa: BLE001 — the static tier still gates the call
             log.warning("society gate: decide failed for %s", self.name, exc_info=True)
             return base
@@ -433,6 +459,15 @@ class _GatedTool:
         return "monitor" if base == "ask" else base
 
     async def execute(self, args: dict[str, Any], ctx: Any) -> Any:
+        # The catalog was selected at turn start. A pause or kill switch that
+        # arrives while the model is thinking must still stop its next call.
+        if await self._runtime.store.kill_switch():
+            return ToolResult(False, {"reason": "kill_switch"}, "the society is halted")
+        live = await self._runtime.roster.get(self._agent.agent_id)
+        if live is None or str(live.state) != "active":
+            return ToolResult(
+                False, {"reason": "blocked_by_policy"}, "caller is not an active agent"
+            )
         return await self._inner.execute(args, ctx)
 
 
@@ -527,6 +562,30 @@ def _workspace_fallback(cfg: Any, agent_id: str) -> Path:
     return data_dir / "society" / agent_id / "workspace"
 
 
+def _permission_override(runtime: Any, session: Any) -> str:
+    service = runtime.chat_service()
+    store = getattr(service, "store", None)
+    lookup = getattr(store, "permission_override", None)
+    session_id = getattr(session, "session_id", "")
+    return str(lookup(session_id) or "") if callable(lookup) and session_id else ""
+
+
+def _effective_approval_mode(
+    agent: AgentRecord, session: Any, override: str = ""
+) -> str | None:
+    """Use a narrower chat choice without widening the agent's roster mode."""
+    if agent.approval_mode is None:
+        # A pre-migration row keeps its ceiling policy until the person chooses
+        # a stricter stance for this chat; the bound mode alone is ambiguous.
+        return override if override in ("ask", "always_ask") else None
+    roster_mode = str(agent.approval_mode)
+    chat_mode = str(getattr(session, "permission_mode", "") or "")
+    strictness = {"bypass": 0, "ask": 1, "always_ask": 2}
+    if chat_mode in strictness and strictness[chat_mode] > strictness[roster_mode]:
+        return chat_mode
+    return roster_mode
+
+
 def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, Tool]] | None:
     rt = current_runtime()
     agent_id = agent_id_of(getattr(session, "session_id", "") or "")
@@ -537,6 +596,7 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
         # The briefing fills the cache before the override is built. A miss
         # cannot establish the agent's mode or grants, so offer no hands.
         return lambda _tools: {}
+    approval_mode = _effective_approval_mode(agent, session, _permission_override(rt, session))
 
     def _apply(tools: dict[str, Tool]) -> dict[str, Tool]:
         own = {
@@ -556,17 +616,23 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
         # The gate rides on the executor's per-call tier hook, so the chat
         # card and the queue stay the one approval path.
         picked = {
-            name: cast(Tool, _GatedTool(tool, agent, cap_id))
+            name: cast(Tool, _GatedTool(tool, agent, cap_id, approval_mode, rt))
             for name, tool in picked.items()
             if (cap_id := capability_id_for_tool(name)) is not None
         }
         ordered: dict[str, Tool] = {}
-        if agent.approval_mode is not None:
+        if approval_mode is not None:
             ordered.update(
                 {
                     name: cast(
                         Tool,
-                        _GatedTool(tool, agent, capability_id_for_tool(name) or "core:society"),
+                        _GatedTool(
+                            tool,
+                            agent,
+                            capability_id_for_tool(name) or "core:society",
+                            approval_mode,
+                            rt,
+                        ),
                     )
                     for name, tool in own.items()
                     # Asking the user IS the person's decision; gating it

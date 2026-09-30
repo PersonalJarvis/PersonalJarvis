@@ -120,6 +120,16 @@ class ChatControls:
         )
         origin_token = _command_origin.set(request)
         try:
+            session = self.service.store.get_session(sid)
+            binder = getattr(self.service, "bind_society_session", None)
+            if (
+                request.command
+                not in {"stop", "status", "help", "clear", "history", "model", "routines", "find"}
+                and session is not None
+                and session.surface == "society"
+                and binder is not None
+            ):
+                await binder(sid)
             from jarvis.memory.wiki.secret_guard import contains_secret
 
             if contains_secret(request.arguments):
@@ -338,13 +348,12 @@ class ChatControls:
         from jarvis.core.tool_read_only import set_chat_read_only
 
         from .events import make_event
-        from .permissions import ladder_key, normalize_permission
+        from .permissions import ladder_key, normalize_permission, society_mode_supported
         from .service import resolve_runner
 
         session = self.service.store.get_session(sid)
-        ladder = ladder_key(
-            session.surface, resolve_runner(session.provider, surface=session.surface)
-        )
+        runner = resolve_runner(session.provider, surface=session.surface)
+        ladder = ladder_key(session.surface, runner)
         # /plan is a chat control, not a ladder choice: the Society ladder
         # (bypass / ask / always ask) has no read-only rung, and folding
         # "plan" onto it would silently leave the turn able to write.
@@ -352,7 +361,20 @@ class ChatControls:
         if permission in ("plan", "read-only") and folded not in ("plan", "read-only"):
             folded = "plan"
         permission = folded
+        if session.surface == "society" and self.service.is_running(sid):
+            raise ValueError("The agent chat is working; stop it before changing permissions")
+        if session.surface == "society" and permission not in ("plan", "read-only"):
+            if not society_mode_supported(runner, permission):
+                raise ValueError(f"{runner} cannot provide an actionable approval for {permission}")
         self.service.store.update_session(sid, permission_mode=permission)
+        if session.surface == "society":
+            self.service.store.set_permission_override(sid, permission)
+            binder = getattr(self.service, "bind_society_session", None)
+            bound = await binder(sid) if binder is not None else session
+            self.service.store.set_permission_override(sid, bound.permission_mode)
+            if bound.permission_mode != permission:
+                raise ValueError("The agent's roster does not permit that chat mode")
+            permission = bound.permission_mode
         state.mode = "plan" if permission in ("plan", "read-only") else "build"
         set_chat_read_only(sid, state.mode == "plan")
         await self.publish(state)

@@ -62,6 +62,7 @@ from jarvis.agent_chat.permissions import (
     ladder_key,
     normalize_permission,
     permission_modes,
+    society_mode_supported,
 )
 from jarvis.agent_chat.service import (
     DECISIONS,
@@ -715,6 +716,10 @@ async def patch_session(
     existing = svc.store.get_session(session_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="session not found")
+    if existing.surface == "society" and ":routine:" in session_id:
+        raise HTTPException(status_code=403, detail="Routine chat is owned by its schedule")
+    if existing.surface == "society" and svc.is_running(session_id):
+        raise HTTPException(status_code=409, detail="Agent chat is working")
     fields: dict[str, Any] = {}
     if body.title is not None:
         fields["title"] = body.title.strip()[:120]
@@ -749,6 +754,13 @@ async def patch_session(
                     + ", ".join(m.id for m in permission_modes(ladder))
                 ),
             )
+        if current.surface == "society" and not society_mode_supported(
+            runner, body.permission_mode
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=f"{runner} cannot provide an actionable approval for {body.permission_mode}",
+            )
         fields["permission_mode"] = body.permission_mode
     elif "provider" in fields:
         # A provider change folds the old mode onto the new runner's ladder
@@ -771,9 +783,21 @@ async def patch_session(
             await svc.controls.pause(session_id, "Model or permission settings changed")
         if "provider" in fields or "account_id" in fields:
             await svc.controls._clear_saved_native(session_id)
+    if current.surface == "society" and svc.is_running(session_id):
+        raise HTTPException(status_code=409, detail="Agent chat is working")
     session = svc.store.update_session(session_id, **fields)
     assert session is not None
-    changed = {k: v for k, v in fields.items() if k != "vendor_session"}
+    if current.surface == "society" and body.permission_mode is not None:
+        svc.store.set_permission_override(session_id, session.permission_mode)
+    if current.surface == "society":
+        binder = getattr(svc, "bind_society_session", None)
+        if binder is not None:
+            session = await binder(session_id)
+            if body.permission_mode is not None:
+                # Persist the effective choice, not a requested escalation that
+                # the roster narrowed during binding.
+                svc.store.set_permission_override(session_id, session.permission_mode)
+    changed = {key: getattr(session, key) for key in fields if key != "vendor_session"}
     if changed:
         await svc._emit(session_id, make_event("session_updated", changed))  # noqa: SLF001 — same package boundary
     d = session.to_dict()
@@ -817,6 +841,8 @@ async def post_message(session_id: str, body: MessageBody, request: Request) -> 
         raise HTTPException(status_code=404, detail="session not found") from exc
     except SessionBusy as exc:
         raise HTTPException(status_code=409, detail="a turn is already running") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
