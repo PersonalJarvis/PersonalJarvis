@@ -67,14 +67,6 @@ def test_settings_labels_cover_every_style(locale: str) -> None:
     assert all(str(label).strip() for label in options.values())
 
 
-@pytest.mark.parametrize("locale", _locale_names())
-def test_onboarding_labels_and_captions_cover_every_style(locale: str) -> None:
-    step = _locale(locale)["onboarding"]["system_style"]
-    assert sorted(step["options"]) == sorted(OVERLAY_STYLES)
-    assert sorted(step["captions"]) == sorted(OVERLAY_STYLES)
-    assert all(str(text).strip() for text in step["captions"].values())
-
-
 def test_every_style_has_its_own_preview_graphic() -> None:
     # StylePreview falls THROUGH to the "hidden" thumbnail, so a style nobody
     # taught it renders as a crossed-out box that claims the overlay is off.

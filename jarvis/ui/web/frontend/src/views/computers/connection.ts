@@ -141,9 +141,9 @@ export function setupPrompt(assistantName: string, publicKey: string): string {
 2. Authorize exactly this PUBLIC key for the account I normally use on this computer. Do not create, copy or print any private key.
    ${publicKey}
    - Linux/macOS: append it to ~/.ssh/authorized_keys of that account (folder mode 700, file mode 600, owned by that account).
-   - Windows: if the account is in the Administrators group, append it to C:\\ProgramData\\ssh\\administrators_authorized_keys and run: icacls C:\\ProgramData\\ssh\\administrators_authorized_keys /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F". Otherwise append it to C:\\Users\\<account>\\.ssh\\authorized_keys.
+   - Windows: if the account is in the Administrators group, append it to C:\\ProgramData\\ssh\\administrators_authorized_keys (UTF-8 without a byte-order mark) and run: icacls C:\\ProgramData\\ssh\\administrators_authorized_keys /inheritance:r /grant "*S-1-5-32-544:F" /grant "*S-1-5-18:F" (the group SIDs work in every Windows language). Otherwise append it to C:\\Users\\<account>\\.ssh\\authorized_keys.
 
-3. If this is Linux or macOS, also install tmux and git if they are missing (coding agents will run here later).
+3. Coding agents will run here later. On Linux or macOS, install tmux and git if they are missing. On Windows, install Git for Windows if it is missing (winget install --id Git.Git -e); the agents use its Git Bash.
 
 4. Work out the address another computer can use to reach this one: the local network IP if we are on the same network, otherwise the public IP. If a router port-forward would be needed, tell me in one sentence.
 

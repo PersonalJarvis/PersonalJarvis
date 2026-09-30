@@ -26,7 +26,7 @@ pages:
     summary: See how Jarvis turns your computer into an AI agent, what stays under your control, and where to begin.
     authoritative_sources:
       - README.md
-      - CLAUDE.md
+      - AGENTS.md
       - jarvis/ui/web/frontend/src/components/layout/Sidebar.tsx
       - jarvis/ui/web/frontend/src/components/layout/MainView.tsx
     related:
@@ -65,12 +65,11 @@ pages:
     file: docs/product/start-here/first-run-setup.md
     title: Complete First-Run Setup
     diataxis: tutorial
-    summary: Choose languages, a local or connected Brain, permissions, and voice activation without exposing credentials.
+    summary: Setup runs inside the app. Agree to the terms, add one key on the API Keys page, pick a wake word in Settings, then take the tour.
     authoritative_sources:
-      - jarvis/ui/web/frontend/src/components/onboarding/OnboardingFlow.tsx
-      - jarvis/ui/web/frontend/src/components/onboarding/steps/ApiKeysStep.tsx
-      - jarvis/ui/web/frontend/src/components/onboarding/steps/WakeWordStep.tsx
-      - jarvis/ui/web/frontend/src/components/onboarding/steps/PermissionsStep.tsx
+      - jarvis/ui/web/frontend/src/components/onboarding/setup/SetupTour.tsx
+      - jarvis/ui/web/frontend/src/components/onboarding/setup/setupSteps.ts
+      - jarvis/ui/web/frontend/src/components/onboarding/tour/tourSteps.ts
       - jarvis/ui/web/onboarding_routes.py
     related:
       - providers-and-api-keys
@@ -800,7 +799,7 @@ pages:
     diataxis: explanation
     summary: Learn what Jarvis stores locally, what may be sent to a connected service, and how each optional feature changes that boundary.
     authoritative_sources:
-      - CLAUDE.md
+      - AGENTS.md
       - jarvis/core/paths.py
       - jarvis/core/redact.py
       - jarvis/state/chat_store.py
@@ -865,7 +864,7 @@ pages:
     diataxis: explanation
     summary: Learn why some actions run immediately, some require confirmation, and some are blocked before they can affect your computer or accounts.
     authoritative_sources:
-      - CLAUDE.md
+      - AGENTS.md
       - jarvis/safety/risk_tier.py
       - jarvis/safety/approval.py
       - jarvis/safety/tool_executor.py

@@ -22,7 +22,7 @@ guess.
 
 The German and Spanish stems here are speech-recognition *input vocabulary*:
 the words a person actually says when handing work to an agent. They are
-matching data, not prose (see CLAUDE.md §1, closed list item 3), and each such
+matching data, not prose (see AGENTS.md §1, closed list item 3), and each such
 line carries an inline marker.
 """
 from __future__ import annotations

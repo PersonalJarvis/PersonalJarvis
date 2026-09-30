@@ -57,7 +57,7 @@ from jarvis.dictation.polish_prompt import RAW_OPEN_DELIMITER
 # The German below is the MATERIAL under test, not prose: a translation test
 # needs text in a language other than the target, and the language detector the
 # guards run on knows de/en/es — so the fixture has to be one of those to
-# exercise the check at all (CLAUDE.md §1, allowed category 4).
+# exercise the check at all (AGENTS.md §1, allowed category 4).
 GERMAN = (
     "also ich glaube wir sollten den bericht am dienstag rausschicken"  # i18n-allow
 )
@@ -817,7 +817,7 @@ def test_the_openai_wording_models_come_from_the_verified_catalog() -> None:
     """The wording pass and the brain must not disagree about what OpenAI serves.
 
     This family's default sat on a 2025 model id for long enough that nobody
-    noticed (CLAUDE.md §3 forbids a default that old). Tying both ids to the
+    noticed (AGENTS.md §3 forbids a default that old). Tying both ids to the
     curated roster the brain already keeps current means the next refresh of
     that roster cannot leave this pass behind — and a removal there fails here
     instead of 404-ing at dictation time.

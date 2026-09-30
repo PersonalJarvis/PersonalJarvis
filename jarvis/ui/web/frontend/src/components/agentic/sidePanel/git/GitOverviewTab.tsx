@@ -411,13 +411,22 @@ export function GitOverviewTab() {
   const [showLegend, setShowLegend] = useState(false);
   // Reopened from the repository chip to change an earlier choice.
   const [changing, setChanging] = useState(false);
+  // The repository just picked. The pick is saved at once, but the GitHub
+  // read it starts takes seconds (up to the request timeout); until that
+  // answer lands the tab shows the choice and the local branches, never the
+  // picker again — a picker that stays put reads as "the click did nothing".
+  const [pickedRepo, setPickedRepo] = useState("");
   useEffect(() => setChanging(false), [workspaceId]);
+  useEffect(() => setPickedRepo(""), [data, workspaceId]);
 
   if (!workspace) {
     return <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t("ide_side_panel.git.no_workspace")}</p>;
   }
   const github = data?.github;
-  const picking = Boolean(data && workspaceId && (github?.code === "needs_repo" || (changing && github?.code !== "not_connected")));
+  const picking = Boolean(
+    data && workspaceId && !pickedRepo && (github?.code === "needs_repo" || (changing && github?.code !== "not_connected")),
+  );
+  const boundRepo = pickedRepo || github?.repo || "";
   const repoName = (data?.root || workspace.path).replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? workspace.name;
 
   return (
@@ -468,7 +477,7 @@ export function GitOverviewTab() {
             </QuickTooltip>
           </span>
         </div>
-        {github?.repo && (
+        {boundRepo && (
           <p data-testid="git-github-state" className="flex min-w-0 items-center gap-1.5 text-[10.5px] text-muted-foreground">
             <QuickTooltip content={t("ide_side_panel.git.change_repo")} side="bottom" className="inline-flex min-w-0">
               <button
@@ -477,14 +486,16 @@ export function GitOverviewTab() {
                 onClick={() => setChanging(true)}
                 className="inline-flex min-w-0 items-center gap-1 rounded px-0.5 font-mono text-foreground/80 hover:bg-secondary hover:text-foreground"
               >
-                <span className="truncate">{github.repo}</span>
+                <span className="truncate">{boundRepo}</span>
               </button>
             </QuickTooltip>
             <span aria-hidden>·</span>
             <span className="min-w-0 truncate">
-              {github.available
-                ? fill(t("ide_side_panel.git.github_updated"), { when: sinceLabel(t, github.fetched_at) })
-                : github.reason}
+              {pickedRepo
+                ? t("ide_side_panel.git.github_reading")
+                : github?.available
+                  ? fill(t("ide_side_panel.git.github_updated"), { when: sinceLabel(t, github.fetched_at) })
+                  : github?.reason}
             </span>
           </p>
         )}
@@ -500,7 +511,8 @@ export function GitOverviewTab() {
           workspaceId={workspaceId}
           current={github?.repo ?? ""}
           suggested={github?.suggested_repo ?? ""}
-          onPicked={() => {
+          onPicked={(repo) => {
+            setPickedRepo(repo);
             setChanging(false);
             refresh();
           }}

@@ -1183,14 +1183,30 @@ export async function resolveDroppedFolder(payload: {
 export async function startIdeSession(
   folder: string,
   terminals: TerminalPlan[],
-  options: {
-    projectId?: string;
-    name?: string;
-    computerId?: string;
-    /** Told the backend's one-line report, e.g. which files stayed on this PC. */
-    onMessage?: (message: string) => void;
-  } = {},
+  options: OpenWorkspaceOptions = {},
 ): Promise<IdeState> {
+  return (await openIdeWorkspace(folder, terminals, options)).state;
+}
+
+export interface OpenWorkspaceOptions {
+  projectId?: string;
+  name?: string;
+  computerId?: string;
+  /** Told the backend's one-line report, e.g. which files stayed on this PC. */
+  onMessage?: (message: string) => void;
+}
+
+/**
+ * `startIdeSession` for a caller that goes on to use the new panes: the new
+ * workspace ITSELF, beside the state. `state.session` is only whichever
+ * workspace is at the front when the answer is built, and another window can
+ * bring a different one forward in between.
+ */
+export async function openIdeWorkspace(
+  folder: string,
+  terminals: TerminalPlan[],
+  options: OpenWorkspaceOptions = {},
+): Promise<{ session: SessionState; state: IdeState }> {
   const res = await fetch("/api/agentic-ide/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1208,9 +1224,10 @@ export async function startIdeSession(
   if (body.message) options.onMessage?.(body.message);
   // `state` is authoritative; `session` alone is kept as the fallback for a
   // backend that predates the workspace bar.
-  return (
-    body.state ?? { ...EMPTY_IDE_STATE, active: true, session: body.session }
-  );
+  return {
+    session: body.session,
+    state: body.state ?? { ...EMPTY_IDE_STATE, active: true, session: body.session },
+  };
 }
 
 /** Shape a pre-workspace-bar backend does not send. */

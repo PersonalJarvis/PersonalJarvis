@@ -52,7 +52,7 @@ Jarvis itself, tuned for a voice assistant.
    - its text passes `guard.refusal`: no credentials, no instruction-like or
      injected text (English, German and Spanish patterns), no orders phrased
      as entries, no invisible, private-use or unassigned characters, at most
-     400 characters;
+     300 characters;
    - a `replace`/`remove` names an existing entry that has not changed since
      the review read it (an edit in the UI or Obsidian wins), and an `add` is
      not an exact duplicate. At most eight changes per review.
@@ -87,15 +87,32 @@ The prompt path never waits on a writer and never creates files: it reads the
 notebooks under a 50 ms lock attempt and otherwise serves the last good text.
 Typed chat turns contribute only what the person typed, never attachments.
 
-## Budgets
+## Size and compaction
 
 The notebooks ride along on every brain turn and every realtime instruction
 update, so they stay small: `user_budget_chars` 1,500 and `memory_budget_chars`
 1,000 by default (about 650 tokens together at most; the compact realtime
-profile for small local models uses half). The reviewer is shown the fill level and asked to merge
-related entries once a notebook passes 80 percent; at 125 percent new entries
-are refused until it has consolidated. Entries beyond the prompt budget are
-kept on disk; the most important and most recent ones reach the prompt.
+profile for small local models uses half). One entry is one short sentence,
+at most 300 characters. Entries beyond the prompt budget stay on disk; the most
+important and most recent ones reach the prompt.
+
+Compaction (`compact.py`) keeps the files themselves small:
+
+1. **Duplicates (free, after every write and at start).** An entry equal to,
+   or contained in, another entry of the same notebook is removed.
+2. **Merge (one cheap call, at most every 12 hours per notebook).** Once a
+   notebook passes 80 percent of its budget, a model proposes merged entries
+   and outdated ones. Python accepts a merge only when it is shorter than its
+   sources and invents nothing: every number and link, every capitalised name
+   and at least 60 percent of its words come from the sources. An entry is
+   dropped as outdated only when it names a date that has passed; lasting
+   facts such as birthdays are kept. The cooldown survives restarts
+   (`.learning-state.json`).
+3. **Hard ceiling.** A review may not grow a notebook past 125 percent of its
+   budget (a replace that does not grow it is fine). Only an explicit
+   "remember" request passes the ceiling, and the next merge shrinks it.
+4. **Bounded ledger.** `.learning-ledger.jsonl` rotates at 256 KB and keeps one
+   previous file, so the audit trail never exceeds about 0.5 MB.
 
 Privacy: reviews send the reviewed turns to the same background provider
 chain the wiki extractor already uses for every conversation turn; the loop
@@ -110,6 +127,8 @@ adds no new destination. `enabled = false` switches it off.
   model, preferably on a subscription.
 - Every turn: at most about 650 prompt tokens for the notebooks, usually far
   less, and byte-stable between reviews so provider prompt caches apply.
+- Compaction: nothing while a notebook is below 80 percent full; then at most
+  one small call per notebook every 12 hours.
 
 ## Design reference
 
@@ -125,6 +144,8 @@ engines. No upstream code was copied.
 
 `tests/unit/memory/learning/test_jarvis_learning.py` covers the evidence and
 safety rules, ledger and budgets, every trigger, the dead-reviewer fallbacks,
-the voice and chat inputs, and both prompt integrations. The loop uses only
+the voice and chat inputs, and both prompt integrations;
+`test_compaction.py` covers deduplication, safe and refused merges, the
+outdated rule, the cooldown, the hard ceiling and the bounded ledger. The loop uses only
 `pathlib`, JSON, asyncio and the existing `filelock` dependency, so it runs
 unchanged on Windows, macOS and headless Linux.

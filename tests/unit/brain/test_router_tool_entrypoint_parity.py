@@ -8,7 +8,7 @@ it out on every boot and it could never load.
 
 The cost was not the dead code — it was the documentation. Three separate docs
 concluded from the entry point that the tool was live, and
-``docs/LLM-CONTEXT.md`` went further and "corrected" CLAUDE.md in the wrong
+``docs/LLM-CONTEXT.md`` went further and "corrected" AGENTS.md in the wrong
 direction. Every agent session read that. A registration is a claim, and an
 unreachable claim is worse than an absence.
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -63,6 +64,19 @@ def subscription_seat(provider: str) -> tuple[str, str] | None:
     if seat is None and provider == "claude-api" and _claude_subscription_ready():
         seat = ("claude-api", "claude-cli")
     return seat
+
+
+async def subscription_seat_off_loop(provider: str) -> tuple[str, str] | None:
+    """``subscription_seat`` for code running on the event loop.
+
+    The Claude slot's login probe can run two blocking ``claude`` subprocesses
+    (4 s + 6 s) when its cache is cold; on the loop that froze voice,
+    WebSockets and the IDE for up to ~10 s (#251). Other seats are a dict
+    lookup and stay inline.
+    """
+    if provider != "claude-api":
+        return subscription_seat(provider)
+    return await asyncio.to_thread(subscription_seat, provider)
 
 
 _CLAUDE_LOGIN_TTL_S = 60.0

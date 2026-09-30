@@ -1,4 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import { isTourEvent } from "@/components/onboarding/tourEvents";
 import { lazy, Suspense, useMemo, useRef, useState, type ComponentType, type LazyExoticComponent } from "react";
 import { Loader2, Search, X } from "lucide-react";
 import {
@@ -431,8 +432,13 @@ export function SettingsHubDialog({ onClose }: { onClose: () => void }) {
   const opener = useRef(document.activeElement);
   // A nested modal inside a tab (credential dialogs, pickers) owns outside
   // clicks and Escape while it is open; so does an open combobox panel.
+  // The first-run guide dims the window over this dialog and points into it;
+  // a click on its card or its dim must not read as "outside" and close the
+  // very page it is pointing at.
   const nestedOwnsEvent = (event: Event) =>
-    isComboboxPanelEvent(event) || content.current?.querySelector('[aria-modal="true"]') != null;
+    isComboboxPanelEvent(event) ||
+    content.current?.querySelector('[aria-modal="true"]') != null ||
+    isTourEvent(event);
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
       <Dialog.Portal>

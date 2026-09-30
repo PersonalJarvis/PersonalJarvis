@@ -1148,7 +1148,7 @@ def _rebuild_invalid_subscription_home() -> None:
     directory is Jarvis's own — never user documents — and its only meaningful
     content is the dedicated login the user is actively replacing or removing.
     Without this, ``setup_invalid`` was an in-app dead end whose card text
-    demanded a reconnect that failed on the very same validation (CLAUDE.md
+    demanded a reconnect that failed on the very same validation (AGENTS.md
     §3: recoverable IN-APP). A symlinked profile is detached, never followed.
     """
     from jarvis.core.paths import user_data_dir
@@ -1601,7 +1601,7 @@ def _login_required_reason_code() -> CodexSubscriptionReasonCode:
     On a headless Linux host the interactive browser login is impossible, so
     inviting it would only produce an error toast after the click — the
     pre-click truth there is ``lifecycle_unavailable`` (visible degradation,
-    CLAUDE.md §3). The same holds for a graphical Linux desktop that ships no
+    AGENTS.md §3). The same holds for a graphical Linux desktop that ships no
     terminal able to host the login for its full lifetime. An EXISTING login
     still reports ready on such hosts.
     """

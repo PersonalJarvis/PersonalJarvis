@@ -16,7 +16,7 @@ family walk (``_api_key_family_viable``) skips the family. A successful run
 clears it immediately, and the cooldown self-expires so a reset cap is
 re-probed.
 
-Fingerprint binding (in-app recoverability, CLAUDE.md §3): the cooldown is
+Fingerprint binding (in-app recoverability, AGENTS.md §3): the cooldown is
 bound to the credential that failed. Saving a NEW key in the API-Keys view
 changes the fingerprint and lifts the block instantly — no restart, no wait.
 A check without a current fingerprint is conservative: the cooldown holds.

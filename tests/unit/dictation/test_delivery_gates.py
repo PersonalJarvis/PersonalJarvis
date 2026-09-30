@@ -39,7 +39,7 @@ from jarvis.speech.pipeline import SpeechPipeline, _is_silence_hallucination
 BYTES_PER_SECOND = 16_000 * 2
 
 # German fixtures. A transcript reproduces the speaker's own words, so the
-# dictated German IS the thing under test here (CLAUDE.md §1, list #4).
+# dictated German IS the thing under test here (AGENTS.md §1, list #4).
 DE_SENTENCE = "Er hat gesagt, dass er das Dokument gleich schickt."  # i18n-allow: fixture
 DE_THANKS = "Vielen Dank für das Update"  # i18n-allow: fixture
 

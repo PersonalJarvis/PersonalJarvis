@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { AgentStatus } from "@/lib/agenticIdeApi";
+import type { AgentStatus, DropAttachment, IdeProject } from "@/lib/agenticIdeApi";
 import type { PaneOccupant } from "./codingFloor";
-import { launchableAgents, pickAll } from "./MissionControlPanel";
+import { launchableAgents, pickAll, workspaceProjects } from "./MissionControlPanel";
+import { folderTarget } from "./NewWorkspaceFields";
 import { liveGrid } from "./PaneLiveScreen";
+import { briefWithFiles, heldPayload, holdDrop } from "./spawnFiles";
+
+const project = (id: string, path: string, extra: Partial<IdeProject> = {}): IdeProject =>
+  ({ id, path, name: id, scratch: false, archived: false, exists: true, workspaces: [], ...extra } as IdeProject);
+
+const described = (reference: string): DropAttachment =>
+  ({ name: reference, reference, kind: "image", detail: "a chart", described_by: "vision", note: "" });
 
 const cli = (name: string, extra: Partial<AgentStatus> = {}): AgentStatus => ({
   name, display_name: name, installed: true, version: null, install_command: null, ...extra,
@@ -36,5 +44,36 @@ describe("mission control", () => {
     const floor = [occupant("a", "working"), occupant("b", "waiting"), occupant("c", "idle")];
     expect([...pickAll(floor, new Set(["b"]))]).toEqual(["a", "b", "c"]);
     expect([...pickAll(floor, new Set(["a", "b", "c"]))]).toEqual([]);
+  });
+
+  it("offers a new workspace only in real, reachable, connected folders", () => {
+    const list = [project("shop", "/w/shop"), project("chats", "/w/c", { scratch: true }),
+      project("old", "/w/old", { archived: true }), project("usb", "/mnt/usb", { exists: false })];
+    expect(workspaceProjects(list).map((p) => p.id)).toEqual(["shop"]);
+  });
+
+  it("recognises a picked folder that is already a connected project", () => {
+    const list = [project("shop", "C:\\work\\shop")];
+    expect(folderTarget("c:/work/shop/", list)).toEqual({ path: "C:\\work\\shop", label: "shop", projectId: "shop" });
+    expect(folderTarget("/home/me/new-app", list)).toEqual({ path: "/home/me/new-app", label: "new-app" });
+  });
+});
+
+describe("spawn point files", () => {
+  const shot = new File(["png"], "shot.png", { type: "image/png", lastModified: 1 });
+
+  it("holds each dropped file once, paths and bytes alike", () => {
+    const once = holdDrop([], { paths: ["C:\\docs\\spec.pdf"], files: [shot] });
+    const twice = holdDrop(once, { paths: ["c:/docs/spec.pdf"], files: [shot] });
+    expect(twice.map((h) => h.name)).toEqual(["spec.pdf", "shot.png"]);
+    expect(heldPayload(twice)).toEqual({ paths: ["C:\\docs\\spec.pdf"], files: [shot] });
+  });
+
+  it("writes in only the files the analysis did not describe, never ending on one", () => {
+    expect(briefWithFiles("Fix it", ["@a.png"], [described("@a.png")])).toBe("Fix it");
+    const brief = briefWithFiles("Fix it", ["@a.png", "@big.mov"], [described("@a.png")]);
+    expect(brief).toContain("@big.mov");
+    expect(brief).not.toContain("@a.png");
+    expect(brief.trimEnd().endsWith("@big.mov")).toBe(false);
   });
 });

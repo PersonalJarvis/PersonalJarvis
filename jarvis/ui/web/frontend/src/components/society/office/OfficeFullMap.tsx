@@ -104,6 +104,8 @@ function FullMapDialog({ onClose, layout, agents, selectedId }: Omit<OfficeFullM
   );
 
   const checkpointLabels: Record<CheckpointKind, string> = {
+    spawn: t("society.office.cp_spawn"),
+    launch: t("society.office.cp_launch"),
     create: t("society.office.cp_create"),
     manage: t("society.office.cp_manage"),
     team: t("society.office.cp_team"),

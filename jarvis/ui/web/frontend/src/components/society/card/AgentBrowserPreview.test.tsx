@@ -11,18 +11,26 @@ vi.mock("@/i18n", () => ({
     "society.browser_live.back": "Back",
     "society.browser_live.screen": "Live browser of {0}",
     "society.browser_live.live": "Live",
+    "society.browser_live.off_hint": "Starts when {0} needs it",
+    "society.browser_live.open": "Open browser",
   } as Record<string, string>)[key] ?? key,
 }));
-const { control, state } = vi.hoisted(() => ({
+const { control, state, view, browser } = vi.hoisted(() => ({
   control: vi.fn(),
+  view: vi.fn(),
+  browser: { open: true },
   state: { connected: true, ready: true, fullWindow: false, manual: false, running: false,
     url: "https://example.com", target: "one", tabs: [{ id: "one", url: "https://example.com" }], error: "" },
 }));
 vi.mock("./useBrowserView", () => ({
-  useBrowserView: () => ({ canvas: { current: null }, state, control, approve: vi.fn() }),
+  useBrowserView: (agentId: string, enabled: boolean) => {
+    view(agentId, enabled);
+    return { canvas: { current: null }, state, control, approve: vi.fn() };
+  },
 }));
 vi.mock("../cardData", () => ({
   useBrowserInstallStatus: () => ({ data: { installed: true, running: false } }),
+  useAgentBrowserOpen: () => ({ data: browser.open }),
 }));
 const agent = { agentId: "scout", name: "Scout" } as SocietyAgent;
 function mount() {
@@ -30,8 +38,24 @@ function mount() {
     <AgentBrowserPreview agent={agent} />
   </QueryClientProvider>);
 }
-afterEach(() => { cleanup(); control.mockClear(); state.manual = false; state.fullWindow = false; });
+afterEach(() => {
+  cleanup(); control.mockClear(); view.mockClear();
+  state.manual = false; state.fullWindow = false; browser.open = true;
+});
 describe("live agent browser", () => {
+  test("opening the card never launches a browser the agent is not using", () => {
+    browser.open = false;
+    mount();
+    expect(view).toHaveBeenLastCalledWith("scout", false);
+    expect(screen.getByTestId("agent-browser-preview").textContent).toContain("Starts when Scout needs it");
+    fireEvent.click(screen.getByTestId("agent-browser-open"));
+    expect(view).toHaveBeenLastCalledWith("scout", true);
+  });
+  test("a browser the agent already runs is shown straight away", () => {
+    mount();
+    expect(view).toHaveBeenLastCalledWith("scout", true);
+    expect(screen.queryByTestId("agent-browser-open")).toBeNull();
+  });
   test("full Chrome window never adds a second address bar or tab picker", async () => {
     state.fullWindow = true;
     mount();

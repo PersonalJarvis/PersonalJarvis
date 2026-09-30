@@ -191,7 +191,7 @@ function WelcomeTab({ floor, layout, onCreateAgent }: { floor: OfficeFloor; layo
           return (
             <li key={cp.id}>
               <button type="button" className="office-rx-place" aria-label={t("society.office.guide.place_walk_label").replace("{0}", name)}
-                onClick={() => walk(cp.x, cp.z)}>
+                onClick={() => walk((cp.approach ?? cp).x, (cp.approach ?? cp).z)}>
                 <span className="office-rx-icon"><IconSvg icon={CHECKPOINT_ICON[cp.id]} /></span>
                 <span className="office-rx-place-text">
                   <strong>{name}</strong>

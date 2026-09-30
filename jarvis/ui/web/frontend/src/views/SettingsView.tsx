@@ -141,6 +141,7 @@ export function SettingsView({ searchTarget, onSearchTargetHandled }: {
                 key={section.id}
                 id={`settings-${section.id}`}
                 data-settings-section={section.id}
+                data-tour={`settings-${section.id}`}
                 className="scroll-mt-4"
               >
                 <SettingsGroupBoundary group={section.id}>

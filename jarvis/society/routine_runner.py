@@ -49,7 +49,7 @@ def _billed_via_api(provider: str) -> bool:
     return resolve_runner(provider, surface=SURFACE) in ("brain", "api", "unknown")
 
 
-def _subscription_seat(cfg: Any) -> tuple[str, str, str] | None:
+async def _subscription_seat(cfg: Any) -> tuple[str, str, str] | None:
     """The Jarvis chat's current subscription seat, if it has one.
 
     Mirrors what a typed turn on the front page resolves to
@@ -59,7 +59,7 @@ def _subscription_seat(cfg: Any) -> tuple[str, str, str] | None:
     """
     try:
         from jarvis.core.model_selection import worker_selection
-        from jarvis.core.task_agent import subscription_seat
+        from jarvis.core.task_agent import subscription_seat_off_loop
     except Exception:  # noqa: BLE001 — no selection layer: no subscription seat
         return None
     try:
@@ -68,7 +68,7 @@ def _subscription_seat(cfg: Any) -> tuple[str, str, str] | None:
         return None
     if selection is None or not selection.provider:
         return None
-    mapped = subscription_seat(selection.provider)
+    mapped = await subscription_seat_off_loop(selection.provider)
     if mapped is not None:
         return mapped[0], selection.model or "", selection.reasoning_effort or ""
     if not _billed_via_api(selection.provider):
@@ -102,7 +102,7 @@ async def _seat_for_run(runtime: Any, agent: Any, task_id: str) -> tuple[str, st
     if getattr(agent, "provider", ""):
         _provider, _model, _effort = pair_for(cfg, agent)
         return _provider, _model, _effort, account_id
-    subscription = _subscription_seat(cfg)
+    subscription = await _subscription_seat(cfg)
     if subscription is not None:
         provider, model, effort = subscription
         return provider, model, effort, account_id

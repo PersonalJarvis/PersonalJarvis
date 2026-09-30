@@ -307,7 +307,7 @@ def _build_worker_cmd(
     the worker class this argv fed was deleted with the direct-worker
     migration; only ``tests/missions/test_provider_chain_argv.py`` and the
     spike script still exercise it. Kept as read-compat surface per the
-    CLAUDE.md §4 glossary (do not delete together with the aliases).
+    AGENTS.md §4 glossary (do not delete together with the aliases).
 
     `binary` accepts either a single executable path (legacy contract,
     used by existing tests that pin one string) or the full argv prefix

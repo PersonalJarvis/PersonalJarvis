@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { translate, useT } from "@/i18n";
 import { useEventStore, type VoiceState, type SectionId } from "@/store/events";
 
-type MascotAction =
+export type MascotAction =
   | "idle"
   | "blink"
   | "wave"
@@ -44,6 +44,11 @@ type Props = {
   className?: string;
   reactToVoice?: boolean;
   enableComments?: boolean;
+  /**
+   * A one-shot move asked for by the parent — the first-run guide greets each
+   * step with one. A new `key` replays the move even when the action repeats.
+   */
+  cue?: { action: MascotAction; key: string | number };
 };
 
 export function MascotGigi({
@@ -51,6 +56,7 @@ export function MascotGigi({
   className,
   reactToVoice = true,
   enableComments = true,
+  cue,
 }: Props) {
   const t = useT();
   const uid = `gigi${useId().replace(/:/g, "")}`;
@@ -87,6 +93,15 @@ export function MascotGigi({
       if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, []);
+
+  const cueAction = cue?.action;
+  const cueKey = cue?.key;
+  useEffect(() => {
+    if (!cueAction || cueAction === "idle") return;
+    setAction(cueAction);
+    const back = setTimeout(() => setAction("idle"), ACTION_DURATION_MS[cueAction]);
+    return () => clearTimeout(back);
+  }, [cueAction, cueKey]);
 
   const voiceClass = reactToVoice ? voiceClassFor(voiceState) : "";
   // Below ~80px blur-halos turn into a muddy disc. The mark is then just

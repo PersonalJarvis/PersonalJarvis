@@ -48,7 +48,7 @@ from dataclasses import dataclass
 
 # i18n-allow: the tables below are speech-recognition vocabulary — the literal
 # German/Spanish tokens a matcher must contain to recognise a German or Spanish
-# hesitation sound. Matching data, not prose (CLAUDE.md §1, category 3).
+# hesitation sound. Matching data, not prose (AGENTS.md §1, category 3).
 
 #: Hesitation sounds per language. Keys are lowercase two-letter codes.
 #: Multi-word entries are matched as a phrase.

@@ -1,8 +1,8 @@
 /**
  * DOM panels for what the person selects in the office: an agent (an IDE
  * session on the coding floor has its own PaneCommandPanel), or one of the
- * checkpoints (reception, agent board, team room, wardrobe, lead office, break
- * room, elevator, Mission Control). Every action here uses an existing app path — create dialog,
+ * checkpoints (the spawn point, reception, agent board, team room, wardrobe,
+ * lead office, break room, elevator, Mission Control). Every action here uses an existing app path — create dialog,
  * agent card/chat, chat groups — the office adds no new backend contract.
  */
 import { useEffect, useId, useRef, useState } from "react";
@@ -17,6 +17,7 @@ import { WardrobePanel } from "./WardrobePanel";
 import { ReceptionPanel } from "./ReceptionPanel";
 import { TeamRoomPanel } from "./TeamRoomPanel";
 import { MissionControlPanel } from "./MissionControlPanel";
+import { LaunchPanel, SpawnPanel } from "./SpawnPanel";
 import { CHECKPOINT_ICON, IconSvg, type CheckpointIcon } from "./CheckpointMarker";
 
 
@@ -153,6 +154,8 @@ export function CheckpointPanel({ id, floor = "agents", agents, layout, sample, 
   const t = useT();
   return (
     <PanelShell title={t(`society.office.cp_${id}`)} subtitle={t(`society.office.cp_${id}_hint`)} icon={CHECKPOINT_ICON[id]} kind={id} onClose={onClose}>
+      {id === "spawn" && <SpawnPanel agents={agents} onCreateAgent={actions.onCreateAgent} />}
+      {id === "launch" && <LaunchPanel />}
       {id === "create" && <ReceptionPanel floor={floor} layout={layout} onCreateAgent={actions.onCreateAgent} />}
       {id === "manage" && <ManagePanel agents={agents} actions={actions} />}
       {id === "team" && <TeamRoomPanel agents={agents} layout={layout} sample={sample} actions={actions} />}

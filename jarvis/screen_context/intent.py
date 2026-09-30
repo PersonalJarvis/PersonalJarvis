@@ -13,7 +13,7 @@ call and no network. An LLM classifier here would sit on the voice path (AP-9),
 and it would make "did it look at my screen, and why?" unanswerable after the
 fact — ``IntentVerdict.evidence`` exists so that question always has an answer.
 
-**Every supported locale is equal** (CLAUDE.md §1): de, en and es are matched
+**Every supported locale is equal** (AGENTS.md §1): de, en and es are matched
 simultaneously rather than selected by the session locale, because a bilingual
 user mixes them inside one sentence and a locale-gated matcher would go deaf on
 the half it did not pick. Adding a locale is a data entry below, not code.
@@ -194,7 +194,7 @@ _END = r"\s*(?:$|[.?!;:])"
 
 # Filler particles a spoken deictic may trail before the clause ends. These are
 # the only tokens allowed between the pronoun and the end — anything else makes
-# it a determiner. Matching data, not prose (CLAUDE.md §1 category 3).
+# it a determiner. Matching data, not prose (AGENTS.md §1 category 3).
 _EN_TAIL = r"(?:\s+(?:then|exactly|now|again|here|there|really))*"
 _DE_TAIL = (  # i18n-allow: German speech-input matching data
     r"(?:\s+(?:denn|eigentlich|jetzt|gerade|genau|nochmal|noch\s+mal"
@@ -672,7 +672,7 @@ def classify(text: str, *, locale: str = "") -> IntentVerdict:
 
 # One entry per supported locale, keyed by the BCP-47 base tag. Adding a locale
 # means adding a line here AND to the matcher above — never a de/en-only table
-# (CLAUDE.md §1.3). The phrasing is deliberately a yes/no question about
+# (AGENTS.md §1.3). The phrasing is deliberately a yes/no question about
 # looking, so a bare "yes" in the next turn is a complete answer.
 # i18n-allow: this IS the runtime multilingual product surface (§1 category 1)
 _CLARIFY_QUESTION: dict[str, str] = {

@@ -5,17 +5,21 @@
  * mode switch. A right-drag pan or a fly-to leaves follow mode; moving the
  * character re-enters it. Seated at Mission Control's desk the camera glides
  * into the character's eyes (first person onto the monitors) and back out
- * when it stands up.
+ * when it stands up; asking for the overview or a fly-to stands it up.
+ *
+ * A press that turned the camera never ends in a click, and the wheel zooms
+ * by how far it turned (see officeCamera.ts).
  */
 import { useEffect, useRef } from "react";
 import { OrbitControls } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import { MOUSE, Vector3, type PerspectiveCamera } from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
-import { cameraHome, CAMERA_LIMITS, HOME_PITCH_RAD, HOME_YAW_RAD } from "./officeCamera";
+import { cameraHome, CAMERA_LIMITS, DRAG_CLICK_PX, HOME_PITCH_RAD, HOME_YAW_RAD, wheelZoomSpeed } from "./officeCamera";
 import { seatOf, type OfficeLayout } from "./officeLayout";
 import { useLeadSeat } from "./leadSeat";
 import { cameraView, officeSession, player, useOfficeStore } from "./officeStore";
+import "./officeCameraRig.css";
 
 /** Where the camera starts: close behind the character, south-east, looking down. */
 export const FOLLOW_DISTANCE = 15;
@@ -43,6 +47,8 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
   const size = useThree((s) => s.size);
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
+  // The element R3F and the orbit controls listen on (the canvas wrapper, which also holds the <Html> labels).
+  const connected = useThree((s) => s.events.connected) as HTMLElement | undefined;
   const lastFocus = useRef(0);
   const lastZoom = useRef(0);
   const backOff = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -55,15 +61,55 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
   const eye = useRef(new Vector3());
   const look = useRef(new Vector3());
   const delta = useRef(new Vector3());
+  const shownFirstPerson = useRef(false);
 
-  // Remember the view when leaving: the pose before a dive, never the inside of a monitor.
+  // First person for the rest of the scene: Gigi steps aside (cameraView), and the floating labels
+  // of the rest of the floor hide over the monitors (officeCameraRig.css keys on the attribute).
+  const publishFirstPerson = (on: boolean) => {
+    cameraView.firstPerson = on;
+    if (shownFirstPerson.current === on) return;
+    shownFirstPerson.current = on;
+    const viewport = gl.domElement.closest(".office-viewport");
+    if (on) viewport?.setAttribute("data-first-person", "");
+    else viewport?.removeAttribute("data-first-person");
+  };
+  useEffect(() => () => {
+    cameraView.firstPerson = false;
+    gl.domElement.closest(".office-viewport")?.removeAttribute("data-first-person");
+  }, [gl]);
+
+  // Out of first person at once, back to the view it left: the person asked for another view.
+  const leaveFirstPerson = () => {
+    const c = controls.current;
+    const fp = seated.current;
+    const desk = layout.command;
+    if (desk && useLeadSeat.getState().seated === desk.id) useLeadSeat.getState().set({ seated: null, standUp: true });
+    const lensCam = camera as PerspectiveCamera;
+    if (fp.before) {
+      camera.position.copy(fp.before.position);
+      c?.target.copy(fp.before.target);
+      lensCam.fov = fp.before.fov;
+      lensCam.updateProjectionMatrix();
+    }
+    fp.before = null;
+    fp.blend = 0;
+    if (c) { c.enabled = true; c.update(); }
+  };
+
+  // Remember the view when leaving: the pose before a dive, never the inside of a monitor,
+  // and the view before sitting down, never the character's eyes.
   const preDive = useRef<{ position: [number, number, number]; target: [number, number, number] } | null>(null);
   useEffect(() => () => {
     const c = controls.current;
-    officeSession.camera = preDive.current ?? (c
+    const beforeSeat = seated.current.before;
+    officeSession.camera = beforeSeat
+      ? { position: beforeSeat.position.toArray() as [number, number, number], target: beforeSeat.target.toArray() as [number, number, number] }
+      : preDive.current ?? (c
       ? { position: camera.position.toArray() as [number, number, number], target: c.target.toArray() as [number, number, number] }
       : null);
     officeSession.follow = useOfficeStore.getState().follow;
+    // The camera belongs to the canvas and can outlive this rig: hand it back with its own lens.
+    if (beforeSeat) { (camera as PerspectiveCamera).fov = beforeSeat.fov; (camera as PerspectiveCamera).updateProjectionMatrix(); }
   }, [camera]);
 
   // Start where the last visit left off, or close to the character.
@@ -89,6 +135,8 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
   // "Overview": frame the whole floor and stop following.
   useEffect(() => {
     if (overview === 0) return;
+    // Seated in first person the glide would keep the camera in the chair: stand up first.
+    if (seated.current.blend > 0 || (layout.command && useLeadSeat.getState().seated === layout.command.id)) leaveFirstPerson();
     const home = cameraHome(layout.bounds, size.width / Math.max(1, size.height));
     flight.current = null;
     useOfficeStore.getState().setFollow(false);
@@ -116,6 +164,49 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
     return () => el.removeEventListener("pointerdown", down, true);
   }, [gl]);
 
+  // A drag turns the camera and nothing else. R3F still delivers a click when
+  // the press ends on the object it started on, so a small turn over the
+  // Mission Control wall, a place token or an agent opened it (a handler's own
+  // `delta` check only sees start to end, and many had none). The click is
+  // swallowed here, in the capture phase, before R3F or a label sees it.
+  // The wheel zooms by how far it turned, not a fixed step per event.
+  useEffect(() => {
+    const el = connected ?? gl.domElement;
+    let origin: { x: number; y: number } | null = null;
+    let dragged = false;
+    const down = (event: PointerEvent) => {
+      origin = { x: event.clientX, y: event.clientY };
+      dragged = false;
+      // A pinch zoom uses the same speed; only the wheel sets it per event.
+      if (controls.current) controls.current.zoomSpeed = 1;
+    };
+    const move = (event: PointerEvent) => {
+      if (origin && !dragged && Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > DRAG_CLICK_PX) dragged = true;
+    };
+    const up = () => { origin = null; };
+    const click = (event: MouseEvent) => {
+      if (!dragged) return;
+      dragged = false;
+      event.stopImmediatePropagation();
+      event.preventDefault();
+    };
+    const wheel = (event: WheelEvent) => {
+      if (controls.current) controls.current.zoomSpeed = wheelZoomSpeed(event.deltaY, event.deltaMode);
+    };
+    el.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointermove", move, true);
+    window.addEventListener("pointerup", up, true);
+    el.addEventListener("click", click, true);
+    el.addEventListener("wheel", wheel, { capture: true, passive: true });
+    return () => {
+      el.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointermove", move, true);
+      window.removeEventListener("pointerup", up, true);
+      el.removeEventListener("click", click, true);
+      el.removeEventListener("wheel", wheel, true);
+    };
+  }, [connected, gl]);
+
   useFrame((_, rawDt) => {
     const c = controls.current;
     if (!c) return;
@@ -129,8 +220,13 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
     const store = useOfficeStore.getState();
     // Seated at Mission Control: glide into first person, and back out on standing up.
     const desk = layout.command;
-    const inSeat = !!desk && useLeadSeat.getState().seated === desk.id;
     const fp = seated.current;
+    // A fly-to (an agent picked from a list, the minimap) is a request for another view: stand up for it,
+    // or it would wait until the person stands up and then fly somewhere stale.
+    const flyTo = !!store.focus && store.focus.seq !== lastFocus.current;
+    if (flyTo && !dive.current && (fp.blend > 0 || (!!desk && useLeadSeat.getState().seated === desk.id))) leaveFirstPerson();
+    const inSeat = !!desk && useLeadSeat.getState().seated === desk.id;
+    publishFirstPerson(inSeat || fp.blend > 0);
     // A monitor dive from the chair runs as usual, starting from the eyes.
     const diving = !!dive.current || (!!store.zoom && store.zoom.seq !== lastZoom.current);
     if (desk && (inSeat || fp.blend > 0) && !diving) {
@@ -163,11 +259,14 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
     if (store.zoom && store.zoom.seq !== lastZoom.current) {
       lastZoom.current = store.zoom.seq;
       flight.current = null;
+      // A second dive within the last one's wait: that wait must not yank the camera back mid-dive.
+      clearTimeout(backOff.current);
       // End squarely in front of the screen, far enough back that it exactly fills the view.
       const lens = camera as unknown as { fov: number; aspect: number };
       const reach = screenFillDistance(lens.fov ?? 35, lens.aspect ?? 1.6, ...(store.zoom.size ?? [SCREEN_W, SCREEN_H])) * 1.02;
       const [tx, ty, tz] = store.zoom.target;
-      preDive.current = { position: camera.position.toArray() as [number, number, number], target: c.target.toArray() as [number, number, number] };
+      // Still set while the last dive's wait runs: the view to come back to is the one before the first dive.
+      preDive.current ??= { position: camera.position.toArray() as [number, number, number], target: c.target.toArray() as [number, number, number] };
       dive.current = { fromEye: camera.position.clone(),
         toEye: new Vector3(tx + Math.sin(store.zoom.facing) * reach, ty, tz + Math.cos(store.zoom.facing) * reach),
         fromTarget: c.target.clone(), toTarget: new Vector3(tx, ty, tz), t: 0 };

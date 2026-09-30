@@ -16,6 +16,13 @@ One SSH connection per computer carries every pane's channel.
 A dropped connection is not an exit: the pool reconnects with jittered backoff
 (AP-33) and re-attaches to the still-running tmux session. Only a session that
 is really gone on the server reports the pane closed.
+
+A Windows computer has no tmux. There a pane runs its agent directly in the
+SSH terminal (ConPTY), started by a small Git Bash launcher uploaded first
+(``jarvis.computers.remote_os``), and non-interactive commands run in Git Bash
+from stdin. The agent then lives as long as its channel: closing the app or
+losing the network ends it, and the pane reports closed instead of waiting to
+re-attach. A plain terminal there is PowerShell.
 """
 
 from __future__ import annotations
@@ -31,8 +38,9 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
+from jarvis.computers import remote_os
 from jarvis.computers.service import ComputerError, get_service
-from jarvis.computers.ssh import Session, close
+from jarvis.computers.ssh import Session, SshError, close
 
 log = logging.getLogger(__name__)
 
@@ -71,6 +79,13 @@ def tmux_command(
         f"\\; set-option -t {session} mouse off "
         f"\\; set-option -t {session} escape-time 0"
     )
+
+
+def windows_pane_argv(argv: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    """A pane's argv for a Windows computer: the login shell becomes PowerShell."""
+    if tuple(argv) == ("bash", "-l"):
+        return ("powershell.exe", "-NoLogo")
+    return tuple(argv)
 
 
 def login_shell(command: str) -> str:
@@ -121,6 +136,7 @@ class SshPtyPool:
         self._connect_fn = connect or (lambda: get_service().connect(computer_id))
         self._session: Session | None = None
         self._home: str | None = None
+        self._host: remote_os.RemoteHost | None = None
         self._lock = asyncio.Lock()
         self._panes: dict[str, _Pane] = {}
         self._tmux_checked = False
@@ -135,21 +151,70 @@ class SshPtyPool:
             self._session = await self._connect_fn()
             return self._session
 
-    async def home(self) -> str:
-        """The remote user's home directory (absolute), cached per connection."""
-        if self._home is None:
+    async def host(self) -> remote_os.RemoteHost:
+        """Which shell the computer speaks (asked again while Git Bash is missing)."""
+        if self._host is None or (self._host.windows and not self._host.bash):
             session = await self.connection()
-            result = await session.conn.run('printf %s "$HOME"', check=False)
-            self._home = str(result.stdout or "").strip() or "/root"
+            try:
+                self._host = await remote_os.remote_host(self.computer_id, session)
+            except SshError as exc:
+                raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
+        return self._host
+
+    async def windows(self) -> bool:
+        return (await self.host()).windows
+
+    async def home(self) -> str:
+        """The remote user's home directory (absolute), cached per connection.
+
+        On Windows it is written ``C:/Users/name``: the form Git Bash, git,
+        the coding CLIs and (through :meth:`sftp_path`) SFTP all accept.
+        """
+        if self._home is None:
+            host = await self.host()
+            if host.windows:
+                self._home = host.home or "C:/Users/Public"
+            else:
+                session = await self.connection()
+                result = await session.conn.run('printf %s "$HOME"', check=False)
+                self._home = str(result.stdout or "").strip() or "/root"
         return self._home
 
+    async def sftp_path(self, path: str) -> str:
+        return (await self.host()).sftp_path(path)
+
     async def run(self, command: str, *, timeout_s: float = 60.0) -> tuple[int, str, str]:
-        """One non-interactive command on the shared connection."""
+        """One non-interactive command on the shared connection.
+
+        A POSIX computer runs it in a login shell; a Windows one in Git Bash,
+        from stdin.
+        """
+        host = await self.host()
         session = await self.connection()
-        result = await asyncio.wait_for(
-            session.conn.run(login_shell(command), check=False, encoding="utf-8", errors="replace"),
-            timeout=timeout_s,
-        )
+        if host.windows:
+            if not host.bash:
+                raise ComputerError(
+                    "This Windows computer needs Git for Windows first. "
+                    + remote_os.GIT_FOR_WINDOWS_HINT,
+                    status=409,
+                )
+            result = await asyncio.wait_for(
+                session.conn.run(
+                    host.bash_script_command(),
+                    input=command,
+                    check=False,
+                    encoding="utf-8",
+                    errors="replace",
+                ),
+                timeout=timeout_s,
+            )
+        else:
+            result = await asyncio.wait_for(
+                session.conn.run(
+                    login_shell(command), check=False, encoding="utf-8", errors="replace"
+                ),
+                timeout=timeout_s,
+            )
         code = result.exit_status if result.exit_status is not None else -1
         return code, str(result.stdout or ""), str(result.stderr or "")
 
@@ -178,17 +243,22 @@ class SshPtyPool:
         """
         identity = str((meta or {}).get("history_id") or shell_id)
         name = tmux_session_name(identity)
+        host = await self.host()
+        if host.windows:
+            command = await self._windows_launcher(host, name, shell_argv, cwd)
+        else:
+            command = login_shell(tmux_command(name, tuple(shell_argv), cwd, cols, rows))
         pane = _Pane(
             terminal_id=uuid4().hex,
             tmux_name=name,
-            command=login_shell(tmux_command(name, tuple(shell_argv), cwd, cols, rows)),
+            command=command,
             cols=cols,
             rows=rows,
             on_output=on_output,
             on_closed=on_closed,
             on_probe=on_probe,
         )
-        if not self._tmux_checked:
+        if not self._tmux_checked and not host.windows:
             code, _out, _err = await self.run("command -v tmux >/dev/null", timeout_s=20)
             if code != 0:
                 raise ComputerError(
@@ -283,6 +353,29 @@ class SshPtyPool:
 
     # -- internals ---------------------------------------------------------------
 
+    async def _windows_launcher(
+        self,
+        host: remote_os.RemoteHost,
+        name: str,
+        shell_argv: tuple[str, ...] | list[str],
+        cwd: str,
+    ) -> str:
+        """Upload the pane's Git Bash launcher; the command that starts it."""
+        if not host.bash:
+            raise ComputerError(
+                "This Windows computer needs Git for Windows first. "
+                + remote_os.GIT_FOR_WINDOWS_HINT,
+                status=409,
+            )
+        relative = f"{remote_os.LAUNCH_DIR}/{remote_os.launcher_name(name)}"
+        script = remote_os.launcher_script(cwd, windows_pane_argv(shell_argv))
+        session = await self.connection()
+        try:
+            await remote_os.upload_text(session, host, relative, script)
+        except SshError as exc:
+            raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
+        return host.launcher_command(relative)
+
     async def _open(self, pane: _Pane) -> None:
         session = await self.connection()
         pane.session = session
@@ -305,6 +398,8 @@ class SshPtyPool:
                 pane.process.close()
 
     async def _kill_session(self, name: str) -> None:
+        if self._host is not None and self._host.windows:
+            return  # no tmux there: the closed channel already ended the agent
         try:
             await self.run(f"tmux kill-session -t {shlex.quote(name)}", timeout_s=15)
         except Exception as exc:  # noqa: BLE001 — logged: an agent may still be running there
@@ -312,6 +407,8 @@ class SshPtyPool:
 
     async def _session_alive(self, name: str) -> bool | None:
         """True/False from the server; None when the server cannot be asked."""
+        if self._host is not None and self._host.windows:
+            return False  # a Windows pane lives exactly as long as its channel
         try:
             code, _out, _err = await self.run(
                 f"tmux has-session -t {shlex.quote(name)}", timeout_s=15

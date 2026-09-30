@@ -187,6 +187,39 @@ async def test_agent_cancel_releases_the_browser_without_stopping_the_chat(monke
     assert seen == [False]
 
 
+async def test_open_probe_reports_a_running_browser_without_launching_one(monkeypatch):
+    import asyncio
+
+    from jarvis.ui.web import society_browser_routes as routes
+
+    ensured = []
+    busy = asyncio.Lock()
+    await busy.acquire()
+    sessions = {
+        "busy": SimpleNamespace(closed=False, run_lock=busy),
+        "done": SimpleNamespace(closed=True, run_lock=asyncio.Lock()),
+    }
+
+    async def resolve(agent_id):
+        return SimpleNamespace(agent_id=agent_id)
+
+    async def ensure(agent, **_):
+        ensured.append(agent.agent_id)
+
+    async def runtime(_):
+        return SimpleNamespace(
+            roster=SimpleNamespace(resolve=resolve),
+            browser=SimpleNamespace(live=SimpleNamespace(sessions=sessions, ensure=ensure)),
+        )
+
+    monkeypatch.setattr(routes, "_runtime", runtime)
+    request = SimpleNamespace()
+    assert await routes.agent_browser_open("busy", request) == {"open": True, "running": True}
+    assert await routes.agent_browser_open("done", request) == {"open": False, "running": False}
+    assert await routes.agent_browser_open("idle", request) == {"open": False, "running": False}
+    assert ensured == []
+
+
 async def test_desktop_fetch_stop_still_ends_the_chat(monkeypatch):
     import asyncio
 

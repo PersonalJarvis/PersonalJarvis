@@ -1,7 +1,7 @@
 """REST-route tests for the cross-device setup report.
 
 The report exists to name why one install behaves differently from another
-(CLAUDE.md §3 device-parity triage), so the tests pin its three contracts:
+(AGENTS.md §3 device-parity triage), so the tests pin its three contracts:
 
 1. Share-safety: credentials appear strictly as presence BOOLEANS — a report
    must be pasteable into an issue without scrubbing.

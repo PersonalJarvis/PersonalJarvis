@@ -47,7 +47,7 @@ from jarvis.sessions.models import VoiceEventRow, VoiceSessionRow
 
 # Per-phase SLO budget in ms. Phases not listed have no gate (always SLO_OK).
 # Budgets mirror the documented voice SLOs: wake->ACK < 1.2s, intent->ACK < 3.0s,
-# router decision < 150ms (CLAUDE.md "Optimistic Execution").
+# router decision < 150ms (AGENTS.md "Optimistic Execution").
 _PHASE_SLO_MS: dict[str, float] = {
     "intent_decision": 150.0,
     "ack_first_audio": 1200.0,

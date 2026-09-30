@@ -12564,7 +12564,7 @@ class BrainManager:
             return agg.text
 
         # ONE output-language resolution for every honesty phrase this turn
-        # (CLAUDE.md §1: one resolver decides the turn for ALL layers). The two
+        # (AGENTS.md §1: one resolver decides the turn for ALL layers). The two
         # guards below used to resolve separately with DIFFERENT defaults
         # ("de" here, DEFAULT_LOCALE there), so an undetectable turn could speak
         # a German evidence fallback followed by an English honesty phrase in the
@@ -13542,10 +13542,13 @@ class BrainManager:
             allowed_tools = (*allowed_tools, _ARTIFACT_TOOL_NAME)
         tools = self._select_task_tools(allowed_tools)
         from jarvis.core.model_selection import operation_model, worker_selection
-        from jarvis.core.task_agent import run_selected, subscription_seat
+        from jarvis.core.task_agent import run_selected, subscription_seat_off_loop
 
         selected = operation_model.get() or worker_selection(self._config)
-        if selected is not None and subscription_seat(selected.provider) is not None:
+        if (
+            selected is not None
+            and await subscription_seat_off_loop(selected.provider) is not None
+        ):
             return await run_selected(
                 selection=selected, prompt=prompt, tool_names=tuple(tools), trace_id=trace_id
             )

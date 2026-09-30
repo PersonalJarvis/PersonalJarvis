@@ -94,6 +94,9 @@ WITHHELD: Final[dict[str, str]] = {
     "POST /api/society/browser/install": "installs software on the machine — never from outside",
     "POST /api/society/browser/repair": "repairs host software; local owner setup",
     "POST /api/society/agents/{agent_id}/browser/cancel": "local browser control belongs to the owner UI",
+    "GET /api/society/agents/{agent_id}/browser/open": (
+        "whether the owner UI may attach its live view; local process state"
+    ),
     "POST /api/society/agents/{agent_id}/browser/session": (
         "prepares the host browser environment; owner UI, not an external agent command"
     ),

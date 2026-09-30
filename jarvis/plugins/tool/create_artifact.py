@@ -82,7 +82,7 @@ def _turn_language(ctx: Any, args: dict[str, Any]) -> str:
     The turn's resolved output language wins (stamped by the tool-use loop via
     ``resolve_output_language``); the brain's own ``language`` guess is next;
     the ambient answer last. This layer never re-derives a language from the
-    utterance (CLAUDE.md §2).
+    utterance (AGENTS.md §2).
     """
     config = getattr(ctx, "config", None)
     stamped = ""

@@ -203,7 +203,7 @@ TOOL_CALL_INLINE_RE = re.compile(
 #: its closing brace and leaves a bare "}" standing in the spoken sentence
 #: ("Ich öffne Spotify. }"). One level covers every envelope this codebase
 #: emits; deeper nesting is not expressible in a regex and is out of scope for
-#: a filter that must stay regex-only (CLAUDE.md §5).
+#: a filter that must stay regex-only (AGENTS.md §5).
 _TOOL_JSON_INNER = r"(?:[^{}]|\{[^{}]*\})"
 TOOL_JSON_RE = re.compile(
     r"\{" + _TOOL_JSON_INNER + r"*?"

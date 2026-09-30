@@ -181,6 +181,26 @@ async def test_without_a_report_the_readback_still_names_the_pane(
     assert [e.text for e in published] == ["Alex has finished your task."]
 
 
+def test_a_remote_pane_never_reads_its_stale_local_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#250: the transcript of a pane on a connected computer lives there; the
+    local copy ends with the previous job's answer."""
+    from jarvis.agentic_ide import agent_transcript
+
+    def _stale(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("a remote pane's local transcript is stale")
+
+    monkeypatch.setattr(agent_transcript, "read", _stale)
+    monkeypatch.setattr(agent_transcript, "can_read", lambda _agent: True)
+    term = _FakeTerm(request="Fix the login bug")
+    term.computer_id = "vps-1"
+    term.agent = "claude"
+    term.resume = type("Handle", (), {"id": "abc"})()
+
+    assert voice_readback.final_report(term) == ""
+
+
 def test_the_pipeline_holds_pane_readbacks_for_an_open_call() -> None:
     event = AnnouncementRequested(
         source_layer=voice_readback.SOURCE_LAYER, kind="completion", text="Alex is done."

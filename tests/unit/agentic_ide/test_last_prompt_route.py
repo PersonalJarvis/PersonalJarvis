@@ -8,7 +8,7 @@ an emulator that never painted, a socket reconnecting, a CLI redrawing its
 input box out of view. The user's honest reading of that is that nothing
 happened.
 
-It is also the CLI-first half (CLAUDE.md §5): the same proof has to be
+It is also the CLI-first half (AGENTS.md §5): the same proof has to be
 available from a terminal and a script, not only from the pane's own overlay.
 """
 

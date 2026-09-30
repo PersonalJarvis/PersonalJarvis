@@ -308,7 +308,7 @@ class GroqWhisperAPI:
             # RuntimeError. This plugin deliberately does NOT raise that
             # shared type — it is the one STT plugin held to a total
             # ``jarvis.*``-import ban outside its own plugin package
-            # (CLAUDE.md §5, pinned by tests/contract/test_stt_protocol.py).
+            # (AGENTS.md §5, pinned by tests/contract/test_stt_protocol.py).
             # It already emits the classifiable shape, so there is nothing to
             # gain and a purity contract to lose. Do not "unify" this line.
             # (Never start a comment line here with ``# type:`` — mypy reads

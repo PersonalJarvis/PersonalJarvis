@@ -322,6 +322,57 @@ describe("AgenticTerminal layout", () => {
     expect(terminalHarness.focus.mock.calls.length).toBe(focuses);
   });
 
+  it("draws a minimal tile: square frame, slim title row, and a signal edge on the pane in use", () => {
+    const props = { name: "Dana", displayName: "Codex", agent: "codex", appearance: "dark" as const, fontSize: 13, headerMode: "minimal" as const };
+    const { rerender } = render(<AgenticTerminal {...props} />);
+    const pane = screen.getByTestId("agentic-pane-Dana");
+    expect(pane.className).toContain("rounded-none");
+    expect(pane.className).not.toContain("rounded-2xl");
+    expect(pane.dataset.paneStyle).toBe("minimal");
+    const header = screen.getByTestId("workspace-terminal-header-Dana");
+    expect(header.dataset.variant).toBe("tile");
+    expect(screen.getByTestId("pane-title-Dana")).toBeTruthy();
+    expect(screen.queryByTestId("pane-header-Dana")).toBeNull();
+    const resting = pane.style.borderColor;
+    expect(resting).toBeTruthy();
+    expect(screen.queryByTestId("pane-focus-ring-Dana")).toBeNull();
+    rerender(<AgenticTerminal {...props} focused />);
+    expect(pane.style.borderColor).not.toBe(resting);
+    // The inner line is a layer of its own on top of the title row, so the
+    // row's translucent ground cannot dim it (it read darker along the top).
+    const ring = screen.getByTestId("pane-focus-ring-Dana");
+    expect(ring.style.boxShadow).toContain("inset");
+    expect(ring.className).toContain("pointer-events-none");
+    expect(ring.className).toContain("z-[45]");
+    expect(pane.lastElementChild).toBe(ring);
+    expect(pane.style.boxShadow).toBe("");
+    // While the reader works in the side panel, the panel wears the frame.
+    rerender(<AgenticTerminal {...props} focused markFocus={false} />);
+    expect(pane.style.borderColor).toBe(resting);
+    expect(screen.queryByTestId("pane-focus-ring-Dana")).toBeNull();
+    // One pane in the grid is still the pane in use: it is marked too.
+    rerender(<AgenticTerminal {...props} focused={false} />);
+    expect(pane.style.borderColor).toBe(resting);
+  });
+
+  it("selects the pane on a press into the terminal even when xterm swallows it", () => {
+    const onFocus = vi.fn();
+    render(<AgenticTerminal name="Dana" displayName="Codex" appearance="dark" fontSize={13} headerMode="minimal" onFocus={onFocus} />);
+    const host = screen.getByTestId("agentic-terminal-host-Dana");
+    // xterm's selection service stops a press it turns into a selection.
+    const swallow = (event: Event) => event.stopPropagation();
+    host.addEventListener("mousedown", swallow);
+    fireEvent.mouseDown(host, { button: 0 });
+    expect(onFocus).toHaveBeenCalledTimes(1);
+    host.removeEventListener("mousedown", swallow);
+    // A press that bubbles normally reaches both handlers but counts once.
+    fireEvent.mouseDown(host, { button: 0 });
+    expect(onFocus).toHaveBeenCalledTimes(2);
+    // Only the primary button selects; a right-click is the pane menu's.
+    fireEvent.mouseDown(host, { button: 2 });
+    expect(onFocus).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps the wheel on terminal history even while the CLI tracks the mouse", () => {
     render(
       <AgenticTerminal

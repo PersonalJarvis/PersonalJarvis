@@ -41,7 +41,8 @@ export function GitHubRepoPicker({
   /** The repository picked before, when the picker is reopened to change it. */
   current: string;
   suggested: string;
-  onPicked: () => void;
+  /** The choice is saved; called with the picked `owner/name`. */
+  onPicked: (repo: string) => void;
   /** Present when there is already a choice to go back to. */
   onCancel?: () => void;
 }) {
@@ -81,7 +82,7 @@ export function GitHubRepoPicker({
     setError("");
     try {
       await bindGitHubRepo(workspaceId, name);
-      onPicked();
+      onPicked(name);
     } catch (err) {
       setError((err as Error).message);
     } finally {

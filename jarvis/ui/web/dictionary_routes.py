@@ -13,7 +13,7 @@ An entry is one canonical ``word`` plus optional ``misheard`` variants — see
 corrector live-reloads on file change), so no restart is required.
 
 Like the Contacts/Socials endpoints this router has **no Brain dependency**,
-so it works headless / with MockBrain (open-source universality, CLAUDE.md §3).
+so it works headless / with MockBrain (open-source universality, AGENTS.md §3).
 """
 from __future__ import annotations
 

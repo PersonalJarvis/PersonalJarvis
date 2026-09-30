@@ -84,6 +84,7 @@ import {
   MINIMUM_CONTRAST_RATIO,
   PANE_BRAND,
   PANE_CHROME,
+  PANE_TILE,
   themeFor,
   type TerminalAppearance,
 } from "./terminalThemes";
@@ -505,8 +506,17 @@ interface AgenticTerminalProps {
    * Compact workspace chrome is opt-in; legacy grids retain their existing
    * header. "none" draws the bare terminal for a host that brings its own
    * title bar (the office's pane panel) — no header, no border of its own.
+   * "minimal" is the multiplexer tile: a square 1px frame, a slim square
+   * title row with the compact header's controls, and the pane the reader
+   * works in outlined in the signal hue.
    */
-  headerMode?: "legacy" | "compact" | "none";
+  headerMode?: "legacy" | "compact" | "minimal" | "none";
+  /**
+   * Minimal tiles only: may the focused pane wear the blue "you are here"
+   * edge right now? Off while the reader works in the IDE's side panel, which
+   * then wears it instead. The pane stays the prompt target either way.
+   */
+  markFocus?: boolean;
   /** Compact header only: opens the fork dialog for this pane. */
   onFork?: () => void;
   /** Compact header only: the worktree branch this pane runs on, if any. */
@@ -650,6 +660,7 @@ export function AgenticTerminal({
   workspaceId,
   displayName,
   headerMode = "legacy",
+  markFocus = true,
   onFork,
   branch,
   computerName,
@@ -2581,14 +2592,58 @@ export function AgenticTerminal({
     return () => container.removeEventListener("paste", onPaste, true);
   }, [attach, name]);
 
+  /*
+   * A primary press anywhere on the pane makes it the pane in use.
+   *
+   * The frame's own bubbling handler never saw presses INTO a coding agent's
+   * output: while the CLI tracks the mouse, ./terminalMouseSelection turns a
+   * plain press into a selection press, and xterm's selection service then
+   * stops it from propagating (so the CLI does not get it). The pane stayed
+   * unselected — no highlight, prompts aimed at the previous pane. The
+   * terminal region therefore also listens in the capture phase, which runs
+   * before any of xterm's listeners; the event identity keeps the two
+   * handlers from doing the work twice for one press.
+   */
+  const handledPress = useRef<Event | null>(null);
+  const pressPane = (event: React.MouseEvent) => {
+    if (event.button !== 0 || handledPress.current === event.nativeEvent) return;
+    handledPress.current = event.nativeEvent;
+    onFocus?.();
+    takeOwnershipRef.current?.();
+  };
   const chrome = PANE_CHROME[appearance];
+  const minimal = headerMode === "minimal";
+  const tile = PANE_TILE[appearance];
+  const headerProps = {
+    name,
+    workspaceId,
+    promptCount,
+    agent: agent ?? "",
+    agentLogoUrl,
+    displayName,
+    status: visibleStatus,
+    appearance,
+    arranging,
+    maximized,
+    addDisabled: splitDisabled,
+    onArrangeStart,
+    onActivate: () => { onFocus?.(); takeOwnershipRef.current?.(); },
+    onToggleMaximize: toggleMaximizeAndFocus,
+    onAdd: onSplit ? (direction: SplitDirection) => onSplit(direction) : undefined,
+    onClose,
+    onRename,
+    onOpenConversation: () => setHistoryOpen(true),
+    onOpenChat,
+    onRestart,
+    onFork,
+    branch,
+    computerName,
+    placementItems,
+  };
 
   return (
     <div
-      onMouseDown={() => {
-        onFocus?.();
-        takeOwnershipRef.current?.();
-      }}
+      onMouseDown={pressPane}
       {...dragHandlers}
       className={cn(
         // One quiet border per pane; the focused one carries the workspace's
@@ -2604,7 +2659,7 @@ export function AgenticTerminal({
         // read as a flicker rather than as a pane taking focus.
         "relative flex h-full w-full flex-col overflow-hidden backdrop-blur-[4px]",
         headerMode === "none" ? "border-0" : "border",
-        headerMode === "compact" ? "rounded-2xl" : headerMode === "none" ? "rounded-none" : "rounded-lg",
+        headerMode === "compact" ? "rounded-2xl" : headerMode === "none" || minimal ? "rounded-none" : "rounded-lg",
         "transition-[box-shadow,border-color,opacity] duration-150 ease-out motion-reduce:transition-none",
         // Focus steps the RIM one notch, from the structural hairline to
         // `--border-strong`, and stops there. It used to add a translucent
@@ -2613,7 +2668,7 @@ export function AgenticTerminal({
         // call-sign plate, the accent hairline under it, the visible action
         // cluster). A rim is the second separation device, never the first,
         // and a shadow belongs only to something that floats.
-        focused && "border-border-strong",
+        focused && !minimal && "border-border-strong",
         // Being carried, and "a prompt just landed here", are the two states
         // that must be findable across a wall of twelve. They get the fill —
         // a solid `--primary` edge plus the sanctioned focus ring — because
@@ -2644,39 +2699,28 @@ export function AgenticTerminal({
          * red when it failed, unchanged while it is connecting or live. See
          * `PANE_CHROME.edge` for why only those two states are marked.
          */
+        //
+        // A minimal tile paints its focused edge here too: the signal hue is a
+        // per-appearance literal (`PANE_TILE`), not a class, for the same
+        // reason the resting edge is. The pane the reader clicked into must be
+        // findable at a glance across a full grid, so its edge is doubled by an
+        // inner line of the same hue — see the focus ring at the end of the
+        // frame for why that line is its own layer.
         borderColor:
-          focused || dragging || justDelivered
+          dragging || justDelivered
             ? undefined
-            : chrome.edge[visibleStatus],
+            : minimal
+              ? focused && markFocus ? tile.focus : tile.edge[visibleStatus]
+              : focused
+                ? undefined
+                : chrome.edge[visibleStatus],
       }}
+      data-pane-style={minimal ? "minimal" : undefined}
       data-testid={`agentic-pane-${name}`}
     >
-      {headerMode === "compact" ? <WorkspaceTerminalHeader
-        name={name}
-        workspaceId={workspaceId}
-        promptCount={promptCount}
-        agent={agent ?? ""}
-        agentLogoUrl={agentLogoUrl}
-        displayName={displayName}
-        status={visibleStatus}
-        appearance={appearance}
-        arranging={arranging}
-        maximized={maximized}
-        addDisabled={splitDisabled}
-        onArrangeStart={onArrangeStart}
-        onActivate={() => { onFocus?.(); takeOwnershipRef.current?.(); }}
-        onToggleMaximize={toggleMaximizeAndFocus}
-        onAdd={onSplit ? (direction) => onSplit(direction) : undefined}
-        onClose={onClose}
-        onRename={onRename}
-        onOpenConversation={() => setHistoryOpen(true)}
-        onOpenChat={onOpenChat}
-        onRestart={onRestart}
-        onFork={onFork}
-        branch={branch}
-        computerName={computerName}
-        placementItems={placementItems}
-      /> : headerMode === "none" ? null : <PaneHeader
+      {headerMode === "compact" ? <WorkspaceTerminalHeader {...headerProps} />
+      : minimal ? <WorkspaceTerminalHeader {...headerProps} variant="tile" focused={focused && markFocus} />
+      : headerMode === "none" ? null : <PaneHeader
         workspaceId={workspaceId}
         status={visibleStatus}
         statusDetail={statusDetail}
@@ -2728,6 +2772,7 @@ export function AgenticTerminal({
       */}
       <div
         ref={terminalRegionRef}
+        onMouseDownCapture={pressPane}
         id={terminalRegionId}
         className={cn(
           "relative min-h-0 flex-1 overflow-hidden px-1.5 pb-0.5 pt-0.5",
@@ -2829,6 +2874,21 @@ export function AgenticTerminal({
             )}
           </div>
         </div>
+      )}
+      {/*
+        The focused tile's inner edge line, drawn ABOVE everything in the pane.
+        As an inset shadow on the frame it sat underneath the title row, whose
+        own translucent ground dimmed it: the blue read darker along the top
+        than down the terminal (maintainer, 2026-09-30). One layer on top keeps
+        the line the same brightness all the way round.
+      */}
+      {minimal && focused && markFocus && !dragging && !justDelivered && (
+        <div
+          aria-hidden="true"
+          data-testid={`pane-focus-ring-${name}`}
+          className="pointer-events-none absolute inset-0 z-[45]"
+          style={{ boxShadow: `inset 0 0 0 1px ${tile.focus}` }}
+        />
       )}
     </div>
   );

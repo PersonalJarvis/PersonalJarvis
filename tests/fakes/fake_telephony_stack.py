@@ -1,6 +1,6 @@
 """Deterministic fakes for the telephony STT -> Brain -> TTS seams.
 
-Convention (CLAUDE.md): fakes over mocks. These let the telephony session loop
+Convention (AGENTS.md): fakes over mocks. These let the telephony session loop
 and the media-stream integration test run with no model download, no API key
 and no real socket.
 

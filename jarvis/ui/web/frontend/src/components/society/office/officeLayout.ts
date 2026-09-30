@@ -8,7 +8,7 @@
  * south-east, so tall rooms stand in the north and the lobby lies in front.
  *
  *   ┌──────────── north strip: Lead office · Team room · Wardrobe ───────────┐
- *   │                   departments (open office, 2 columns)                 │
+ *   │        departments (open office, 2 columns) · spawn point in the middle  │
  *   └──── south strip: Reception + lobby (Agent board) · Break room ─────────┘
  *
  * The coding floor (variant "coding", one elevator ride up) keeps the same
@@ -17,8 +17,13 @@
  * office and the wardrobe. It has no lead desks. Mission Control is a modern
  * office: a walnut slat wall with a live video wall, a desk with three live
  * monitors and a lounge corner; working it starts new coding agents and
- * briefs several at once. Only it, the elevator and the break room are
- * checkpoints there.
+ * briefs several at once. Only it, the spawn point, the elevator and the
+ * break room are checkpoints there.
+ *
+ * Both floors have a spawn point in their middle: a round pad with a
+ * terminal on the crossing of the centre aisle and the cross aisle nearest
+ * the floor's centre. It spawns new Jarvis agents downstairs and new coding
+ * agents upstairs, and everyone new to the floor appears on its pad.
  */
 import type { AgentRunState, AgentTier } from "../data";
 import { agentsAmbience } from "./agentsAmbience";
@@ -79,9 +84,11 @@ export interface WallSegment { x1: number; z1: number; x2: number; z2: number; r
 
 /**
  * "elevator" rides between the floors and stands in front of the lobby elevator on both of them.
- * "mission" is Mission Control, the coding floor's centre hub.
+ * "mission" is Mission Control on the coding floor.
+ * "spawn" (agents floor) and "launch" (coding floor) are the spawn point in the floor's middle:
+ * a new Jarvis agent downstairs, a new coding agent upstairs.
  */
-export type CheckpointKind = "create" | "manage" | "team" | "wardrobe" | "lead" | "break" | "elevator" | "mission";
+export type CheckpointKind = "spawn" | "launch" | "create" | "manage" | "team" | "wardrobe" | "lead" | "break" | "elevator" | "mission";
 
 /** A place the person can walk to (or click from afar) to act. "floor" = the open office, outside every room. */
 export interface Checkpoint extends Point {
@@ -98,7 +105,7 @@ export interface Checkpoint extends Point {
 }
 
 export type FurnitureKind =
-  | "meetingTable" | "teamBoard" | "receptionDesk" | "kiosk" | "lockers" | "mirror"
+  | "meetingTable" | "teamBoard" | "receptionDesk" | "lockers" | "mirror"
   | "coffeeBar" | "waterCooler" | "couch" | "coffeeTable" | "arcade" | "beanbag"
   | "bookshelf" | "plant" | "rug" | "elevator"
   // Break room lounge: sofa modules and their corner, the oak coffee table, a kilim, the bookcase wall,
@@ -119,7 +126,9 @@ export type FurnitureKind =
   | "wardrobeWall" | "dressingMirror" | "tailorDummy" | "dressingBench" | "coatStand" | "roundRug"
   // Lobby (agents floor): the brand wall, the Agent board totem, the waiting lounge, olive trees, the award vitrine, the mat.
   | "brandWall" | "agentTotem" | "lobbySofa" | "lobbyArmchair" | "lobbyTable" | "sideTable" | "lobbyLamp" | "oliveTree"
-  | "awardCase" | "entranceMat" | "lobbyRug";
+  | "awardCase" | "entranceMat" | "lobbyRug"
+  // The spawn point in the middle of both floors: the flat pad and the terminal standing on it.
+  | "spawnPad" | "spawnTerminal";
 
 /**
  * Footprint (x-extent × z-extent before rotation) and height of each piece.
@@ -132,7 +141,6 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   teamBoard: { w: 2.6, d: 0.2, h: 1.9, solid: true },
   // The counter is 1.1 m; its slatted back wall with the help display rises to 2.2 m.
   receptionDesk: { w: 2.8, d: 0.9, h: 2.2, solid: true },
-  kiosk: { w: 1.0, d: 0.5, h: 1.8, solid: true },
   lockers: { w: 2.4, d: 0.5, h: 1.9, solid: true },
   mirror: { w: 0.9, d: 0.12, h: 1.9, solid: true },
   coffeeBar: { w: 2.4, d: 0.7, h: 1.05, solid: true },
@@ -205,7 +213,19 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   awardCase: { w: 1.3, d: 0.42, h: 1.95, solid: true },
   entranceMat: { w: 1, d: 1, h: 0.02, solid: false },
   lobbyRug: { w: 1, d: 1, h: 0.02, solid: false },
+  // The spawn point: a flat round pad everyone walks over, and the double-sided terminal on it (its crest
+  // tops out at 2.2 m). The pad fits the 3.2 m aisle crossing with a margin to every department.
+  spawnPad: { w: 2 * 1.42, d: 2 * 1.42, h: 0.02, solid: false },
+  spawnTerminal: { w: 1.2, d: 0.7, h: 2.2, solid: true },
 };
+
+/**
+ * The spawn point's numbers, shared by the layout, the renderer and the tests:
+ * the walk-in radius round the terminal, how far south of it "walk there" and
+ * a newcomer's arrival stand, and the height of its floating token (above
+ * the terminal's crest).
+ */
+export const SPAWN = { reach: 1.15, approach: 0.95, tokenY: 2.85 } as const;
 
 export interface Furniture extends Point {
   id: string;
@@ -239,6 +259,8 @@ export interface OfficeLayout {
   obstacles: Rect[];
   /** Where the person's character starts. */
   spawn: Point;
+  /** Where someone new to the floor (an agent created during the visit) appears: on the spawn pad. */
+  arrival: Point;
   /** The walkable floor inside the railing. */
   floor: Rect;
   /** The whole slab, railing included. */
@@ -520,10 +542,12 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
   const wardrobeRoom: Room = { id: eastKind, kind: eastKind, walled: true, minX: teamRoom.maxX, maxX, minZ: topZ, maxZ: northMaxZ,
     doors: [{ side: "south", at: (teamRoom.maxX + maxX) / 2, width: 1.5 }] };
 
-  // Departments between the strips.
+  // Departments between the strips, and the centre line of each cross aisle between two rows.
   const departments: Department[] = [];
+  const crossAisles: number[] = [];
   let z = northMaxZ + AISLE;
   for (let row = 0; row < rows; row += 1) {
+    if (row > 0) crossAisles.push(z - AISLE / 2);
     for (let col = 0; col < COLUMNS; col += 1) {
       const index = row * COLUMNS + col;
       const group = groups[index];
@@ -542,6 +566,11 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
 
   // South strip: an open reception/lobby in the west, a walled break room in the east.
   const southMinZ = bottomZ - SOUTH_DEPTH;
+  // The spawn point: on the centre aisle, at the crossing nearest the floor's middle (a
+  // single row of departments, which the minimum never allows, falls back to the south aisle).
+  const plazaZ = (crossAisles.length > 0 ? crossAisles : [southMinZ - AISLE / 2])
+    .reduce((best, c) => (Math.abs(c - (topZ + bottomZ) / 2) < Math.abs(best - (topZ + bottomZ) / 2) ? c : best));
+  const plaza: Point = { x: minX + DEPT_WIDTH + centreAisle / 2, z: plazaZ };
   const breakW = 10.5;
   const receptionRoom: Room = { id: "reception", kind: "reception", walled: false, minX, maxX: maxX - breakW, minZ: southMinZ, maxZ: bottomZ, doors: [] };
   const breakRoom: Room = { id: "break", kind: "break", walled: true, minX: maxX - breakW, maxX, minZ: southMinZ, maxZ: bottomZ,
@@ -655,9 +684,11 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     // Reception and lobby.
     { id: "elevator", kind: "elevator", x: rx0 + 0.25, z: bottomZ - 2.6, rotationY: Math.PI / 2, room: "reception" },
     { id: "reception-desk", kind: "receptionDesk", x: rx0 + 3.2, z: southMinZ + 2.6, rotationY: 0, room: "reception" },
-    // The agents floor's Agent board is a touch-screen totem in the kiosk's place; the rest of its lobby is lobbyFurniture.
-    { id: "kiosk", kind: coding ? "kiosk" : "agentTotem", x: receptionRoom.maxX - 2.2, z: southMinZ + 2.2, rotationY: 0, room: "reception" },
+    // The spawn point in the middle of the floor: the pad, and the terminal on it facing the lobby.
+    { id: "spawn-pad", kind: "spawnPad", x: plaza.x, z: plaza.z, rotationY: 0, room: "floor" },
+    { id: "spawn-terminal", kind: "spawnTerminal", x: plaza.x, z: plaza.z, rotationY: 0, room: "floor" },
     ...(coding ? [
+      // The coding lobby keeps only its plants: new coding agents are spawned in the middle of the floor.
       { id: "lobby-plant-a", kind: "plant", x: rx0 + 0.6, z: southMinZ + 0.8, rotationY: 0, room: "reception" },
       { id: "lobby-plant-b", kind: "plant", x: receptionRoom.maxX - 0.8, z: bottomZ - 0.7, rotationY: 0, room: "reception" },
     ] satisfies Furniture[] : lobbyFurniture(receptionRoom)),
@@ -740,17 +771,22 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
   }
 
   const reception = furniture.find((f) => f.id === "reception-desk")!;
-  const kiosk = furniture.find((f) => f.id === "kiosk")!;
   const elevator = furniture.find((f) => f.id === "elevator")!;
+  // The spawn point's ring surrounds the terminal; "walk there" and newcomers stand south of it, facing the screen.
+  const arrival: Point = { x: plaza.x, z: plaza.z + SPAWN.approach };
+  const spawnStop: Checkpoint = { id: coding ? "launch" : "spawn", room: "floor", x: plaza.x, z: plaza.z, radius: SPAWN.reach,
+    tokenY: SPAWN.tokenY, approach: arrival };
   // The elevator's doors face east into the lobby; its checkpoint is the floor in front of them.
   const elevatorStop: Checkpoint = { id: "elevator", room: "reception", x: elevator.x + 0.95, z: elevator.z, radius: 1.0 };
   const breakStop: Checkpoint = { id: "break", room: "break", x: bx0 + 5.6, z: bz0 + 2.6, radius: 1.8 };
   // Mission Control's stop is a ring round the desk, usable from every side; "walk there" ends in front of the desk.
   const missionStop: Checkpoint = { id: "mission", room: "command", x: commandDeskAt.x, z: commandDeskAt.z - 0.3, radius: COMMAND_REACH,
     tokenY: 2.25, approach: { x: commandDeskAt.x, z: commandDeskAt.z + COMMAND_DESK.d / 2 + 0.55 } };
-  const checkpoints: Checkpoint[] = coding ? [missionStop, elevatorStop, breakStop] : [
+  const board = furniture.find((f) => f.id === AGENT_BOARD_ID);
+  const checkpoints: Checkpoint[] = coding ? [spawnStop, missionStop, elevatorStop, breakStop] : [
+    spawnStop,
     { id: "create", room: "reception", x: reception.x, z: reception.z + 1.7, radius: 1.2 },
-    { id: "manage", room: "reception", x: kiosk.x, z: kiosk.z + 1.4, radius: 1.1 },
+    ...(board ? [{ id: "manage", room: "reception", x: board.x, z: board.z + 1.4, radius: 1.1 } satisfies Checkpoint] : []),
     { id: "team", room: "team", x: tcx + 2.2, z: northMaxZ - 1.05, radius: 0.95 },
     { id: "wardrobe", room: "wardrobe", x: wcx, z: tcz + 0.8, radius: 1.5 },
     { id: "lead", room: "lead", x: minX + leadW / 2, z: northMaxZ - 1.5, radius: 1.3 },
@@ -793,6 +829,7 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     ...(coding ? { command: { id: "command", x: commandDeskAt.x, z: commandDeskAt.z, facing: "south" as const, agentId: null,
       size: { w: COMMAND_DESK.w, d: COMMAND_DESK.d } } } : {}),
     spawn: { x: rx0 + 1.4, z: bottomZ - 2.6 },
+    arrival,
     floor,
     bounds: { minX: minX - EDGE, maxX: maxX + EDGE, minZ: topZ - EDGE, maxZ: bottomZ + EDGE },
   };
@@ -800,6 +837,8 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
 
 /** The lobby lounge's sofa, relative to the reception room's west and north edges. */
 const LOBBY_LOUNGE = { dx: 6.0, dz: 5.35 };
+/** The agents floor's Agent board totem; the "manage" checkpoint stands in front of it. */
+const AGENT_BOARD_ID = "agent-board";
 
 /**
  * The agents floor's lobby round the reception desk and the elevator: the
@@ -816,6 +855,8 @@ function lobbyFurniture(room: Rect): Furniture[] {
   const piece = (id: string, kind: FurnitureKind, x: number, z: number, rotationY = 0, size?: { w: number; d: number }): Furniture =>
     ({ id, kind, x, z, rotationY, room: "reception", ...(size ? { size } : {}) });
   return [
+    // The Agent board: a touch-screen totem in the lobby's north-east corner.
+    piece(AGENT_BOARD_ID, "agentTotem", room.maxX - 2.2, z0 + 2.2),
     piece("lobby-brand-wall", "brandWall", x0 + 0.22, z0 + 2.55, Math.PI / 2),
     piece("lobby-olive-nw", "oliveTree", x0 + 0.65, z0 + 0.35),
     piece("lobby-olive-se", "oliveTree", room.maxX - 0.75, room.maxZ - 0.7),

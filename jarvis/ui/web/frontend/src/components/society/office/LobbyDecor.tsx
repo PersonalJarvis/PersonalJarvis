@@ -112,7 +112,7 @@ function ghostShape(): Shape {
 }
 
 /** Extruded ghost, 1 unit tall and 0.06 deep (plus a soft bevel), its back face on z = 0. */
-const GHOST_GEOMETRY = (() => {
+export const GHOST_GEOMETRY = (() => {
   const geometry = new ExtrudeGeometry(ghostShape(), {
     depth: 0.06, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.008, bevelSegments: 2, curveSegments: 18,
   });
@@ -132,7 +132,8 @@ function traceGhost(ctx: Ctx, cx: number, top: number, height: number): void {
   ctx.closePath();
 }
 
-function drawGhost(ctx: Ctx, cx: number, top: number, height: number, body: string, eyes: string): void {
+/** The ghost, `height` px tall with its top at `top`, centred on `cx`: a filled body with filled eyes. */
+export function drawGhost(ctx: Ctx, cx: number, top: number, height: number, body: string, eyes: string): void {
   traceGhost(ctx, cx, top, height);
   ctx.fillStyle = body;
   ctx.fill();

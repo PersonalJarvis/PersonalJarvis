@@ -6,8 +6,8 @@ problems and propose concrete fixes with `file:line` evidence.
 
 ## Mandatory reading before every review
 
-1. `AGENTS.md` — the whole rulebook and source of truth. `CLAUDE.md` is its
-   byte-identical compatibility copy; reading both is unnecessary.
+1. `AGENTS.md` — the whole rulebook and the only instructions file. A new
+   `CLAUDE.md` anywhere in the diff is a finding: it would hide `AGENTS.md`.
 2. `docs/BUGS.md` — what these traps cost in production, when you need the
    history behind a rule or an `AP-nn` marker you found in a code comment.
 3. The changed files themselves, read in full, not just the diff.

@@ -134,7 +134,7 @@ def test_the_session_instructions_name_every_installed_skill(
 
 def test_the_compact_profile_also_names_the_skills(skills_root: Path) -> None:
     """A small self-hosted brain gets a shorter roster, never no roster —
-    provider parity is not optional (CLAUDE.md §3)."""
+    provider parity is not optional (AGENTS.md §3)."""
     _install(skills_root)
 
     instructions = session_module._session_instructions(

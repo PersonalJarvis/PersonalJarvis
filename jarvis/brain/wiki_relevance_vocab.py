@@ -3,7 +3,7 @@
 MATCHING DATA, NOT PROSE. Every token below is a fragment the speech
 recogniser may literally produce, which a classifier must contain in order to
 recognise the corresponding utterance — the same category as the router,
-navigation-intent and wake-trigger vocabularies (CLAUDE.md §1, closed-list
+navigation-intent and wake-trigger vocabularies (AGENTS.md §1, closed-list
 item 3). Translating these tokens would make the gate deaf in that language.
 
 All tokens are written PRE-FOLDED: lower-case, no umlauts, no accents, sharp-s

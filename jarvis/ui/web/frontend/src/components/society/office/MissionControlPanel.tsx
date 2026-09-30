@@ -6,21 +6,28 @@
  * (workspace, CLI, how many) and, when a task is given, waits for each pane to
  * come up and hands it the task through `/terminals/{name}/prompt` — the path
  * voice and the grid use, so every prompt is recorded and receipted the same
- * way. "Message several agents" sends one message to every picked session.
- * The office adds no backend contract of its own.
+ * way. Files dropped on the launcher are held until each pane is live and
+ * then go through the pane's own `/terminals/{name}/attach`. "New workspace"
+ * opens a folder as another workspace through the IDE's `POST /session`,
+ * with the new agents as its panes. "Message several agents" sends one
+ * message to every picked session. The office adds no backend contract of
+ * its own.
  */
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
-import { Minus, Plus } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Minus, Paperclip, Plus, X } from "lucide-react";
 import { useT } from "@/i18n";
 import {
-  fetchIdeAgents, fetchIdeState, fetchWorkspacePanes, interruptTerminal, openTerminal, promptTerminal,
-  type AgentStatus, type WorkspaceCard,
+  attachToTerminal, fetchIdeAgents, fetchIdeProjects, fetchIdeState, fetchWorkspacePanes, interruptTerminal,
+  openIdeWorkspace, openTerminal, promptTerminal,
+  type AgentStatus, type DropAttachment, type IdeProject, type WorkspaceCard,
 } from "@/lib/agenticIdeApi";
-import { useEventStore } from "@/store/events";
+import { openProject } from "@/lib/chatLibraryApi";
 import { useWorkspacePanesStore } from "@/store/workspacePanes";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { BrandedSelect } from "@/components/ui/select";
 import { paneOccupants, type PaneOccupant } from "./codingFloor";
+import { NewWorkspaceFields, type NewWorkspaceTarget } from "./NewWorkspaceFields";
+import { briefWithFiles, heldPayload, useSpawnFiles, type HeldFile } from "./spawnFiles";
 import "./missionControl.css";
 
 /** At most this many agents per launch; the IDE caps the workspace on its own too. */
@@ -30,11 +37,19 @@ const START_TIMEOUT_MS = 30_000;
 const START_POLL_MS = 600;
 const START_JITTER_MS = 300;
 
+/** The workspace picker's value for "open a new workspace". */
+export const NEW_WORKSPACE = "__new__";
+
 type LaunchLine = { tone: "busy" | "ok" | "warn" | "error"; text: string };
 
 /** Coding CLIs a new agent can run: installed, and not a plain shell. Pure. */
 export function launchableAgents(agents: readonly AgentStatus[]): AgentStatus[] {
   return agents.filter((a) => a.installed && (a.kind ?? "cli") !== "shell");
+}
+
+/** Projects a new workspace can open in: real, reachable folders the user connected. Pure. */
+export function workspaceProjects(projects: readonly IdeProject[]): IdeProject[] {
+  return projects.filter((p) => !p.scratch && !p.archived && p.exists);
 }
 
 /** Every session on the floor, or none: the one bulk pick the list offers. Pure. */
@@ -65,18 +80,32 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function StartAgent() {
+/** What a launch read once and every pane shares: the attached files, as references and analysis. */
+type Handover = { references: string[]; analysis: DropAttachment[] };
+
+/** Start coding agents: CLI, workspace (or a new one), how many, an optional first task and files. Also the coding floor's spawn point. */
+export function StartAgent() {
   const t = useT();
   const [workspaces, setWorkspaces] = useState<WorkspaceCard[] | null>(null);
+  const [projects, setProjects] = useState<IdeProject[]>([]);
   const [agents, setAgents] = useState<AgentStatus[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [workspaceId, setWorkspaceId] = useState("");
+  const [newTarget, setNewTarget] = useState<NewWorkspaceTarget | null>(null);
+  const [newName, setNewName] = useState("");
   const [agentName, setAgentName] = useState("");
   const [count, setCount] = useState(1);
   const [task, setTask] = useState("");
   const [sharpen, setSharpen] = useState(false);
   const [running, setRunning] = useState(false);
   const [lines, setLines] = useState<LaunchLine[]>([]);
+  const files = useSpawnFiles();
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const loadProjects = useCallback(() => fetchIdeProjects()
+    .then((listing) => setProjects(workspaceProjects(listing.projects)))
+    // Only the new-workspace picker lists these; without them it still offers "choose a folder".
+    .catch((err) => console.warn("Mission Control: projects did not load", err)), []);
 
   useEffect(() => {
     let alive = true;
@@ -84,68 +113,126 @@ function StartAgent() {
       .then(([state, list]) => {
         if (!alive) return;
         setWorkspaces(state.workspaces);
-        setWorkspaceId((current) => current || state.active_id || state.workspaces[0]?.id || "");
+        setWorkspaceId((current) => current || state.active_id || state.workspaces[0]?.id || NEW_WORKSPACE);
         const usable = launchableAgents(list.agents);
         setAgents(usable);
         setAgentName((current) => current || usable[0]?.name || "");
       })
       .catch((err) => { if (alive) setLoadError(errorText(err)); });
+    void loadProjects();
     return () => { alive = false; };
-  }, []);
+  }, [loadProjects]);
 
   const setLine = (index: number, line: LaunchLine) =>
     setLines((prev) => { const next = [...prev]; next[index] = line; return next; });
 
+  /** Wait for one new pane, then hand it the files and the task. */
+  const settle = async (
+    i: number, name: string, wsId: string, brief: string, held: readonly HeldFile[], shared: { handover?: Handover },
+  ) => {
+    if (!brief && held.length === 0) {
+      setLine(i, { tone: "ok", text: t("society.office.mission_done_open").replace("{0}", name) });
+      return;
+    }
+    setLine(i, { tone: "busy", text: t("society.office.mission_waiting").replace("{0}", name) });
+    if (!(await waitLive(wsId, name))) {
+      setLine(i, { tone: "warn", text: t("society.office.mission_not_started").replace("{0}", name) });
+      return;
+    }
+    let text = brief;
+    let attachments: DropAttachment[] = [];
+    if (held.length > 0) {
+      setLine(i, { tone: "busy", text: t("society.office.mission_files_handing").replace("{0}", name) });
+      let handover: Handover;
+      try {
+        if (!brief) {
+          // Files alone: typed into the pane's input, as a drop on the pane itself would be.
+          await attachToTerminal(name, heldPayload(held));
+          setLine(i, { tone: "ok", text: t("society.office.mission_files_typed").replace("{0}", name) });
+          return;
+        }
+        // Read once per launch: every pane shares the workspace and the CLI, so
+        // the references are the same, and describing a picture again for each
+        // pane would bill the user again for the same answer.
+        handover = shared.handover ??= await attachToTerminal(name, { ...heldPayload(held), analyze: true, deliver: false })
+          .then((result) => ({ references: result.references, analysis: result.analysis ?? [] }));
+      } catch (err) {
+        setLine(i, { tone: "error", text: t("society.office.mission_files_failed").replace("{0}", name).replace("{1}", errorText(err)) });
+        return;
+      }
+      attachments = handover.analysis;
+      text = briefWithFiles(brief, handover.references, attachments);
+    }
+    setLine(i, { tone: "busy", text: t("society.office.mission_briefing").replace("{0}", name) });
+    try {
+      const result = await promptTerminal(name, text, { compose: sharpen, workspaceId: wsId, attachments });
+      setLine(i, result.submitted === true
+        ? { tone: "ok", text: t("society.office.mission_done_briefed").replace("{0}", name) }
+        : { tone: "warn", text: result.detail || t("society.office.cmd_unconfirmed") });
+    } catch (err) {
+      setLine(i, { tone: "error", text: errorText(err) });
+    }
+  };
+
+  const creating = workspaceId === NEW_WORKSPACE;
+  const ready = Boolean(agentName) && (creating ? newTarget !== null : Boolean(workspaceId));
+
   const launch = async () => {
-    if (running || !workspaceId || !agentName) return;
+    if (running || !ready) return;
     setRunning(true);
     setLines([]);
     const brief = task.trim();
-    for (let i = 0; i < count; i += 1) {
-      setLine(i, { tone: "busy", text: t("society.office.mission_opening") });
-      let name = "";
+    const held = files.held;
+    const shared: { handover?: Handover } = {};
+    let opened = 0;
+    if (creating && newTarget) {
+      setLine(0, { tone: "busy", text: t("society.office.mission_ws_creating") });
       try {
-        name = (await openTerminal({ workspace_id: workspaceId, agent: agentName })).name;
+        const project = newTarget.projectId ? { id: newTarget.projectId, path: newTarget.path } : await openProject(newTarget.path);
+        const { session, state } = await openIdeWorkspace(
+          project.path, Array.from({ length: count }, () => ({ agent: agentName })),
+          { projectId: project.id, name: newName.trim() || undefined },
+        );
+        // The next launch lands beside these agents, not in yet another new workspace.
+        setWorkspaces(state.workspaces);
+        setWorkspaceId(session.id);
+        setNewTarget(null);
+        setNewName("");
+        void loadProjects();
+        void useWorkspacePanesStore.getState().load();
+        opened = session.terminals.length;
+        for (const [i, term] of session.terminals.entries()) await settle(i, term.name, session.id, brief, held, shared);
       } catch (err) {
-        setLine(i, { tone: "error", text: t("society.office.mission_failed").replace("{0}", errorText(err)) });
-        break;
+        setLine(0, { tone: "error", text: t("society.office.mission_failed").replace("{0}", errorText(err)) });
       }
-      void useWorkspacePanesStore.getState().load();
-      if (!brief) { setLine(i, { tone: "ok", text: t("society.office.mission_done_open").replace("{0}", name) }); continue; }
-      setLine(i, { tone: "busy", text: t("society.office.mission_waiting").replace("{0}", name) });
-      if (!(await waitLive(workspaceId, name))) {
-        setLine(i, { tone: "warn", text: t("society.office.mission_not_started").replace("{0}", name) });
-        continue;
-      }
-      setLine(i, { tone: "busy", text: t("society.office.mission_briefing").replace("{0}", name) });
-      try {
-        const result = await promptTerminal(name, brief, { compose: sharpen, workspaceId });
-        setLine(i, result.submitted === true
-          ? { tone: "ok", text: t("society.office.mission_done_briefed").replace("{0}", name) }
-          : { tone: "warn", text: result.detail || t("society.office.cmd_unconfirmed") });
-      } catch (err) {
-        setLine(i, { tone: "error", text: errorText(err) });
+    } else {
+      for (let i = 0; i < count; i += 1) {
+        setLine(i, { tone: "busy", text: t("society.office.mission_opening") });
+        let name = "";
+        try {
+          name = (await openTerminal({ workspace_id: workspaceId, agent: agentName })).name;
+        } catch (err) {
+          setLine(i, { tone: "error", text: t("society.office.mission_failed").replace("{0}", errorText(err)) });
+          break;
+        }
+        opened += 1;
+        void useWorkspacePanesStore.getState().load();
+        await settle(i, name, workspaceId, brief, held, shared);
       }
     }
-    if (brief) setTask("");
+    // Kept for another try when not a single agent opened.
+    if (opened > 0) {
+      if (brief) setTask("");
+      files.release(held);
+    }
     void useWorkspacePanesStore.getState().load();
     setRunning(false);
   };
 
   if (loadError) return <p className="office-mc-note" role="alert">{loadError}</p>;
   if (!workspaces || !agents) return <p className="office-mc-note" role="status">{t("society.office.mission_loading")}</p>;
-  if (workspaces.length === 0) {
-    return (
-      <div className="office-mc-empty">
-        <p>{t("society.office.mission_no_workspace")}</p>
-        <button type="button" className="office-mc-primary" onClick={() => useEventStore.getState().setActiveSection("agentic-ide")}>
-          {t("society.office.open_ide")}
-        </button>
-      </div>
-    );
-  }
   return (
-    <div className="office-mc-block">
+    <div className="office-mc-block office-mc-dropzone" data-dragging={files.dragging || undefined} {...files.handlers}>
       {agents.length === 0 ? <p className="office-mc-note">{t("society.office.mission_no_agents")}</p> : (
         <div className="office-mc-agents" role="radiogroup" aria-label={t("society.office.mission_agent")}>
           {agents.map((a) => (
@@ -158,25 +245,50 @@ function StartAgent() {
         </div>
       )}
 
-      {workspaces.length > 1 && (
+      {workspaces.length === 0 ? <p className="office-mc-note">{t("society.office.mission_no_workspace")}</p> : (
         <div className="office-mc-row">
           <span>{t("society.office.mission_workspace")}</span>
           <BrandedSelect value={workspaceId} onValueChange={setWorkspaceId} disabled={running}
             ariaLabel={t("society.office.mission_workspace")} className="office-mc-select px-2 py-1.5 text-xs"
-            options={workspaces.map((w) => ({ value: w.id, label: w.name, hint: w.branch || undefined }))} />
+            options={[
+              ...workspaces.map((w) => ({ value: w.id, label: w.name, hint: w.branch || undefined })),
+              { value: NEW_WORKSPACE, label: t("society.office.mission_ws_new") },
+            ]} />
         </div>
+      )}
+      {creating && (
+        <NewWorkspaceFields projects={projects} target={newTarget} onTarget={setNewTarget}
+          name={newName} onName={setNewName} disabled={running} />
       )}
 
       <textarea className="office-mc-task" rows={3} value={task} maxLength={8000} disabled={running}
         placeholder={t("society.office.mission_task_placeholder")} aria-label={t("society.office.mission_task")}
-        onChange={(e) => setTask(e.target.value)}
+        onChange={(e) => setTask(e.target.value)} onPaste={files.onPaste}
         onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void launch(); } }} />
-      {task.trim() && (
-        <label className="office-cmd-check">
-          <input type="checkbox" checked={sharpen} disabled={running} onChange={(e) => setSharpen(e.target.checked)} />
-          <span>{t("society.office.cmd_sharpen")}</span>
-        </label>
+      {files.held.length > 0 && (
+        <ul className="office-mc-files" aria-label={t("society.office.mission_files_attach")}>
+          {files.held.map((h) => (
+            <li key={h.key} title={h.path ?? h.name}>
+              <span>{h.name}</span>
+              <button type="button" disabled={running} onClick={() => files.remove(h.key)}
+                aria-label={t("society.office.mission_files_remove").replace("{0}", h.name)}><X aria-hidden /></button>
+            </li>
+          ))}
+        </ul>
       )}
+      <div className="office-mc-tools">
+        <button type="button" className="office-mc-link office-mc-attach" disabled={running} onClick={() => fileInput.current?.click()}>
+          <Paperclip aria-hidden />{t("society.office.mission_files_attach")}
+        </button>
+        <input ref={fileInput} type="file" multiple hidden tabIndex={-1}
+          onChange={(e) => { files.addFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
+        {task.trim() && (
+          <label className="office-cmd-check">
+            <input type="checkbox" checked={sharpen} disabled={running} onChange={(e) => setSharpen(e.target.checked)} />
+            <span>{t("society.office.cmd_sharpen")}</span>
+          </label>
+        )}
+      </div>
 
       <div className="office-mc-go">
         <div className="office-mc-stepper" role="group" aria-label={t("society.office.mission_count")}>
@@ -186,7 +298,7 @@ function StartAgent() {
           <button type="button" disabled={running || count >= MAX_LAUNCH} onClick={() => setCount((n) => n + 1)}
             aria-label={t("society.office.mission_more")}><Plus aria-hidden /></button>
         </div>
-        <button type="button" className="office-mc-primary" disabled={running || !workspaceId || !agentName} onClick={() => void launch()}>
+        <button type="button" className="office-mc-primary" disabled={running || !ready} onClick={() => void launch()}>
           {count === 1 ? t("society.office.mission_start_one") : t("society.office.mission_start_many").replace("{0}", String(count))}
         </button>
       </div>
@@ -196,6 +308,7 @@ function StartAgent() {
           {lines.map((line, i) => <li key={i} data-tone={line.tone}><i aria-hidden />{line.text}</li>)}
         </ul>
       )}
+      {files.dragging && <div className="office-mc-drophint" aria-hidden>{t("society.office.mission_files_drop")}</div>}
     </div>
   );
 }

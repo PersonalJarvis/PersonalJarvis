@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   allDesks, archPosts, buildOfficeLayout, countStates, departmentKey, FURNITURE_SIZE, footprint, groupDepartments,
-  MAX_DEPARTMENTS, MIN_DEPARTMENTS, COMMAND_DESK, COMMAND_REACH, type OfficeAgentInput,
+  MAX_DEPARTMENTS, MIN_DEPARTMENTS, COMMAND_DESK, COMMAND_REACH, SPAWN, type OfficeAgentInput,
 } from "./officeLayout";
 import { buildNavGrid, isWalkable } from "./officeNav";
 import { cameraHome, fitDistance, focusBounds } from "./officeCamera";
@@ -114,7 +114,7 @@ describe("office layout", () => {
     expect(plain).toEqual(buildOfficeLayout(roster, { variant: "agents" }));
     expect(plain.variant).toBe("agents");
     expect(plain.rooms.map((r) => r.kind)).toEqual(["lead", "team", "wardrobe", "reception", "break"]);
-    expect(plain.checkpoints.map((c) => c.id)).toEqual(["create", "manage", "team", "wardrobe", "lead", "break", "elevator"]);
+    expect(plain.checkpoints.map((c) => c.id)).toEqual(["spawn", "create", "manage", "team", "wardrobe", "lead", "break", "elevator"]);
   });
 
   it("builds the coding floor: workspaces as departments, Mission Control and server room, no lead desks", () => {
@@ -123,7 +123,7 @@ describe("office layout", () => {
     expect(layout.variant).toBe("coding");
     expect(layout.rooms.map((r) => r.kind)).toEqual(["command", "team", "server", "reception", "break"]);
     expect(layout.lead.desks).toEqual([]);
-    expect(layout.checkpoints.map((c) => c.id)).toEqual(["mission", "elevator", "break"]);
+    expect(layout.checkpoints.map((c) => c.id)).toEqual(["launch", "mission", "elevator", "break"]);
     expect(layout.departments.map((d) => d.label)).toEqual(["Personal Jarvis", "Website", "", ""]);
     expect(layout.furniture.some((f) => f.room === "lead" || f.room === "wardrobe")).toBe(false);
     expect(layout.spots.some((s) => s.room === "command")).toBe(true);
@@ -177,6 +177,58 @@ describe("office layout", () => {
     expect(isWalkable(grid, { x: stop.x + 0.75, z: chairZ - 0.25 })).toBe(true);
     expect(isWalkable(grid, { x: stop.x - 0.75, z: chairZ - 0.25 })).toBe(true);
     expect(isWalkable(grid, stop.approach!)).toBe(true);
+  });
+
+  for (const [variant, id] of [["agents", "spawn"], ["coding", "launch"]] as const) {
+    for (const count of [0, 12, 40]) {
+      it(`puts the spawn point on the aisle crossing in the middle of the floor (${variant}, ${count} agents)`, () => {
+        const roster = Array.from({ length: count }, (_, i) => agent(`a${i}`, `P${i % 6}`));
+        const layout = buildOfficeLayout(roster, { variant });
+        const stop = layout.checkpoints.find((c) => c.id === id)!;
+        const terminal = layout.furniture.find((f) => f.kind === "spawnTerminal")!;
+        const pad = layout.furniture.find((f) => f.kind === "spawnPad")!;
+        expect(stop.room).toBe("floor");
+        expect([terminal.x, terminal.z]).toEqual([stop.x, stop.z]);
+        expect([pad.x, pad.z]).toEqual([stop.x, stop.z]);
+        // On the centre line between the two department columns, in a cross aisle nearest the floor's middle.
+        expect(stop.x).toBeCloseTo((layout.bounds.minX + layout.bounds.maxX) / 2, 9);
+        const rowStarts = [...new Set(layout.departments.map((d) => d.minZ))].sort((p, q) => p - q);
+        const crossings = rowStarts.slice(1).map((start, i) => {
+          const above = Math.max(...layout.departments.filter((d) => d.minZ === rowStarts[i]).map((d) => d.maxZ));
+          return (above + start) / 2;
+        });
+        expect(crossings.length).toBeGreaterThan(0);
+        const middle = (layout.bounds.minZ + layout.bounds.maxZ) / 2;
+        const nearest = Math.min(...crossings.map((c) => Math.abs(c - middle)));
+        expect(Math.abs(stop.z - middle)).toBeCloseTo(nearest, 6);
+        // The whole pad stays clear of every department, and the ring sits on the pad.
+        const padBox = footprint(pad);
+        for (const dept of layout.departments) {
+          const overlap = padBox.minX < dept.maxX && dept.minX < padBox.maxX && padBox.minZ < dept.maxZ && dept.minZ < padBox.maxZ;
+          expect(overlap, dept.id).toBe(false);
+        }
+        expect(stop.radius).toBeLessThanOrEqual(FURNITURE_SIZE.spawnPad.w / 2);
+        // The token floats above the terminal; newcomers appear where "walk there" ends, south of the screen.
+        expect(stop.tokenY).toBeGreaterThan(FURNITURE_SIZE.spawnTerminal.h);
+        expect(layout.arrival).toEqual(stop.approach);
+        expect(layout.arrival.z - stop.z).toBeCloseTo(SPAWN.approach, 9);
+        expect(isWalkable(buildNavGrid(layout), layout.arrival)).toBe(true);
+      });
+    }
+  }
+
+  it("keeps only one spawn point per floor, and the agents floor's Agent board in the lobby", () => {
+    const agents = buildOfficeLayout([agent("a1", "Codex")]);
+    const coding = buildOfficeLayout([agent("p1", "Personal Jarvis")], { variant: "coding" });
+    for (const layout of [agents, coding]) {
+      expect(layout.furniture.filter((f) => f.kind === "spawnTerminal")).toHaveLength(1);
+      expect(layout.furniture.filter((f) => f.kind === "spawnPad")).toHaveLength(1);
+    }
+    const board = agents.furniture.find((f) => f.kind === "agentTotem")!;
+    expect(board.room).toBe("reception");
+    const manage = agents.checkpoints.find((c) => c.id === "manage")!;
+    expect([manage.x, manage.z - 1.4]).toEqual([board.x, board.z]);
+    expect(coding.furniture.some((f) => f.kind === "agentTotem")).toBe(false);
   });
 
   it("counts states", () => {

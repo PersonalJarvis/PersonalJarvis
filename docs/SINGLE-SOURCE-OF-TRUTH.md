@@ -3,7 +3,7 @@
 > **Purpose.** One self-contained, authoritative narrative of the entire Personal Jarvis
 > project — vision, philosophy, architecture, subsystems, and the hard-won engineering
 > lessons. Written to be read end-to-end (by a human or by an AI generating a summary,
-> presentation, or explainer). Synthesized from `CLAUDE.md`, the cloud-first charter, the
+> presentation, or explainer). Synthesized from `AGENTS.md`, the cloud-first charter, the
 > architecture contracts, and the bug register.
 >
 > **Status:** Phases 0–7 live, plus Awareness (A0–A5), Knowledge Wiki, Jarvis-Agents bridge

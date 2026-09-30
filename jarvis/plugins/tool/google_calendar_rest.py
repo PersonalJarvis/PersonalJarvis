@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 _BOT_PATH = Path(__file__).parent / "calendar_bot.mjs"
 _NODE_TIMEOUT_S = 25.0
 
-# User-facing error strings (English per CLAUDE.md; the brain rephrases to the
+# User-facing error strings (English per AGENTS.md; the brain rephrases to the
 # user's language). Distinct so the brain can tell the failure modes apart.
 _NOT_CONNECTED = (
     "Google Calendar is not connected — connect it in the Plugins view."

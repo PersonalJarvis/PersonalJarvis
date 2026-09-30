@@ -295,7 +295,7 @@ POLISH_FAMILIES: Final[tuple[PolishFamily, ...]] = (
         base_url="https://api.openai.com/v1",
         secret_candidates=("openai_api_key",),
         # ``gpt-4.1-nano`` sat here from a 2025 catalog and is more than a year
-        # old — never a default (CLAUDE.md §3). Both ids below are the ones
+        # old — never a default (AGENTS.md §3). Both ids below are the ones
         # ``jarvis.brain.model_catalog`` carries as current for this provider
         # and ``tests/unit/brain/test_current_model_catalogs.py`` pins, so the
         # wording pass and the brain cannot drift apart on what OpenAI serves.

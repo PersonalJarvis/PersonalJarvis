@@ -232,7 +232,7 @@ def test_every_voice_section_id_has_a_nav_key_in_every_locale() -> None:
 
 
 def test_the_merged_sidebar_row_carries_the_brand_token_not_a_name() -> None:
-    """CLAUDE.md §4 — the user-visible brand is derived from the wake word.
+    """AGENTS.md §4 — the user-visible brand is derived from the wake word.
 
     ``nav.voice`` is the one label of this section that reaches the sidebar, so
     a hardcoded product name here would show up for every user regardless of

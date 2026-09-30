@@ -23,7 +23,11 @@ const empty: BrowserViewState = {
   url: "", tabs: [], target: "", error: "",
 };
 
-export function useBrowserView(agentId: string) {
+/**
+ * Opening the live socket launches the agent's Chromium, so callers pass
+ * `enabled` only while the browser is wanted: already running, or asked for.
+ */
+export function useBrowserView(agentId: string, enabled = true) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const socket = useRef<WebSocket | null>(null);
   const [state, setState] = useState<BrowserViewState>(empty);
@@ -52,6 +56,7 @@ export function useBrowserView(agentId: string) {
       if (el) el.width = 1280;
     };
     clearCanvas();
+    if (!enabled) return;
     const decodeFrame = () => {
       if (decodeBusy || !latestFrame || disposed) return;
       const frame = latestFrame;
@@ -212,7 +217,7 @@ export function useBrowserView(agentId: string) {
       ws?.close();
       clearCanvas();
     };
-  }, [agentId]);
+  }, [agentId, enabled]);
 
   const control = useCallback((op: string, args: Record<string, unknown> = {}) => {
     if (op === "cancel") {

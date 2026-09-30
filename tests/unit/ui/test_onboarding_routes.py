@@ -31,6 +31,15 @@ def test_state_starts_incomplete(client):
     assert body["steps"][0] == "welcome"
     assert len(body["legal_references"]) >= 3
     assert body["wake_word_acknowledged"] is False
+    assert body["tour_completed"] is False
+
+
+def test_tour_complete_is_recorded_without_restart(client, monkeypatch):
+    calls: list[int] = []
+    monkeypatch.setattr(onboarding_routes, "_schedule_fresh_restart", lambda req: calls.append(1))
+    assert client.post("/api/onboarding/tour-complete").json() == {"ok": True}
+    assert client.get("/api/onboarding/state").json()["tour_completed"] is True
+    assert calls == []
 
 
 def test_terms_endpoint(client):
@@ -84,6 +93,7 @@ def test_router_registers_all_paths():
         "/api/onboarding/decline-terms",
         "/api/onboarding/acknowledge-wake-word",
         "/api/onboarding/complete",
+        "/api/onboarding/tour-complete",
     }
 
 

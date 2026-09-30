@@ -9099,7 +9099,7 @@ async def test_a_handshake_resource_exhausted_says_busy_not_unreachable():
 
 @pytest.mark.asyncio
 async def test_the_handshake_notice_follows_the_pinned_reply_language():
-    """One resolver decides, here as everywhere (CLAUDE.md §1 runtime rule 1).
+    """One resolver decides, here as everywhere (AGENTS.md §1 runtime rule 1).
 
     Every supported locale is equal: a Spanish-pinned user must not be told in
     English (or German) that the call is ending.

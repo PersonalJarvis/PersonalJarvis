@@ -58,7 +58,7 @@ made the receiving agent behave *worse*:
   picks the set and only that set is injected.
 
 The composed prompt is always English. The recipient is a coding agent working
-in a repository whose artifacts are English (CLAUDE.md §1); a prompt in the
+in a repository whose artifacts are English (AGENTS.md §1); a prompt in the
 spoken language pulls same-language commit messages and comments after it. The
 *spoken readback* to the user is unaffected — that stays in the turn's
 resolved output language.

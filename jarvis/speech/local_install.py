@@ -1,6 +1,6 @@
 """In-app installation of the optional local speech engines and their models.
 
-CLAUDE.md section 3 is explicit that a capability must be recoverable from
+AGENTS.md section 3 is explicit that a capability must be recoverable from
 INSIDE the app: entering, switching or repairing a provider may never require
 hand-editing ``jarvis.toml`` or dropping to a shell. A local provider makes that
 concrete — it needs a pip package and a multi-gigabyte model download before it

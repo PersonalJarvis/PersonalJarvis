@@ -6,7 +6,7 @@ wall clock + monotonic), every stage offset that was marked, derived metrics
 (TTFW, total), and best-effort context fields (token counts, audio length, TTS
 char count).
 
-Design constraints (mirrors AP-9 / AP-18 from CLAUDE.md):
+Design constraints (mirrors AP-9 / AP-18 from AGENTS.md):
   * Subscriber callback never blocks: write is enqueued, flushed in a daemon
     thread. The hot path returns instantly.
   * Stdlib only — runs unchanged on the €5/month VPS doctrine.
