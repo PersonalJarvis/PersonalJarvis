@@ -355,7 +355,7 @@ async def test_an_explicit_request_is_saved_without_a_model(book: JarvisNotebook
     await _drain(loop)
 
     [entry] = _entries(book, "user") + _entries(book, "memory")
-    assert "the user asked to remember: dass ich Zwiebeln nicht mag" in entry  # i18n-allow
+    assert "(the user's words): dass ich Zwiebeln nicht mag" in entry  # i18n-allow
     assert loop.review_calls == 0
 
 

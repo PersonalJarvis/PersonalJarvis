@@ -17,7 +17,7 @@ from typing import Final
 log = logging.getLogger(__name__)
 
 #: Longest single entry. A fact that needs more is a wiki page, not a note.
-MAX_ENTRY_CHARS: Final[int] = 400
+MAX_ENTRY_CHARS: Final[int] = 300
 
 #: Format (Cf: zero-width, bidi, tag characters), private-use and unassigned
 #: code points. None belongs in a note; all can smuggle hidden text.

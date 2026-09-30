@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ log = logging.getLogger(__name__)
 OWNER_ID: Final[str] = "jarvis"
 TARGETS: Final[tuple[str, ...]] = ("user", "memory")
 LEDGER_NAME: Final[str] = ".learning-ledger.jsonl"
+STATE_NAME: Final[str] = ".learning-state.json"
 #: Minimum seconds between two mtime checks from the prompt path.
 _STAT_INTERVAL_S: Final[float] = 2.0
 #: Longest the prompt path waits for the notebook lock before serving the cache.
@@ -37,6 +39,8 @@ _READ_LOCK_S: Final[float] = 0.05
 _HARD_LIMIT: Final[float] = 1.25
 #: Tries for a notebook write another process briefly blocks (Windows only in practice).
 _REPLACE_ATTEMPTS: Final[int] = 4
+#: The ledger rotates past this size and keeps one previous file: at most ~0.5 MB.
+_LEDGER_MAX_BYTES: Final[int] = 256 * 1024
 
 _HEADER = (
     "## What you have learned so far\n"
@@ -114,13 +118,16 @@ class JarvisNotebook:
         evidence: str = "",
         source: str = "",
         expected: str | None = None,
+        enforce_budget: bool = True,
     ) -> Change | None:
         """Write one change; ``None`` when it changed nothing (a duplicate).
 
         ``expected`` is the entry text the caller based a replace or remove on;
         when the entry changed since (an edit in the UI or Obsidian), the change
-        is refused so the person's own edit wins. An ``add`` to a notebook far
-        past its budget is refused too: the reviewer must consolidate first.
+        is refused so the person's own edit wins. A change that would grow a
+        notebook past ``_HARD_LIMIT`` of its budget is refused too (a replace
+        that does not grow it is fine); ``enforce_budget=False`` lets an explicit
+        remember request and a shrinking merge through.
         Every applied change is appended to a ledger with its old and new text,
         so nothing the loop replaces or removes is ever unrecoverable.
         """
@@ -137,9 +144,10 @@ class JarvisNotebook:
             before = match[0].text
             if expected is not None and before != expected:
                 raise ValueError("the entry changed after the review read it")
-        else:
+        if enforce_budget and operation != "remove":
             used, budget = self.usage(current)[target]
-            if used + len(text) > budget * _HARD_LIMIT:
+            grown = used + len(text) + (2 if operation == "add" else -len(before))
+            if grown > budget * _HARD_LIMIT and grown > used:
                 raise ValueError(f"the {target} notebook is full; consolidate first")
         for attempt in range(_REPLACE_ATTEMPTS):
             try:
@@ -167,6 +175,23 @@ class JarvisNotebook:
         self.invalidate()
         return change
 
+    def read_state(self) -> dict[str, Any]:
+        """Small loop bookkeeping (compaction times) next to the notebooks."""
+        try:
+            data = json.loads((self.folder / STATE_NAME).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def write_state(self, state: dict[str, Any]) -> None:
+        from jarvis.society.memory import atomic_write
+
+        try:
+            atomic_write(self.folder / STATE_NAME, json.dumps(state, sort_keys=True))
+        except OSError:
+            # Losing the timestamp only means an earlier retry; the notebook is intact.
+            log.warning("learning: could not save the loop state", exc_info=True)
+
     def _append_ledger(self, change: Change, *, evidence: str, source: str) -> None:
         from jarvis.memory.learning.guard import contains_secret
 
@@ -181,8 +206,11 @@ class JarvisNotebook:
             # A quote that looks like a credential is never written to disk.
             "evidence": "[withheld]" if contains_secret(evidence) else evidence,
         }
+        ledger = self.folder / LEDGER_NAME
         try:
-            with (self.folder / LEDGER_NAME).open("a", encoding="utf-8", newline="\n") as handle:
+            if ledger.is_file() and ledger.stat().st_size > _LEDGER_MAX_BYTES:
+                os.replace(ledger, ledger.with_name(LEDGER_NAME + ".1"))
+            with ledger.open("a", encoding="utf-8", newline="\n") as handle:
                 handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         except OSError:
             # The notebook write already succeeded; a lost audit line must not
