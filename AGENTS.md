@@ -71,6 +71,12 @@ the install base, and "works on my machine" is the defect. (AP-23)
 - **Any single key must work.** Gate on capability, never a provider name or
   model id (AP-21). A tier whose primary AND fallback share one provider family
   is a brick — every chain crosses families or degrades honestly (AP-22).
+- **Nothing the user did not start may bill a key on its own.** Health dots
+  come from real calls, never a paid probe. Once a subscription is connected,
+  background work runs only on subscriptions or local models
+  (`jarvis/brain/background_policy.py`); a failing subscription makes it WAIT,
+  never fall back to an API key. An agent's own memory updates run on that
+  agent's seat. Idle once burned 5 EUR in three hours on wiki calls.
 - **Every OS**, including a headless `python:3.11-slim` with no GPU, audio or
   native API: base install + boot must succeed there. Extras group, environment
   marker or lazy import — whichever fits.
