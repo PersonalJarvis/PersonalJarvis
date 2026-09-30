@@ -791,16 +791,56 @@ def test_a_connected_subscription_writes_recaps_without_any_key(monkeypatch) -> 
     assert recap_engine._resolve_brains() == [subscription]  # noqa: SLF001
 
 
-def test_without_a_subscription_the_keyed_chain_writes_recaps(monkeypatch) -> None:
+def test_without_a_subscription_the_keyed_chain_writes_recaps(monkeypatch, tmp_path) -> None:
     """A single-key install keeps model recaps (AP-22)."""
     from jarvis.brain import resolver
+    from tests.fakes.fake_background_billing import (
+        isolate_background_billing,
+        reset_background_billing,
+    )
 
-    api = SimpleNamespace(model="only-key")
-    monkeypatch.setattr(resolver, "frontier_brain_candidates", lambda cfg: iter([api]))
-    monkeypatch.setattr(resolver, "resolve_subscription_brain", lambda cfg, **kwargs: None)
-    monkeypatch.setattr("jarvis.core.config.load_config", lambda: SimpleNamespace())
+    isolate_background_billing(monkeypatch, tmp_path / "billing")
+    try:
+        api = SimpleNamespace(model="only-key")
+        monkeypatch.setattr(resolver, "frontier_brain_candidates", lambda cfg: iter([api]))
+        monkeypatch.setattr(resolver, "resolve_subscription_brain", lambda cfg, **kwargs: None)
+        monkeypatch.setattr("jarvis.core.config.load_config", lambda: SimpleNamespace())
 
-    assert recap_engine._resolve_brains() == [api]  # noqa: SLF001
+        assert recap_engine._resolve_brains() == [api]  # noqa: SLF001
+    finally:
+        reset_background_billing()
+
+
+def test_an_unavailable_subscription_never_falls_back_to_a_key(
+    monkeypatch, tmp_path
+) -> None:
+    """Recaps are background work: once a subscription is connected, a
+    subscription that cannot answer means the plain title, never a paid key —
+    no keyed brain is even instantiated."""
+    from jarvis.brain import resolver
+    from tests.fakes.fake_background_billing import (
+        isolate_background_billing,
+        reset_background_billing,
+    )
+
+    billing = isolate_background_billing(monkeypatch, tmp_path / "billing")
+    try:
+        billing.remember_subscription("claude-cli")
+        billing.sign_out("claude-cli")
+        instantiated: list[str] = []
+
+        def _keyed_candidates(_cfg):  # noqa: ANN001, ANN202
+            instantiated.append("keyed")
+            yield SimpleNamespace(model="paid-key")
+
+        monkeypatch.setattr(resolver, "frontier_brain_candidates", _keyed_candidates)
+        monkeypatch.setattr(resolver, "resolve_subscription_brain", lambda cfg, **kwargs: None)
+        monkeypatch.setattr("jarvis.core.config.load_config", lambda: SimpleNamespace())
+
+        assert recap_engine._resolve_brains() == []  # noqa: SLF001
+        assert instantiated == [], "no keyed provider may be instantiated"
+    finally:
+        reset_background_billing()
 
 
 def test_a_failing_provider_leaves_the_previous_sentence_in_place() -> None:

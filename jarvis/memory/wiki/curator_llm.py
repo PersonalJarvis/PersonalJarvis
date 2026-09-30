@@ -543,7 +543,10 @@ class WikiCuratorLLM:
         # bills only what background work may bill: once a subscription is
         # connected, subscriptions and local models — never a key.
         try:
-            background = build_background_wiki_chain(
+            # Provider selection may run vendor login probes (seconds of subprocess):
+            # keep it off the event loop (AP-9).
+            background = await asyncio.to_thread(
+                build_background_wiki_chain,
                 registry=self._registry,
                 config=self._config,
                 primary=(self._cfg.provider.strip() or self._config.brain.primary),

@@ -449,18 +449,23 @@ class SessionRollupWorker:
         from jarvis.memory.wiki.curator_llm import instantiate_curator_brain
         from jarvis.memory.wiki.provider_chain import subscription_provider_options
 
-        try:
+        def _billing_gate() -> dict[str, Any] | None:
             guard.check_ready(self._config)
             decision = background_providers([provider_name])
             if not decision.permits(provider_name):
                 raise BackgroundDeferred(decision.reason)
             guard.reserve_call(self._config, label="session-rollup")
-        except BackgroundDeferred as exc:
+            return subscription_provider_options(decision, self._registry).get(
+                provider_name
+            )
+
+        try:
+            # The policy may run vendor login probes (seconds of subprocess):
+            # keep it off the event loop (AP-9).
+            pinned = await asyncio.to_thread(_billing_gate)
+        except BackgroundDeferred as exc:  # the skip is logged right here
             log.info("SessionRollupWorker: digest skipped — %s", exc)
             return None
-        pinned = subscription_provider_options(decision, self._registry).get(
-            provider_name
-        )
 
         try:
             async with self._brain_lock:

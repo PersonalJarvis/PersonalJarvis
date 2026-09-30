@@ -337,14 +337,18 @@ class ConversationFactExtractor:
         must never notice the memory pipeline. The one exception is
         :class:`BackgroundDeferred`: nothing background work may bill can take
         the call right now, so the caller keeps the turn and retries later.
-        It is raised BEFORE the review is claimed whenever that is known up
-        front, so waiting never uses up a review attempt.
+        Waiting never uses up a review attempt: a wait known up front is
+        raised before the review is claimed, and a wait that starts mid-chain
+        (the subscription stops answering, the daily cap is reached) hands the
+        claimed attempt back (``CandidateJournal.release_capture``). A review
+        that cannot be claimed is logged with the reason — a WARNING when its
+        failure budget is spent — never dropped silently.
         """
         text = (user_text or "").strip()
         focus_turn_id = (turn_id or turn_hash).strip()
         key = review_key or f"turn:v2:{turn_hash}"
         background = (
-            self._background_chain()
+            await self._background_chain()
             if self._cfg.enabled and len(text) >= int(self._cfg.min_user_chars)
             else None
         )
@@ -356,6 +360,7 @@ class ConversationFactExtractor:
             session_id=session_id,
             turn_id=focus_turn_id,
         ):
+            await self._log_unclaimed(key, source_label=source_label)
             return 0
 
         if not self._cfg.enabled:
@@ -398,9 +403,9 @@ class ConversationFactExtractor:
             raise
         except BackgroundDeferred:
             # The daily cap was reached or the subscription stopped answering
-            # mid-chain: the review stays retryable and the caller keeps the
-            # turn for a later attempt.
-            await self._finish_review(key, status="failed", error_code="deferred")
+            # mid-chain: nothing was reviewed, so the attempt goes back and
+            # the caller keeps the turn for a later try.
+            await self._release_review(key)
             raise
         except Exception:  # noqa: BLE001 - the conversation must never notice
             log.exception("ConversationFactExtractor: unexpected extraction failure")
@@ -461,7 +466,7 @@ class ConversationFactExtractor:
             background: WikiBackgroundChain | None = None
             if self._cfg.enabled:
                 try:
-                    background = self._background_chain()
+                    background = await self._background_chain()
                 except BackgroundDeferred as exc:
                     log.info(
                         "ConversationFactExtractor: session %s sweep paused at "
@@ -479,6 +484,7 @@ class ConversationFactExtractor:
                 session_id=session_id,
                 turn_id="",
             ):
+                await self._log_unclaimed(key, source_label=f"{source_label}:chunk:{index}")
                 continue
             if background is None:
                 await self._finish_review(
@@ -506,7 +512,7 @@ class ConversationFactExtractor:
                 await self._finish_review(key, status="failed", error_code="cancelled")
                 raise
             except BackgroundDeferred as exc:
-                await self._finish_review(key, status="failed", error_code="deferred")
+                await self._release_review(key)
                 log.info(
                     "ConversationFactExtractor: session %s sweep paused at chunk %d — %s",
                     session_id,
@@ -802,6 +808,62 @@ class ConversationFactExtractor:
             )
             return True
 
+    async def _release_review(self, review_key: str) -> None:
+        """Hand a claimed review back: it waited, it did not fail."""
+        try:
+            released = await asyncio.to_thread(self._journal.release_capture, review_key)
+        except Exception:  # noqa: BLE001 - reported below, the wait still propagates
+            log.warning(
+                "ConversationFactExtractor: could not release the waiting review %s",
+                review_key[-24:],
+                exc_info=True,
+            )
+            return
+        if not released:
+            log.warning(
+                "ConversationFactExtractor: waiting review %s was not in progress; "
+                "its attempt could not be handed back",
+                review_key[-24:],
+            )
+
+    async def _log_unclaimed(self, review_key: str, *, source_label: str) -> None:
+        """Say why a review was not started instead of returning 0 silently."""
+        try:
+            status = await asyncio.to_thread(self._journal.capture_status, review_key)
+            attempts = await asyncio.to_thread(self._journal.capture_attempts, review_key)
+        except Exception:  # noqa: BLE001 - the unclaimed review itself is reported below
+            status, attempts = None, 0
+            log.debug(
+                "ConversationFactExtractor: capture status lookup failed", exc_info=True
+            )
+        if status == "failed":
+            log.warning(
+                "ConversationFactExtractor: %s is not reviewed again — it failed %d "
+                "time(s) and its retry budget is spent (review %s)",
+                source_label,
+                attempts,
+                review_key[-24:],
+            )
+        elif status == "started":
+            log.info(
+                "ConversationFactExtractor: %s is already being reviewed (review %s)",
+                source_label,
+                review_key[-24:],
+            )
+        elif status is None:
+            log.warning(
+                "ConversationFactExtractor: %s could not be claimed — the capture "
+                "journal is unavailable (review %s)",
+                source_label,
+                review_key[-24:],
+            )
+        else:
+            log.debug(
+                "ConversationFactExtractor: %s was already reviewed (%s)",
+                source_label,
+                status,
+            )
+
     async def _finish_review(
         self,
         review_key: str,
@@ -885,13 +947,18 @@ class ConversationFactExtractor:
         await self._maybe_trigger_consolidation()
         return appended
 
-    def _background_chain(self) -> WikiBackgroundChain:
+    async def _background_chain(self) -> WikiBackgroundChain:
         """The provider chain this extraction may bill, or raise to make it wait.
 
         Checks the runaway guard (backoff window, daily cap) and the
         background billing policy BEFORE any review is claimed, so an install
-        waiting on its subscription never spends a retry attempt.
+        waiting on its subscription never spends a retry attempt. Provider
+        selection may shell out to vendor login probes for seconds, so it
+        runs on a worker thread, never on the voice event loop (AP-9).
         """
+        return await asyncio.to_thread(self._background_chain_blocking)
+
+    def _background_chain_blocking(self) -> WikiBackgroundChain:
         from jarvis.memory.wiki.provider_chain import build_background_wiki_chain
 
         background_guard.check_ready(self._root_cfg)
