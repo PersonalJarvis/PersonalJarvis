@@ -511,6 +511,12 @@ interface AgenticTerminalProps {
    * works in outlined in the signal hue.
    */
   headerMode?: "legacy" | "compact" | "minimal" | "none";
+  /**
+   * Minimal tiles only: may the focused pane wear the blue "you are here"
+   * edge right now? Off while the reader works in the IDE's side panel, which
+   * then wears it instead. The pane stays the prompt target either way.
+   */
+  markFocus?: boolean;
   /** Compact header only: opens the fork dialog for this pane. */
   onFork?: () => void;
   /** Compact header only: the worktree branch this pane runs on, if any. */
@@ -654,6 +660,7 @@ export function AgenticTerminal({
   workspaceId,
   displayName,
   headerMode = "legacy",
+  markFocus = true,
   onFork,
   branch,
   computerName,
@@ -2703,7 +2710,7 @@ export function AgenticTerminal({
           dragging || justDelivered
             ? undefined
             : minimal
-              ? focused ? tile.focus : tile.edge[visibleStatus]
+              ? focused && markFocus ? tile.focus : tile.edge[visibleStatus]
               : focused
                 ? undefined
                 : chrome.edge[visibleStatus],
@@ -2712,7 +2719,7 @@ export function AgenticTerminal({
       data-testid={`agentic-pane-${name}`}
     >
       {headerMode === "compact" ? <WorkspaceTerminalHeader {...headerProps} />
-      : minimal ? <WorkspaceTerminalHeader {...headerProps} variant="tile" focused={focused} />
+      : minimal ? <WorkspaceTerminalHeader {...headerProps} variant="tile" focused={focused && markFocus} />
       : headerMode === "none" ? null : <PaneHeader
         workspaceId={workspaceId}
         status={visibleStatus}
@@ -2875,7 +2882,7 @@ export function AgenticTerminal({
         than down the terminal (maintainer, 2026-09-30). One layer on top keeps
         the line the same brightness all the way round.
       */}
-      {minimal && focused && !dragging && !justDelivered && (
+      {minimal && focused && markFocus && !dragging && !justDelivered && (
         <div
           aria-hidden="true"
           data-testid={`pane-focus-ring-${name}`}

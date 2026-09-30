@@ -346,6 +346,10 @@ describe("AgenticTerminal layout", () => {
     expect(ring.className).toContain("z-[45]");
     expect(pane.lastElementChild).toBe(ring);
     expect(pane.style.boxShadow).toBe("");
+    // While the reader works in the side panel, the panel wears the frame.
+    rerender(<AgenticTerminal {...props} focused markFocus={false} />);
+    expect(pane.style.borderColor).toBe(resting);
+    expect(screen.queryByTestId("pane-focus-ring-Dana")).toBeNull();
     // One pane in the grid is still the pane in use: it is marked too.
     rerender(<AgenticTerminal {...props} focused={false} />);
     expect(pane.style.borderColor).toBe(resting);

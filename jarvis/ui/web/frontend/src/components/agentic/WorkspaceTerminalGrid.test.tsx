@@ -9,8 +9,8 @@ vi.mock("./AgenticTerminal", () => ({ AgenticTerminal: (props: {
   name: string; onToggleMaximize: () => void; onRestart: () => void; restartToken: number;
   onFocus: () => void;
   onArrangeStart?: (event: React.PointerEvent) => void;
-  headerMode?: string;
-}) => <div onMouseDown={props.onFocus} data-testid={`pane-${props.name}`} data-header-mode={props.headerMode}>
+  headerMode?: string; markFocus?: boolean;
+}) => <div onMouseDown={props.onFocus} data-testid={`pane-${props.name}`} data-header-mode={props.headerMode} data-mark-focus={String(props.markFocus)}>
   <button onClick={props.onToggleMaximize}>Maximize {props.name}</button>
   <button type="button" data-ide-drag-handle="true" onPointerDown={props.onArrangeStart}>Move {props.name}</button>
   <button onClick={props.onRestart}>Restart {props.name}</button>
@@ -254,4 +254,14 @@ it("draws square tiles in the minimal style and cards in the classic one", () =>
   rerender(<WorkspaceTerminalGrid {...props} session={makeSession()} paneStyle="classic" />);
   expect(document.querySelector<HTMLElement>('[data-session-id="T1"]')!.className).toContain("rounded-2xl");
   expect(screen.getByTestId("pane-T1").dataset.headerMode).toBe("compact");
+});
+
+it("hands the blue frame back from the side panel to a pressed pane", () => {
+  useIdeSidePanelStore.setState({ open: true, inUse: true });
+  render(<WorkspaceTerminalGrid {...props} session={makeSession()} paneStyle="minimal" />);
+  expect(screen.getByTestId("pane-T1").dataset.markFocus).toBe("false");
+  fireEvent.mouseDown(screen.getByTestId("pane-T2"));
+  expect(useIdeSidePanelStore.getState().inUse).toBe(false);
+  expect(screen.getByTestId("pane-T1").dataset.markFocus).toBe("true");
+  useIdeSidePanelStore.setState({ open: false, inUse: false });
 });
