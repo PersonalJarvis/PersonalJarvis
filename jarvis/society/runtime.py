@@ -250,7 +250,9 @@ class SocietyRuntime:
         self._publish_event = event_publish
         #: The society's one memory service; every touch moves the figure to the Memory House.
         self.memory = SocietyMemory(self, on_activity=self.checkpoints.note_memory_activity)
-        self.conversations = ConversationArchive(self._data_dir / "society-conversations.db")
+        self.conversations = ConversationArchive(
+            self._data_dir / "society-conversations.db", defer_open=True
+        )
         self._review_lock = asyncio.Lock()
         #: The Quest Board: the person's jobs, routed to one taker, read back off the board.
         self.quests = Quests(self)
@@ -328,6 +330,10 @@ class SocietyRuntime:
 
     async def _start_runtime(self) -> SocietyRuntime:
         await self.store.open()
+        self._require_open_owner()
+        # FTS backfill can take seconds on a busy disk. It must never stall
+        # HTTP, microphone controls or the first response from the desktop.
+        await asyncio.to_thread(self.conversations.open)
         self._require_open_owner()
         self.scheduler._budget = self._get_budget()  # noqa: SLF001 — the runtime owns its scheduler
         self.scheduler.attach()
@@ -556,13 +562,13 @@ class SocietyRuntime:
         async with AsyncExitStack() as cleanup:
             cleanup.callback(clear_runtime)
             cleanup.push_async_callback(self.store.close)
+            cleanup.push_async_callback(asyncio.to_thread, self.conversations.close)
             for release in (
                 self.world_feed.detach,
                 self.quests.detach,
                 self.checkpoints.detach,
                 self.bridge.detach,
                 self.scheduler.detach,
-                self.conversations.close,
             ):
                 cleanup.callback(release)
             cleanup.push_async_callback(self.browser.close)
@@ -606,7 +612,7 @@ class SocietyRuntime:
         import json
 
         events = json.loads(completion.events_json)
-        self.conversations.ingest(session.session_id, events)
+        await asyncio.to_thread(self.conversations.ingest, session.session_id, events)
         await self._complete_message_reply(session, completion, events)
         terminal = [e for e in events if e.get("kind") == "turn_finished"]
         if not terminal or terminal[-1].get("payload", {}).get("status") not in {
@@ -631,7 +637,8 @@ class SocietyRuntime:
             # Reviewing them again wastes a model call and can
             # duplicate a standing instruction as a conflicting memory.
             return
-        if self.conversations.queue_review(
+        if await asyncio.to_thread(
+            self.conversations.queue_review,
             session.session_id,
             completion.turn.turn_id,
             events,
