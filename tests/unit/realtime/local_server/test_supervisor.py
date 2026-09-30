@@ -42,6 +42,13 @@ def _local_models_switch_on(monkeypatch: pytest.MonkeyPatch) -> None:
     provider.autostart = True
     cfg.brain.providers["ollama"] = provider
     monkeypatch.setattr("jarvis.core.config.load_config", lambda: cfg)
+    # Lifecycle fixtures must not depend on or query the developer's GPU and
+    # live model server. Individual probe tests supply their own fake client.
+    monkeypatch.setattr(
+        "jarvis.hardware.detection.free_accelerator_gb",
+        lambda: (16.0, "nvidia-smi"),
+    )
+    monkeypatch.setattr(supervisor, "_probe_client", lambda: None)
 
 
 def _spawn_ready(monkeypatch, tmp_path: Path) -> list[dict[str, Any]]:
@@ -160,16 +167,7 @@ def test_pool_url_normalizes_every_supported_input_shape() -> None:
 
 
 def test_runtime_probe_requires_a_valid_loaded_pool(monkeypatch) -> None:
-    import http.client
-
-    class _Response:
-        status = 200
-
-        def __init__(self, payload: object) -> None:
-            self._payload = json.dumps(payload).encode("utf-8")
-
-        def read(self, limit: int) -> bytes:
-            return self._payload[:limit]
+    import httpx
 
     payload = {
         "size": 4,
@@ -182,34 +180,24 @@ def test_runtime_probe_requires_a_valid_loaded_pool(monkeypatch) -> None:
         ],
     }
 
-    class _Connection:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            pass
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+    ) as client:
+        monkeypatch.setattr(supervisor, "_probe_client", lambda: client)
+        assert supervisor.probe_runtime("http://localhost:8765") == {
+            "size": 4,
+            "in_use": 3,
+            "available": 1,
+            "active": 1,
+            "draining": 1,
+            "stuck": 1,
+        }
 
-        def request(self, *args: Any, **kwargs: Any) -> None:
-            pass
-
-        def getresponse(self) -> _Response:
-            return _Response(payload)
-
-        def close(self) -> None:
-            pass
-
-    monkeypatch.setattr(http.client, "HTTPConnection", _Connection)
-    assert supervisor.probe_runtime("http://localhost:8765") == {
-        "size": 4,
-        "in_use": 3,
-        "available": 1,
-        "active": 1,
-        "draining": 1,
-        "stuck": 1,
-    }
-
-    payload["in_use"] = 2
-    assert supervisor.probe_runtime("http://localhost:8765") is None
-    payload["in_use"] = 3
-    payload["units"] = []
-    assert supervisor.probe_runtime("http://localhost:8765") is None
+        payload["in_use"] = 2
+        assert supervisor.probe_runtime("http://localhost:8765") is None
+        payload["in_use"] = 3
+        payload["units"] = []
+        assert supervisor.probe_runtime("http://localhost:8765") is None
 
 
 def test_only_an_abandoned_full_pool_has_no_usable_capacity() -> None:
@@ -2104,12 +2092,15 @@ def _write_booting_pidfile(tmp_path: Path, *, spawned_ago_s: float) -> None:
     )
 
 
-def test_status_reports_stage_and_eta_while_an_owned_child_boots(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize("spawned_ago_s", [20.0, 90.0])
+def test_status_reports_stage_and_eta_while_an_owned_child_boots(
+    monkeypatch, tmp_path, spawned_ago_s
+) -> None:
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(supervisor, "_port_open", lambda port, timeout=1.0: False)
     monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: None)
     monkeypatch.setattr(supervisor, "_process_create_time", lambda pid: 1000.0)
-    _write_booting_pidfile(tmp_path, spawned_ago_s=20.0)
+    _write_booting_pidfile(tmp_path, spawned_ago_s=spawned_ago_s)
     stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     (tmp_path / "local_realtime_server.log").write_text(
         f"{stamp},100 - speech_to_speech.TTS.qwen3_tts_handler - INFO - "
@@ -2131,7 +2122,10 @@ def test_status_reports_stage_and_eta_while_an_owned_child_boots(monkeypatch, tm
     assert boot["stage"] == "voice-model"
     assert boot["stage_label"] == "loading the speaking voice"
     assert boot["expected_total_s"] == 80.0
-    assert 50.0 <= boot["remaining_s"] <= 65.0
+    if spawned_ago_s < 80:
+        assert 50.0 <= boot["remaining_s"] <= 65.0
+    else:
+        assert boot["remaining_s"] is None
     assert boot["failed_streak"] == 0
 
 
