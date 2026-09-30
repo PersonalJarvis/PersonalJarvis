@@ -1120,6 +1120,47 @@ class VoiceMuteChanged(Event):
     source: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class VoiceSpeakerMuteChanged(Event):
+    """Authoritative broadcast that the assistant's voice went silent or audible.
+
+    Speaker mute is TTS volume 0 for the running session (nothing is written
+    to ``jarvis.toml`` by a mute). Every writer — the orb/pet speaker disc, the
+    in-app speaker button through ``PUT /api/settings/tts-volume`` — ends in
+    ``SpeechPipeline.set_tts_volume``, and that one choke point publishes this
+    event whenever the muted-ness flips. Surfaces mirror it; none of them keeps
+    its own truth.
+    """
+    muted: bool = False
+    source: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ComposeRequested(Event):
+    """A surface asked for a fresh typed conversation.
+
+    Publishers: the pet's pen control, wired through ``OrbBusBridge``. The
+    DesktopApp raises the main window; the frontend (``useWebSocket``) starts
+    a new chat and focuses the composer. Null-safe when no window exists.
+    """
+    source: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class PetChanged(Event):
+    """The active desktop pet or its look settings changed.
+
+    Emitted by ``jarvis/ui/web/pets_routes.py`` after the value is on disk and
+    applied live, so every open settings page redraws from one event. ``pet_id``
+    is a built-in id, a custom ``u…`` id, or ``"none"`` (control strip only).
+    """
+    pet_id: str = ""
+    scale: float = 1.0
+    bubble: bool = True
+    visible: bool = True
+    source: str = ""
+
+
 # Kill-Switch (ADR-0004)
 
 @dataclass(frozen=True, slots=True)
