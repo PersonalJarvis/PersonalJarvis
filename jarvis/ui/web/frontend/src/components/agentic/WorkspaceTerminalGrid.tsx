@@ -374,6 +374,11 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             name={terminal.name} workspaceId={session.id} displayName={terminal.display_name}
             recap={terminal.recap} promptCount={terminal.prompts_sent} appearance={appearance ?? theme} fontSize={fontSize}
             focused={selected === terminal.name} onFocus={() => { if (spotlitPane && spotlitPane !== terminal.name) setSpotlight(null); onSelect(terminal.name); }}
+            onSwapWithFocused={saving || disabled || selected === terminal.name || !tiles.some((entry) => entry.name === selected)
+              ? undefined : () => {
+                const target = tiles.find((entry) => entry.name === selected);
+                if (target) void move(id, idOf(target));
+              }}
             layoutBusy={resizing}
             maximized={visibleMaximized === id} onToggleMaximize={() => setMaximized((current) => current === id ? null : id)}
             onArrangeStart={visibleMaximized || saving || disabled ? undefined : (event) => startDrag(id, event)} arranging={drag?.id === id}
