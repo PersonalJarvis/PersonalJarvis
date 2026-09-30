@@ -869,6 +869,13 @@ jarvis = [
     # Wiki bootstrap templates for a new vault (memory/wiki/__init__.py's
     # TEMPLATES_DIR + integration.py's schema.md read).
     "memory/wiki/templates/*.md",
+    # Built-in desktop pets and the sprite-sheet template, read at runtime via
+    # Path(__file__) (jarvis/ui/pets/loader.py). Scoped to the two file kinds
+    # a pet folder holds.
+    "ui/pets/builtin/*/*.json",
+    "ui/pets/builtin/*/*.png",
+    "ui/pets/template/*.json",
+    "ui/pets/template/*.png",
     # Built-in skills: SKILL.md plus their reference/asset/script support
     # files (e.g. skill-creator ships references/, scripts/, agents/,
     # assets/ alongside its SKILL.md). Extension-scoped rather than

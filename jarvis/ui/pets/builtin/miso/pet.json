@@ -1,0 +1,52 @@
+{
+  "format": "jarvis-pet/1",
+  "id": "miso",
+  "name": "Miso",
+  "description": "A ginger cat whose ears perk up when you talk and who naps curled in a loaf.",
+  "frame_size": 48,
+  "sheet": "sheet.png",
+  "animations": {
+    "idle": {
+      "row": 0,
+      "frames": 8,
+      "fps": 4,
+      "loop": true
+    },
+    "listening": {
+      "row": 1,
+      "frames": 4,
+      "fps": 8,
+      "loop": true
+    },
+    "thinking": {
+      "row": 2,
+      "frames": 6,
+      "fps": 8,
+      "loop": true
+    },
+    "talking": {
+      "row": 3,
+      "frames": 4,
+      "fps": 10,
+      "loop": true
+    },
+    "success": {
+      "row": 4,
+      "frames": 6,
+      "fps": 10,
+      "loop": false
+    },
+    "error": {
+      "row": 5,
+      "frames": 4,
+      "fps": 8,
+      "loop": false
+    },
+    "sleeping": {
+      "row": 6,
+      "frames": 4,
+      "fps": 2,
+      "loop": true
+    }
+  }
+}
