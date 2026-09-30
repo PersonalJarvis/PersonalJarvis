@@ -185,7 +185,7 @@ export function WelcomeFlow({ onb }: { onb: ReturnType<typeof useOnboarding> }) 
   return (
     <MotionConfig reducedMotion="user">
       <div
-        className="relative flex min-h-full w-full items-start justify-center px-4 py-8 sm:items-center sm:px-8 sm:py-12"
+        className="relative flex min-h-full w-full items-start justify-center px-4 py-8 sm:items-center sm:px-8 sm:py-10"
         data-testid="onboarding-flow"
         data-beat={beat}
       >
@@ -243,17 +243,17 @@ export function WelcomeFlow({ onb }: { onb: ReturnType<typeof useOnboarding> }) 
             <motion.header
               layout
               transition={{ layout: { duration: 0.42, ease: EASE_OUT } }}
-              className={cn(first ? "flex flex-col items-center pt-4 text-center" : "flex items-start gap-3 pr-2")}
+              className={cn(first ? "flex flex-col items-center pt-1 text-center" : "flex items-start gap-3 pr-2")}
             >
               <motion.div layoutId="onboarding-mascot" className="shrink-0" transition={{ duration: 0.42, ease: EASE_OUT }}>
                 <MascotGigi
-                  size={first ? 96 : 40}
+                  size={first ? 76 : 40}
                   reactToVoice={false}
                   enableComments={false}
                   cue={cue}
                 />
               </motion.div>
-              <motion.div layout="position" className={cn("min-w-0", first ? "mt-4" : "pt-0.5")}>
+              <motion.div layout="position" className={cn("min-w-0", first ? "mt-3" : "pt-0.5")}>
                 <h2
                   className={cn(
                     "font-semibold tracking-tight text-foreground",
@@ -283,7 +283,7 @@ export function WelcomeFlow({ onb }: { onb: ReturnType<typeof useOnboarding> }) 
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -12 }}
                 transition={{ duration: 0.24, ease: EASE_OUT }}
-                className="mt-6"
+                className="mt-5"
               >
                 {beat === "welcome" && <HelloBeat {...props} />}
                 {beat === "brain" && <BrainBeat {...props} />}
@@ -297,7 +297,7 @@ export function WelcomeFlow({ onb }: { onb: ReturnType<typeof useOnboarding> }) 
             <motion.footer
               layout
               transition={{ layout: { duration: 0.42, ease: EASE_OUT } }}
-              className="mt-8 grid grid-cols-[1fr_auto_1fr] items-center gap-3"
+              className="mt-6 grid grid-cols-[1fr_auto_1fr] items-center gap-3"
             >
               <div>
                 {back && (

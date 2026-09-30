@@ -82,7 +82,7 @@ export function HelloBeat({ onb, next, cheer }: BeatProps) {
         <p className="mb-2 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
           {t("first_run.welcome.facts_label")}
         </p>
-        <ul className="space-y-2 rounded-xl border border-border bg-background px-4 py-3" data-testid="onboarding-facts">
+        <ul className="space-y-1.5 rounded-xl border border-border bg-background px-4 py-3" data-testid="onboarding-facts">
           {facts.map(({ key, Icon }) => (
             <li key={key} className="flex items-start gap-3 text-sm leading-snug text-foreground">
               <Icon aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
