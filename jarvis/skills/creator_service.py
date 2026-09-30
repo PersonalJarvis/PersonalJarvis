@@ -552,6 +552,7 @@ class SkillCreatorService:
         config: Any | None = None,
         user_skills_root: Path | None = None,
         context: AuthoringContext | None = None,
+        seat_only: bool = False,
     ) -> None:
         self._brain = brain
         self._registry = registry
@@ -559,6 +560,12 @@ class SkillCreatorService:
         self._config = config
         self._user_skills_root = user_skills_root
         self._context = context
+        #: The injected ``brain`` is an agent's own seat and the ONLY rung: no
+        #: operation pin, no active provider, no resolver ladder. A Society
+        #: agent's skill is authored on the seat it chats on or not at all
+        #: (``jarvis/society/seat_brain.py``). Every other caller keeps the
+        #: ladder below.
+        self._seat_only = seat_only
 
     async def draft(self, inp: SkillCreatorInput) -> SkillCreatorResult:
         return await self._draft_or_refine(inp)
@@ -738,6 +745,10 @@ class SkillCreatorService:
             return True
 
         bm = self._brain
+        if self._seat_only:
+            if _fresh(bm):
+                yield bm, "seat"
+            return
         # A caller that pinned a model for this operation (a GPT-Live call pins
         # its thinking model) outranks the chat brain's active model: without
         # this, a skill drafted from a cheap voice session ran on the chat

@@ -181,6 +181,15 @@ class ConversationArchive:
                 "UPDATE reviews SET status='done' WHERE session=? AND turn_id=?", (session, turn_id)
             )
 
+    def drop_review(self, session: str, turn_id: str) -> None:
+        """Give up on a pending review: it is kept, marked, and never retried."""
+        with self._lock, self._db:
+            self._db.execute(
+                "UPDATE reviews SET status='dropped' WHERE session=? AND turn_id=? "
+                "AND status='pending'",
+                (session, turn_id),
+            )
+
     def review_counts(self, agent_id: str) -> dict[str, int]:
         """Count direct chats and routine reviews without reading conversation contents."""
         session = f"society:{agent_id}"
