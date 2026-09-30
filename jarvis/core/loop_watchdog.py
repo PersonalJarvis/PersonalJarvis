@@ -173,14 +173,41 @@ class EventLoopWatchdog:
         return "".join(traceback.format_stack(frame))
 
 
+def _memory_pressure_note() -> str:
+    """One sentence on system memory when it is nearly gone, else ``""``.
+
+    A process whose memory the OS has paged out stalls at whatever line touches
+    memory next. On 2026-09-30 three 15 s stalls landed in a log call, a
+    ``CreateProcess`` and an SSL context load while the machine had 1.5 GB of
+    32 GB free and paged in ~4,000 pages a second; each stack read like the
+    culprit and none was. This line says when the stack is only where the
+    thread waited.
+    """
+    try:
+        import psutil
+
+        memory = psutil.virtual_memory()
+    except Exception:  # noqa: BLE001 - no reading means no claim, not a failure
+        return ""
+    gib = 1024**3
+    if memory.available >= max(2 * gib, memory.total * 0.10):
+        return ""
+    return (
+        f" System memory is nearly exhausted ({memory.available / gib:.1f} GB of "
+        f"{memory.total / gib:.0f} GB free): the OS is likely paging this process, "
+        "so the stack may show where the loop waited, not what caused the stall."
+    )
+
+
 def _log_stall(stalled_s: float, stack_text: str) -> None:
     """Default reporter: one warning naming the duration and the guilty stack."""
     from loguru import logger
 
     logger.warning(
         "Event loop STALLED for {:.1f}s — every WebSocket, HTTP route and "
-        "brain turn is blocked behind this call. Stack of the loop thread:\n{}",
+        "brain turn is blocked behind this call.{} Stack of the loop thread:\n{}",
         stalled_s,
+        _memory_pressure_note(),
         stack_text,
     )
 
