@@ -6,19 +6,20 @@ it, never a voice or chat turn. It therefore follows
 auslegen"):
 
 * **Subscription mode** (a subscription is connected, or was within the
-  policy's memory window): the bio is written on a connected subscription with
-  the caller's contract forwarded (``resolve_subscription_brain``), else on a
-  free local model. When neither is usable the resolve raises
+  policy's memory window): the bio is written on the first policy-allowed
+  subscription that forwards the caller's contract, else on a free local
+  model. When neither is usable the resolve raises
   :class:`~jarvis.brain.background_policy.BackgroundDeferred`; the generator
   keeps the old bio and the next board event tries again. It never slides onto
   a per-token API key.
 * **Key-only install** (no subscription ever connected): today's frontier
   chain, unchanged, so a single-key download keeps a working bio (AGENTS.md
   "any single key must work").
-* ``[board.bio].override_provider/override_model`` is a deliberate power-user
-  pin and is honoured as-is in both modes. In subscription mode an override
-  that cannot be instantiated falls through to the subscription path, never to
-  the keyed chain.
+* ``[board.bio].override_provider/override_model`` is the user's deliberate
+  pin and is honoured as-is in both modes, even when it names a keyed
+  provider: it is the only way the bio bills a per-token key while a
+  subscription is connected. An override that cannot be instantiated falls
+  through to the subscription path, never to the keyed chain.
 
 Provider membership comes from the provider cards' billing mode (through the
 policy), never from a provider name (AP-21).
@@ -63,23 +64,16 @@ def resolve_bio_brain(config: JarvisConfig, *, bus: EventBus | None = None) -> B
 
     override = _override_entry(config)
     if override is not None:
+        # The user's deliberate pin (like an agent seat): the ONLY way the bio
+        # bills a per-token key while a subscription is connected.
         brain = _instantiate(*override)
         if brain is not None:
             log.info("bio brain: power-user override %s", override[0])
             return brain
 
-    if any(background_policy.subscription_capable(name) for name in policy.allowed):
-        brain = brain_resolver.resolve_subscription_brain(
-            config, bus=bus, cli_timeout_s=BIO_TIMEOUT_S,
-        )
-        if brain is not None:
-            name = str(getattr(brain, "name", "") or "")
-            if policy.permits(name):
-                log.info("bio brain: subscription %s", name)
-                return brain
-            log.info(
-                "bio brain: %s is not allowed to bill background work right now", name,
-            )
+    brain = _subscription_brain(config, policy)
+    if brain is not None:
+        return brain
 
     for provider, model in _local_candidates(config, policy):
         brain = _instantiate(provider, model)
@@ -90,6 +84,54 @@ def resolve_bio_brain(config: JarvisConfig, *, bus: EventBus | None = None) -> B
     raise background_policy.BackgroundDeferred(
         f"No subscription or local model can write the bio right now ({policy.reason})."
     )
+
+
+def _subscription_brain(
+    config: JarvisConfig, policy: background_policy.BackgroundProviders,
+) -> Any | None:
+    """The first policy-allowed subscription that takes the bio's contract.
+
+    Same shape as ``resolve_subscription_brain`` — card order, a CLI with a
+    real system channel first, ``structured_prompts`` required — but it walks
+    EVERY subscription the policy allows. That resolver stops at its first
+    connected candidate, which the policy may still refuse (a card with an
+    API-key slot whose login is not confirmed), and a second subscription
+    that could have written the bio would never be asked.
+    """
+    try:
+        candidates = [
+            name for name in brain_resolver._subscription_candidates(config)
+            if policy.permits(name)
+        ]
+    except Exception:  # noqa: BLE001 - a card problem means no subscription, not a crash
+        log.info("bio brain: subscription candidates unavailable", exc_info=True)
+        return None
+    candidates.sort(key=lambda name: not brain_resolver._native_system_channel(name))
+
+    for provider in candidates:
+        kwargs: dict[str, Any] = {
+            "structured_prompts": True,
+            "cli_timeout_s": BIO_TIMEOUT_S,
+        }
+        model = brain_resolver._deep_model_for(config, provider)
+        if model:
+            kwargs["model"] = model
+        try:
+            brain = brain_resolver._get_registry().instantiate(provider, **kwargs)
+        except TypeError:
+            # No structured mode means the bio contract would be replaced by a
+            # conversational wrapper; skip rather than write a chat answer.
+            log.info("bio brain: %s cannot forward a system contract, skipped", provider)
+            continue
+        except Exception as exc:  # noqa: BLE001 - an unusable candidate is skipped
+            log.info(
+                "bio brain: subscription %s not instantiable (%s)",
+                provider, type(exc).__name__,
+            )
+            continue
+        log.info("bio brain: subscription %s", provider)
+        return brain
+    return None
 
 
 def _brain_provider_ids() -> list[str]:
