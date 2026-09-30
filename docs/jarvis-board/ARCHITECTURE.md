@@ -61,7 +61,7 @@
 | Phase | Code | Persistence | Responsibility |
 |---|---|---|---|
 | **A — Personal Dashboard** | `jarvis/board/aggregator.py`, `store.py` | `data/board/personal.db` (SQLite, sync) | FlightRecorder-JSONL → daily_stats / personal_records. Read-only API. |
-| **B — Achievements + AI-Bio** | `jarvis/board/achievements.py`, `evaluator.py`, `profile.py`, `scheduler.py` | same `personal.db` (additive) | Live-EventBus subscriber unlocks achievements. Weekly bio via BrainManager. |
+| **B — Achievements + AI-Bio** | `jarvis/board/achievements.py`, `evaluator.py`, `profile.py`, `scheduler.py` | same `personal.db` (additive) | Live-EventBus subscriber unlocks achievements. Bio rewritten on achievement unlocks or on request, billed to a subscription once one is connected. |
 | **C — Federation Backend** | `board-backend/` (separate subproject) | `/data/board.db` (in the container) | Standalone service. Receives signed pushes from the local Jarvis. |
 | **D — Friends** | extends `board-backend/` + `jarvis/ui/web/federation_proxy_routes.py` | same `board.db` (additive) | Pair, Activity, Reactions, Stories, Federation-Pull. |
 
@@ -104,8 +104,11 @@ profile.py
   └── BioStore                     # append-only bio table
 
 scheduler.py
-  └── BioScheduler                 # asyncio tick loop, cron-like
-                                   # weekly + post-master-achievement
+  └── BioScheduler                 # hook-driven, no timer: any unlocked
+                                   # achievement, debounced, >= 24 h apart
+
+bio_brain.py                        # background billing rule: subscription or
+                                    # local model once one is connected
 
 prompts.py                          # bio prompt template (Plan §B)
 ```
