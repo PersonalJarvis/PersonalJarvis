@@ -283,27 +283,83 @@ async def _drain(loop: JarvisLearningLoop) -> None:
     raise AssertionError("reviews did not finish")
 
 
-async def test_a_review_fires_after_the_configured_number_of_turns(book: JarvisNotebook) -> None:
+async def test_ordinary_requests_cost_no_model_call(book: JarvisNotebook) -> None:
+    """A conversation without a personal fact, preference, correction or plan is free."""
+    reviewer = ScriptedReviewer()
+    loop = JarvisLearningLoop(book, reviewer, review_every_turns=3, idle_review_seconds=0)
+    for text in (
+        "What's the weather like in Hamburg today?",
+        "Play some music from the eighties",
+        "Wie spät ist es in Tokio?",  # i18n-allow
+        "ja",
+    ):
+        loop.record("voice:a", _voice(text))
+    await loop._on_voice_ended(SimpleNamespace(session_id="a"))
+    await _drain(loop)
+    assert reviewer.prompts == []
+    assert loop.review_calls == 0
+    assert loop.pending() == {}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I'm vegan, by the way",
+        "My daughter starts school next week",
+        "Ich arbeite als Tischler in Köln",  # i18n-allow
+        "Nenn mich bitte einfach Rubi",  # i18n-allow
+        "No, I meant the other calendar",
+        "Das ist falsch, der Termin ist am Freitag",  # i18n-allow
+        "We are preparing the launch for November",
+        "Ich plane nächstes Jahr nach Lissabon zu ziehen",  # i18n-allow
+    ],
+)
+def test_personal_turns_are_picked(text: str) -> None:
+    from jarvis.memory.learning.signals import has_signal
+
+    assert has_signal(text)
+
+
+async def test_one_call_per_conversation_sees_only_the_picked_turns(
+    book: JarvisNotebook,
+) -> None:
     reviewer = ScriptedReviewer(
         [_change(text="The user plans a launch on 2026-11-17.", evidence="launch on November 17")]
     )
-    loop = JarvisLearningLoop(book, reviewer, review_every_turns=3, idle_review_seconds=0)
-    loop.record("voice:a", _voice("Hey, what's the weather like today?"))
-    loop.record("voice:a", _voice("We have the launch on November 17, lots to do"))
-    await _drain(loop)
-    assert reviewer.prompts == []
-    loop.record("voice:a", _voice("Remind me to prepare the slides for it later please"))
+    loop = JarvisLearningLoop(book, reviewer, review_every_turns=50, idle_review_seconds=0)
+    loop.record("voice:b", _voice("What's on my calendar tomorrow?", "Two meetings and a call."))
+    loop.record("voice:b", _voice("We have the launch on November 17, lots to do"))
+    loop.record("voice:b", _voice("Play something relaxing"))
+    await loop._on_voice_ended(SimpleNamespace(session_id="b"))
     await _drain(loop)
 
-    assert len(reviewer.prompts) == 1
-    shown = reviewer.prompts[0]
-    assert len(shown["conversation_to_review"]) == 3
-    assert shown["notebooks"]["user"]["fill"].startswith("0/600")
+    assert loop.review_calls == 1
+    [shown] = reviewer.prompts
+    assert shown["said"] == [
+        {
+            "user": "We have the launch on November 17, lots to do",
+            "assistant_before": "Two meetings and a call.",
+        }
+    ]
+    assert set(shown) == {"notebooks", "said"}  # no transcript, no profile dump
     assert _entries(book, "user") == ["The user plans a launch on 2026-11-17."]
     assert loop.pending() == {}
 
 
-async def test_an_explicit_request_is_reviewed_at_once(book: JarvisNotebook) -> None:
+async def test_an_explicit_request_is_saved_without_a_model(book: JarvisNotebook) -> None:
+    reviewer = ScriptedReviewer()
+    loop = JarvisLearningLoop(book, reviewer, review_every_turns=50, idle_review_seconds=0)
+    loop.record("voice:c", _voice("Merk dir bitte, dass ich Zwiebeln nicht mag"))  # i18n-allow
+    await _drain(loop)
+    await loop._on_voice_ended(SimpleNamespace(session_id="c"))
+    await _drain(loop)
+
+    [entry] = _entries(book, "user") + _entries(book, "memory")
+    assert "the user asked to remember: dass ich Zwiebeln nicht mag" in entry  # i18n-allow
+    assert loop.review_calls == 0
+
+
+async def test_a_bare_remember_that_asks_the_model_at_once(book: JarvisNotebook) -> None:
     reviewer = ScriptedReviewer(
         [
             _change(
@@ -314,36 +370,34 @@ async def test_an_explicit_request_is_reviewed_at_once(book: JarvisNotebook) -> 
         ]
     )
     loop = JarvisLearningLoop(book, reviewer, review_every_turns=50, idle_review_seconds=0)
-    loop.record("chat:x", _voice("Remember that my spare key is with Mrs. Lee next door"))
+    loop.record("chat:d", _voice("My spare key is with Mrs. Lee next door", "Good to know."))
+    loop.record("chat:d", _voice("Remember that"))
     await _drain(loop)
 
-    assert len(reviewer.prompts) == 1
+    assert loop.review_calls == 1
     assert _entries(book, "memory") == [
         "The user's spare house key is with the neighbour, Mrs. Lee."
     ]
-    assert _entries(book, "user") == []  # covered by the review, not duplicated
 
 
-async def test_an_explicit_request_survives_a_dead_reviewer(book: JarvisNotebook) -> None:
-    loop = JarvisLearningLoop(
-        book, ScriptedReviewer(None), review_every_turns=50, idle_review_seconds=0
+async def test_minor_details_are_not_kept(book: JarvisNotebook) -> None:
+    reviewer = ScriptedReviewer(
+        [_change(text="The user had pasta today.", evidence="I have pasta today", importance=2)]
     )
-    loop.record("voice:b", _voice("Merk dir bitte, dass ich Zwiebeln nicht mag"))  # i18n-allow
+    loop = JarvisLearningLoop(book, reviewer, review_every_turns=1, idle_review_seconds=0)
+    loop.record("voice:e", _voice("I have pasta today, I love it"))
     await _drain(loop)
+    assert loop.review_calls == 1
+    assert _entries(book, "user") == []
 
-    [entry] = _entries(book, "user") + _entries(book, "memory")
-    assert "the user asked to remember: dass ich Zwiebeln nicht mag" in entry  # i18n-allow
 
-
-async def test_a_dead_reviewer_keeps_ordinary_turns_for_the_next_try(
-    book: JarvisNotebook,
-) -> None:
+async def test_a_dead_reviewer_keeps_the_turns_for_the_next_try(book: JarvisNotebook) -> None:
     reviewer = ScriptedReviewer(None, [])
     loop = JarvisLearningLoop(book, reviewer, review_every_turns=1, idle_review_seconds=0)
-    loop.record("voice:c", _voice("I usually work late in the evening on weekdays"))
+    loop.record("voice:f", _voice("I usually work late in the evening on weekdays"))
     await _drain(loop)
-    assert loop.pending() == {"voice:c": 1}
-    assert await loop.review("voice:c") == 0
+    assert loop.pending() == {"voice:f": 1}
+    assert await loop.review("voice:f") == 0
     assert len(reviewer.prompts) == 2
     assert loop.pending() == {}
 
@@ -353,13 +407,13 @@ async def test_a_failing_reviewer_is_not_retried_on_every_turn(book: JarvisNoteb
     loop = JarvisLearningLoop(book, reviewer, review_every_turns=1, idle_review_seconds=0)
     for text in (
         "I usually work late in the evening on weekdays",
-        "and on Fridays I stop at noon for football",
-        "my team meets every Monday morning",
+        "I always stop at noon on Fridays for football",
+        "My team meets every Monday morning",
     ):
-        loop.record("voice:f", _voice(text))
+        loop.record("voice:g", _voice(text))
         await _drain(loop)
     assert len(reviewer.prompts) == 1  # the rest waits out the pause
-    assert loop.pending() == {"voice:f": 3}
+    assert loop.pending() == {"voice:g": 3}
 
 
 class BlockingReviewer:
@@ -372,31 +426,19 @@ class BlockingReviewer:
         return None
 
 
-async def test_shutdown_mid_review_still_keeps_an_explicit_request(
-    book: JarvisNotebook,
-) -> None:
+async def test_shutdown_never_hangs_on_a_slow_reviewer(book: JarvisNotebook) -> None:
     reviewer = BlockingReviewer()
-    loop = JarvisLearningLoop(book, reviewer, review_every_turns=50, idle_review_seconds=0)
-    loop.record("voice:g", _voice("Remember that I park on level three at the office"))
+    loop = JarvisLearningLoop(book, reviewer, review_every_turns=1, idle_review_seconds=0)
+    loop.record("voice:h", _voice("I am moving to Lisbon next spring"))
     await asyncio.wait_for(reviewer.started.wait(), timeout=2)
-    await loop.stop()
-    [entry] = _entries(book, "memory") + _entries(book, "user")
-    assert entry.endswith("I park on level three at the office")
-
-
-async def test_small_talk_costs_no_model_call(book: JarvisNotebook) -> None:
-    reviewer = ScriptedReviewer()
-    loop = JarvisLearningLoop(book, reviewer, review_every_turns=2, idle_review_seconds=0)
-    loop.record("voice:d", _voice("ja"))
-    loop.record("voice:d", _voice("danke"))  # i18n-allow
-    await _drain(loop)
-    assert reviewer.prompts == []
+    await asyncio.wait_for(loop.stop(), timeout=5)
+    assert loop.pending() == {"voice:h": 1}  # handed back, not lost
 
 
 async def test_a_quiet_conversation_is_reviewed(book: JarvisNotebook) -> None:
     reviewer = ScriptedReviewer([])
     loop = JarvisLearningLoop(book, reviewer, review_every_turns=50, idle_review_seconds=0.05)
-    loop.record("chat:e", _voice("I am switching my team to a four-day week in October"))
+    loop.record("chat:i", _voice("I am switching my team to a four-day week in October"))
     for _ in range(50):
         if reviewer.prompts:
             break
@@ -433,7 +475,7 @@ async def test_voice_events_feed_the_loop_and_a_hangup_reviews_it(
     finally:
         await loop.stop()
     assert len(reviewer.prompts) == 1
-    assert reviewer.prompts[0]["conversation_to_review"][0]["assistant"].startswith("Good luck")
+    assert reviewer.prompts[0]["said"][0]["user"].startswith("I am training")
     assert loop.pending() == {}
 
 
