@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jarvis.ui.desktop_app import _force_foreground_hwnd
+from jarvis.ui.desktop_app import _force_foreground_hwnd, _window_answers
 
 
 class _Kernel32:
@@ -48,6 +48,47 @@ class _User32:
     @staticmethod
     def SetWindowPos(*_args: object) -> bool:
         return True
+
+
+class _ProbeUser32:
+    def __init__(self, *, hung: bool = False, answers: bool = True, raises: bool = False):
+        self.hung = hung
+        self.answers = answers
+        self.raises = raises
+        self.sent: list[tuple[int, int, int]] = []
+
+    def IsHungAppWindow(self, _hwnd: int) -> bool:
+        if self.raises:
+            raise OSError("probe unavailable")
+        return self.hung
+
+    def SendMessageTimeoutW(self, hwnd, msg, _wparam, _lparam, flags, timeout, _result) -> int:
+        self.sent.append((hwnd, msg, timeout))
+        return 1 if self.answers else 0
+
+
+def test_a_window_windows_reports_as_hung_gets_no_message() -> None:
+    user32 = _ProbeUser32(hung=True)
+
+    assert _window_answers(200, user32) is False
+    assert user32.sent == []
+
+
+def test_a_window_that_misses_the_deadline_is_not_touched() -> None:
+    """2026-09-30: a closing window held a second launch for 92 s inside the
+    synchronous ShowWindow calls. The probe has a deadline; those calls do not."""
+    user32 = _ProbeUser32(answers=False)
+
+    assert _window_answers(200, user32, timeout_ms=250) is False
+    assert user32.sent == [(200, 0, 250)]
+
+
+def test_a_responsive_window_is_raised_as_before() -> None:
+    assert _window_answers(200, _ProbeUser32()) is True
+
+
+def test_a_probe_that_cannot_run_does_not_claim_a_hang() -> None:
+    assert _window_answers(200, _ProbeUser32(raises=True)) is True
 
 
 def test_foreground_lock_recovery_attaches_and_always_detaches() -> None:

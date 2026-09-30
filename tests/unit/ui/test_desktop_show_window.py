@@ -136,3 +136,56 @@ def test_focus_window_now_without_window_reports_no_window() -> None:
     app._window = None  # noqa: SLF001
 
     assert app._focus_window_now() == {"ok": False, "reason": "no_window"}  # noqa: SLF001
+
+
+def test_focus_window_now_leaves_a_quitting_window_alone() -> None:
+    """A second launch during a quit must not raise the window being destroyed.
+
+    Live 2026-09-30: the focus reply said "raised", the launch exited as if it
+    had worked, and the user was left with no window at all.
+    """
+    app = DesktopApp.__new__(DesktopApp)
+    window = _RecordingWindow()
+    app._window = window  # noqa: SLF001
+    app._user_requested_quit = True  # noqa: SLF001
+
+    assert app._focus_window_now() == {  # noqa: SLF001
+        "ok": False,
+        "focused": False,
+        "reason": "quitting",
+    }
+    assert window.calls == []
+
+
+class _Reply:
+    def __init__(self, payload: dict) -> None:
+        self.status_code = 200
+        self._payload = payload
+
+    def json(self) -> dict:
+        return self._payload
+
+
+def test_launcher_focus_does_not_fall_back_to_a_quitting_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A holder that reports "quitting" is not raised by title either."""
+    import sys
+    from types import ModuleType
+
+    from jarvis.ui import desktop_app
+
+    fake_httpx = ModuleType("httpx")
+    fake_httpx.post = lambda *_a, **_k: _Reply(  # type: ignore[attr-defined]
+        {"ok": False, "focused": False, "reason": "quitting"}
+    )
+    monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
+    monkeypatch.setattr(desktop_app, "_read_meta", lambda: {"port": 47821})
+    monkeypatch.setattr(desktop_app, "_focus_request_headers", lambda _port: {})
+    raised: list[str] = []
+    monkeypatch.setattr(
+        desktop_app, "_bring_window_to_front_by_title", lambda title: raised.append(title) or True
+    )
+
+    assert desktop_app.focus_existing_instance_robust() is False
+    assert raised == []

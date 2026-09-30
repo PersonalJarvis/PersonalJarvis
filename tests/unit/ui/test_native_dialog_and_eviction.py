@@ -65,6 +65,52 @@ def test_macos_yes_is_a_normal_osascript_return(monkeypatch):
     assert native_dialog.ask_yes_no("t", "m", _run=lambda cmd: (True, 1)) is False
 
 
+def test_a_withdrawn_question_is_no_without_showing_anything(monkeypatch):
+    import threading
+
+    dismiss = threading.Event()
+    dismiss.set()
+
+    def _run(cmd, **kwargs):
+        raise AssertionError("a withdrawn question must not open a dialog")
+
+    assert native_dialog.ask_yes_no("t", "m", dismiss=dismiss, _run=_run) is False
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Win32 branch opens a real box")
+def test_the_dismiss_event_reaches_the_helper(monkeypatch):
+    import threading
+
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr(sys, "platform", "linux")
+    dismiss = threading.Event()
+    seen: list[object] = []
+
+    def _run(cmd, *, dismiss=None):
+        seen.append(dismiss)
+        return (True, -1)  # the helper was closed from outside
+
+    assert native_dialog.ask_yes_no("t", "m", dismiss=dismiss, _run=_run) is False
+    assert seen == [dismiss]
+
+
+def test_a_dismissed_helper_process_is_closed_promptly():
+    """The real runner ends a helper that is still waiting for a click."""
+    import threading
+    import time
+
+    dismiss = threading.Event()
+    threading.Timer(0.3, dismiss.set).start()
+    started = time.monotonic()
+
+    ran, code = native_dialog._run_helper(
+        [sys.executable, "-c", "import time; time.sleep(60)"], dismiss=dismiss
+    )
+
+    assert ran is True
+    assert code != 0  # read as "no" by every caller
+    assert time.monotonic() - started < 10.0
+
 def test_eviction_falls_back_to_the_process_tree_kill(monkeypatch):
     """psutil's kill did not take → the tree kill runs → liveness is re-checked."""
     from jarvis.ui import desktop_app

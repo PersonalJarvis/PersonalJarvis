@@ -614,8 +614,23 @@ def focus_existing_instance_robust() -> bool:
             if _focus_response_means_window_raised(r):
                 _bring_window_to_front_by_title(WINDOW_TITLE)
                 return True
+            if _focus_response_reason(r) == "quitting":
+                # Its window is being torn down: raising it would only wait
+                # on a GUI thread that is busy destroying it.
+                return False
 
     return _bring_window_to_front_by_title(WINDOW_TITLE) or focused
+
+
+def _focus_response_reason(response: Any) -> str:
+    """The ``reason`` a focus reply carries, or ``""`` when it has none."""
+    try:
+        payload = response.json()
+    except Exception:  # noqa: BLE001 — a reply without JSON has no reason
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("reason") or "")
 
 
 def _force_foreground_hwnd(hwnd: int, user32: Any, kernel32: Any) -> bool:
@@ -671,6 +686,45 @@ def _force_foreground_hwnd(hwnd: int, user32: Any, kernel32: Any) -> bool:
             user32.AttachThreadInput(current_thread, target_thread, False)
 
 
+#: How long a window may take to answer a no-op message before the focus path
+#: treats it as hung. Matches the threshold Windows itself uses for "Not
+#: responding", so a window that is merely busy for a moment is still raised.
+_WINDOW_ANSWER_TIMEOUT_MS = 5000
+
+
+def _window_answers(hwnd: int, user32: Any, *, timeout_ms: int = _WINDOW_ANSWER_TIMEOUT_MS) -> bool:
+    """True when the thread that owns ``hwnd`` services a message in time.
+
+    ``ShowWindow``, ``MoveWindow``, ``SetWindowPos`` and ``AttachThreadInput``
+    on another thread's window are synchronous: they wait, without a timeout,
+    until that thread pumps its queue. A window whose GUI thread is stuck — a
+    quit tearing WebView2 down on a machine that is paging — held a second
+    launch inside those calls for 92 s on 2026-09-30 while the user saw
+    nothing. ``SendMessageTimeoutW(WM_NULL)`` asks the same question with a
+    deadline, so a hung window costs seconds, not minutes.
+    """
+    from ctypes import byref, c_size_t
+
+    try:
+        if user32.IsHungAppWindow(hwnd):
+            return False
+        answer = c_size_t(0)
+        smto_abortifhung, smto_erroronexit, wm_null = 0x0002, 0x0020, 0x0000
+        return bool(
+            user32.SendMessageTimeoutW(
+                hwnd,
+                wm_null,
+                0,
+                0,
+                smto_abortifhung | smto_erroronexit,
+                int(timeout_ms),
+                byref(answer),
+            )
+        )
+    except Exception:  # noqa: BLE001 — a probe that cannot run is no proof of a hang
+        return True
+
+
 def _bring_window_to_front_by_title(title: str) -> bool:
     """Win32 fallback for hidden/minimized pywebview windows.
 
@@ -678,6 +732,9 @@ def _bring_window_to_front_by_title(title: str) -> bool:
     when the window was previously hidden via a tray close — Edge/WebView2
     keeps the HWND minimized. ``ShowWindow(SW_RESTORE) + SetForegroundWindow``
     via the Win32 API path is the only reliable recovery.
+
+    A window that does not answer (:func:`_window_answers`) is reported as not
+    raised instead of touched: every call below would block on it.
     """
     if sys.platform != "win32":
         return False
@@ -691,6 +748,18 @@ def _bring_window_to_front_by_title(title: str) -> bool:
         # calls, which rely on it staying argtypes-free.
         user32 = ctypes.WinDLL("user32", use_last_error=True)
         user32.FindWindowW.restype = wintypes.HWND
+        user32.IsHungAppWindow.argtypes = [wintypes.HWND]
+        user32.IsHungAppWindow.restype = wintypes.BOOL
+        user32.SendMessageTimeoutW.argtypes = [
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+            wintypes.UINT,
+            wintypes.UINT,
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        user32.SendMessageTimeoutW.restype = wintypes.LPARAM
         user32.GetForegroundWindow.restype = wintypes.HWND
         user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
         user32.IsIconic.argtypes = [wintypes.HWND]
@@ -728,6 +797,14 @@ def _bring_window_to_front_by_title(title: str) -> bool:
         ]
         hwnd = user32.FindWindowW(None, title)
         if not hwnd:
+            return False
+        if not _window_answers(hwnd, user32):
+            from loguru import logger
+
+            logger.warning(
+                "Window {!r} is not responding — left alone instead of waiting on it.",
+                title,
+            )
             return False
         was_minimized = bool(user32.IsIconic(hwnd))
         rect = wintypes.RECT()
@@ -4635,6 +4712,10 @@ class DesktopApp:
         directly. Split out of the ``/api/window/focus`` route so tests can pin
         the off-loop contract without a running server.
         """
+        if getattr(self, "_user_requested_quit", False) or getattr(self, "_shutdown_done", False):
+            # A second launch during a quit must not "raise" the window that is
+            # being destroyed and then exit as if it had succeeded (2026-09-30).
+            return {"ok": False, "focused": False, "reason": "quitting"}
         if self._window is None:
             if getattr(getattr(self, "_background", None), "keeper", None) is not None:
                 self._ensure_main_window()
@@ -5584,6 +5665,9 @@ class DesktopApp:
                 "runs in private mode and the interface forgets its wallpaper "
                 "and layout on every restart."
             )
+        # Read by ``_begin_quit_from_close``: a force-exit backstop armed at the
+        # X only makes sense while a real window loop is tearing down.
+        self._webview_running = True
         try:
             webview.start(
                 func=self._inject_token,
@@ -5598,6 +5682,8 @@ class DesktopApp:
             # Not swallowed: the exception is handed to the degrade path, which
             # reports it and opens the UI in the default browser instead.
             return self._degrade_to_browser_ui(exc)
+        finally:
+            self._webview_running = False
         # webview.start returns once the window is destroyed. A real quit (the
         # X, tray "Quit", or a restart) has set ``_user_requested_quit``; in that
         # case tear every surface down AND guarantee the process dies, so nothing
@@ -5973,6 +6059,7 @@ class DesktopApp:
         self._main_window_closing = True
         if not self._detached_windows and not self._background_keeps_running():
             self._user_requested_quit = True
+            self._begin_quit_from_close()
             if getattr(getattr(self, "_background", None), "keeper", None) is not None:
                 # The closing event waits for us; native destruction must run
                 # after this callback releases the GUI thread.
@@ -5981,6 +6068,61 @@ class DesktopApp:
                     name="jarvis-background-close", daemon=True,
                 ).start()
         return True
+
+    #: Backstop for a quit that starts at the window's X. Longer than the 20 s
+    #: one ``run_window_only`` arms once ``webview.start()`` returns, because
+    #: this one also covers the window teardown in front of ``shutdown()``.
+    _CLOSE_QUIT_BACKSTOP_S = 45.0
+
+    def _begin_quit_from_close(self) -> None:
+        """Make a close-to-quit visible at once and bounded in time.
+
+        ``shutdown()`` runs only after pywebview has destroyed the window and
+        ``webview.start()`` has returned. On 2026-09-30 that teardown took about
+        90 s on a machine that was paging: the window was gone, the Jarvis bar
+        stayed on screen and kept listening, and a new launch found an instance
+        that neither answered nor exited. The bar now leaves with the window,
+        and while a real window loop runs, the force-exit backstop starts
+        counting from the click instead of from the end of the teardown.
+        """
+        from loguru import logger
+
+        if getattr(self, "_quit_requested_at", None) is not None:
+            return
+        self._quit_requested_at = time.monotonic()
+        backstop = getattr(self, "_webview_running", False)
+        logger.info(
+            "Main window closed — quitting{}.",
+            f" (force-exit backstop in {self._CLOSE_QUIT_BACKSTOP_S:.0f} s)" if backstop else "",
+        )
+        if getattr(self, "_orb", None) is not None:
+            # Off the GUI thread: the closing callback holds it, and the
+            # window's destruction waits for this callback to return.
+            self._overlay_close_thread = threading.Thread(
+                target=self._stop_overlay, name="jarvis-overlay-close", daemon=True
+            )
+            self._overlay_close_thread.start()
+        if backstop:
+            self._arm_force_exit(after_s=self._CLOSE_QUIT_BACKSTOP_S)
+
+    def _stop_overlay(self) -> None:
+        """Take the on-screen bar or mascot down. Idempotent, never raises."""
+        orb = getattr(self, "_orb", None)
+        if orb is None:
+            return
+        try:
+            # Prefer stop() when the surface has it (jarvis bar: unsubscribes
+            # its level_tap sink + destroys the window). The mascot orb has no
+            # stop() → fall back to hide().
+            stop = getattr(orb, "stop", None)
+            if callable(stop):
+                stop()
+            else:
+                orb.hide()
+        except Exception:  # noqa: BLE001, S110
+            # Teardown best-effort: the process is exiting and the OS
+            # reclaims the window regardless.
+            pass
 
     def _suppress_overlay_for_hidden_window(self) -> None:
         """Take a NON-persistent overlay bar off the screen on minimise — but
@@ -6094,24 +6236,22 @@ class DesktopApp:
                 probe_client.close()
             self._health_http = None
 
+        quit_requested_at = getattr(self, "_quit_requested_at", None)
+        if quit_requested_at is not None:
+            from loguru import logger as _logger
+
+            # The gap between the click and this line is the window teardown;
+            # it was invisible until 2026-09-30, when it took ~90 s.
+            _logger.info(
+                "Shutdown started {:.1f} s after the window was closed.",
+                time.monotonic() - quit_requested_at,
+            )
+
         # Hide the orb overlay first — the event path (pipeline → supervisor
         # → bus → OrbBridge) doesn't reliably reach the bridge anymore during a
         # hard loop stop. A direct hide() guarantees the desktop icon
         # top-right disappears before the process terminates.
-        if self._orb is not None:
-            try:
-                # Prefer stop() when the surface has it (jarvis bar:
-                # unsubscribes its level_tap sink + destroys the window). The
-                # mascot orb has no stop() → fall back to hide().
-                stop = getattr(self._orb, "stop", None)
-                if callable(stop):
-                    stop()
-                else:
-                    self._orb.hide()
-            except Exception:  # noqa: BLE001, S110
-                # Teardown best-effort: the process is exiting and the OS
-                # reclaims the window regardless.
-                pass
+        self._stop_overlay()
 
         # Restore other apps' audio (in case a session was muting music at quit).
         ducker = getattr(self, "_ducker", None)
