@@ -134,7 +134,7 @@ def _clamp_output_buffer_s(value: float | None) -> float:
         return DEFAULT_OUTPUT_BUFFER_S
     try:
         seconds = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Invalid device latency uses the documented output-buffer fallback.
         return DEFAULT_OUTPUT_BUFFER_S
     if not math.isfinite(seconds):
         return DEFAULT_OUTPUT_BUFFER_S

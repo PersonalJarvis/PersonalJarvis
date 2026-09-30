@@ -3333,12 +3333,13 @@ async def pane_screens(
 ) -> dict:
     """The visible rows of each requested pane — what the office's monitors draw.
 
-    Unknown panes are omitted rather than failing the whole poll. Async on
-    purpose: the screen buffers are written on the event loop, so reading them
-    there needs no lock (see :mod:`jarvis.agentic_ide.screen_feed`).
+    Unknown panes are omitted rather than failing the whole poll. Registry
+    lookup can block, but the screen snapshot stays on the event loop because
+    its buffers are written there without locks (see screen_feed).
     """
     refs = screen_feed.parse_pane_refs(pane or [])
-    return {"screens": screen_feed.collect_screens(get_registry(), refs)}
+    registry = await asyncio.to_thread(get_registry)
+    return {"screens": screen_feed.collect_screens(registry, refs)}
 
 
 @router.get(

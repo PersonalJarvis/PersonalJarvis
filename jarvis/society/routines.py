@@ -209,7 +209,7 @@ def next_run_readback(due_at_ns: int | None, timezone: str | None) -> str | None
     if timezone:
         try:
             when = when.astimezone(calendar_zone(timezone))
-        except ValueError:
+        except ValueError:  # Saved invalid zones fall back to the UTC display label.
             timezone = "UTC"
     label = timezone or "UTC"
     return f"{when:%a %Y-%m-%d %H:%M} ({label})"

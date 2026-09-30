@@ -23,16 +23,15 @@ import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { clsx } from "clsx";
 import { cn } from "@/lib/utils";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import { RecentChats } from "@/components/home/RecentChats";
 import { useConversations } from "@/hooks/useConversations";
 import { useHomeStore } from "@/store/home";
 import { useAgentChatStore } from "@/store/agentChat";
-import { IdeProjectTree } from "@/components/agentic/IdeProjectTree";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useAppInstance } from "@/hooks/useAppInstance";
-import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
+import { usePublishIdentity } from "@/components/marketplace/publishIdentityQuery";
 import { GigiMark } from "@/components/GigiMark";
 import * as Dialog from "@radix-ui/react-dialog";
 import { startNewVoiceRun } from "@/lib/chatsApi";
@@ -61,6 +60,12 @@ import { startNewVoiceRun } from "@/lib/chatsApi";
  * Mirrors the nav row's own `matchIds` (see ./navGroups): the section has been
  * renamed twice and the older ids are still what some entry points set.
  */
+// Only the Agentic IDE shows the project tree, so it loads with that section
+// instead of riding in the startup bundle every other screen pays for.
+const IdeProjectTree = lazy(() =>
+  import("@/components/agentic/IdeProjectTree").then((m) => ({ default: m.IdeProjectTree })),
+);
+
 const IDE_SECTIONS: readonly string[] = [
   "agentic-ide",
   "chat-workspace",
@@ -536,7 +541,7 @@ export function Sidebar({
           {moreOpen && <ul id="sidebar-more" className="space-y-1">{moreItems.map((item) => item.id === "tasks" ? renderRow({ ...item, labelKey: "sidebar.scheduled" }) : renderRow(item))}</ul>}
         </nav>}
         {!railed && (onIdeSection
-          ? <IdeProjectTree />
+          ? <Suspense fallback={null}><IdeProjectTree /></Suspense>
           : <section className="mt-4 px-2 pb-3" aria-label={t("sidebar.recent_chats")}><RecentChats /></section>)}
       </div>
 

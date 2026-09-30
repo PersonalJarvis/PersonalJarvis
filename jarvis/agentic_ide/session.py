@@ -4682,6 +4682,7 @@ class Registry:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
+            # Called outside the event loop: there is no repaint to schedule.
             return
         # One check per pane: a dragged seam resizes many times a second, and
         # only the newest size's repaint is worth waiting for. An older check is

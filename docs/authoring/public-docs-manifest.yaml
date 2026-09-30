@@ -754,7 +754,6 @@ pages:
     diataxis: howto
     summary: Let your assistant inspect one requested screen or window with visible capture, privacy filtering, and short-lived memory.
     authoritative_sources:
-      - jarvis/ui/web/frontend/src/views/settings/ScreenContextGroup.tsx
       - jarvis/ui/web/screen_context_routes.py
       - jarvis/screen_context/service.py
       - jarvis/screen_context/intent.py

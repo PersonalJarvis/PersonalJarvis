@@ -38,7 +38,7 @@
 .office-mc-agents button:disabled { opacity:.5; cursor:not-allowed; }
 
 .office-mc-row { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; color:hsl(var(--muted-foreground)); }
-.office-mc-row select { flex:0 1 60%; min-width:0; padding:6px 8px; border:1px solid hsl(var(--border)); border-radius:8px; background:hsl(var(--background)); color:hsl(var(--foreground)); font:inherit; font-size:12px; }
+.office-mc-row .office-mc-workspace-picker { flex:0 1 60%; min-width:0; font-size:12px; }
 .office-mc-task { width:100%; min-height:44px; resize:vertical; padding:9px 10px; border:1px solid hsl(var(--border)); border-radius:10px; background:hsl(var(--background)); color:hsl(var(--foreground)); font:inherit; font-size:13px; line-height:1.4; }
 .office-mc-task::placeholder { color:hsl(var(--muted-foreground)); }
 

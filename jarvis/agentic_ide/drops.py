@@ -113,6 +113,7 @@ def size_of(source: DropSource) -> int:
         try:
             return source.stat().st_size
         except OSError:
+            # -1 is the documented 'size unknown' answer; the caller decides.
             return -1
     try:
         here = source.tell()
@@ -120,6 +121,7 @@ def size_of(source: DropSource) -> int:
         source.seek(here)
         return int(end)
     except (OSError, ValueError, AttributeError):
+        # -1 is the documented 'size unknown' answer; the caller decides.
         return -1
 
 

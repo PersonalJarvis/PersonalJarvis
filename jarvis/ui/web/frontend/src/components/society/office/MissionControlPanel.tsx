@@ -19,6 +19,7 @@ import {
 import { useEventStore } from "@/store/events";
 import { useWorkspacePanesStore } from "@/store/workspacePanes";
 import { AgentMark } from "@/components/agentic/AgentMark";
+import { BrandedSelect } from "@/components/ui/select";
 import { paneOccupants, type PaneOccupant } from "./codingFloor";
 import "./missionControl.css";
 
@@ -158,12 +159,12 @@ function StartAgent() {
       )}
 
       {workspaces.length > 1 && (
-        <label className="office-mc-row">
+        <div className="office-mc-row">
           <span>{t("society.office.mission_workspace")}</span>
-          <select value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} disabled={running}>
-            {workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}{w.branch ? ` · ${w.branch}` : ""}</option>)}
-          </select>
-        </label>
+          <BrandedSelect value={workspaceId} onValueChange={setWorkspaceId} disabled={running}
+            ariaLabel={t("society.office.mission_workspace")} className="office-mc-workspace-picker"
+            options={workspaces.map((w) => ({ value: w.id, label: `${w.name}${w.branch ? ` · ${w.branch}` : ""}` }))} />
+        </div>
       )}
 
       <textarea className="office-mc-task" rows={3} value={task} maxLength={8000} disabled={running}

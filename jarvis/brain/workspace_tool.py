@@ -68,6 +68,7 @@ class WorkspaceOrchestrationTool:
         try:
             result = await self.gateway.run(args, trace_id=str(ctx.trace_id))
         except ValueError as exc:
+            # The gateway's validation message goes back to the model as the error.
             return ToolResult(success=False, output=None, error=str(exc))
         status = result.get("status")
         return ToolResult(

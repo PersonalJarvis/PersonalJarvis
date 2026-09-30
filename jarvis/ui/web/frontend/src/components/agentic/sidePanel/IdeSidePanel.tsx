@@ -4,7 +4,7 @@ import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { PaneResizer } from "@/components/layout/PaneResizer";
-import { useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { SIDE_PANEL_ID, useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { useExplorerPathRouting } from "@/store/ideExplorer";
 import { usePaneReviewTracking } from "@/store/paneReviews";
 import { useIdeProjectsStore } from "@/store/ideProjects";
@@ -21,7 +21,7 @@ const OFFICE_MIN_PX = 520;
 /** Terminal canvas kept visible while the panel is open. */
 const GRID_RESERVED_PX = 320;
 
-export const SIDE_PANEL_ID = "ide-side-panel";
+export { SIDE_PANEL_ID };
 
 const HEADER_BTN =
   "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors " +

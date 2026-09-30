@@ -134,7 +134,7 @@ async def test_management_rejects_missing_agent_invalid_model_and_unexposed_fiel
         },
         context(),
     )
-    assert not escalation.success and "unknown argument" in escalation.error
+    assert not escalation.success and "permission_ceiling" in escalation.error
 
 
 def test_management_is_supervisor_only_and_degrades_without_server():

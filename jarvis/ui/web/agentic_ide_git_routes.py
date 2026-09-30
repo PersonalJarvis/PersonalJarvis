@@ -112,7 +112,7 @@ def github_repositories(refresh: bool = Query(False)) -> dict:
         return {"connected": False, "source": "", "login": "", "repos": [], "reason": ""}
     try:
         login, repos = github_link.list_repositories(cred, refresh=refresh)
-    except github_link.GitHubError as exc:
+    except github_link.GitHubError as exc:  # The failure is returned to the UI as a reason.
         return {
             "connected": exc.code != "not_connected",
             "source": cred.source,

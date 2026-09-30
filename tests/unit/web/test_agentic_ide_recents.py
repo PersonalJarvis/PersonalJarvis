@@ -24,7 +24,9 @@ async def test_open_route_remembers_the_user_selected_folder(
     )
 
     class FakeRegistry:
-        async def start(self, folder: str, terminals: list[dict]) -> object:
+        async def start(
+            self, folder: str, terminals: list[dict], **_options: object
+        ) -> object:
             assert folder == str(tmp_path)
             assert len(terminals) == 3
             return session

@@ -25,6 +25,10 @@ def _no_real_agents(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ide, "agent_argv", lambda name: (f"/usr/bin/{name}",))
     # Every handle points at a conversation that exists, unless a test says not.
     monkeypatch.setattr(ide, "has_conversation", lambda agent, handle, home=None: True)
+    # The cold-start gate is sized from the CPU count (2 on a 4-core CI runner)
+    # and holds each slot until the CLI's input line appears, which the fake
+    # pool never prints. Pacing has its own suite; here every start may run.
+    monkeypatch.setattr(ide, "COLD_START_LIMIT", 16)
 
 
 def _pane(index: int, *, running: bool = True, working: bool = False, resume: bool = True):

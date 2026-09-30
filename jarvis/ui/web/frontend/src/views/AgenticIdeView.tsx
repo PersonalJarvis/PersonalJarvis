@@ -16,6 +16,7 @@ import { GitPanelDialog } from "@/components/agentic/git/GitPanelDialog";
 import { KEEP_CHECKOUT, prepareGit, type GitPlan } from "@/lib/gitApi";
 import { SplitRightIcon, SplitBelowIcon, SplitLeftIcon, SplitAboveIcon } from "@/components/agentic/splitIcons";
 import type { PaneSplitDirection } from "@/components/agentic/WorkspaceTerminalHeader";
+import { BrandedSelect } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
@@ -476,11 +477,12 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
               <span className="text-xs font-medium text-foreground">Where should it open?</span>
               <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 Next to
-                <select aria-label="Split next to" value={splitAnchor} disabled={busy} onChange={(event) => setSplitAnchor(event.target.value)}
-                  className="h-7 rounded-md border border-input bg-background px-2 text-xs font-medium text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-                  {session.terminals.map((terminal) => <option key={terminal.name} value={terminal.name}>{terminal.name} · {terminal.display_name}</option>)}
-                  <option value="">Automatic even grid</option>
-                </select>
+                <BrandedSelect ariaLabel="Split next to" value={splitAnchor} disabled={busy} onValueChange={setSplitAnchor}
+                  className="h-7 min-w-0 text-xs font-medium"
+                  options={[
+                    ...session.terminals.map((terminal) => ({ value: terminal.name, label: `${terminal.name} · ${terminal.display_name}` })),
+                    { value: "", label: "Automatic even grid" },
+                  ]} />
               </label>
             </div>
             {anchorTerminal ? <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label="Split direction">

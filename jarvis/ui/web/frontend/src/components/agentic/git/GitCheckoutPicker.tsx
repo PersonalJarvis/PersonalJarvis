@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Dices, FolderGit2, FolderTree, GitBranch, GitBranchPlus, GitFork, Loader2, Sparkles } from "lucide-react";
+import { BrandedSelect } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { folderName, inspectGit, type GitPlan, type GitPrepareMode, type GitRepoInfo } from "@/lib/gitApi";
 import { GitStatusLine } from "./GitStatusLine";
@@ -178,10 +179,9 @@ export function GitCheckoutPicker({ folder, value, onChange, disabled, context, 
         </span>
       </label>
       <label className="block text-xs text-muted-foreground">Based on
-        <select value={value.base} disabled={disabled || info.unborn} aria-label="Base branch"
-          onChange={(event) => onChange({ ...value, base: event.target.value })} className={cn(field, "mt-1")}>
-          {bases.map((name) => <option key={name} value={name}>{name}{name === info.branch ? " (current)" : name === info.default_branch ? " (default)" : ""}</option>)}
-        </select>
+        <BrandedSelect value={value.base} disabled={disabled || info.unborn} ariaLabel="Base branch"
+          onValueChange={(base) => onChange({ ...value, base })} className={cn(field, "mt-1")}
+          options={bases.map((name) => ({ value: name, label: `${name}${name === info.branch ? " (current)" : name === info.default_branch ? " (default)" : ""}` }))} />
       </label>
       <p className="text-xs text-muted-foreground sm:col-span-2">
         {info.unborn ? "This repository has no commit yet — make a first commit before branching."
@@ -191,17 +191,15 @@ export function GitCheckoutPicker({ folder, value, onChange, disabled, context, 
     </div>}
 
     {info?.is_repo && value.mode === "switch_branch" && <label className="block text-xs text-muted-foreground">Branch
-      <select value={value.branch} disabled={disabled} aria-label="Existing branch" onChange={(event) => onChange({ ...value, branch: event.target.value })} className={cn(field, "mt-1")}>
-        {switchable.map((branch) => <option key={branch.name} value={branch.name}>{branch.name}</option>)}
-      </select>
+      <BrandedSelect value={value.branch} disabled={disabled} ariaLabel="Existing branch" onValueChange={(branch) => onChange({ ...value, branch })} className={cn(field, "mt-1")}
+        options={switchable.map((branch) => ({ value: branch.name, label: branch.name }))} />
     </label>}
 
     {info?.is_repo && value.mode === "open_worktree" && <label className="block text-xs text-muted-foreground">Worktree
-      <select value={value.base} disabled={disabled} aria-label="Existing worktree"
-        onChange={(event) => { const tree = linked.find((entry) => entry.path === event.target.value); onChange({ ...value, base: event.target.value, branch: tree?.branch ?? "" }); }}
-        className={cn(field, "mt-1")}>
-        {linked.map((tree) => <option key={tree.path} value={tree.path}>{folderName(tree.path)} · {tree.branch || "detached"}</option>)}
-      </select>
+      <BrandedSelect value={value.base} disabled={disabled} ariaLabel="Existing worktree"
+        onValueChange={(path) => { const tree = linked.find((entry) => entry.path === path); onChange({ ...value, base: path, branch: tree?.branch ?? "" }); }}
+        className={cn(field, "mt-1")}
+        options={linked.map((tree) => ({ value: tree.path, label: `${folderName(tree.path)} · ${tree.branch || "detached"}` }))} />
     </label>}
 
     {value.mode === "init" && <p className="text-xs text-muted-foreground">Creates a repository on <span className="font-mono">main</span> with an empty first commit. Your files are not committed — you decide what goes in.</p>}

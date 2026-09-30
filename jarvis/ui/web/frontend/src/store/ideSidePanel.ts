@@ -1,5 +1,10 @@
 import { create } from "zustand";
 
+/** DOM id of the side panel, shared with the caption toggle that controls it.
+ * Kept here so the always-mounted toggle does not pull the whole panel
+ * (explorer, agents overview) into the startup bundle. */
+export const SIDE_PANEL_ID = "ide-side-panel";
+
 /**
  * The Agentic IDE's right-hand side panel: open or shut, which tabs it holds,
  * and which one is in front.

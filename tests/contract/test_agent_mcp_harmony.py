@@ -46,6 +46,11 @@ COVERED: Final[dict[str, str]] = {
     "POST /api/society/kill-switch": "kill_switch",
 }
 
+_CHAT_GROUPS_WHY = (
+    "chat groups only arrange the owner's side-by-side chat windows in the app; "
+    "they are a view preference, not an agent capability a remote client needs"
+)
+
 #: REST route -> why an MCP client does not get it. Each line is a decision.
 WITHHELD: Final[dict[str, str]] = {
     "PATCH /api/society/agents/{agent_id}": (
@@ -154,6 +159,14 @@ WITHHELD: Final[dict[str, str]] = {
         "editing a routine changes recurring spend; the owner does it on the "
         "routine card where the schedule is visible, not via a remote client"
     ),
+    "POST /api/society/agents/{agent_id}/routines/{task_id}/operation": (
+        "starting, pausing, or stopping a routine changes live agent work; the "
+        "owner does it in the routine card with its current state visible"
+    ),
+    "GET /api/society/chat-groups": _CHAT_GROUPS_WHY,
+    "POST /api/society/chat-groups": _CHAT_GROUPS_WHY,
+    "PATCH /api/society/chat-groups/{group_id}": _CHAT_GROUPS_WHY,
+    "DELETE /api/society/chat-groups/{group_id}": _CHAT_GROUPS_WHY,
 }
 
 

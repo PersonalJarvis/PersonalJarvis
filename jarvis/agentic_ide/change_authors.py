@@ -145,6 +145,7 @@ def _relative(raw: str, base: Path, root: Path) -> str | None:
     try:
         relative = candidate.resolve(strict=False).relative_to(root)
     except (ValueError, OSError):
+        # A path outside the repository has no author to attribute.
         return None
     text = PurePosixPath(*relative.parts).as_posix()
     return None if text in ("", ".") else text

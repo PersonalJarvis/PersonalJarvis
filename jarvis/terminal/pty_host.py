@@ -533,6 +533,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         asyncio.run(host.serve(Path(args.state)))
     except KeyboardInterrupt:
+        # Ctrl+C is the normal way to stop a foreground PTY host.
         return 0
     return 0
 
