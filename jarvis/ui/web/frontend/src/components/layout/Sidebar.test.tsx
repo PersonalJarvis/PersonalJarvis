@@ -13,6 +13,34 @@ import { isSectionId, useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
+import { sectionPrefetch } from "@/lib/sectionPrefetch";
+import { SECTION_PREFETCH_DELAY_MS } from "@/hooks/useSectionPrefetch";
+
+test.each([SIDEBAR_DEFAULT_WIDTH, SIDEBAR_RAIL_WIDTH])(
+  "sidebar intent warms a destination without navigating (width=%s)",
+  (width) => {
+    vi.useFakeTimers();
+    const warm = vi.spyOn(sectionPrefetch, "prefetch").mockResolvedValue();
+    try {
+      useEventStore.setState({ activeSection: "chats" });
+      renderSidebar(width);
+      expect(warm).not.toHaveBeenCalled();
+      fireEvent.mouseEnter(screen.getByTestId("nav-row-agents"));
+      act(() => { vi.advanceTimersByTime(SECTION_PREFETCH_DELAY_MS); });
+      expect(warm).toHaveBeenCalledExactlyOnceWith("agents");
+      expect(useEventStore.getState().activeSection).toBe("chats");
+      fireEvent.focus(screen.getByTestId("sidebar-profile-toggle"));
+      act(() => { vi.advanceTimersByTime(SECTION_PREFETCH_DELAY_MS); });
+      expect(warm).toHaveBeenLastCalledWith("profile");
+      fireEvent.click(screen.getByTestId("nav-row-agents"));
+      expect(useEventStore.getState().activeSection).toBe("agents");
+    } finally {
+      cleanup();
+      warm.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);
 
 test("IDE rail keeps workspace options and Jarvis Live reachable", () => {
   act(() => {
