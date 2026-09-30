@@ -12,6 +12,11 @@ const api = vi.hoisted(() => ({
   syncAgenticIdeSurface: vi.fn(() => Promise.resolve()),
 }));
 const openProject = vi.hoisted(() => vi.fn());
+const computers = vi.hoisted(() => ({ list: vi.fn() }));
+vi.mock("@/lib/computersApi", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/computersApi")>();
+  return { ...actual, computersApi: { ...actual.computersApi, list: computers.list } };
+});
 const git = vi.hoisted(() => ({ inspectGit: vi.fn(), prepareGit: vi.fn() }));
 vi.mock("@/lib/gitApi", async (importOriginal) => ({ ...(await importOriginal<object>()), ...git }));
 vi.mock("@/lib/agenticIdeApi", () => api);
@@ -41,6 +46,7 @@ beforeEach(() => {
   api.fetchIdeAgents.mockResolvedValue({ terminal_available: true, max_terminals: 8, suggested_names: [], agents: [agent] });
   useIdeProjectsStore.setState({ projects: [], activeWorkspaceId: null, pendingWorkspaceId: null, refreshRequest: null, action: null });
   git.inspectGit.mockResolvedValue(repoInfo);
+  computers.list.mockResolvedValue([]);
 });
 afterEach(cleanup);
 
@@ -75,7 +81,7 @@ describe("Agentic IDE project flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Claude Code" }));
     fireEvent.change(screen.getByLabelText("Name (optional)"), { target: { value: "Installer" } });
     fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
-    await waitFor(() => expect(api.startIdeSession).toHaveBeenCalledWith("/code/app", [{ agent: "codex" }, { agent: "claude" }], { projectId: "p1", name: "Installer" }));
+    await waitFor(() => expect(api.startIdeSession).toHaveBeenCalledWith("/code/app", [{ agent: "codex" }, { agent: "claude" }], { projectId: "p1", name: "Installer", onMessage: expect.any(Function) }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "New workspace" })).toBeNull());
   });
 
@@ -93,7 +99,7 @@ describe("Agentic IDE project flow", () => {
     expect((within(dialog).getByLabelText("Branch name") as HTMLInputElement).value).toBe("agent/brave-river-0001");
     fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
     await waitFor(() => expect(git.prepareGit).toHaveBeenCalledWith("/code/app", { mode: "new_worktree", branch: "agent/brave-river-0001", base: "main" }));
-    expect(api.startIdeSession).toHaveBeenCalledWith("/code/app/.worktrees/agent-brave-river-0001", [{ agent: "codex" }], { projectId: "p1", name: "agent/brave-river-0001" });
+    expect(api.startIdeSession).toHaveBeenCalledWith("/code/app/.worktrees/agent-brave-river-0001", [{ agent: "codex" }], { projectId: "p1", name: "agent/brave-river-0001", onMessage: expect.any(Function) });
   });
 
   it("keeps the launch dialog open while creation is in flight", async () => {
@@ -146,7 +152,7 @@ describe("Agentic IDE project flow", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Pane add" }));
     expect(screen.getByRole("dialog", { name: "Add coding agent" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Codex" }));
-    await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith({ workspace_id: "w1", agent: "codex", direction: "down" }));
+    await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith({ workspace_id: "w1", agent: "codex", direction: "down" }, { onMessage: expect.any(Function) }));
   });
 
   it("lets the user choose which pane to split and in which direction", async () => {
@@ -168,7 +174,7 @@ describe("Agentic IDE project flow", () => {
     expect(anchor.getAttribute("data-value")).toBe("T2");
     fireEvent.click(within(dialog).getByRole("radio", { name: "Split left" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Codex" }));
-    await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith({ workspace_id: "w1", agent: "codex", anchor: "T2", direction: "left" }));
+    await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith({ workspace_id: "w1", agent: "codex", anchor: "T2", direction: "left" }, { onMessage: expect.any(Function) }));
     expect(api.reorderIdeTerminals).not.toHaveBeenCalled();
   });
 
@@ -284,4 +290,79 @@ describe("Agentic IDE project flow", () => {
     await waitFor(() => expect(useIdeChatStore.getState().stagedPane).toBe("T1"));
   });
 
+});
+
+describe("Agentic IDE on a connected computer", () => {
+  const vps = { id: "c1", name: "vps", kind: "server", health: { status: "online", checked_at: 0, latency_ms: 5, message: null, load_1m: null, mem_used_pct: null } };
+  const remoteSession = { id: "w1", project_id: "p1", folder: "/code/app", name: "App work", created_at: 0, focus_mode: false, project: { name: "App" },
+    terminals: [{ key: "t1", history_id: "id1", name: "T1", display_name: "Codex", computer_id: "c1" }] };
+  const withClaudeOnlyThere = [agent, { ...agent, name: "claude", display_name: "Claude Code", installed: false }];
+
+  beforeEach(() => {
+    computers.list.mockResolvedValue([vps]);
+    // A pane jump left behind by an earlier test would switch the workspace.
+    useIdeChatStore.setState({ paneRequest: null, stagedPane: null });
+    try { localStorage.clear(); } catch { /* storage blocked */ }
+  });
+
+  it("opens a new agent where its neighbours run and offers the server's CLIs", async () => {
+    api.fetchIdeState.mockResolvedValue({ ...emptyState, active: true, active_id: "w1", session: remoteSession });
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
+    api.fetchIdeAgents.mockResolvedValue({ terminal_available: true, max_terminals: 8, suggested_names: [], agents: withClaudeOnlyThere });
+    api.addTerminal.mockResolvedValue(remoteSession);
+    render(<AgenticIdeView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pane add" }));
+    const dialog = screen.getByRole("dialog", { name: "Add coding agent" });
+    const onVps = await within(dialog).findByRole("radio", { name: /vps/ });
+    expect(onVps.getAttribute("aria-checked")).toBe("true");
+    // Installed only on the server: offered there, not for this PC.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Claude Code" }));
+    await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({ workspace_id: "w1", agent: "claude", computer_id: "c1" }), { onMessage: expect.any(Function) }));
+  });
+
+  it("says 'this PC' explicitly for a local agent in a remote workspace", async () => {
+    api.fetchIdeState.mockResolvedValue({ ...emptyState, active: true, active_id: "w1", session: remoteSession });
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
+    api.fetchIdeAgents.mockResolvedValue({ terminal_available: true, max_terminals: 8, suggested_names: [], agents: withClaudeOnlyThere });
+    api.addTerminal.mockResolvedValue(remoteSession);
+    render(<AgenticIdeView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pane add" }));
+    const dialog = screen.getByRole("dialog", { name: "Add coding agent" });
+    await within(dialog).findByRole("radio", { name: /vps/ });
+    fireEvent.click(within(dialog).getByRole("radio", { name: /This computer/ }));
+    expect(within(dialog).queryByRole("button", { name: "Claude Code" })).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Codex" }));
+    await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: "codex", computer_id: null }), { onMessage: expect.any(Function) }));
+  });
+
+  it("creates a workspace on the server and remembers that choice for the project", async () => {
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_project_id: null, active_workspace_id: null, max_terminals: 8 });
+    api.startIdeSession.mockResolvedValue(emptyState);
+    render(<AgenticIdeView />);
+    await screen.findByText("Choose a workspace");
+    act(() => useIdeProjectsStore.getState().newWorkspace("p1"));
+    let dialog = await screen.findByRole("dialog", { name: "New workspace" });
+    fireEvent.click(await within(dialog).findByRole("radio", { name: /vps/ }));
+    expect(within(dialog).getByTestId("ide-run-on-note").textContent).toContain(".env");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create workspace" }));
+    await waitFor(() => expect(api.startIdeSession).toHaveBeenCalledWith("/code/app", [{ agent: "codex" }],
+      expect.objectContaining({ projectId: "p1", computerId: "c1" })));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "New workspace" })).toBeNull());
+
+    act(() => useIdeProjectsStore.getState().newWorkspace("p1"));
+    dialog = await screen.findByRole("dialog", { name: "New workspace" });
+    expect((await within(dialog).findByRole("radio", { name: /vps/ })).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("falls back to this PC when the remembered computer is gone", async () => {
+    localStorage.setItem("jarvis.agenticIde.runOn.p1", "c-removed");
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_project_id: null, active_workspace_id: null, max_terminals: 8 });
+    render(<AgenticIdeView />);
+    await screen.findByText("Choose a workspace");
+    act(() => useIdeProjectsStore.getState().newWorkspace("p1"));
+    const dialog = await screen.findByRole("dialog", { name: "New workspace" });
+    await waitFor(() => expect(within(dialog).getByRole("radio", { name: /This computer/ }).getAttribute("aria-checked")).toBe("true"));
+  });
 });
