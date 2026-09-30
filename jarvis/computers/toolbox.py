@@ -9,6 +9,11 @@ its own.
 
 Installation is a background job with a log the UI polls, because a fresh VPS
 takes minutes to fetch Node and two npm packages.
+
+A Windows computer is read and served in PowerShell (``remote_os``): it needs
+Git for Windows instead of tmux (panes there run without a server-side
+session), installs through ``winget`` and ``npm``, and keeps the CLI logins in
+the same ``~/.claude`` / ``~/.codex`` files.
 """
 
 from __future__ import annotations
@@ -21,8 +26,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from jarvis.computers import remote_os
 from jarvis.computers.remote_terminal import login_shell
 from jarvis.computers.service import ComputerError, get_service
+from jarvis.computers.ssh import SshError
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +37,8 @@ ToolId = Literal["tmux", "git", "node", "claude", "codex"]
 AgentLogin = Literal["claude", "codex"]
 
 TOOLS: tuple[ToolId, ...] = ("tmux", "git", "node", "claude", "codex")
+#: Windows has no tmux; Git for Windows brings the bash agents run in.
+WINDOWS_TOOLS: tuple[ToolId, ...] = ("git", "node", "claude", "codex")
 
 _INSPECT = r"""
 for t in tmux git node npm claude codex; do
@@ -50,6 +59,30 @@ echo "uid $(id -u)"
 command -v sudo >/dev/null 2>&1 && echo "sudo yes" || echo "sudo no"
 echo "os $(uname -s)"
 """.strip()
+
+#: The same report from a Windows computer ("uid 0" = an administrator).
+#: npm is left out: nothing shows it, and ``npm --version`` alone took 13 s
+#: on a busy Windows VM.
+_INSPECT_WINDOWS = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+foreach ($t in 'git', 'node', 'claude', 'codex') {
+  $c = Get-Command $t -CommandType Application | Select-Object -First 1
+  if ($c) {
+    $v = & $c.Source --version 2>$null | Select-Object -First 1
+    "tool $t ok $v"
+  } else { "tool $t missing" }
+}
+if (Test-Path (Join-Path $HOME '.claude\.credentials.json')) { 'login claude ok' }
+else { 'login claude missing' }
+if (Test-Path (Join-Path $HOME '.codex\auth.json')) { 'login codex ok' }
+else { 'login codex missing' }
+if (Get-Command winget -CommandType Application) { 'pkg winget' }
+if ((whoami /groups) -match 'S-1-5-32-544') { 'uid 0' } else { 'uid 1000' }
+'sudo no'
+'os Windows'
+""".strip()
+
+_WINGET_IDS: dict[str, str] = {"git": "Git.Git", "node": "OpenJS.NodeJS.LTS"}
 
 _PACKAGES: dict[str, dict[str, str]] = {
     "apt-get": {
@@ -129,9 +162,11 @@ def parse_inspection(output: str) -> Readiness:
             sudo = parts[1] == "yes"
         elif kind == "os" and len(parts) >= 2:
             os_name = parts[1]
-    ordered = [tools.get(t, ToolState(t, False)) for t in TOOLS]
+    windows = os_name == "Windows"
+    ordered = [tools.get(t, ToolState(t, False)) for t in (WINDOWS_TOOLS if windows else TOOLS)]
     have = {t.id for t in ordered if t.installed}
-    ready = {"tmux", "git"} <= have and any(
+    base = {"git"} if windows else {"tmux", "git"}
+    ready = base <= have and any(
         agent in have and logins.get(agent, False) for agent in ("claude", "codex")
     )
     return Readiness(
@@ -148,6 +183,14 @@ def parse_inspection(output: str) -> Readiness:
 async def inspect(computer_id: str) -> Readiness:
     """Read what the computer has, in one round trip."""
     async with get_service().session(computer_id) as session:
+        try:
+            host = await remote_os.remote_host(computer_id, session)
+            if host.windows:
+                # PowerShell itself needs seconds to start on a busy machine.
+                answer = await remote_os.run_powershell(session, _INSPECT_WINDOWS, timeout_s=90)
+                return parse_inspection(answer.stdout)
+        except SshError as exc:
+            raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
         result = await asyncio.wait_for(
             session.conn.run(
                 login_shell(_INSPECT), check=False, encoding="utf-8", errors="replace"
@@ -157,8 +200,44 @@ async def inspect(computer_id: str) -> Readiness:
     return parse_inspection(str(result.stdout or ""))
 
 
+def install_script_windows(readiness: Readiness, wanted: list[str]) -> str:
+    """The PowerShell script that installs ``wanted`` on a Windows computer."""
+    missing = {t.id for t in readiness.tools if not t.installed}
+    system = [t for t in ("git", "node") if t in wanted and t in missing]
+    npm = [_NPM_PACKAGES[a] for a in _NPM_PACKAGES if a in wanted and a in missing]
+    if npm and "node" in missing and "node" not in system:
+        system.append("node")
+    lines = ["$ErrorActionPreference = 'Stop'"]
+    if system:
+        if readiness.package_manager != "winget":
+            raise ComputerError(
+                "winget was not found on this computer. Install Git for Windows and "
+                "Node.js by hand, then check again."
+            )
+        for tool in system:
+            lines.append(
+                f"winget install --id {_WINGET_IDS[tool]} -e --silent --disable-interactivity "
+                "--accept-source-agreements --accept-package-agreements"
+            )
+            # winget answers "already installed" with a non-zero code; only a
+            # tool that is still missing afterwards is a failure.
+            lines.append("$global:LASTEXITCODE = 0")
+    if npm:
+        # A Node.js installed a moment ago is not on this session's PATH yet.
+        lines.append(
+            "$env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + "
+            "[Environment]::GetEnvironmentVariable('Path', 'User')"
+        )
+        lines.append(f"npm install -g --silent {' '.join(npm)}")
+        lines.append("if ($LASTEXITCODE) { exit $LASTEXITCODE }")
+    lines.append("'[jarvis] done'")
+    return "\n".join(lines)
+
+
 def install_script(readiness: Readiness, wanted: list[str]) -> str:
     """The shell script that installs ``wanted`` on this computer."""
+    if readiness.os == "Windows":
+        return install_script_windows(readiness, wanted)
     missing = {t.id for t in readiness.tools if not t.installed}
     lines = ["set -e"]
     prefix = "" if readiness.root else ("sudo -n " if readiness.sudo else "")
@@ -216,31 +295,40 @@ async def start_install(computer_id: str, items: list[str]) -> InstallJob:
     if not wanted:
         raise ComputerError("Choose at least one thing to install.")
     readiness = await inspect(computer_id)
+    windows = readiness.os == "Windows"
     if (
         not readiness.root
         and not readiness.sudo
         and any(t in wanted for t in ("tmux", "git", "node"))
     ):
         raise ComputerError(
-            "Installing system packages needs root or sudo without a password on this login."
+            "Installing Git and Node.js needs an administrator login on this computer."
+            if windows
+            else "Installing system packages needs root or sudo without a password on this login."
         )
     script = install_script(readiness, wanted)
     new_job = InstallJob(computer_id=computer_id, items=wanted)
     _JOBS[computer_id] = new_job
     _TASKS[computer_id] = asyncio.create_task(
-        _run_install(new_job, script), name=f"computers-install-{computer_id}"
+        _run_install(new_job, script, windows=windows), name=f"computers-install-{computer_id}"
     )
     return new_job
 
 
-async def _run_install(current: InstallJob, script: str) -> None:
+async def _run_install(current: InstallJob, script: str, *, windows: bool = False) -> None:
     try:
         async with get_service().session(current.computer_id) as session:
             import asyncssh
 
             process = await session.conn.create_process(
-                login_shell(script), encoding="utf-8", errors="replace", stderr=asyncssh.STDOUT
+                remote_os.POWERSHELL_STDIN if windows else login_shell(script),
+                encoding="utf-8",
+                errors="replace",
+                stderr=asyncssh.STDOUT,
             )
+            if windows:
+                process.stdin.write(script)
+                process.stdin.write_eof()
             async for line in process.stdout:
                 current.log.append(line.rstrip())
             await asyncio.wait_for(process.wait(), timeout=1500)
@@ -262,11 +350,31 @@ async def _run_install(current: InstallJob, script: str) -> None:
 
 
 def local_login_file(agent: str) -> Path | None:
+    """The login file of this computer's ACTIVE account for ``agent``, if any.
+
+    An account the app manages keeps its login in its own config folder
+    (``CLAUDE_CONFIG_DIR`` / ``CODEX_HOME``); the plain ``~/.claude`` /
+    ``~/.codex`` one is the fallback.
+    """
     rel = _LOGIN_FILES.get(agent)
     if rel is None:
         return None
-    path = Path.home() / rel
-    return path if path.is_file() else None
+    candidates: list[Path] = []
+    try:
+        from jarvis import agent_accounts
+
+        account = agent_accounts.active_account(agent)  # type: ignore[arg-type]
+        overrides = agent_accounts.env_overrides(agent, account.id)  # type: ignore[arg-type]
+        folder = overrides.get(_ACCOUNT_DIR_VARS[agent])
+        if folder:
+            candidates.append(Path(folder) / Path(rel).name)
+    except Exception as exc:  # noqa: BLE001 — no account layer: the default login below
+        log.debug("computers: account folder for %s unknown: %s", agent, exc)
+    candidates.append(Path.home() / rel)
+    return next((path for path in candidates if path.is_file()), None)
+
+
+_ACCOUNT_DIR_VARS: dict[str, str] = {"claude": "CLAUDE_CONFIG_DIR", "codex": "CODEX_HOME"}
 
 
 async def copy_login(computer_id: str, agent: AgentLogin) -> None:
@@ -278,10 +386,23 @@ async def copy_login(computer_id: str, agent: AgentLogin) -> None:
             f"open a terminal there and run {agent}."
         )
     rel = _LOGIN_FILES[agent]
-    remote_dir = shlex.quote(str(Path(rel).parent.as_posix()))
+    folder = Path(rel).parent.as_posix()
     async with get_service().session(computer_id) as session:
-        await session.conn.run(f"mkdir -p ~/{remote_dir} && chmod 700 ~/{remote_dir}", check=False)
+        try:
+            host = await remote_os.remote_host(computer_id, session)
+        except SshError as exc:
+            raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
+        if not host.windows:
+            remote_dir = shlex.quote(folder)
+            await session.conn.run(
+                f"mkdir -p ~/{remote_dir} && chmod 700 ~/{remote_dir}", check=False
+            )
         async with session.conn.start_sftp_client() as sftp:
+            if host.windows:
+                # Relative paths start in the home folder; Windows keeps its own
+                # ACLs, so there is no mode to set.
+                await sftp.makedirs(folder, exist_ok=True)
             await sftp.put(str(source), rel)
-            await sftp.chmod(rel, 0o600)
+            if not host.windows:
+                await sftp.chmod(rel, 0o600)
     log.info("computers: copied the %s login to %s at the user's request", agent, computer_id)

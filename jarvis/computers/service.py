@@ -28,7 +28,7 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
-from jarvis.computers import cloud, identity, local_vm, providers
+from jarvis.computers import cloud, identity, local_vm, providers, remote_os
 from jarvis.computers.models import (
     AuthMethod,
     Computer,
@@ -36,7 +36,7 @@ from jarvis.computers.models import (
     LoginMode,
     ProviderId,
 )
-from jarvis.computers.probe import PROBE_SCRIPT, parse_probe
+from jarvis.computers.probe import PROBE_SCRIPT, WINDOWS_PROBE_SCRIPT, parse_probe
 from jarvis.computers.ssh import (
     MAX_COMMAND_TIMEOUT_S,
     CommandResult,
@@ -44,6 +44,7 @@ from jarvis.computers.ssh import (
     SshError,
     SshTarget,
     authorize_key_command,
+    authorize_key_script_windows,
     close,
     open_session,
     run_command,
@@ -56,6 +57,18 @@ log = logging.getLogger(__name__)
 _HOST_RE = re.compile(r"^[A-Za-z0-9._:\-\[\]]{1,253}$")
 _USER_RE = re.compile(r"^[A-Za-z0-9._\-]{1,64}$")
 _PROBE_TIMEOUT_S = 25.0
+
+
+async def _probe(opened: Session, host: remote_os.RemoteHost) -> CommandResult:
+    """The health script in the language the computer speaks."""
+    if host.windows:
+        return await remote_os.run_powershell(
+            # PowerShell alone took 6 s to start on a busy Windows VM.
+            opened,
+            WINDOWS_PROBE_SCRIPT,
+            timeout_s=_PROBE_TIMEOUT_S * 2,
+        )
+    return await run_command(opened, PROBE_SCRIPT, timeout_s=_PROBE_TIMEOUT_S)
 
 
 class ComputerError(Exception):
@@ -316,7 +329,8 @@ class ComputerService:
         try:
             async with self.session(computer_id) as opened:
                 try:
-                    result = await run_command(opened, PROBE_SCRIPT, timeout_s=_PROBE_TIMEOUT_S)
+                    host = await remote_os.remote_host(computer_id, opened)
+                    result = await _probe(opened, host)
                 except SshError as exc:
                     # A probe that times out or loses the channel is a health
                     # reading like a refused login, not a crash of the check.
@@ -386,17 +400,28 @@ class ComputerService:
             opened = await open_session(target)
         except SshError as exc:
             raise _login_error(exc, target) from exc
+        windows = False
         try:
-            result = await run_command(
-                opened, authorize_key_command(identity.public_key_line()), timeout_s=20
-            )
+            host = await remote_os.detect(opened)
+            windows = host.windows
+            if windows:
+                result = await remote_os.run_powershell(
+                    opened, authorize_key_script_windows(identity.public_key_line()), timeout_s=30
+                )
+            else:
+                result = await run_command(
+                    opened, authorize_key_command(identity.public_key_line()), timeout_s=20
+                )
         except SshError as exc:
             raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
         finally:
             close(opened)
         if result.exit_status not in (0, None):
             raise ComputerError(
-                "The login worked, but the key could not be saved on the server "
+                "The login worked, but Windows refused to save the key. Administrator "
+                "accounts need an elevated login to change the SSH key file."
+                if windows
+                else "The login worked, but the key could not be saved on the server "
                 "(is the home folder writable?).",
                 status=502,
                 kind="install_key",
@@ -564,7 +589,7 @@ class ComputerService:
             return _test_result(False, exc.kind, message)
         facts: dict[str, Any] | None = None
         try:
-            probe = await run_command(opened, PROBE_SCRIPT, timeout_s=_PROBE_TIMEOUT_S)
+            probe = await _probe(opened, await remote_os.detect(opened))
             facts = parse_probe(probe.stdout).facts.model_dump(mode="json")
         except SshError as exc:
             log.info("computers: test probe failed after login: %s", exc.message)
@@ -669,6 +694,7 @@ class ComputerService:
             except local_vm.LocalVmError as exc:
                 raise ComputerError(exc.message, status=502) from exc
         _forget_secrets(computer_id)
+        remote_os.forget(computer_id)
         return self._store.remove(computer_id)
 
     # -- cloud import ---------------------------------------------------------

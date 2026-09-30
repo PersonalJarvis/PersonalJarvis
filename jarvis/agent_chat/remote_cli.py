@@ -17,6 +17,11 @@ What does NOT travel:
 * Jarvis' own MCP tools. That endpoint listens on this computer's localhost
   and a remote CLI cannot reach it, so ``--mcp-config`` / the Codex
   ``mcp_servers`` overrides are dropped for remote turns.
+
+A Windows computer cannot take the turn on its command line (``cmd.exe``
+mangles non-ASCII text and line breaks, and stops at 8 191 characters), so
+there the system prompt is uploaded as a file and the CLI is started by a
+small Git Bash launcher uploaded next to it (``jarvis.computers.remote_os``).
 """
 
 from __future__ import annotations
@@ -80,13 +85,15 @@ def remote_argv(
     local_cwd: str,
     remote_cwd: str,
     system_prompt_files: dict[str, str] | None = None,
+    uploaded_prompt_files: dict[str, str] | None = None,
 ) -> list[str]:
     """Rewrite a locally planned argv for the remote machine.
 
     The local launcher prefix becomes the bare ``binary`` (found on the
     remote PATH); the local working folder becomes the remote one; Jarvis'
     localhost MCP wiring is dropped; an ``--append-system-prompt-file`` (a
-    local file) is inlined as ``--append-system-prompt``.
+    local file) points at its uploaded copy when ``uploaded_prompt_files``
+    has one, and is inlined as ``--append-system-prompt`` otherwise.
     """
     parts = list(argv)
     start = 0
@@ -96,6 +103,7 @@ def remote_argv(
     out: list[str] = [binary]
     skip = False
     files = system_prompt_files or {}
+    uploaded = uploaded_prompt_files or {}
     for index, part in enumerate(rest):
         if skip:
             skip = False
@@ -107,8 +115,11 @@ def remote_argv(
             skip = True
             continue
         if part == "--append-system-prompt-file" and index + 1 < len(rest):
-            text = files.get(rest[index + 1])
             skip = True
+            if rest[index + 1] in uploaded:
+                out += [part, uploaded[rest[index + 1]]]
+                continue
+            text = files.get(rest[index + 1])
             if text:
                 out += ["--append-system-prompt", text]
             continue
@@ -188,6 +199,65 @@ class RemoteCliProcess:
         await self._stack.aclose()
 
 
+def placement_note(computer: Any, remote_cwd: str) -> str:
+    """The system-prompt section that tells a remote CLI where it runs.
+
+    The briefing it rides on was written for this computer; without the note
+    the agent answers "which PC are you on?" wrongly and reaches for Jarvis
+    tools that do not exist over there.
+    """
+    facts = getattr(computer, "facts", None)
+    details = [
+        part
+        for part in (
+            getattr(facts, "hostname", None) and f"host name {facts.hostname}",
+            getattr(facts, "os_name", None),
+        )
+        if part
+    ]
+    where = f'"{computer.name}"' + (f" ({', '.join(details)})" if details else "")
+    return (
+        "\n\n## Where you run\n\n"
+        f"You run on the connected computer {where}, reached over SSH from the "
+        f"person's main computer — not on the main computer itself. Your working "
+        f"folder there is {remote_cwd}. Jarvis' own tools (the jarvis MCP tools) "
+        "are not available on that computer; work with the files and programs there.\n"
+    )
+
+
+async def _windows_launch(
+    opened: Any,
+    host: Any,
+    agent_id: str,
+    argv: Sequence[str],
+    binary: str,
+    local_cwd: str,
+    remote_cwd: str,
+    env: dict[str, str],
+    prompts: dict[str, str],
+) -> str:
+    """Upload the system prompt and a Git Bash launcher; the command that runs it."""
+    from jarvis.computers import remote_os
+
+    uploaded: dict[str, str] = {}
+    for index, (local_path, text) in enumerate(prompts.items()):
+        name = remote_os.launcher_name(f"{agent_id}-prompt-{index}", ".md")
+        relative = f"{remote_os.LAUNCH_DIR}/{name}"
+        await remote_os.upload_text(opened, host, relative, text)
+        uploaded[local_path] = f"{host.home}/{relative}"
+    command_argv = remote_argv(
+        argv,
+        binary=binary,
+        local_cwd=local_cwd,
+        remote_cwd=remote_cwd,
+        uploaded_prompt_files=uploaded,
+    )
+    launcher = f"{remote_os.LAUNCH_DIR}/{remote_os.launcher_name(agent_id)}"
+    script = remote_os.launcher_script(remote_cwd, command_argv, remote_env(env))
+    await remote_os.upload_text(opened, host, launcher, script)
+    return host.launcher_command(launcher)
+
+
 async def spawn(
     computer_id: str,
     *,
@@ -200,6 +270,7 @@ async def spawn(
     system_prompt_files: dict[str, str] | None = None,
 ) -> RemoteCliProcess:
     """Start the CLI on ``computer_id`` inside the agent's remote workspace."""
+    from jarvis.computers import remote_os
     from jarvis.computers.service import ComputerError, get_service
     from jarvis.computers.ssh import SshError, run_command
     from jarvis.society.remote import remote_workspace_expr
@@ -207,34 +278,54 @@ async def spawn(
     stack = contextlib.AsyncExitStack()
     try:
         opened = await stack.enter_async_context(get_service().session(computer_id))
+        computer = get_service().get(computer_id)
+        host = await remote_os.remote_host(computer_id, opened)
+        if host.windows and not host.bash:
+            raise RemoteCliUnavailable(
+                f"{computer.name} runs Windows without Git for Windows, which coding "
+                f"agents need there. {remote_os.GIT_FOR_WINDOWS_HINT}"
+            )
         folder = remote_workspace_expr(agent_id)
-        probe = await run_command(
-            opened,
-            f"mkdir -p {folder} && cd {folder} && pwd && "
-            f"(command -v {shlex.quote(binary)} >/dev/null 2>&1 && echo found || echo missing)",
-            timeout_s=20,
+        # Git Bash's ``pwd -W`` answers C:/Users/... — the path a Windows CLI reads.
+        check = (
+            f"mkdir -p {folder} && cd {folder} && {'pwd -W' if host.windows else 'pwd'} && "
+            f"(command -v {shlex.quote(binary)} >/dev/null 2>&1 && echo found || echo missing)"
         )
+        if host.windows:
+            probe = await remote_os.run_bash(opened, host, check, timeout_s=30)
+        else:
+            probe = await run_command(opened, check, timeout_s=20)
         lines = [line.strip() for line in probe.stdout.splitlines() if line.strip()]
         if len(lines) < 2:
-            raise RemoteCliUnavailable("The agent's computer did not answer the setup check.")
+            said = (probe.stderr or probe.stdout).strip().splitlines()
+            raise RemoteCliUnavailable(
+                "The agent's computer did not answer the setup check"
+                + (f": {said[-1][:200]}" if said else ".")
+            )
         remote_cwd, presence = lines[-2], lines[-1]
-        computer = get_service().get(computer_id)
         if presence != "found":
             raise RemoteCliUnavailable(
                 f"Install {binary} on {computer.name} (and log in there once), "
                 "or set the agent to run on this computer."
             )
-        command_argv = remote_argv(
-            argv,
-            binary=binary,
-            local_cwd=local_cwd,
-            remote_cwd=remote_cwd,
-            system_prompt_files=system_prompt_files,
-        )
-        assignments = " ".join(f"{k}={shlex.quote(v)}" for k, v in remote_env(env).items())
-        command = (
-            f"cd {shlex.quote(remote_cwd)} && exec env {assignments} {shlex.join(command_argv)}"
-        )
+        note = placement_note(computer, remote_cwd)
+        prompts = {path: text + note for path, text in (system_prompt_files or {}).items()}
+        if host.windows:
+            command = await _windows_launch(
+                opened, host, agent_id, argv, binary, local_cwd, remote_cwd, env, prompts
+            )
+        else:
+            command_argv = remote_argv(
+                argv,
+                binary=binary,
+                local_cwd=local_cwd,
+                remote_cwd=remote_cwd,
+                system_prompt_files=prompts,
+            )
+            assignments = " ".join(f"{k}={shlex.quote(v)}" for k, v in remote_env(env).items())
+            command = (
+                f"cd {shlex.quote(remote_cwd)} && exec env {assignments} {shlex.join(command_argv)}"
+            )
         log.info("agent chat: %s turn for %s runs on %s", runner, agent_id, computer.name)
         process = await opened.conn.create_process(command, encoding=None)
     except (ComputerError, SshError) as exc:

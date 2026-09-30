@@ -338,6 +338,18 @@ async def preflight(pool: SshPtyPool, commands: Mapping[str, str], where: str) -
     """
     if not commands:
         return
+    host = await pool.host()
+    if host.windows:
+        if not host.bash:
+            raise MoveError(
+                f"{where} runs Windows and needs Git for Windows first. "
+                "Open Computers, then Prepare."
+            )
+        # Panes there run without tmux (``remote_terminal``); the rest is checked
+        # the same way, in Git Bash.
+        commands = {label: cmd for label, cmd in commands.items() if cmd != "tmux"}
+        if not commands:
+            return
     checks = " ".join(
         f"command -v {shlex.quote(command)} >/dev/null 2>&1 || printf '%s\\n' "
         f"{shlex.quote('missing:' + label)};"
@@ -367,6 +379,7 @@ async def _remote_known(pool: SshPtyPool, remote_folder: str) -> list[str]:
 
 
 async def _upload(pool: SshPtyPool, local: Path, remote: str) -> None:
+    remote = await pool.sftp_path(remote)
     session = await pool.connection()
     async with session.conn.start_sftp_client() as sftp:
         await sftp.makedirs(str(PurePosixPath(remote).parent), exist_ok=True)
@@ -374,6 +387,7 @@ async def _upload(pool: SshPtyPool, local: Path, remote: str) -> None:
 
 
 async def _download(pool: SshPtyPool, remote: str, local: Path) -> None:
+    remote = await pool.sftp_path(remote)
     session = await pool.connection()
     async with session.conn.start_sftp_client() as sftp:
         await sftp.get(remote, str(local))

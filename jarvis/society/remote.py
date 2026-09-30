@@ -11,6 +11,11 @@ The agent's remote workspace is ``~/jarvis-agents/<agent_id>`` on that
 machine, created on demand. Local containment (``resolve_contained``) still
 decides WHICH subfolder a command may use; this module only maps that
 subfolder onto the remote workspace.
+
+On a Windows computer the same command runs in Git for Windows' bash (the
+shell agents write for, and the one their coding CLI uses there too), sent on
+stdin because ``cmd.exe`` cannot carry it; without Git for Windows it runs in
+PowerShell in the same folder (``jarvis.computers.remote_os``).
 """
 
 from __future__ import annotations
@@ -58,6 +63,24 @@ def wrap_in_workspace(agent_id: str, command: str, *, relative: str = "") -> str
     return f"mkdir -p {folder} && cd {folder} && export CI=1 NO_COLOR=1 && {command}"
 
 
+def _ps_quote(text: str) -> str:
+    return "'" + text.replace("'", "''") + "'"
+
+
+def powershell_in_workspace(agent_id: str, command: str, *, relative: str = "") -> str:
+    """The PowerShell twin of :func:`wrap_in_workspace` for a Windows computer."""
+    parts = [REMOTE_ROOT, agent_id, *[p for p in relative.split("/") if p]]
+    folder = "\\".join(parts)
+    return (
+        f"$ws = Join-Path $HOME {_ps_quote(folder)}\n"
+        "New-Item -ItemType Directory -Force -Path $ws | Out-Null\n"
+        "Set-Location -LiteralPath $ws\n"
+        "$env:CI = '1'; $env:NO_COLOR = '1'; $global:LASTEXITCODE = 0\n"
+        f"{command}\n"
+        "if ($LASTEXITCODE) { exit $LASTEXITCODE } elseif (-not $?) { exit 1 }\n"
+    )
+
+
 class SshShellBackend:
     """Runs an agent's shell commands inside its workspace on another computer."""
 
@@ -67,6 +90,8 @@ class SshShellBackend:
         self._computer_id = computer_id
         self._agent_id = agent_id
         self._workspace = Path(workspace)
+        #: Where the last command ran, for the tool result ("Ubuntu, bash").
+        self.where: str | None = None
 
     def _relative(self, cwd: Path) -> str:
         try:
@@ -80,14 +105,28 @@ class SshShellBackend:
         from jarvis.computers.service import ComputerError, get_service
 
         timeout = max(1.0, min(float(timeout_s or DEFAULT_TIMEOUT_S), MAX_TIMEOUT_S))
-        wrapped = wrap_in_workspace(self._agent_id, command, relative=self._relative(cwd))
+        relative = self._relative(cwd)
         started = time.perf_counter()
         try:
             async with get_service().session(self._computer_id) as opened:
+                from jarvis.computers import remote_os
                 from jarvis.computers.ssh import SshError, run_command
 
                 try:
-                    result = await run_command(opened, wrapped, timeout_s=timeout)
+                    host = await remote_os.remote_host(self._computer_id, opened)
+                    name = get_service().get(self._computer_id).name
+                    if not host.windows:
+                        self.where = f"{name} (bash)"
+                        wrapped = wrap_in_workspace(self._agent_id, command, relative=relative)
+                        result = await run_command(opened, wrapped, timeout_s=timeout)
+                    elif host.bash:
+                        self.where = f"{name} (Windows, Git Bash)"
+                        wrapped = wrap_in_workspace(self._agent_id, command, relative=relative)
+                        result = await remote_os.run_bash(opened, host, wrapped, timeout_s=timeout)
+                    else:
+                        self.where = f"{name} (Windows, PowerShell)"
+                        script = powershell_in_workspace(self._agent_id, command, relative=relative)
+                        result = await remote_os.run_powershell(opened, script, timeout_s=timeout)
                 except SshError as exc:
                     if exc.kind == "timeout":
                         return ShellResult(
