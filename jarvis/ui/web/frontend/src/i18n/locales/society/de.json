@@ -893,6 +893,7 @@
       "pane_prompt": "Letzter Prompt",
       "pane_unasked": "Noch nichts gefragt.",
       "pane_open": "Session öffnen",
+      "pane_window_hint": "Ziehen zum Verschieben · Doppelklick setzt es zurück",
       "cp_mission": "Mission Control",
       "cp_mission_hint": "Neue Coding-Agents starten oder mehreren gleichzeitig schreiben",
       "tool_open": "Öffnen",

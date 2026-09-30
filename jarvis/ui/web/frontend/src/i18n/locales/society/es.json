@@ -893,6 +893,7 @@
       "pane_prompt": "Último prompt",
       "pane_unasked": "Todavía no se le ha pedido nada.",
       "pane_open": "Abrir sesión",
+      "pane_window_hint": "Arrastra para moverla · doble clic para devolverla a su sitio",
       "cp_mission": "Mission Control",
       "cp_mission_hint": "Inicia nuevos agentes de código o escribe a varios a la vez",
       "tool_open": "Abrir",

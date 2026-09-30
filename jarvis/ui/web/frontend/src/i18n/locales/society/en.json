@@ -893,6 +893,7 @@
       "pane_prompt": "Last prompt",
       "pane_unasked": "Nothing asked yet.",
       "pane_open": "Open session",
+      "pane_window_hint": "Drag to move · double-click to put it back",
       "cp_mission": "Mission Control",
       "cp_mission_hint": "Start new coding agents or message several at once",
       "tool_open": "Open",
