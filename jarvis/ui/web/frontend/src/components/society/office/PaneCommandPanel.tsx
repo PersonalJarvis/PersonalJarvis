@@ -31,6 +31,7 @@ import { useWorkspacePanesStore } from "@/store/workspacePanes";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { AgenticTerminal } from "@/components/agentic/AgenticTerminal";
 import { FONT_DEFAULT } from "@/components/agentic/paneFont";
+import { warmTerminalFont } from "@/lib/terminalFont";
 import { BranchIcon } from "@/components/agentic/branchIcon";
 import { PANE_BRAND, PANE_CHROME, PANE_SOLID, storedTerminalAppearance, themeFor } from "@/components/agentic/terminalThemes";
 import type { PaneOccupant } from "./codingFloor";
@@ -42,6 +43,11 @@ import {
   type ResizeEdge, type StageSize, type WindowRect,
 } from "./paneWindow";
 import "./paneCommand.css";
+
+// This module loads with the office, well before a session is clicked: fetch
+// the terminal's font now, so the first panel opens on a font that is already
+// here instead of waiting for it (measured: ~0.4 s of the first open).
+warmTerminalFont(FONT_DEFAULT);
 
 /** A second press within this window confirms closing the session. */
 const CONFIRM_MS = 4000;
