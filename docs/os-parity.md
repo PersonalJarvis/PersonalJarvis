@@ -1,5 +1,38 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Connected computers that run Windows (2026-09-30, T3)
+
+This one is about the REMOTE side: the machine Jarvis connects to under
+Computers, whatever OS Jarvis itself runs on. Linux and macOS computers take
+the POSIX paths they always took. A Windows computer with the OpenSSH server
+runs commands in `cmd.exe` (or PowerShell as its `DefaultShell`), which runs
+no POSIX shell and mangles its own command line: every non-ASCII letter
+arrived as two U+FFFD characters, a line break ends the command, and the line
+stops at 8 191 characters. `jarvis/computers/remote_os.py` asks each computer
+once (one `echo` that sh, cmd and PowerShell answer differently) and then:
+
+| Feature | Linux / macOS computer | Windows computer |
+|---|---|---|
+| Health check and facts | POSIX probe | PowerShell probe on stdin, same sections; no load average |
+| Planting the app's key (password login) | `~/.ssh/authorized_keys` | PowerShell: `administrators_authorized_keys` for admins, ACL by SID (works on a German Windows), UTF-8 without BOM |
+| Readiness and install | tmux, git, Node, CLIs; apt/dnf/yum/apk/pacman/brew | git (Git for Windows), Node, CLIs; winget and npm; "admin" instead of root |
+| Society agent's CLI turn | `exec env … <cli>` on the command line | system prompt uploaded as a file, CLI started by a Git Bash launcher uploaded over SFTP |
+| Society agent's shell tool | sh in `~/jarvis-agents/<id>` | Git Bash in the same folder; PowerShell when Git for Windows is missing |
+| IDE panes | tmux session; survives app close and network loss, re-attached | no tmux: the agent runs in the SSH terminal (ConPTY) and ends with the channel; a plain terminal is PowerShell |
+| IDE folder sync, conversation copy | POSIX scripts | the same scripts in Git Bash; SFTP paths as `/C:/…` |
+| Keep working when this PC closes | offered | not offered (and refused on quit): its agents would stop with the connection |
+
+Git for Windows is the one prerequisite beyond the SSH server, and every
+feature that needs it says so in one sentence. Verified live against a
+Windows 11 Pro VM (German locale): facts, readiness, a CLI start through the
+launcher, an agent shell command with non-ASCII output, a PowerShell pane,
+and a git folder sent over and brought back with an edit made there. Covered
+by `tests/unit/computers/test_windows_remote.py` against a scripted Windows
+SSH server. Not verified live: planting the key with a password (unit-tested
+only; the VM already had the key), a Windows computer whose `DefaultShell` is
+PowerShell (handled by prefixing `&`, unit-tested only), the winget install
+leg, and a Windows Server install without winget.
+
 ## Persistent Agentic IDE terminals (2026-09-28, T3)
 
 Coding-agent panes now live in a separate PTY host process

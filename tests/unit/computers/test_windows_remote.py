@@ -418,3 +418,26 @@ async def test_ide_pane_runs_without_tmux_and_ends_with_its_channel(
         assert screen.closed == [5], "the agent's own exit, no re-attach attempt"
     finally:
         pool.close_all()
+
+
+async def test_keep_working_never_moves_panes_to_windows(
+    desk,  # noqa: ANN001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without tmux its agents would stop with the app's connection at quit."""
+    from jarvis.agentic_ide import offload_on_quit
+
+    monkeypatch.setattr(offload_on_quit, "target", lambda: desk.id)
+    placed: list[str] = []
+
+    async def place_workspace(workspace_id: str, *, computer_id: str) -> None:
+        placed.append(workspace_id)
+
+    running = SimpleNamespace(pty_id="p1", computer_id="")
+    registry = SimpleNamespace(
+        sessions=[SimpleNamespace(id="ws1", name="app", terminals=[running])],
+        place_workspace=place_workspace,
+    )
+
+    assert await offload_on_quit.offload_before_quit(registry) == []
+    assert placed == []
