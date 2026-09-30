@@ -54,16 +54,16 @@ It runs on your own machine with whichever model you like, local ones included, 
 
 ## See it in action
 
-The [desktop screenshot](https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/home-2026-09-09.webp) shows the
-workspace; the [agent demo](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-agents-v4.mp4)
-shows a brief, progress, and output. The demos are **illustrative interface
+The [voice demo](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.mp4)
+shows a spoken conversation on the home screen; the [agent demo](#jarvis-agents)
+further down shows a brief, progress, and output. The demos are **illustrative interface
 recreations**, not recordings of a completed live task or timing benchmarks.
 The [demo source and still previews](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/scripts/readme-video/README.md) explain
 what is shown.
 
 <p align="center">
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-agents-v4.mp4">
-    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/jarvis-agents-v4.png" alt="Illustrative Jarvis Agents workspace showing a brief, agent activity, and a resulting plan" width="850" />
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.mp4">
+    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.png" alt="Illustrative Jarvis home screen during a voice conversation, with the sidebar of agents, artifacts, and plugins" width="850" />
   </a>
 </p>
 
