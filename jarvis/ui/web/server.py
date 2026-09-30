@@ -383,6 +383,7 @@ class WebServer:
         from .onboarding_routes import router as onboarding_router
         from .outputs_routes import router as outputs_router
         from .permissions_routes import router as permissions_router
+        from .pets_routes import router as pets_router
         from .preview_routes import router as preview_router
         from .profile_routes import router as profile_router
         from .provider_routes import router as provider_router
@@ -544,6 +545,8 @@ class WebServer:
         app.include_router(contacts_router)
         # Settings -> Computers: the user's own servers and local VMs over SSH.
         app.include_router(computers_router)
+        # Desktop pets — the `pet` overlay style's pets, look and visibility.
+        app.include_router(pets_router)
         app.include_router(dictionary_router)
         # Dictation mode — hold to speak, text lands in the focused field.
         # Mounted so every action is also `jarvis api dictation <op>`, which is

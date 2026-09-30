@@ -231,6 +231,13 @@ async def _main() -> None:
             if config.trigger.hotkey_paste_last.strip()
             else ()
         ),
+        # The pet shortcut: same reason as above — the rebuilt pipeline must
+        # arm it too, or it works until the first voice restart.
+        pet_toggle_hotkeys=(
+            (config.trigger.hotkey_pet_toggle,)
+            if config.trigger.hotkey_pet_toggle.strip()
+            else ()
+        ),
         dictate_mode=config.dictation.mode,
         dictation_config=config.dictation,
         hangup_hotkeys=(

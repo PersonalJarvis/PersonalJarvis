@@ -36,7 +36,12 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from jarvis.core.events import (
+    ActionExecuted,
+    ActionProposed,
+    AnnouncementRequested,
+    AssistantTextDelta,
     AudioOutFirst,
+    ComposeRequested,
     DictationCompleted,
     DictationPromptModeChanged,
     DictationPromptModePauseToggleRequested,
@@ -44,23 +49,37 @@ from jarvis.core.events import (
     DictationStarted,
     DictationTranscribing,
     DictationTranscript,
+    ErrorOccurred,
     JarvisAgentBackgroundCompleted,
     ListeningStarted,
     OrbResetRequested,
+    PetVisibilityToggleRequested,
     ResponseGenerated,
     ShowWindowRequested,
+    SpeechSpoken,
     SystemStateChanged,
     TranscriptionUpdate,
+    UiLanguageChanged,
     UserVisibleFeedback,
     VoiceBootStatus,
     VoiceMuteChanged,
     VoiceMuteToggleRequested,
     VoiceSessionEnded,
     VoiceSessionStarted,
+    VoiceSpeakerMuteChanged,
     WakeCandidateDetected,
     WakeWordDetected,
 )
 from jarvis.dictation.outcomes import was_delivered
+from jarvis.sessions.constants import (
+    HANGUP_ERROR,
+    SPOKEN_KIND_ACTION_DONE,
+    SPOKEN_KIND_COMPLETION,
+    SPOKEN_KIND_STT_UNAVAILABLE,
+    SPOKEN_KIND_TIMEOUT,
+    SPOKEN_KIND_UNAVAILABLE,
+)
+from jarvis.ui.pets.status_line import StatusFeed
 from ui.orb.animations import IDLE_ANIMATION_POOL
 
 if TYPE_CHECKING:
@@ -202,6 +221,83 @@ def _is_transcript_boilerplate(text: str) -> bool:
     return _TRANSCRIPT_BOILERPLATE_RE.search(text) is not None
 
 
+# --- Desktop pet (docs/pets.md) ---------------------------------------------
+#
+# The pet reacts to OUTCOMES as well as states: a one-shot success or error
+# animation. Both sets come from the one spoken-kind vocabulary, so a kind that
+# is renamed there cannot silently stop reaching the pet (AP-4).
+PET_SUCCESS_SPOKEN_KINDS: frozenset[str] = frozenset(
+    {SPOKEN_KIND_ACTION_DONE, SPOKEN_KIND_COMPLETION}
+)
+PET_ERROR_SPOKEN_KINDS: frozenset[str] = frozenset(
+    {SPOKEN_KIND_TIMEOUT, SPOKEN_KIND_UNAVAILABLE, SPOKEN_KIND_STT_UNAVAILABLE}
+)
+
+# Headers of the pet's status bubble, per interface language ([ui] language).
+# User-facing product text drawn by the overlay, so every supported locale has
+# its own entry and none of them is a fallback for another.
+PET_STATUS_HEADERS: dict[str, dict[str, str]] = {
+    "listening": {
+        "en": "Listening …",
+        "de": "Ich höre zu …",  # i18n-allow
+        "es": "Escuchando …",  # i18n-allow
+    },
+    "thinking": {
+        "en": "Thinking …",
+        "de": "Denke nach …",  # i18n-allow
+        "es": "Pensando …",  # i18n-allow
+    },
+    "talking": {
+        "en": "Answer",
+        "de": "Antwort",  # i18n-allow
+        "es": "Respuesta",  # i18n-allow
+    },
+}
+PET_STATUS_LANGUAGES: tuple[str, ...] = ("en", "de", "es")
+
+# Minimum spacing of two status-bubble updates. A streamed reply produces a few
+# snapshots per second; repainting the bubble for each one is flicker.
+PET_STATUS_MIN_INTERVAL_S = 0.3
+
+# Announcement kinds that describe work in progress (the pet's "thinking" line).
+# A completion or a sub-agent readback is an ANSWER, and it is spoken anyway.
+_PET_THINKING_ANNOUNCEMENT_KINDS = frozenset({"preamble", "progress"})
+
+# A sentence ends at terminal punctuation followed by whitespace.
+_SENTENCE_BREAK_RE = re.compile(r"(?<=[.!?…])\s+")
+_SENTENCE_END_RE = re.compile(r"[.!?…][\"'»”)\]]*$")
+
+
+def _last_sentence(text: str, *, complete_only: bool = False) -> str:
+    """The last sentence of ``text`` (whitespace collapsed).
+
+    ``complete_only`` is for text still being produced: a reply streamed word
+    by word ends in a fragment most of the time, and showing "The" for a
+    moment between two full sentences is flicker, not information. Until the
+    fragment ends in punctuation the previous complete sentence stays; a reply
+    with no complete sentence yet shows the fragment.
+    """
+    flat = " ".join((text or "").split())
+    if not flat:
+        return ""
+    pieces = [piece for piece in _SENTENCE_BREAK_RE.split(flat) if piece]
+    if not pieces:
+        return ""
+    if complete_only and len(pieces) > 1 and not _SENTENCE_END_RE.search(pieces[-1]):
+        return pieces[-2]
+    return pieces[-1]
+
+
+def _humanize_tool_name(tool_name: str) -> str:
+    """``web_search`` → ``Web search``; ``mcp__github__create_issue`` → ``Create issue``."""
+    name = str(tool_name or "").strip().split("__")[-1]
+    words = name.replace("_", " ").replace("-", " ").split()
+    if not words:
+        return ""
+    phrase = " ".join(words)
+    return phrase[:1].upper() + phrase[1:]
+
+
 # NOTE 2026-05-27 (bubble-pendulum Ep.3): the STT pipeline accumulates probe
 # tails into a complete snapshot itself (jarvis/speech/pipeline.py:409
 # ``_merge_partial_transcript`` over ``_probe_live_text``) and every
@@ -223,9 +319,20 @@ class OrbBusBridge:
         orb: OrbOverlay,
         idle_animations_enabled: bool = True,
         hide_on_idle: bool = True,
+        language: str | None = None,
     ) -> None:
         self._bus = bus
         self._orb = orb
+        # Interface language for the pet's bubble headers. ``None`` = read it
+        # from the running pipeline's config when needed; ``UiLanguageChanged``
+        # overrides it live.
+        self._language: str | None = language if language in PET_STATUS_LANGUAGES else None
+        # ONE rate-limited feed for every status line the pet shows, so a burst
+        # of transcript, tool and reply updates cannot flood the Tk thread. A
+        # line the feed holds back is shown by ``_status_flush_task`` once the
+        # interval has passed, so the LAST update of a burst is never lost.
+        self._status_feed = StatusFeed(time.monotonic, min_interval_s=PET_STATUS_MIN_INTERVAL_S)
+        self._status_flush_task: asyncio.Task | None = None
         self._mic_level_unsub = None  # mic_level subscription (registered in attach)
         self._tts_recency_unsub = None  # level_tap subscription (TTS-active tracker)
         # Monotonic time of the last TTS output level. The state label
@@ -304,6 +411,20 @@ class OrbBusBridge:
         # session reason=error. Captured lazily in attach()/_on_state (both run
         # on the backend loop, well before the orb is ever clickable).
         self._loop: asyncio.AbstractEventLoop | None = None
+
+    def _hides_when_idle(self) -> bool:
+        """Does the CURRENT surface leave the screen when Jarvis goes idle?
+
+        ``hide_on_idle`` is set by whoever builds the bridge and is flipped by
+        the DesktopApp for the bar's persistence regime. A surface that must
+        stay on screen while idle whatever that regime says — the desktop pet
+        (docs/pets.md) — declares ``keeps_visible_when_idle`` and gets the idle
+        look instead of a hide. Asked per call, so a live style swap is honoured
+        at once.
+        """
+        if getattr(self._orb, "keeps_visible_when_idle", False) is True:
+            return False
+        return self._hide_on_idle
 
     def _remember_loop(self) -> None:
         """Capture the running backend loop (idempotent). Called from async bus
@@ -402,6 +523,25 @@ class OrbBusBridge:
             # The local_action_gate publishes OrbResetRequested when the
             # user says "Orb zurück" / "wo bist du" / "reset orb".  # i18n-allow
             self._bus.subscribe(OrbResetRequested, self._on_reset_requested)
+            # Desktop pet (docs/pets.md). Every handler reaches the surface
+            # through ``getattr``, so the bar, the mascot and ``NullOverlay``
+            # ignore all of them. Speaker mute mirrors the pipeline the same way
+            # the microphone mute above does; the shortcut toggles visibility;
+            # the rest feeds the one-shot outcomes and the status bubble.
+            self._bus.subscribe(VoiceSpeakerMuteChanged, self._on_speaker_mute_changed)
+            self._bus.subscribe(PetVisibilityToggleRequested, self._on_pet_visibility_toggle)
+            self._bus.subscribe(UiLanguageChanged, self._on_ui_language_changed)
+            self._bus.subscribe(ActionProposed, self._on_action_proposed)
+            self._bus.subscribe(ActionExecuted, self._on_action_executed)
+            self._bus.subscribe(SpeechSpoken, self._on_speech_spoken)
+            self._bus.subscribe(ErrorOccurred, self._on_error_occurred)
+            # ``JarvisAgentAnnouncement`` is deliberately NOT a status source:
+            # its ``action`` is the spawn tool's bare relative-clause fragment
+            # in the tool schema's language, whatever the interface language,
+            # and reads as a broken sentence on its own. The spawn's
+            # ``ActionProposed`` already puts a thinking line up.
+            self._bus.subscribe(AnnouncementRequested, self._on_announcement)
+            self._bus.subscribe(AssistantTextDelta, self._on_assistant_text_delta)
             # Wire the orb's double-double-click gesture to a bus publish.
             # The orb requires two ``<Double-Button-1>`` events inside
             # ``MUTE_GESTURE_WINDOW_MS`` (four clicks in <600 ms) before
@@ -420,6 +560,11 @@ class OrbBusBridge:
             if prompt_setter is not None:
                 prompt_setter(self._publish_prompt_mode_toggle)
             self._seed_prompt_mode()
+            # The pet's pen control asks for a fresh typed chat. Same marshal.
+            compose_setter = getattr(self._orb, "set_on_compose", None)
+            if compose_setter is not None:
+                compose_setter(self._publish_compose)
+            self._seed_mute_state()
             # ADR-0016 visible-feedback contract: inject the publisher so
             # the orb stays bus-agnostic. Defensive getattr keeps older
             # orb test doubles working.
@@ -461,7 +606,7 @@ class OrbBusBridge:
                 "+ VoiceSessionEnded + ListeningStarted + TranscriptionUpdate "
                 "+ ResponseGenerated + AudioOutFirst + OrbResetRequested "
                 "+ mute-toggle gesture + show-window gesture "
-                "+ visible-feedback contract."
+                "+ visible-feedback contract + pet events."
             )
         except Exception as exc:  # noqa: BLE001
             log.exception("OrbBridge.attach() failed: %s", exc)
@@ -542,6 +687,181 @@ class OrbBusBridge:
             DictationPromptModePauseToggleRequested(source="jarvis_bar")
         )
         self._marshal_publish(coro, label="prompt-mode-pause")
+
+    def _publish_compose(self) -> None:
+        """Called from the surface's UI thread when the pet's pen is clicked.
+
+        Same marshal as ``_publish_mute_toggle``. The DesktopApp raises the
+        window and the frontend opens a new chat (``ComposeRequested``).
+        """
+        coro = self._bus.publish(ComposeRequested(source="pet"))
+        self._marshal_publish(coro, label="compose")
+
+    def _call_surface(self, name: str, *args: Any) -> None:
+        """Call an optional surface method; a surface without it is skipped.
+
+        Every pet method is optional by contract (docs/pets.md): the bar, the
+        mascot and ``NullOverlay`` simply do not have them. A surface that
+        raises gets a debug line, never a broken bus handler — a mirror update
+        is cosmetic.
+        """
+        method = getattr(self._orb, name, None)
+        if not callable(method):
+            return
+        try:
+            method(*args)
+        except Exception:  # noqa: BLE001 — a surface update must never break the bus
+            log.debug("surface %s failed", name, exc_info=True)
+
+    def _seed_mute_state(self) -> None:
+        """Push the live microphone and speaker mute onto the surface.
+
+        Both mirrors are otherwise only updated by their change events, so a
+        surface attached or swapped in AFTER a mute would show the wrong icon
+        until the next flip. Before the pipeline is registered there is nothing
+        to read; ``_on_voice_boot_status`` runs this again once it is.
+        """
+        try:
+            from jarvis.core.runtime_refs import get_speech_pipeline
+
+            pipeline = get_speech_pipeline()
+        except Exception:  # noqa: BLE001 — a seed must never break the bridge
+            log.debug("mute seed: pipeline lookup failed", exc_info=True)
+            return
+        if pipeline is None:
+            return
+        self._call_surface("set_muted", bool(getattr(pipeline, "is_muted", False)))
+        getter = getattr(pipeline, "get_tts_volume", None)
+        if not callable(getter):
+            return
+        try:
+            speaker_muted = float(getter()) <= 0.0
+        except Exception:  # noqa: BLE001 — an unreadable volume leaves the icon alone
+            log.debug("mute seed: get_tts_volume failed", exc_info=True)
+            return
+        self._call_surface("set_speaker_muted", speaker_muted)
+
+    def _status_language(self) -> str:
+        """The interface language for bubble headers (en / de / es)."""
+        if self._language is not None:
+            return self._language
+        try:
+            from jarvis.core.runtime_refs import get_speech_pipeline
+
+            config = getattr(get_speech_pipeline(), "_config", None)
+            language = str(getattr(getattr(config, "ui", None), "language", "") or "")
+        except Exception:  # noqa: BLE001 — English is a safe answer here
+            log.debug("status language lookup failed", exc_info=True)
+            return "en"
+        return language if language in PET_STATUS_LANGUAGES else "en"
+
+    def _offer_status(self, kind: str, line: str, *, force: bool = False) -> None:
+        """Feed one status line to a surface that shows them (the pet).
+
+        Gated on ``wants_status_lines`` so no other style pays for condensing
+        or rate limiting. ``kind`` picks the localized header; the feed decides
+        whether this update is shown now or dropped as too soon after the last.
+        """
+        if not getattr(self._orb, "wants_status_lines", False):
+            return
+        headers = PET_STATUS_HEADERS.get(kind)
+        if headers is None:
+            return
+        header = headers.get(self._status_language(), headers["en"])
+        try:
+            # The feed condenses both parts itself (markdown, paths, dumps).
+            shown = self._status_feed.offer(header, line or "", force=force)
+        except Exception:  # noqa: BLE001 — a status line is cosmetic
+            log.debug("status feed rejected a line", exc_info=True)
+            return
+        if shown is not None:
+            self._call_surface("show_status", *shown)
+        else:
+            self._schedule_status_flush()
+
+    def _schedule_status_flush(self) -> None:
+        """Show the line the feed held back once the rate limit allows it.
+
+        Without this the last transcript or reply update of a burst would stay
+        in the feed until some later event happened to arrive — often never.
+        One pending flush at a time; it asks the feed, which returns nothing
+        when there is nothing held back.
+        """
+        task = self._status_flush_task
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Only bus handlers offer lines, and they run on the loop.
+            log.debug("status flush skipped: no running loop")
+            return
+
+        async def _flush() -> None:
+            try:
+                await asyncio.sleep(PET_STATUS_MIN_INTERVAL_S)
+            except asyncio.CancelledError:
+                return
+            if not getattr(self._orb, "wants_status_lines", False):
+                return
+            shown = self._status_feed.flush()
+            if shown is not None:
+                self._call_surface("show_status", *shown)
+
+        self._status_flush_task = loop.create_task(_flush(), name="orb-pet-status-flush")
+
+    def _pet_outcome(self, kind: str) -> None:
+        """Play the pet's one-shot ``success`` / ``error`` (no-op elsewhere)."""
+        self._call_surface("set_pet_outcome", kind)
+
+    async def _on_speaker_mute_changed(self, event: VoiceSpeakerMuteChanged) -> None:
+        """Mirror the pipeline's speaker mute (TTS volume 0) on the surface."""
+        self._call_surface("set_speaker_muted", bool(event.muted))
+
+    async def _on_pet_visibility_toggle(self, event: PetVisibilityToggleRequested) -> None:
+        """The pet shortcut: hide the pet, or show it and bring it forward."""
+        log.info("OrbBridge pet visibility toggle (source=%s)", event.source or "unknown")
+        self._call_surface("toggle_visible")
+
+    async def _on_ui_language_changed(self, event: UiLanguageChanged) -> None:
+        language = (event.language or "").strip().lower()
+        if language in PET_STATUS_LANGUAGES:
+            self._language = language
+
+    async def _on_action_proposed(self, event: ActionProposed) -> None:
+        """A tool is about to run: its reason (else its name) is the thinking line."""
+        line = (event.rationale or "").strip() or _humanize_tool_name(event.tool_name)
+        if line:
+            self._offer_status("thinking", line)
+
+    async def _on_action_executed(self, event: ActionExecuted) -> None:
+        self._pet_outcome("success" if event.success else "error")
+
+    async def _on_speech_spoken(self, event: SpeechSpoken) -> None:
+        kind = event.spoken_kind or ""
+        if kind in PET_SUCCESS_SPOKEN_KINDS:
+            self._pet_outcome("success")
+        elif kind in PET_ERROR_SPOKEN_KINDS:
+            self._pet_outcome("error")
+
+    async def _on_error_occurred(self, _event: ErrorOccurred) -> None:
+        self._pet_outcome("error")
+
+    async def _on_announcement(self, event: AnnouncementRequested) -> None:
+        """A preamble or a progress milestone is work in progress: show it."""
+        if event.kind in _PET_THINKING_ANNOUNCEMENT_KINDS and (event.text or "").strip():
+            self._offer_status("thinking", event.text)
+
+    async def _on_assistant_text_delta(self, event: AssistantTextDelta) -> None:
+        """The reply as it streams in: the latest sentence, rate-limited.
+
+        ``text`` is the cumulative snapshot, so only its last sentence matters.
+        The final snapshot (``done``) is forced through the rate limit, or the
+        bubble could stop one sentence short of the answer.
+        """
+        line = _last_sentence(event.text, complete_only=not event.done)
+        if line:
+            self._offer_status("talking", line, force=bool(event.done))
 
     def _publish_visible_feedback(self, mode: str, observed: dict) -> None:
         """Called from the orb's Tk thread after a deiconify. Builds and
@@ -637,7 +957,7 @@ class OrbBusBridge:
         if self._voice_session_active:
             return
         self._last_state = self._wake_preview_origin_state
-        if self._hide_on_idle:
+        if self._hides_when_idle():
             self._orb.hide()
         else:
             self._orb.show(mode="idle")
@@ -724,6 +1044,10 @@ class OrbBusBridge:
         self._show_listening_transcript("")
         self._completion_continuation = False
         self._cancel_idle_scheduler()
+        # A new conversation starts a new bubble: nothing from the previous
+        # one may be rate-limited against, or linger in, this one.
+        self._status_feed.reset()
+        self._offer_status("listening", "", force=True)
 
     async def _on_session_ended(self, event: VoiceSessionEnded) -> None:
         """A voice session ended (hangup / idle-timeout / shutdown / error).
@@ -744,6 +1068,8 @@ class OrbBusBridge:
             event.hangup_reason,
         )
         self._suppress_show_until_session = True
+        if event.hangup_reason == HANGUP_ERROR:
+            self._pet_outcome("error")
         # Defense in depth: a persistent (always-on) bar must drop to its idle
         # look the instant a session ends, not only when the follow-up
         # SystemStateChanged(IDLE) arrives. That state edge can be skipped or
@@ -755,7 +1081,7 @@ class OrbBusBridge:
         # suppression latch (that only blocks ACTIVE-state repaints), so the
         # genuine IDLE transition, if it still arrives, is a harmless same-mode
         # repaint. The idle-animation scheduler stays owned by that transition.
-        if not self._hide_on_idle:
+        if not self._hides_when_idle():
             try:
                 self._orb.show(mode="idle")
             except Exception as exc:  # noqa: BLE001
@@ -775,6 +1101,7 @@ class OrbBusBridge:
         # The pipeline is registered by now, so the bar can learn where the
         # user left the Prompt Mode switch (attach() may have run too early).
         self._seed_prompt_mode()
+        self._seed_mute_state()
         self._release_bar_startup_gate(event.detail or "voice-ready")
 
     def _release_bar_startup_gate(self, reason: str) -> None:
@@ -789,7 +1116,7 @@ class OrbBusBridge:
             # withdrawn while idle. Mascot/Null surfaces expose no gate and stay
             # untouched. An already-visible legacy bar gets the existing safe
             # z-order repair instead.
-            if not self._hide_on_idle and not was_gated:
+            if not self._hides_when_idle() and not was_gated:
                 reassert = getattr(self._orb, "reassert_z_order", None)
                 if callable(reassert):
                     reassert()
@@ -924,6 +1251,7 @@ class OrbBusBridge:
             # happening). A reply arriving mid-THINKING swaps it in via
             # _on_response_generated.
             self._refresh_voice_bubble()
+            self._offer_status("thinking", "", force=True)
             self._cancel_idle_scheduler()
         elif state == "SPEAKING":
             # TTS synthesis is often still running here — the state flips to
@@ -951,7 +1279,7 @@ class OrbBusBridge:
                 except Exception as exc:  # noqa: BLE001
                     log.debug("hide_comment failed: %s", exc)
 
-            if not self._hide_on_idle:
+            if not self._hides_when_idle():
                 # Persistent "show at all times" bar: a standalone always-on
                 # element. EVERY non-active state (IDLE, and also ERROR / PAUSED)
                 # shows the idle pill and NEVER withdraws the bar. Hiding it on
@@ -1033,6 +1361,7 @@ class OrbBusBridge:
         # diverge.
         self._listening_transcript_text = event.text.strip()
         self._show_listening_transcript(self._listening_transcript_text)
+        self._offer_status("listening", _last_sentence(self._listening_transcript_text))
 
     async def _on_response_generated(self, event: ResponseGenerated) -> None:
         """Capture Jarvis's reply so the orb bubble can show it while speaking.
@@ -1046,6 +1375,12 @@ class OrbBusBridge:
         self._last_response_text = (event.text or "").strip()
         if self._last_state in ("THINKING", "SPEAKING"):
             self._refresh_voice_bubble()
+        # The pet's talking line, for reply paths that stream no
+        # ``AssistantTextDelta``; after a streamed reply this is the same
+        # sentence again and the feed treats it as such.
+        line = _last_sentence(self._last_response_text)
+        if line:
+            self._offer_status("talking", line)
 
     def _refresh_voice_bubble(self) -> None:
         """Render the right bubble text for the current voice state.
@@ -1392,7 +1727,7 @@ class OrbBusBridge:
             self._show_listening_transcript("")
             restore = self._current_voice_mode() if self._voice_session_active else "idle"
             try:
-                if restore == "idle" and self._hide_on_idle:
+                if restore == "idle" and self._hides_when_idle():
                     self._orb.hide()
                 else:
                     self._orb.show(mode=restore)
@@ -1453,7 +1788,7 @@ class OrbBusBridge:
             # situation this fail-safe exists for.
             self._show_listening_transcript("")
             try:
-                if self._hide_on_idle:
+                if self._hides_when_idle():
                     self._orb.hide()
                 else:
                     self._orb.show(mode="idle")
@@ -1482,7 +1817,7 @@ class OrbBusBridge:
                 return
             self._show_listening_transcript("")
             try:
-                if self._hide_on_idle:
+                if self._hides_when_idle():
                     self._orb.hide()
                 else:
                     self._orb.show(mode="idle")
@@ -1544,7 +1879,7 @@ class OrbBusBridge:
         """
         try:
             await asyncio.sleep(delay_s)
-            if self._hide_on_idle:
+            if self._hides_when_idle():
                 self._orb.hide()
             else:
                 self._orb.show(mode="idle")
@@ -1555,12 +1890,15 @@ class OrbBusBridge:
         except asyncio.CancelledError:
             pass
 
-    async def _on_background_completed(self, _event: JarvisAgentBackgroundCompleted) -> None:
+    async def _on_background_completed(self, event: JarvisAgentBackgroundCompleted) -> None:
         """Briefly surface the mascot when an async task finishes.
 
         This is UI-only. It does not start or end the speech session, so the
-        conversation/task context remains untouched.
+        conversation/task context remains untouched. A successful task also
+        plays the pet's one-shot success, whatever the voice state.
         """
+        if event.success:
+            self._pet_outcome("success")
         if self._last_state not in ("IDLE", "ERROR", "PAUSED"):
             return
         self._orb.show(mode="speak")
@@ -1715,6 +2053,18 @@ class OrbBusBridge:
         show_window_setter = getattr(surface, "set_on_show_window", None)
         if callable(show_window_setter):
             show_window_setter(self._publish_show_window)
+        # The sparkle and the pet's pen were only wired in attach(), so a
+        # surface swapped in later had dead buttons until the next restart.
+        prompt_setter = getattr(surface, "set_on_prompt_mode_toggle", None)
+        if callable(prompt_setter):
+            prompt_setter(self._publish_prompt_mode_toggle)
+        compose_setter = getattr(surface, "set_on_compose", None)
+        if callable(compose_setter):
+            compose_setter(self._publish_compose)
+        # A fresh surface starts with default icons; show it the live state.
+        self._seed_prompt_mode()
+        self._seed_mute_state()
+        self._status_feed.reset()
         if self._voice_usable:
             self._release_bar_startup_gate("voice-ready surface swap")
         log.info("OrbBridge surface swapped (last_state=%s)", self._last_state)
