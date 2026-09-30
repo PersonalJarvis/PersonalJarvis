@@ -2990,6 +2990,15 @@ class WikiIntegrationConfig(BaseModel):
     # speaker, which is why this explicit list exists rather than a guess.
     search_alias_languages: list[str] = Field(default_factory=list)
 
+    # Runaway guard on how OFTEN the wiki may call a model on its own per
+    # local day (consolidator judge, split-and-retry halves, write-time search
+    # aliases, explicitly saved turns' extraction). Read by
+    # jarvis/memory/wiki/background_guard.py. It counts calls only — it never
+    # shortens a prompt, a context window or an output budget. When reached,
+    # the work waits until the next day and one log line says so. Generous on
+    # purpose: a normal day needs a handful; values below 1 count as 1.
+    max_background_llm_calls_per_day: int = 200
+
 
 class WikiContextConfig(BaseModel):
     """Configuration for the wiki context injector (B5 Agent C).

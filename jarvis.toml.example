@@ -205,6 +205,9 @@ data_dir = "./data"          # per-user runtime data (gitignored)
 [wiki_integration]
 enabled = true
 vault_root = "wiki/obsidian-vault"
+# Runaway guard: the most model calls the wiki may make on its own per day
+# (it counts calls, it never shortens a prompt or an answer).
+# max_background_llm_calls_per_day = 200
 
 # ── Login autostart — ON by default; toggle in Settings ──
 # Launches the full desktop app (voice + Orb) at login so the wake listener

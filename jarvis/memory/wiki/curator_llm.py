@@ -25,7 +25,6 @@ config, timeout-via-wait_for, error-tolerant shape).
 from __future__ import annotations
 
 import asyncio
-import functools
 import json
 import logging
 import time
@@ -454,7 +453,6 @@ class WikiCuratorLLM:
         self._brain: Brain | None = None
         self._resolved_provider: str | None = None
         self._resolved_model: str | None = None
-        self._lock = asyncio.Lock()
 
     @property
     def provider_name(self) -> str | None:
@@ -532,28 +530,31 @@ class WikiCuratorLLM:
         )
 
         start_ns = time.time_ns()
+        from jarvis.brain.background_policy import BackgroundDeferred
+        from jarvis.memory.wiki.background_guard import guard
         from jarvis.memory.wiki.provider_chain import (
-            background_wiki_providers,
-            build_wiki_provider_chain,
+            build_background_wiki_chain,
             complete_with_fallback,
         )
 
         # Key-aware fallback (AP-22/23): cross to a reachable family instead of
         # dying on one dead / throttled provider (live 2026-06-30 silent brick).
-        available = set(self._registry.available())
-        chain = build_wiki_provider_chain(
-            primary=(self._cfg.provider.strip() or self._config.brain.primary),
-            model_override=self._cfg.model,
-            available=available,
-            credential_ready=(
-                background_wiki_providers(
-                    available=available,
-                    config=self._config,
-                )
-                if self._credential_filter
-                else available
-            ),
-        )
+        # The curator runs after the turn with nobody waiting on it, so it
+        # bills only what background work may bill: once a subscription is
+        # connected, subscriptions and local models — never a key.
+        try:
+            background = build_background_wiki_chain(
+                registry=self._registry,
+                config=self._config,
+                primary=(self._cfg.provider.strip() or self._config.brain.primary),
+                model_override=self._cfg.model,
+                credential_filter=self._credential_filter,
+            )
+        except BackgroundDeferred as exc:
+            logger.warning("WikiCuratorLLM: nothing written now — %s", exc)
+            guard.note_waiting(str(exc))
+            return []
+        chain = background.chain
         rejection_reasons: list[str] = []
 
         def _validate_response(agg: Any) -> str | None:
@@ -589,7 +590,11 @@ class WikiCuratorLLM:
             label="WikiCuratorLLM",
             aggregate=aggregate,
             validate=_validate_response,
+            provider_options=background.provider_options,
+            record_chain_failure=not background.subscription_mode,
         )
+        if result is None and background.subscription_mode and not rejection_reasons:
+            guard.note_waiting("the subscription did not answer")
         if result is None:
             if any(reason.startswith("truncated") for reason in rejection_reasons):
                 logger.warning(
@@ -630,55 +635,6 @@ class WikiCuratorLLM:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
-
-    async def _ensure_brain(self) -> Brain | None:
-        """Instantiate the configured Brain once, cache the result.
-
-        Returns ``None`` when the provider can't be created — the caller
-        treats that as "skip ingest, log warning".
-        """
-
-        async with self._lock:
-            if self._brain is not None:
-                return self._brain
-
-            try:
-                provider, model = _resolve_provider_and_model(self._cfg, self._config)
-            except Exception as exc:                              # noqa: BLE001
-                logger.warning(
-                    "WikiCuratorLLM: provider resolution failed: %s", exc,
-                )
-                return None
-
-            self._resolved_provider = provider
-            self._resolved_model = model
-
-            try:
-                # Thinking disabled for the curator tier (Gemini non-pro):
-                # background JSON work must not burn the token budget on
-                # internal reasoning (see instantiate_curator_brain).
-                brain = await asyncio.to_thread(
-                    functools.partial(
-                        instantiate_curator_brain,
-                        self._registry,
-                        provider,
-                        model,
-                        cli_timeout_s=float(self._cfg.timeout_s),
-                    ),
-                )
-            except Exception as exc:                              # noqa: BLE001
-                logger.warning(
-                    "WikiCuratorLLM: cannot instantiate provider %r (model=%r): %s",
-                    provider, model, exc,
-                )
-                return None
-
-            self._brain = brain
-            logger.info(
-                "WikiCuratorLLM active (provider=%s model=%s timeout=%.1fs)",
-                provider, model or "<provider-default>", self._cfg.timeout_s,
-            )
-            return brain
 
     async def _load_schema(self) -> str | None:
         """Read ``schema.md`` from disk on a worker thread."""

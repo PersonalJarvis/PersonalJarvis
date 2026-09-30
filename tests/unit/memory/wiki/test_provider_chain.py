@@ -173,20 +173,26 @@ def test_credential_probe_uses_core_portable_storage_and_keeps_oauth(
     assert ready == {"nvidia", "future-oauth"}
 
 
-def test_background_work_skips_paid_keys_while_a_subscription_is_connected(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _stub_ready(monkeypatch: pytest.MonkeyPatch, ready: set[str]) -> None:
     import jarvis.memory.wiki.provider_chain as chain_module
 
     monkeypatch.setattr(
         chain_module,
         "credential_ready_wiki_providers",
-        lambda *, available, config: {"openai", "gemini", "codex", "ollama"},
+        lambda *, available, config: set(ready),
     )
+
+
+def test_background_work_skips_paid_keys_while_a_subscription_is_connected(
+    monkeypatch: pytest.MonkeyPatch, background_billing,  # noqa: ANN001
+) -> None:
+    import jarvis.memory.wiki.provider_chain as chain_module
+
+    _stub_ready(monkeypatch, {"openai", "gemini", "codex", "ollama"})
+    background_billing.sign_in("codex")
     ready = chain_module.background_wiki_providers(
         available={"openai", "gemini", "codex", "ollama"},
         config=object(),
-        is_subscription=lambda name: name == "codex",
     )
     assert ready == {"codex", "ollama"}  # subscription + keyless local only
 
@@ -196,15 +202,81 @@ def test_background_work_keeps_keys_when_no_subscription_exists(
 ) -> None:
     import jarvis.memory.wiki.provider_chain as chain_module
 
-    monkeypatch.setattr(
-        chain_module,
-        "credential_ready_wiki_providers",
-        lambda *, available, config: {"openai"},
-    )
+    _stub_ready(monkeypatch, {"openai"})
     ready = chain_module.background_wiki_providers(
-        available={"openai"}, config=object(), is_subscription=lambda _name: False
+        available={"openai"}, config=object()
     )
     assert ready == {"openai"}  # a single-key install keeps a working wiki
+
+
+def test_signed_out_subscription_waits_instead_of_using_keys(
+    monkeypatch: pytest.MonkeyPatch, background_billing,  # noqa: ANN001
+) -> None:
+    """The 5-EUR leak: one ``False`` probe used to hand the chain every key."""
+    import jarvis.memory.wiki.provider_chain as chain_module
+    from jarvis.brain.background_policy import BackgroundDeferred
+
+    _stub_ready(monkeypatch, {"openai", "gemini", "grok"})
+    background_billing.remember_subscription("claude-cli")
+    background_billing.sign_out("claude-cli")
+    assert chain_module.background_wiki_providers(
+        available={"openai", "gemini", "grok", "claude-cli"}, config=object()
+    ) == set()
+
+    class _Registry:
+        instantiated: list[str] = []
+
+        def available(self) -> set[str]:
+            return {"openai", "gemini", "grok", "claude-cli"}
+
+        def instantiate(self, name: str, **_kwargs: Any) -> Any:  # pragma: no cover
+            self.instantiated.append(name)
+            raise AssertionError("no provider may be built while waiting")
+
+    with pytest.raises(BackgroundDeferred):
+        chain_module.build_background_wiki_chain(
+            registry=_Registry(),
+            config=object(),
+            primary="openai",
+            model_override="",
+        )
+
+
+def test_subscription_mode_pins_a_dual_billed_provider_to_its_login(
+    monkeypatch: pytest.MonkeyPatch, background_billing,  # noqa: ANN001
+) -> None:
+    """A card with a login AND a key slot must never fall through to the key."""
+    import jarvis.memory.wiki.provider_chain as chain_module
+
+    class _DualBilled:
+        def __init__(self, model: str | None = None, prefer_subscription: bool = False):
+            self.prefer_subscription = prefer_subscription
+
+    class _KeyOnly:
+        def __init__(self, model: str | None = None):
+            self.model = model
+
+    class _Registry:
+        def available(self) -> set[str]:
+            return {"codex", "openai"}
+
+        def get_class(self, name: str) -> type:
+            return _DualBilled if name == "codex" else _KeyOnly
+
+        def instantiate(self, name: str, **_kwargs: Any) -> Any:  # pragma: no cover
+            raise AssertionError("building the chain instantiates nothing")
+
+    _stub_ready(monkeypatch, {"codex", "openai"})
+    background_billing.sign_in("codex")
+    background = chain_module.build_background_wiki_chain(
+        registry=_Registry(),
+        config=object(),
+        primary="openai",
+        model_override="",
+    )
+    assert background.subscription_mode is True
+    assert [name for name, _model in background.chain] == ["codex"]
+    assert background.provider_options == {"codex": {"prefer_subscription": True}}
 
 
 # --- the fallback loop -------------------------------------------------------
@@ -965,3 +1037,53 @@ def test_exception_summary_carries_known_safe_diagnosis_only() -> None:
         RuntimeError("request failed ?key=sk-proj-XYZ at C:/Users/private")
     )
     assert raw == "RuntimeError"
+
+
+async def test_before_attempt_deferral_stops_the_chain_before_any_call():
+    """The runaway guard raising at the cap is not a provider failure."""
+    from jarvis.brain.background_policy import BackgroundDeferred
+    from jarvis.memory.wiki.health import health
+
+    health.record_chain_success()
+    reg = _FakeRegistry(fail_providers=set())
+    chain = build_wiki_provider_chain(
+        primary="gemini", model_override="", available=reg.available()
+    )
+
+    def _cap_reached(_provider: str) -> None:
+        raise BackgroundDeferred("daily cap reached")
+
+    with pytest.raises(BackgroundDeferred):
+        await complete_with_fallback(
+            registry=reg,
+            chain=chain,
+            request=object(),
+            timeout_s=5.0,
+            label="test",
+            aggregate=_aggregate,
+            before_attempt=_cap_reached,
+        )
+    assert reg.tried == []
+    assert health.snapshot()["last_chain_failure"] is None
+
+
+async def test_chain_failure_can_stay_off_the_red_banner():
+    """Subscription-mode callers record a waiting state instead."""
+    from jarvis.memory.wiki.health import health
+
+    health.record_chain_success()
+    reg = _FakeRegistry(fail_providers=set(_ALL))
+    chain = build_wiki_provider_chain(
+        primary="gemini", model_override="", available=reg.available()
+    )
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=chain,
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+        record_chain_failure=False,
+    )
+    assert result is None
+    assert health.snapshot()["last_chain_failure"] is None
