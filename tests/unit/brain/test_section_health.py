@@ -83,15 +83,17 @@ async def test_every_catalog_provider_health_is_bound_to_its_exact_id(
     """The generic guard covers every Brain, TTS, STT, Realtime and wording card.
 
     What is under test is the BINDING (a tier's health names the exact provider
-    it came from), so every way a card can be judged is stubbed healthy here:
-    the shared probe, the on-device readiness check that answers for keyless
-    cards, and the wording probe that owns the dictation tier. A card that
-    reached a real provider instead would make this a connectivity test of the
-    machine it runs on.
+    it came from), so every way a card can be judged reads healthy here: a
+    recorded real-call success for its modality, the on-device readiness check
+    that answers for keyless cards, and credential presence for the wording
+    tier. No card may reach a provider on the way — the recorder proves it.
     """
     from jarvis import codex_app_server
-    from jarvis.dictation import polish_probe
+    from jarvis.brain import provider_health_ledger as ledger
     from jarvis.ui.web import provider_routes
+    from tests.fakes.fake_provider_calls import ProviderCallRecorder
+
+    recorder = ProviderCallRecorder().install(monkeypatch)
 
     monkeypatch.setattr(provider_routes, "_is_credential_present", lambda *args: True)
 
@@ -123,19 +125,17 @@ async def test_every_catalog_provider_health_is_bound_to_its_exact_id(
         lambda _spec: {"ready": True, "detail": "installed"},
     )
 
-    async def _probe(selected, cfg, **kwargs):
-        return SimpleNamespace(status="ok", detail="")
+    modality = ledger.modality_for_tier(spec.tier)
+    if modality is not None:
+        ledger.get_ledger().record(spec.id, modality, provider_test.OK)
 
-    async def _polish_probe(family, cfg, **kwargs):
-        return SimpleNamespace(status="ok", detail="")
-
-    monkeypatch.setattr(provider_test, "run_provider_test", _probe)
-    monkeypatch.setattr(polish_probe, "probe_polish_family", _polish_probe)
-
-    result = await provider_routes._tier_section_health(SimpleNamespace(), spec)
+    result = await provider_routes._tier_section_health(
+        SimpleNamespace(), spec, modality=modality
+    )
 
     assert result.status == sh.OK
     assert result.subject_id == spec.id
+    assert recorder.calls == []
 
 
 def test_health_fingerprint_covers_every_model_selection_surface() -> None:
@@ -337,80 +337,132 @@ def _gpt_live_config(mode: str = "realtime") -> SimpleNamespace:
     )
 
 
-async def _brain_probe_flag(monkeypatch, cfg, brain_subject: str) -> bool:
-    """Run the rollup with every check stubbed; return the brain ``probe`` flag."""
+async def _section_modalities(monkeypatch, cfg) -> dict[str, str | None]:
+    """Run the rollup with every check stubbed; return each tier's modality."""
     from jarvis.ui.web import provider_routes as pr
 
-    seen: dict[str, bool] = {}
+    seen: dict[str, str | None] = {}
 
-    async def _tier(cfg, spec, *, probe=True, **kwargs):
-        if spec is not None and spec.id == brain_subject:
-            seen["brain"] = probe
-        return pr.SectionHealth(status=sh.OK, reason="ok")
-
-    async def _other(*args, **kwargs):
+    async def _tier(cfg, spec, *, modality=None, **kwargs):
+        if spec is not None:
+            seen[spec.id] = modality
         return pr.SectionHealth(status=sh.OK, reason="ok")
 
     def _sync_other(*args, **kwargs):
         return pr.SectionHealth(status=sh.OK, reason="ok")
 
     monkeypatch.setattr(pr, "_tier_section_health", _tier)
-    monkeypatch.setattr(pr, "_realtime_section_health", _other)
-    monkeypatch.setattr(pr, "_dictation_section_health", _other)
     monkeypatch.setattr(pr, "_jarvis_agent_section_health", _sync_other)
     monkeypatch.setattr(pr, "_advanced_section_health", _sync_other)
     monkeypatch.setattr(pr, "_local_models_section_health", _sync_other)
     monkeypatch.setattr(pr, "_codex_binary_path", lambda request: None)
     monkeypatch.setattr(pr, "_polish_enabled", lambda cfg: False)
     subjects = {key: None for key in pr._SECTION_HEALTH_KEYS}
-    subjects["brain"] = brain_subject
+    subjects.update(
+        {
+            "brain": "openai",
+            "computer-use": "grok",
+            "tts": "elevenlabs",
+            "stt": "groq-api",
+            "realtime": "openai-live",
+        }
+    )
     await pr._compute_section_health(SimpleNamespace(), cfg, subjects)
-    return seen["brain"]
+    return seen
 
 
 @pytest.mark.asyncio
-async def test_brain_on_the_voice_key_is_not_probed_twice(monkeypatch) -> None:
-    """The realtime section already spends one call on the GPT-Live key; the
-    hidden Brain tab must not spend a second one on the same key (2026-09-29)."""
-    assert await _brain_probe_flag(monkeypatch, _gpt_live_config(), "openai") is False
+async def test_every_tier_reads_its_own_real_call_outcomes(monkeypatch) -> None:
+    """Each tab is judged by the record of ITS calls: brain turns for Brain,
+    tool-model steps for Tool Model, spoken sentences, transcriptions and
+    realtime handshakes — never by a probe of the page's own (2026-09-30)."""
+    from jarvis.brain import provider_health_ledger as ledger
+
+    seen = await _section_modalities(monkeypatch, _gpt_live_config())
+
+    assert seen == {
+        "openai": ledger.MODALITY_BRAIN,
+        "grok": ledger.MODALITY_TOOL,
+        "elevenlabs": ledger.MODALITY_TTS,
+        "groq-api": ledger.MODALITY_STT,
+        "openai-live": ledger.MODALITY_REALTIME,
+    }
 
 
 @pytest.mark.asyncio
-async def test_brain_off_the_voice_key_is_still_probed(monkeypatch) -> None:
-    assert await _brain_probe_flag(monkeypatch, _gpt_live_config(), "grok") is True
+async def test_a_keyed_provider_never_used_is_silent_not_red(monkeypatch) -> None:
+    """Credential present, no real call since: ``unknown`` — no dot, no probe."""
+    from jarvis.brain import provider_health_ledger as ledger
+    from jarvis.ui.web import provider_routes as pr
+    from tests.fakes.fake_provider_calls import ProviderCallRecorder
+
+    recorder = ProviderCallRecorder().install(monkeypatch)
+    monkeypatch.setattr(pr, "_is_credential_present", lambda *args: True)
+
+    health = await pr._tier_section_health(
+        None, pr.get_spec("elevenlabs"), modality=ledger.MODALITY_TTS
+    )
+
+    assert health.status == sh.UNKNOWN
+    assert health.reason == pr.UNVERIFIED_REASON
+    assert recorder.calls == []
 
 
 @pytest.mark.asyncio
-async def test_pipeline_voice_probes_an_openai_brain(monkeypatch) -> None:
-    cfg = _gpt_live_config(mode="pipeline")
+async def test_a_login_based_provider_is_ok_on_its_login(monkeypatch) -> None:
+    """A signed-in CLI login is the whole verdict (the Test button gives no more)."""
+    from jarvis.brain import provider_health_ledger as ledger
+    from jarvis.ui.web import provider_routes as pr
 
-    assert await _brain_probe_flag(monkeypatch, cfg, "openai") is True
+    monkeypatch.setattr(pr, "_is_credential_present", lambda *args: True)
+
+    health = await pr._tier_section_health(
+        None, pr.get_spec("codex"), modality=ledger.MODALITY_BRAIN
+    )
+
+    assert health.status == sh.OK
+    assert health.reason == "connected"
 
 
 def test_passive_health_polls_reuse_the_cache_for_minutes() -> None:
-    """Sidebar and dock poll this in every window and every build reloads every
-    window; a sub-minute TTL turned that into a paid probe per minute."""
+    """Sidebar and dock read this in every window and every build reloads every
+    window; the credential/login reads behind it are cached for minutes."""
     from jarvis.ui.web import provider_routes as pr
 
     assert pr._SECTION_HEALTH_TTL_S >= 15 * 60
 
 
-@pytest.mark.asyncio
-async def test_composer_health_does_not_spend_the_voice_key(monkeypatch) -> None:
-    """The agent-chat composer sweeps every API row; the GPT-Live key must be
-    reported from configuration, not probed on every sweep (2026-09-29)."""
+def test_a_new_real_call_outcome_supersedes_the_cached_rollup() -> None:
+    from jarvis.brain import provider_health_ledger as ledger
     from jarvis.ui.web import provider_routes as pr
 
-    probes: dict[str, bool] = {}
+    cfg = SimpleNamespace(brain=SimpleNamespace(providers={}))
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(telephony_manager=None))
+    )
+    subjects = {key: None for key in pr._SECTION_HEALTH_KEYS}
+    before = pr._section_health_fingerprint(request, cfg, subjects)
+    ledger.get_ledger().record("openai", ledger.MODALITY_BRAIN, provider_test.BAD_KEY)
 
-    async def _tier(cfg, spec, *, probe=True, **kwargs):
-        probes[spec.id] = probe
-        return pr.SectionHealth(status=sh.OK, reason="ok", subject_id=spec.id)
+    assert pr._section_health_fingerprint(request, cfg, subjects) != before
 
-    monkeypatch.setattr(pr, "_tier_section_health", _tier)
+
+@pytest.mark.asyncio
+async def test_composer_health_reads_the_record_and_sends_nothing(monkeypatch) -> None:
+    """The agent-chat composer used to spend one paid completion per keyed
+    provider on every open. It now reads the same record the tabs read."""
+    from jarvis.brain import provider_health_ledger as ledger
+    from jarvis.ui.web import provider_routes as pr
+    from tests.fakes.fake_provider_calls import ProviderCallRecorder
+
+    recorder = ProviderCallRecorder().install(monkeypatch)
+    monkeypatch.setattr(pr, "_is_credential_present", lambda *args: True)
+    ledger.get_ledger().record("grok", ledger.MODALITY_BRAIN, provider_test.NO_CREDITS)
     cfg = _gpt_live_config()
 
-    await pr.provider_health(cfg, "openai", probe=True)
-    await pr.provider_health(cfg, "grok", probe=True)
+    grok = await pr.provider_health(cfg, "grok")
+    openai = await pr.provider_health(cfg, "openai")
 
-    assert probes == {"openai": False, "grok": True}
+    assert (grok.status, grok.reason) == (sh.ERROR, provider_test.NO_CREDITS)
+    assert (openai.status, openai.reason) == (sh.UNKNOWN, pr.UNVERIFIED_REASON)
+    assert recorder.calls == []
