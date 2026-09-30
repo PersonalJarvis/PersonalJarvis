@@ -54,6 +54,8 @@ _KEY_RE = re.compile(r"'?(ssh-[a-z0-9-]+ [A-Za-z0-9+/=]+(?: [^'\s]+)?)'?")
 class FakeSshState:
     password: str = TEST_PASSWORD
     username: str = "root"
+    #: False plays a server with ``PasswordAuthentication no`` (keys only).
+    password_login: bool = True
     authorized: set[str] = field(default_factory=set)
     commands: list[str] = field(default_factory=list)
     #: Optional scripted command handler: return True when it answered the
@@ -74,7 +76,10 @@ class _Server(asyncssh.SSHServer):
         return True
 
     def password_auth_supported(self) -> bool:
-        return True
+        return self._state.password_login
+
+    def kbdint_auth_supported(self) -> bool:
+        return self._state.password_login
 
     def validate_password(self, username: str, password: str) -> bool:
         return username == self._state.username and password == self._state.password

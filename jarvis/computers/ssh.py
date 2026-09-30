@@ -44,6 +44,9 @@ class SshError(Exception):
         super().__init__(message)
         self.kind: SshErrorKind = kind
         self.message = message
+        #: Set on a refused login that tried this PC's keys: did the server
+        #: offer a password (or keyboard-interactive) login as well?
+        self.password_offered: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -56,6 +59,10 @@ class SshTarget:
     #: Pinned OpenSSH host-key line; ``None`` on first contact (TOFU).
     host_key: str | None = None
     password: str | None = None
+    #: Also offer the keys this PC's own ``ssh`` would use: the default files
+    #: in ``~/.ssh`` (encrypted ones skipped) and the running SSH agent. Used
+    #: once, to plant the app's own key; never stored.
+    use_this_pc: bool = False
     client_key: asyncssh.SSHKey | None = None
 
 
@@ -76,6 +83,34 @@ class Session:
     host_key: str
     host_fingerprint: str
     latency_ms: int
+
+
+#: The agent for ``use_this_pc``: ``()`` finds it the way ``ssh`` does
+#: (SSH_AUTH_SOCK, else Pageant or the Windows OpenSSH agent). Tests set None.
+THIS_PC_AGENT: Any = ()
+
+
+def this_pc_keys() -> list[Any]:
+    """The key files this PC's ``ssh`` would offer (``~/.ssh`` defaults)."""
+    from asyncssh.public_key import load_default_keypairs
+
+    return list(load_default_keypairs())
+
+
+def _password_probe(offered: list[bool]) -> Any:
+    """An SSH client that notes whether the server would take a password."""
+    import asyncssh
+
+    class _Probe(asyncssh.SSHClient):
+        def password_auth_requested(self) -> None:
+            offered.append(True)
+            return None
+
+        def kbdint_auth_requested(self) -> None:
+            offered.append(True)
+            return None
+
+    return _Probe
 
 
 def _classify(exc: BaseException) -> SshError:
@@ -144,6 +179,14 @@ async def open_session(target: SshTarget, *, timeout_s: float = CONNECT_TIMEOUT_
     }
     if target.client_key is None:
         options["preferred_auth"] = "password,keyboard-interactive"
+    offered: list[bool] = []
+    if target.use_this_pc:
+        own = [target.client_key] if target.client_key is not None else []
+        options["client_keys"] = [*own, *this_pc_keys()] or ()
+        options["agent_path"] = THIS_PC_AGENT
+        # Keys only; a password offer is noted, never answered.
+        options["preferred_auth"] = "publickey,keyboard-interactive,password"
+        options["client_factory"] = _password_probe(offered)
     started = time.perf_counter()
     try:
         conn = await asyncssh.connect(target.host, **options)
@@ -151,6 +194,8 @@ async def open_session(target: SshTarget, *, timeout_s: float = CONNECT_TIMEOUT_
         if isinstance(exc, asyncio.CancelledError):
             raise
         error = _classify(exc)
+        if target.use_this_pc:
+            error.password_offered = bool(offered)
         log.info(
             "computers: ssh %s@%s:%s failed (%s)",
             target.username,
