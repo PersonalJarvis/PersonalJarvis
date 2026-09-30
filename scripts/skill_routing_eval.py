@@ -50,7 +50,10 @@ if sys.platform == "win32":
 # must NOT fire any skill. Every positive paraphrase avoids the skill's literal
 # voice-trigger tokens, so only the model-judged path can fire it.
 GOLDEN: list[tuple[str, str | None]] = [
-    ("fass mir mal kurz zusammen was heute alles ansteht", "morning-routine"),
+    # No builtin owns a day overview since the shipped morning routine was
+    # retired (2026-09-30), so this one must fire nothing.
+    ("fass mir mal kurz zusammen was heute alles ansteht",  # i18n-allow: simulated German user utterance under test (negative control)
+     None),
     ("ich brauch jetzt ruhe zum arbeiten, blende mir die ablenkungen aus",  # i18n-allow: simulated German user utterance under test
      "deep-work-mode"),
     ("schau mal ob heute schon was wichtiges per e-mail reingekommen ist",  # i18n-allow: simulated German user utterance under test

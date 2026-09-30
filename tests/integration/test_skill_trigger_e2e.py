@@ -24,13 +24,23 @@ async def test_voice_match_de_en(builtin_root: Path) -> None:
     reg = SkillRegistry(builtin_root, bus)
     reg.reload_sync()
     matcher = TriggerMatcher(reg)
-    de = matcher.match_voice("guten morgen", lang="de")
-    en = matcher.match_voice("good morning", lang="en")
+    de = matcher.match_voice("fokusmodus", lang="de")
+    en = matcher.match_voice("deep work mode", lang="en")
     assert de is not None and de.frontmatter is not None
     assert en is not None and en.frontmatter is not None
-    assert de.frontmatter.name == "morning-routine"
-    assert en.frontmatter.name == "morning-routine"
+    assert de.frontmatter.name == "deep-work-mode"
+    assert en.frontmatter.name == "deep-work-mode"
     assert de.frontmatter.name == en.frontmatter.name
+
+
+async def test_a_greeting_fires_no_shipped_skill(builtin_root: Path) -> None:
+    """The shipped morning routine is retired (2026-09-30): "good morning" is
+    smalltalk again, never a daily briefing nobody asked for."""
+    reg = SkillRegistry(builtin_root, EventBus())
+    reg.reload_sync()
+    matcher = TriggerMatcher(reg)
+    assert matcher.match_voice("guten morgen", lang="de") is None
+    assert matcher.match_voice("good morning", lang="en") is None
 
 
 async def test_cron_scheduler_graceful_without_croniter(

@@ -325,8 +325,8 @@ def test_user_skills_render_before_builtins() -> None:
     """User-authored skills sort before shipped builtins in the listing."""
     registry = _FakeRegistry(skills=[
         # Real builtin name → _is_builtin() classifies it as shipped.
-        _FakeSkill(name="morning-routine", frontmatter=_FakeFrontmatter(
-            description="builtin briefing")),
+        _FakeSkill(name="memory-save", frontmatter=_FakeFrontmatter(
+            description="builtin memory")),
         _FakeSkill(name="my-own-skill", frontmatter=_FakeFrontmatter(
             description="user authored")),
     ])
@@ -334,7 +334,7 @@ def test_user_skills_render_before_builtins() -> None:
     out = render_available_skills_section(registry)  # type: ignore[arg-type]
 
     assert out is not None
-    assert out.index("- `my-own-skill`") < out.index("- `morning-routine`")
+    assert out.index("- `my-own-skill`") < out.index("- `memory-save`")
 
 
 def test_builtins_fold_before_user_skills_on_overflow() -> None:
@@ -342,8 +342,8 @@ def test_builtins_fold_before_user_skills_on_overflow() -> None:
     own skills keep their described bullets.
     """
     registry = _FakeRegistry(skills=[
-        _FakeSkill(name="morning-routine", frontmatter=_FakeFrontmatter(
-            description="builtin briefing")),
+        _FakeSkill(name="memory-save", frontmatter=_FakeFrontmatter(
+            description="builtin memory")),
         _FakeSkill(name="deep-work-mode", frontmatter=_FakeFrontmatter(
             description="builtin focus")),
         _FakeSkill(name="my-own-skill", frontmatter=_FakeFrontmatter(
@@ -365,7 +365,7 @@ def test_budget_eviction_prefers_builtins_over_user_skills() -> None:
     """
     registry = _FakeRegistry(skills=[
         _FakeSkillWithMtime(
-            name="morning-routine",
+            name="memory-save",
             frontmatter=_FakeFrontmatter(description="B" * 200),
             mtime=100.0,  # newer than the user skill
         ),
@@ -382,9 +382,9 @@ def test_budget_eviction_prefers_builtins_over_user_skills() -> None:
 
     assert out is not None
     assert "- `my-own-skill`" in out
-    assert "- `morning-routine` — " not in out
+    assert "- `memory-save` — " not in out
     tail = next(ln for ln in out.splitlines() if ln.startswith("- …"))
-    assert "`morning-routine`" in tail
+    assert "`memory-save`" in tail
 
 
 # ----------------------------------------------------------------------

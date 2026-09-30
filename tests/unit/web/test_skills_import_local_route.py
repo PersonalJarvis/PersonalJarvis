@@ -132,7 +132,7 @@ async def test_name_collision_is_a_409(
 async def test_builtin_name_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    content = _CLAUDE_CODE_STYLE.replace("my-own-skill", "morning-routine")
+    content = _CLAUDE_CODE_STYLE.replace("my-own-skill", "deep-work-mode")
     src = _write_source(tmp_path, content)
     _, _, request = _setup(tmp_path, monkeypatch)
 
