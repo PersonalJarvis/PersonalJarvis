@@ -110,6 +110,8 @@ function FullMapDialog({ onClose, layout, agents, selectedId }: Omit<OfficeFullM
     wardrobe: t("society.office.cp_wardrobe"),
     lead: t("society.office.cp_lead"),
     break: t("society.office.cp_break"),
+    elevator: t("society.office.cp_elevator"),
+    mission: t("society.office.cp_mission"),
   };
   const roomLabels: Record<RoomKind, string> = {
     lead: t("society.office.room_lead"),
@@ -117,6 +119,8 @@ function FullMapDialog({ onClose, layout, agents, selectedId }: Omit<OfficeFullM
     wardrobe: t("society.office.room_wardrobe"),
     reception: t("society.office.room_reception"),
     break: t("society.office.room_break"),
+    command: t("society.office.room_command"),
+    server: t("society.office.room_server"),
   };
   const openSpace = t("society.office.open_space");
   const youLabel = t("society.office.minimap_you");

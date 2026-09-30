@@ -352,6 +352,7 @@ export const WORLD_MSG_TYPES: readonly string[] = [
   "QUERY",
   "ANSWER",
   "PROPOSE",
+  "ASSIGN",
   "ROOM_OPEN",
   "ROOM_SETTLE",
 ];

@@ -9,69 +9,21 @@
  * canvas textures are module-level singletons shared by every copy.
  */
 import { memo } from "react";
-import {
-  CanvasTexture, CylinderGeometry, MeshStandardMaterial, SphereGeometry, SRGBColorSpace, type Texture,
-} from "three";
-import { Bookshelf, Box, Couch, MAT, matte, Plant, Rounded, Rug } from "./OfficeFurniture";
+import { CylinderGeometry, MeshStandardMaterial, SphereGeometry } from "three";
+import { canvasMaterial } from "./canvasMaterials";
+import { LEAD_RENDERERS } from "./LeadSuite";
+import { COMMAND_RENDERERS } from "./CommandOffice";
+import { SERVER_RENDERERS } from "./ServerRoom";
+import { TEAM_RENDERERS } from "./TeamRoomDecor";
+import { BREAK_RENDERERS } from "./BreakLounge";
+import { WARDROBE_RENDERERS } from "./WardrobeRoom";
+import { LOBBY_RENDERERS } from "./LobbyDecor";
+import { MeetingChair } from "./OfficeChairs";
+import { Bookshelf, Box, Couch, GEO, MAT, matte, Plant, Rounded, Rug } from "./OfficeFurniture";
 import { FURNITURE_SIZE, type Furniture, type FurnitureKind } from "./officeLayout";
 import { PROP_COLOURS as P } from "./officePalette";
 
 type Vec3 = [number, number, number];
-
-// ---------------------------------------------------------------------------
-// Shared canvas textures
-// ---------------------------------------------------------------------------
-
-const textureCache = new Map<string, Texture | null>();
-
-/**
- * A canvas-drawn texture, drawn once per key and cached. Returns null where no
- * 2D canvas exists (SSR, tests without canvas); callers fall back to a colour.
- */
-export function cachedCanvasTexture(
-  key: string, width: number, height: number, draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void,
-): Texture | null {
-  if (textureCache.has(key)) return textureCache.get(key) ?? null;
-  const canvas = typeof document !== "undefined" ? document.createElement("canvas") : null;
-  let ctx: CanvasRenderingContext2D | null = null;
-  try {
-    ctx = canvas?.getContext("2d") ?? null;
-  } catch {
-    // jsdom without the canvas package throws "not implemented": no texture, the colour fallback is correct.
-    ctx = null;
-  }
-  let texture: Texture | null = null;
-  if (canvas && ctx) {
-    canvas.width = width;
-    canvas.height = height;
-    draw(ctx, width, height);
-    const made = new CanvasTexture(canvas);
-    made.colorSpace = SRGBColorSpace;
-    made.anisotropy = 4;
-    texture = made;
-  }
-  textureCache.set(key, texture);
-  return texture;
-}
-
-const materialCache = new Map<string, MeshStandardMaterial>();
-
-/** A material showing a cached canvas texture; `glow` > 0 makes it self-lit like a screen. */
-function canvasMaterial(
-  key: string, width: number, height: number, draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void,
-  { glow = 0, fallback = "#ffffff", roughness = 0.6 }: { glow?: number; fallback?: string; roughness?: number } = {},
-): MeshStandardMaterial {
-  let material = materialCache.get(key);
-  if (!material) {
-    const map = cachedCanvasTexture(key, width, height, draw);
-    material = new MeshStandardMaterial({
-      color: map ? "#ffffff" : fallback, map, roughness,
-      emissive: glow > 0 ? "#ffffff" : "#000000", emissiveMap: glow > 0 ? map : null, emissiveIntensity: glow,
-    });
-    materialCache.set(key, material);
-  }
-  return material;
-}
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
   ctx.beginPath();
@@ -81,56 +33,6 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.arcTo(x, y + h, x, y, r);
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
-}
-
-/** Team board: an org chart on the left, sticky notes on the right. */
-function drawTeamBoard(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-  ctx.fillStyle = P.boardWhite;
-  ctx.fillRect(0, 0, w, h);
-  // Org chart: one box on top, three below, joined by marker lines.
-  const node = (x: number, y: number, colour: string) => {
-    ctx.fillStyle = colour;
-    roundRect(ctx, x - 62, y - 26, 124, 52, 10);
-    ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,0.85)";
-    ctx.fillRect(x - 40, y - 5, 80, 10);
-  };
-  ctx.strokeStyle = "#3b4250";
-  ctx.lineWidth = 5;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(250, 120); ctx.lineTo(250, 200);
-  ctx.moveTo(90, 200); ctx.lineTo(410, 200);
-  for (const x of [90, 250, 410]) { ctx.moveTo(x, 200); ctx.lineTo(x, 262); }
-  ctx.stroke();
-  node(250, 100, "#4f7cac");
-  node(90, 288, "#5e9c76");
-  node(250, 288, "#c8553d");
-  node(410, 288, "#8d6cab");
-  // Marker scribbles under the chart.
-  ctx.strokeStyle = "#6b7280";
-  ctx.lineWidth = 4;
-  for (let i = 0; i < 3; i += 1) {
-    ctx.beginPath();
-    ctx.moveTo(40, 380 + i * 30);
-    ctx.lineTo(40 + 180 + ((i * 70) % 160), 380 + i * 30);
-    ctx.stroke();
-  }
-  // Sticky notes, slightly askew.
-  const notes = ["#fde68a", "#fbcfe8", "#bbf7d0", "#bfdbfe", "#fed7aa", "#fde68a"];
-  notes.forEach((colour, i) => {
-    const col = i % 3, row = Math.floor(i / 3);
-    ctx.save();
-    ctx.translate(620 + col * 135, 110 + row * 170);
-    ctx.rotate(((i * 37) % 9 - 4) * 0.02);
-    ctx.fillStyle = "rgba(0,0,0,0.12)";
-    ctx.fillRect(-52, -48, 110, 110);
-    ctx.fillStyle = colour;
-    ctx.fillRect(-55, -55, 110, 110);
-    ctx.fillStyle = "rgba(60,60,70,0.55)";
-    for (let line = 0; line < 3; line += 1) ctx.fillRect(-40, -30 + line * 22, 50 + ((i + line) * 17) % 30, 6);
-    ctx.restore();
-  });
 }
 
 /** Kiosk screen: a list of agents with a gold header and an add button. */
@@ -166,44 +68,155 @@ function drawKioskList(ctx: CanvasRenderingContext2D, w: number, h: number): voi
   ctx.fillRect(w - 53, h - 54, 6, 24);
 }
 
-/** A generic desktop UI for the reception monitor. */
-function drawDeskScreen(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-  ctx.fillStyle = "#1b2a44";
+/**
+ * Reception's help display: the map's main keys as key caps, each over a gold
+ * pictogram of what it does (walk, run, use, map, help). Shapes only, no words,
+ * so it reads the same in every language.
+ */
+function drawReceptionHelp(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  const bg = ctx.createLinearGradient(0, 0, 0, h);
+  bg.addColorStop(0, "#1a2742");
+  bg.addColorStop(1, "#0f1628");
+  ctx.fillStyle = bg;
   ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = "#7dd3fc";
-  ctx.fillRect(12, 12, w - 24, 16);
-  ctx.fillStyle = "rgba(255,255,255,0.75)";
-  for (let i = 0; i < 5; i += 1) ctx.fillRect(16, 44 + i * 20, 60 + ((i * 41) % 110), 8);
-  ctx.fillStyle = "#a7f3d0";
-  ctx.fillRect(w - 80, 44, 60, 90);
+  ctx.fillStyle = "#f5b83d";
+  ctx.fillRect(0, 0, w, 7);
+  const cap = (x: number, y: number, cw: number, label: string) => {
+    ctx.fillStyle = "#0a0f1c";
+    roundRect(ctx, x, y + 5, cw, 46, 9);
+    ctx.fill();
+    ctx.fillStyle = "#eef2f8";
+    roundRect(ctx, x, y, cw, 44, 9);
+    ctx.fill();
+    ctx.fillStyle = "#1a2742";
+    ctx.font = "700 24px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, x + cw / 2, y + 23);
+  };
+  const gold = () => { ctx.strokeStyle = "#f5b83d"; ctx.fillStyle = "#f5b83d"; ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.lineJoin = "round"; };
+  const iy = 150;
+  // WASD cluster over a four-way arrow.
+  const kx = 26, ky = 30, kw = 44;
+  cap(kx + kw + 6, ky, kw, "W");
+  cap(kx, ky + 52, kw, "A"); cap(kx + kw + 6, ky + 52, kw, "S"); cap(kx + 2 * (kw + 6), ky + 52, kw, "D");
+  gold();
+  const cx = kx + 1.5 * kw + 6;
+  ctx.beginPath();
+  ctx.moveTo(cx - 22, iy); ctx.lineTo(cx + 22, iy); ctx.moveTo(cx, iy - 16); ctx.lineTo(cx, iy + 16);
+  ctx.moveTo(cx - 14, iy - 7); ctx.lineTo(cx - 22, iy); ctx.lineTo(cx - 14, iy + 7);
+  ctx.moveTo(cx + 14, iy - 7); ctx.lineTo(cx + 22, iy); ctx.lineTo(cx + 14, iy + 7);
+  ctx.stroke();
+  // Shift: a double chevron (run).
+  const col = (x: number, cw: number, label: string, icon: (x: number) => void) => { cap(x, 56, cw, label); gold(); icon(x + cw / 2); };
+  col(186, 92, "Shift", (x) => {
+    ctx.beginPath();
+    for (const dx of [-12, 6]) { ctx.moveTo(x + dx, iy - 12); ctx.lineTo(x + dx + 12, iy); ctx.lineTo(x + dx, iy + 12); }
+    ctx.stroke();
+  });
+  // E: a filled ring (use what is nearby).
+  col(298, 52, "E", (x) => {
+    ctx.beginPath(); ctx.arc(x, iy, 14, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, iy, 5, 0, Math.PI * 2); ctx.fill();
+  });
+  // M: a folded map.
+  col(370, 52, "M", (x) => {
+    ctx.beginPath();
+    ctx.moveTo(x - 18, iy - 10); ctx.lineTo(x - 6, iy - 15); ctx.lineTo(x + 6, iy - 10); ctx.lineTo(x + 18, iy - 15);
+    ctx.lineTo(x + 18, iy + 10); ctx.lineTo(x + 6, iy + 15); ctx.lineTo(x - 6, iy + 10); ctx.lineTo(x - 18, iy + 15); ctx.closePath();
+    ctx.moveTo(x - 6, iy - 15); ctx.lineTo(x - 6, iy + 10); ctx.moveTo(x + 6, iy - 10); ctx.lineTo(x + 6, iy + 15);
+    ctx.stroke();
+  });
+  // H: a question mark in a ring (help), the key the whole guide hangs on.
+  col(442, 52, "H", (x) => {
+    ctx.beginPath(); ctx.arc(x, iy, 17, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, iy - 4, 6, Math.PI * 1.05, Math.PI * 2.3); ctx.lineTo(x, iy + 5); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, iy + 11, 2.6, 0, Math.PI * 2); ctx.fill();
+  });
 }
 
-const INVADER = [
-  "..X.....X..", "...X...X...", "..XXXXXXX..", ".XX.XXX.XX.",
-  "XXXXXXXXXXX", "X.XXXXXXX.X", "X.X.....X.X", "...XX.XX...",
-];
+/** The gold info sign on the reception counter's front (drawn on a disc, so the square corners never show). */
+function drawInfoSign(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  ctx.clearRect(0, 0, w, h);
+  const r = w / 2 - 4;
+  const disc = ctx.createRadialGradient(w * 0.42, h * 0.38, r * 0.1, w / 2, h / 2, r);
+  disc.addColorStop(0, "#ffe19a");
+  disc.addColorStop(1, "#f0a92b");
+  ctx.fillStyle = disc;
+  ctx.beginPath(); ctx.arc(w / 2, h / 2, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.55)";
+  ctx.lineWidth = w * 0.025;
+  ctx.beginPath(); ctx.arc(w / 2, h / 2, r * 0.86, 0, Math.PI * 2); ctx.stroke();
+  // The "i": a dot over a rounded stem.
+  ctx.fillStyle = "#2a1a04";
+  ctx.beginPath(); ctx.arc(w / 2, h * 0.3, w * 0.075, 0, Math.PI * 2); ctx.fill();
+  roundRect(ctx, w / 2 - w * 0.065, h * 0.43, w * 0.13, h * 0.34, w * 0.05);
+  ctx.fill();
+}
 
-/** Arcade screen: two rows of pixel invaders, a ship and a score. */
+/** Arcade screen: the Asteroid Run attract screen, a rocket among faceted rocks. */
 function drawArcade(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-  ctx.fillStyle = "#07060f";
+  const sky = ctx.createLinearGradient(0, 0, 0, h);
+  sky.addColorStop(0, "#07060f");
+  sky.addColorStop(1, "#171133");
+  ctx.fillStyle = sky;
   ctx.fillRect(0, 0, w, h);
-  const px = 4;
-  for (let row = 0; row < 2; row += 1) {
-    for (let col = 0; col < 4; col += 1) {
-      ctx.fillStyle = row === 0 ? "#ff7ab8" : "#7cfc9a";
-      const ox = 22 + col * 58, oy = 34 + row * 44;
-      INVADER.forEach((line, y) => {
-        for (let x = 0; x < line.length; x += 1) if (line[x] === "X") ctx.fillRect(ox + x * px, oy + y * px, px, px);
-      });
-    }
+  // Warp streaks running out from the vanishing point.
+  const vx = w * 0.52, vy = h * 0.42;
+  ctx.lineCap = "round";
+  for (let i = 0; i < 46; i += 1) {
+    const a = (i * 2.399) % (Math.PI * 2), r0 = 14 + ((i * 37) % 60), len = 8 + ((i * 13) % 22);
+    ctx.strokeStyle = `rgba(201, 212, 255, ${0.25 + ((i * 7) % 10) / 20})`;
+    ctx.lineWidth = 1 + (i % 3) * 0.5;
+    ctx.beginPath();
+    ctx.moveTo(vx + Math.cos(a) * r0, vy + Math.sin(a) * r0);
+    ctx.lineTo(vx + Math.cos(a) * (r0 + len), vy + Math.sin(a) * (r0 + len));
+    ctx.stroke();
   }
-  ctx.fillStyle = "#7dd3fc";
-  ctx.fillRect(w / 2 - 18, h - 30, 36, 10);
-  ctx.fillRect(w / 2 - 4, h - 40, 8, 10);
-  ctx.fillStyle = "#fde68a";
-  ctx.fillRect(w / 2 - 1, h - 90, 3, 14);
-  ctx.fillStyle = "#ffffff";
-  for (let i = 0; i < 5; i += 1) ctx.fillRect(14 + i * 12, 10, 8, 10);
+  // Low-poly rocks: a fan of facets, each triangle shaded by its facing.
+  const rock = (cx: number, cy: number, r: number, seed: number) => {
+    const n = 7;
+    const pts = Array.from({ length: n }, (_, i) => {
+      const a = (i / n) * Math.PI * 2 + seed, k = 0.75 + (((seed * 31 + i * 17) % 10) / 10) * 0.4;
+      return [cx + Math.cos(a) * r * k, cy + Math.sin(a) * r * k] as const;
+    });
+    const hub = [cx - r * 0.15, cy - r * 0.2] as const;
+    pts.forEach((p, i) => {
+      const q = pts[(i + 1) % n];
+      const light = 0.45 + 0.4 * Math.max(0, Math.cos((i / n) * Math.PI * 2 + seed - 2.3));
+      ctx.fillStyle = `rgb(${Math.round(120 * light + 60)}, ${Math.round(128 * light + 62)}, ${Math.round(165 * light + 70)})`;
+      ctx.beginPath(); ctx.moveTo(hub[0], hub[1]); ctx.lineTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.closePath(); ctx.fill();
+    });
+  };
+  rock(w * 0.84, h * 0.2, 24, 1);
+  rock(w * 0.16, h * 0.3, 15, 2);
+  rock(w * 0.62, h * 0.24, 9, 3);
+  rock(w * 0.3, h * 0.62, 7, 4);
+  rock(w * 0.82, h * 0.7, 17, 5);
+  // The rocket, flying into the screen: exhaust, fins, body, nose, window.
+  const rx = w * 0.46, ry = h * 0.7;
+  ctx.save();
+  ctx.translate(rx, ry);
+  ctx.rotate(-0.5);
+  ctx.fillStyle = "#ffcc33";
+  ctx.beginPath(); ctx.moveTo(-7, 14); ctx.lineTo(0, 44); ctx.lineTo(7, 14); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#e0443e";
+  ctx.beginPath(); ctx.moveTo(-9, 2); ctx.lineTo(-20, 18); ctx.lineTo(-8, 14); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(9, 2); ctx.lineTo(20, 18); ctx.lineTo(8, 14); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#eef2f8";
+  ctx.fillRect(-9, -16, 18, 30);
+  ctx.fillStyle = "#3b82f6";
+  ctx.fillRect(-9, -6, 18, 5);
+  ctx.beginPath(); ctx.moveTo(-9, -16); ctx.lineTo(0, -32); ctx.lineTo(9, -16); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  // A laser bolt and the score line.
+  ctx.strokeStyle = "#ffe066";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(w * 0.55, h * 0.48); ctx.lineTo(w * 0.6, h * 0.36); ctx.stroke();
+  ctx.fillStyle = "#e6ebff";
+  for (let i = 0; i < 4; i += 1) ctx.fillRect(12 + i * 10, 10, 7, 7);
+  ctx.fillStyle = "#facc15";
+  ctx.fillRect(12, 22, 54, 3);
 }
 
 /** Elevator floor indicator: an amber "up" arrow and a dim "down" arrow. */
@@ -271,8 +284,6 @@ const PM = {
   shaft: matte(P.elevatorShaft),
   lockers: P.lockers.map((c) => matte(c)),
   lockerVent: matte(P.lockerVent),
-  bottle: new MeshStandardMaterial({ color: P.waterBottle, roughness: 0.2, transparent: true, opacity: 0.8 }),
-  taps: P.waterTap.map((c) => matte(c)),
   mug: matte(P.mug),
   coffee: matte(P.coffee),
   espresso: matte(P.espresso, { roughness: 0.35, metalness: 0.25 }),
@@ -281,7 +292,6 @@ const PM = {
   marquee: matte(P.arcadeMarquee, { emissive: P.arcadeMarquee, emissiveIntensity: 0.8 }),
   joystick: matte(P.joystick, { roughness: 0.4 }),
   arcadeButtons: P.arcadeButtons.map((c) => matte(c, { emissive: c, emissiveIntensity: 0.35 })),
-  beanbags: P.beanbag.map((c) => matte(c, { roughness: 0.95 })),
   bell: matte(P.bell, { roughness: 0.35, metalness: 0.3 }),
   boardFrame: matte(P.boardFrame),
   kioskBody: matte(P.kioskBody),
@@ -289,13 +299,14 @@ const PM = {
   paper: matte(P.paper),
   rugInner: matte(P.rugInner),
   gold: matte("#f5b83d", { emissive: "#f5b83d", emissiveIntensity: 0.6 }),
+  brochures: P.lockers.map((c) => matte(c, { roughness: 0.8 })),
   indicatorLight: matte(P.indicator, { emissive: P.indicator, emissiveIntensity: 0.9 }),
 };
 
 const lazy = {
-  board: () => canvasMaterial("prop:teamBoard", 1024, 478, drawTeamBoard, { fallback: P.boardWhite, roughness: 0.7 }),
   kiosk: () => canvasMaterial("prop:kiosk", 512, 360, drawKioskList, { glow: 0.85, fallback: "#1b2a44", roughness: 0.4 }),
-  deskScreen: () => canvasMaterial("prop:deskScreen", 256, 160, drawDeskScreen, { glow: 0.8, fallback: "#1b2a44", roughness: 0.4 }),
+  receptionHelp: () => canvasMaterial("prop:receptionHelp", 512, 192, drawReceptionHelp, { glow: 0.85, fallback: "#1a2742", roughness: 0.4 }),
+  infoSign: () => canvasMaterial("prop:infoSign", 256, 256, drawInfoSign, { glow: 0.7, fallback: "#f5b83d", roughness: 0.4 }),
   arcade: () => canvasMaterial("prop:arcade", 256, 200, drawArcade, { glow: 1, fallback: "#07060f", roughness: 0.4 }),
   indicator: () => canvasMaterial("prop:indicator", 128, 48, drawIndicator, { glow: 0.9, fallback: "#111318", roughness: 0.4 }),
   mirror: () => canvasMaterial("prop:mirror", 128, 256, drawMirror, { glow: 0.25, fallback: P.mirror, roughness: 0.1 }),
@@ -328,33 +339,6 @@ function Panel({ size, position, material, rotation }: {
 // Props (local space: centred on the origin, front faces +z)
 // ---------------------------------------------------------------------------
 
-/** Long light-wood meeting table on two white pedestals. Chairs are `MeetingChairs`. */
-function MeetingTable() {
-  return (
-    <group>
-      <Rounded size={[3.6, 0.07, 1.6]} radius={0.03} position={[0, 0.725, 0]} material={MAT.deskTop} />
-      <Rounded size={[0.22, 0.69, 1.1]} radius={0.03} position={[-1.3, 0.345, 0]} material={MAT.deskBody} />
-      <Rounded size={[0.22, 0.69, 1.1]} radius={0.03} position={[1.3, 0.345, 0]} material={MAT.deskBody} />
-      <Box size={[2.4, 0.06, 0.08]} position={[0, 0.3, 0]} material={MAT.deskLeg} />
-      <Box size={[0.3, 0.006, 0.42]} position={[-0.9, 0.763, 0.35]} material={PM.paper} cast={false} />
-      <Box size={[0.3, 0.006, 0.42]} position={[0.6, 0.763, -0.35]} material={PM.paper} cast={false} />
-      <Box size={[0.42, 0.02, 0.3]} position={[0.1, 0.77, 0.3]} material={MAT.monitor} />
-    </group>
-  );
-}
-
-/** A meeting chair centred on its seat, facing +z (backrest on the -z side). */
-function MeetingChair() {
-  return (
-    <group>
-      <Cyl radius={0.26} height={0.04} position={[0, 0.02, 0]} material={MAT.chair} />
-      <Cyl radius={0.03} height={0.4} position={[0, 0.24, 0]} material={MAT.chair} cast={false} />
-      <Rounded size={[0.48, 0.08, 0.46]} radius={0.03} position={[0, 0.46, 0]} material={MAT.chairSeat} />
-      <Rounded size={[0.46, 0.46, 0.07]} radius={0.03} position={[0, 0.74, -0.21]} material={MAT.chairSeat} />
-    </group>
-  );
-}
-
 /**
  * Six chairs around a meeting table: three per long side at local x = -1.1, 0,
  * +1.1 and z = ∓1.25, each facing the table. They sit outside the table's
@@ -373,51 +357,68 @@ export function MeetingChairs({ table }: { table: Furniture }) {
   );
 }
 
-/** Mobile whiteboard (org chart + sticky notes) on two slim legs, board face towards +z. */
-function TeamBoard() {
-  return (
-    <group>
-      {[-1.26, 1.26].map((x) => (
-        <group key={x}>
-          <Box size={[0.05, 1.86, 0.05]} position={[x, 0.93, -0.04]} material={MAT.railing} />
-          <Box size={[0.06, 0.03, 0.2]} position={[x, 0.015, 0]} material={MAT.railing} />
-        </group>
-      ))}
-      <Rounded size={[2.5, 1.22, 0.05]} radius={0.02} position={[0, 1.25, -0.04]} material={PM.boardFrame} />
-      <Panel size={[2.4, 1.12]} position={[0, 1.25, -0.0135]} material={lazy.board()} />
-      <Box size={[2.1, 0.03, 0.08]} position={[0, 0.66, 0]} material={PM.boardFrame} />
-      {[PM.joystick, MAT.books[2], MAT.keyboard].map((material, i) => (
-        <Box key={i} size={[0.12, 0.02, 0.02]} position={[-0.3 + i * 0.18, 0.685, 0.01]} material={material} cast={false} />
-      ))}
-    </group>
-  );
-}
-
 /**
  * Reception counter: the visitor side (+z) is a high white counter with a
  * wood top and a service bell; the receptionist side (-z) is a lower work
  * surface whose monitor faces -z.
  */
+/** Vertical slat positions across the reception back wall. */
+const RECEPTION_SLATS = Array.from({ length: 15 }, (_, i) => -1.26 + i * 0.18);
+
+/**
+ * Reception counter, the office's help desk. Visitor side (+z): a white
+ * counter on a dark plinth with wood end caps, a wood feature panel carrying
+ * a glowing gold info sign, gold light lines under the lip and along the
+ * floor, and on the wood top a service bell, a brochure stand and a small
+ * plant. Behind it a slatted wood wall holds the help display with the map's
+ * main keys, so the desk reads as "ask here" from across the floor.
+ */
 function ReceptionDesk() {
   return (
     <group>
-      {/* Counter front stops 2 cm short of the wood strip: coplanar faces z-fight into stripes. */}
-      <Rounded size={[2.8, 0.98, 0.38]} radius={0.15} position={[0, 0.49, 0.24]} material={MAT.deskBody} />
+      {/* Back wall: dark panel, light slats, a gold light line on top. */}
+      <Box size={[2.8, 2.1, 0.05]} position={[0, 1.05, -0.42]} material={MAT.woodDark} />
+      {RECEPTION_SLATS.map((x) => <Box key={x} size={[0.07, 2.02, 0.03]} position={[x, 1.05, -0.38]} material={MAT.wood} />)}
+      <Box size={[2.8, 0.05, 0.1]} position={[0, 2.125, -0.405]} material={MAT.woodDark} />
+      <Box size={[2.7, 0.018, 0.02]} position={[0, 2.09, -0.345]} material={PM.gold} cast={false} />
+      {/* Help display on the wall, facing the visitors. */}
+      <Rounded size={[1.56, 0.64, 0.05]} radius={0.03} position={[0, 1.62, -0.34]} material={PM.kioskHead} />
+      <Panel size={[1.46, 0.548]} position={[0, 1.62, -0.3135]} material={lazy.receptionHelp()} />
+      <Box size={[0.6, 0.02, 0.012]} position={[0, 1.95, -0.32]} material={PM.gold} cast={false} />
+
+      {/* Receptionist side: a low work surface on two pedestals and a keyboard. */}
+      <Rounded size={[2.5, 0.04, 0.3]} radius={0.015} position={[0, 0.74, -0.17]} material={MAT.deskTop} />
+      <Box size={[0.36, 0.72, 0.26]} position={[-1.05, 0.36, -0.17]} material={MAT.deskBody} />
+      <Box size={[0.36, 0.72, 0.26]} position={[1.05, 0.36, -0.17]} material={MAT.deskBody} />
+      <Box size={[0.4, 0.02, 0.12]} position={[0.2, 0.77, -0.2]} material={MAT.keyboard} />
+
+      {/* Visitor counter: plinth, body and wood end caps (body stops short of the caps: no coplanar faces). */}
+      <Box size={[2.64, 0.08, 0.34]} position={[0, 0.04, 0.22]} material={MAT.woodDark} />
+      <Box size={[2.5, 0.012, 0.012]} position={[0, 0.07, 0.395]} material={PM.gold} cast={false} />
+      <Rounded size={[2.6, 0.9, 0.38]} radius={0.12} position={[0, 0.53, 0.24]} material={MAT.deskBody} />
+      <Rounded size={[0.1, 0.96, 0.42]} radius={0.03} position={[-1.35, 0.5, 0.23]} material={MAT.wood} />
+      <Rounded size={[0.1, 0.96, 0.42]} radius={0.03} position={[1.35, 0.5, 0.23]} material={MAT.wood} />
       <Rounded size={[2.8, 0.05, 0.46]} radius={0.02} position={[0, 1.005, 0.22]} material={MAT.wood} />
-      <Box size={[2.3, 0.1, 0.02]} position={[0, 0.55, 0.44]} material={MAT.wood} cast={false} />
-      <Rounded size={[2.5, 0.04, 0.44]} radius={0.015} position={[0, 0.74, -0.2]} material={MAT.deskTop} />
-      <Box size={[0.36, 0.72, 0.42]} position={[-1.05, 0.36, -0.2]} material={MAT.deskBody} />
-      <Box size={[0.36, 0.72, 0.42]} position={[1.05, 0.36, -0.2]} material={MAT.deskBody} />
-      {/* Monitor facing the receptionist. */}
-      <Box size={[0.2, 0.015, 0.14]} position={[-0.3, 0.768, -0.05]} material={MAT.monitor} />
-      <Box size={[0.06, 0.12, 0.05]} position={[-0.3, 0.83, -0.05]} material={MAT.monitor} />
-      <Rounded size={[0.56, 0.32, 0.035]} radius={0.012} position={[-0.3, 0.93, -0.08]} material={MAT.monitor} />
-      <Panel size={[0.52, 0.28]} position={[-0.3, 0.93, -0.0985]} rotation={[0, Math.PI, 0]} material={lazy.deskScreen()} />
-      <Box size={[0.4, 0.02, 0.13]} position={[-0.3, 0.77, -0.3]} material={MAT.keyboard} />
-      {/* Service bell on the visitor counter. */}
-      <Cyl radius={0.07} height={0.012} position={[0.9, 1.036, 0.26]} material={MAT.monitor} />
-      <mesh geometry={PGEO.dome} material={PM.bell} position={[0.9, 1.042, 0.26]} scale={0.055} castShadow />
-      <mesh geometry={PGEO.sphere} material={PM.bell} position={[0.9, 1.1, 0.26]} scale={0.012} />
+      <Box size={[2.5, 0.016, 0.012]} position={[0, 0.965, 0.432]} material={PM.gold} cast={false} />
+      {/* Front feature panel with the info sign. */}
+      <Rounded size={[0.92, 0.62, 0.03]} radius={0.02} position={[0, 0.52, 0.43]} material={MAT.wood} />
+      <mesh position={[0, 0.54, 0.448]} material={lazy.infoSign()}>
+        <circleGeometry args={[0.2, 40]} />
+      </mesh>
+
+      {/* On the counter: service bell, brochure stand, a small plant. */}
+      <Cyl radius={0.07} height={0.012} position={[0.95, 1.036, 0.26]} material={MAT.monitor} />
+      <mesh geometry={PGEO.dome} material={PM.bell} position={[0.95, 1.042, 0.26]} scale={0.055} castShadow />
+      <mesh geometry={PGEO.sphere} material={PM.bell} position={[0.95, 1.1, 0.26]} scale={0.012} />
+      <Box size={[0.34, 0.02, 0.12]} position={[-0.9, 1.04, 0.24]} material={PM.kioskHead} />
+      {P.lockers.slice(0, 3).map((colour, i) => (
+        <group key={colour} position={[-1.01 + i * 0.11, 1.11, 0.24]} rotation={[-0.2, 0, 0]}>
+          <Box size={[0.085, 0.13, 0.01]} position={[0, 0, 0]} material={PM.brochures[i]!} />
+        </group>
+      ))}
+      <Cyl radius={0.05} height={0.07} position={[-0.35, 1.065, 0.3]} material={MAT.pot} />
+      <mesh geometry={GEO.blob} material={MAT.leaf} position={[-0.35, 1.13, 0.3]} scale={[0.07, 0.06, 0.07]} castShadow />
+      <mesh geometry={GEO.blob} material={MAT.leafDark} position={[-0.32, 1.17, 0.29]} scale={0.035} castShadow />
     </group>
   );
 }
@@ -499,22 +500,6 @@ function CoffeeBar() {
   );
 }
 
-/** Water cooler: white stand, taps on the +z side, a blue bottle on top. */
-function WaterCooler() {
-  return (
-    <group>
-      <Rounded size={[0.36, 0.9, 0.36]} radius={0.04} position={[0, 0.45, 0]} material={MAT.deskBody} />
-      <Box size={[0.26, 0.2, 0.01]} position={[0, 0.72, 0.181]} material={PM.steelDark} cast={false} />
-      <Box size={[0.04, 0.05, 0.04]} position={[-0.06, 0.74, 0.2]} material={PM.taps[0]} />
-      <Box size={[0.04, 0.05, 0.04]} position={[0.06, 0.74, 0.2]} material={PM.taps[1]} />
-      <Box size={[0.22, 0.02, 0.06]} position={[0, 0.6, 0.2]} material={PM.steelDark} />
-      <Cyl radius={0.12} height={0.04} position={[0, 0.92, 0]} material={MAT.deskBody} />
-      <Cyl radius={0.16} height={0.3} position={[0, 1.09, 0]} material={PM.bottle} />
-      <Cyl radius={0.15} height={0.03} position={[0, 1.255, 0]} material={PM.bottle} />
-    </group>
-  );
-}
-
 /** Round low wood table with a mug and a magazine. */
 function CoffeeTable() {
   return (
@@ -562,17 +547,6 @@ export function idHash(id: string): number {
   return hash;
 }
 
-/** A squashed soft beanbag; the raised back is on the -z side, so it faces +z. */
-function Beanbag({ id }: { id: string }) {
-  const material = PM.beanbags[idHash(id) % PM.beanbags.length];
-  return (
-    <group>
-      <mesh geometry={PGEO.sphere} material={material} position={[0, 0.26, 0]} scale={[0.44, 0.26, 0.44]} castShadow receiveShadow />
-      <mesh geometry={PGEO.sphere} material={material} position={[0, 0.42, -0.16]} scale={[0.36, 0.18, 0.24]} castShadow receiveShadow />
-    </group>
-  );
-}
-
 /** A flat rug with an inner field, sized per instance. */
 function RugPiece({ w, d }: { w: number; d: number }) {
   const inset = Math.min(0.3, Math.min(w, d) * 0.15);
@@ -616,19 +590,15 @@ const COUCH_FIT_X = FURNITURE_SIZE.couch.w / 2.36;
 
 /** Every furniture kind maps to exactly one renderer (the Record type keeps this exhaustive). */
 export const PROP_RENDERERS: Record<FurnitureKind, (props: { item: Furniture }) => JSX.Element> = {
-  meetingTable: () => <MeetingTable />,
-  teamBoard: () => <TeamBoard />,
   receptionDesk: () => <ReceptionDesk />,
   kiosk: () => <Kiosk />,
   lockers: () => <Lockers />,
   mirror: () => <Mirror />,
   coffeeBar: () => <CoffeeBar />,
-  waterCooler: () => <WaterCooler />,
   // The shared couch's armrests reach 2.36 m; squeeze it into the 2.2 m footprint.
   couch: () => <group scale={[COUCH_FIT_X, 1, 1]}><Couch position={[0, 0, 0]} /></group>,
   coffeeTable: () => <CoffeeTable />,
   arcade: () => <Arcade />,
-  beanbag: ({ item }) => <Beanbag id={item.id} />,
   bookshelf: () => <Bookshelf position={[0, 0, 0]} />,
   plant: () => <Plant position={[0, 0, 0]} size={PROP_PLANT_SIZE} />,
   rug: ({ item }) => {
@@ -636,6 +606,13 @@ export const PROP_RENDERERS: Record<FurnitureKind, (props: { item: Furniture }) 
     return <RugPiece w={size.w} d={size.d} />;
   },
   elevator: () => <Elevator />,
+  ...LEAD_RENDERERS,
+  ...COMMAND_RENDERERS,
+  ...SERVER_RENDERERS,
+  ...TEAM_RENDERERS,
+  ...BREAK_RENDERERS,
+  ...WARDROBE_RENDERERS,
+  ...LOBBY_RENDERERS,
 };
 
 /** One furniture item, placed at (x, 0, z) and turned by `rotationY` (0 = front faces +z). */

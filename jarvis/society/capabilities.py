@@ -11,7 +11,16 @@ or deny them, and the model card can list them grouped by kind.
 Never granted, structurally (AP-5/AP-14): every dispatch tool and general app
 control tool. Scoped coding-session control is a separate grantable capability.
 The prohibited tools are filtered out here, so no later layer can hand them to
-an agent by accident.
+an agent by accident. A ban entry matches the registry name in either
+spelling: tools register as ``spawn_worker`` while the list was written as
+``spawn-worker``, and for a while that mismatch let every spawn tool through.
+
+One deliberate exception (maintainer decision 2026-09-29): ``create_artifact``.
+It starts a background build, but the build is a page, not a worker that can
+hire more workers, and the user asked for agents and their routines to be
+able to deliver one. It stays ask-only: an API seat sees it only on a turn that
+names an artifact (``jarvis.brain.artifact_gate``), and an allowlist agent
+needs the grant ``plugin:create_artifact``.
 
 Pure functions over the objects passed in — no registry is imported at
 module import time (AP-26); the runtime wires the live sources.
@@ -25,11 +34,13 @@ from enum import StrEnum
 from typing import Any, Final
 
 __all__ = [
+    "ARTIFACT_TOOL_NAME",
     "CapabilityKind",
     "CapabilityRow",
     "NEVER_GRANTED",
     "build_catalog",
     "capability_id_for_tool",
+    "is_never_granted",
     "select_tools",
     "tool_name_for_capability",
 ]
@@ -53,11 +64,12 @@ NEVER_GRANTED: Final[frozenset[str]] = frozenset(
         "dispatch-to-harness",
         "dispatch-to-admin",
         "dispatch-with-review",
-        "create-artifact",
         "navigate",
         "switch-provider",
         "manage-mcp-server",
         "app-command",
+        "find-app-action",
+        "run-app-action",
         "create-skill",
         "reveal-key-preview",
         "profile-update",
@@ -66,6 +78,9 @@ NEVER_GRANTED: Final[frozenset[str]] = frozenset(
         "message-agent",
     }
 )
+
+#: The artifact builder — the one dispatch tool an agent may hold (see above).
+ARTIFACT_TOOL_NAME: Final[str] = "create_artifact"
 
 #: Built-in hands that are not "a plugin someone connected".
 _CORE_TOOLS: Final[frozenset[str]] = frozenset(
@@ -82,8 +97,6 @@ _CORE_TOOLS: Final[frozenset[str]] = frozenset(
         "wiki-ingest",
         "wiki-list",
         "wiki-page-read",
-        "awareness-recall",
-        "awareness-snapshot",
         "run-skill",
         "inspect-pointer",
         "open-app",
@@ -141,11 +154,16 @@ class CapabilityRow:
         }
 
 
+def is_never_granted(tool_name: str) -> bool:
+    """True for a banned tool, whichever spelling its registry name uses."""
+    return tool_name in NEVER_GRANTED or tool_name.replace("_", "-") in NEVER_GRANTED
+
+
 def capability_id_for_tool(tool_name: str) -> str | None:
     """The catalog id of a brain tool name; ``None`` for never-granted tools."""
     if tool_name in {"society_browser", "society_browser_action"}:
         return "core:browser"
-    if tool_name in NEVER_GRANTED:
+    if is_never_granted(tool_name):
         return None
     if tool_name.startswith("cli_"):
         return f"cli:{tool_name[4:]}"
@@ -188,6 +206,10 @@ def _label(tool_name: str, kind: CapabilityKind, tool: Any = None) -> str:
         return tool_name[4:] if tool_name.startswith("cli_") else tool_name
     if kind is CapabilityKind.MCP:
         return tool_name
+    if tool_name == ARTIFACT_TOOL_NAME:
+        # Bilingual like the Jarvis chat's Add row, so an @mention finds it
+        # by "Artefakt" as well as "Artifact".
+        return "Artifact / Artefakt"
     return tool_name.replace("_", "-")
 
 

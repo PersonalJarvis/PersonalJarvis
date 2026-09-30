@@ -8,6 +8,10 @@
 .office-panel-head > div { min-width:0; }
 .office-panel-head h2 { display:block; margin:0; font-size:14px; font-weight:700; overflow-wrap:anywhere; }
 .office-panel-head span { display:block; font-size:11px; color:hsl(var(--muted-foreground)); margin-top:2px; }
+/* A checkpoint panel wears its checkpoint's icon, gold like the token on the floor. */
+.office-panel-head > div { flex:1; }
+.office-panel-head .office-panel-badge { flex:none; display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; margin:0; border-radius:10px; background:linear-gradient(160deg, #ffd476, #f0a92b); color:#1f1300; box-shadow:0 4px 14px rgb(240 169 43 / .3); }
+.office-panel-badge svg { width:18px; height:18px; }
 .office-panel-body { display:flex; flex-direction:column; gap:9px; padding:4px 12px 12px; overflow:auto; font-size:12px; line-height:1.45; }
 .office-panel-body p { margin:0; }
 .office-panel-status { display:flex; align-items:center; gap:6px; font-weight:600; }

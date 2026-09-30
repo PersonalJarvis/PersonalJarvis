@@ -131,6 +131,20 @@ export function themeFor(appearance: TerminalAppearance): ITheme {
   return appearance === "dark" ? DARK_TERMINAL_THEME : LIGHT_TERMINAL_THEME;
 }
 
+/** Where the reader's pane appearance is kept; no entry means "follow the app". */
+export const TERMINAL_APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
+
+/** The stored pane appearance, or null when there is none (or storage is blocked). */
+export function storedTerminalAppearance(): TerminalAppearance | null {
+  try {
+    const raw = window.localStorage.getItem(TERMINAL_APPEARANCE_KEY);
+    return raw === "light" || raw === "dark" ? raw : null;
+  } catch {
+    // Private mode or disabled storage reads as "no preference", never as a failure.
+    return null;
+  }
+}
+
 /**
  * The lifecycle a pane's frame reports, mirroring `PaneStatus` in
  * ./AgenticTerminal.
@@ -246,6 +260,15 @@ export const PANE_BRAND: Record<TerminalAppearance, PaneBrand> = {
     inkFaint: "#7a7a7a",
     chip: "rgba(255,255,255,0.14)",
   },
+};
+
+/**
+ * The pane's ground made near-opaque, for a pane floated over a busy scene
+ * (the office map) where the translucent `shell` would let the world through.
+ */
+export const PANE_SOLID: Record<TerminalAppearance, string> = {
+  light: "rgba(252, 251, 248, 0.94)",
+  dark: "rgba(18, 18, 18, 0.92)",
 };
 
 export const PANE_CHROME: Record<TerminalAppearance, PaneChrome> = {

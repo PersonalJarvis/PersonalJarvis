@@ -203,7 +203,7 @@ _REFUSAL_DE: dict[str, str] = {
     "repos": "Ich habe aktuell keinen Zugriff auf deine Repositories.",  # i18n-allow
     "deployments": "Ich habe aktuell keinen Zugriff auf deine Deployments.",  # i18n-allow
     "cloud": "Ich habe aktuell keinen Zugriff auf deine Cloud-Abrechnung.",  # i18n-allow
-    "activity": "Ich kann gerade nicht auf deinen Aktivitätsverlauf zugreifen.",  # i18n-allow
+    "activity": "Ich zeichne keinen Aktivitätsverlauf auf.",  # i18n-allow
 }
 _REFUSAL_DE_FALLBACK = "Dafuer habe ich aktuell keinen Datenzugriff."  # i18n-allow
 
@@ -214,7 +214,7 @@ _REFUSAL_EN: dict[str, str] = {
     "repos": "I have no access to your repositories right now.",
     "deployments": "I have no access to your deployments right now.",
     "cloud": "I have no access to your cloud billing right now.",
-    "activity": "I can't access your activity history right now.",
+    "activity": "I don't keep a history of your activity.",
 }
 _REFUSAL_EN_FALLBACK = "I have no data access for that right now."
 
@@ -228,7 +228,7 @@ _REFUSAL_ES: dict[str, str] = {
     "repos": "Ahora mismo no tengo acceso a tus repositorios.",  # i18n-allow
     "deployments": "Ahora mismo no tengo acceso a tus despliegues.",  # i18n-allow
     "cloud": "Ahora mismo no tengo acceso a tu facturación en la nube.",  # i18n-allow
-    "activity": "Ahora mismo no puedo acceder a tu historial de actividad.",  # i18n-allow
+    "activity": "No guardo un historial de tu actividad.",  # i18n-allow
 }
 _REFUSAL_ES_FALLBACK = "Ahora mismo no tengo acceso a esos datos."  # i18n-allow
 

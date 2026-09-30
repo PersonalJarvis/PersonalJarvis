@@ -2083,18 +2083,6 @@ class DesktopApp:
                     getattr(built, "active_provider", "unknown"),
                 )
                 _wire_ready_brain(built)
-
-                awareness_manager = getattr(built, "_awareness_manager", None)
-                if awareness_manager is not None:
-                    from loguru import logger as _aw_logger
-
-                    try:
-                        await awareness_manager.start()
-                        _aw_logger.info(
-                            "AwarenessManager started — StoryTracker is now listening on bus."
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        _aw_logger.opt(exception=exc).warning("AwarenessManager.start() failed.")
             except Exception as exc:  # noqa: BLE001
                 from loguru import logger
 

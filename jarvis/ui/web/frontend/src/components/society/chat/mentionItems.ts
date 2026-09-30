@@ -13,6 +13,9 @@ import { PLUGIN_FAMILIES, marketplacePluginId, pluginFamily } from "@/lib/plugin
 import type { Capability, SocietyAgent } from "../data";
 import type { AgentStatus } from "@/lib/agenticIdeApi";
 
+/** The one plugin-kind capability that is not a connector: the artifact builder. */
+const ARTIFACT_CAPABILITY = "plugin:create_artifact";
+
 /** "plugin:gmail" → "gmail"; "mcp:github/create_issue" → "github/create_issue". */
 function capabilityName(id: string): string {
   return id.replace(/^(plugin|cli|mcp|skill|core):/, "");
@@ -229,7 +232,7 @@ export function buildMentionCatalog(
       continue;
     }
     const kind = kindOf(cap);
-    if (kind === "plugin") {
+    if (kind === "plugin" && cap.id !== ARTIFACT_CAPABILITY) {
       // Coding commands and other non-connector tools are not plugins.
       continue;
     }
@@ -288,14 +291,17 @@ export function buildMentionCatalog(
   }
 
   for (const cap of rest) {
-    const short = capabilityName(cap.id);
+    // The artifact builder is tagged by what it makes ("@artifact") and sits
+    // with Jarvis's own tools; the pin still carries its capability id, which
+    // is what opens the artifact gate for the turn.
+    const isArtifact = cap.id === ARTIFACT_CAPABILITY;
+    const short = isArtifact ? "artifact" : capabilityName(cap.id);
     const value = takeValue(short, cap.id, taken);
-    items.push(
-      capabilityItem(cap, value, {
-        key: cap.id,
-        detail: false,
-      }),
-    );
+    const item = capabilityItem(cap, value, {
+      key: cap.id,
+      detail: false,
+    });
+    items.push(isArtifact ? { ...item, group: "tools" } : item);
   }
 
   for (const [server, tools] of mcpByServer) {

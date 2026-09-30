@@ -69,6 +69,14 @@ import {
   X,
 } from "lucide-react";
 import { SplitBelowIcon, SplitRightIcon } from "./splitIcons";
+import {
+  holdsSizeLead,
+  mayLeadSize,
+  onSizeLeadReleased,
+  releaseSizeLead,
+  sizeLeadKey,
+  takeSizeLead,
+} from "./paneSizeLead";
 // A leaf module with no DOM and no terminal in it, which is the point: the
 // wizard quotes this same number before any pane exists — see ./layout.
 import { cn } from "@/lib/utils";
@@ -493,8 +501,12 @@ interface AgenticTerminalProps {
   workspaceId?: string;
   /** Agent label shown in the pane header ("Claude Code"). */
   displayName: string;
-  /** Compact workspace chrome is opt-in; legacy grids retain their existing header. */
-  headerMode?: "legacy" | "compact";
+  /**
+   * Compact workspace chrome is opt-in; legacy grids retain their existing
+   * header. "none" draws the bare terminal for a host that brings its own
+   * title bar (the office's pane panel) — no header, no border of its own.
+   */
+  headerMode?: "legacy" | "compact" | "none";
   /** Compact header only: opens the fork dialog for this pane. */
   onFork?: () => void;
   /** Compact header only: the worktree branch this pane runs on, if any. */
@@ -624,6 +636,13 @@ interface AgenticTerminalProps {
    * one, and the backend spawns a new agent for it.
    */
   restartToken?: number;
+  /**
+   * Open as THE view of this pane in this window: while mounted it sizes the
+   * pane, and the same pane's other viewers here (the IDE grid behind the
+   * office's pane window) follow it instead of taking the size back on every
+   * gesture. Read at mount. See ./paneSizeLead.
+   */
+  sizeLead?: boolean;
 }
 
 export function AgenticTerminal({
@@ -666,6 +685,7 @@ export function AgenticTerminal({
   showArrangeHandle = false,
   arranging = false,
   layoutBusy = false,
+  sizeLead = false,
 }: AgenticTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRegionRef = useRef<HTMLDivElement | null>(null);
@@ -678,6 +698,15 @@ export function AgenticTerminal({
   const claimResizeRef = useRef<(() => void) | null>(null);
   /** The claim a gesture inside the pane makes — see `takeOwnership`. */
   const takeOwnershipRef = useRef<(() => void) | null>(null);
+  /**
+   * This viewer's identity in the window's size-lead registry (./paneSizeLead),
+   * and whether it held the lead when its terminal was last torn down. Both
+   * outlive the connect effect: a rebuild (a restart, the font arriving, the
+   * grid settling) is the same viewer, and must come back holding the lead it
+   * had rather than leaving the pane leaderless for another viewer to claim.
+   */
+  const leadTokenRef = useRef<object>({});
+  const heldLeadRef = useRef(false);
   const visibilityRef = useRef<{
     show: (afterFlush?: () => void) => void;
     park: () => void;
@@ -1566,6 +1595,18 @@ export function AgenticTerminal({
     let owned = false;
     /** Is this pane showing a geometry another viewer chose? See reclaimOnGesture. */
     let displaced = false;
+    /*
+     * This viewer's place among the pane's viewers in THIS window. The server
+     * settles who sizes the pane between windows; inside one, a second viewer
+     * of the same pane (the office's pane window over the IDE grid) would
+     * otherwise take the size back on every gesture and the two would trade it
+     * every GESTURE_RECLAIM_MS. See ./paneSizeLead.
+     */
+    const leadKey = sizeLeadKey(workspaceId, name);
+    const leadToken = leadTokenRef.current;
+    if (sizeLead || heldLeadRef.current) takeSizeLead(leadKey, leadToken);
+    heldLeadRef.current = false;
+    const mayLead = () => mayLeadSize(leadKey, leadToken);
 
     /*
      * May this pane take the shared size without being asked to?
@@ -1585,6 +1626,7 @@ export function AgenticTerminal({
      * that had just been made to fill the window (2026-08-25).
      */
     const viewerMayOwn = () =>
+      mayLead() &&
       activeRef.current &&
       (typeof document === "undefined" ||
         typeof document.hasFocus !== "function" ||
@@ -1658,6 +1700,23 @@ export function AgenticTerminal({
        * narrow that will be, and how many panes to open stays the user's call.
        */
       const size = measured;
+      // A pane showing another viewer's geometry keeps showing it while its
+      // own tile has not changed since it last asked. Fitting it back to the
+      // tile here and then staying quiet (the request below would repeat one
+      // already turned down) left xterm at the tile's width while the agent
+      // went on drawing for the owner's: rows drawn over rows, word tails left
+      // at the end of other lines, worst on returning to the IDE, where every
+      // pane refits (2026-09-29). The geometry `onGeometry` applied is the one
+      // the agent really draws for, so it is the one this grid must hold.
+      if (
+        !claimOwner &&
+        displaced &&
+        sentSize &&
+        sentSize.cols === size.cols &&
+        sentSize.rows === size.rows
+      ) {
+        return;
+      }
       try {
         if (size.cols === proposed.cols && size.rows === proposed.rows) {
           fit.fit();
@@ -1667,6 +1726,8 @@ export function AgenticTerminal({
       } catch {
         return;
       }
+      // The grid now comes from a tile, so a reconnect may hand it over.
+      mountMeasured = true;
       // Already delivered and unchanged: the fit above was the whole job.
       // Re-announcing a size makes the agent on the other end redraw its
       // entire screen, and a pane refits several times per settling layout.
@@ -1783,9 +1844,15 @@ export function AgenticTerminal({
      * desktop shell's answer to that question can lag the truth, and a click
      * that is not allowed to take the pane back leaves the user with no way
      * to do so at all.
+     *
+     * It also makes this viewer the pane's lead in this window, so the view
+     * the user just pressed keeps the size instead of another viewer of the
+     * same pane here taking it straight back on the next mouse move.
      */
     const takeOwnership = () => {
-      if (activeRef.current) sendResize(true);
+      if (!activeRef.current) return;
+      takeSizeLead(leadKey, leadToken);
+      sendResize(true);
     };
     takeOwnershipRef.current = takeOwnership;
     /**
@@ -1805,7 +1872,10 @@ export function AgenticTerminal({
      */
     let lastGestureReclaimAt = 0;
     const reclaimOnGesture = () => {
-      if (!displaced || !activeRef.current) return;
+      // Another viewer of this pane in this very window holds it: the gesture
+      // is as much that viewer's as this one's, and taking the size back here
+      // is what made the two trade it forever.
+      if (!displaced || !activeRef.current || !mayLead()) return;
       const now = Date.now();
       if (now - lastGestureReclaimAt < GESTURE_RECLAIM_MS) return;
       lastGestureReclaimAt = now;
@@ -1814,30 +1884,73 @@ export function AgenticTerminal({
     window.addEventListener("pointermove", reclaimOnGesture, { passive: true });
     window.addEventListener("pointerdown", reclaimOnGesture, true);
     window.addEventListener("keydown", reclaimOnGesture, true);
+    /*
+     * The lead viewer went away (the office's pane window closed): the size is
+     * this window's to set again, and this pane's tile is what it shows. Its
+     * own refits stayed quiet while it only watched, so nothing else would
+     * hand the agent this tile's size back.
+     */
+    const stopLeadWatch = onSizeLeadReleased(leadKey, () => {
+      if (disposed) return;
+      // A claim, not a request: the lead that just left was THIS window's,
+      // closed from here, and a request would be answered with the size the
+      // departed viewer chose — whatever the desktop shell says about focus.
+      sendResize(activeRef.current);
+    });
 
-    const openedWithClaim = viewerMayOwn();
+    /*
+     * The size this socket connects with. The tile's own measurement when there
+     * was one: the mount-time fit above already clamped the grid to the floors,
+     * so the terminal's geometry is safe to hand over as-is. When that fit
+     * could not run at all — a grid cell still mid-layout, a pane mounted
+     * hidden on the chat stage — the terminal still holds what it was
+     * constructed with, and THAT must not go out as if a tile had measured it:
+     * a running agent would be re-wrapped for 80 columns no tile has, and again
+     * for the real ones a moment later (ConPTY re-flows the whole screen on
+     * each). `UNMEASURED_SIZE` says so on the wire instead; the real size
+     * follows from `onOpen`'s fit as soon as the cell settles.
+     *
+     * Read on EVERY connect, not once at mount. The socket reconnects on its
+     * own (a backend restart, sleep and wake), and a handshake carrying the
+     * size the pane had when it mounted resized the agent to a grid the pane
+     * had long left — its frame drawn for that width into this one, until the
+     * next repaint happened to come (2026-09-29).
+     */
+    let openedWithClaim = viewerMayOwn();
+    const connectSize = () => {
+      if (!mountMeasured || !measurable()) return UNMEASURED_SIZE;
+      let proposed: { cols: number; rows: number } | undefined;
+      try {
+        proposed = fit.proposeDimensions();
+      } catch {
+        proposed = undefined;
+      }
+      const cols = proposed?.cols ?? term.cols;
+      const rows = proposed?.rows ?? term.rows;
+      if (!Number.isFinite(cols) || !Number.isFinite(rows)) return UNMEASURED_SIZE;
+      // The same floors `applyResize` puts on the grid.
+      return {
+        cols: Math.max(cols, MIN_REAL_COLS),
+        rows: Math.max(rows, MIN_REAL_ROWS),
+      };
+    };
     socket = openPaneSocket(
       {
         name,
         workspaceId,
-        // The connect-time size is the tile's own measurement when there was
-        // one. The mount-time fit above already clamped the grid to the
-        // floors, so the terminal's geometry is safe to hand over as-is.
-        // When that fit could not run at all — a grid cell still mid-layout,
-        // a pane mounted hidden on the chat stage — the terminal still holds
-        // what it was constructed with, and THAT must not go out as if a tile
-        // had measured it: a running agent would be re-wrapped for 80
-        // columns no tile has, and again for the real ones a moment later
-        // (ConPTY re-flows the whole screen on each). `UNMEASURED_SIZE` says
-        // so on the wire instead; the real size follows from `onOpen`'s fit
-        // as soon as the cell settles.
-        ...(mountMeasured &&
-        term.cols >= MIN_REAL_COLS &&
-        term.rows >= MIN_REAL_ROWS
-          ? { cols: term.cols, rows: term.rows }
-          : UNMEASURED_SIZE),
+        get cols() {
+          return connectSize().cols;
+        },
+        get rows() {
+          return connectSize().rows;
+        },
         appearance: appearanceRef.current,
-        claimOwner: openedWithClaim,
+        // Decided per connect as well, and remembered: `onOpen` settles
+        // ownership from what THIS handshake claimed.
+        get claimOwner() {
+          openedWithClaim = viewerMayOwn();
+          return openedWithClaim;
+        },
       },
       {
         onOpen: () => {
@@ -2162,6 +2275,13 @@ export function AgenticTerminal({
       } catch {
         /* ignore */
       }
+      // After the socket, so this viewer is gone before another one of the
+      // pane here takes the size back.
+      stopLeadWatch();
+      // Remembered for a rebuild of this same viewer; forgotten on unmount,
+      // when nothing reads it again.
+      heldLeadRef.current = holdsSizeLead(leadKey, leadToken);
+      releaseSizeLead(leadKey, leadToken);
       // Before the terminal: frees this pane's WebGL context slot.
       renderer.dispose();
       term.dispose();
@@ -2482,8 +2602,9 @@ export function AgenticTerminal({
         // click landed, and the ring around it faded in over the next 150 ms.
         // On a grid where the focused pane is the one standing accent, that
         // read as a flicker rather than as a pane taking focus.
-        "relative flex h-full w-full flex-col overflow-hidden border backdrop-blur-[4px]",
-        headerMode === "compact" ? "rounded-2xl" : "rounded-lg",
+        "relative flex h-full w-full flex-col overflow-hidden backdrop-blur-[4px]",
+        headerMode === "none" ? "border-0" : "border",
+        headerMode === "compact" ? "rounded-2xl" : headerMode === "none" ? "rounded-none" : "rounded-lg",
         "transition-[box-shadow,border-color,opacity] duration-150 ease-out motion-reduce:transition-none",
         // Focus steps the RIM one notch, from the structural hairline to
         // `--border-strong`, and stops there. It used to add a translucent
@@ -2555,7 +2676,7 @@ export function AgenticTerminal({
         branch={branch}
         computerName={computerName}
         placementItems={placementItems}
-      /> : <PaneHeader
+      /> : headerMode === "none" ? null : <PaneHeader
         workspaceId={workspaceId}
         status={visibleStatus}
         statusDetail={statusDetail}

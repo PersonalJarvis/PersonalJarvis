@@ -1,6 +1,6 @@
 # ADR-0012 — `awareness-recall` lives in the router tier, not a worker tier
 
-**Status:** Accepted · **Date:** 2026-05-11 · **Phase:** Awareness A3
+**Status:** Superseded — the tool was removed with the awareness layer on 2026-09-30 (see the ADR-0011 amendment "Awareness tools retired") · **Date:** 2026-05-11 · **Phase:** Awareness A3
 
 ## Context
 

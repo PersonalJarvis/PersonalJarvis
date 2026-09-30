@@ -128,7 +128,6 @@ from .turn_planner import is_contextual_follow_up, plan_turn
 from .voice_command_gate import match_voice_command
 
 if TYPE_CHECKING:
-    from jarvis.awareness.manager import AwarenessManager
     from jarvis.brain.evidence_gate import EvidenceVerdict
     from jarvis.brain.wiki_context import WikiContextInjector
     from jarvis.control.cost import CostMeter as CostMeterLike
@@ -1878,6 +1877,17 @@ _ACTION_UNFULFILLED_PHRASES: dict[str, dict[str, str]] = {
             "No se ejecutó la acción de guardarla."  # i18n-allow: runtime output
         ),
     },
+    "society-create-routine": {
+        "de": (
+            "Die Routine wurde nicht erstellt. "  # i18n-allow: runtime output
+            "Der Speichervorgang wurde nicht ausgeführt."  # i18n-allow: runtime output
+        ),
+        "en": "The routine was not created. The save action did not run.",
+        "es": (
+            "La rutina no se creó. "  # i18n-allow: runtime output
+            "No se ejecutó la acción de guardarla."  # i18n-allow: runtime output
+        ),
+    },
     "contact-upsert": {
         "de": (
             "Ich hab den Kontakt noch nicht gespeichert — sag mir die Angaben "  # i18n-allow: German TTS
@@ -2697,6 +2707,25 @@ _MID_ANSWER_ERROR_PHRASES: dict[str, str] = {
 }
 
 
+#: Source layers that run without a person waiting on the reply. An appshot
+#: parked for "the next message" belongs to the user's next message, never to
+#: a scheduled task or a background worker that happens to run first.
+_AUTOMATED_LAYER_PREFIXES = (
+    "tasks",
+    "workflows",
+    "skills",
+    "missions",
+    "society",
+    "supervisor",
+    "tool.",
+)
+
+
+def _takes_pending_appshot(source_layer: str | None) -> bool:
+    layer = (source_layer or "").strip().lower()
+    return not layer.startswith(_AUTOMATED_LAYER_PREFIXES)
+
+
 class BrainManager:
     """Top-level orchestrator with intent router and smart fallback."""
 
@@ -2716,7 +2745,6 @@ class BrainManager:
         people: PersonStore | None = None,
         curator: Curator | None = None,
         cost_meter: "CostMeterLike | None" = None,  # noqa: UP037
-        awareness_manager: "AwarenessManager | None" = None,  # noqa: UP037
         wiki_injector: "WikiContextInjector | None" = None,  # noqa: UP037
         contacts: Any = None,
         readback_composer: "ReadbackComposer | None" = None,  # noqa: UP037
@@ -2765,10 +2793,6 @@ class BrainManager:
         # call, with the EXISTING canned line as the instant fallback. None on the
         # bare/CLI managers and in tests => unchanged canned behavior (risk-free).
         self._readback_composer = readback_composer
-        # Phase A1: optional AwarenessManager. When set, _build_system_prompt()
-        # injects a compact live snapshot (window/idle) as a fallback in case
-        # the LLM does NOT call the awareness-snapshot tool. Plan §5 "Files to Modify".
-        self._awareness_manager = awareness_manager
         # Phase 5 / ADR-0006: optional budget hook. Fed with aggregated usage
         # post-call; pre-call blocks when in cooldown or when the task/daily
         # budget is exceeded. When None, the feature is completely inactive —
@@ -2894,6 +2918,9 @@ class BrainManager:
         # reset). Prevents each voice turn from running through 8 sequential
         # "no API key" failures.
         self._dead_providers: set[str] = set()
+        # The provider a person switched to at runtime ("switch to openai").
+        # A deliberate pick keeps answering even on the realtime voice key.
+        self._switched_to: str | None = None
         # Model-scoped twin of `_dead_providers`: a billing-style rejection
         # (account_blocked, e.g. HTTP 402) on ONE model must not dead-list a
         # provider that has other, untried models still in this turn's chain
@@ -2950,7 +2977,6 @@ class BrainManager:
         user_profile: UserProfile | None = None,
         soul: Soul | None = None,
         people: PersonStore | None = None,
-        awareness_manager: "AwarenessManager | None" = None,  # noqa: UP037
         contacts: Any = None,
     ) -> BrainManager:
         """Builds a BrainManager from the tier-specific config.
@@ -3137,7 +3163,6 @@ class BrainManager:
             user_profile=user_profile,
             soul=soul,
             people=people,
-            awareness_manager=awareness_manager,
             contacts=contacts,
         )
         manager._configured_fallbacks = configured_fallbacks
@@ -3755,7 +3780,7 @@ class BrainManager:
         stacks for a voice turn (name, soul, persona, the assistant file, the
         user's profile, people, contacts, the identity card, core memory, the
         skills section, the tool-routing rules), the wiki context this turn's
-        text pulls in, and the per-turn context (date, awareness). Read-only:
+        text pulls in, and the per-turn context (date). Read-only:
         nothing is stored on the manager, so a voice turn running alongside
         sees no trace of it.
         """
@@ -4252,6 +4277,18 @@ class BrainManager:
             except Exception:  # noqa: BLE001
                 pass
 
+        # What Jarvis learned across earlier calls and chats (the background
+        # review loop in jarvis/memory/learning). A cached snapshot that only
+        # changes after a review writes, so it stays in the cached prefix.
+        try:
+            from jarvis.memory.learning.notebook import snapshot_block
+
+            learned_block = snapshot_block()
+            if learned_block:
+                parts.append(learned_block)
+        except Exception:  # noqa: BLE001 — a notebook fault never breaks a prompt build
+            log.debug("learned notebook block unavailable", exc_info=True)
+
         # Profile-write directive — only when the update_profile tool is actually
         # wired (else this would contradict the hard "do not invent tools" rule).
         # The legacy auto-curator is soft-disabled, so the brain itself must
@@ -4341,31 +4378,12 @@ class BrainManager:
                 cm = cm[:20_000] + "…"
             parts.append(cm)
 
-        # Phase A1: awareness snapshot as fallback when the LLM does not
-        # actively call the awareness-snapshot tool. Defensive try/except
-        # because a state read must never crash the system-prompt build.
-        # Wave 2 (omni-latency): in cache-optimized mode this moves to the
-        # per-turn user message (_build_turn_context) so the cached system
-        # prefix stays byte-stable across turns. Legacy mode keeps it here.
-        if self._awareness_manager is not None and not self._cache_optimized():
-            try:
-                snap = self._awareness_manager.state.snapshot_for_prompt(max_chars=4_000)
-                if snap:
-                    parts.append(
-                        "CURRENT CONTEXT (background, for orientation only, do "
-                        "NOT read aloud or enumerate unless the user asks "
-                        f"directly):\n{snap}"
-                    )
-            except Exception:  # noqa: BLE001
-                pass
-
         # Skills-Brain-Integration (Track B): surface the installed, active
         # user skills so the router-tier brain can actually choose ``run_skill``
         # for them. Without this block the ``run-skill`` tool is registered but
         # the brain never learns which skills exist, so it is never selected.
-        # Static content (changes only on install/promote), so unlike the
-        # per-turn awareness snapshot above it stays in the cached system
-        # prefix — mirrors the capability block below. Defensive try/except:
+        # Static content (changes only on install/promote), so it stays in the
+        # cached system prefix — mirrors the capability block below. Defensive try/except:
         # a renderer fault must never crash the system-prompt build. The lazy
         # import is intentional so a monkeypatched renderer resolves correctly.
         try:
@@ -4612,7 +4630,7 @@ class BrainManager:
     def _build_turn_context(self) -> str:
         """Per-turn dynamic context for the user message (cache-optimized mode).
 
-        Date/time + awareness snapshot + wiki context. Empty in legacy mode
+        Date/time + wiki context. Empty in legacy mode
         (there these live in the system prompt instead). Riding on the user
         message keeps the cached system prefix byte-stable across turns, which
         is what actually lets the Gemini/Anthropic prompt cache hit.
@@ -4642,17 +4660,6 @@ class BrainManager:
         private = _TURN_OVERRIDE.get()
         if private is not None and private.tool_context.get("tool_origin") == "society":
             return "\n\n".join(parts)
-        if self._awareness_manager is not None:
-            try:
-                snap = self._awareness_manager.state.snapshot_for_prompt(max_chars=4_000)
-                if snap:
-                    parts.append(
-                        "CURRENT CONTEXT (background, for orientation only, do "
-                        "NOT read aloud or enumerate unless the user asks "
-                        f"directly):\n{snap}"
-                    )
-            except Exception:  # noqa: BLE001
-                pass
         if self._wiki_context_suffix:
             parts.append(self._wiki_context_suffix)
         agentic_block = self._agentic_focus_block()
@@ -4664,8 +4671,7 @@ class BrainManager:
         """Workspace-awareness block while the Agentic IDE's focus mode is on.
 
         Pure in-memory read (the session's cached project profile + each
-        terminal's ring buffer), so it stays off the latency budget the way
-        awareness does (AP-9). Any failure degrades to no block — a coding-mode
+        terminal's ring buffer), so it stays off the latency budget (AP-9). Any failure degrades to no block — a coding-mode
         convenience must never be able to break a voice turn.
         """
         try:
@@ -4719,6 +4725,7 @@ class BrainManager:
                 return
             previous = self._active_name
             self._active_name = canonical
+            self._switched_to = canonical
             # Keep deep_brain following the active provider on a runtime switch
             # when there is no explicit cross-provider deep split (deep_brain
             # tracked the previous active, or was never configured) — so switching
@@ -5388,16 +5395,6 @@ class BrainManager:
             domain_map = dict(
                 connected_domain_tool_map(cli_reg) if cli_reg is not None else {}
             )
-            # The "activity" (screen / window-history) domain is served by the
-            # always-on internal awareness-recall tool, not a connected CLI, so
-            # wire it into the domain→tool map here. Without a mandated tool the
-            # fast brain confabulates "der lokale Verlaufsspeicher ist nicht
-            # verfügbar" without ever calling awareness-recall (live 2026-06-18,
-            # proven from the log). Guarded on the tool actually being
-            # registered so a deployment without awareness degrades to the
-            # gate's honest refusal, never a mandate for a missing tool.
-            if "awareness-recall" in (getattr(self, "_tools", None) or {}):
-                domain_map.setdefault("activity", "awareness-recall")
 
             def _hint(domain: str, lang: str) -> str:
                 if cli_reg is None:
@@ -5432,48 +5429,6 @@ class BrainManager:
         except Exception:  # noqa: BLE001
             log.debug("evidence gate degraded to PASS", exc_info=True)
             return EvidenceVerdict(kind="pass")
-
-    async def _prefetch_activity_block(
-        self, tool_name: str, user_text: str, *, trace_id: Any = None,
-    ) -> str:
-        """Deterministically run the safe, read-only awareness-recall tool.
-
-        The evidence gate's ``activity`` domain mandates ``awareness-recall``,
-        but the fast brain does not reliably call a soft-mandated tool (live
-        2026-06-18). Rather than depend on the model, the manager runs the tool
-        itself and injects the rendered timeline as answer-context. Goes through
-        the ``ToolExecutor`` (never a direct ``Tool.execute`` — AP-3) so the
-        risk-tier/audit path is honoured. Returns the rendered output, or ``""``
-        when the tool is missing / errors / yields nothing (the caller then
-        keeps the soft mandate so the honest fallback fires, never a
-        confabulation).
-        """
-        tool = (self._tools or {}).get(tool_name)
-        if tool is None or self._tool_executor is None:
-            log.warning(
-                "activity pre-fetch skipped: tool=%r present=%s executor=%s",
-                tool_name, tool is not None, self._tool_executor is not None,
-            )
-            return ""
-        try:
-            res = await self._tool_executor.execute(
-                tool,
-                {"query": user_text, "since_minutes": 1440},
-                user_utterance=user_text,
-                trace_id=trace_id,
-            )
-        except Exception:  # noqa: BLE001 — pre-fetch is best-effort, never fatal
-            log.warning("activity pre-fetch raised", exc_info=True)
-            return ""
-        ok = bool(getattr(res, "success", False))
-        out = str(getattr(res, "output", "") or "").strip()
-        log.info(
-            "activity pre-fetch result: success=%s out_len=%d err=%r",
-            ok, len(out), getattr(res, "error", None),
-        )
-        if ok:
-            return out
-        return ""
 
     def _is_smalltalk(self, user_text: str) -> bool:
         """Pure smalltalk allowlist check — independent of spawn-verb logic.
@@ -5788,6 +5743,18 @@ class BrainManager:
                     skill=explicit_skill, fired=True,
                 )
                 return explicit_skill
+
+            # Channel 0.4 (2026-09-29): scheduled work for an agent ("a briefing
+            # every day at 8", "create a routine that …") is an agent routine.
+            # No skill captures it — neither the skill-creator (it wrote an
+            # inactive draft skill live) nor a briefing skill that would run
+            # once now instead of scheduling.
+            if "society-create-routine" in self._live_tool_names():
+                from jarvis.society.routine_intent import wants_agent_routine
+
+                if wants_agent_routine(user_text):
+                    log.info("scheduled agent work — society-create-routine owns this turn")
+                    return None
 
             # Channel 0.5 (2026-08-18): the user asked to CREATE a skill
             # ("erstell mir einen neuen Skill, der … mit YouTube Music …").
@@ -6758,10 +6725,12 @@ class BrainManager:
         try:
             window = int(getattr(brain, "context_window", 0) or 0)
         except (TypeError, ValueError):
+            # A malformed context window means 'unknown'; no trimming then.
             window = 0
         try:
             max_tools = int(getattr(brain, "max_tools", 0) or 0)
         except (TypeError, ValueError):
+            # A malformed tool limit means 'unknown'; no trimming then.
             max_tools = 0
         if window <= 0 and max_tools <= 0:
             return tools
@@ -8157,6 +8126,7 @@ class BrainManager:
             from jarvis.agentic_ide.session import (
                 MAX_TERMINALS,
                 SessionError,
+                WorkspaceFull,
                 get_registry,
                 terminals_added_event,
             )
@@ -8275,12 +8245,29 @@ class BrainManager:
                     # is attempted on its own and what could not be opened is
                     # named at the end, so a mixed fleet degrades pane by pane
                     # instead of all at once.
+                    # The registry refuses a batch that does not fit as a
+                    # whole, but a spoken "open five more" with room for three
+                    # opens three and says so (``ide_terminals_spawned_capped``):
+                    # the user hears the shortfall instead of a flat refusal.
+                    current = registry.session
+                    room = (
+                        MAX_TERMINALS - len(current.terminals)
+                        if current is not None
+                        else group.count
+                    )
+                    if room <= 0:
+                        if created:
+                            break
+                        raise WorkspaceFull(
+                            f"A workspace can contain at most {MAX_TERMINALS} terminals."
+                        )
+                    wanted = min(group.count, room)
                     try:
                         opened, _capped = await registry.add_terminals(
-                            group.count, agent=group.agent
+                            wanted, agent=group.agent
                         )
                     except SessionError as exc:
-                        if "maximum" in str(exc).lower():
+                        if isinstance(exc, WorkspaceFull):
                             raise
                         log.info(
                             "Agentic IDE spawn: %s group refused: %s",
@@ -8290,7 +8277,7 @@ class BrainManager:
                         refused.append(str(exc))
                         continue
                     created.extend(opened)
-                    if _capped:
+                    if _capped or wanted < group.count:
                         # The workspace filled up mid-fleet. Stop rather than
                         # asking for the next group and getting the same
                         # refusal — the readback already reports the shortfall.
@@ -8300,7 +8287,7 @@ class BrainManager:
             # these already carries a user-facing English sentence, and speaking
             # it is more useful than a generic failure.
             log.info("Agentic IDE spawn fast-path refused: %s", exc)
-            if "maximum" in str(exc).lower():
+            if isinstance(exc, WorkspaceFull):
                 return action_phrase(
                     "ide_terminals_full", out_lang, max=MAX_TERMINALS
                 )
@@ -10028,6 +10015,7 @@ class BrainManager:
             locale=locale,
             bus=self._bus,
             trace_id=trace_id,
+            allow_pending_appshot=_takes_pending_appshot(source_layer),
         )
         if outcome.status == "clarify":
             pending_map[confirm_key] = _PendingScreenConfirm(
@@ -10585,6 +10573,11 @@ class BrainManager:
         if db:
             order.append(db)
         order += ["gemini", "claude-api", "openai", "openrouter", "grok", "nvidia"]
+        from jarvis.brain.voice_key import bills_voice_key
+
+        # The realtime voice key leads a turn only when no other provider can
+        # call tools (mandate 2026-09-29: that key pays for the voice call).
+        on_voice_key: tuple[str, str | None] | None = None
         seen: set[str] = set()
         for name in order:
             if name in seen or name == skip or name not in available:
@@ -10607,8 +10600,11 @@ class BrainManager:
             if not self._rate_tracker.is_available(name, model):
                 continue
             if self._brain_can_call_tools(name, model):
+                if bills_voice_key(self._config, name):
+                    on_voice_key = on_voice_key or (name, model)
+                    continue
                 return (name, model)
-        return None
+        return on_voice_key
 
     def _turn_has_action_intent(self, user_text: str) -> bool:
         """Best-effort, provider-agnostic 'this turn wants a tool/desktop action'
@@ -10669,6 +10665,7 @@ class BrainManager:
         # make the loop wrongly fall through). Set below only when we prepend an
         # intelligent-router lead.
         self._router_lead_key: tuple[str, str | None] | None = None
+        tool_lead: tuple[str, str | None] | None = None
 
         override = _TURN_OVERRIDE.get()
         if override is not None:
@@ -10699,6 +10696,7 @@ class BrainManager:
                         active, helper[0], active,
                     )
                     self._router_lead_key = helper
+                    tool_lead = helper
                     chain.append(helper)
             elif getattr(self, "_turn_needs_tools", False):
                 # Flag OFF (kill switch): the narrower action-intent delegation —
@@ -10710,6 +10708,7 @@ class BrainManager:
                         "Tool delegation (legacy): %s cannot call tools — leading "
                         "this action turn with %s.", active, helper[0],
                     )
+                    tool_lead = helper
                     chain.append(helper)
 
         # 0. Deep/code intents: dedicated deep_brain first (e.g. gemini via
@@ -10797,7 +10796,52 @@ class BrainManager:
                 continue
             seen.add(item)
             deduped.append(item)
-        return deduped
+        # A tool lead no other family could take, and a provider the person
+        # switched to themselves, stay on the chain.
+        keep = [entry for entry in deduped if entry[0] == self._switched_to == active]
+        if tool_lead is not None:
+            keep.append(tool_lead)
+        return self._keep_off_voice_key(
+            deduped,
+            keep=keep,
+            needs_tools=bool(getattr(self, "_turn_needs_tools", False)),
+        )
+
+    def _keep_off_voice_key(
+        self,
+        chain: list[tuple[str, str | None]],
+        *,
+        keep: Iterable[tuple[str, str | None]] = (),
+        needs_tools: bool = False,
+    ) -> list[tuple[str, str | None]]:
+        """Drop the realtime voice key's family while another provider remains.
+
+        Text turns, Telegram and scheduled routines never spend the key that
+        pays for the live voice call (mandate 2026-09-29). A single-key install
+        keeps it, and so do the ``keep`` entries (a tool lead no other family
+        could take, a provider the person switched to). Only a
+        provider that can take the turn right now counts as the alternative:
+        not rate-limited, and able to call tools when the turn needs them.
+        """
+        from jarvis.brain.voice_key import without_voice_key
+
+        models: dict[str, str | None] = {}
+        for name, model in chain:
+            models.setdefault(name, model)
+
+        def can_answer(name: str) -> bool:
+            model = models.get(name)
+            if not self._rate_tracker.is_available(name, model):
+                return False
+            return not needs_tools or self._brain_can_call_tools(name, model)
+
+        kept = without_voice_key(self._config, chain, is_alternative=can_answer, keep=keep)
+        if len(kept) < len(chain):
+            log.debug(
+                "Voice key reserved for the live call — left out of this chain: %s",
+                sorted({name for name, _ in chain} - {name for name, _ in kept}),
+            )
+        return kept
 
     # ------------------------------------------------------------------
     # Generate — Haupt-Entrypoint
@@ -11515,37 +11559,11 @@ class BrainManager:
                 "Evidence gate: domain=%s requires tool %s this turn",
                 verdict.domain, verdict.tool_name,
             )
-            injected = False
-            if verdict.domain == "activity":
-                # The fast brain will NOT reliably honor a soft tool directive
-                # (live 2026-06-18: awareness-recall was mandated yet never
-                # called — executed=[] in the log — and the model confabulated
-                # "der lokale Verlaufsspeicher ist nicht verfügbar"). The tool
-                # is internal, read-only and safe, so run it deterministically
-                # HERE (via the ToolExecutor) and inject its result as concrete
-                # answer-context. The brain then answers from real data with no
-                # dependency on its tool-calling discretion; the honest-fallback
-                # guard is intentionally left disarmed because the data is
-                # already in hand.
-                block = await self._prefetch_activity_block(
-                    verdict.tool_name, user_text, trace_id=turn_trace_id,
-                )
-                if block:
-                    self._evidence_directive = (
-                        "The user is asking what they had open / were doing on "
-                        "their computer. Their ACTUAL recent on-device activity "
-                        "is below — answer the question from THIS data, "
-                        "naturally and concisely. The awareness store IS "
-                        "available; never claim it is unavailable.\n\n" + block
-                    )
-                    self._evidence_required_tool = ""
-                    injected = True
-            if not injected:
-                self._evidence_directive = verdict.directive
-                self._evidence_required_tool = verdict.tool_name
-                # Persist the domain so the honest "couldn't reach X" fallback can
-                # NAME the capability (B3) instead of the generic "the tool".
-                self._evidence_required_domain = verdict.domain
+            self._evidence_directive = verdict.directive
+            self._evidence_required_tool = verdict.tool_name
+            # Persist the domain so the honest "couldn't reach X" fallback can
+            # NAME the capability (B3) instead of the generic "the tool".
+            self._evidence_required_domain = verdict.domain
 
         # Say-do honesty guard for WRITES. The read evidence gate above never
         # fires on a "save this" turn (it is not a lookup), so a confirmed offer
@@ -11626,6 +11644,31 @@ class BrainManager:
                 self._evidence_required_is_write = True
                 self._evidence_required_domain = "routine"
                 log.info("Society routine creation intent — mandating society_propose_change")
+
+        # Jarvis itself (voice and the lead chat) schedules an agent's
+        # recurring work through the society-create-routine app command. A
+        # request like "a briefing every day at 8" never says "routine" and
+        # used to end as an inactive draft skill (live 2026-09-29), so the
+        # recurrence alone makes the save mandatory.
+        if (
+            not self._evidence_required_tool
+            and "society-create-routine" in self._live_tool_names()
+        ):
+            from jarvis.society.routine_intent import wants_agent_routine
+
+            if wants_agent_routine(user_text):
+                self._evidence_directive = (
+                    "MANDATORY THIS TURN: the user wants work done on a schedule. "
+                    "If the agent does not exist yet, create it with society-create-agent "
+                    "first. Then call society-create-routine for that agent with a "
+                    "self-contained prompt and the schedule. Never use create-skill for "
+                    "scheduled work. Speak the returned next_run; if the tool fails, say "
+                    "the routine was not created."
+                )
+                self._evidence_required_tool = "society-create-routine"
+                self._evidence_required_is_write = True
+                self._evidence_required_domain = "routine"
+                log.info("Recurring-work intent — mandating society-create-routine")
 
         # Phase 5 / ADR-0006: pre-call budget gate. Block rather than request
         # when cooldown is active or the task/daily budget is exhausted.
@@ -11794,7 +11837,7 @@ class BrainManager:
             self._wiki_context_suffix = ""
 
         # Wave 2 (omni-latency): assemble the per-turn dynamic context (date +
-        # awareness + wiki) once. In cache-optimized mode it rides on the user
+        # wiki) once. In cache-optimized mode it rides on the user
         # message (keeping the cached system prompt stable); empty in legacy
         # mode. Reused for every provider in the fallback chain below.
         turn_context = self._build_turn_context()
@@ -12058,6 +12101,14 @@ class BrainManager:
                 _turn_tools = self._hide_run_skill_on_pc_control_turn(
                     _turn_tools, user_text
                 )
+            # Scheduled work for an agent is a routine, never a draft skill
+            # with a cron line (live 2026-09-29: "every day at 8" became an
+            # inactive skill while the routine was reported as set up).
+            if (
+                isinstance(_turn_tools, dict)
+                and self._evidence_required_tool == "society-create-routine"
+            ):
+                _turn_tools = {n: t for n, t in _turn_tools.items() if n != "create-skill"}
             # AI Pointer: on a deictic pointer turn the cursor crop is already the
             # only attached image, so drop the redundant ``inspect-pointer`` PULL
             # tool (calling it produced an empty spoken answer — observed live).
@@ -13179,16 +13230,11 @@ class BrainManager:
 
             harness_manager = HarnessManager(bus=self._bus)
 
-            # ROOT CAUSE of the "local history store is unavailable"
-            # voice bug (live 2026-06-18): this rebuild — triggered by EVERY
-            # CLI/MCP connect at boot ("Tool-Registry refreshed: 29 -> 107") —
-            # used to drop the four shared DI references the boot path passes, so
-            # the rebuilt awareness-recall got recall_store=None (and
-            # awareness-snapshot/contact/spawn_worker lost their managers too).
-            # awareness-recall then returned "awareness recall store unavailable"
-            # FOREVER after the first CLI connected, and the brain faithfully
-            # relayed that — it was a genuine outage, never a confabulation. The
-            # boot DI MUST be mirrored here so a refresh preserves it.
+            # This rebuild runs on EVERY CLI/MCP connect at boot ("Tool-Registry
+            # refreshed: 29 -> 107"). It must mirror the shared DI references
+            # the boot path passes, or the rebuilt tools lose their managers
+            # (live 2026-06-18: contact/spawn_worker went dark after the first
+            # CLI connected).
             new_tools = _load_tools_for_tier(
                 tier,
                 bus=self._bus,
@@ -13198,8 +13244,6 @@ class BrainManager:
                 people=self._people,
                 config=self._config,
                 mission_manager=_resolve_mission_manager(),
-                awareness_manager=self._awareness_manager,
-                recall_store=self._recall,
                 contacts=self._contacts,
             )
             new_local_action_tools = _load_local_action_tools(
@@ -13488,6 +13532,14 @@ class BrainManager:
         """
         del prefer_api
         intent = "deep" if model_tier == "deep" else "fast"
+        # A routine whose prompt asks for its result as an artifact is granted
+        # the builder for that turn — the same explicit-word rule the chat gate
+        # applies, so "every morning at 8, my briefing as an artifact" works
+        # without the person knowing the tool has a grant of its own.
+        from jarvis.brain.artifact_gate import wants_artifact  # noqa: PLC0415
+
+        if wants_artifact(prompt) and _ARTIFACT_TOOL_NAME not in allowed_tools:
+            allowed_tools = (*allowed_tools, _ARTIFACT_TOOL_NAME)
         tools = self._select_task_tools(allowed_tools)
         from jarvis.core.model_selection import operation_model, worker_selection
         from jarvis.core.task_agent import run_selected, subscription_seat
@@ -13497,7 +13549,7 @@ class BrainManager:
             return await run_selected(
                 selection=selected, prompt=prompt, tool_names=tuple(tools), trace_id=trace_id
             )
-        # The per-turn context (date/time, awareness, wiki) rides on the user
+        # The per-turn context (date/time, wiki) rides on the user
         # message in cache-optimized mode; without it a scheduled turn did not
         # know what day it was (BUG-212 — the morning brief prompts say "the
         # date is in your context" and it was not). Legacy mode carries it in
@@ -13574,6 +13626,9 @@ class BrainManager:
         except Exception:  # noqa: BLE001 — a broken probe must not kill the task
             log.debug("run_task: tool-model chain unavailable", exc_info=True)
             ready = []
+        # A scheduled routine runs unattended; it spends the realtime voice key
+        # only when no other ready provider exists (mandate 2026-09-29).
+        ready = self._keep_off_voice_key(ready)
         chain: list[tuple[str, str | None]] = []
         for name, model in ready[:_TASK_MAX_ATTEMPTS]:
             if intent == "deep":

@@ -25,6 +25,10 @@ These cost real bugs. Nothing catches them but you.
 - **The working tree is SHARED** with other agent sessions. Stage only YOUR
   paths — `git add -p` or an explicit pathspec, and `git commit --only -- <paths>`.
   `git add -A` sweeps someone else's half-finished work into your commit.
+- **A probe against the running app spends the user's real money.** Turns sent
+  to it (`/ws`, `jarvis` CLI, Telegram) bill their own keys: five scripted
+  test turns once cost $6.82 on a deep model. Send one turn, on a subscription
+  or `tests/fakes/`, never a loop against a paid provider.
 - **`jarvis.toml` only through `jarvis/core/config_writer.py`** — lock, tempfile,
   BOM-safe. A raw write leaves the backend unbootable. (AP-7)
 - **Never share a native inference engine** (ctranslate2, ONNX) between callers.

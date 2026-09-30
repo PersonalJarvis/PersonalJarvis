@@ -55,9 +55,10 @@ class CreateSkillTool:
     risk_tier: ClassVar[str] = "monitor"
     description: ClassVar[str] = (
         "Create a NEW skill for this assistant from the user's description — use "
-        "this when the user asks to create, build, or set up a skill, routine, or "
-        "automation ('erstell mir einen Skill, der …', "  # i18n-allow: quoted phrase
-        "'create a skill that …', 'jeden Morgen um 6 sollst du …'). "  # i18n-allow: quoted phrase
+        "this when the user asks to create, build, or set up a skill "
+        "('erstell mir einen Skill, der …', 'create a skill that …'). "  # i18n-allow: quoted phrase
+        "Work on a schedule ('every morning at 6 …', a daily briefing, a routine) "
+        "is NOT a skill: it is an agent routine, created with society-create-routine. "
         "Pass the COMPLETE description in "
         "'intent': what it should do, in which order, at what time or on which "
         "phrase, which services (mail, calendar, tickets, music, …) and every "

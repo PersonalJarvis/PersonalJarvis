@@ -181,7 +181,7 @@ def test_search_web_unregistered_hits_unsupported() -> None:
     fall into UNSUPPORTED — guarding the historical search_web prompt drift
     where the system prompt advertised a tool that did not exist."""
     # Use a fresh registry without web-search (seeded default has 'such' on
-    # awareness/wiki recall but those resolve, so we use an isolated registry).
+    # wiki recall but those resolve, so we use an isolated registry).
     fresh = CapabilityRegistry()
     # No capabilities registered → action_intent True, resolve None
     assert fresh.has_action_intent("such im web nach python 3.13")

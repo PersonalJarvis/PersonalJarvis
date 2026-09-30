@@ -480,6 +480,8 @@ async def run_brain_turn(
     _note_skill_trigger(brain, text)
 
     if bridge is not None:
+        from jarvis.society.surface import requires_explicit_approval
+
         bridge.arm(
             ref,
             ChatGrant(
@@ -489,6 +491,11 @@ async def run_brain_turn(
                 always_allowed=always_allowed,
                 ask=handle.request_approval,
                 call_id_for=mirror.open_call_id,
+                force_ask=(
+                    lambda name, args: requires_explicit_approval(session.session_id, name, args)
+                )
+                if session.surface == "society"
+                else lambda _name, _args: False,
             ),
         )
 

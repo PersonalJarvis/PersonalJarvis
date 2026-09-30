@@ -450,6 +450,18 @@ def describe_failure(exc: BaseException) -> str:
     return recap.condense(raw, 200)
 
 
+def pane_id(term: Any) -> str:
+    """The id this module remembers a pane under: its LIFETIME id, never its key.
+
+    A pane key ("t5") is unique only inside one workspace, and two open
+    workspaces each hold a T5. Keyed by it, both panes shared one cache entry,
+    so one pane's header showed the other pane's model-written title
+    (maintainer report 2026-09-29). ``history_id`` is minted once per pane and
+    never handed on; the key is only the fallback for an object without one.
+    """
+    return str(getattr(term, "history_id", "") or getattr(term, "key", "") or "")
+
+
 def _state(key: str) -> _PaneState:
     entry = _panes.get(key)
     if entry is None:
@@ -554,7 +566,7 @@ def recap_for(term: Any, *, lines: Sequence[str] | None = None) -> SmartRecap:
     been written, and the deterministic one until then — so a pane always has a
     header, from the moment it opens.
     """
-    entry = _panes.get(str(getattr(term, "key", "") or ""))
+    entry = _panes.get(pane_id(term))
     if entry is not None and entry.pinned_headline:
         return SmartRecap(
             headline=entry.pinned_headline,
@@ -579,7 +591,7 @@ def recap_for(term: Any, *, lines: Sequence[str] | None = None) -> SmartRecap:
     # that names the work. A state label ("running since 10:52") is true for
     # this poll and must not be what the list keeps saying once the pane has
     # been asked something.
-    key = str(getattr(term, "key", "") or "")
+    key = pane_id(term)
     if key:
         state = _state(key)
         state.floor_headline = plain.headline if plain.names_work else ""
@@ -612,7 +624,7 @@ def known_headline(term: Any) -> str:
     been asked nothing anywhere; the list then names the CLI, which is then in
     fact everything there is to say.
     """
-    entry = _panes.get(str(getattr(term, "key", "") or ""))
+    entry = _panes.get(pane_id(term))
     if entry is not None:
         if entry.pinned_headline:
             return entry.pinned_headline
@@ -638,7 +650,7 @@ def refresh_soon(term: Any, *, lines: Sequence[str], folder: str = "") -> None:
     try:
         if not _enabled():
             return
-        key = str(getattr(term, "key", "") or "")
+        key = pane_id(term)
         if not key:
             return
         rows = list(lines)
@@ -700,6 +712,7 @@ def _spawn(term: Any, key: str, rows: list[str], folder: str) -> None:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
+        # No running loop: this is a worker thread, handled below.
         try:
             from anyio.from_thread import run_sync
 
@@ -806,6 +819,13 @@ def _resolve_brains() -> list[Any]:
         from jarvis.core.config import load_config
 
         config = load_config()
+        # Recaps are background work: a connected subscription writes them and
+        # no per-token key is touched (live 2026-09-29: recaps billed the
+        # OpenAI key meant for the voice call). If the subscription cannot
+        # answer, the deterministic floor writes the title instead.
+        subscription = _resolve_subscription(config)
+        if subscription is not None:
+            return [subscription]
         candidates: list[Any] = []
         for brain in frontier_brain_candidates(config):
             candidates.append(brain)
@@ -814,23 +834,8 @@ def _resolve_brains() -> list[Any]:
     except Exception as exc:  # noqa: BLE001 - no brain is an answer, not an error
         logger.info("Agentic IDE recap: no brain reachable ({})", exc)
         return []
-    # Every family above needs an API key, and the install this feature broke
-    # on live had exactly one — depleted. A connected coding subscription is a
-    # credential too (§3), and often the STRONGEST model the user has: the very
-    # CLI running in the panes. It goes LAST because a CLI call costs a process
-    # spawn and seconds where an API call costs milliseconds — it should write
-    # the recap only when everything cheaper is dead.
-    #
-    # Appended UNCONDITIONALLY, not into a spare slot. It used to be skipped
-    # whenever MAX_PROVIDER_TRIES API families were configured — which made it
-    # unreachable on exactly the install it was built for: three configured but
-    # broken keys occupied every slot, and the one credential provably working
-    # (the CLI running in the panes) was never asked. Resolving it here only
-    # instantiates the brain; the expensive CLI call happens solely when every
-    # API family has already failed.
-    subscription = _resolve_subscription(config)
-    if subscription is not None:
-        candidates.append(subscription)
+    # Reached only with no subscription connected: the keyed families are
+    # then the whole chain, so a single-key install still gets model recaps.
     return candidates
 
 
@@ -1210,7 +1215,7 @@ async def summarize_now(term: Any, *, lines: Sequence[str], folder: str = "") ->
     as the deterministic recap plus a note saying exactly that, because "why is
     this line thin" is the question the whole feature exists to answer.
     """
-    key = str(getattr(term, "key", "") or "")
+    key = pane_id(term)
     entry = _state(key) if key else _PaneState()
     unpin(key)
     rows = list(lines)

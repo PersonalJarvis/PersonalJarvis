@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   allDesks, archPosts, buildOfficeLayout, countStates, departmentKey, FURNITURE_SIZE, footprint, groupDepartments,
-  MAX_DEPARTMENTS, MIN_DEPARTMENTS, type OfficeAgentInput,
+  MAX_DEPARTMENTS, MIN_DEPARTMENTS, COMMAND_DESK, COMMAND_REACH, type OfficeAgentInput,
 } from "./officeLayout";
+import { buildNavGrid, isWalkable } from "./officeNav";
 import { cameraHome, fitDistance, focusBounds } from "./officeCamera";
 
 const agent = (id: string, provider: string, extra: Partial<OfficeAgentInput> = {}): OfficeAgentInput => ({
@@ -68,13 +69,114 @@ describe("office layout", () => {
     }
   });
 
-  it("keeps every checkpoint centre clear of solid furniture", () => {
-    const layout = buildOfficeLayout(Array.from({ length: 12 }, (_, i) => agent(`a${i}`, i % 2 ? "Codex" : "Gemini")));
-    const solid = layout.furniture.filter((f) => FURNITURE_SIZE[f.kind].solid).map(footprint);
-    for (const cp of layout.checkpoints) {
-      const inside = solid.some((o) => cp.x >= o.minX && cp.x <= o.maxX && cp.z >= o.minZ && cp.z <= o.maxZ);
-      expect(inside, cp.id).toBe(false);
+  for (const variant of ["agents", "coding"] as const) {
+    it(`keeps every checkpoint centre clear of solid furniture (${variant})`, () => {
+      const layout = buildOfficeLayout(Array.from({ length: 12 }, (_, i) => agent(`a${i}`, i % 2 ? "Codex" : "Gemini")), { variant });
+      const solid = layout.furniture.filter((f) => FURNITURE_SIZE[f.kind].solid).map(footprint);
+      for (const cp of layout.checkpoints) {
+        // A ring centred on a solid prop (Mission Control's screen) walks to its approach point instead.
+        const at = cp.approach ?? cp;
+        const inside = solid.some((o) => at.x >= o.minX && at.x <= o.maxX && at.z >= o.minZ && at.z <= o.maxZ);
+        expect(inside, cp.id).toBe(false);
+      }
+    });
+
+    it(`puts the elevator checkpoint right in front of the elevator (${variant})`, () => {
+      const layout = buildOfficeLayout([], { variant });
+      const elevator = layout.furniture.find((f) => f.kind === "elevator")!;
+      const stop = layout.checkpoints.find((c) => c.id === "elevator")!;
+      expect(stop.room).toBe("reception");
+      expect(stop.z).toBeCloseTo(elevator.z, 9);
+      expect(stop.x).toBeGreaterThan(elevator.x);
+      expect(Math.hypot(stop.x - elevator.x, stop.z - elevator.z)).toBeLessThan(1.5);
+      expect(new Set(layout.checkpoints.map((c) => c.id)).size).toBe(layout.checkpoints.length);
+    });
+
+    it(`keeps room, furniture and spot ids unique and inside the floor (${variant})`, () => {
+      const layout = buildOfficeLayout(Array.from({ length: 20 }, (_, i) => agent(`a${i}`, `P${i % 3}`)), { variant });
+      for (const list of [layout.rooms, layout.furniture, layout.spots]) {
+        expect(new Set(list.map((x) => x.id)).size).toBe(list.length);
+      }
+      for (const item of [...layout.furniture, ...layout.spots]) {
+        const room = item.room === "floor" ? layout.floor : layout.rooms.find((r) => r.kind === item.room)!;
+        expect(room, item.id).toBeDefined();
+        expect(item.x, item.id).toBeGreaterThanOrEqual(room.minX);
+        expect(item.x, item.id).toBeLessThanOrEqual(room.maxX);
+        expect(item.z, item.id).toBeGreaterThanOrEqual(room.minZ);
+        expect(item.z, item.id).toBeLessThanOrEqual(room.maxZ);
+      }
+    });
+  }
+
+  it("keeps the agents office as it was when no variant is named", () => {
+    const roster = [agent("a1", "Codex"), agent("a2", "", { tier: "lead" })];
+    const plain = buildOfficeLayout(roster);
+    expect(plain).toEqual(buildOfficeLayout(roster, { variant: "agents" }));
+    expect(plain.variant).toBe("agents");
+    expect(plain.rooms.map((r) => r.kind)).toEqual(["lead", "team", "wardrobe", "reception", "break"]);
+    expect(plain.checkpoints.map((c) => c.id)).toEqual(["create", "manage", "team", "wardrobe", "lead", "break", "elevator"]);
+  });
+
+  it("builds the coding floor: workspaces as departments, Mission Control and server room, no lead desks", () => {
+    const roster = [agent("p1", "Personal Jarvis"), agent("p2", "Website"), agent("p3", "Personal Jarvis")];
+    const layout = buildOfficeLayout(roster, { variant: "coding" });
+    expect(layout.variant).toBe("coding");
+    expect(layout.rooms.map((r) => r.kind)).toEqual(["command", "team", "server", "reception", "break"]);
+    expect(layout.lead.desks).toEqual([]);
+    expect(layout.checkpoints.map((c) => c.id)).toEqual(["mission", "elevator", "break"]);
+    expect(layout.departments.map((d) => d.label)).toEqual(["Personal Jarvis", "Website", "", ""]);
+    expect(layout.furniture.some((f) => f.room === "lead" || f.room === "wardrobe")).toBe(false);
+    expect(layout.spots.some((s) => s.room === "command")).toBe(true);
+    expect(layout.spots.some((s) => s.room === "server")).toBe(true);
+    // Both floors share one footprint, and the elevator stands at the same spot on each.
+    const below = buildOfficeLayout(roster);
+    expect(layout.bounds).toEqual(below.bounds);
+    const lift = (l: typeof layout) => l.checkpoints.find((c) => c.id === "elevator")!;
+    expect(lift(layout).z).toBe(lift(below).z);
+    expect(lift(layout).x - layout.bounds.minX).toBeCloseTo(lift(below).x - below.bounds.minX);
+    expect(layout.spawn.x - layout.bounds.minX).toBeCloseTo(below.spawn.x - below.bounds.minX);
+  });
+
+  it("builds Mission Control as its own office: slat wall, desk, lounge, and a ring round the desk", () => {
+    const layout = buildOfficeLayout([agent("p1", "Personal Jarvis"), agent("p2", "Website")], { variant: "coding" });
+    const room = layout.rooms.find((r) => r.kind === "command")!;
+    const stop = layout.checkpoints.find((c) => c.id === "mission")!;
+    const inRoom = (p: { x: number; z: number }) => p.x > room.minX && p.x < room.maxX && p.z > room.minZ && p.z < room.maxZ;
+    for (const kind of ["commandWall", "commandDesk", "couch", "coffeeTable", "bookshelf"] as const) {
+      expect(layout.furniture.some((f) => f.kind === kind && f.room === "command" && inRoom(f)), kind).toBe(true);
     }
+    expect(stop.room).toBe("command");
+    expect(stop.radius).toBe(COMMAND_REACH);
+    // The whole ring stays inside the room's walls.
+    expect(stop.x - stop.radius).toBeGreaterThan(room.minX);
+    expect(stop.x + stop.radius).toBeLessThan(room.maxX);
+    expect(stop.z - stop.radius).toBeGreaterThan(room.minZ);
+    expect(stop.z + stop.radius).toBeLessThan(room.maxZ);
+    expect(buildOfficeLayout([agent("a1", "codex")]).furniture.some((f) => f.kind === "commandDesk")).toBe(false);
+  });
+
+  it("lets the person work Mission Control's desk from every side, with no invisible walls", () => {
+    const layout = buildOfficeLayout([agent("p1", "Personal Jarvis")], { variant: "coding" });
+    const stop = layout.checkpoints.find((c) => c.id === "mission")!;
+    const grid = buildNavGrid(layout);
+    // A loop round the desk and chair: free to stand on everywhere, and inside the ring.
+    for (let i = 0; i < 16; i += 1) {
+      const a = (i / 16) * Math.PI * 2;
+      // An ellipse: the desk is long and shallow, so the path round it is too.
+      const p = { x: stop.x + Math.cos(a) * 1.85, z: stop.z + Math.sin(a) * 1.6 };
+      expect(isWalkable(grid, p), `angle ${i}`).toBe(true);
+      expect(Math.hypot(p.x - stop.x, p.z - stop.z)).toBeLessThanOrEqual(stop.radius);
+    }
+    // Only the desk top and the chair are solid: right beside the chair is open floor.
+    // The desk faces the door; its chair stands between it and the wall.
+    const deskZ = stop.z + 0.3;
+    const chairZ = deskZ - COMMAND_DESK.chairZ;
+    expect(isWalkable(grid, { x: stop.x, z: deskZ })).toBe(false);
+    expect(isWalkable(grid, { x: stop.x, z: chairZ })).toBe(false);
+    // Beside the chair, a step back from the desk edge, the floor is open on both sides.
+    expect(isWalkable(grid, { x: stop.x + 0.75, z: chairZ - 0.25 })).toBe(true);
+    expect(isWalkable(grid, { x: stop.x - 0.75, z: chairZ - 0.25 })).toBe(true);
+    expect(isWalkable(grid, stop.approach!)).toBe(true);
   });
 
   it("counts states", () => {

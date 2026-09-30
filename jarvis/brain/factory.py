@@ -52,7 +52,7 @@ BrainCallback = Callable[[str], Awaitable[str]]
 # Rationale: Hauptjarvis is a pure dispatcher. Direct actions outside this
 # list (open_app, type_text, remember, whoami …) are delegated to a background
 # worker — the router delegates them via ``spawn_worker``. Read-only lookups
-# (search-web, wiki-recall, awareness-recall) and safe-gated direct actions
+# (search-web, wiki-recall) and safe-gated direct actions
 # (computer-use, cli-tools, plugin-tools) are router-tier by design — see the
 # ADR-0011 amendments (2026-05-24 CLI, 2026-05-29 Computer-Use, 2026-06-01
 # plugins, 2026-06-10 inline web search).
@@ -97,15 +97,14 @@ ROUTER_TOOLS = frozenset({
     # (two-turn voice confirm). Direct gated action, never a spawn — never in
     # a worker set (AP-5/AP-14). See ADR-0011 amendment "app-command tool".
     "app-command",
-    # Phase A1: synchronous state read on the AwarenessManager (Plan §5).
-    # NO brain call, NO IO — property read only.
-    "awareness-snapshot",
-    # Phase A3 (Plan §7): BM25 full-text search across the recent episode
-    # log. The plan originally placed this in a Sub-Jarvis tier; Welle 4
-    # deleted that tier, so it lives here. Still read-only, still safe to
-    # call without confirmation. See ADR on awareness routing for the
-    # placement rationale.
-    "awareness-recall",
+    # Every app action (2026-09-29): search the app's own REST surface and
+    # run ONE operation in-process, each call tiered by the person's
+    # Jarvis-actions policy (allow / ask / block, else the action default).
+    # Secrets, sign-ins and the policy itself are never in the catalog.
+    # Direct gated action, never a spawn — never in a worker set
+    # (AP-5/AP-14). See ADR-0011 amendment "Every app action".
+    "find-app-action",
+    "run-app-action",
     # Agent society (2026-09-02): the voice front door of the user's named
     # agents. ``delegate-to-agent`` appends ONE ASSIGN envelope to the
     # society board and acknowledges inside the voice budget; the society
@@ -385,8 +384,6 @@ def _load_tools_for_tier(
     people: Any,
     config: Any,
     mission_manager: Any = None,
-    awareness_manager: Any = None,
-    recall_store: Any = None,
     contacts: Any = None,
 ) -> dict[str, Any]:
     """Load all tools for the given tier and instantiate them.
@@ -397,7 +394,7 @@ def _load_tools_for_tier(
     the heavy worker runs as an external subprocess via the Mission-Manager.
 
     Encapsulates entry-point discovery + special cases (dispatch-to-harness,
-    spawn-worker, whoami, awareness-snapshot).
+    spawn-worker, whoami).
 
     Args:
         tier: currently only ``"router"``.
@@ -540,18 +537,6 @@ def _load_tools_for_tier(
                 )
             elif ep.name == "whoami":
                 inst = cls(profile=user_profile, people=people)
-            elif ep.name == "awareness-snapshot":
-                if awareness_manager is None:
-                    log.debug("awareness-snapshot skipped: no AwarenessManager")
-                    continue
-                inst = cls(manager=awareness_manager)
-            elif ep.name == "awareness-recall":
-                # Phase A3: the tool itself stays loaded even when the store
-                # is None — its execute() returns a clean "unavailable" error
-                # in that case rather than disappearing from the schema mid
-                # session. That keeps the tool surface stable for the router
-                # brain across awareness on/off toggles.
-                inst = cls(recall_store=recall_store)
             elif ep.name == "wiki-recall":
                 # Phase B5: build VaultSearch with the configured vault root.
                 # The search instance is created once per brain build and
@@ -600,7 +585,7 @@ def _load_tools_for_tier(
                 # emit ProfileUpdated on `bus` for live UI sync. Loads even when
                 # user_profile is None — execute() returns a clean error then, so
                 # the tool surface stays stable across sessions (mirrors
-                # awareness-recall / wiki-ingest).
+                # wiki-ingest).
                 inst = cls(profile_resolver=lambda: user_profile, bus=bus)
             elif ep.name in ("contact-lookup", "contact-upsert", "call-contact"):
                 # Chunk B (jarvis-contacts): all three consume Contract 1
@@ -609,7 +594,7 @@ def _load_tools_for_tier(
                 # until Chunk A merges (or if the store fails to build) — the
                 # tools then return a clean "contacts unavailable" error rather
                 # than disappearing from the schema mid-session (stable tool
-                # surface, mirrors awareness-recall / wiki-ingest). call-contact
+                # surface, mirrors wiki-ingest). call-contact
                 # additionally lazy-loads Contract 2 (place_call) + the telephony
                 # config at execute time, degrading to a clear English no-op when
                 # the [telephony] extra / Chunk C is absent.
@@ -963,163 +948,6 @@ def _phase2_full_brain(
     # but the harness is unregistered — that block is inert (Welle-4 removal).
     warn_if_phantom_worker_harness(config, harness_manager)
 
-    # Phase A1: build the AwarenessManager (DI for the awareness-snapshot tool).
-    # Do NOT start it here — start()/stop() is the responsibility of the app layer
-    # (DesktopApp._start_speech_and_orb or similar). Without start() the tool
-    # returns an empty snapshot ("") — that is acceptable for Plan-AC; the tool
-    # schema entry in the router is the actual A1 deliverable.
-    awareness_manager: Any | None = None
-    if config.awareness.enabled:
-        from jarvis.awareness.manager import AwarenessManager
-
-        awareness_manager = AwarenessManager(config.awareness, bus=bus)
-
-        # Phase A2: build the Verdichter brain (Haiku) as a separate brain
-        # instance and attach it to the AwarenessManager. Hard Negative §6:
-        # the Verdichter is a DIRECT brain call, NOT spawn_worker. Therefore
-        # its own instance via BrainProviderRegistry, NOT the router brain.
-        v_cfg = config.awareness.verdichter
-        if v_cfg.enabled:
-            try:
-                from jarvis.awareness.verdichter import Verdichter
-                from jarvis.brain.provider_registry import BrainProviderRegistry
-
-                # BUG-LIVE-04 (2026-05-14) — honour the user-mandate "no
-                # Anthropic account". `AwarenessVerdichterConfig` still
-                # defaults to provider="claude-api" / model="claude-haiku"
-                # for legacy compatibility, but the user's
-                # `[brain.primary]` is the real source of truth: every
-                # other brain-call path (Critic, ack-brain, sub-jarvis
-                # chain) routes through it. The verdichter is the last
-                # Anthropic-hardcoded hold-out — when primary is
-                # non-Claude, redirect this call too so live logs stop
-                # screaming `Your credit balance is too low to access
-                # the Anthropic API` every 30 seconds.
-                v_provider = v_cfg.provider
-                v_model = v_cfg.model
-                # Redirect off the legacy claude-api default in TWO cases:
-                #   (a) the user picked a different `[brain.primary]` (the
-                #       original BUG-LIVE-04 redirect), OR
-                #   (b) primary is STILL the claude-api default but the host has
-                #       NO usable Anthropic credential — then cross to the first
-                #       reachable keyed family (open-source AP-22). Without (b)
-                #       the awareness loop repeat-401's every ~30 s on a machine
-                #       whose only key is elsewhere. This is a read-only
-                #       background build, off the voice hot path (AP-9). Reuses
-                #       the resolver's key-aware family probe, not a hardcoded
-                #       provider list.
-                if v_provider == "claude-api":
-                    from jarvis.brain.resolver import (
-                        _provider_reachable,
-                        _reachable_keyed_families,
-                    )
-
-                    redirect_target: str | None = None
-                    if config.brain.primary != "claude-api":
-                        redirect_target = config.brain.primary
-                    elif not _provider_reachable(config, "claude-api"):
-                        families = _reachable_keyed_families(
-                            config, exclude=frozenset({"claude-api"}),
-                        )
-                        if families:
-                            redirect_target = families[0][0]
-                    if redirect_target and redirect_target != "claude-api":
-                        v_provider = redirect_target
-                        primary_cfg = config.brain.providers.get(v_provider)
-                        # Verdichter is short, factual, latency-sensitive — pick
-                        # a lightweight model: the provider's configured `model`,
-                        # then its `deep_model`, then the family's light tier
-                        # default (never leave a claude model id on a non-claude
-                        # provider).
-                        chosen_model = None
-                        if primary_cfg is not None:
-                            chosen_model = (
-                                getattr(primary_cfg, "model", None)
-                                or getattr(primary_cfg, "deep_model", None)
-                            )
-                        if not chosen_model:
-                            from jarvis.brain.manager import get_tier_default_model
-
-                            chosen_model = get_tier_default_model(
-                                "router", v_provider,
-                            ) or get_tier_default_model("deep", v_provider)
-                        if chosen_model:
-                            v_model = str(chosen_model)
-                        log.info(
-                            "Verdichter provider redirected: claude-api -> %s "
-                            "(brain.primary mandate / no usable Anthropic "
-                            "credential, BUG-LIVE-04 + AP-22)",
-                            v_provider,
-                        )
-
-                v_registry = BrainProviderRegistry()
-                v_brain = v_registry.instantiate(v_provider, model=v_model)
-                awareness_manager._verdichter = Verdichter(    # noqa: SLF001
-                    brain=v_brain, config=v_cfg,
-                )
-                log.info(
-                    "Verdichter aktiv (provider=%s model=%s timeout=%.1fs)",
-                    v_provider, v_model, v_cfg.timeout_s,
-                )
-            except Exception as exc:    # noqa: BLE001
-                log.warning("Verdichter could not be initialized: %s", exc)
-                awareness_manager._verdichter = None    # noqa: SLF001
-
-        # Phase A2: build the StoryTracker and attach it to the manager. Lifecycle
-        # (start/stop) is handled by the manager in start() — analogous to Watchers.
-        # Prerequisites: Verdichter + Recall + story.enabled.
-        s_cfg = config.awareness.story
-        v_inst = getattr(awareness_manager, "_verdichter", None)
-        if s_cfg.enabled and v_inst is not None and recall is not None:
-            try:
-                from jarvis.awareness.story import StoryTracker
-
-                awareness_manager._story_tracker = StoryTracker(    # noqa: SLF001
-                    manager=awareness_manager,
-                    bus=bus,
-                    recall=recall,
-                    verdichter=v_inst,
-                    config=s_cfg,
-                )
-                log.info(
-                    "StoryTracker konfiguriert (buffer_max=%d, min_dur=%ds, "
-                    "hard_timer=%dmin)",
-                    s_cfg.buffer_max, s_cfg.episode_min_duration_s,
-                    s_cfg.hard_timer_min,
-                )
-            except Exception as exc:    # noqa: BLE001
-                log.warning("StoryTracker could not be initialized: %s", exc)
-                awareness_manager._story_tracker = None    # noqa: SLF001
-
-        # Phase A5-Lite: probes (GitProbe + FileSystemProbe). Called by the
-        # watcher drain loop via manager.probe_all() in parallel within a
-        # 200 ms total budget. FileSystemProbe requires start/stop —
-        # AwarenessManager wires that in start()/stop().
-        p_cfg = config.awareness.probes
-        if p_cfg.enabled:
-            try:
-                from jarvis.awareness.probes import FileSystemProbe, GitProbe
-
-                probes_list: list = []
-                if p_cfg.enable_git:
-                    probes_list.append(GitProbe())
-                if p_cfg.enable_filesystem:
-                    fs_probe = FileSystemProbe(
-                        bus=bus,
-                        max_watched_roots=p_cfg.fs_max_watched_roots,
-                    )
-                    probes_list.append(fs_probe)
-                    awareness_manager._fs_probe = fs_probe    # noqa: SLF001
-                awareness_manager._probes = probes_list    # noqa: SLF001
-                log.info(
-                    "Awareness-Probes konfiguriert: %s (budget=%dms)",
-                    [type(p).__name__ for p in probes_list], p_cfg.total_budget_ms,
-                )
-            except Exception as exc:    # noqa: BLE001
-                log.warning("Probes could not be initialized: %s", exc)
-                awareness_manager._probes = []    # noqa: SLF001
-                awareness_manager._fs_probe = None    # noqa: SLF001
-
     # Build tools — Wave 4: no sub-tier any more; the Jarvis-Agent worker runs
     # as an external subprocess via MissionManager. If a MissionManager is
     # already present in ``app.state`` (server bootstrap), we pass it to
@@ -1143,8 +971,6 @@ def _phase2_full_brain(
         people=people,
         config=config,
         mission_manager=mission_manager_ref,
-        awareness_manager=awareness_manager,
-        recall_store=recall,
         contacts=contact_store,
     )
     local_action_tools = _load_local_action_tools(
@@ -1153,20 +979,9 @@ def _phase2_full_brain(
         config=config,
     )
 
-    # Provider-override logic: if the user has switched to a different provider
-    # via voice/UI ("switch to gemini" -> brain.primary="gemini" persisted in
-    # jarvis.toml) while [brain.router].provider still points to "claude-api",
-    # we prefer brain.primary. That is the global master selection that should
-    # apply to all tiers.
-    startup_override: str | None = None
-    tier_cfg_startup = getattr(config.brain, "router", None)
-    tier_provider = tier_cfg_startup.provider if tier_cfg_startup else None
-    if config.brain.primary and config.brain.primary != tier_provider:
-        startup_override = config.brain.primary
-        log.info(
-            "Startup override: brain.primary=%s overrides [brain.router].provider=%s",
-            config.brain.primary, tier_provider,
-        )
+    # brain.primary normally overrides [brain.router].provider — except when it
+    # would put text turns on the realtime voice key (see the helper).
+    startup_override = _router_provider_override(config)
 
     # Build the router-tier BrainManager via from_tier_config
     manager = BrainManager.from_tier_config(
@@ -1182,7 +997,6 @@ def _phase2_full_brain(
         user_profile=user_profile,
         soul=soul,
         people=people,
-        awareness_manager=awareness_manager,
         contacts=contact_store,
     )
 
@@ -1565,14 +1379,6 @@ def _phase2_full_brain(
                 log.warning("WikiContextInjector could not be initialised: %s", exc)
                 from jarvis.brain.wiki_context import WikiContextInjector
                 manager._wiki_injector = WikiContextInjector(search=None)
-
-    # B5 follow-up (2026-05-13): expose awareness_manager so the desktop-app
-    # startup hook can call awareness_manager.start(). Without this, the
-    # StoryTracker never subscribes to ResponseGenerated and no episode is
-    # ever written, which prevents SessionRollupWorker from triggering the
-    # WikiCurator at idle.
-    if awareness_manager is not None:
-        manager._awareness_manager = awareness_manager  # noqa: SLF001
 
     return manager
 
@@ -2003,14 +1809,18 @@ def _build_flash_provider(jcfg: Any, ack_cfg: Any) -> Any:
     if provider_name == "follow_brain":
         brain_cfg = getattr(jcfg, "brain", None)
         primary = getattr(brain_cfg, "primary", None) if brain_cfg else None
-        if primary and primary in REGISTRY:
+        # A primary on the realtime voice key does not pull flash composition
+        # onto that key; the keyed fallback below picks another family first.
+        from jarvis.brain.voice_key import bills_voice_key
+
+        if primary and primary in REGISTRY and not bills_voice_key(jcfg, primary):
             log.info(
                 "Flash-Brain: follow_brain -> %s (from brain.primary).",
                 primary,
             )
             provider_name = primary
         else:
-            fallback = _pick_keyed_flash_fallback(ack_cfg)
+            fallback = _pick_keyed_flash_fallback(ack_cfg, jcfg)
             if fallback is None:
                 log.warning(
                     "Flash-Brain: brain.primary=%r has no Flash adapter "
@@ -2038,7 +1848,7 @@ def _build_flash_provider(jcfg: Any, ack_cfg: Any) -> Any:
     return provider_cls(provider_cfg)
 
 
-def _pick_keyed_flash_fallback(ack_cfg: Any) -> str | None:
+def _pick_keyed_flash_fallback(ack_cfg: Any, jcfg: Any = None) -> str | None:
     """First REGISTRY provider family with a usable credential, or ``None``.
 
     AP-21/AP-22: never hardcode a literal provider name as the fallback — a
@@ -2049,24 +1859,30 @@ def _pick_keyed_flash_fallback(ack_cfg: Any) -> str | None:
     (local Ollama) needs no credential and is always considered usable.
     """
     from jarvis.brain.ack_brain.providers import REGISTRY
+    from jarvis.brain.voice_key import bills_voice_key
     from jarvis.core.config import get_provider_secret, get_secret
 
+    # A family on the realtime voice key is deferred (mandate 2026-09-29): the
+    # next keyed family in REGISTRY order answers instead. It still comes back
+    # before a keyless local provider, so a single-key install without a local
+    # server keeps a working flash tier (AP-22).
+    deferred: str | None = None
     for name in REGISTRY:
         provider_cfg = getattr(ack_cfg.providers, name, None)
         if provider_cfg is None:
             continue
         secret_name = getattr(provider_cfg, "api_key_secret", None)
+        if secret_name is None:
+            return deferred or name
         # The family resolver is the second probe so a credential that lives
         # only in a scoped slot of the same family (e.g. the Realtime card's
         # key) still marks the provider usable — the adapters resolve their
         # key through the same two-step lookup.
-        if (
-            secret_name is None
-            or get_secret(secret_name)
-            or get_provider_secret(name)
-        ):
-            return name
-    return None
+        if get_secret(secret_name) or get_provider_secret(name):
+            if not bills_voice_key(jcfg, name):
+                return name
+            deferred = deferred or name
+    return deferred
 
 
 def _build_ack_fallback(ack_cfg: Any, preferences_provider: Any = None) -> Any:
@@ -2311,3 +2127,44 @@ def build_readback_composer(jcfg: Any | None = None) -> Any:
             "build_readback_composer() failed: %s — fallback-only mode.", exc
         )
         return ReadbackComposer()
+
+
+def _router_provider_override(config: Any) -> str | None:
+    """The provider that overrides ``[brain.router].provider`` at boot, or None.
+
+    Provider-override logic: if the user has switched to a different provider
+    via voice/UI ("switch to gemini" -> brain.primary="gemini" persisted in
+    jarvis.toml) while [brain.router].provider still points elsewhere, we
+    prefer brain.primary. That is the global master selection that should
+    apply to all tiers.
+
+    The realtime voice call owns its key (user mandate 2026-09-29: the GPT-Live
+    key pays for the voice call and its thinking model only). While voice runs
+    realtime the Brain tab is hidden, so a ``brain.primary`` left on that key's
+    family is not a choice anyone can see; it must not pull text turns onto the
+    voice budget when the router tier names another provider. A single-key
+    install (no other router provider) keeps working on the key.
+    """
+    from jarvis.brain.voice_key import bills_voice_key
+
+    primary = config.brain.primary
+    tier_cfg = getattr(config.brain, "router", None)
+    tier_provider = tier_cfg.provider if tier_cfg else None
+    if (
+        bills_voice_key(config, primary)
+        and tier_provider
+        and not bills_voice_key(config, tier_provider)
+    ):
+        log.info(
+            "Router stays on [brain.router].provider=%s: brain.primary=%s bills "
+            "the realtime voice key.",
+            tier_provider, primary,
+        )
+        return None
+    if primary and primary != tier_provider:
+        log.info(
+            "Startup override: brain.primary=%s overrides [brain.router].provider=%s",
+            primary, tier_provider,
+        )
+        return primary
+    return None

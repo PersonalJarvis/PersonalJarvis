@@ -187,3 +187,28 @@ def connected_plugin_ids(store: TokenStore) -> list[str]:
             # Corrupted blob — treat as not-connected for scheduling purposes.
             continue
     return ids
+
+
+def usable_plugin_ids(store: TokenStore | None = None) -> set[str]:
+    """Catalog plugin ids a tool can use right now.
+
+    Connected means a stored token that needs no re-auth, or a plugin whose
+    auth mode is ``none``. One unreadable credential disables only its row.
+    """
+    from jarvis.marketplace.catalog_data import load_catalog
+    from jarvis.marketplace.token_store import TokenStore as _TokenStore
+
+    store = store or _TokenStore()
+    usable: set[str] = set()
+    for spec in load_catalog().plugins:
+        if getattr(spec.auth, "mode", "") == "none":
+            usable.add(spec.id)
+            continue
+        try:
+            tokens = store.load(spec.id)
+        except Exception:  # noqa: BLE001 — a broken credential blob only hides this plugin
+            log.warning("could not read connection state for %s", spec.id, exc_info=True)
+            continue
+        if tokens is not None and not tokens.needs_reauth:
+            usable.add(spec.id)
+    return usable

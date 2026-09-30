@@ -140,6 +140,53 @@ export function forgetUploadedAtlasPages(term: Terminal): void {
 }
 
 
+/** The slice of the WebGL renderer that draws a frame. Not public API either. */
+interface WebglRendererInternals {
+  _core?: {
+    _renderService?: {
+      _renderer?: {
+        value?: {
+          _gl?: WebGL2RenderingContext;
+          renderRows?: (start: number, end: number) => void;
+          __clearsEveryFrame?: boolean;
+        };
+      };
+    };
+  };
+}
+
+/**
+ * Make `term`'s WebGL renderer empty its canvas before it draws each frame.
+ *
+ * The addon never calls `gl.clear`: it "clears" by painting one rectangle the
+ * size of the screen in the theme's background colour, then draws every row
+ * over it. A pane's background is transparent (alpha 0, so the glass shell
+ * behind it shows through), and with alpha blending that rectangle paints
+ * nothing — the previous frame stays in the drawing buffer wherever the
+ * browser has not wiped it. It does not wipe a canvas it never presented, and
+ * a pane rebuilding behind its curtain (`visibility: hidden` after a reload
+ * or a workspace switch) is exactly that: the replayed screen, the reset, the
+ * agent's repaint were drawn on top of each other, and the pane was revealed
+ * with two readable texts in the same cells and a cursor left at the top-left
+ * corner (2026-09-29). Every frame redraws the whole model, so a real clear
+ * first loses nothing.
+ */
+export function clearEveryFrame(term: Terminal): void {
+  const renderer = (term as unknown as WebglRendererInternals)._core?._renderService?._renderer
+    ?.value;
+  const gl = renderer?._gl;
+  const renderRows = renderer?.renderRows;
+  if (!renderer || !gl || typeof renderRows !== "function" || renderer.__clearsEveryFrame) {
+    return;
+  }
+  renderer.__clearsEveryFrame = true;
+  renderer.renderRows = function (this: unknown, start: number, end: number) {
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    renderRows.call(this, start, end);
+  };
+}
+
 /**
  * An atlas merge just shifted the shared pages: every WebGL pane re-uploads
  * them. Synchronous for the invalidation — the merge happens inside one pane's
@@ -204,6 +251,7 @@ export function attachTerminalRenderer(
     try {
       webgl = deps.createWebgl();
       term.loadAddon(webgl);
+      clearEveryFrame(term);
       webglPanes += 1;
       webglTerminals.add(term);
       counted = true;

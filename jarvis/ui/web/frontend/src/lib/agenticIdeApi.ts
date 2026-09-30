@@ -1183,7 +1183,13 @@ export async function resolveDroppedFolder(payload: {
 export async function startIdeSession(
   folder: string,
   terminals: TerminalPlan[],
-  options: { projectId?: string; name?: string; computerId?: string } = {},
+  options: {
+    projectId?: string;
+    name?: string;
+    computerId?: string;
+    /** Told the backend's one-line report, e.g. which files stayed on this PC. */
+    onMessage?: (message: string) => void;
+  } = {},
 ): Promise<IdeState> {
   const res = await fetch("/api/agentic-ide/session", {
     method: "POST",
@@ -1198,7 +1204,8 @@ export async function startIdeSession(
     }),
   });
   if (!res.ok) throw new Error(await detail(res));
-  const body = (await res.json()) as { session: SessionState; state: IdeState };
+  const body = (await res.json()) as { session: SessionState; state: IdeState; message?: string };
+  if (body.message) options.onMessage?.(body.message);
   // `state` is authoritative; `session` alone is kept as the fallback for a
   // backend that predates the workspace bar.
   return (
@@ -1348,17 +1355,40 @@ export async function addTerminal(payload: {
   model?: string;
   effort?: string;
   permission_mode?: string;
-}): Promise<SessionState> {
+  /**
+   * Where the new pane runs: a connected computer's id, or null for this PC.
+   * Omitted, it runs where its anchor (or the whole workspace) runs.
+   */
+  computer_id?: string | null;
+}, options: { onMessage?: (message: string) => void } = {}): Promise<SessionState> {
   const res = await fetch("/api/agentic-ide/terminals", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(await detail(res));
-  const body = (await res.json()) as { state: IdeState };
+  const body = (await res.json()) as { state: IdeState; message?: string };
+  if (body.message) options.onMessage?.(body.message);
   if (!body.state.session)
     throw new Error("The workspace closed while adding a terminal.");
   return body.state.session;
+}
+
+/**
+ * Open one more terminal and answer with THAT terminal — the pane Mission
+ * Control goes on to brief. `addTerminal` answers with the front workspace,
+ * which is not where the pane went when another workspace was named.
+ */
+export async function openTerminal(
+  payload: Parameters<typeof addTerminal>[0],
+): Promise<TerminalState> {
+  const res = await fetch("/api/agentic-ide/terminals", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  return ((await res.json()) as { terminal: TerminalState }).terminal;
 }
 
 /**
@@ -2010,10 +2040,12 @@ export interface PromptResult {
 export async function promptTerminal(
   name: string,
   prompt: string,
-  options: { compose?: boolean; attachments?: DropAttachment[] } = {},
+  options: { compose?: boolean; attachments?: DropAttachment[]; workspaceId?: string } = {},
 ): Promise<PromptResult> {
+  // A call-sign is only unique inside its workspace; name it when the caller knows it.
+  const query = options.workspaceId ? `?workspace=${encodeURIComponent(options.workspaceId)}` : "";
   const res = await fetch(
-    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/prompt`,
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/prompt${query}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

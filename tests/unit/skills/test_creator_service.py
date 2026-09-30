@@ -209,6 +209,36 @@ async def test_draft_uses_active_provider_of_brain_manager(registry) -> None:
     assert bm.requested == ["gemini"]  # used the active provider
 
 
+class _PinnableBrainManager(_FakeBrainManager):
+    """Adds ``_get_brain(name, model)`` so an operation-pinned model resolves."""
+
+    def __init__(self, active, pinned) -> None:  # noqa: ANN001
+        super().__init__(active, name="openai")
+        self._pinned = pinned
+        self.pinned_requests: list[tuple[str, str | None]] = []
+
+    def _get_brain(self, name: str, model: str | None = None):  # noqa: ANN001
+        self.pinned_requests.append((name, model))
+        return self._pinned
+
+
+@pytest.mark.asyncio
+async def test_draft_uses_the_operation_pinned_model_first(registry) -> None:
+    """A voice session that pinned its (cheap) thinking model drafts skills on
+    it, not on the chat tier's active frontier model."""
+    from jarvis.core.model_selection import ModelSelection, use_operation_model
+
+    active = _FakeBrain("not json")
+    pinned = _FakeBrain(_GOOD_BRAIN_JSON)
+    bm = _PinnableBrainManager(active, pinned)
+    svc = SkillCreatorService(brain=bm, registry=registry)
+    with use_operation_model(ModelSelection("openai", "cheap-model")):
+        result = await svc.draft(SkillCreatorInput(intent="something"))
+    assert result.draft["name"] == "Brain Made Skill"
+    assert bm.pinned_requests == [("openai", "cheap-model")]
+    assert bm.requested == []
+
+
 @pytest.mark.asyncio
 async def test_draft_falls_back_when_brain_returns_garbage(registry) -> None:
     svc = _service(registry, brain=_FakeBrain("I cannot help with that."))

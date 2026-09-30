@@ -764,6 +764,11 @@ async def test_propose_updates_uses_default_registry_if_none_injected(
         "jarvis.memory.wiki.provider_chain.credential_ready_wiki_providers",
         lambda *, available, **_kwargs: set(available),
     )
+    # This host's real CLI logins must not reorder the chain under test.
+    monkeypatch.setattr(
+        "jarvis.memory.wiki.provider_chain.subscription_login_ready",
+        lambda _provider, **_kwargs: None,
+    )
 
     llm = WikiCuratorLLM(
         config=cfg,

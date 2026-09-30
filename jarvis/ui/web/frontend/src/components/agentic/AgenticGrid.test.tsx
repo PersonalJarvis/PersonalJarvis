@@ -36,7 +36,8 @@ const pushToast = vi.fn();
 vi.mock("@/store/events", () => {
   // Built on each call, never at factory time: this factory is hoisted above
   // the `const pushToast` above it, so reading it eagerly is a TDZ error.
-  const state = () => ({ pushToast, assistantName: "Jarvis" });
+  // `events` too: the chat composer's appshot claim scans the event feed.
+  const state = () => ({ pushToast, assistantName: "Jarvis", events: [] });
   const useEventStore = (selector: (s: Record<string, unknown>) => unknown) =>
     selector(state());
   useEventStore.getState = state;
@@ -781,6 +782,39 @@ describe("maximize", () => {
     // Nova is hidden, never removed — removing it would kill its agent.
     expect(screen.getByTestId("pane-Nova")).toBeTruthy();
     expect(screen.getByTestId("pane-cell-Nova").className).toContain("hidden");
+  });
+
+  it("zooms with a compositor transform, never the layout glide", () => {
+    // Every element measures as the whole 1000x600 workspace, so the maximized
+    // pane ends at the full surface and starts at its (smaller) tile.
+    const rect = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockReturnValue(DOMRect.fromRect({ x: 0, y: 0, width: 1000, height: 600 }));
+    const calls: { element: Element; keyframes: Keyframe[] }[] = [];
+    const original = HTMLElement.prototype.animate;
+    HTMLElement.prototype.animate = function (this: HTMLElement, keyframes) {
+      calls.push({ element: this, keyframes: keyframes as Keyframe[] });
+      return { cancel() {}, onfinish: null, oncancel: null } as unknown as Animation;
+    };
+    try {
+      renderGrid();
+      fireEvent.click(screen.getByTestId("pane-maximize-Mika"));
+      const cell = screen.getByTestId("pane-cell-Mika");
+      const zoom = calls.find((call) => call.element === cell);
+      expect(String(zoom?.keyframes[0].transform)).toMatch(/scale\(/);
+      calls.length = 0;
+      fireEvent.click(screen.getByTestId("pane-maximize-Mika"));
+      // The commit that swaps the box back must not also start the
+      // left/top/width/height transition.
+      expect(cell.className).not.toContain("transition-[left,top,width,height]");
+      // The neighbours fade back in on opacity alone.
+      const nova = screen.getByTestId("pane-cell-Nova");
+      const fade = calls.find((call) => call.element === nova);
+      expect(fade?.keyframes[0].opacity).toBe(0);
+    } finally {
+      HTMLElement.prototype.animate = original;
+      rect.mockRestore();
+    }
   });
 });
 

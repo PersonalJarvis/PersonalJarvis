@@ -59,6 +59,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                     "call_tool for any tool not declared directly. For computer control, capture "
                     "screen_snapshot, inspect the image, call the desktop primitives, and verify "
                     "the result with a new snapshot. Do not call a separate computer-use harness. "
+                    "When the user asks for an appshot, call take_appshot. "
                     "Request confirmation for pending approvals. Use confirm_action only after "
                     "explicit approval. A started job is not complete. Never invent tool results. "
                     "Use workspace-orchestrate for coding tasks: inspect and resolve project, "
@@ -369,10 +370,40 @@ class NativeLiveVoiceSession(LiveVoiceSession):
         else:
             await super().handle_control(message)
 
-    async def deliver_announcement(self, text: str, **_kwargs: Any) -> bool:
+    async def deliver_announcement(
+        self, text: str, *, report: str | None = None, **kwargs: Any
+    ) -> bool:
         if not self.is_active:
             return False
+        if str(report or "").strip():
+            # The model reasons over the agent's full report before speaking
+            # (``report_prompt``); refused mid-turn so the caller retries at
+            # the next boundary instead of talking over anyone.
+            if self._thinking or self._speaking or self.playback_active or self._input_active:
+                return False
+            from jarvis.realtime.report_prompt import report_update_prompt
+
+            text = report_update_prompt(
+                text,
+                str(report),
+                language=str(kwargs.get("language") or self._language),
+                kind=str(kwargs.get("spoken_kind") or "completion"),
+            )
         await self._connection.send_text(text)
+        return True
+
+    async def attach_appshot(self, image: bytes, mime: str, note: str) -> bool:
+        """Hand the appshot to the native model as a video frame, silently.
+
+        A text turn would make the model answer right away; the frame alone is
+        what it looks at when the user asks. Servers without image input
+        decline, and the caller parks the appshot for the next message.
+        """
+        del note
+        send_image = getattr(self._connection, "send_image", None)
+        if not self.is_active or not callable(send_image):
+            return False
+        await send_image(image, mime)
         return True
 
     async def end(self, *, reason: str = "client_stop") -> None:

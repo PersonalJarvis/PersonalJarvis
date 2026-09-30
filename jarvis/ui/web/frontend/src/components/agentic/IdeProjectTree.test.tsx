@@ -67,8 +67,8 @@ it("keeps a manual collapse across polling and remount", () => {
   const { unmount } = render(<IdeProjectTree />);
   const selected = screen.getByTestId("ide-workspace-p1-w1");
   expect(selected.parentElement?.className).toContain("bg-muted");
-  expect(selected.className).toContain("min-h-10");
-  expect(screen.getByTestId("ide-project-p1").firstElementChild?.className).toContain("min-h-11");
+  expect(selected.className).toContain("min-h-8");
+  expect(screen.getByTestId("ide-project-p1").firstElementChild?.className).toContain("min-h-8");
   fireEvent.click(screen.getByRole("button", { name: "Collapse App" }));
   expect(screen.queryByTestId("ide-workspace-p1-w1")).toBeNull();
   act(() => useIdeProjectsStore.getState().publish([{ ...project() }], "p1-w1"));
@@ -114,7 +114,27 @@ it("counts agent sessions across a project's workspaces", () => {
   ] };
   useIdeProjectsStore.setState({ projects: [withTwo] });
   render(<IdeProjectTree />);
+  // Open, the rows carry their own counts; folded, the header sums them.
+  expect(screen.queryByLabelText("9 agent sessions")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Collapse App" }));
   expect(screen.getByLabelText("9 agent sessions").textContent).toBe("9");
+});
+
+it("renders a project whose only workspace shares its name as one row", async () => {
+  const solo = { ...project(), workspaces: [{ ...project().workspaces[0], name: "app", status: "closed", live_terminals: 0, terminals: 4 }] } as IdeProject;
+  useIdeProjectsStore.setState({ projects: [solo], activeWorkspaceId: null });
+  render(<IdeProjectTree />);
+  expect(screen.queryByRole("button", { name: /Collapse App|Expand App/ })).toBeNull();
+  expect(screen.getAllByText(/^app$/i)).toHaveLength(1);
+  expect(screen.getByLabelText("4 agent sessions")).toBeDefined();
+  fireEvent.click(screen.getByRole("button", { name: "Open App" }));
+  expect(useIdeProjectsStore.getState().action).toMatchObject({ kind: "activate-workspace", workspaceId: "p1-w1" });
+  fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
+  const menu = screen.getByRole("menu", { name: "Workspace actions for app" });
+  expect(menu.textContent).toContain("Rename project");
+  expect(menu.textContent).toContain("Reopen workspace");
+  expect(menu.textContent).not.toContain("Rename workspace");
+  expect(menu.textContent).not.toContain("Remove workspace");
 });
 
 it("marks a queued workspace before the active workspace changes", () => {

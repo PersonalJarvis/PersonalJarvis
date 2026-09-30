@@ -35,6 +35,7 @@ import type { SocietyChatGroup } from "@/lib/societyChatGroups";
 import { AgentSwatch } from "../AgentSwatch";
 import type { AgentRunState, SocietyAgent } from "../data";
 import { AgentRosterActions } from "./AgentRosterActions";
+import { GroupRosterActions } from "./GroupRosterActions";
 import { useRosterUnread } from "./useRosterUnread";
 import { ChatGroupDialog } from "../chat/ChatGroupDialog";
 
@@ -131,8 +132,12 @@ export function RosterRail({
   const [groupReady, setGroupReady] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
   const [menu, setMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
+  const [groupMenu, setGroupMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const profile = agents.find((agent) => agent.agentId === profileId);
   const menuAgent = agents.find((agent) => agent.agentId === menu?.agentId);
+  const menuGroup = groups.find((group) => group.group_id === groupMenu?.groupId);
+  const editingGroup = groups.find((group) => group.group_id === editingGroupId);
   const unread = useRosterUnread(agents, activeAgentId);
   const assistantName = useEventStore((state) => state.assistantName);
 
@@ -147,7 +152,14 @@ export function RosterRail({
   const openMenu = (event: MouseEvent, agentId: string) => {
     event.preventDefault();
     event.stopPropagation();
+    setGroupMenu(null);
     setMenu({ agentId, x: event.clientX, y: event.clientY });
+  };
+  const openGroupMenu = (event: MouseEvent, groupId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setMenu(null);
+    setGroupMenu({ groupId, x: event.clientX, y: event.clientY });
   };
 
   const lead = useMemo(() => agents.find((a) => a.tier === "lead") ?? null, [agents]);
@@ -562,7 +574,7 @@ export function RosterRail({
         ) : null}
         {visibleGroups.length > 0 && <ul className="flex flex-col gap-0.5 px-2 pb-2">
           {visibleGroups.map((group) => <li key={group.group_id}>
-            <button type="button" data-group-id={group.group_id} onClick={() => onOpenGroup?.(group.group_id)} aria-current={activeGroupId === group.group_id ? "true" : undefined}
+            <button type="button" data-group-id={group.group_id} onClick={() => onOpenGroup?.(group.group_id)} onContextMenu={(event) => openGroupMenu(event, group.group_id)} aria-current={activeGroupId === group.group_id ? "true" : undefined}
               className={cn("flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", activeGroupId === group.group_id && "bg-secondary", groupHover?.kind === "group" && groupHover.id === group.group_id && (groupReady ? "ring-2 ring-primary" : "ring-1 ring-border-strong"))}
               data-testid={`society-group-${group.group_id}`}>
               <span className="flex w-12 shrink-0 items-center justify-center">
@@ -646,8 +658,11 @@ export function RosterRail({
       {footer}
       {menu && menuAgent && <AgentRosterActions key={menu.agentId} agent={menuAgent} roster={agents} sample={sample}
         hidden={hiddenIds.includes(menu.agentId)} x={menu.x} y={menu.y} onVisibilityChange={setHidden} onDismiss={closeMenu} />}
+      {groupMenu && menuGroup && <GroupRosterActions key={groupMenu.groupId} group={menuGroup} x={groupMenu.x} y={groupMenu.y}
+        onEdit={() => setEditingGroupId(menuGroup.group_id)} onDismiss={() => setGroupMenu(null)} />}
       {profile && <Suspense fallback={null}><AgentProfileDialog key={profile.agentId} agent={profile} sample={sample} onClose={() => setProfileId(null)} /></Suspense>}
       {creatingGroup && <ChatGroupDialog agents={agents} onClose={() => setCreatingGroup(false)} onSaved={(id) => onOpenGroup?.(id)} />}
+      {editingGroup && <ChatGroupDialog group={editingGroup} agents={agents} onClose={() => setEditingGroupId(null)} onSaved={(id) => onOpenGroup?.(id)} />}
     </aside>
   );
 }

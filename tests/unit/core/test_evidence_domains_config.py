@@ -14,8 +14,8 @@ def test_defaults_ship_seven_domains_enabled():
 
 
 def test_defaults_include_activity_window_history_domain():
-    # "Was hatte ich heute offen?" must force awareness-recall instead of a
-    # confabulated "lokaler Verlaufsspeicher nicht verfügbar" (live 2026-06-18).
+    # "Was hatte ich heute offen?" gets an honest refusal (Jarvis keeps no
+    # activity history) instead of a confabulated timeline.
     # Keywords are phrase-specific to opened windows / on-device activity.
     cfg = EvidenceDomainsConfig()
     kws = cfg.domains["activity"]

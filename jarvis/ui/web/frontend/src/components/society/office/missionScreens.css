@@ -1,0 +1,22 @@
+/* Mission Control's live desk monitors: real app sections drawn onto the glass.
+   The frame is the app's own ground; the IDE monitor takes its colours from the
+   --pane-* variables the component sets from the pane appearance tables. */
+.office-mission-screen { width:100%; height:100%; overflow:hidden; background:hsl(var(--background)); color:hsl(var(--foreground)); border-radius:6px; }
+.office-mission-screen > * { height:100%; }
+
+/* The Agentic IDE as the app draws it: the workspace sidebar on the app's own
+   ground, then the panes side by side, each on the pane ground with its edge. */
+.office-ide-monitor { display:flex; height:100%; color:hsl(var(--foreground)); }
+.office-ide-side { flex:none; width:220px; padding:10px 8px; overflow:hidden; }
+.office-ide-side-title { height:32px; padding:0 8px; font-size:14px; font-weight:600; line-height:32px; }
+.office-ide-project { display:flex; align-items:center; gap:8px; margin-top:8px; padding:5px 8px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:13px; font-weight:500; }
+.office-ide-project svg { flex:none; width:15px; height:15px; color:hsl(var(--muted-foreground)); }
+.office-ide-ws { display:flex; align-items:center; gap:8px; margin-top:1px; padding:5px 8px 5px 22px; border-radius:6px; font-size:13px; color:hsl(var(--muted-foreground)); }
+.office-ide-ws[data-active] { background:hsl(var(--muted)); color:hsl(var(--foreground)); }
+.office-ide-ws i { flex:none; width:6px; height:6px; border-radius:50%; }
+.office-ide-ws span { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.office-ide-ws b { flex:none; font-size:12px; font-weight:400; color:hsl(var(--muted-foreground)); }
+.office-ide-grid { display:grid; flex:1; min-width:0; min-height:0; gap:6px; padding:6px 6px 6px 0; }
+.office-ide-tile { display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; border:1px solid var(--pane-rule); border-radius:8px; background:var(--pane-ground); color:var(--pane-ink); }
+.office-ide-screen { flex:1 1 auto; min-height:0; margin:0 10px 6px; cursor:inherit; }
+.office-ide-empty { margin:auto; font-size:14px; color:hsl(var(--muted-foreground)); }

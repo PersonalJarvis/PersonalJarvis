@@ -34,6 +34,7 @@ import { DictationButton } from "@/components/agentchat/DictationButton";
 import { ComposerAddMenu } from "@/components/agentchat/ComposerAddMenu";
 import { ComposerChipField, type ComposerChipFieldHandle } from "@/components/agentchat/ComposerChipField";
 import type { ToolChoice } from "@/components/agentchat/toolChoices";
+import { useAppshotClaim } from "@/components/agentchat/useAppshotClaim";
 import { GigiMark } from "@/components/GigiMark";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -166,6 +167,8 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     },
     onAttachProblem,
   );
+  // A shortcut appshot parked for "the next message" joins this one.
+  useAppshotClaim(files.attachFiles, surface === "jarvis");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pasteRescue = usePasteRescue();
 

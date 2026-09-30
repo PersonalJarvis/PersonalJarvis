@@ -339,3 +339,61 @@ async def test_revise_of_an_unknown_artifact_is_a_retryable_error(
     assert result.success is False
     assert "budget forecast" in (result.error or "")
     assert manager.dispatched == []
+
+
+def _background_ctx(config: dict[str, Any]) -> ExecutionContext:
+    return ExecutionContext(
+        trace_id=uuid4(),
+        user_utterance="Morning briefing as an artifact",
+        config={"output_language": "en", **config},
+        memory_read=None,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"approval_ref": "agent-chat:society:agent-7", "approval_surface": "interactive"},
+        {"approval_ref": "agent-chat:society:agent-7:routine:t1:r1"},
+        {"unattended": True, "delivery": "written"},
+        {"approval_surface": "unattended", "approval_ref": "agent-chat:task-1"},
+    ],
+)
+async def test_an_agent_or_routine_builds_quietly(config: dict[str, Any]) -> None:
+    """An agent's chat or a routine at 08:00 builds the page without moving the
+    screen and without a spoken readback (mandate 2026-09-28: Jarvis never
+    speaks uncalled) — the mission is a ``system`` one the voice listener skips."""
+    bus, manager, kontrollierer = _FakeBus(), _FakeManager(), _FakeKontrollierer()
+    tool = CreateArtifactTool(bus, manager=manager, kontrollierer=kontrollierer)
+
+    args = {"title": "Morning brief", "request": "Today."}
+    result = await tool.execute(args, _background_ctx(config))
+    await _settle()
+
+    assert result.success is True
+    assert manager.dispatched[0]["source_actor"] == "system"
+    assert kontrollierer.ran == ["mission-1"]
+    assert not any(isinstance(e, NavigateSidebar) for e in bus.published)
+
+
+@pytest.mark.asyncio
+async def test_a_background_failure_is_logged_not_spoken() -> None:
+    bus = _FakeBus()
+    tool = CreateArtifactTool(
+        bus, manager=_FakeManager(), kontrollierer=_FakeKontrollierer(fail=True)
+    )
+    await tool.execute({"title": "T", "request": "R"}, _background_ctx({"unattended": True}))
+    await _settle()
+    assert not any(isinstance(e, JarvisAgentBackgroundCompleted) for e in bus.published)
+
+
+@pytest.mark.asyncio
+async def test_the_jarvis_chat_still_asks_in_the_foreground() -> None:
+    bus, manager = _FakeBus(), _FakeManager()
+    tool = CreateArtifactTool(bus, manager=manager, kontrollierer=_FakeKontrollierer())
+    ctx = _background_ctx({"approval_ref": "agent-chat:jarvis:main"})
+    await tool.execute({"title": "T", "request": "R"}, ctx)
+    await _settle()
+    assert manager.dispatched[0]["source_actor"] == "hauptjarvis"
+    assert any(isinstance(e, NavigateSidebar) for e in bus.published)

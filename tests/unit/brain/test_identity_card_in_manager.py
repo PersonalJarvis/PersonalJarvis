@@ -53,7 +53,6 @@ def _manager(tmp_path: Path, *, cache_optimized: bool, profile: str | None) -> B
     m._user_profile = None
     m._people = None
     m._core_memory = None
-    m._awareness_manager = None
     m._system_prompt_extra = ""
     m._wiki_context_suffix = ""
     m._reply_language = "auto"

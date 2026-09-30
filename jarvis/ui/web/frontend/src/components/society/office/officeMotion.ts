@@ -94,6 +94,22 @@ export function clearOfBodies(p: Point, others: Iterable<Point>, spacing = BODY_
 }
 
 /**
+ * May a figure step from `from` to `next` among `others`? Yes when the step
+ * keeps the spacing from everyone, or when every body it would touch there is
+ * one it already touches and the step does not bring it closer. Only touching
+ * bodies count: a far-away figure must never veto the way out of a crowd,
+ * or someone pinned in a corner could not move at all.
+ */
+export function stepClearOfBodies(next: Point, from: Point, others: Iterable<Point>, spacing = BODY_SPACING): boolean {
+  for (const o of others) {
+    const after = Math.hypot(next.x - o.x, next.z - o.z);
+    if (after >= spacing) continue;
+    if (after < Math.hypot(from.x - o.x, from.z - o.z)) return false;
+  }
+  return true;
+}
+
+/**
  * Nudge a mover sideways out of others' way, only onto walkable ground.
  * Called after `stepMover`; the path pulls it back on the next frames.
  */

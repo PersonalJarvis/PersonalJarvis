@@ -15473,3 +15473,43 @@ worktree.
 the app; the IDE workspaces come back from `last_session.json` via
 `POST /api/agentic-ide/workspaces/{id}/restore`, each pane resuming its CLI
 session.
+
+## BUG-220: "look at my screen" / an appshot of the front window sent the model a black picture (MEDIUM, FIXED 2026-09-29)
+
+**Symptom.** Asking Jarvis to look at the window in front answered as if the
+screen were empty; the captured image of the Personal Jarvis window was one
+flat dark colour.
+
+**Cause.** Window-scoped captures use the native window-only backend
+(`jarvis.platform.window_capture.grab_window`). For some GPU-composited
+windows — WebView2 apps, the desktop app itself among them — it returns a
+frame that is a single colour (measured: every pixel luma 10) instead of
+failing, and the service handed that frame on as a successful capture.
+
+**Fix.** A window target is always the window in front, so
+`ScreenContextService._grab` grabs the window's screen rectangle first —
+exactly what the user sees. The first fix (same morning) only fell back when
+the native frame was perfectly flat; the live frame had darker anti-aliased
+corners (luma 0-13), passed as "content", and the appshot was black again.
+Native window-only capture is now used only when a visible denylisted window
+intersects the rectangle, and a blank result there (`_is_flat_frame`: the
+middle 98 % of pixels within six luma levels) is refused.
+Guard: `tests/unit/screen_context/test_blank_window_capture.py`.
+
+## BUG-221: the whole app froze — wake word, chat and every window dead, 0 % CPU (CRITICAL, FIXED 2026-09-29)
+
+**Symptom.** The wake word never fired and no view reacted; `/api/health`
+timed out while the backend process sat at 0 % CPU.
+
+**Cause.** A self-deadlock on the asyncio loop thread. `asyncio.to_thread`
+called `ThreadPoolExecutor.submit`, which holds `concurrent.futures`'
+process-wide, non-reentrant `_global_shutdown_lock`. Allocating the worker
+thread triggered a GC pass that collected a `LockedRecognizer`; its `__del__`
+handed the native recognizer to the release pool with a second `submit` —
+which waited forever for the lock its own thread already held.
+
+**Fix.** `jarvis/plugins/wake/vosk_native.py` hands dead recognizers to a
+plain daemon worker through a `queue.SimpleQueue` (documented reentrant and
+safe in destructors); `__del__` only enqueues and takes no lock. The worker is
+started in ordinary code (`LockedRecognizer.__init__`, `release_recognizer`).
+Guard: `tests/unit/plugins/wake/test_vosk_native.py::test_dropping_the_proxy_inside_an_executor_submit_does_not_deadlock`.

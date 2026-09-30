@@ -8,6 +8,7 @@ import type { AgentChatCatalog, AgentChatEvent } from "@/lib/agentChatApi";
 import { AgentChatStoreProvider } from "@/components/agentchat/AgentChatStoreContext";
 import { useAgentChatStore, useAgentSessionStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
+import { useHomeStore } from "@/store/home";
 
 const CATALOG: AgentChatCatalog = {
   default_cwd: "C:\\work",
@@ -741,6 +742,60 @@ describe("ChatStage (agent chat)", () => {
     // A spoken thread has no composer: it is continued by talking.
     expect(screen.queryByTestId("agent-composer")).toBeNull();
     expect(screen.getByTestId("continue-by-voice")).toBeTruthy();
+  });
+
+  it("continues a spoken thread by starting a call seeded with it", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ armed: true, seeded_turns: 2 }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    useAgentChatStore.setState({ activeSessionId: null, timeline: EMPTY_TIMELINE });
+    useHomeStore.setState({ surface: "chat", jarvisCardMode: "chat", transcript: [] });
+    useEventStore.setState({
+      activeKind: "voice",
+      activeThreadId: "v1",
+      messages: [
+        { id: "m1", role: "user", content: "set a timer", ts: 1 },
+        { id: "m2", role: "assistant", content: "Ten minutes, running.", ts: 2 },
+      ],
+      thinkingTraces: {},
+    });
+    render(<ChatStage />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("continue-by-voice"));
+    });
+
+    // The call itself starts — switching the screen alone left a silent orb.
+    expect(fetchMock).toHaveBeenCalledWith("/api/chats/voice/v1/speak", { method: "POST" });
+    expect(useHomeStore.getState().surface).toBe("voice");
+    expect(useHomeStore.getState().jarvisCardMode).toBe("voice");
+    expect(useHomeStore.getState().transcript.length).toBe(2);
+    vi.unstubAllGlobals();
+  });
+
+  it("says so when the seeded call could not start", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ armed: false, seeded_turns: 0 }), { status: 200 })),
+    );
+    const pushToast = vi.fn();
+    useAgentChatStore.setState({ activeSessionId: null, timeline: EMPTY_TIMELINE });
+    useEventStore.setState({
+      activeKind: "voice",
+      activeThreadId: "v1",
+      messages: [{ id: "m1", role: "user", content: "set a timer", ts: 1 }],
+      thinkingTraces: {},
+      pushToast,
+    });
+    render(<ChatStage />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("continue-by-voice"));
+    });
+
+    expect(pushToast).toHaveBeenCalledWith("warning", expect.any(String));
+    vi.unstubAllGlobals();
   });
 
   it("gives the stage back to the agent chat once a session is open", () => {

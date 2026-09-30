@@ -65,6 +65,7 @@ from jarvis.core.turn_language import (
 )
 from jarvis.realtime.audio import StreamingPcm16Resampler
 from jarvis.realtime.protocol import RealtimeSessionConfig, RealtimeUnavailableError
+from jarvis.realtime.report_prompt import clip_report, report_update_prompt
 from jarvis.realtime.scrub_gate import ScrubHoldGate
 from jarvis.realtime.tools import canonical_tool_wire_name
 from jarvis.sessions.constants import (
@@ -1749,12 +1750,16 @@ _HANDSHAKE_FAILURE_MESSAGES: dict[str, dict[str, str]] = {
     },
     "no_credits": {
         "de": (  # i18n-allow: localized runtime voice output
-            "Das Sprachkontingent ist aufgebraucht, "  # i18n-allow
-            "deshalb musste ich das Gespräch beenden."  # i18n-allow
+            "Das Guthaben für die Sprachverbindung ist aufgebraucht. "  # i18n-allow
+            "Lade es beim Anbieter auf, dann klappt es wieder."  # i18n-allow
         ),
-        "en": "The voice quota is used up, so I had to end the call.",
+        "en": (
+            "The credit for the voice connection is used up. "
+            "Top it up with the provider and it will work again."
+        ),
         "es": (  # i18n-allow: localized runtime voice output
-            "Se agotó la cuota de voz, así que tuve que terminar la llamada."
+            "Se agotó el saldo de la conexión de voz. "
+            "Recárgalo con el proveedor y volverá a funcionar."
         ),
     },
     "dropped": {
@@ -2185,6 +2190,19 @@ def _preferences_block(config: Any, *, compact: bool = False) -> str:
         return ""
 
 
+def _learned_block(*, compact: bool = False) -> str:
+    """Jarvis' learned notebooks (cached snapshot; at most one ``stat``).
+
+    Degrades to ``""`` so a notebook fault never blocks the session handshake.
+    """
+    try:
+        from jarvis.memory.learning.notebook import snapshot_block
+
+        return snapshot_block(compact=compact)
+    except Exception:  # noqa: BLE001 — never break the voice session on a notebook fault
+        return ""
+
+
 def _session_instructions(
     language: str,
     *,
@@ -2331,6 +2349,7 @@ def _session_instructions(
         "classic text brain configuration."
     )
     history_lost_line = _HISTORY_LOST_INSTRUCTION if history_lost else ""
+    learned = _learned_block(compact=compact)
     if compact:
         # Static-first / dynamic-last: everything that is identical from turn
         # to turn forms one stable prefix, so Ollama's KV prefix cache skips
@@ -2339,6 +2358,7 @@ def _session_instructions(
         parts = [
             persona,
             preferences,
+            learned,
             _ONE_SPEAKER_DIRECTIVE,
             _COMPLETE_THE_REQUEST_DIRECTIVE,
             tool_directive,
@@ -2363,6 +2383,10 @@ def _session_instructions(
         # for THIS user (tone, dialect, address, defaults) and must frame the
         # whole spoken output, while safety and tool rules below stay above them.
         preferences,
+        # What Jarvis has learned about this user across earlier calls and
+        # chats (jarvis/memory/learning). Background knowledge, framed as data
+        # below the user's own standing instructions.
+        learned,
         _ONE_SPEAKER_DIRECTIVE,
         # Right after the one-speaker rule, because the two shape the same
         # thing: how much of the turn belongs to this reply. One says "do not
@@ -3152,24 +3176,13 @@ class RealtimeVoiceSession:
         return (
             "[Agent society — the user's own agents, live right now]\n"
             f"Agents on the user's team: {roster}.\n"
-            "For an agent-list or status QUESTION call society_status via your action "
-            "function. This is a read-only lookup: do not assign work, spawn a worker, "
-            "or announce that any agent is starting. An empty name snapshot does not "
-            "prove the user has no agents. Creation and reconfiguration use the "
-            "society-create-agent, society-update-agent and society-switch-agent-model "
-            "app commands; inspect society-capability-catalog for valid capabilities "
-            "and society-agent-catalog for models. "
-            "Report management changes only after a successful tool result. "
-            "To send a message TO an agent, use message_agent (target, text), or "
-            "ask jarvis_action to use message_agent if it is not directly available. "
-            "This is an internal chat message, not an email: never use gmail or "
-            "another external messaging connector for it. Internal messages need "
-            "no extra confirmation. Use delegate_to_agent for assigning work, including "
-            "'tell X to test Y'; compose an actionable brief with known context, scope "
-            "and completion evidence. For 'ask X about Y', send a query requiring an answer. "
-            "Choose reply_policy: always for requested findings, on_error for blockers only, "
-            "none for information or explicit silence. Do not merely paraphrase the user "
-            "or invent missing facts. Delivery does not mean completion. "
+            "For an agent-list or status QUESTION call society_status (directly or "
+            "through your action function). This is a read-only lookup: do not assign "
+            "work, spawn a worker, or announce that any agent is starting. An empty name "
+            "snapshot does not prove the user has no agents. Creating, changing or "
+            "archiving agents and their scheduled routines uses the society-* tools; "
+            "messages and assignments use message_agent and delegate_to_agent. Their "
+            "descriptions carry the rules; report only what a tool result confirmed. "
             "Those are the user's OWN AGENTS from the Agents section (each with "
             "its own chat, tools and instructions) — not people you know, not "
             "coding terminals, and not the retired sub-agent system. When the "
@@ -4668,6 +4681,7 @@ class RealtimeVoiceSession:
         text: str,
         spoken_kind: str,
         detail: str | None = None,
+        report: str | None = None,
     ) -> bool:
         """Retain an owed background result for later delegated follow-ups.
 
@@ -4694,6 +4708,10 @@ class RealtimeVoiceSession:
         note = f"[{label}]\n{cleaned}".strip()
         if metadata:
             note = f"{note}\nResult metadata: {metadata}".strip()
+        material = str(report or "").strip()
+        if material:
+            # So "what exactly did it change?" is answerable next turn.
+            note = f"{note}\nFull report:\n{clip_report(material)}"
         self._remember_delegate_turn("", note)
         return True
 
@@ -4704,8 +4722,13 @@ class RealtimeVoiceSession:
         language: str,
         spoken_kind: str,
         detail: str | None = None,
+        report: str | None = None,
     ) -> bool:
         """Let an idle, healthy live model render one standardized readback.
+
+        With ``report`` the model is handed an agent's full report and asked to
+        reason over it (:mod:`jarvis.realtime.report_prompt`); ``text`` stays
+        the honest fallback that is spoken verbatim if the turn never renders.
 
         ``False`` means the caller must keep the classic TTS path. Refusing a
         busy session is load-bearing: Gemini text input interrupts generation,
@@ -4727,6 +4750,7 @@ class RealtimeVoiceSession:
             text=cleaned,
             spoken_kind=spoken_kind,
             detail=detail,
+            report=report,
         )
         send_text = getattr(self._session, "send_text", None)
         if (
@@ -4768,8 +4792,17 @@ class RealtimeVoiceSession:
         self._drop_provider_output_until_user_turn = False
         await self._ensure_turn_started()
         try:
+            material = str(report or "").strip()
             await send_text(
-                _external_update_prompt(
+                report_update_prompt(
+                    cleaned,
+                    material,
+                    language=resolved_language,
+                    kind=state.spoken_kind,
+                    opener=SPEAK_REQUEST_OPENER,
+                )
+                if material
+                else _external_update_prompt(
                     cleaned,
                     language=resolved_language,
                     kind=state.spoken_kind,

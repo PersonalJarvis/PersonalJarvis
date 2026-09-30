@@ -125,7 +125,7 @@ def _render(spec: LaunchSpec) -> str:
         "[Desktop Entry]\n"
         "Type=Application\n"
         f"Name={escape_value(_APP_NAME)}\n"
-        "Comment=Voice-driven meta-orchestrator (autostart)\n"
+        "Comment=Turn your computer into an AI agent (autostart)\n"
         f"Exec={_exec_value(spec)}\n"
         f"Path={escape_value(spec.working_dir)}\n"
         "Terminal=false\n"

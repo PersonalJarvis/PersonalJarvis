@@ -54,6 +54,10 @@ KNOWN: frozenset[str] = frozenset(
         "feedback",
         "agent-instructions",
         "wallpaper",
+        # Appshots: the shortcut and destination for showing the front window.
+        "appshots",
+        # Jarvis actions: which app actions Jarvis may run, ask for or never run.
+        "jarvis-actions",
         "dictionary",
         "dictation",
         "voice-shortcuts",
@@ -199,6 +203,11 @@ _ALIASES: dict[str, str] = {
     "hintergrund": "wallpaper",  # i18n-allow: input vocab
     "hintergrundbild": "wallpaper",  # i18n-allow: input vocab
     "fondo de pantalla": "wallpaper",  # i18n-allow: input vocab
+    "appshot": "appshots",
+    "jarvis actions": "jarvis-actions",
+    "jarvis aktionen": "jarvis-actions",  # i18n-allow: speech-input vocabulary
+    "app shots": "appshots",
+    "app shot": "appshots",
     "task bar": "taskbar",
     "taskleiste": "taskbar",
     # The Artifacts section (section id kept as "visualization" — its 2026-08

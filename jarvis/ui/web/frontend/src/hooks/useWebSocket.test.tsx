@@ -257,13 +257,15 @@ describe("useWebSocket VoiceBootStatus handling", () => {
     expect(voiceInputLevelRef.current).toBe(0);
   });
 
-  it("shows a metadata-only receipt for one-shot screen capture", async () => {
+  it("shows one appshot receipt per capture and no window title", async () => {
     render(<Harness />);
     await Promise.resolve();
 
+    // The capture events themselves stay silent: the desktop overlay flashes
+    // at the shutter, and AppshotTaken is the single in-app receipt.
     MockWebSocket.last!.deliver(
       envelope("ScreenCaptureAnnounced", {
-        target_kind: "monitor",
+        target_kind: "window",
         target_label: "private title must not enter the toast",
       }),
     );
@@ -275,15 +277,38 @@ describe("useWebSocket VoiceBootStatus handling", () => {
         target_label: "private title must not enter the toast",
       }),
     );
+    MockWebSocket.last!.deliver(
+      envelope("AppshotTaken", {
+        appshot_id: "a1",
+        trigger: "hotkey",
+        delivered_to: "message",
+        target_label: "active window",
+      }),
+    );
 
     const toasts = useEventStore.getState().toasts;
-    expect(toasts).toHaveLength(2);
-    expect(toasts[0].message).toContain("requested surface");
-    expect(toasts[1].message).toContain("1600×900");
-    expect(toasts[1].message).toContain("3 redaction");
-    expect(toasts.map((toast) => toast.message).join(" ")).not.toContain(
-      "private title",
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].kind).toBe("success");
+    expect(toasts[0].message).toContain("Appshot");
+    expect(toasts[0].message).not.toContain("private title");
+  });
+
+  it("says why a shortcut appshot was refused", async () => {
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver(
+      envelope("AppshotTaken", {
+        trigger: "hotkey",
+        delivered_to: "refused",
+        target_label: "Appshots are switched off.",
+      }),
     );
+
+    const toasts = useEventStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].kind).toBe("warning");
+    expect(toasts[0].message).toContain("Appshots are switched off.");
   });
 
   it("stages the newest picture when the brain opens the Visualization section", async () => {

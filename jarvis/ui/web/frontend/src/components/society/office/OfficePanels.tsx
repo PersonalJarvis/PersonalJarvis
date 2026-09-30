@@ -1,20 +1,23 @@
 /**
- * DOM panels for what the person selects in the office: an agent, or one of
- * the checkpoints (reception, agent board, team room, wardrobe, lead office,
- * break room). Every action here uses an existing app path — create dialog,
+ * DOM panels for what the person selects in the office: an agent (an IDE
+ * session on the coding floor has its own PaneCommandPanel), or one of the
+ * checkpoints (reception, agent board, team room, wardrobe, lead office, break
+ * room, elevator, Mission Control). Every action here uses an existing app path — create dialog,
  * agent card/chat, chat groups — the office adds no new backend contract.
  */
 import { useEffect, useId, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { useT } from "@/i18n";
-import { createSocietyChatGroup, useSocietyChatGroups } from "@/lib/societyChatGroups";
 import type { SocietyAgent } from "../data";
 import type { CheckpointKind, OfficeLayout, Point } from "./officeLayout";
-import { player, useOfficeStore } from "./officeStore";
+import { player, useOfficeStore, type OfficeFloor } from "./officeStore";
 import { agentPositions } from "./walkerRegistry";
 import { AgentTalkPanel, CALL_MS } from "./AgentTalkPanel";
 import type { PlayerProfile } from "./playerProfile";
 import { WardrobePanel } from "./WardrobePanel";
+import { ReceptionPanel } from "./ReceptionPanel";
+import { TeamRoomPanel } from "./TeamRoomPanel";
+import { MissionControlPanel } from "./MissionControlPanel";
+import { CHECKPOINT_ICON, IconSvg, type CheckpointIcon } from "./CheckpointMarker";
 
 
 export interface OfficeActions {
@@ -28,7 +31,9 @@ function StateDot({ state }: { state: SocietyAgent["state"] }) {
   return <i className="office-dot" data-state={state} aria-hidden />;
 }
 
-function PanelShell({ title, subtitle, onClose, children }: { title: string; subtitle?: string; onClose: () => void; children: React.ReactNode }) {
+function PanelShell({ title, subtitle, icon, kind, onClose, children }: {
+  title: string; subtitle?: string; icon?: CheckpointIcon; kind?: string; onClose: () => void; children: React.ReactNode;
+}) {
   const t = useT();
   const headingId = useId();
   const panel = useRef<HTMLElement>(null);
@@ -36,8 +41,9 @@ function PanelShell({ title, subtitle, onClose, children }: { title: string; sub
   // land on it; walking keys keep working because they listen on the window.
   useEffect(() => { panel.current?.focus({ preventScroll: true }); }, [title]);
   return (
-    <aside ref={panel} className="office-card office-panel" data-office-ui aria-labelledby={headingId} tabIndex={-1}>
+    <aside ref={panel} className="office-card office-panel" data-office-ui data-panel={kind} aria-labelledby={headingId} tabIndex={-1}>
       <header className="office-panel-head">
+        {icon && <span className="office-panel-badge" aria-hidden><IconSvg icon={icon} /></span>}
         <div>
           <h2 id={headingId}>{title}</h2>
           {subtitle ? <span>{subtitle}</span> : null}
@@ -49,7 +55,7 @@ function PanelShell({ title, subtitle, onClose, children }: { title: string; sub
   );
 }
 
-function spotCentre(layout: OfficeLayout, kind: "meeting" | "couch"): Point {
+function spotCentre(layout: OfficeLayout, kind: "couch"): Point {
   const spots = layout.spots.filter((s) => s.kind === kind);
   if (spots.length === 0) return layout.spawn;
   return { x: spots.reduce((s, p) => s + p.x, 0) / spots.length, z: spots.reduce((s, p) => s + p.z, 0) / spots.length };
@@ -58,18 +64,6 @@ function spotCentre(layout: OfficeLayout, kind: "meeting" | "couch"): Point {
 /** The agent panel is a walkie-talkie to that agent (AgentTalkPanel). */
 export function AgentPanel({ agent, actions, onClose }: { agent: SocietyAgent; actions: OfficeActions; onClose: () => void }) {
   return <AgentTalkPanel agent={agent} actions={actions} onClose={onClose} />;
-}
-
-function CreatePanel({ actions }: { actions: OfficeActions }) {
-  const t = useT();
-  return (
-    <>
-      <p>{t("society.office.create_body")}</p>
-      <button type="button" className="office-action office-action-primary" disabled={!actions.onCreateAgent} onClick={() => actions.onCreateAgent?.()}>
-        {t("society.office.create_action")}
-      </button>
-    </>
-  );
 }
 
 function ManagePanel({ agents, actions }: { agents: SocietyAgent[]; actions: OfficeActions }) {
@@ -98,88 +92,6 @@ function ManagePanel({ agents, actions }: { agents: SocietyAgent[]; actions: Off
     </>
   );
 }
-
-function TeamPanel({ agents, layout, sample, actions }: { agents: SocietyAgent[]; layout: OfficeLayout; sample: boolean; actions: OfficeActions }) {
-  const t = useT();
-  const store = useOfficeStore();
-  const client = useQueryClient();
-  const groups = useSocietyChatGroups(!sample);
-  const [name, setName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [created, setCreated] = useState<{ id: string; name: string } | null>(null);
-  const table = spotCentre(layout, "meeting");
-  const members = store.teamDraft.filter((id) => agents.some((a) => a.agentId === id));
-  const canCreate = !sample && !busy && members.length >= 2;
-  const create = async () => {
-    if (!canCreate) return;
-    setBusy(true); setError(""); setCreated(null);
-    try {
-      const names = members.map((id) => agents.find((a) => a.agentId === id)?.name ?? id);
-      const group = await createSocietyChatGroup(name.trim() || names.join(" + "), members);
-      await client.invalidateQueries({ queryKey: ["society", "chat-groups"] });
-      store.summon(members, table, CALL_MS);
-      store.clearDraft();
-      setName("");
-      setCreated({ id: group.group_id, name: group.name });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <>
-      <p>{t("society.office.team_body")}</p>
-      {sample && <p className="office-note-inline">{t("society.office.sample")}</p>}
-      <label className="office-field">
-        <span>{t("society.office.team_name")}</span>
-        <input value={name} maxLength={60} onChange={(e) => setName(e.target.value)} placeholder={t("society.office.team_name_placeholder")}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void create(); } }} />
-      </label>
-      {agents.length === 0 ? <p className="office-note-inline">{t("society.office.manage_empty")}</p> : (
-        <ul className="office-list office-list-check">
-          {agents.map((agent) => (
-            <li key={agent.agentId}>
-              <label>
-                <input type="checkbox" checked={store.teamDraft.includes(agent.agentId)} onChange={() => store.toggleDraft(agent.agentId)} />
-                <StateDot state={agent.state} /><span className="office-list-name" title={agent.name}>{agent.name}</span>
-              </label>
-            </li>
-          ))}
-        </ul>
-      )}
-      <button type="button" className="office-action office-action-primary" disabled={!canCreate} aria-busy={busy} onClick={() => void create()}>
-        {t("society.office.team_create").replace("{0}", String(members.length))}
-      </button>
-      {!sample && members.length < 2 && agents.length >= 2 && <p className="office-hint">{t("society.office.team_need_more")}</p>}
-      {error && <p role="alert" className="office-error">{error}</p>}
-      {created && (
-        <p className="office-success" role="status">
-          {t("society.office.team_created").replace("{0}", created.name)}
-          {actions.onOpenGroup && <button type="button" className="office-link" onClick={() => actions.onOpenGroup?.(created.id)}>{t("society.office.team_open")}</button>}
-        </p>
-      )}
-      {(groups.data?.length ?? 0) > 0 && (
-        <>
-          <h4 className="office-subhead">{t("society.office.team_existing")}</h4>
-          <ul className="office-list">
-            {groups.data!.map((group) => (
-              <li key={group.group_id}>
-                <span className="office-list-name" title={group.name}>{group.name}</span>
-                <button type="button" className="office-mini" aria-label={t("society.office.team_gather_label").replace("{0}", group.name)}
-                  onClick={() => store.summon(group.members, table, CALL_MS)}>{t("society.office.team_gather")}</button>
-                {actions.onOpenGroup && <button type="button" className="office-mini" aria-label={t("society.office.team_open_label").replace("{0}", group.name)}
-                  onClick={() => actions.onOpenGroup?.(group.group_id)}>{t("society.office.action_open")}</button>}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-    </>
-  );
-}
-
 
 function LeadPanel({ agents, actions }: { agents: SocietyAgent[]; actions: OfficeActions }) {
   const t = useT();
@@ -234,19 +146,20 @@ function BreakPanel({ agents, layout }: { agents: SocietyAgent[]; layout: Office
   );
 }
 
-export function CheckpointPanel({ id, agents, layout, sample, profile, onProfile, actions, onClose }: {
-  id: CheckpointKind; agents: SocietyAgent[]; layout: OfficeLayout; sample: boolean;
+export function CheckpointPanel({ id, floor = "agents", agents, layout, sample, profile, onProfile, actions, onClose }: {
+  id: CheckpointKind; floor?: OfficeFloor; agents: SocietyAgent[]; layout: OfficeLayout; sample: boolean;
   profile: PlayerProfile; onProfile: (next: PlayerProfile) => void; actions: OfficeActions; onClose: () => void;
 }) {
   const t = useT();
   return (
-    <PanelShell title={t(`society.office.cp_${id}`)} subtitle={t(`society.office.cp_${id}_hint`)} onClose={onClose}>
-      {id === "create" && <CreatePanel actions={actions} />}
+    <PanelShell title={t(`society.office.cp_${id}`)} subtitle={t(`society.office.cp_${id}_hint`)} icon={CHECKPOINT_ICON[id]} kind={id} onClose={onClose}>
+      {id === "create" && <ReceptionPanel floor={floor} layout={layout} onCreateAgent={actions.onCreateAgent} />}
       {id === "manage" && <ManagePanel agents={agents} actions={actions} />}
-      {id === "team" && <TeamPanel agents={agents} layout={layout} sample={sample} actions={actions} />}
+      {id === "team" && <TeamRoomPanel agents={agents} layout={layout} sample={sample} actions={actions} />}
       {id === "wardrobe" && <WardrobePanel profile={profile} onProfile={onProfile} agents={agents} sample={sample} />}
       {id === "lead" && <LeadPanel agents={agents} actions={actions} />}
       {id === "break" && <BreakPanel agents={agents} layout={layout} />}
+      {id === "mission" && <MissionControlPanel />}
     </PanelShell>
   );
 }

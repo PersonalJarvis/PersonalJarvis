@@ -72,6 +72,7 @@ class SshShellBackend:
         try:
             rel = Path(cwd).resolve().relative_to(self._workspace.resolve())
         except ValueError:
+            # A cwd outside the workspace maps to the workspace root.
             return ""
         text = rel.as_posix()
         return "" if text == "." else text

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { act, createRoot, extend, type ReconcilerRoot } from "@react-three/fiber";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as THREE from "three";
 import { Box3, type Object3D } from "three";
 import { FURNITURE_SIZE, type Furniture, type FurnitureKind } from "./officeLayout";
@@ -36,7 +37,12 @@ async function mount(element: JSX.Element): Promise<Object3D> {
   });
   let captured: Object3D | null = null;
   await act(async () => {
-    current.render(<group ref={(g) => { captured = g; }}>{element}</group>);
+    // Some props read app data (the server room's wall reads Spend): give them a client that never retries.
+    current.render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <group ref={(g) => { captured = g; }}>{element}</group>
+      </QueryClientProvider>,
+    );
   });
   if (!captured) throw new Error("the element did not mount");
   return captured;

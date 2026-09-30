@@ -58,23 +58,28 @@ def grid(registry: Registry) -> list[tuple[str, int, int]]:
     return [(t.name, t.column, t.slot) for t in session.terminals]
 
 
-async def test_wizard_opens_columns_of_two(tmp_path) -> None:
-    """Four terminals are two columns of two, not four columns of one.
+async def test_wizard_opens_an_even_grid_in_reading_order(tmp_path) -> None:
+    """Four terminals are a 2 x 2, not four columns of one.
 
     The workspace is one screenful, so a row of columns divides the window
     between every pane: six terminals left each about 410 px on the
     maintainer's display, under the width their agent needs to draw in, so
     every pane was clipped at its tile edge and the six read as overlapping
-    one another (2026-08-11). Filling columns two deep halves the column count
-    and so doubles each pane's width.
+    one another (2026-08-11). The opening grid is dealt row by row
+    (``balanced_columns``), so T1 and T2 share the top band.
     """
     registry = await _workspace(tmp_path, 4)
-    assert [(c, s) for _, c, s in grid(registry)] == [(0, 0), (0, 1), (1, 0), (1, 1)]
+    assert [(c, s) for _, c, s in grid(registry)] == [(0, 0), (1, 0), (0, 1), (1, 1)]
 
 
-async def test_wizard_stands_an_odd_pane_in_a_column_of_its_own(tmp_path) -> None:
+async def test_wizard_opens_two_panes_side_by_side(tmp_path) -> None:
+    registry = await _workspace(tmp_path, 2)
+    assert [(c, s) for _, c, s in grid(registry)] == [(0, 0), (1, 0)]
+
+
+async def test_wizard_puts_an_odd_pane_in_the_second_row(tmp_path) -> None:
     registry = await _workspace(tmp_path, 3)
-    assert [(c, s) for _, c, s in grid(registry)] == [(0, 0), (0, 1), (1, 0)]
+    assert [(c, s) for _, c, s in grid(registry)] == [(0, 0), (1, 0), (0, 1)]
 
 
 async def test_split_down_stacks_inside_the_anchors_own_column(tmp_path) -> None:
@@ -153,9 +158,12 @@ async def test_split_right_in_a_stack_keeps_the_other_pane_full_width(tmp_path) 
     panes and everything was squeezed. The tree answers locally: the top half
     holds two panes side by side, the bottom pane keeps the full width.
     """
-    registry = await _workspace(tmp_path, 2)
+    # Two panes OPEN side by side (``balanced_columns``), so the stack is
+    # built the way a user builds one: split the first pane downwards.
+    registry = await _workspace(tmp_path, 1)
     session = registry.session
     assert session is not None
+    await registry.add_terminal(anchor=session.terminals[0].name, direction="down")
     top, bottom = session.terminals[0], session.terminals[1]
     added = await registry.add_terminal(anchor=top.name, direction="right")
 

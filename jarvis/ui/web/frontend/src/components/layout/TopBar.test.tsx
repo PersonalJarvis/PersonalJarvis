@@ -24,15 +24,14 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("TopBar detach button", () => {
-  it("offers the Settings navigation toggle with its current state", () => {
-    useEventStore.setState({ activeSection: "profile" });
+  it("offers the sidebar toggle with its current state", () => {
     const onToggle = vi.fn();
-    const { rerender } = render(<TopBar settingsNavigation={{ open: false, onToggle }} />);
-    const toggle = screen.getByTestId("settings-sidebar-toggle");
+    const { rerender } = render(<TopBar navToggle={{ collapsed: true, onToggle }} />);
+    const toggle = screen.getByTestId("section-nav-sidebar");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(toggle);
     expect(onToggle).toHaveBeenCalledOnce();
-    rerender(<TopBar settingsNavigation={{ open: true, onToggle }} />);
+    rerender(<TopBar navToggle={{ collapsed: false, onToggle }} />);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
   });
 

@@ -621,6 +621,37 @@ def test_removing_gives_the_room_to_the_siblings() -> None:
     assert slimmed.weights == [2.0, 1.0]  # 2:1 survives, the tail's share dissolves
 
 
+def test_closing_a_grid_cell_moves_the_pane_below_up() -> None:
+    """Close the top-right of a 2x2: the bottom-right rises, the left stays.
+
+    The grid stands on its rows, so the closed pane's row neighbour used to
+    stretch across the full width instead (maintainer report, 2026-09-29).
+    """
+    grid = lt.wizard_tree(["t1", "t2", "t3", "t4"], 2)
+    assert isinstance(grid, Split) and grid.direction == "column"
+
+    closed = lt.remove_pane(grid, "t2")
+    assert closed == Split(
+        direction="row",
+        children=[
+            Split(
+                direction="column",
+                children=[Leaf(pane="t1"), Leaf(pane="t3")],
+                weights=[0.5, 0.5],
+            ),
+            Leaf(pane="t4"),
+        ],
+        weights=[1.0, 1.0],
+    )
+    check_canonical(closed)
+
+    # A bottom cell folds the same way: its column-mate grows down.
+    lower = lt.remove_pane(grid, "t3")
+    assert isinstance(lower, Split) and lower.direction == "row"
+    assert lower.children[0] == Leaf(pane="t1")
+    check_canonical(lower)
+
+
 def test_removing_the_last_pane_empties_the_tree() -> None:
     assert lt.remove_pane(Leaf(pane="t1"), "t1") is None
 

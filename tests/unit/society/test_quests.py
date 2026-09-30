@@ -29,7 +29,7 @@ def _cap(cap_id: str, label: str, *, connected: bool = True) -> CapabilityRow:
 
 CATALOG = [
     _cap("plugin:gmail", "Gmail"),
-    _cap("plugin:google-calendar", "Google Calendar"),
+    _cap("plugin:google_calendar", "Google Calendar"),
     _cap("core:search-web", "Search the web"),
 ]
 
@@ -77,7 +77,7 @@ async def test_focus_match_picks_the_specialist(rt: SocietyRuntime):
         name="Mailbox", title="Mail assistant", focus=["plugin:gmail"]
     )
     await rt.roster.create(
-        name="Planner", title="Calendar assistant", focus=["plugin:google-calendar"]
+        name="Planner", title="Calendar assistant", focus=["plugin:google_calendar"]
     )
     agents = await rt.roster.list()
     choice = choose_taker("Summarize the five most important emails of today", agents, CATALOG)

@@ -52,6 +52,9 @@ export type Checkpoint = (typeof CHECKPOINTS)[number];
 export const PERMISSION_CEILINGS = ["safe", "monitor", "ask"] as const;
 export type PermissionCeiling = (typeof PERMISSION_CEILINGS)[number];
 
+export const AGENT_APPROVAL_MODES = ["bypass", "ask", "always_ask"] as const;
+export type AgentApprovalMode = (typeof AGENT_APPROVAL_MODES)[number];
+
 export const BROWSER_MODES = ["own", "attach"] as const;
 export type BrowserMode = (typeof BROWSER_MODES)[number];
 
@@ -155,6 +158,8 @@ export interface SocietyAgentRow {
   wiki_namespace: string;
   knowledge_scope: KnowledgeScope;
   permission_ceiling: PermissionCeiling;
+  /** Null only for an existing agent whose chat retains its legacy setting. */
+  approval_mode: AgentApprovalMode | null;
   approval_rules: ApprovalRules;
   daily_budget_usd: number;
   max_concurrent_runs: number;

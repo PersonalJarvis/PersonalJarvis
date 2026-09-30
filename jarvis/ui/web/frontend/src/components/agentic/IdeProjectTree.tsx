@@ -49,6 +49,23 @@ function removalErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * The project's only workspace when it carries the project's own name. Such a
+ * project renders as ONE row: a folder header over a child with the same name
+ * and the same count says everything twice.
+ */
+function soloWorkspace(project: IdeProject): ProjectWorkspace | null {
+  if (project.workspaces.length !== 1) return null;
+  const [workspace] = project.workspaces;
+  return workspace.name.trim().toLowerCase() === project.name.trim().toLowerCase() ? workspace : null;
+}
+
+/** Running agents glow, an open but idle workspace is a solid dot, a saved (closed) one a hollow ring. */
+function statusDotClass(workspace: ProjectWorkspace): string {
+  if (workspace.status !== "open") return "border border-muted-foreground/45";
+  return workspace.live_terminals > 0 ? "bg-emerald-500 ring-[3px] ring-emerald-500/15" : "bg-muted-foreground/40";
+}
+
 function readExpansion(): Record<string, boolean> {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(EXPANSION_KEY) ?? "{}");
@@ -156,6 +173,10 @@ export function IdeProjectTree() {
         await openProject(project.path);
         await patchProject(project.id, changes);
       }
+      // A one-row project renames as one: its workspace follows, so the row
+      // does not split into a header and a differently named child.
+      const solo = soloWorkspace(project);
+      if (changes.name && solo?.status === "open") await renameWorkspace(solo.id, changes.name);
       setRenamingId(null);
       requestRefresh();
     } catch (error) { pushToast("error", (error as Error).message); }
@@ -402,11 +423,16 @@ export function IdeProjectTree() {
     const isProjectDragged = draggedProjectId === project.id;
     const isProjectDropBefore = projectDropTarget?.id === project.id && projectDropTarget.before;
     const isProjectDropAfter = projectDropTarget?.id === project.id && !projectDropTarget.before;
-    const projectMenuOpen = contextMenu?.kind === "project" && contextMenu.projectId === project.id;
-    return <div key={project.id} className="mb-0.5" data-testid={`ide-project-${project.id}`}>
+    const solo = soloWorkspace(project);
+    const soloSelected = solo !== null && solo.id === activeWorkspaceId;
+    const soloPending = solo !== null && solo.id === pendingWorkspaceId;
+    const soloBlocked = solo !== null && solo.status === "closed" && !solo.restorable;
+    const projectMenuOpen = contextMenu?.projectId === project.id
+      && (solo ? contextMenu.kind === "workspace" && contextMenu.workspaceId === solo.id : contextMenu.kind === "project");
+    return <div key={project.id} className="mb-px" data-testid={`ide-project-${project.id}`}>
       <div draggable={projectDraggable}
         data-testid={`ide-project-header-${project.id}`}
-        onContextMenu={(event) => openProjectMenu(event, project.id)}
+        onContextMenu={(event) => solo ? openWorkspaceMenu(event, project.id, solo.id) : openProjectMenu(event, project.id)}
         onDragStart={(event) => {
           if (!projectDraggable) { event.preventDefault(); return; }
           event.dataTransfer.setData(PROJECT_DRAG_MIME, project.id);
@@ -439,7 +465,7 @@ export function IdeProjectTree() {
           clearProjectDragState();
           void moveProject(sourceId, project.id, before);
         }}
-        className={`group relative flex min-h-11 items-center rounded-xl border border-transparent transition-colors hover:bg-muted/70 ${active ? "border-border/50 bg-muted/55" : ""} ${isProjectDragged ? "opacity-40" : ""} ${isProjectDropBefore ? "before:absolute before:-top-0.5 before:left-2 before:right-2 before:h-0.5 before:rounded-full before:bg-primary" : ""} ${isProjectDropAfter ? "after:absolute after:-bottom-0.5 after:left-2 after:right-2 after:h-0.5 after:rounded-full after:bg-primary" : ""} ${projectDraggable ? "cursor-grab active:cursor-grabbing" : ""}`}>
+        className={`group relative flex min-h-8 items-center rounded-md transition-colors hover:bg-muted ${active ? "text-foreground" : ""} ${soloSelected || soloPending ? "bg-muted" : ""} ${isProjectDragged ? "opacity-40" : ""} ${isProjectDropBefore ? "before:absolute before:-top-0.5 before:left-2 before:right-2 before:h-0.5 before:rounded-full before:bg-primary" : ""} ${isProjectDropAfter ? "after:absolute after:-bottom-0.5 after:left-2 after:right-2 after:h-0.5 after:rounded-full after:bg-primary" : ""} ${projectDraggable ? "cursor-grab active:cursor-grabbing" : ""}`}>
         {renamingId === project.id ? <form className="flex min-w-0 flex-1 items-center gap-1 px-2" onSubmit={(event) => { event.preventDefault(); const name = draftName.trim(); if (name && name !== project.name) void mutate(project, { name }); else setRenamingId(null); }}>
           <input autoFocus aria-label={`Rename ${project.name}`} value={draftName} maxLength={80} disabled={working}
             onChange={(event) => setDraftName(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setRenamingId(null); } }}
@@ -447,8 +473,12 @@ export function IdeProjectTree() {
           <button type="submit" aria-label={`Save ${project.name}`} disabled={working || !draftName.trim()} className="rounded p-1 text-muted-foreground hover:text-foreground disabled:opacity-40"><Check className="h-4 w-4" /></button>
           <button type="button" aria-label={`Cancel renaming ${project.name}`} onClick={() => setRenamingId(null)} className="rounded p-1 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
         </form> : <>
-          <button type="button" aria-label={`${open ? "Collapse" : "Expand"} ${project.name}`} aria-expanded={open}
-            onClick={() => setProjectOpen(project.id, !open)}
+          <button type="button" aria-label={solo ? `Open ${project.name}` : `${open ? "Collapse" : "Expand"} ${project.name}`}
+            aria-expanded={solo ? undefined : open}
+            aria-current={soloSelected ? "page" : undefined} aria-busy={soloPending || undefined}
+            data-testid={solo ? `ide-workspace-${solo.id}` : undefined}
+            disabled={soloBlocked}
+            onClick={() => solo ? activateWorkspace(solo.id) : setProjectOpen(project.id, !open)}
             onKeyDown={(event) => {
               if (!event.altKey) return;
               if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
@@ -459,28 +489,37 @@ export function IdeProjectTree() {
               if (!neighbour) return;
               void moveProject(project.id, neighbour.id, event.key === "ArrowUp");
             }}
-            title={`${project.name} — drag to reorder, or press Alt plus arrow keys to move`}
-            className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2.5 text-left text-[16px] font-medium text-foreground group-hover:pr-16 group-focus-within:pr-16 [@media(hover:none)]:pr-16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
-            <Folder className="h-[18px] w-[18px] shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate">{project.name}</span>
-            {count > 0 && <span className="rounded-md bg-background/50 px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground" aria-label={`${count} agent ${count === 1 ? "session" : "sessions"}`}>{count}</span>}
+            title={soloBlocked ? "This workspace cannot be restored on this machine" : `${project.name} — drag to reorder, or press Alt plus arrow keys to move`}
+            className={`flex min-h-8 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-sm font-medium [@media(hover:none)]:pr-14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${solo && solo.status !== "open" && !soloSelected && !soloPending ? "text-muted-foreground" : "text-foreground"}`}>
+            {/* A one-row project has nothing to fold: its status dot takes the chevron's slot. */}
+            {solo
+              ? <span aria-hidden className="flex h-3 w-3 shrink-0 items-center justify-center">
+                  {soloPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <span className={`h-1.5 w-1.5 rounded-full ${statusDotClass(solo)}`} />}
+                </span>
+              : open ? <ChevronDown aria-hidden className="h-3 w-3 shrink-0 text-muted-foreground/70" /> : <ChevronRight aria-hidden className="h-3 w-3 shrink-0 text-muted-foreground/70" />}
+            <Folder aria-hidden className="ml-0.5 h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+            <span className="ml-0.5 min-w-0 flex-1 truncate">{project.name}</span>
+            {soloPending && <span className="sr-only">Switching workspace</span>}
+            {/* An open project's rows carry their own counts; the total only speaks for a folded one. */}
+            {count > 0 && (solo || !open) && <span className="text-xs tabular-nums text-muted-foreground/80 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 [@media(hover:none)]:opacity-0" aria-label={`${count} agent ${count === 1 ? "session" : "sessions"}`}>{count}</span>}
           </button>
-          <div className={`absolute right-1 top-1/2 flex -translate-y-1/2 items-center transition-opacity ${projectMenuOpen ? "opacity-100" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"}`} data-project-menu={project.id}>
+          <div className={`absolute inset-y-0 right-0 flex items-center rounded-r-md bg-gradient-to-l from-muted from-60% to-transparent pl-5 pr-1 transition-opacity ${projectMenuOpen ? "opacity-100" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"}`} data-project-menu={project.id}>
             <button type="button" aria-label={`Project actions for ${project.name}`} title="Project actions" aria-haspopup="menu" aria-expanded={projectMenuOpen}
               data-tree-menu-anchor
-              onClick={(event) => toggleAnchoredMenu(event, { kind: "project", projectId: project.id })}
-              className={`rounded p-1.5 hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${projectMenuOpen ? "bg-background/70 text-foreground" : "text-muted-foreground/70"}`}>
+              onClick={(event) => toggleAnchoredMenu(event, solo
+                ? { kind: "workspace", projectId: project.id, workspaceId: solo.id }
+                : { kind: "project", projectId: project.id })}
+              className={`rounded p-1 hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${projectMenuOpen ? "bg-background/70 text-foreground" : "text-muted-foreground"}`}>
               {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MoreHorizontal className="h-3.5 w-3.5" />}
             </button>
             <button type="button" aria-label={`New workspace in ${project.name}`} title="New workspace" onClick={() => newWorkspace(project.id)}
-              className="rounded p-1.5 text-muted-foreground/70 hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              className="rounded p-1 text-muted-foreground hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Plus className="h-3.5 w-3.5" />
             </button>
           </div>
         </>}
       </div>
-      {open && <div className="ml-5 border-l border-border/70 pl-2 pt-0.5">
+      {open && !solo && <div className="mb-1 ml-3.5 flex flex-col gap-px border-l border-border/60 pl-1.5">
         {project.workspaces.map((workspace: ProjectWorkspace) => {
           const pending = workspace.id === pendingWorkspaceId;
           const selected = workspace.id === activeWorkspaceId;
@@ -523,7 +562,7 @@ export function IdeProjectTree() {
               clearDragState();
               void moveWorkspace(sourceId, workspace.id, before);
             }}
-            className={`group/space relative flex min-h-10 items-center rounded-xl border border-transparent transition-colors hover:bg-muted/70 ${selected ? "border-border/50 bg-muted text-foreground" : ""} ${pending ? "bg-muted/80 text-foreground" : ""} ${isDragged ? "opacity-40" : ""} ${isDropBefore ? "before:absolute before:-top-0.5 before:left-2 before:right-2 before:h-0.5 before:rounded-full before:bg-primary" : ""} ${isDropAfter ? "after:absolute after:-bottom-0.5 after:left-2 after:right-2 after:h-0.5 after:rounded-full after:bg-primary" : ""}`}>
+            className={`group/space relative flex min-h-8 items-center rounded-md transition-colors hover:bg-muted ${selected ? "bg-muted text-foreground" : ""} ${pending ? "bg-muted/80 text-foreground" : ""} ${isDragged ? "opacity-40" : ""} ${isDropBefore ? "before:absolute before:-top-0.5 before:left-2 before:right-2 before:h-0.5 before:rounded-full before:bg-primary" : ""} ${isDropAfter ? "after:absolute after:-bottom-0.5 after:left-2 after:right-2 after:h-0.5 after:rounded-full after:bg-primary" : ""}`}>
             {renamingWorkspaceId === workspace.id ? (
               <form
                 className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1"
@@ -581,11 +620,11 @@ export function IdeProjectTree() {
               if (!neighbour) return;
               void moveWorkspace(workspace.id, neighbour.id, event.key === "ArrowUp");
             }}
-            className={`flex min-h-10 min-w-0 flex-1 items-center gap-2.5 rounded-xl px-2.5 text-left text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${selected || pending ? "text-foreground" : "text-muted-foreground"} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}>
-            {pending ? <Loader2 aria-hidden className="h-3.5 w-3.5 shrink-0 animate-spin" />
-              : <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${workspace.status === "open" && workspace.live_terminals > 0 ? "bg-emerald-500" : "bg-muted-foreground/40"}`} />}
+            className={`flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${selected || pending ? "text-foreground" : "text-muted-foreground"} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}>
+            {pending ? <Loader2 aria-hidden className="h-3 w-3 shrink-0 animate-spin" />
+              : <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDotClass(workspace)}`} />}
             <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
-            <span className="text-xs tabular-nums opacity-70">{workspace.terminals}</span>
+            <span className="text-xs tabular-nums text-muted-foreground/80 transition-opacity group-hover/space:opacity-0 group-focus-within/space:opacity-0 [@media(hover:none)]:opacity-0">{workspace.terminals}</span>
             {pending && <span className="sr-only">Switching workspace</span>}
             </button>
             {(() => {
@@ -593,15 +632,15 @@ export function IdeProjectTree() {
               return <button type="button" aria-label={`Workspace actions for ${workspace.name}`} title="Workspace actions"
                 aria-haspopup="menu" aria-expanded={spaceMenuOpen} data-tree-menu-anchor
                 onClick={(event) => toggleAnchoredMenu(event, { kind: "workspace", projectId: project.id, workspaceId: workspace.id })}
-                className={`mr-1 rounded-md p-1.5 text-muted-foreground transition-opacity hover:bg-background/70 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/space:opacity-100 group-focus-within/space:opacity-100 [@media(hover:none)]:opacity-100 ${spaceMenuOpen ? "bg-background/70 text-foreground opacity-100" : "opacity-0"}`}>
-                <MoreHorizontal className="h-4 w-4" />
+                className={`absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-opacity hover:bg-background/70 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/space:opacity-100 group-focus-within/space:opacity-100 [@media(hover:none)]:opacity-100 ${spaceMenuOpen ? "bg-background/70 text-foreground opacity-100" : "opacity-0"}`}>
+                <MoreHorizontal className="h-3.5 w-3.5" />
               </button>;
             })()}
               </>
             )}
           </div>;
         })}
-        {project.workspaces.length === 0 && <button type="button" onClick={() => newWorkspace(project.id)} className="px-2 py-2 text-left text-sm text-muted-foreground hover:text-foreground">Create workspace</button>}
+        {project.workspaces.length === 0 && <button type="button" onClick={() => newWorkspace(project.id)} className="px-2 py-1.5 text-left text-xs text-muted-foreground hover:text-foreground">Create workspace</button>}
       </div>}
     </div>;
   };
@@ -686,6 +725,23 @@ export function IdeProjectTree() {
     ];
   };
 
+  /**
+   * A one-row project's menu: the workspace's agent actions plus the
+   * project's own, each once — one rename, one launcher set, one removal.
+   */
+  const soloMenuSections = (project: IdeProject, workspace: ProjectWorkspace): TreeMenuItem[][] => {
+    const [agentActions, , place = [], git = []] = workspaceMenuSections(project, workspace);
+    const [projectCreate, projectMeta, projectDelete] = projectMenuSections(project);
+    return [
+      agentActions,
+      [...projectCreate, { id: "copy", label: "Copy folder path", icon: Copy, testId: "ide-workspace-menu-copy", onSelect: run(() => void copyPath(workspace.folder || project.path)) }],
+      place,
+      git,
+      projectMeta,
+      projectDelete,
+    ];
+  };
+
   const menuProject = contextMenu ? visible.find((project) => project.id === contextMenu.projectId) ?? null : null;
   const menuWorkspace =
     contextMenu?.kind === "workspace" && menuProject
@@ -698,20 +754,20 @@ export function IdeProjectTree() {
     : null;
   const confirmProjectTarget = confirmProject ? (visible.find((project) => project.id === confirmProject) ?? null) : null;
 
-  return <div data-testid="ide-project-tree" className="mx-2 mt-2 flex-1 rounded-2xl border border-border/50 bg-card/40 p-2 pb-3">
-    <div className="flex items-center justify-between px-2 pb-2 pt-1 text-[17px] font-semibold text-foreground">
+  return <div data-testid="ide-project-tree" className="flex-1 px-2 pb-3 pt-2">
+    <div className="flex h-8 items-center justify-between pl-2 pr-1 text-sm font-semibold text-foreground">
       <span>Workspaces</span>
       <div className="flex items-center gap-0.5">
         <button type="button" aria-label="Jarvis Live" title="Jarvis Live" onClick={toggleVoice}
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Mic className="h-4 w-4" /></button>
+          className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Mic className="h-3.5 w-3.5" /></button>
         <button type="button" aria-label="Connect project" title="Connect project folder" onClick={connectProject}
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Plus className="h-4 w-4" /></button>
+          className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Plus className="h-3.5 w-3.5" /></button>
       </div>
     </div>
     {visible.some((project) => project.pinned) && <>
-      <div className="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">Pinned</div>
+      <div className="px-2 pb-1 pt-3 text-xs font-medium text-muted-foreground/80">Pinned</div>
       {visible.filter((project) => project.pinned).map(projectRow)}
-      {visible.some((project) => !project.pinned) && <div className="px-2 pb-1 pt-3 text-[11px] font-medium text-muted-foreground">Other projects</div>}
+      {visible.some((project) => !project.pinned) && <div className="px-2 pb-1 pt-4 text-xs font-medium text-muted-foreground/80">Other projects</div>}
     </>}
     {visible.filter((project) => !project.pinned).map(projectRow)}
     {visible.length === 0 && <p className="px-2 py-2 text-xs text-muted-foreground">Connect a folder to start a project.</p>}
@@ -724,7 +780,9 @@ export function IdeProjectTree() {
         kind={contextMenu.kind}
         busy={mutatingId !== null || reordering || confirmBusy}
         sections={contextMenu.kind === "workspace" && menuWorkspace
-          ? workspaceMenuSections(menuProject, menuWorkspace)
+          ? (soloWorkspace(menuProject)?.id === menuWorkspace.id
+            ? soloMenuSections(menuProject, menuWorkspace)
+            : workspaceMenuSections(menuProject, menuWorkspace))
           : projectMenuSections(menuProject)}
       />
     )}

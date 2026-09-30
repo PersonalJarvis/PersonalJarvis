@@ -1,8 +1,9 @@
 """Speech on the board, projected onto the island.
 
-The society bus carries every envelope. The island only cares about the six
-that are somebody TALKING -- ``SAY | QUERY | ANSWER | PROPOSE`` and the two
-room brackets. Everything else already reaches the world through the
+The society bus carries every envelope. The island only cares about the seven
+that are somebody TALKING -- ``SAY | QUERY | ANSWER | PROPOSE``, a handed-over
+task (``ASSIGN``: the office draws the lead flying over to deliver it) and the
+two room brackets. Everything else already reaches the world through the
 checkpoint engine, and pushing it twice would tell the same story in two
 voices.
 
@@ -31,8 +32,9 @@ log = logging.getLogger(__name__)
 __all__ = ["ROOM_TYPES", "VISIBLE_TYPES", "WorldFeed", "preview"]
 
 #: A line one agent addressed to another; the island draws a bubble for each.
+#: ``ASSIGN`` is a task handed over; the office animates its delivery.
 VISIBLE_TYPES: Final[frozenset[MsgType]] = frozenset(
-    {MsgType.SAY, MsgType.QUERY, MsgType.ANSWER, MsgType.PROPOSE}
+    {MsgType.SAY, MsgType.QUERY, MsgType.ANSWER, MsgType.PROPOSE, MsgType.ASSIGN}
 )
 #: The brackets around a bounded room (rooms.py).
 ROOM_TYPES: Final[frozenset[MsgType]] = frozenset({MsgType.ROOM_OPEN, MsgType.ROOM_SETTLE})

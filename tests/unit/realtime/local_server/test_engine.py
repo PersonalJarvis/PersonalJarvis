@@ -112,6 +112,9 @@ class TestBrainResolution:
             "_ollama_models",
             lambda base, timeout: [
                 ("qwen3.5:4b", 3.4),
+                ("qwen3.5:4b-voice-32k", 3.4),
+                ("qwen3.5:4b-voice-64k", 3.4),
+                ("qwen3.5-4b-jarvis-ab12cd34:latest", 3.4),
                 ("nemotron-cascade-2:latest", 24.0),
                 ("nomic-embed-text:latest", 0.3),  # never a voice brain
             ],
@@ -122,6 +125,7 @@ class TestBrainResolution:
         assert payload["reachable"] is True
         by_id = {entry["id"]: entry for entry in payload["models"]}
         assert "nomic-embed-text:latest" not in by_id
+        assert not any("-voice-" in name or "-jarvis-" in name for name in by_id)
         assert by_id["qwen3.5:4b"]["installed"] is True
         assert by_id["qwen3.5:4b"]["fits"] is True
         assert by_id["qwen3.5:4b"]["current"] is True

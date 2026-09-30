@@ -16,15 +16,23 @@ async def test_open_route_remembers_the_user_selected_folder(
     session = SimpleNamespace(
         folder=str(tmp_path),
         terminals=[
-            SimpleNamespace(agent="codex"),
-            SimpleNamespace(agent="codex"),
-            SimpleNamespace(agent="claude"),
+            SimpleNamespace(agent="codex", notice=""),
+            SimpleNamespace(agent="codex", notice=""),
+            SimpleNamespace(agent="claude", notice=""),
         ],
         to_dict=lambda: {"folder": str(tmp_path)},
     )
 
     class FakeRegistry:
-        async def start(self, folder: str, terminals: list[dict]) -> object:
+        async def start(
+            self,
+            folder: str,
+            terminals: list[dict],
+            *,
+            project_id: str | None = None,
+            name: str | None = None,
+            computer_id: str | None = None,
+        ) -> object:
             assert folder == str(tmp_path)
             assert len(terminals) == 3
             return session

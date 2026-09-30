@@ -37,6 +37,7 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``POST   /fanout``                     → run ONE task across several agents
   (open the panes, divide the work, brief each one, report who was reached)
 * ``GET    /terminals/{name}/report``    → what one named terminal is doing
+* ``GET    /screens``                    → read-only screen snapshots of up to 8 panes
 * ``PATCH  /terminals/{terminal}``       → give that pane another call-sign
 * ``POST   /terminals/{name}/archive``   → hide or restore a chat in the session list
 * ``GET    /terminals/{name}/prompts``   → every prompt handed to that pane
@@ -62,13 +63,14 @@ import re
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Annotated, Any, Literal, get_args
 
 from fastapi import (
     APIRouter,
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
     WebSocket,
@@ -90,6 +92,7 @@ from jarvis.agentic_ide import (
     recap_engine,
     recents,
     resume_store,
+    screen_feed,
     workspace_catalog,
 )
 from jarvis.agentic_ide.activity import has_work_behind_it
@@ -110,11 +113,13 @@ from jarvis.agentic_ide.folders import (
 from jarvis.agentic_ide.names import default_names
 from jarvis.agentic_ide.session import (
     AGENT_DISPLAY,
+    INHERIT_PLACEMENT,
     MAX_PROMPT_CHARS,
     MAX_TERMINAL_NAME,
     MAX_TERMINALS,
     MAX_WORKSPACES,
     PendingPromptAttachmentBatch,
+    PlacementError,
     Session,
     SessionError,
     SessionNotReady,
@@ -268,7 +273,8 @@ class StartSessionRequest(BaseModel):
         default=None,
         description=(
             "Run every terminal on this connected computer (Computers) instead of "
-            "this machine; the folder is copied there first."
+            "this machine; the server is checked and the folder is copied there "
+            "first. The CLIs need to be installed there, not here."
         ),
     )
 
@@ -310,6 +316,14 @@ class AddTerminalRequest(BaseModel):
     anchor: str | None = Field(
         default=None,
         description="Call-sign of the terminal to split; defaults to the last one.",
+    )
+    computer_id: str | None = Field(
+        default=None,
+        description=(
+            "Where the new terminal runs: a connected computer's id, or null for "
+            "this machine. Omitted, it runs where its anchor runs (or where the "
+            "whole workspace runs); a computer gets the folder copied first."
+        ),
     )
     direction: str = Field(
         default="right",
@@ -2143,22 +2157,19 @@ async def start_session(request: Request, req: StartSessionRequest) -> dict:
     history with folders the user never selected.
     """
     try:
+        # With a computer, the panes are created gated and set up THERE before
+        # this returns; a viewer that attaches meanwhile is told "not yet".
         session = await get_registry().start(
             req.folder,
             [t.model_dump() for t in req.terminals],
             project_id=req.project_id,
             name=req.name,
+            computer_id=req.computer_id or None,
         )
+    except PlacementError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except SessionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if req.computer_id:
-        # Placed BEFORE anyone is told the workspace exists: a pane that
-        # attached first would start its agent on this machine instead.
-        try:
-            await get_registry().place_workspace(session.id, computer_id=req.computer_id)
-        except SessionError as exc:
-            await get_registry().end(session.id)
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     split: dict[str, int] = {}
     for terminal in session.terminals:
@@ -2176,7 +2187,13 @@ async def start_session(request: Request, req: StartSessionRequest) -> dict:
     # of a workspace this one just replaced at the front, and a grid nobody
     # corrects is a grid whose panes attach to the wrong workspace.
     await _announce_workspace(request, session, "opened")
-    return {"ok": True, "session": session.to_dict(), "state": get_registry().state()}
+    notices = [t.notice for t in session.terminals if t.notice]
+    return {
+        "ok": True,
+        "session": session.to_dict(),
+        "message": notices[0] if notices else "",
+        "state": get_registry().state(),
+    }
 
 
 @router.delete(
@@ -2660,10 +2677,22 @@ async def add_terminal(req: AddTerminalRequest) -> dict:
             model=req.model,
             effort=req.effort,
             permission_mode=req.permission_mode,
+            # Absent means "where its neighbours run"; an explicit null means
+            # this machine — the two must not collapse into one default.
+            computer_id=(
+                req.computer_id if "computer_id" in req.model_fields_set else INHERIT_PLACEMENT
+            ),
         )
+    except PlacementError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except SessionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"ok": True, "terminal": term.to_dict(), "state": get_registry().state()}
+    return {
+        "ok": True,
+        "terminal": term.to_dict(),
+        "message": term.notice,
+        "state": get_registry().state(),
+    }
 
 
 @router.get("/terminals/{name}/fork", summary="What a fork of a terminal would be called")
@@ -3184,7 +3213,7 @@ def set_terminal_recap(
     it plainly means.
     """
     term, _session = _pane_for_recap(name, workspace_id)
-    summary = recap_engine.pin(term.key, payload.recap, payload.recap_detail)
+    summary = recap_engine.pin(recap_engine.pane_id(term), payload.recap, payload.recap_detail)
     if not summary.headline:
         # Cleared rather than written: answer with whatever the pane says now.
         summary = recap_engine.recap_for(term, lines=term.transcript.lines())
@@ -3204,7 +3233,7 @@ def clear_terminal_recap(name: str, workspace_id: str | None = None) -> Terminal
     window.
     """
     term, _session = _pane_for_recap(name, workspace_id)
-    recap_engine.unpin(term.key)
+    recap_engine.unpin(recap_engine.pane_id(term))
     return _recap_row(term, recap_engine.recap_for(term, lines=term.transcript.lines()))
 
 
@@ -3319,6 +3348,23 @@ def terminal_report(name: str, lines: int = 40) -> dict:
         return get_registry().report(name, lines)
     except SessionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/screens", summary="Read-only screen snapshots of several panes")
+async def pane_screens(
+    pane: Annotated[
+        list[str] | None,
+        Query(description="`<workspace_id>:<key>`, repeatable; at most 8 are read."),
+    ] = None,
+) -> dict:
+    """The visible rows of each requested pane — what the office's monitors draw.
+
+    Unknown panes are omitted rather than failing the whole poll. Async on
+    purpose: the screen buffers are written on the event loop, so reading them
+    there needs no lock (see :mod:`jarvis.agentic_ide.screen_feed`).
+    """
+    refs = screen_feed.parse_pane_refs(pane or [])
+    return {"screens": screen_feed.collect_screens(get_registry(), refs)}
 
 
 @router.get(
@@ -4231,6 +4277,8 @@ async def terminal_prompt(
                 workspace_id=found[0].id,
                 typed=req.prompt,
                 attachments=attachments,
+                # Asked of Jarvis, so Jarvis reports how it ended.
+                readback=True,
             )
         except SessionError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc

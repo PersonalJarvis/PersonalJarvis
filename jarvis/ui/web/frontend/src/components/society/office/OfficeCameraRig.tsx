@@ -3,15 +3,18 @@
  * rotate and zoom; in follow mode the orbit target glides after the
  * character, so zooming out turns the same view into an overview without a
  * mode switch. A right-drag pan or a fly-to leaves follow mode; moving the
- * character re-enters it.
+ * character re-enters it. Seated at Mission Control's desk the camera glides
+ * into the character's eyes (first person onto the monitors) and back out
+ * when it stands up.
  */
 import { useEffect, useRef } from "react";
 import { OrbitControls } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
-import { MOUSE, Vector3 } from "three";
+import { MOUSE, Vector3, type PerspectiveCamera } from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { cameraHome, CAMERA_LIMITS, HOME_PITCH_RAD, HOME_YAW_RAD } from "./officeCamera";
-import type { OfficeLayout } from "./officeLayout";
+import { seatOf, type OfficeLayout } from "./officeLayout";
+import { useLeadSeat } from "./leadSeat";
 import { cameraView, officeSession, player, useOfficeStore } from "./officeStore";
 
 /** Where the camera starts: close behind the character, south-east, looking down. */
@@ -21,11 +24,17 @@ const TARGET_HEIGHT = 0.8;
 export const ZOOM_SECONDS = 1.15;
 /** Monitor screen size in metres (see LiveMonitors): the dive ends with it filling the view. */
 const SCREEN_W = 0.66, SCREEN_H = 0.38;
+/**
+ * First person at Mission Control: eye height, how far behind the seat centre
+ * the eyes sit, the height looked at, a wider lens so all three monitors fit,
+ * and how long the glide in and out takes.
+ */
+const FIRST_PERSON = { eyeY: 1.2, back: 0.3, lookY: 1.08, lookAhead: 0.2, fov: 64, seconds: 0.7 };
 
 /** How far in front of a screen the camera must stand for the screen to fill the view. */
-export function screenFillDistance(fovDeg: number, aspect: number): number {
+export function screenFillDistance(fovDeg: number, aspect: number, width = SCREEN_W, height = SCREEN_H): number {
   const v = Math.tan((fovDeg * Math.PI) / 360);
-  return Math.max(SCREEN_H / 2 / v, SCREEN_W / 2 / (v * Math.max(0.2, aspect)));
+  return Math.max(height / 2 / v, width / 2 / (v * Math.max(0.2, aspect)));
 }
 
 export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; overview: number }) {
@@ -41,6 +50,10 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
   const dive = useRef<{ fromEye: Vector3; toEye: Vector3; fromTarget: Vector3; toTarget: Vector3; t: number } | null>(null);
   const flight = useRef<{ from: Vector3; to: Vector3; t: number } | null>(null);
   const desired = useRef(new Vector3());
+  // First person: 0 = the normal view, 1 = the character's eyes; the view it left is kept to glide back to.
+  const seated = useRef<{ blend: number; before: { position: Vector3; target: Vector3; fov: number } | null }>({ blend: 0, before: null });
+  const eye = useRef(new Vector3());
+  const look = useRef(new Vector3());
   const delta = useRef(new Vector3());
 
   // Remember the view when leaving: the pose before a dive, never the inside of a monitor.
@@ -114,12 +127,45 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
     cameraView.ready = true;
     const dt = Math.min(rawDt, 0.1);
     const store = useOfficeStore.getState();
+    // Seated at Mission Control: glide into first person, and back out on standing up.
+    const desk = layout.command;
+    const inSeat = !!desk && useLeadSeat.getState().seated === desk.id;
+    const fp = seated.current;
+    // A monitor dive from the chair runs as usual, starting from the eyes.
+    const diving = !!dive.current || (!!store.zoom && store.zoom.seq !== lastZoom.current);
+    if (desk && (inSeat || fp.blend > 0) && !diving) {
+      const lensCam = camera as PerspectiveCamera;
+      if (inSeat && !fp.before) fp.before = { position: camera.position.clone(), target: c.target.clone(), fov: lensCam.fov };
+      fp.blend = Math.min(1, Math.max(0, fp.blend + ((inSeat ? 1 : -1) * dt) / FIRST_PERSON.seconds));
+      const e = fp.blend < 0.5 ? 4 * fp.blend ** 3 : 1 - (-2 * fp.blend + 2) ** 3 / 2;
+      const before = fp.before;
+      if (before) {
+        const seat = seatOf(desk);
+        const dx = Math.sin(seat.facing), dz = Math.cos(seat.facing);
+        eye.current.set(seat.x - dx * FIRST_PERSON.back, FIRST_PERSON.eyeY, seat.z - dz * FIRST_PERSON.back);
+        look.current.set(desk.x + dx * FIRST_PERSON.lookAhead, FIRST_PERSON.lookY, desk.z + dz * FIRST_PERSON.lookAhead);
+        camera.position.lerpVectors(before.position, eye.current, e);
+        c.target.lerpVectors(before.target, look.current, e);
+        lensCam.fov = before.fov + (FIRST_PERSON.fov - before.fov) * e;
+        lensCam.updateProjectionMatrix();
+        camera.lookAt(c.target);
+      }
+      // Orbit limits would pull the camera out of the chair; the controls rest until the glide back ends.
+      c.enabled = false;
+      if (fp.blend === 0) {
+        if (before) { lensCam.fov = before.fov; lensCam.updateProjectionMatrix(); }
+        fp.before = null;
+        c.enabled = true;
+        c.update();
+      }
+      return;
+    }
     if (store.zoom && store.zoom.seq !== lastZoom.current) {
       lastZoom.current = store.zoom.seq;
       flight.current = null;
       // End squarely in front of the screen, far enough back that it exactly fills the view.
       const lens = camera as unknown as { fov: number; aspect: number };
-      const reach = screenFillDistance(lens.fov ?? 35, lens.aspect ?? 1.6) * 1.02;
+      const reach = screenFillDistance(lens.fov ?? 35, lens.aspect ?? 1.6, ...(store.zoom.size ?? [SCREEN_W, SCREEN_H])) * 1.02;
       const [tx, ty, tz] = store.zoom.target;
       preDive.current = { position: camera.position.toArray() as [number, number, number], target: c.target.toArray() as [number, number, number] };
       dive.current = { fromEye: camera.position.clone(),

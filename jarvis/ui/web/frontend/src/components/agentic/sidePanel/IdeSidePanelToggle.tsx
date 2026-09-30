@@ -2,8 +2,7 @@ import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
-import { useIdeSidePanelStore } from "@/store/ideSidePanel";
-import { SIDE_PANEL_ID } from "./IdeSidePanel";
+import { SIDE_PANEL_ID, useIdeSidePanelStore } from "@/store/ideSidePanel";
 
 /**
  * Opens and shuts the Agentic IDE's right-hand side panel.

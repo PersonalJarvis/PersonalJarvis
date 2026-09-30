@@ -105,6 +105,7 @@ class BrainSupervisorToolGateway:
 
     def _voice_tools(self) -> dict[str, Any]:
         from jarvis.harness.computer_use_context import peek_computer_use_context
+        from jarvis.plugins.tool.appshot import AppshotTool
         from jarvis.plugins.tool.live_screen import LiveScreenTool
 
         tools = self._live_tools()
@@ -113,6 +114,10 @@ class BrainSupervisorToolGateway:
         if context is not None and getattr(computer_use, "enabled", True):
             tools.update(context.tools or {})
         tools["screen_snapshot"] = LiveScreenTool()
+        # "Take an appshot" said in a live call: the shortcut's capture, with
+        # its effect and sound. Voice-only — a brain turn gets the same
+        # picture from its own Screen Context step.
+        tools["take_appshot"] = AppshotTool()
         if self._workspace_tool is not None:
             # Live delegates coding to one addressed service. The old prompt
             # tools silently choose an ambient pane and cannot safely coexist.
