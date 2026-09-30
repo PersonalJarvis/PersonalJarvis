@@ -2918,6 +2918,9 @@ class BrainManager:
         # reset). Prevents each voice turn from running through 8 sequential
         # "no API key" failures.
         self._dead_providers: set[str] = set()
+        # The provider a person switched to at runtime ("switch to openai").
+        # A deliberate pick keeps answering even on the realtime voice key.
+        self._switched_to: str | None = None
         # Model-scoped twin of `_dead_providers`: a billing-style rejection
         # (account_blocked, e.g. HTTP 402) on ONE model must not dead-list a
         # provider that has other, untried models still in this turn's chain
@@ -4710,6 +4713,7 @@ class BrainManager:
                 return
             previous = self._active_name
             self._active_name = canonical
+            self._switched_to = canonical
             # Keep deep_brain following the active provider on a runtime switch
             # when there is no explicit cross-provider deep split (deep_brain
             # tracked the previous active, or was never configured) — so switching
@@ -10537,6 +10541,11 @@ class BrainManager:
         if db:
             order.append(db)
         order += ["gemini", "claude-api", "openai", "openrouter", "grok", "nvidia"]
+        from jarvis.brain.voice_key import bills_voice_key
+
+        # The realtime voice key leads a turn only when no other provider can
+        # call tools (mandate 2026-09-29: that key pays for the voice call).
+        on_voice_key: tuple[str, str | None] | None = None
         seen: set[str] = set()
         for name in order:
             if name in seen or name == skip or name not in available:
@@ -10559,8 +10568,11 @@ class BrainManager:
             if not self._rate_tracker.is_available(name, model):
                 continue
             if self._brain_can_call_tools(name, model):
+                if bills_voice_key(self._config, name):
+                    on_voice_key = on_voice_key or (name, model)
+                    continue
                 return (name, model)
-        return None
+        return on_voice_key
 
     def _turn_has_action_intent(self, user_text: str) -> bool:
         """Best-effort, provider-agnostic 'this turn wants a tool/desktop action'
@@ -10621,6 +10633,7 @@ class BrainManager:
         # make the loop wrongly fall through). Set below only when we prepend an
         # intelligent-router lead.
         self._router_lead_key: tuple[str, str | None] | None = None
+        tool_lead: tuple[str, str | None] | None = None
 
         override = _TURN_OVERRIDE.get()
         if override is not None:
@@ -10651,6 +10664,7 @@ class BrainManager:
                         active, helper[0], active,
                     )
                     self._router_lead_key = helper
+                    tool_lead = helper
                     chain.append(helper)
             elif getattr(self, "_turn_needs_tools", False):
                 # Flag OFF (kill switch): the narrower action-intent delegation —
@@ -10662,6 +10676,7 @@ class BrainManager:
                         "Tool delegation (legacy): %s cannot call tools — leading "
                         "this action turn with %s.", active, helper[0],
                     )
+                    tool_lead = helper
                     chain.append(helper)
 
         # 0. Deep/code intents: dedicated deep_brain first (e.g. gemini via
@@ -10749,7 +10764,52 @@ class BrainManager:
                 continue
             seen.add(item)
             deduped.append(item)
-        return deduped
+        # A tool lead no other family could take, and a provider the person
+        # switched to themselves, stay on the chain.
+        keep = [entry for entry in deduped if entry[0] == self._switched_to == active]
+        if tool_lead is not None:
+            keep.append(tool_lead)
+        return self._keep_off_voice_key(
+            deduped,
+            keep=keep,
+            needs_tools=bool(getattr(self, "_turn_needs_tools", False)),
+        )
+
+    def _keep_off_voice_key(
+        self,
+        chain: list[tuple[str, str | None]],
+        *,
+        keep: Iterable[tuple[str, str | None]] = (),
+        needs_tools: bool = False,
+    ) -> list[tuple[str, str | None]]:
+        """Drop the realtime voice key's family while another provider remains.
+
+        Text turns, Telegram and scheduled routines never spend the key that
+        pays for the live voice call (mandate 2026-09-29). A single-key install
+        keeps it, and so do the ``keep`` entries (a tool lead no other family
+        could take, a provider the person switched to). Only a
+        provider that can take the turn right now counts as the alternative:
+        not rate-limited, and able to call tools when the turn needs them.
+        """
+        from jarvis.brain.voice_key import without_voice_key
+
+        models: dict[str, str | None] = {}
+        for name, model in chain:
+            models.setdefault(name, model)
+
+        def can_answer(name: str) -> bool:
+            model = models.get(name)
+            if not self._rate_tracker.is_available(name, model):
+                return False
+            return not needs_tools or self._brain_can_call_tools(name, model)
+
+        kept = without_voice_key(self._config, chain, is_alternative=can_answer, keep=keep)
+        if len(kept) < len(chain):
+            log.debug(
+                "Voice key reserved for the live call — left out of this chain: %s",
+                sorted({name for name, _ in chain} - {name for name, _ in kept}),
+            )
+        return kept
 
     # ------------------------------------------------------------------
     # Generate — Haupt-Entrypoint
@@ -13534,6 +13594,9 @@ class BrainManager:
         except Exception:  # noqa: BLE001 — a broken probe must not kill the task
             log.debug("run_task: tool-model chain unavailable", exc_info=True)
             ready = []
+        # A scheduled routine runs unattended; it spends the realtime voice key
+        # only when no other ready provider exists (mandate 2026-09-29).
+        ready = self._keep_off_voice_key(ready)
         chain: list[tuple[str, str | None]] = []
         for name, model in ready[:_TASK_MAX_ATTEMPTS]:
             if intent == "deep":

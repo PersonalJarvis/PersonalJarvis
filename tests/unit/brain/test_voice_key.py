@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from jarvis.brain.voice_key import bills_voice_key, voice_key_slots
+from jarvis.brain.voice_key import bills_voice_key, voice_key_slots, without_voice_key
 
 
 def _cfg(mode: str, realtime_provider: str) -> SimpleNamespace:
@@ -34,3 +34,34 @@ def test_unknown_or_missing_realtime_provider_reserves_nothing() -> None:
     assert voice_key_slots(_cfg("realtime", "")) == frozenset()
     assert voice_key_slots(_cfg("realtime", "no-such-voice-plugin")) == frozenset()
     assert not bills_voice_key(None, "openai")
+
+
+def test_chain_drops_the_voice_key_while_another_provider_remains() -> None:
+    cfg = _cfg("realtime", "openai-live")
+    chain = [("openai", "gpt-5.5-pro"), ("grok", "grok-4.3"), ("openai", "gpt-5.5")]
+
+    assert without_voice_key(cfg, chain) == [("grok", "grok-4.3")]
+
+
+def test_chain_keeps_the_voice_key_when_nothing_else_can_answer() -> None:
+    cfg = _cfg("realtime", "openai-live")
+    chain = [("openai", "gpt-5.5"), ("ollama", None)]
+
+    kept = without_voice_key(cfg, chain, is_alternative=lambda provider: provider != "ollama")
+
+    assert kept == chain
+
+
+def test_chain_keeps_a_named_entry_and_subscription_brains() -> None:
+    cfg = _cfg("realtime", "openai-live")
+    lead = ("openai", "gpt-5.5")
+    chain = [lead, ("codex", None), ("grok", "grok-4.3")]
+
+    assert without_voice_key(cfg, chain, keep=[lead]) == chain
+    assert without_voice_key(cfg, chain) == [("codex", None), ("grok", "grok-4.3")]
+
+
+def test_pipeline_voice_leaves_the_chain_untouched() -> None:
+    chain = [("openai", "gpt-5.5"), ("grok", "grok-4.3")]
+
+    assert without_voice_key(_cfg("pipeline", "openai-live"), chain) == chain
