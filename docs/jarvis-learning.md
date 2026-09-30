@@ -17,30 +17,37 @@ Jarvis itself, tuned for a voice assistant.
    surface kit's `turn_completed` hook) is filed per conversation. Society
    agent chats never feed this loop, and routine or agent-injected chat turns
    (`direct_user = false`) are ignored.
-2. **Trigger.** A background review starts when any of these happens:
-   - `review_every_turns` unreviewed user turns have piled up (default 6);
-   - the user explicitly asks to remember something ("remember that ...",
-     "merk dir ..."), so the next turn already knows it;
-   - a call ends (`VoiceSessionEnded`), or the conversation has been quiet for
-     `idle_review_seconds` (default 300).
-   Turns with almost no user text (under 24 characters in total) cost no model
-   call.
-3. **Review.** One model call sees the two notebooks with their entry ids and
-   fill level, what the identity card already knows, up to four earlier turns
-   as context, and the turns to review. It returns JSON changes: `add`,
-   `replace` (update or merge an entry) or `remove` (only when the user
-   retracted it). The model runs on the wiki's background provider chain:
-   the configured pair first, then every reachable provider, and while any
-   subscription is connected only subscriptions and keyless local models
-   (never the per-token key that pays for the voice call).
-4. **Validate (Python decides).** A change is written only when:
+2. **Filter (free).** A deterministic filter (`signals.py`, English, German
+   and Spanish) marks the few turns in which the user talks about themselves,
+   states a preference, corrects Jarvis, or names a plan, goal or deadline.
+   Requests and questions ("play some music", "what's the weather") are not
+   marked. A conversation with no marked turn never reaches a model.
+3. **Explicit requests (free, immediate).** "Remember that X" / "merk dir X"
+   is saved at once in the user's own words with the date, without a model,
+   so it cannot be lost to a provider failure. Only a bare "remember that",
+   which points at something said before, is reviewed right away with the
+   turn before it.
+4. **Review (one small call per conversation).** When a call ends
+   (`VoiceSessionEnded`), the conversation has been quiet for
+   `idle_review_seconds` (default 300), or after `review_every_turns`
+   (default 30) in a very long conversation, one model call sees only the
+   marked user turns (at most eight, each with the assistant line just before
+   it, cut to 240 characters) and the two small notebooks. It returns at most
+   three changes (`add`, `replace` to update or merge, `remove` only when the
+   user retracted something), capped at 800 output tokens; proposals below
+   importance 5 are dropped. The model is each provider's cheap router-tier
+   model on the wiki's background chain: subscriptions and keyless local
+   models while a subscription is connected, never the key that pays for the
+   voice call.
+5. **Validate (Python decides).** A change is written only when:
+5. **Validate (Python decides).** A change is written only when:
    - its `evidence` is a verbatim quote (12 characters or more) of the
-     **user's** own words from the reviewed window. Anything only the
+     **user's** own words the review was shown. Anything only the
      assistant, a web page, an email or a tool said proves nothing;
    - the quote is about the change: it shares a content word with the new
      text, or, for a `remove`, with the entry being removed;
    - every link, e-mail address or long number in the text was said by the
-     user or is already in the notebooks or the known profile (dates the
+     user or is already in the notebooks (dates the
      reviewer derived from "next Friday" are allowed);
    - its text passes `guard.refusal`: no credentials, no instruction-like or
      injected text (English, German and Spanish patterns), no orders phrased
@@ -52,7 +59,7 @@ Jarvis itself, tuned for a voice assistant.
 
    Entries are written in the language the user spoke, so the quote and the
    entry share their words.
-5. **Write.** Changes go through `jarvis.society.memory_books`, the same
+6. **Write.** Changes go through `jarvis.society.memory_books`, the same
    locked, journaled layer the agents use, into the lead identity's notebooks:
 
    | File (in the vault) | Holds |
@@ -62,7 +69,7 @@ Jarvis itself, tuned for a voice assistant.
    | `society/jarvis/.learning-ledger.jsonl` | every applied change with its old and new text and the evidence |
 
    Nothing is ever lost: a replaced or removed entry stays in the ledger.
-6. **Use.** A cached snapshot of both notebooks is added to the classic brain
+7. **Use.** A cached snapshot of both notebooks is added to the classic brain
    prompt (`BrainManager._build_system_prompt`, right after the user profile)
    and to the realtime voice instructions (`_session_instructions`, right
    after the user's standing instructions). It is framed as background
@@ -74,10 +81,7 @@ Jarvis itself, tuned for a voice assistant.
 Turns stay pending until a review has really looked at them. When no reviewer
 answers, the turns are handed back and the next attempt waits 1, 2, 4 ...
 minutes (at most an hour) instead of firing on every turn; a call ending or a
-quiet conversation still tries again. An explicit remember request is saved in
-the user's own words with the date it was said when no review covered it,
-including on shutdown in the middle of a review. A request that points at
-something earlier ("remember that") without context is never guessed.
+quiet conversation still tries again. Shutdown never waits on a slow reviewer.
 
 The prompt path never waits on a writer and never creates files: it reads the
 notebooks under a 50 ms lock attempt and otherwise serves the last good text.
@@ -85,9 +89,10 @@ Typed chat turns contribute only what the person typed, never attachments.
 
 ## Budgets
 
-Each notebook has a prompt budget (`user_budget_chars`, `memory_budget_chars`,
-default 4,000 characters each; the compact realtime profile for small local
-models uses half). The reviewer is shown the fill level and asked to merge
+The notebooks ride along on every brain turn and every realtime instruction
+update, so they stay small: `user_budget_chars` 1,500 and `memory_budget_chars`
+1,000 by default (about 650 tokens together at most; the compact realtime
+profile for small local models uses half). The reviewer is shown the fill level and asked to merge
 related entries once a notebook passes 80 percent; at 125 percent new entries
 are refused until it has consolidated. Entries beyond the prompt budget are
 kept on disk; the most important and most recent ones reach the prompt.
@@ -95,6 +100,16 @@ kept on disk; the most important and most recent ones reach the prompt.
 Privacy: reviews send the reviewed turns to the same background provider
 chain the wiki extractor already uses for every conversation turn; the loop
 adds no new destination. `enabled = false` switches it off.
+
+## Cost
+
+- An ordinary conversation (requests, questions, small talk): no model call.
+- "Remember that X": no model call.
+- A conversation with a personal fact, preference, correction or plan: one
+  call of roughly 1,300 input tokens and at most 800 output tokens on a cheap
+  model, preferably on a subscription.
+- Every turn: at most about 650 prompt tokens for the notebooks, usually far
+  less, and byte-stable between reviews so provider prompt caches apply.
 
 ## Design reference
 
