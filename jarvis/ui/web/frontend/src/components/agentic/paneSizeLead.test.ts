@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mayLeadSize, onSizeLeadReleased, releaseSizeLead, sizeLeadKey, takeSizeLead } from "./paneSizeLead";
+import { holdsSizeLead, mayLeadSize, onSizeLeadReleased, releaseSizeLead, sizeLeadKey, takeSizeLead } from "./paneSizeLead";
 
 const flush = () => Promise.resolve();
 
@@ -13,7 +13,9 @@ describe("pane size lead", () => {
   it("keeps the size with the lead and away from the pane's other viewers", () => {
     const key = sizeLeadKey("ws-led", "Dana");
     const office = {}, grid = {};
+    expect(holdsSizeLead(key, office)).toBe(false);
     takeSizeLead(key, office);
+    expect(holdsSizeLead(key, office)).toBe(true);
     expect(mayLeadSize(key, office)).toBe(true);
     expect(mayLeadSize(key, grid)).toBe(false);
     // Another pane, or the same name in another workspace, is not affected.

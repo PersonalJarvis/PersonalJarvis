@@ -2081,6 +2081,37 @@ describe("pane refit", () => {
       settle();
       expect(claimsOn(1)).toEqual([]);
     });
+
+    it("keeps the lead through a rebuild of the viewer that holds it", async () => {
+      // A restart (or the font arriving) rebuilds the terminal inside the same
+      // viewer. Coming back leaderless let the other viewer pass the gesture
+      // test again, and the two traded the size as before the fix.
+      const pressed = (token: number) => (
+        <AgenticTerminal key="grid" name="Dana" displayName="Claude Code" appearance="dark" fontSize={13} restartToken={token} />
+      );
+      const view = render(<>{pressed(0)}{office}</>);
+      open(0);
+      open(1);
+      settle();
+      fireEvent.mouseDown(view.getAllByTestId("agentic-terminal-host-Dana")[0]);
+      settle();
+
+      view.rerender(<>{pressed(1)}{office}</>);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      open(2);
+      settle();
+      displace(1);
+      clearSent();
+      act(() => {
+        vi.advanceTimersByTime(2_500);
+      });
+      fireEvent.pointerMove(document.body);
+      settle();
+
+      expect(claimsOn(1)).toEqual([]);
+    });
   });
 });
 

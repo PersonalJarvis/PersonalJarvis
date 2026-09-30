@@ -57,6 +57,11 @@ export function releaseSizeLead(key: string, token: SizeLeadToken): void {
   });
 }
 
+/** Does `token` hold the pane's lead right now (not merely "nobody leads")? */
+export function holdsSizeLead(key: string, token: SizeLeadToken): boolean {
+  return leads.get(key) === token;
+}
+
 /** May `token` size the pane: it leads, or nobody in this window does. */
 export function mayLeadSize(key: string, token: SizeLeadToken): boolean {
   const lead = leads.get(key);

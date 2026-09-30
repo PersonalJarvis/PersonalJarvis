@@ -70,6 +70,7 @@ import {
 } from "lucide-react";
 import { SplitBelowIcon, SplitRightIcon } from "./splitIcons";
 import {
+  holdsSizeLead,
   mayLeadSize,
   onSizeLeadReleased,
   releaseSizeLead,
@@ -697,6 +698,15 @@ export function AgenticTerminal({
   const claimResizeRef = useRef<(() => void) | null>(null);
   /** The claim a gesture inside the pane makes — see `takeOwnership`. */
   const takeOwnershipRef = useRef<(() => void) | null>(null);
+  /**
+   * This viewer's identity in the window's size-lead registry (./paneSizeLead),
+   * and whether it held the lead when its terminal was last torn down. Both
+   * outlive the connect effect: a rebuild (a restart, the font arriving, the
+   * grid settling) is the same viewer, and must come back holding the lead it
+   * had rather than leaving the pane leaderless for another viewer to claim.
+   */
+  const leadTokenRef = useRef<object>({});
+  const heldLeadRef = useRef(false);
   const visibilityRef = useRef<{
     show: (afterFlush?: () => void) => void;
     park: () => void;
@@ -1593,8 +1603,9 @@ export function AgenticTerminal({
      * every GESTURE_RECLAIM_MS. See ./paneSizeLead.
      */
     const leadKey = sizeLeadKey(workspaceId, name);
-    const leadToken = {};
-    if (sizeLead) takeSizeLead(leadKey, leadToken);
+    const leadToken = leadTokenRef.current;
+    if (sizeLead || heldLeadRef.current) takeSizeLead(leadKey, leadToken);
+    heldLeadRef.current = false;
     const mayLead = () => mayLeadSize(leadKey, leadToken);
 
     /*
@@ -1881,7 +1892,10 @@ export function AgenticTerminal({
      */
     const stopLeadWatch = onSizeLeadReleased(leadKey, () => {
       if (disposed) return;
-      claimResize();
+      // A claim, not a request: the lead that just left was THIS window's,
+      // closed from here, and a request would be answered with the size the
+      // departed viewer chose — whatever the desktop shell says about focus.
+      sendResize(activeRef.current);
     });
 
     /*
@@ -2264,6 +2278,9 @@ export function AgenticTerminal({
       // After the socket, so this viewer is gone before another one of the
       // pane here takes the size back.
       stopLeadWatch();
+      // Remembered for a rebuild of this same viewer; forgotten on unmount,
+      // when nothing reads it again.
+      heldLeadRef.current = holdsSizeLead(leadKey, leadToken);
       releaseSizeLead(leadKey, leadToken);
       // Before the terminal: frees this pane's WebGL context slot.
       renderer.dispose();
