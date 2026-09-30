@@ -355,6 +355,36 @@ async def test_brain_ladder_crosses_a_dead_active_provider(registry, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_a_seat_only_creator_never_climbs_the_ladder(registry, monkeypatch) -> None:
+    """A Society agent's skill is authored on its own seat or not at all: no
+    operation pin and no resolver rung answers when that seat is dead, even
+    with a config present. Other callers keep the ladder above."""
+    from types import SimpleNamespace
+
+    from jarvis.brain import resolver as resolver_mod
+    from jarvis.core.model_selection import ModelSelection, use_operation_model
+
+    def ladder(cfg, bus=None):  # noqa: ANN001
+        raise AssertionError("a seat-only creator climbed the resolver ladder")
+
+    for name in ("resolve_tool_model_brain", "resolve_quality_brain", "resolve_frontier_brain"):
+        monkeypatch.setattr(resolver_mod, name, ladder)
+    svc = SkillCreatorService(
+        brain=_DeadBrain(), registry=registry, config=SimpleNamespace(), seat_only=True
+    )
+    with use_operation_model(ModelSelection("openai", "pinned")):
+        result = await svc.draft(SkillCreatorInput(intent="something"))
+    assert result.brain_used is False
+
+    seat = SkillCreatorService(
+        brain=_RecordingBrain(_GOOD_BRAIN_JSON), registry=registry, seat_only=True
+    )
+    answered = await seat.draft(SkillCreatorInput(intent="something"))
+    assert answered.brain_used is True
+    assert answered.brain_source == "seat"
+
+
+@pytest.mark.asyncio
 async def test_prompt_carries_the_live_inventory_and_the_skill_contract(registry) -> None:
     """What makes the draft a WORKING skill: the model sees which connectors
     are attached (by name) and the trigger/schedule contract."""

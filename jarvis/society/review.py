@@ -55,83 +55,45 @@ Importance: 8-10 enduring identity/requirements; 4-7 durable facts; 0-3 incident
 
 
 async def _ask(runtime: Any, agent: Any, prompt: str) -> dict[str, Any] | None:
-    from jarvis.agent_chat.runner_brain import brain_manager
+    """Ask the reviewed agent's OWN seat, and nothing else.
+
+    The provider, model and auth mode are the ones the agent's chat runs on
+    (``seat_brain``; maintainer decision 2026-09-30). ``None`` when the seat
+    cannot answer: the review stays pending, ``review_queue`` retries it a
+    bounded number of times and then drops it. No other provider, no
+    subscription the agent does not sit on and no other key is asked instead.
+    """
     from jarvis.brain.streaming import aggregate
-    from jarvis.core.config import get_jarvis_agent_secret, override_provider_secrets
 
-    manager = brain_manager()
-    getter = getattr(manager, "_get_brain", None)
-    if not callable(getter):
+    from .seat_brain import SeatUnavailable, agent_brain
+
+    try:
+        brain = await agent_brain(runtime.config(), agent, caller="society-review")
+    except SeatUnavailable as exc:
+        log.info("society review: %s has no usable seat (%s)", agent.agent_id, exc)
         return None
-    from .chat_binding import pair_for
-
-    provider_name, model, _ = pair_for(runtime.config(), agent)
-    secret = await asyncio.to_thread(get_jarvis_agent_secret, provider_name)
-    with override_provider_secrets({provider_name: secret} if secret else {}):
-
-        def candidates():
-            try:
-                yield getter(provider_name, model or None, scope=f"society-review:{agent.agent_id}")
-            except Exception:
-                log.info("society: selected seat has no review provider", exc_info=True)
-            # A review is background work nobody waits on: a connected
-            # subscription answers before any per-token key (mandate
-            # 2026-09-29), and the keyed chain below stays the fallback.
-            from jarvis.brain.resolver import resolve_subscription_brain
-
-            subscription = resolve_subscription_brain(runtime.config())
-            if subscription is not None:
-                yield subscription
-            # Reuse the established authoring fallback chain, but allocate a
-            # separate scoped instance so native engines never share callers.
-            from .learning import default_creator_factory
-
-            creator = default_creator_factory(runtime.config)(
-                agent, runtime.skills_for(agent.agent_id)
-            )
-            if creator is not None:
-                for candidate, _ in creator._candidate_brains():
-                    try:
-                        yield getter(
-                            candidate.name,
-                            getattr(candidate, "_model", None),
-                            scope=f"society-review:{agent.agent_id}",
-                        )
-                    except Exception:
-                        log.info("society: fallback review provider unavailable", exc_info=True)
-
-        seen = set()
-        providers = candidates()
-        while True:
-            # Provider construction may read catalogs, credentials and local
-            # models. Never run that synchronous work on the desktop event loop.
-            # next(..., None) also avoids propagating StopIteration into a Future.
-            provider = await asyncio.to_thread(next, providers, None)
-            if provider is None:
-                break
-            identity = (getattr(provider, "name", ""), str(getattr(provider, "_model", "")))
-            if identity in seen:
-                continue
-            seen.add(identity)
-            try:
-                request = BrainRequest(
-                    system=_SYSTEM,
-                    messages=(BrainMessage(role="user", content=prompt),),
-                    temperature=0.1,
-                    max_tokens=4096,
-                )
-                response = await asyncio.wait_for(aggregate(provider.complete(request)), timeout=90)
-                raw = response.text.strip()
-                if raw.startswith("```"):
-                    raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
-                result = json.loads(raw)
-                if isinstance(result, dict):
-                    return result
-            except Exception:
-                log.warning(
-                    "society: review provider failed; trying the configured fallback", exc_info=True
-                )
+    request = BrainRequest(
+        system=_SYSTEM,
+        messages=(BrainMessage(role="user", content=prompt),),
+        temperature=0.1,
+        max_tokens=4096,
+    )
+    try:
+        response = await asyncio.wait_for(aggregate(brain.complete(request)), timeout=90)
+        raw = response.text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+        result = json.loads(raw)
+    except Exception as exc:  # noqa: BLE001 - one failed attempt; the queue retries it
+        # The type only: a provider's error body never reaches a log (AP-34).
+        log.warning(
+            "society review: %s's seat %s did not answer (%s)",
+            agent.agent_id,
+            brain.seat.describe(),
+            type(exc).__name__,
+        )
         return None
+    return result if isinstance(result, dict) else None
 
 
 async def review_turn(runtime: Any, pending: dict[str, Any]) -> bool:
