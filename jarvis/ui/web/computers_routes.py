@@ -358,7 +358,7 @@ async def check_computer(computer_id: str) -> dict[str, Any]:
         raise _fail(exc) from exc
 
 
-@router.post("/{computer_id}/run")
+@router.post("/{computer_id}/run", openapi_extra={"x-jarvis-dangerous": True})
 async def run_on_computer(computer_id: str, body: RunBody) -> dict[str, Any]:
     try:
         result = await get_service().run(computer_id, body.command, timeout_s=body.timeout_s)
@@ -406,7 +406,7 @@ async def trust_host_key(computer_id: str) -> dict[str, Any]:
         raise _fail(exc) from exc
 
 
-@router.post("/{computer_id}/power")
+@router.post("/{computer_id}/power", openapi_extra={"x-jarvis-dangerous": True})
 async def power_computer(computer_id: str, body: PowerBody) -> dict[str, Any]:
     try:
         return _row(await get_service().power(computer_id, body.action))
@@ -425,7 +425,7 @@ async def computer_readiness(computer_id: str) -> dict[str, Any]:
     return {**readiness.to_dict(), "install": job.to_dict() if job else None}
 
 
-@router.post("/{computer_id}/install", status_code=202)
+@router.post("/{computer_id}/install", status_code=202, openapi_extra={"x-jarvis-dangerous": True})
 async def install_tools(computer_id: str, body: InstallBody) -> dict[str, Any]:
     try:
         job = await toolbox.start_install(computer_id, list(body.items))
