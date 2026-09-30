@@ -68,6 +68,10 @@ keyring>=25.5
 # SSH to the user's own servers and virtual machines (Settings -> Computers)
 asyncssh[bcrypt]>=2.21
 
+# Security floor for a transitive dependency (mcp, twilio): 2.13.0 carries
+# ten advisories fixed in 2.14.0.
+pyjwt>=2.14.0
+
 # Audio I/O
 sounddevice>=0.5
 # Upstream's native dependencies do not publish Windows ARM64 wheels. The
