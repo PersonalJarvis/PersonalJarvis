@@ -1,7 +1,9 @@
 """WebSocket tests for /api/missions/ws (hello + replay + live fanout)."""
+
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -13,14 +15,17 @@ from starlette.websockets import WebSocketDisconnect
 from jarvis.missions.events import EventEnvelope, MissionDispatched
 from jarvis.missions.manager import MissionManager
 from jarvis.ui.web.missions_auth import (
-    issue_token,
     reset_tokens,
+)
+from jarvis.ui.web.missions_auth import (
     router as missions_auth_router,
 )
 from jarvis.ui.web.missions_routes import router as missions_router
 from jarvis.ui.web.missions_ws_routes import (
     ConnectionManager,
     _drain_client_frames,
+)
+from jarvis.ui.web.missions_ws_routes import (
     router as missions_ws_router,
 )
 
@@ -104,16 +109,12 @@ def test_ws_closes_4401_on_invalid_token(app: FastAPI) -> None:
     with TestClient(app) as client:
         with pytest.raises(WebSocketDisconnect) as exc_info:
             with client.websocket_connect("/api/missions/ws") as ws:
-                ws.send_json(
-                    {"type": "hello", "last_seq": 0, "token": "bogus"}
-                )
+                ws.send_json({"type": "hello", "last_seq": 0, "token": "bogus"})
                 ws.receive_json()
     assert exc_info.value.code == 4401
 
 
-def test_ws_accepts_valid_token_and_streams_replay(
-    app: FastAPI, manager: MissionManager
-) -> None:
+def test_ws_accepts_valid_token_and_streams_replay(app: FastAPI, manager: MissionManager) -> None:
     """Dispatch a mission BEFORE the WS connect → replay delivers it."""
     with TestClient(app) as client:
         d1 = client.post("/api/missions/dispatch", json={"prompt": "first"})
@@ -133,9 +134,7 @@ def test_ws_accepts_valid_token_and_streams_replay(
     assert f2["payload"]["prompt"] == "second"
 
 
-def test_ws_replay_respects_last_seq(
-    app: FastAPI, manager: MissionManager
-) -> None:
+def test_ws_replay_respects_last_seq(app: FastAPI, manager: MissionManager) -> None:
     """``last_seq=1`` skips the first event and delivers only the second."""
     with TestClient(app) as client:
         client.post("/api/missions/dispatch", json={"prompt": "first"})
@@ -149,9 +148,7 @@ def test_ws_replay_respects_last_seq(
     assert frame["payload"]["prompt"] == "second"
 
 
-def test_ws_live_fanout_after_connect(
-    app: FastAPI, manager: MissionManager
-) -> None:
+def test_ws_live_fanout_after_connect(app: FastAPI, manager: MissionManager) -> None:
     """Dispatch AFTER the connect → the event lands via fanout at the client."""
     with TestClient(app) as client:
         token = client.get("/api/missions/auth/token").json()["token"]
@@ -159,15 +156,31 @@ def test_ws_live_fanout_after_connect(
         with client.websocket_connect("/api/missions/ws") as ws:
             ws.send_json({"type": "hello", "last_seq": 0, "token": token})
             # Now trigger a mission → the live frame must arrive
-            d = client.post(
-                "/api/missions/dispatch", json={"prompt": "live!"}
-            )
+            d = client.post("/api/missions/dispatch", json={"prompt": "live!"})
             assert d.status_code == 201
             mid = d.json()["mission_id"]
             frame = ws.receive_json()
     assert frame["mission_id"] == mid
     assert frame["payload"]["event_type"] == "MissionDispatched"
     assert frame["payload"]["prompt"] == "live!"
+
+
+def test_ws_idle_disconnect_unregisters_client(app: FastAPI) -> None:
+    """An idle closed socket must not retain its queue until another event arrives."""
+    with TestClient(app) as client:
+        token = client.get("/api/missions/auth/token").json()["token"]
+        conn_mgr = app.state.missions_ws_manager
+        with client.websocket_connect("/api/missions/ws") as ws:
+            ws.send_json({"type": "hello", "last_seq": 0, "token": token})
+            deadline = time.monotonic() + 1.0
+            while conn_mgr.client_count != 1 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert conn_mgr.client_count == 1
+            ws.close()
+            deadline = time.monotonic() + 0.5
+            while conn_mgr.client_count and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert conn_mgr.client_count == 0
 
 
 # ---------------------------------------------------------------------------

@@ -25,7 +25,7 @@ You can inspect actions, approvals, and output in the app. What runs depends on
 your setup, permissions, and the tools you connect.
 
 **Try it:** [Install on Windows, macOS, or Linux](#install) ·
-[See the app and demos](#see-it-in-action) ·
+[See the agents at work](#jarvis-agents) ·
 [Read the first-run guide](#your-first-steps-in-the-desktop-app)
 
 ## Install
@@ -52,21 +52,6 @@ The idea is simple: one place on your computer where you say what you need, and 
 
 It runs on your own machine with whichever model you like, local ones included, and it's free. There's no account to create, and nothing sends your data anywhere you didn't connect yourself.
 
-## See it in action
-
-The [voice demo](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.mp4)
-shows a spoken conversation on the home screen; the [agent demo](#jarvis-agents)
-further down shows a brief, progress, and output. The demos are **illustrative interface
-recreations**, not recordings of a completed live task or timing benchmarks.
-The [demo source and still previews](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/scripts/readme-video/README.md) explain
-what is shown.
-
-<p align="center">
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.mp4">
-    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/readme-2026-09/jarvis-orchestrator-v4.png" alt="Illustrative Jarvis home screen during a voice conversation, with the sidebar of agents, artifacts, and plugins" width="850" />
-  </a>
-</p>
-
 ## One request, several ways to get it done
 
 | Stage | What Jarvis connects |
@@ -86,9 +71,9 @@ receive the content required for their requests. See [privacy and local data](ht
 
 [Website](https://personaljarvis.ai) · [Docs](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/welcome-to-personal-jarvis.md) · [Getting started](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/first-run-setup.md) · [How it works](#how-it-works) · [Discord](https://discord.gg/x7USduHxbc) · [X](https://x.com/PersonalJarvis)
 
-https://github.com/user-attachments/assets/9930ca95-5015-4ade-9a16-975c77d179fd
+https://github.com/user-attachments/assets/2078e032-f1f0-40fa-a200-73773b099fd2
 
-<p align="center"><sub>A real click-through of the app: every frame is recorded, waiting is sped up, and a few moments are zoomed in.</sub></p>
+<p align="center"><sub>Jarvis Agents, the Jarvis Verse and the Agentic IDE, filmed from the app's own interface with a sample team; the chat and terminal output are scripted.</sub></p>
 
 ## install
 

@@ -2320,7 +2320,9 @@ def _kill_by_install_root(root: Path) -> tuple[int, int]:
             )
     if not signalled:
         return vanished, failed
-    gone, alive = psutil.wait_procs(signalled, timeout=10)
+    from jarvis.core.process_utils import wait_procs  # noqa: PLC0415
+
+    gone, alive = wait_procs(signalled, timeout=10)
     for proc in alive:
         log.warning("supervisor: managed pid %s survived forced stop", proc.pid)
     return vanished + len(gone), failed + len(alive)

@@ -11,6 +11,19 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [2.4.2] — 2026-09-30
+
+### Fixed
+
+- Waiting for a process tree to exit no longer fails on Linux when a process
+  is caught mid-shutdown. psutil 7.2 raised `OSError: [Errno 22]` for such a
+  process; it stopped the Linux desktop installer build for 2.4.1 and could
+  break stopping the local voice server, a mission worker's commands or the
+  uninstaller. 2.4.2 ships the 2.4.1 application with this fix and the
+  desktop installers for Windows, macOS and Linux.
+
+---
+
 ## [2.4.1] — 2026-09-30
 
 ### Fixed
