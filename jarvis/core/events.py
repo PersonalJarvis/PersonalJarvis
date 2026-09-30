@@ -1147,6 +1147,18 @@ class ComposeRequested(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class PetVisibilityToggleRequested(Event):
+    """The pet shortcut fired: hide the pet, or show it and bring it forward.
+
+    Publishers: the ``pet_toggle`` hotkey (``[trigger].hotkey_pet_toggle``),
+    dispatched by the speech pipeline like every other shortcut. ``OrbBusBridge``
+    forwards it to ``surface.toggle_visible()``; a surface without that method
+    (the bar, ``NullOverlay``) ignores it.
+    """
+    source: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class PetChanged(Event):
     """The active desktop pet or its look settings changed.
 

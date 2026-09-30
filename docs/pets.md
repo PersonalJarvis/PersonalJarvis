@@ -165,6 +165,8 @@ Control-strip actions reported back through callbacks: `compose`, `mic_mute`,
   `SpeechPipeline.set_tts_volume` when the muted-ness flips.
 - `ComposeRequested(source)`: the pen control; DesktopApp raises the window,
   the frontend opens a new chat.
+- `PetVisibilityToggleRequested(source)`: the `pet_toggle` shortcut; the
+  bridge calls `surface.toggle_visible()`.
 - `PetChanged(pet_id, scale, bubble, visible, source)`: published by the pets
   routes after a change is on disk and applied.
 
