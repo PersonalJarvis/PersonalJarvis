@@ -1851,6 +1851,36 @@ class LegacyCuratorConfig(BaseModel):
     enabled: bool = False
 
 
+class JarvisLearningConfig(BaseModel):
+    """``[memory.learning]`` — Jarvis' own self-learning loop.
+
+    ``jarvis/memory/learning/`` reviews finished voice and chat conversations
+    in the background and keeps two bounded notebooks: USER.md (who the user
+    is, what they prefer, what they are working toward) and MEMORY.md
+    (Jarvis' own working notes and lessons from corrections). Both reach the
+    classic brain prompt and the realtime voice instructions. Every key below
+    is read by ``jarvis.memory.learning`` (AP-31).
+    """
+
+    model_config = {"extra": "allow"}
+
+    #: Master switch: off stops reviews and removes the notebooks from prompts.
+    enabled: bool = True
+    #: A review runs after this many unreviewed user turns ...
+    review_every_turns: int = Field(default=6, ge=1, le=100)
+    #: ... or when a conversation has been quiet this long, or a call ends.
+    idle_review_seconds: float = Field(default=300.0, ge=10.0, le=86_400.0)
+    #: Prompt budget per notebook. Entries beyond it stay on disk; the
+    #: reviewer is told the fill level and consolidates before it overflows.
+    user_budget_chars: int = Field(default=4_000, ge=500, le=40_000)
+    memory_budget_chars: int = Field(default=4_000, ge=500, le=40_000)
+    #: Reviewer model. Empty = the wiki curator's pair, then every other
+    #: reachable provider (subscriptions before per-token keys).
+    provider: str = ""
+    model: str = ""
+    timeout_s: float = Field(default=90.0, ge=5.0, le=600.0)
+
+
 class MemoryConfig(BaseModel):
     recall_store: str = "sqlite"
     # chromadb was removed (2026-06-28); there is no chroma backend in
@@ -1861,6 +1891,7 @@ class MemoryConfig(BaseModel):
     data_dir: str = "./data"
     wiki: WikiMemoryConfig = Field(default_factory=WikiMemoryConfig)
     legacy_curator: LegacyCuratorConfig = Field(default_factory=LegacyCuratorConfig)
+    learning: JarvisLearningConfig = Field(default_factory=JarvisLearningConfig)
 
 
 class SafetyWhitelistConfig(BaseModel):
