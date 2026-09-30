@@ -45,14 +45,16 @@ def _providers(config: JarvisConfig) -> list[str]:
     return [provider for provider, _ in resolver._resolve_chain(config)]
 
 
-def test_voice_key_primary_moves_behind_other_cloud_families(monkeypatch) -> None:
+def test_voice_key_primary_leaves_the_chain_while_other_families_are_keyed(
+    monkeypatch,
+) -> None:
     _keys(monkeypatch, "openai", "gemini", "grok")
 
     providers = _providers(_gpt_live("openai"))
 
-    assert providers[0] != "openai"
-    assert providers.index("gemini") < providers.index("openai")
-    assert providers.index("grok") < providers.index("openai")
+    assert "openai" not in providers
+    assert "gemini" in providers
+    assert "grok" in providers
 
 
 def test_voice_key_still_precedes_the_keyless_local_tail(monkeypatch) -> None:
@@ -79,3 +81,13 @@ def test_pipeline_voice_leaves_an_openai_primary_first(monkeypatch) -> None:
     providers = _providers(_gpt_live("openai", mode="pipeline"))
 
     assert providers[0] == "openai"
+
+
+def test_codex_without_a_login_is_no_alternative_to_the_voice_key(monkeypatch) -> None:
+    """Codex falls back to the same OpenAI key slot when nobody is signed in."""
+    _keys(monkeypatch, "openai", "codex")
+
+    providers = _providers(_gpt_live("openai"))
+
+    assert "openai" in providers
+    assert providers.index("openai") < providers.index("ollama")
