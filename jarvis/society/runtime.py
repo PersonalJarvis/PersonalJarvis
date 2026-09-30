@@ -68,89 +68,14 @@ class SocietyRuntimeClosed(RuntimeError):
     """This runtime owner has entered terminal shutdown."""
 
 
-#: What the person hears when a task Jarvis handed out comes back.
-_LEAD_DONE: dict[str, str] = {
-    "de": "{name} ist fertig: {text}",  # i18n-allow: spoken completion
-    "en": "{name} is done: {text}",
-    "es": "{name} ha terminado: {text}",
-}
-_LEAD_BLOCKED: dict[str, str] = {
-    "de": "{name} kam nicht weiter: {text}",  # i18n-allow: spoken completion
-    "en": "{name} got stuck: {text}",
-    "es": "{name} se quedó atascado: {text}",
-}
-
-#: What the person hears when an agent answers Jarvis directly (SAY / QUERY /
-#: ANSWER / PROPOSE to the lead). Previously these envelopes were only queued
-#: into the Jarvis chat inbox and projected onto the island — voice stayed
-#: silent after the "X ist dran, ich sage Bescheid" ack (live 2026-09-09).
-_LEAD_MESSAGE: dict[str, str] = {
-    "de": "{name} meldet: {text}",  # i18n-allow: spoken completion
-    "en": "{name} reports: {text}",
-    "es": "{name} informa: {text}",
-}
-
-#: The situation the readback composer is told about, per case. The agent's own
-#: text is the only content it may use; the spoken line is Jarvis passing it on
-#: in one short sentence, not the raw text clipped at a character count.
-_LEAD_DONE_SITUATION = (
-    "The user's Jarvis agent named {name} finished a task the user gave it through "
-    "you. Tell the user what it did or found, based only on its report. Name the agent."
-)
-_LEAD_BLOCKED_SITUATION = (
-    "The user's Jarvis agent named {name} could not finish a task the user gave it "
-    "through you. Tell the user what stopped it, based only on its report. Name the agent."
-)
-_LEAD_MESSAGE_SITUATION: dict[MsgType, str] = {
-    MsgType.SAY: (
-        "The user's Jarvis agent named {name} sent a message. Pass it on to the "
-        "user in your own words. Name the agent."
-    ),
-    MsgType.QUERY: (
-        "The user's Jarvis agent named {name} is asking the user a question. Pass "
-        "the question on in your own words, keeping what exactly it asks. Name the agent."
-    ),
-    MsgType.ANSWER: (
-        "The user's Jarvis agent named {name} answered. Tell the user its answer in "
-        "your own words. Name the agent."
-    ),
-    MsgType.PROPOSE: (
-        "The user's Jarvis agent named {name} proposes something. Tell the user what "
-        "it proposes in your own words. Name the agent."
-    ),
-}
-
-
-def _lead_report_material(name: str, env: Any, status: str, summary: str) -> str:
-    """What a live voice model gets to think about for a lead-assigned result."""
-    task = str(getattr(env, "text", "") or env.payload.get("text") or "").strip()
-    outcome = "finished" if status == "done" else "could not finish"
-    parts = [f"Agent: {name} ({outcome} the task)"]
-    if task:
-        parts.append(f"What the user asked for:\n{task}")
-    parts.append(f"The agent's report:\n{summary}")
-    return "\n\n".join(parts)
-
-
-async def _spoken_report(
-    *, instruction: str, language: str, line: str, name: str, report: str
-) -> str:
-    """The agent's report as one short spoken sentence; ``line`` is the fallback."""
-    from jarvis.voice.report_readback import compose_report, plain_excerpt
-
-    excerpt = plain_excerpt(report, max_words=40)
-    return await compose_report(
-        instruction=instruction,
-        language=language,
-        canned=lambda: line.format(name=name, text=excerpt),
-        report=report,
-        facts={"agent": name},
-    )
-
+# An agent reporting back to the lead is SHOWN, never spoken: a notice in the
+# newest front-page chat carries the full text. The spoken readback (a flash
+# model phrasing the report, billed on an API key) was removed by maintainer
+# decision 2026-09-30 — nobody asked to hear background results read out.
 
 #: Board types that are somebody TALKING to the lead. RESULT stays out: chat
-#: runs announce it via report_to_lead and mission runs via MissionAnnouncer —
-#: announcing it here as well would speak every completion twice.
+#: runs post it via report_to_lead and mission runs via the mission stack —
+#: posting it here as well would show every completion twice.
 _LEAD_INCOMING_TYPES: Final[frozenset[MsgType]] = frozenset(
     {MsgType.SAY, MsgType.QUERY, MsgType.ANSWER, MsgType.PROPOSE}
 )
@@ -245,9 +170,6 @@ class SocietyRuntime:
         # ``event_publish`` is the app bus the WebSocket forwards (server.py hands
         # it in); without it the engine falls back to the process default bus.
         self.checkpoints = CheckpointEngine(self, publish=event_publish)
-        #: The same app bus, for what the lead has to SAY: a delegated task's
-        #: result is announced to the person (voice + front-page chat).
-        self._publish_event = event_publish
         #: The society's one memory service; every touch moves the figure to the Memory House.
         self.memory = SocietyMemory(self, on_activity=self.checkpoints.note_memory_activity)
         self.conversations = ConversationArchive(
@@ -381,11 +303,11 @@ class SocietyRuntime:
             break
 
     async def _on_lead_incoming(self, env: SocietyEnvelope) -> None:
-        """Announce replies to a specific request from Jarvis.
+        """Post replies to a specific request from Jarvis into the lead chat.
 
-        Direct agent chats and unsolicited board messages stay silent. A past
-        assignment to the same agent is not permission to speak a new chat.
-        Assignment completions retain their report_to_lead announcement.
+        Direct agent chats and unsolicited board messages stay on the board. A
+        past assignment to the same agent is not permission to surface a new
+        chat. Assignment completions keep their report_to_lead notice.
         """
         try:
             if env.to_agent != LEAD_AGENT_ID or env.msg_type not in _LEAD_INCOMING_TYPES:
@@ -420,109 +342,40 @@ class SocietyRuntime:
         except Exception:  # noqa: BLE001 - a silent message is a lost courtesy, not a lost result
             log.warning("society: lead incoming announcement failed", exc_info=True)
 
-    async def _lead_message_lang(self, env: SocietyEnvelope) -> str:
-        """The spoken language for an agent's message to the lead.
-
-        The envelope itself carries no lang (only ASSIGN does), so follow the
-        trace back to the lead's order and reuse its lang; fall back to "en"
-        and let the pipeline's authoritative resolver decide.
-        """
-        lang = str(env.payload.get("lang") or "").strip().lower()
-        if lang in _LEAD_MESSAGE:
-            return lang
-        try:
-            for event in await self.store.events_for_trace(env.trace_id):
-                candidate = str(event.payload.get("lang") or "").strip().lower()
-                if candidate in _LEAD_MESSAGE:
-                    return candidate
-            # An ANSWER rarely shares its trace with the lead's order (the
-            # assignment turn runs without incoming context), so fall back to
-            # the newest assignment Jarvis sent this agent — its lang is the
-            # turn language the ack already spoke.
-            latest = await self.store.latest_assignment_for_agent(
-                env.from_agent, from_agent=LEAD_AGENT_ID
-            )
-            if latest is not None:
-                candidate = str(latest.payload.get("lang") or "").strip().lower()
-                if candidate in _LEAD_MESSAGE:
-                    return candidate
-        except Exception:  # noqa: BLE001 - the lang hint is best-effort only
-            log.debug("society: lead message lang lookup failed", exc_info=True)
-        return "en"
-
     async def announce_lead_message(self, sender: AgentRecord, env: SocietyEnvelope) -> None:
-        """Close the loop on an agent talking back to Jarvis: tell the person.
+        """Close the loop on an agent talking back to Jarvis: show the person.
 
         Twin of report_to_lead for conversational envelopes (SAY / QUERY /
-        ANSWER / PROPOSE): the text goes where the order came from — spoken
-        as a completion announcement on the app bus (the TTS pipeline and
-        the realtime session both read AnnouncementRequested) and posted as
-        a notice into the newest front-page chat. Neither leg may fail the run.
+        ANSWER / PROPOSE): the text is posted as a notice into the newest
+        front-page chat, where the order came from. It is not spoken — no
+        background result is read aloud (maintainer decision 2026-09-30).
+        A failed notice never fails the run.
         """
         summary = " ".join(str(env.text or "").split())
         if not summary:
             return
-        lang = await self._lead_message_lang(env)
-        line = _LEAD_MESSAGE.get(lang, _LEAD_MESSAGE["en"])
         svc = self._get_chat()
         post = getattr(svc, "post_notice", None)
-        if svc is not None and post is not None:
-            try:
-                sessions = svc.store.list_sessions(limit=1, surface="jarvis")
-                if sessions:
-                    await post(
-                        sessions[0].session_id,
-                        {
-                            "kind": "society_message",
-                            "agent_id": sender.agent_id,
-                            "agent_name": sender.name,
-                            "msg_type": str(env.msg_type).lower(),
-                            "status": "done",
-                            "text": summary[:1000],
-                            "session_id": sender.session_id,
-                            "trace_id": env.trace_id,
-                        },
-                    )
-            except Exception:  # noqa: BLE001 - chat notice is a courtesy; voice still runs
-                log.warning(
-                    "society: incoming message notice for the lead chat failed", exc_info=True
-                )
-        if self._publish_event is None:
+        if svc is None or post is None:
             return
-        # Phrased after the chat notice: the notice carries the full text
-        # and must not wait on the composer.
-        text = await _spoken_report(
-            instruction=_LEAD_MESSAGE_SITUATION.get(
-                env.msg_type, _LEAD_MESSAGE_SITUATION[MsgType.SAY]
-            ).format(name=sender.name),
-            language=lang,
-            line=line,
-            name=sender.name,
-            report=summary,
-        )
         try:
-            from jarvis.core.events import AnnouncementRequested
-
-            maybe = self._publish_event(
-                AnnouncementRequested(
-                    source_layer="society.lead",
-                    text=text,
-                    priority="normal",
-                    language=lang,
-                    kind="completion",
-                    detail=(
-                        f"agent={sender.agent_id} "
-                        f"trace={env.trace_id} "
-                        f"msg={str(env.msg_type).lower()}"
-                    ),
-                    # The live voice model thinks about the full message.
-                    report=f"Message from {sender.name} ({str(env.msg_type).lower()}):\n{summary}",
+            sessions = svc.store.list_sessions(limit=1, surface="jarvis")
+            if sessions:
+                await post(
+                    sessions[0].session_id,
+                    {
+                        "kind": "society_message",
+                        "agent_id": sender.agent_id,
+                        "agent_name": sender.name,
+                        "msg_type": str(env.msg_type).lower(),
+                        "status": "done",
+                        "text": summary[:1000],
+                        "session_id": sender.session_id,
+                        "trace_id": env.trace_id,
+                    },
                 )
-            )
-            if asyncio.iscoroutine(maybe):
-                await maybe
-        except Exception:  # noqa: BLE001 - a silent message is a lost courtesy, not a lost result
-            log.warning("society: incoming message announcement for the lead failed", exc_info=True)
+        except Exception:  # noqa: BLE001 - a lost notice is a lost courtesy, not a lost result
+            log.warning("society: incoming message notice for the lead chat failed", exc_info=True)
 
     async def _deliver_pending(self) -> None:
         """Recover committed messages and retry busy chats without opening sockets."""
@@ -1055,74 +908,39 @@ class SocietyRuntime:
     async def report_to_lead(
         self, target: AgentRecord, env: SocietyEnvelope, *, status: str, summary: str
     ) -> None:
-        """Close the loop on a task Jarvis handed out: tell the person.
+        """Close the loop on a task Jarvis handed out: show the person.
 
         Jarvis delegates by voice or from the front-page chat and acknowledges
         at once ("Scout is on it"); the work then ends on the board, where the
         person only sees it by opening the Agents section. So the RESULT of a
-        lead-assigned task also goes where the order came from — spoken as a
-        completion announcement on the app bus (the TTS pipeline and the
-        realtime session both read ``AnnouncementRequested``) and posted as a
-        notice into the newest front-page chat. Neither leg may fail the run.
+        lead-assigned task is also posted where the order came from: a notice
+        in the newest front-page chat. It is not spoken — no background result
+        is read aloud (maintainer decision 2026-09-30). A failed notice never
+        fails the run.
         """
         if not should_report(env, status):
             return
-        lang = str(env.payload.get("lang") or "en").lower()
-        line = (_LEAD_DONE if status == "done" else _LEAD_BLOCKED).get(
-            lang, (_LEAD_DONE if status == "done" else _LEAD_BLOCKED)["en"]
-        )
         svc = self._get_chat()
         post = getattr(svc, "post_notice", None)
-        if svc is not None and post is not None:
-            try:
-                sessions = svc.store.list_sessions(limit=1, surface="jarvis")
-                if sessions:
-                    await post(
-                        sessions[0].session_id,
-                        {
-                            "kind": "society_result",
-                            "agent_id": target.agent_id,
-                            "agent_name": target.name,
-                            "status": status,
-                            "text": summary[:1000],
-                            "session_id": target.session_id,
-                            "trace_id": env.trace_id,
-                        },
-                    )
-            except Exception:  # noqa: BLE001 - the chat notice is a courtesy; the voice leg still runs
-                log.warning("society: result notice for the lead chat failed", exc_info=True)
-        if self._publish_event is None:
+        if svc is None or post is None:
             return
-        # Phrased after the chat notice: the notice carries the full text
-        # and must not wait on the composer.
-        text = await _spoken_report(
-            instruction=(
-                _LEAD_DONE_SITUATION if status == "done" else _LEAD_BLOCKED_SITUATION
-            ).format(name=target.name),
-            language=lang if lang in _LEAD_DONE else "en",
-            line=line,
-            name=target.name,
-            report=summary,
-        )
         try:
-            from jarvis.core.events import AnnouncementRequested
-
-            maybe = self._publish_event(
-                AnnouncementRequested(
-                    source_layer="society.lead",
-                    text=text,
-                    priority="normal",
-                    language=lang if lang in _LEAD_DONE else "en",
-                    kind="completion",
-                    detail=f"agent={target.agent_id} trace={env.trace_id}",
-                    # The live voice model thinks about the full report.
-                    report=_lead_report_material(target.name, env, status, summary),
+            sessions = svc.store.list_sessions(limit=1, surface="jarvis")
+            if sessions:
+                await post(
+                    sessions[0].session_id,
+                    {
+                        "kind": "society_result",
+                        "agent_id": target.agent_id,
+                        "agent_name": target.name,
+                        "status": status,
+                        "text": summary[:1000],
+                        "session_id": target.session_id,
+                        "trace_id": env.trace_id,
+                    },
                 )
-            )
-            if asyncio.iscoroutine(maybe):
-                await maybe
-        except Exception:  # noqa: BLE001 - a silent completion is a lost courtesy, not a lost result
-            log.warning("society: result announcement for the lead failed", exc_info=True)
+        except Exception:  # noqa: BLE001 - a lost notice is a lost courtesy, not a lost result
+            log.warning("society: result notice for the lead chat failed", exc_info=True)
 
     def pick_agent(self, task: str) -> AgentRecord | None:
         """The active agent whose hands fit ``task`` best, or ``None``.

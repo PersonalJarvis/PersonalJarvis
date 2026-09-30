@@ -1,8 +1,10 @@
 """The prompt that lets a live voice model reason over an agent's report.
 
-Background results — a coding pane that finished the job Jarvis handed it, a
-Jarvis agent reporting back — carry two things: a short deterministic line
-(what classic TTS speaks) and the agent's full report. A live model is handed
+An announcement that carries an agent's report (``AnnouncementRequested.report``)
+has two things: a short deterministic line (what classic TTS speaks) and the
+agent's full report. Coding panes and Jarvis agents no longer send one — their
+results are shown, not spoken (2026-09-30) — so only a caller that still
+attaches a report reaches this path. A live model is handed
 both and asked to work out what the user actually needs to hear, instead of
 reading either one out. Every live engine (the realtime wrapper, GPT-Live,
 native Gemini) builds its request here, so they all ask the same thing.

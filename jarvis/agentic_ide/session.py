@@ -1145,14 +1145,6 @@ class Terminal:
     # bursts — for work nobody had asked for. A pane nobody has given an
     # instruction cannot have finished one, and this is how that is known.
     last_submit_at: float | None = None
-    # Is the job this pane is working on one the user gave THROUGH Jarvis (a
-    # spoken order, the IDE prompt bar)? Then Jarvis owes the user a spoken
-    # "here is what it did" when the pane stops (see `.voice_readback`). Set by
-    # the prompt paths that ask for it, cleared by a job typed in by hand and by
-    # the readback itself. Ephemeral: a restored pane owes nobody anything.
-    voice_readback: bool = False
-    # The user's own words for that job — what the readback is about.
-    voice_readback_request: str = ""
     # Did the last prompt actually leave the input line? None = none sent yet.
     submitted: bool | None = None
     # A hand-pressed Enter on an injected prompt is being checked against the
@@ -4722,11 +4714,6 @@ class Registry:
             else:
                 term.last_submit_at = term.last_input_at
                 term.submit_generation = term.process_generation
-                if term.reading().activity != "asking":
-                    # A new job typed by hand is the user's own, and nobody
-                    # asked Jarvis to report on it. Answering the pane's
-                    # question keeps the Jarvis job (and its readback) alive.
-                    term.voice_readback = False
             # And the pane's conversation may have just begun, which for most
             # coding CLIs is the first moment its id exists on disk at all. A
             # pane driven only by hand never goes through `send_prompt`, so
@@ -6437,13 +6424,11 @@ class Registry:
         require_idle: bool = False,
         expected_input: str = "",
         allow_question: bool = False,
-        readback: bool = False,
     ) -> Terminal:
         """Serialize deliveries and pin the pane before the first await.
 
-        ``readback`` marks the job as one the user gave through Jarvis, so its
-        end is reported by voice (see :mod:`.voice_readback`). Callers that
-        supervise the pane themselves (a society agent) leave it off.
+        How the job ends is shown on the pane (status badge, bell entry), never
+        spoken: no pane result is read aloud (maintainer decision 2026-09-30).
         """
         found = self.find_terminal(wanted, workspace_id)
         if found is None:
@@ -6477,7 +6462,6 @@ class Registry:
                 attachments=attachments,
                 expected_input=expected_input,
                 allow_question=allow_question,
-                readback=readback,
             )
 
     @staticmethod
@@ -6496,7 +6480,6 @@ class Registry:
         attachments: Sequence[Any] = (),
         expected_input: str = "",
         allow_question: bool = False,
-        readback: bool = False,
     ) -> Terminal:
         """Type ``text`` into a terminal, press Enter, and CONFIRM it was sent.
 
@@ -6643,10 +6626,6 @@ class Registry:
         term.manual_submit_token += 1
         term.submitted = submitted
         term.sent_multiline = multiline and submitted is True
-        # Whoever sent THIS job decides whether its end is reported by voice; a
-        # supervising agent's follow-up replaces a Jarvis job and its readback.
-        term.voice_readback = readback
-        term.voice_readback_request = (typed or payload).strip() if readback else ""
         from .prompt_receipts import receipts_for
 
         history_entry = prompt_history.PromptHistoryEntry(

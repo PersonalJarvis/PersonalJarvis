@@ -313,8 +313,8 @@ Gmail agent stood on the island. The team card (`jarvis/society/lead_card.py`) i
   name the roster does not know, "email agent") the lead picks the agent whose focus fits the
   task (`SocietyRuntime.pick_agent`, `derive_focus` over the task text) or says that nobody
   fits. When a lead-assigned run ends, `SocietyRuntime.report_to_lead` posts a `notice` event
-  into the newest front-page chat session (rendered as a muted result line) and publishes an
-  `AnnouncementRequested(kind="completion")` the TTS pipeline and the realtime session speak.
+  into the newest front-page chat session (rendered as a muted result line). It is not
+  spoken: since 2026-09-30 no background result is read aloud, and no model call phrases one.
 - **Words.** The section is "Agents" (`nav.agents`); the Agentic IDE holds "coding terminals"
   in every prompt and directive; `navigate` maps "society", "team", "island", "my agents" to
   the section and "terminals", "terminal grid" to the IDE.
@@ -327,7 +327,8 @@ Gmail agent stood on the island. The team card (`jarvis/society/lead_card.py`) i
 - **User ↔ agent:** the canonical chat (card's right column), `society:<agent_id>` session on
   the agent_chat store; the composer's `/` lists the agent's enabled skills, `@` the roster.
 - **Jarvis ↔ agent (voice):** the `delegate-to-agent` router tool (M4): ACK < 5 s, work goes
-  through the scheduler as `ASSIGN`, completion re-enters voice through `scrub_for_voice`.
+  through the scheduler as `ASSIGN`, completion comes back as a notice in the front-page
+  chat (not spoken, 2026-09-30).
 - **Agent ↔ agent:** exactly one tool, `message_agent(target, text, kind)` → one `SAY` /
   `QUERY` / `PROPOSE` envelope to ONE teammate; the scheduler wakes the target's chat.
   `@name` in a canonical chat by the USER also produces a `SAY` from the user's identity.
