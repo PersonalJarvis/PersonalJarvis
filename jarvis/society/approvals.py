@@ -9,9 +9,9 @@ person decides.
 
 Rule evaluation (``decide``), in order: global blacklist (not here — the
 ToolExecutor raises before anything), the agent's ``require_approval``
-patterns (queue), its ``always_allow`` patterns (run when the tool's own
-tier is at most ``ask`` — the person's standing yes), then the tool's risk
-tier against the ceiling.
+patterns (queue), its explicit approval mode, then the legacy
+``always_allow`` patterns and risk ceiling. Bypass still blocks actions above
+an inherited ceiling; Always ask queues even safe reads.
 Patterns are capability ids (``plugin:gmail``), ``capability:verb``
 (``plugin:gmail:send``) or ``capability:*``.
 """
@@ -67,11 +67,21 @@ def decide(agent: AgentRecord, capability_id: str, tool_tier: str, *, verb: str 
     rules = agent.approval_rules
     if any(matches(p, capability_id, verb) for p in rules.get("require_approval", [])):
         return Verdict.QUEUE
+    mode = str(agent.approval_mode) if agent.approval_mode is not None else ""
+    if mode == "always_ask":
+        return Verdict.QUEUE
     if any(matches(p, capability_id, verb) for p in rules.get("always_allow", [])):
-        # An explicit always-allow rule is the person's standing "yes" for this
-        # exact action (the card's "Always allow", agent-definition §3.4): it
-        # runs up to the ask tier. Block stays block — it never had a card.
+        # The person's explicit standing yes can authorize this action up to
+        # the ask tier. Always ask above intentionally ignores standing yes.
         return Verdict.RUN if _TIER_RANK.get(tool_tier, 1) <= 2 else Verdict.QUEUE
+    if mode == "bypass":
+        # Bypass removes prompts, not an inherited risk ceiling. An action
+        # above that ceiling is denied instead of being silently escalated.
+        if _TIER_RANK.get(tool_tier, 1) > _TIER_RANK[str(agent.permission_ceiling)]:
+            return Verdict.BLOCK
+        return Verdict.RUN
+    if mode == "ask":
+        return Verdict.RUN if tool_tier == "safe" else Verdict.QUEUE
     ceiling = _TIER_RANK[str(agent.permission_ceiling)]
     tier = _TIER_RANK.get(tool_tier, 1)
     if tier <= ceiling and tool_tier != str(PermissionCeiling.ASK):

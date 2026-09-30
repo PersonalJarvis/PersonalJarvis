@@ -538,11 +538,9 @@
     "recent": "Recent",
     "pin_chat": "Pin chat",
     "unpin_chat": "Unpin chat",
-
     "jarvis_tools": "Jarvis Tools",
     "scheduled": "Scheduled",
     "more": "More",
-
     "instance_dev_hint": "Dev instance — a second, freely restartable copy of the app with its own data, ports and icon. The regular app keeps running beside it.",
     "surface_voice": "Voice",
     "surface_chat": "Chat",
@@ -1948,7 +1946,11 @@
     "managed_speaking_title": "Speak",
     "managed_voice_unavailable": "not voice-tested yet",
     "managed_voice_install_required": "runtime install required",
-    "managed_apply_test": "Apply & voice-test",
+    "managed_apply_test": "Apply, test & use local voice",
+    "managed_protocol_options": "Advanced server model and voice options",
+    "managed_setup_testing": "Preparing the selected models and testing speech. This can take longer on the first start.",
+    "managed_selected": "Selected for voice. These models start automatically with Jarvis.",
+    "managed_not_selected": "This server is not selected for voice yet. Choose two models and apply them to use local voice.",
     "managed_full_catalog": "Browse the full Ollama catalog",
     "managed_voice_catalog_title": "Browse open-source speech models",
     "managed_voice_catalog_search": "Search by model, backend, language, or license…",
@@ -2050,7 +2052,7 @@
     "cat_computer_use_desc": "The Tool Model runs your actions: it routes spoken commands, plans Computer-Use on your screen, starts background agents, and drives app controls — independent of your chat Brain.",
     "cat_dictation_desc": "The fast model that tidies up dictated text — punctuation, filler words and sentence breaks. Optional: with no key here your dictation is delivered exactly as it was recognized.",
     "cat_subagents_title": "{name}-Agents",
-    "cat_subagents_desc": "This provider runs text chat, memory and background tasks. A subscription here costs nothing extra; your voice key stays reserved for the voice call.",
+    "cat_subagents_desc": "Runs chat, memory and background tasks — not your voice key.",
     "advanced_title": "Access & Integrations",
     "advanced_desc": "Optional extras: the team key proxy, telephony, and the knowledge Wiki provider.",
     "no_providers_in_tier": "No providers available in this category.",
@@ -2085,7 +2087,7 @@
     "realtime_options_error": "Voice options could not be loaded.",
     "realtime_options_retry": "Try again",
     "realtime_model_managed": "Managed",
-    "realtime_model_managed_hint": "ChatGPT selects the subscription model. Choose an API Realtime provider to pin a GPT Realtime model.",
+    "realtime_model_managed_hint": "This provider manages the model. Use its setup controls above to change the selection.",
     "guide_realtime_title": "Which model should I pick?",
     "guide_realtime_body": "OpenAI API: GPT Realtime 2.1 is the current flagship and 2.1 Mini is the budget pick. Google: Gemini 3.1 Flash Live is the current Live flagship.",
     "guide_computer_use_title": "Which provider should power the Tool Model?",
@@ -3027,10 +3029,10 @@
       "summary_accepted": "Terms accepted"
     },
     "intro": {
-      "scene_1": "Meet your voice-first assistant.",
-      "scene_2": "Just talk — it listens and acts.",
-      "scene_3": "It keeps working in the background while you don't.",
-      "scene_4": "Your keys, your data, your rules."
+      "scene_1": "Your computer becomes an AI agent.",
+      "scene_2": "Give Jarvis a task by chat or voice.",
+      "scene_3": "It can use apps, tools, models, and agents.",
+      "scene_4": "Review its actions and results in one place."
     },
     "language": {
       "ui_label": "Interface language",
@@ -5194,9 +5196,22 @@
   },
   "society": {
     "groups": {
-      "create": "New agent team", "edit": "Edit agent team", "description": "Bundle agents in one sidebar entry. Each agent keeps its own conversation.",
-      "name": "Team name", "members": "Members", "cancel": "Cancel", "save": "Save team", "delete": "Ungroup", "delete_confirm": "Ungroup these agents? Their individual chats will remain.",
-      "left_chat": "Left chat", "right_chat": "Right chat", "open": "Open", "open_individual": "Open {0}'s individual chat", "missing_member": "Select an available agent to view this chat.", "hold_to_group": "Hold to group", "release_to_group": "Release to group"
+      "create": "New agent team",
+      "edit": "Edit agent team",
+      "description": "Bundle agents in one sidebar entry. Each agent keeps its own conversation.",
+      "name": "Team name",
+      "members": "Members",
+      "cancel": "Cancel",
+      "save": "Save team",
+      "delete": "Ungroup",
+      "delete_confirm": "Ungroup these agents? Their individual chats will remain.",
+      "left_chat": "Left chat",
+      "right_chat": "Right chat",
+      "open": "Open",
+      "open_individual": "Open {0}'s individual chat",
+      "missing_member": "Select an available agent to view this chat.",
+      "hold_to_group": "Hold to group",
+      "release_to_group": "Release to group"
     },
     "chat": {
       "placeholder": "Message {0}",
@@ -5404,6 +5419,18 @@
       "safe": "Safe",
       "monitor": "Monitor",
       "ask": "Ask first"
+    },
+    "approval_mode": {
+      "title": "Agent permissions",
+      "bypass": "Bypass permissions",
+      "ask": "Ask",
+      "always_ask": "Always ask",
+      "bypass_hint": "Jarvis tools run without prompts; Jarvis blocks and denied tools still apply. A subscription CLI's native tools follow that runner's controls.",
+      "ask_hint": "Read freely; ask in this chat before changes or other actions.",
+      "always_ask_hint": "Ask in this chat before every Jarvis tool call, including reads.",
+      "legacy_hint": "This agent keeps its existing chat permissions until you choose a mode.",
+      "legacy_ceiling": "Existing permission ceiling",
+      "unavailable": "This runner cannot show a usable approval card for this mode."
     },
     "grant": {
       "all": "All connected tools",

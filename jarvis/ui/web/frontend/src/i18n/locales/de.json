@@ -538,11 +538,9 @@
     "recent": "Letzte",
     "pin_chat": "Chat anheften",
     "unpin_chat": "Chat lösen",
-
     "jarvis_tools": "Jarvis Tools",
     "scheduled": "Geplant",
     "more": "Mehr",
-
     "instance_dev_hint": "Dev-Instanz — eine zweite, frei neustartbare Kopie der App mit eigenen Daten, Ports und eigenem Icon. Die normale App läuft daneben weiter.",
     "surface_voice": "Voice",
     "surface_chat": "Chat",
@@ -1915,7 +1913,11 @@
     "managed_speaking_title": "Sprechen",
     "managed_voice_unavailable": "noch nicht sprachgetestet",
     "managed_voice_install_required": "Laufzeit-Installation nötig",
-    "managed_apply_test": "Anwenden & Sprache testen",
+    "managed_apply_test": "Anwenden, testen & lokal sprechen",
+    "managed_protocol_options": "Erweiterte Modell- und Stimmoptionen des Servers",
+    "managed_setup_testing": "Die ausgewählten Modelle werden vorbereitet und die Sprachausgabe geprüft. Beim ersten Start kann das länger dauern.",
+    "managed_selected": "Für Sprache ausgewählt. Diese Modelle starten automatisch mit Jarvis.",
+    "managed_not_selected": "Dieser Server ist noch nicht für Sprache ausgewählt. Zwei Modelle auswählen und anwenden, um lokal zu sprechen.",
     "managed_full_catalog": "Vollständigen Ollama-Katalog durchsuchen",
     "managed_voice_catalog_title": "Open-Source-Sprachmodelle durchsuchen",
     "managed_voice_catalog_search": "Nach Modell, Backend, Sprache oder Lizenz suchen…",
@@ -2017,7 +2019,7 @@
     "cat_computer_use_desc": "Das Tool Model führt deine Aktionen aus: Es routet Sprachbefehle, plant Computer-Use auf deinem Bildschirm, startet Hintergrund-Agenten und steuert die App — unabhängig von deinem Chat-Brain.",
     "cat_dictation_desc": "Das schnelle Modell, das diktierten Text aufräumt — Satzzeichen, Füllwörter und Satzgrenzen. Optional: Ohne Schlüssel hier kommt dein Diktat genau so an, wie es erkannt wurde.",
     "cat_subagents_title": "{name}-Agents",
-    "cat_subagents_desc": "Dieser Provider übernimmt Textchat, Gedächtnis und Hintergrundaufgaben. Ein Abo kostet hier nichts extra; dein Voice-Key bleibt für das Sprachgespräch reserviert.",
+    "cat_subagents_desc": "Übernimmt Chat, Gedächtnis und Hintergrundarbeit — nicht dein Voice-Key.",
     "advanced_title": "Zugang & Integrationen",
     "advanced_desc": "Optionale Extras: der Team-Key-Proxy, Telefonie und der Wissens-Wiki-Provider.",
     "no_providers_in_tier": "In dieser Kategorie sind keine Provider verfügbar.",
@@ -2051,7 +2053,7 @@
     "realtime_options_error": "Die Sprachoptionen konnten nicht geladen werden.",
     "realtime_options_retry": "Erneut versuchen",
     "realtime_model_managed": "Verwaltet",
-    "realtime_model_managed_hint": "ChatGPT wählt das Subscription-Modell. Bei einem API-Realtime-Anbieter kannst du ein GPT-Realtime-Modell festlegen.",
+    "realtime_model_managed_hint": "Dieser Anbieter verwaltet das Modell. Die Auswahl lässt sich über die Einrichtung oben ändern.",
     "guide_realtime_title": "Welches Modell soll ich nehmen?",
     "guide_realtime_body": "OpenAI API: GPT Realtime 2.1 ist das aktuelle Flaggschiff, 2.1 Mini die günstigere Wahl. Google: Gemini 3.1 Flash Live ist das aktuelle Live-Flaggschiff.",
     "guide_computer_use_title": "Welcher Provider soll das Tool Model antreiben?",
@@ -2994,10 +2996,10 @@
       "summary_accepted": "Bedingungen akzeptiert"
     },
     "intro": {
-      "scene_1": "Dein sprachgesteuerter Assistent.",
-      "scene_2": "Einfach sprechen — er hört zu und handelt.",
-      "scene_3": "Er arbeitet im Hintergrund weiter, während du es nicht tust.",
-      "scene_4": "Deine Schlüssel, deine Daten, deine Regeln."
+      "scene_1": "Dein Computer wird zum KI-Agenten.",
+      "scene_2": "Gib Jarvis eine Aufgabe per Chat oder Sprache.",
+      "scene_3": "Er kann Apps, Tools, Modelle und Agenten nutzen.",
+      "scene_4": "Prüfe seine Aktionen und Ergebnisse an einem Ort."
     },
     "language": {
       "ui_label": "Sprache der Oberfläche",
@@ -5161,9 +5163,22 @@
   },
   "society": {
     "groups": {
-      "create": "Neues Agent-Team", "edit": "Agent-Team bearbeiten", "description": "Agents in einem Eintrag bündeln. Jeder Agent behält seinen eigenen Chat.",
-      "name": "Teamname", "members": "Mitglieder", "cancel": "Abbrechen", "save": "Team speichern", "delete": "Gruppe auflösen", "delete_confirm": "Diese Gruppe auflösen? Die einzelnen Agent-Chats bleiben erhalten.",
-      "left_chat": "Linker Chat", "right_chat": "Rechter Chat", "open": "Öffnen", "open_individual": "Einzelchat von {0} öffnen", "missing_member": "Wähle einen verfügbaren Agent für diesen Chat.", "hold_to_group": "Halten zum Gruppieren", "release_to_group": "Loslassen zum Gruppieren"
+      "create": "Neues Agent-Team",
+      "edit": "Agent-Team bearbeiten",
+      "description": "Agents in einem Eintrag bündeln. Jeder Agent behält seinen eigenen Chat.",
+      "name": "Teamname",
+      "members": "Mitglieder",
+      "cancel": "Abbrechen",
+      "save": "Team speichern",
+      "delete": "Gruppe auflösen",
+      "delete_confirm": "Diese Gruppe auflösen? Die einzelnen Agent-Chats bleiben erhalten.",
+      "left_chat": "Linker Chat",
+      "right_chat": "Rechter Chat",
+      "open": "Öffnen",
+      "open_individual": "Einzelchat von {0} öffnen",
+      "missing_member": "Wähle einen verfügbaren Agent für diesen Chat.",
+      "hold_to_group": "Halten zum Gruppieren",
+      "release_to_group": "Loslassen zum Gruppieren"
     },
     "chat": {
       "placeholder": "Nachricht an {0}",
@@ -5371,6 +5386,18 @@
       "safe": "Sicher",
       "monitor": "Beobachten",
       "ask": "Erst fragen"
+    },
+    "approval_mode": {
+      "title": "Agentenberechtigungen",
+      "bypass": "Berechtigungen umgehen",
+      "ask": "Fragen",
+      "always_ask": "Immer fragen",
+      "bypass_hint": "Jarvis-Werkzeuge laufen ohne Nachfragen; Sperren und verweigerte Werkzeuge gelten weiter. Eigene Werkzeuge einer Abo-CLI folgen deren Regeln.",
+      "ask_hint": "Lesen ohne Nachfrage; vor Änderungen und anderen Aktionen hier im Chat fragen.",
+      "always_ask_hint": "Vor jedem Jarvis-Werkzeugaufruf hier im Chat fragen, auch beim Lesen.",
+      "legacy_hint": "Dieser Agent behält seine bisherigen Chat-Berechtigungen, bis du einen Modus auswählst.",
+      "legacy_ceiling": "Bisherige Berechtigungsgrenze",
+      "unavailable": "Dieser Runner kann für diesen Modus keine nutzbare Freigabekarte anzeigen."
     },
     "grant": {
       "all": "Alle verbundenen Werkzeuge",

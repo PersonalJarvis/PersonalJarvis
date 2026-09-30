@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -61,7 +62,8 @@ async def test_ensure_session_is_deterministic_and_reseats(world):
     assert first.session_id == "society:scout"
     assert first.surface == "society"
     assert first.provider == "openai" and first.model == "gpt-5.2"
-    assert first.permission_mode == "accept-edits"
+    # New agents start on the Society ladder's Bypass default.
+    assert first.permission_mode == "bypass"
     assert first.title == "Scout"
     assert Path(first.cwd).name == "workspace" and os.path.isdir(first.cwd)  # noqa: ASYNC240
     assert Path(first.cwd).is_absolute()
@@ -76,12 +78,22 @@ async def test_ensure_session_is_deterministic_and_reseats(world):
     assert reseated.session_id == "society:scout"
 
 
-async def test_ceiling_maps_to_stance(world):
+async def test_legacy_ceiling_maps_to_stance(world):
+    """A pre-migration row (no approval mode) keeps its ceiling's old stance."""
     rt, svc, cfg = world
     safe, _ = await rt.roster.create(name="Reader", provider="openai", permission_ceiling="safe")
     ask, _ = await rt.roster.create(name="Asker", provider="openai", permission_ceiling="ask")
+    safe = dataclasses.replace(safe, approval_mode=None)
+    ask = dataclasses.replace(ask, approval_mode=None)
     assert ensure_session(svc, cfg, safe).permission_mode == "plan"
     assert ensure_session(svc, cfg, ask).permission_mode == "ask"
+
+
+async def test_explicit_approval_mode_wins(world):
+    rt, svc, cfg = world
+    asker, _ = await rt.roster.create(name="Asker", provider="openai")
+    asker = await rt.roster.update("asker", {"approval_mode": "ask"})
+    assert ensure_session(svc, cfg, asker).permission_mode == "ask"
 
 
 async def test_without_provider_the_agents_tier_answers(world, monkeypatch):
