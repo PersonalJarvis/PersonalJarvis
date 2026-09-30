@@ -1,7 +1,9 @@
-"""HttpHandler — HTTP-Request via httpx, response-body als Run-Output."""
+"""HTTP jobs with a reusable connection pool and off-loop TLS setup."""
 from __future__ import annotations
 
+import asyncio
 import time
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any
 
 from .base import HandlerResult
@@ -10,7 +12,7 @@ _BODY_CAP = 64 * 1024
 
 
 def _match_status(status: int, pattern: str) -> bool:
-    """``'2xx'`` / ``'200'`` / ``'3xx'`` / exakter Code."""
+    """Match a status family such as ``2xx`` or an exact status code."""
     p = pattern.strip().lower()
     if p.endswith("xx") and len(p) == 3 and p[0].isdigit():
         return (status // 100) == int(p[0])
@@ -20,7 +22,52 @@ def _match_status(status: int, pattern: str) -> bool:
         return False
 
 
+class _NoStoredCookies(DefaultCookiePolicy):
+    def set_ok(self, cookie: Any, request: Any) -> bool:
+        # Separate jobs may use different credentials against the same host.
+        # Pool sockets, but never carry response cookies into another job.
+        return False
+
+
 class HttpHandler:
+    def __init__(self) -> None:
+        self._client: Any | None = None
+        self._lock = asyncio.Lock()
+
+    @staticmethod
+    def _build_client() -> Any:
+        import httpx
+
+        return httpx.AsyncClient(
+            cookies=CookieJar(policy=_NoStoredCookies()),
+            limits=httpx.Limits(
+                max_connections=20, max_keepalive_connections=10,
+                keepalive_expiry=30.0,
+            ),
+        )
+
+    async def _get_client(self) -> Any:
+        async with self._lock:
+            if self._client is None:
+                # Loading trust roots can stall for seconds under memory
+                # pressure. Even the first job must leave the UI loop free.
+                build = asyncio.create_task(asyncio.to_thread(self._build_client))
+                try:
+                    self._client = await asyncio.shield(build)
+                except asyncio.CancelledError:
+                    # A thread cannot be cancelled. Close what it built before
+                    # propagating cancellation, rather than leaking its pool.
+                    client = await build
+                    await client.aclose()
+                    raise
+            return self._client
+
+    async def aclose(self) -> None:
+        async with self._lock:
+            client, self._client = self._client, None
+            if client is not None:
+                await client.aclose()
+
     async def execute(
         self,
         spec: Any,
@@ -30,13 +77,14 @@ class HttpHandler:
 
         start = time.perf_counter()
         try:
-            async with httpx.AsyncClient(timeout=spec.timeout_s) as client:
-                r = await client.request(
-                    method=spec.method,
-                    url=spec.url,
-                    headers=spec.headers or None,
-                    content=spec.body,
-                )
+            client = await self._get_client()
+            r = await client.request(
+                method=spec.method,
+                url=spec.url,
+                headers=spec.headers or None,
+                content=spec.body,
+                timeout=spec.timeout_s,
+            )
         except httpx.TimeoutException:
             duration_ms = int((time.perf_counter() - start) * 1000)
             return HandlerResult(
