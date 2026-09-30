@@ -176,7 +176,7 @@ def _build(config: Any, seat: Seat, caller: str) -> SeatBrain:
         model = _chat_default_model(config, seat.provider)
     try:
         inner = resolve_browser_brain(config, seat.provider, model, runner=seat.runner)
-    except LookupError:
+    except LookupError:  # no brain plugin: a CLI adapter, or SeatUnavailable
         inner = _cli_adapter(seat, model)
     except Exception as exc:  # noqa: BLE001 - reported by type; the text may be a provider's
         raise SeatUnavailable(
@@ -264,7 +264,7 @@ class SeatBrain:
                 with self._scope():
                     try:
                         delta = await iterator.__anext__()
-                    except StopAsyncIteration:
+                    except StopAsyncIteration:  # the seat's stream ended normally
                         return
                 yield delta
         except Exception as exc:  # noqa: BLE001 - re-raised without the provider's text
