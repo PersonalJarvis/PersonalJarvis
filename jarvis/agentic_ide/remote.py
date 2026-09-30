@@ -513,8 +513,14 @@ async def _push_tarball(pool: SshPtyPool, folder: Path, remote: str) -> list[str
 _PACK = r"""
 set -e
 cd {dest}
-export GIT_INDEX_FILE="$(mktemp)"; git read-tree HEAD; git add -A; t=$(git write-tree)
-c=$(git -c user.name=Jarvis -c user.email=jarvis@localhost commit-tree "$t" -p HEAD \
+export GIT_INDEX_FILE="$(mktemp)"; rm -f "$GIT_INDEX_FILE"  # a name only: git makes the file
+# A folder sent before its first commit has no HEAD here either.
+if git rev-parse -q --verify HEAD >/dev/null
+then git read-tree HEAD; set -- -p HEAD
+else set --
+fi
+git add -A; t=$(git write-tree)
+c=$(git -c user.name=Jarvis -c user.email=jarvis@localhost commit-tree "$t" "$@" \
     -m "jarvis: work from the server")
 rm -f "$GIT_INDEX_FILE"; unset GIT_INDEX_FILE
 git update-ref {ref} "$c"
