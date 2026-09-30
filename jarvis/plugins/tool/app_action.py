@@ -219,10 +219,12 @@ class RunAppActionTool:
                     json=body if method != "GET" and body is not None else None,
                 )
         except httpx.HTTPError as exc:
+            # The transport error is returned to the model as the tool result.
             return None, f"transport error: {exc}"
         try:
             data = resp.json() if resp.content else None
         except ValueError:
+            # A non-JSON body is still a valid answer; hand back the raw text.
             data = resp.text
         return resp.status_code, data
 

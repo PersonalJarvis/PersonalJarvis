@@ -116,6 +116,50 @@ def _agentic_ide_history_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
 
 
 @pytest.fixture(autouse=True)
+def _agent_trust_configs_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
+    """Keep the folder-trust pre-seed out of the developer's real CLI configs.
+
+    Opening a workspace marks its folder as trusted in each coding CLI's own
+    config (``~/.claude.json``, ``$CODEX_HOME/config.toml``, ...). The
+    Agentic-IDE suite already stubbed that out, but the brain and web suites
+    open workspaces too, and every run added its throwaway ``tmp_path`` folders
+    to the real files: one Codex config grew to 1,300+ dead project tables
+    (220 KB). The trust write re-parses that file with a formatting-preserving
+    parser before every open, so each test that opened a workspace then spent
+    seconds in it and a whole test file ran into the timeout.
+
+    Root conftest for the same reason as the history redirect above: the
+    guarantee must not depend on which suite remembered it. The redirect sits
+    on the path resolver, not on ``ensure_trusted`` itself, so modules that
+    imported the function by name are covered and ``test_trust.py`` still
+    exercises the real writer against its own temporary home.
+    """
+    from jarvis.workspace import trust
+
+    fake_home = tmp_path_factory.mktemp("agent-trust-home")
+    base = tmp_path_factory.getbasetemp().resolve()
+    real_config_path = trust._config_path  # noqa: SLF001
+    real_extra_configs = trust._extra_configs  # noqa: SLF001
+
+    def _config_path(spec, home, *, test_mode):  # noqa: ANN001, ANN202
+        if test_mode:
+            return real_config_path(spec, home, test_mode=True)
+        return real_config_path(spec, fake_home, test_mode=True)
+
+    def _extra_configs(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        # An added account's directory is only seeded when a test created it.
+        return [
+            path
+            for path in real_extra_configs(*args, **kwargs)
+            if Path(path).resolve().is_relative_to(base)
+        ]
+
+    monkeypatch.setattr(trust, "_config_path", _config_path)
+    monkeypatch.setattr(trust, "_extra_configs", _extra_configs)
+    yield fake_home
+
+
+@pytest.fixture(autouse=True)
 def _macos_shell_registration_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
     """Keep every suite away from the developer's real macOS shell databases.
 
@@ -184,6 +228,21 @@ def _pricing_feed_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
 
 
 @pytest.fixture(autouse=True)
+def _app_action_state_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
+    """Every registry-command or app-action call records its outcome for the
+    Jarvis-actions page; keep that, and the per-action policy, off the
+    developer's real ``data/state``."""
+    from jarvis.app_actions import history, policy
+
+    root = tmp_path_factory.mktemp("app-actions")
+    monkeypatch.setattr(policy, "policy_path", lambda: root / "policy.json")
+    monkeypatch.setattr(history, "history_path", lambda: root / "history.json")
+    history.reset_for_tests()
+    yield
+    history.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _report_readback_canned_only():
     """Keep spoken report readbacks off the real flash provider.
 
@@ -198,21 +257,6 @@ def _report_readback_canned_only():
     report_readback.set_composer(ReadbackComposer())
     yield
     report_readback.set_composer(None)
-
-
-@pytest.fixture(autouse=True)
-def _app_action_state_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
-    """Every registry-command or app-action call records its outcome for the
-    Jarvis-actions page; keep that, and the per-action policy, off the
-    developer's real ``data/state``."""
-    from jarvis.app_actions import history, policy
-
-    root = tmp_path_factory.mktemp("app-actions")
-    monkeypatch.setattr(policy, "policy_path", lambda: root / "policy.json")
-    monkeypatch.setattr(history, "history_path", lambda: root / "history.json")
-    history.reset_for_tests()
-    yield
-    history.reset_for_tests()
 
 
 @pytest.fixture(autouse=True)

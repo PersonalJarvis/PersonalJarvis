@@ -96,6 +96,7 @@ def git_toplevel(folder: Path) -> Path | None:
     try:
         return Path(_git(folder, "rev-parse", "--show-toplevel"))
     except (MoveError, OSError):
+        # Not a git checkout (or git missing): None is the documented answer.
         return None
 
 
@@ -103,6 +104,7 @@ def _head(top: Path) -> str | None:
     try:
         return _git(top, "rev-parse", "-q", "--verify", "HEAD^{commit}")
     except MoveError:
+        # An unborn repo has no HEAD yet; None is the documented answer.
         return None
 
 
@@ -110,6 +112,7 @@ def _branch(top: Path) -> str | None:
     try:
         name = _git(top, "symbolic-ref", "-q", "--short", "HEAD")
     except MoveError:
+        # Detached HEAD has no branch name; None is the documented answer.
         return None
     return name or None
 
@@ -244,6 +247,7 @@ async def push_code(pool: SshPtyPool, local_folder: Path) -> Placement:
                 await asyncio.to_thread(_git, top, "cat-file", "-e", f"{sha}^{{commit}}")
                 present.append(f"^{sha}")
             except MoveError:
+                # The target lacks this commit, so it cannot serve as a bundle base.
                 continue
         try:
             await asyncio.to_thread(_git, top, "bundle", "create", str(bundle), ref, *present)
@@ -393,6 +397,7 @@ async def pull_code(
                 _git, top, "apply", "--whitespace=nowarn", stdin=(patch + "\n").encode("utf-8")
             )
         except MoveError as exc:
+            # The failure is returned to the caller, which shows it to the user.
             return Return(branch=branch, applied=False, message=f"{exc} The work is on {branch}.")
     return Return(
         branch=branch,

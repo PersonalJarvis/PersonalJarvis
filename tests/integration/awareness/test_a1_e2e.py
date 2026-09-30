@@ -42,9 +42,18 @@ def _async_collect(target: list):
     return _handler
 
 
+@pytest.mark.skip_ci
 @pytest.mark.asyncio
 async def test_window_focus_watcher_real_win32_hook() -> None:
-    """Real SetWinEventHook: spawn notepad → FrameUpdated empfangen."""
+    """Real SetWinEventHook: spawn notepad -> receive FrameUpdated.
+
+    Needs an interactive desktop on which a freshly started notepad.exe takes
+    the foreground. A hosted CI runner guarantees neither (no user in front
+    of the session, and the image decides whether a classic ``notepad.exe``
+    exists at all), so there the event may never fire and the test fails for
+    the environment, not for the watcher. The hook lifecycle itself stays covered in CI by the
+    double-lifecycle and stop-budget tests below.
+    """
     cfg = AwarenessConfig.default()
     bus = EventBus()
     manager = AwarenessManager(cfg)
@@ -81,7 +90,7 @@ async def test_window_focus_watcher_real_win32_hook() -> None:
 
 @pytest.mark.asyncio
 async def test_window_focus_watcher_double_lifecycle() -> None:
-    """start → stop → start → stop ohne Crash (UnhookWinEvent funktioniert)."""
+    """start -> stop -> start -> stop without a crash (UnhookWinEvent works)."""
     cfg = AwarenessConfig.default()
     bus = EventBus()
     manager = AwarenessManager(cfg)
@@ -97,7 +106,7 @@ async def test_window_focus_watcher_double_lifecycle() -> None:
 
 @pytest.mark.asyncio
 async def test_window_focus_watcher_stop_under_2s() -> None:
-    """Plan §5 AC: stop() returnt innerhalb 2s."""
+    """Plan §5 AC: stop() returns within 2 s."""
     cfg = AwarenessConfig.default()
     bus = EventBus()
     manager = AwarenessManager(cfg)
