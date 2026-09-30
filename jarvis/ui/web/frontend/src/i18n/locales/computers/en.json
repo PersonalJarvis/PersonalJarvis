@@ -283,7 +283,7 @@
     "wz_next_ide_body": "In the Agentic IDE, choose “Runs on: {computer}” when you open a workspace.",
     "wz_open": "Open {computer}",
     "cx_title": "Connect a computer",
-    "cx_subtitle": "Enter the address and choose how {name} logs in. {name} tests the connection before it saves anything.",
+    "cx_subtitle": "Enter the address. {name} logs in with this PC's SSH keys or asks for what is missing, and tests the connection before it saves anything.",
     "cx_address": "Server address",
     "cx_address_hint": "The IP your provider shows, e.g. 203.0.113.10 — or paste a whole \"ssh root@…\" line.",
     "cx_login": "How to log in",
@@ -345,6 +345,15 @@
     "cx_step_save_warn": "Saved, but the follow-up check did not come back online.",
     "cx_edit": "Change details",
     "cx_retry": "Try again",
-    "cx_verified_body": "{name} reached it, logged in and ran a test command."
+    "cx_verified_body": "{name} reached it, logged in and ran a test command.",
+    "cx_auto_hint": "{name} tries the SSH keys this PC already uses. If none of them opens the server, it asks for the password once.",
+    "cx_other_ways": "Other ways to log in",
+    "cx_auto_back": "Automatic (recommended)",
+    "cx_ask_password": "None of this PC's SSH keys opens this server. Enter its password once: {name} then sets up its own key and forgets the password.",
+    "cx_key_only_title": "This server only lets in keys it knows",
+    "cx_key_only_body": "Run this line once on the server, in your hosting panel's web console or any SSH session. It adds {name}'s key. Then press Try again.",
+    "cx_key_only_line": "Line for the server",
+    "cx_key_only_agent": "Or let a coding agent on the server do it",
+    "cx_try_again": "Try again"
   }
 }
