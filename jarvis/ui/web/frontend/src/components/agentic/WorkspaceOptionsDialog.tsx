@@ -1,6 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { Columns2, GitBranch, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { PaneStyle } from "./terminalThemes";
 
 interface Props {
   open: boolean;
@@ -19,7 +20,15 @@ interface Props {
   onGit: () => void;
   appearance: "light" | "dark" | null;
   onAppearance: (appearance: "light" | "dark" | null) => void;
+  /** Square tiles without titles, or rounded cards with a title bar. */
+  paneStyle?: PaneStyle;
+  onPaneStyle?: (style: PaneStyle) => void;
 }
+
+const PANE_STYLES: { id: PaneStyle; label: string; hint: string }[] = [
+  { id: "minimal", label: "Minimal", hint: "Square frames, no titles" },
+  { id: "classic", label: "Classic", hint: "Rounded, with a title bar" },
+];
 
 /** Workspace controls live off-canvas so the terminal area needs no toolbar. */
 export function WorkspaceOptionsDialog(props: Props) {
@@ -37,8 +46,20 @@ export function WorkspaceOptionsDialog(props: Props) {
         <section aria-label="Terminal arrangement" className="space-y-2">
           <button type="button" disabled={props.busy || props.count < 2} onClick={() => choose(props.onBalance)}
             className="flex w-full items-center gap-2 rounded-lg border border-border px-3 py-2.5 text-sm hover:bg-muted disabled:opacity-40"><Columns2 className="h-4 w-4" />Balance layout</button>
-          <p className="text-xs leading-relaxed text-muted-foreground">Drag a terminal title to an edge to place it beside, above or below another terminal. Drop in the center to swap positions.</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">{props.paneStyle === "minimal"
+            ? "Point at a terminal and drag its handle (top right) to an edge to place it beside, above or below another terminal. Drop in the center to swap positions."
+            : "Drag a terminal title to an edge to place it beside, above or below another terminal. Drop in the center to swap positions."}</p>
         </section>
+        {props.onPaneStyle && <section aria-label="Terminal style">
+          <p className="mb-2 text-sm font-medium">Terminal style</p>
+          <div className="flex gap-2">
+            {PANE_STYLES.map((style) => <button type="button" key={style.id} aria-pressed={props.paneStyle === style.id}
+              onClick={() => props.onPaneStyle?.(style.id)} className={cn("flex flex-1 flex-col items-start gap-0.5 rounded-lg border px-3 py-2 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", props.paneStyle === style.id ? "border-foreground/35 bg-muted" : "border-border text-muted-foreground hover:bg-muted")}>
+              <span className="font-medium">{style.label}</span>
+              <span className="text-xs text-muted-foreground">{style.hint}</span>
+            </button>)}
+          </div>
+        </section>}
         <section aria-label="Terminal appearance">
           <p className="mb-2 text-sm font-medium">Terminal appearance</p>
           <div className="flex gap-2">

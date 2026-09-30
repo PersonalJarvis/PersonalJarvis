@@ -160,3 +160,49 @@ describe("compact workspace terminal header", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 });
+
+describe("minimal tile controls (overlay variant)", () => {
+  it("floats four square controls and no title, shown only under the pointer", () => {
+    render(<WorkspaceTerminalHeader {...BASE} variant="overlay" onToggleMaximize={() => {}} onClose={() => {}} onOpenConversation={() => {}} />);
+    expect(screen.queryByTestId("workspace-terminal-header-Dana")).toBeNull();
+    expect(screen.queryByTestId("pane-title-Dana")).toBeNull();
+    const controls = screen.getByTestId("workspace-terminal-controls-Dana");
+    expect(controls.className).toContain("absolute");
+    expect(controls.className).toContain("opacity-0");
+    expect(controls.className).toContain("group-hover/tile:opacity-100");
+    expect(controls.className).toContain("focus-within:opacity-100");
+    const buttons = within(controls).getAllByRole("button");
+    expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual(["Dana", "More actions for Dana", "Maximize Dana", "Close Dana"]);
+    for (const button of buttons) expect(button.className).toContain("rounded-none");
+  });
+
+  it("moves the pane from its handle only, and stays visible while its menu is open", () => {
+    const arrange = vi.fn();
+    render(<WorkspaceTerminalHeader {...BASE} variant="overlay" onArrangeStart={arrange} onOpenConversation={() => {}} />);
+    const handle = screen.getByRole("button", { name: "Move Dana" });
+    expect(handle.dataset.ideDragHandle).toBe("true");
+    expect(handle.getAttribute("aria-keyshortcuts")).toContain("Alt+ArrowLeft");
+    pressPointer(handle);
+    expect(arrange).toHaveBeenCalledTimes(1);
+    pressPointer(handle, 2);
+    pressPointer(screen.getByRole("button", { name: "More actions for Dana" }));
+    expect(arrange).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "More actions for Dana" }));
+    const controls = screen.getByTestId("workspace-terminal-controls-Dana");
+    expect(controls.className).toContain("opacity-100");
+    expect(controls.className).not.toContain("opacity-0");
+    expect(screen.getByRole("menu").className).toContain("rounded-none");
+  });
+
+  it("renames in place of the handle", async () => {
+    const rename = vi.fn().mockResolvedValue(true);
+    render(<WorkspaceTerminalHeader {...BASE} variant="overlay" onRename={rename} />);
+    fireEvent.click(screen.getByRole("button", { name: "More actions for Dana" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+    expect(screen.queryByRole("button", { name: "Dana" })).toBeNull();
+    fireEvent.change(screen.getByRole("textbox", { name: "Name for Dana" }), { target: { value: "Installer" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save name" })); });
+    expect(rename).toHaveBeenCalledWith("Installer");
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+});
