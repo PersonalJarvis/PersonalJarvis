@@ -11,6 +11,7 @@ import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useWorkspacePanes } from "@/store/workspacePanes";
 import { dotKindFor, workspaceAgents } from "./agentStatus";
 import { SIDE_PANEL_TABS, sidePanelTab } from "./sidePanelTabs";
+import { SIDE_PANEL_ID } from "./sidePanelConstants";
 
 const WIDTH_KEY = "jarvis.agenticIde.sidePanelWidth.v1";
 const DEFAULT_PX = 340;
@@ -20,8 +21,6 @@ const MAX_PX = 720;
 const OFFICE_MIN_PX = 520;
 /** Terminal canvas kept visible while the panel is open. */
 const GRID_RESERVED_PX = 320;
-
-export const SIDE_PANEL_ID = "ide-side-panel";
 
 const HEADER_BTN =
   "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors " +

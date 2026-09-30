@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppWindow, Download, RotateCw } from "lucide-react";
+import { lazy, Suspense } from "react";
 
 import { useEventStore, type SectionId } from "@/store/events";
 import {
@@ -13,10 +14,20 @@ import { cn } from "@/lib/utils";
 import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
 import { SectionNavButtons } from "@/components/layout/SectionNavButtons";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
-import { IdeSidePanelToggle } from "@/components/agentic/sidePanel/IdeSidePanelToggle";
 import { useDesktopChrome, WindowControls } from "@/components/layout/WindowControls";
 import { hasEmbeddedDesktopBridge } from "@/components/voice/BrowserRealtimeControl";
 import { openExternalUrl } from "@/lib/openExternal";
+
+const LazyIdeSidePanelToggle = lazy(() =>
+  import("@/components/agentic/sidePanel/IdeSidePanelToggle").then(({ IdeSidePanelToggle }) => ({ default: IdeSidePanelToggle })),
+);
+
+function IdeSidePanelToggleSlot() {
+  const activeSection = useEventStore((state) => state.activeSection);
+  return activeSection === "agentic-ide"
+    ? <Suspense fallback={null}><LazyIdeSidePanelToggle /></Suspense>
+    : null;
+}
 
 /**
  * The window's title strip, on every screen.
@@ -104,7 +115,7 @@ export function TopBar({ navToggle }: {
       <div className="flex shrink-0 items-center">
         <CodingModeBadge />
         <TopBarActions />
-        <IdeSidePanelToggle />
+        <IdeSidePanelToggleSlot />
         {controls === "trailing" && (
           <WindowControls controls={controls} maximized={chrome.maximized} onCommand={chrome.command} />
         )}

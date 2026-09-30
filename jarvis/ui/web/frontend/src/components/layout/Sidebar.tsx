@@ -23,19 +23,24 @@ import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { clsx } from "clsx";
 import { cn } from "@/lib/utils";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
-import { RecentChats } from "@/components/home/RecentChats";
 import { useConversations } from "@/hooks/useConversations";
 import { useHomeStore } from "@/store/home";
 import { useAgentChatStore } from "@/store/agentChat";
-import { IdeProjectTree } from "@/components/agentic/IdeProjectTree";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useAppInstance } from "@/hooks/useAppInstance";
 import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
 import { GigiMark } from "@/components/GigiMark";
 import * as Dialog from "@radix-ui/react-dialog";
 import { startNewVoiceRun } from "@/lib/chatsApi";
+
+const LazyIdeProjectTree = lazy(() =>
+  import("@/components/agentic/IdeProjectTree").then(({ IdeProjectTree }) => ({ default: IdeProjectTree })),
+);
+const LazyRecentChats = lazy(() =>
+  import("@/components/home/RecentChats").then(({ RecentChats }) => ({ default: RecentChats })),
+);
 
 /*
  * Why `clsx` and not `cn` on the rows below.
@@ -536,8 +541,10 @@ export function Sidebar({
           {moreOpen && <ul id="sidebar-more" className="space-y-1">{moreItems.map((item) => item.id === "tasks" ? renderRow({ ...item, labelKey: "sidebar.scheduled" }) : renderRow(item))}</ul>}
         </nav>}
         {!railed && (onIdeSection
-          ? <IdeProjectTree />
-          : <section className="mt-4 px-2 pb-3" aria-label={t("sidebar.recent_chats")}><RecentChats /></section>)}
+          ? <Suspense fallback={null}><LazyIdeProjectTree /></Suspense>
+          : <section className="mt-4 px-2 pb-3" aria-label={t("sidebar.recent_chats")}>
+              <Suspense fallback={<div className="h-16" aria-hidden />}><LazyRecentChats /></Suspense>
+            </section>)}
       </div>
 
       {/* The footer is one button now, not a popup: it opens the Settings hub

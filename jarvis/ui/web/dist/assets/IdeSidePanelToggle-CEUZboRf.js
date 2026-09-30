@@ -1,0 +1,6 @@
+import{b as d,u,e as g,j as i,c as p}from"./index-DLPXdFV9.js";import{u as o}from"./ideSidePanel-BJASr2A1.js";import{S as h,P as f}from"./sidePanelConstants-DVfzteHT.js";/**
+ * @license lucide-react v0.445.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */const m=d("PanelRightOpen",[["rect",{width:"18",height:"18",x:"3",y:"3",rx:"2",key:"afitv7"}],["path",{d:"M15 3v18",key:"14nvp0"}],["path",{d:"m10 15-3-3 3-3",key:"1pgupc"}]]);function S({className:s}){const a=u(),r=g(e=>e.activeSection),t=o(e=>e.open),c=o(e=>e.toggle);if(r!=="agentic-ide")return null;const n=a(t?"ide_side_panel.collapse":"ide_side_panel.expand"),l=t?f:m;return i.jsx("button",{type:"button",onClick:c,title:n,"aria-label":n,"aria-expanded":t,"aria-controls":h,"data-testid":"ide-side-panel-toggle",className:p("inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md","text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground","focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",t&&"text-foreground",s),children:i.jsx(l,{"aria-hidden":!0,className:"h-4 w-4"})})}export{S as IdeSidePanelToggle};

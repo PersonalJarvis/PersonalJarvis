@@ -34,10 +34,10 @@ test("IDE rail keeps workspace options and Jarvis Live reachable", () => {
   cleanup();
 });
 
-test("IDE sidebar puts Projects first and returns to the normal chat navigation", () => {
+test("IDE sidebar puts Projects first and returns to the normal chat navigation", async () => {
   act(() => useEventStore.setState({ activeSection: "agentic-ide" }));
   renderSidebar();
-  expect(screen.getByTestId("ide-project-tree")).toBeDefined();
+  expect(await screen.findByTestId("ide-project-tree")).toBeDefined();
   // The agents list lives in the IDE's right-hand side panel now.
   expect(screen.queryByTestId("ide-workspace-agents")).toBeNull();
   expect(screen.queryByTestId("sidebar-new-chat")).toBeNull();
@@ -652,12 +652,12 @@ describe("compact sidebar navigation", () => {
   });
   afterEach(() => cleanup());
 
-  test("keeps core destinations above visible recent chats", () => {
+  test("keeps core destinations above visible recent chats", async () => {
     renderSidebar();
     for (const id of ["agents", "dictation", "visualization", "agentic-ide", "plugins", "marketplace"]) {
       expect(screen.getByTestId(`nav-row-${id}`)).toBeTruthy();
     }
-    expect(screen.getByTestId("recent-chats")).toBeTruthy();
+    expect(await screen.findByTestId("recent-chats")).toBeTruthy();
     expect(screen.queryByTestId("nav-row-wallpaper")).toBeNull();
     expect(screen.queryByTestId("nav-row-memory")).toBeNull();
   });
@@ -676,7 +676,7 @@ describe("compact sidebar navigation", () => {
     expect(useEventStore.getState().activeSection).toBe("visualization");
   });
 
-  test("expands tools through More without duplicating rows", () => {
+  test("expands tools through More without duplicating rows", async () => {
     renderSidebar();
     fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
     expect(screen.getByTestId("nav-row-memory")).toBeTruthy();
@@ -684,7 +684,7 @@ describe("compact sidebar navigation", () => {
     expect(useEventStore.getState().activeSection).toBe("memory");
     fireEvent.click(screen.getByTestId("sidebar-more-toggle"));
     expect(screen.queryByTestId("nav-row-memory")).toBeNull();
-    expect(screen.getByTestId("recent-chats")).toBeTruthy();
+    expect(await screen.findByTestId("recent-chats")).toBeTruthy();
   });
 
   test("the profile button opens the hub — hub tabs are the hub's own tests", () => {
