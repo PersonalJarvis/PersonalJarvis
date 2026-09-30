@@ -132,7 +132,7 @@ class JarvisLearningLoop:
     def _spawn(self, work: Awaitable[Any], *, name: str) -> None:
         try:
             task = asyncio.get_running_loop().create_task(self._guarded(work), name=name)
-        except RuntimeError:
+        except RuntimeError:  # no event loop (shutdown / sync caller): drop the work cleanly
             if asyncio.iscoroutine(work):
                 work.close()
             return
@@ -246,7 +246,7 @@ class JarvisLearningLoop:
             return
         try:
             loop = asyncio.get_running_loop()
-        except RuntimeError:
+        except RuntimeError:  # no event loop: no idle timer to arm, nothing lost
             return
         conversation.timer = loop.call_later(
             wait, lambda: self._schedule(key, reason="quiet conversation", force=True)
