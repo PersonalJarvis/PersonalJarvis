@@ -482,9 +482,11 @@ export interface SectionHealthResponse {
 }
 
 /**
- * Fetches the per-tab health rollup. `refresh=true` bypasses the server-side
- * TTL cache — used right after a key save / provider switch so the dot reflects
- * the change immediately instead of a stale cached result.
+ * Fetches the per-tab health rollup. The server never probes a provider for
+ * it: it reads key presence and the outcomes of real calls (plus explicit
+ * Test clicks). Its cache is dropped by every key save, provider switch and
+ * newly recorded outcome, so a plain read is always current; `refresh=true`
+ * only recomputes the cheap local checks.
  */
 export async function getSectionHealth(
   refresh = false,
@@ -499,10 +501,11 @@ export async function getSectionHealth(
 }
 
 /**
- * Drives the tab status dots in the API-Keys view. Fetches once on mount (the
- * server runs the REAL connectivity test of each tier's active provider, cached
- * briefly) and re-fetches with `refresh=true` whenever a key is saved, a provider
- * is switched, or a manual per-card test completes — so the dot tracks live.
+ * Drives the tab status dots in the API-Keys view, the sidebar and the dock.
+ * Fetches once on mount and re-reads whenever a key is saved, a provider is
+ * switched, or a manual per-card test completes — so the dot tracks live.
+ * Every read is free: the server reports the last REAL outcome of each tier's
+ * active provider and never sends a request to find out (2026-09-30).
  *
  * Health is best-effort: a failed fetch leaves the map empty (no dots), never
  * breaking the page.
@@ -535,8 +538,10 @@ export function useSectionHealth() {
   useEffect(() => {
     void reload(false);
     // Debounced: one action can fire several of these events back-to-back
-    // (switch + refetch + test). Each refresh runs REAL connectivity tests
-    // server-side, so bursts are collapsed into a single trailing reload.
+    // (switch + refetch + test), and every window hears them; bursts are
+    // collapsed into a single trailing re-read. The re-read is a plain read —
+    // the server dropped its cache on the change itself, and nothing it does
+    // for this request reaches a provider.
     let timer: number | undefined;
     const clearSection = (section?: string) => {
       setHealth((previous) => {
@@ -573,7 +578,7 @@ export function useSectionHealth() {
 
       window.clearTimeout(timer);
       if (event.type === "jarvis:provider-selection-pending") return;
-      timer = window.setTimeout(() => void reload(true), 400);
+      timer = window.setTimeout(() => void reload(false), 400);
     };
     const events = [
       "jarvis:secret-configured",
