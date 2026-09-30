@@ -14,7 +14,7 @@ OCR therefore runs only when all three hold simultaneously:
 * a backend is actually installed.
 
 That last condition is why OCR is not a dependency. The base install stays
-torch-free (CLAUDE.md §3), so this module *probes* for a backend and degrades
+torch-free (AGENTS.md §3), so this module *probes* for a backend and degrades
 with a named reason when there is none — it never pulls one in.
 """
 from __future__ import annotations

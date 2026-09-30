@@ -4,12 +4,17 @@ The binding rules for every coding agent in this repo — Claude Code, Codex,
 Gemini CLI, whichever. This is the whole rulebook; there is no longer a fuller
 version to read first. Write everything here so it addresses ANY agent.
 
-**Source of truth:** Edit `AGENTS.md` and `.agents/{agents,skills}/`.
-`CLAUDE.md` and `.claude/{agents,skills}/` are compatibility copies because
-Claude Code does not discover project subagents or skills under `.agents/`, and
-its `AGENTS.md` support is conditional. `.codex/agents/*.toml` is generated
-from `.agents/agents/*.md` for Codex. The sync scripts and CI check these
-copies; never edit a generated copy directly.
+**Source of truth:** `AGENTS.md` is the only instructions file; every agent
+reads it directly. Never add a `CLAUDE.md`, `.claude/CLAUDE.md` or
+`CLAUDE.local.md`: Claude Code then reads that file INSTEAD of this one
+(`scripts/ci/check_agents_md.py` blocks a tracked one). A Claude pane on a
+Jarvis account config dir sees `~/.claude/CLAUDE.md` as such a parent-dir file,
+so its Project instructions setting must be `claude-md-and-agents-md`.
+Edit `.agents/{agents,skills}/`; `.claude/{agents,skills}/` are compatibility
+copies because Claude Code does not discover subagents or skills under
+`.agents/`, and `.codex/agents/*.toml` is generated from `.agents/agents/*.md`
+for Codex. The sync scripts and CI check these copies; never edit a generated
+copy directly.
 
 ---
 

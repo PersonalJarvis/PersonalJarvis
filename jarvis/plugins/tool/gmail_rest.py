@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 
 _GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 
-# User-facing error strings (English per CLAUDE.md; the brain rephrases to the
+# User-facing error strings (English per AGENTS.md; the brain rephrases to the
 # user's language). Kept distinct so the brain can tell "never connected" from
 # "was connected, token died — reconnect".
 _NOT_CONNECTED = "Gmail is not connected — connect it in the Plugins view."

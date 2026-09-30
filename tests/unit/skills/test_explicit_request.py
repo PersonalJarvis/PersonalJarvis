@@ -5,7 +5,7 @@ The resolver is the deterministic form of the doctrine in
 skill class. Precision over recall — every test in the "misses" section is a
 hard negative that must never resolve.
 
-Lightweight fakes, no ``unittest.mock`` (CLAUDE.md testing convention).
+Lightweight fakes, no ``unittest.mock`` (AGENTS.md testing convention).
 """
 from __future__ import annotations
 

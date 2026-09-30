@@ -197,7 +197,7 @@ def test_creating_a_chat_starts_nothing(client: TestClient, tmp_path: Path) -> N
 
 
 def test_destructive_routes_declare_themselves(client: TestClient) -> None:
-    """The danger flag is what keeps a delete out of an unattended yes (CLAUDE.md §5)."""
+    """The danger flag is what keeps a delete out of an unattended yes (AGENTS.md §5)."""
     schema = client.get("/openapi.json").json()["paths"]
 
     for path in (

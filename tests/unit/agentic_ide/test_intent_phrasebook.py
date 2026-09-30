@@ -25,7 +25,7 @@ Two properties make this a phrasebook rather than a wishlist:
   miss. The unrelated block is what keeps the widening honest.
 
 German and Spanish utterances here are speech-recognition input vocabulary —
-the words a person literally says — not prose (CLAUDE.md §1, closed list item
+the words a person literally says — not prose (AGENTS.md §1, closed list item
 3). They are the content under test.
 """
 from __future__ import annotations

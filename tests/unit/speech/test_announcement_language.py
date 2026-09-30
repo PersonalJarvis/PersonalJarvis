@@ -12,7 +12,7 @@ stale/wrong) language an emitter stamped on the event drove the TTS voice.
 These tests pin the contract: the event tag is only a HINT (passed where the
 STT tag normally goes); the pin wins, then conversation stickiness for thin
 turns, then the detected language of the announcement text, then the tag.
-See CLAUDE.md "Runtime Output Language".
+See AGENTS.md "Runtime Output Language".
 """
 from __future__ import annotations
 

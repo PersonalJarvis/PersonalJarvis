@@ -2,7 +2,7 @@
 
 **Purpose:** Consolidated source of truth for anti-patterns, conventions, and hard negatives that subagents check against. This file is read as mandatory reading by `code-reviewer`, `jarvis-reviewer`, `jarvis-agents-bridge-reviewer`, `phase7-selfmod-auditor`, and all verifiers.
 
-**Maintenance:** When a new anti-pattern arises from a bug, ADR, or plan update, it belongs here. Existing sources (CLAUDE.md, BUGS.md, ADR collection, Awareness Plan §10, Jarvis-Agents bridge doc §5, Phase-7 doc §6) remain canonical — this file mirrors them for subagent consumption.
+**Maintenance:** When a new anti-pattern arises from a bug, ADR, or plan update, it belongs here. Existing sources (AGENTS.md, BUGS.md, ADR collection, Awareness Plan §10, Jarvis-Agents bridge doc §5, Phase-7 doc §6) remain canonical — this file mirrors them for subagent consumption.
 
 ---
 
@@ -20,16 +20,16 @@
 
 | ID | Anti-Pattern | Source | Fix |
 |---|---|---|---|
-| AP-A1 | Higher layer imports a lower one directly instead of via a Protocol | CLAUDE.md §Architecture | Protocol in `jarvis/core/protocols.py`, runtime_checkable, isinstance without inheritance |
-| AP-A2 | Lateral layer calls directly instead of via `EventBus` | CLAUDE.md §Event-Bus-Patterns | Typed Event in `jarvis/core/events.py`, frozen DataClass with `trace_id`, via `bus.publish()` |
-| AP-A3 | Plugin class imports from `jarvis.*` | CLAUDE.md §Plugin-System | Structural compatibility is enough — no inheritance requirement |
-| AP-A4 | Hardcoded API key or secret in code/config/commit | CLAUDE.md §Secrets | Exclusively `jarvis.core.config.get_secret(key, env_fallback)` |
-| AP-A5 | Sync code path parallel to stream path ("sync or stream?") | CLAUDE.md §Streaming | All provider APIs are `AsyncIterator`, non-streaming yields one element |
-| AP-A6 | Brain client (Claude/OpenAI/...) hardcoded instead of via `BrainManager` | CLAUDE.md §Brain-Provider-Strategy | Multi-provider switch via `BrainManager`, voice switch supported |
-| AP-A7 | Event subscriber error propagates → blocks pipeline | CLAUDE.md §Event-Bus-Patterns | `_safe_dispatch` swallows the error + logs; never without try/except |
-| AP-A8 | Awareness code in the voice critical path | CLAUDE.md §Awareness-Layer Hard Rule | `awareness-snapshot` stays a state read, no Brain/IO in the critical path |
-| AP-A9 | Tool-use loop without risk-tier check | CLAUDE.md §Risk-Tier-System | `jarvis/safety/tool_executor.py` is the mandatory path |
-| AP-A10 | Confirmation fatigue: every tool asks for confirmation | CLAUDE.md §Risk-Tier-System | Respect `[safety.whitelist]` patterns — whitelisted patterns run without prompting |
+| AP-A1 | Higher layer imports a lower one directly instead of via a Protocol | AGENTS.md §Architecture | Protocol in `jarvis/core/protocols.py`, runtime_checkable, isinstance without inheritance |
+| AP-A2 | Lateral layer calls directly instead of via `EventBus` | AGENTS.md §Event-Bus-Patterns | Typed Event in `jarvis/core/events.py`, frozen DataClass with `trace_id`, via `bus.publish()` |
+| AP-A3 | Plugin class imports from `jarvis.*` | AGENTS.md §Plugin-System | Structural compatibility is enough — no inheritance requirement |
+| AP-A4 | Hardcoded API key or secret in code/config/commit | AGENTS.md §Secrets | Exclusively `jarvis.core.config.get_secret(key, env_fallback)` |
+| AP-A5 | Sync code path parallel to stream path ("sync or stream?") | AGENTS.md §Streaming | All provider APIs are `AsyncIterator`, non-streaming yields one element |
+| AP-A6 | Brain client (Claude/OpenAI/...) hardcoded instead of via `BrainManager` | AGENTS.md §Brain-Provider-Strategy | Multi-provider switch via `BrainManager`, voice switch supported |
+| AP-A7 | Event subscriber error propagates → blocks pipeline | AGENTS.md §Event-Bus-Patterns | `_safe_dispatch` swallows the error + logs; never without try/except |
+| AP-A8 | Awareness code in the voice critical path | AGENTS.md §Awareness-Layer Hard Rule | `awareness-snapshot` stays a state read, no Brain/IO in the critical path |
+| AP-A9 | Tool-use loop without risk-tier check | AGENTS.md §Risk-Tier-System | `jarvis/safety/tool_executor.py` is the mandatory path |
+| AP-A10 | Confirmation fatigue: every tool asks for confirmation | AGENTS.md §Risk-Tier-System | Respect `[safety.whitelist]` patterns — whitelisted patterns run without prompting |
 
 ---
 
@@ -37,7 +37,7 @@
 
 | ID | Anti-Pattern | Source | Fix |
 |---|---|---|---|
-| AP-V1 | Brain output goes directly to TTS without `scrub_for_voice` | CLAUDE.md §Output-Filter Discipline | Mandatory hook before every `_speak`/`tts.synthesize` (paths #1 + #2) |
+| AP-V1 | Brain output goes directly to TTS without `scrub_for_voice` | AGENTS.md §Output-Filter Discipline | Mandatory hook before every `_speak`/`tts.synthesize` (paths #1 + #2) |
 | AP-V2 | Tool-call JSON / `<function_calls>` / YAML args remains in the voice output | output_filter.py:blacklist | Pattern in `scrub_for_voice` |
 | AP-V3 | Engineering jargon ("Harness", "MCP", "Subprocess", "Provider") in TTS | output_filter.py | Scrub standalone matches, keep compounds (Browser-Provider) |
 | AP-V4 | Stacktrace in the voice output | output_filter.py | Standard phrase "Error occurred"  # i18n-allow |
@@ -52,9 +52,9 @@
 
 | ID | Anti-Pattern | Source | Fix |
 |---|---|---|---|
-| AP-T1 | `unittest.mock` for plugin tests | CLAUDE.md §Testing-Conventions | `FakeXxxProvider` with scripted responses |
-| AP-T2 | New provider without a contract test in `tests/contract/` | CLAUDE.md §Testing-Conventions | Extend the parametrized catalog |
-| AP-T3 | Integration test with a real API without a skip marker | CLAUDE.md §Testing-Conventions | `pytest -m <live>` for external calls; default suite is mock-only |
+| AP-T1 | `unittest.mock` for plugin tests | AGENTS.md §Testing-Conventions | `FakeXxxProvider` with scripted responses |
+| AP-T2 | New provider without a contract test in `tests/contract/` | AGENTS.md §Testing-Conventions | Extend the parametrized catalog |
+| AP-T3 | Integration test with a real API without a skip marker | AGENTS.md §Testing-Conventions | `pytest -m <live>` for external calls; default suite is mock-only |
 | AP-T4 | Test-hardcoded paths (Windows, user-specific) | jarvis-test-runner drift | `tmp_path` fixture, ENV resolver, repo-relative paths |
 
 ---
@@ -131,9 +131,9 @@ From `JARVIS_AWARENESS_PLAN.md` §10 (full there):
 This is where false positives land that reviewers repeatedly flag incorrectly as AP:
 
 - **`jarvis/vision/screenshot.py:_ensure_dpi_awareness` lazy-imports `ctypes`** — not AP-A4 (hardcoded), this is the correct DPI-awareness pattern for Win32 (see `win32-specialist` mandatory reading).
-- **`pipeline.py:_on_announcement` calls `synthesize` directly** — not AP-A2 (lateral-direct), this is the deliberate bus bypass for Jarvis-Agent/skill announcements, used by the Jarvis-Agents bridge for `summary_de` voice readback (CLAUDE.md §Output-Filter).
-- **`output_filter.py` regex-only without LLM** — not an AP-V4-style lazy filter, latency mandate (CLAUDE.md §Output-Filter).
-- **`build_default_brain()` creates its own `EventBus`** — a known open item, not an AP, until the two-bus bridge refactor happens (CLAUDE.md §Desktop-App open items).
+- **`pipeline.py:_on_announcement` calls `synthesize` directly** — not AP-A2 (lateral-direct), this is the deliberate bus bypass for Jarvis-Agent/skill announcements, used by the Jarvis-Agents bridge for `summary_de` voice readback (AGENTS.md §Output-Filter).
+- **`output_filter.py` regex-only without LLM** — not an AP-V4-style lazy filter, latency mandate (AGENTS.md §Output-Filter).
+- **`build_default_brain()` creates its own `EventBus`** — a known open item, not an AP, until the two-bus bridge refactor happens (AGENTS.md §Desktop-App open items).
 
 ---
 
@@ -153,7 +153,7 @@ This is where false positives land that reviewers repeatedly flag incorrectly as
 
 | Source | Path | What for |
 |---|---|---|
-| CLAUDE.md | Repo root | Architecture, plugin system, streaming, event bus, Windows specifics, conventions |
+| AGENTS.md | Repo root | Architecture, plugin system, streaming, event bus, Windows specifics, conventions |
 | BUGS.md | `docs/BUGS.md` | Bug register and lessons learned |
 | ADR collection | `docs/adr/0001-0011*` | Architecture decisions with justification |
 | Jarvis-Agents bridge doc | `docs/jarvis-agents-bridge.md` | AD-1..AD-21, AP-OC1..OC13, test strategy |

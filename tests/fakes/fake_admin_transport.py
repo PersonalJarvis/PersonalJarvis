@@ -1,6 +1,6 @@
 """Hand-built ``AdminTransport`` fake (Wave 3, sub-task 3.1; EK-3).
 
-Per CLAUDE.md the project uses real fakes, never ``unittest.mock``. A real named
+Per AGENTS.md the project uses real fakes, never ``unittest.mock``. A real named
 pipe (Windows) or AF_UNIX socket (POSIX) cannot be exercised in a pure-logic unit
 test, so :class:`FakeAdminTransport` round-trips raw envelope bytes entirely
 in-process: the server-side ``handler`` (the reused

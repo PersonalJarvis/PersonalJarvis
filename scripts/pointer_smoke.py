@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import sys
 
-try:  # cp1252-safe output on a Windows console (CLAUDE.md Windows note)
+try:  # cp1252-safe output on a Windows console (AGENTS.md Windows note)
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
     pass

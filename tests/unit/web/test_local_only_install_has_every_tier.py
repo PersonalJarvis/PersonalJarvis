@@ -1,6 +1,6 @@
 """A download whose only hardware is their own must reach every tier.
 
-Personal Jarvis is aimed at an arbitrary downloader (CLAUDE.md section 3), and
+Personal Jarvis is aimed at an arbitrary downloader (AGENTS.md section 3), and
 a meaningful share of them will not enter a single cloud credential — that is
 the whole point of the local providers. For those installs "mostly local" is
 not a state the product should have: one keyless gap means the voice mode, the

@@ -11,8 +11,8 @@ This is the engine behind both halves of agent integration:
 
 Conflicts are resolved by file class, cheapest first:
 
-1. **Generated files** (frontend ``dist/``, the AGENTS.md / .agents / .codex
-   mirrors, the CLI reference docs, lockfiles, timing caches): take main's
+1. **Generated files** (frontend ``dist/``, the .claude / .codex copies of
+   .agents, the CLI reference docs, lockfiles, timing caches): take main's
    copy, then REGENERATE from the merged sources. A hand-merge of generated
    output is always wrong; a regeneration is always right.
 2. **Append-only files** (CHANGELOG.md, allowlists, .gitignore): a union
@@ -52,8 +52,10 @@ FRONTEND = "jarvis/ui/web/frontend"
 # (glob, regenerator key). Main's copy is taken, then the key regenerates it.
 GENERATED: tuple[tuple[str, str], ...] = (
     ("jarvis/ui/web/dist/*", "frontend-build"),
-    ("AGENTS.md", "mirrors"),
-    (".agents/*", "mirrors"),
+    # AGENTS.md and .agents/ are hand-written sources, never taken from main.
+    (".claude/agents/*", "mirrors"),
+    (".claude/commands/*", "mirrors"),
+    (".claude/skills/*", "mirrors"),
     (".codex/agents/*", "mirrors"),
     ("docs/jarvis-cli-reference.md", "reference-docs"),
     ("docs/commands-reference.md", "reference-docs"),
@@ -193,7 +195,6 @@ def regenerate(keys: set[str], cwd: Path) -> list[str]:
     py = sys.executable
     commands: dict[str, list[list[str]]] = {
         "mirrors": [
-            [py, "scripts/ci/sync_agents_md.py"],
             [py, "scripts/ci/sync_agents_dir.py"],
             [py, "scripts/ci/sync_codex_agents.py"],
         ],

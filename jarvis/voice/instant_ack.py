@@ -32,7 +32,7 @@ Design constraints, each of which killed an earlier attempt:
    canned "On it." — so the ACTION pool is deliberately empty and the class
    is marked ``contextual``.
 
-German/Spanish strings below are runtime voice output (CLAUDE.md §1).
+German/Spanish strings below are runtime voice output (AGENTS.md §1).
 """
 
 from __future__ import annotations
@@ -209,7 +209,7 @@ _POOLS: dict[WorkClass, dict[str, tuple[str, ...]]] = {
         ),
     },
     # ``{agent}`` is the wake-word-derived agent brand ("<Name>-Agent"),
-    # rendered by the caller — never a hardcoded product name (CLAUDE.md §4).
+    # rendered by the caller — never a hardcoded product name (AGENTS.md §4).
     WorkClass.MISSION: {
         "de": (  # i18n-allow: localized runtime voice output
             "Das gebe ich einem {agent} weiter.",  # i18n-allow

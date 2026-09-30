@@ -15,7 +15,7 @@ independent facts a local path needs:
 
 * **engine** — is the inference runtime importable in THIS interpreter
   (``faster_whisper`` / ``sherpa_onnx``)? Both are opt-in extras the cloud-first
-  base install deliberately omits (CLAUDE.md section 3), so on a fresh install
+  base install deliberately omits (AGENTS.md section 3), so on a fresh install
   the honest answer is "no".
 * **model** — are the weights on disk? An installed engine with no weights is
   not readiness; it is a download away from it, and saying so is the whole
@@ -490,7 +490,7 @@ WHISPER_VOICE_MODEL = "large-v3"
 
 #: pip requirement for the CTranslate2-backed Whisper engine. Torch-free,
 #: cross-platform wheels; the cloud-first base install omits it on purpose
-#: (CLAUDE.md section 3), which is why it can be installed from inside the app.
+#: (AGENTS.md section 3), which is why it can be installed from inside the app.
 FASTER_WHISPER_PACKAGE = "faster-whisper>=1.0"
 
 #: pip requirement for the ONNX-Runtime speech stack (Apache-2.0, torch-free,

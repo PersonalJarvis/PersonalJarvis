@@ -12544,7 +12544,7 @@ class BrainManager:
             return agg.text
 
         # ONE output-language resolution for every honesty phrase this turn
-        # (CLAUDE.md §1: one resolver decides the turn for ALL layers). The two
+        # (AGENTS.md §1: one resolver decides the turn for ALL layers). The two
         # guards below used to resolve separately with DIFFERENT defaults
         # ("de" here, DEFAULT_LOCALE there), so an undetectable turn could speak
         # a German evidence fallback followed by an English honesty phrase in the

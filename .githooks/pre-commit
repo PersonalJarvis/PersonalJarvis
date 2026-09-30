@@ -1,8 +1,10 @@
 #!/bin/sh
-# pre-commit: keep generated agent compatibility files aligned.
+# pre-commit: keep AGENTS.md the only rulebook and the agent copies aligned.
 #
-# AGENTS.md and .agents/ are authoritative. This hook projects them into the
-# paths Claude Code and Codex still use for project instructions and subagents.
+# AGENTS.md and .agents/ are authoritative. Every agent reads AGENTS.md
+# directly; a committed CLAUDE.md would make Claude Code read it INSTEAD, so
+# one is blocked. .agents/ is projected into the paths Claude Code and Codex
+# still use for subagents and skills.
 #
 # Behaviour: a staged source also stages its generated copy. Generated copies
 # are overwritten when they differ from their source.
@@ -14,22 +16,19 @@
 # Fail-open when Python cannot run; CI checks the projections independently.
 
 # Prefer the known-good interpreter (a bare 'python' may be a deps-less venv on
-# this machine); fall back to whatever 'python'/'python3' resolves to. The sync
-# engine is stdlib + git only, so any Python 3.x works. No Python at all -> skip.
+# this machine); fall back to whatever 'python'/'python3' resolves to. The
+# scripts are stdlib + git only, so any Python 3.x works. No Python at all -> skip.
 PY="/c/Program Files/Python311/python.exe"
 [ -x "$PY" ] || PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null)"
 [ -n "$PY" ] || exit 0
 
-sync="scripts/ci/sync_agents_md.py"
-[ -f "$sync" ] || exit 0
-
-"$PY" "$sync" --stage --quiet </dev/null
-rc=$?
-
-# A missing source is a real error; do not commit a stale compatibility copy.
-if [ "$rc" -ne 0 ]; then
-    echo "pre-commit BLOCKED: AGENTS.md could not be projected to CLAUDE.md."
-    exit 1
+# --- AGENTS.md is the only rulebook -------------------------------------------
+check="scripts/ci/check_agents_md.py"
+if [ -f "$check" ]; then
+    if ! "$PY" "$check" --quiet </dev/null; then
+        echo "pre-commit BLOCKED: AGENTS.md must stay the only agent-instructions file."
+        exit 1
+    fi
 fi
 
 # --- .agents/ -> .claude/ compatibility copies -------------------------------
@@ -49,7 +48,7 @@ if [ -f "$synccodex" ]; then
 fi
 
 # --- LANGUAGE gate (FAIL-CLOSED on confirmed German) --------------------------
-# English-only artifacts (CLAUDE.md rule 1). Checks the STAGED changes so new
+# English-only artifacts (AGENTS.md rule 1). Checks the STAGED changes so new
 # German is caught at COMMIT time — the real write path (incl. the auto-save
 # stop-hook), which never pushes and so never reached the pre-push language gate.
 # rc == 1 means a CONFIRMED newly-added German line; any other rc fails OPEN
@@ -60,7 +59,7 @@ if [ -f "$lang" ]; then
     if [ "$?" -eq 1 ]; then
         echo ""
         echo "pre-commit BLOCKED: LANGUAGE gate — newly added German in staged changes."
-        echo "  Artifacts must be English (CLAUDE.md rule 1). Translate the lines above,"
+        echo "  Artifacts must be English (AGENTS.md rule 1). Translate the lines above,"
         echo "  or mark an intentionally-German product-surface line with 'i18n-allow'."
         echo "  Bypass once with:  git commit --no-verify"
         exit 1

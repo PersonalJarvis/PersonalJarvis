@@ -17,7 +17,7 @@ months (multiple provider families with keys, a trained wake word, realtime
 mode, wiki content, activated skills). A second device runs **the published
 code** with **an empty or minimal setup**. Identical code therefore does NOT
 mean identical behavior — by design, features gate on capabilities and
-degrade quietly when a key or provider is missing (§3 of `CLAUDE.md`).
+degrade quietly when a key or provider is missing (§3 of `AGENTS.md`).
 
 ## Layer 1 — Version lag (check FIRST, takes 2 minutes)
 
@@ -44,7 +44,7 @@ not exist anywhere else in the world. Ship it before expecting it on a device.
 Configuration, credentials, and data **never travel with the code** — that is
 deliberate credential protection, not a sync failure: `data/`, `.env`,
 `jarvis.toml`, the OS keyring, and the Vault are untracked (§2 of
-`CLAUDE.md`).
+`AGENTS.md`).
 
 A fresh install therefore starts with: no keys, default providers, default
 mode, no wake word, no wiki, no skills, no trained voices. Because every tier
@@ -72,7 +72,7 @@ to be recoverable in-app) and re-test **before** filing a bug.
 Only when the device runs the same version with an equivalent setup and a
 feature still misbehaves is an OS-specific defect plausible (macOS
 permissions, window control, audio backends). Then the OS-parity rules apply:
-`docs/os-parity.md` + §3 "OS feature parity" in `CLAUDE.md`. File it as a
+`docs/os-parity.md` + §3 "OS feature parity" in `AGENTS.md`. File it as a
 tracked parity gap, not folklore.
 
 ---

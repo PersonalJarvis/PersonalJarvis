@@ -25,7 +25,7 @@ a model that takes 800 ms turns the preview into a lagging distraction. The
 FINAL text is never produced here — it always comes from the configured
 provider, so the words that land in the user's document are the good ones.
 
-Degrades honestly (CLAUDE.md §3): on a host without ``faster_whisper`` — a base
+Degrades honestly (AGENTS.md §3): on a host without ``faster_whisper`` — a base
 or headless install — this reports unavailable and the caller falls back to the
 budgeted cloud preview. No GPU is required either; the engine picks CPU and the
 caller simply sees a slower preview.

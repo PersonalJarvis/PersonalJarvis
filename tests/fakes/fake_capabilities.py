@@ -1,6 +1,6 @@
 """Hand-built ``Capabilities`` fakes for the three platforms (EK-3).
 
-Per CLAUDE.md the project uses real fakes, never ``unittest.mock``. These give
+Per AGENTS.md the project uses real fakes, never ``unittest.mock``. These give
 tests a deterministic capability snapshot per OS without probing the real host,
 so a port's seam-factory can be exercised for macOS/Linux from a Windows box.
 """

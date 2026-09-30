@@ -15,7 +15,7 @@ Mount alongside the other routers::
 this app will start in a terminal. That is exactly what the user is asking for
 when they type it into the form themselves — and exactly what must not happen
 because a model decided it would be helpful. The metadata keeps the generated
-CLI and the tool broker asking first (CLAUDE.md §5, AP-14).
+CLI and the tool broker asking first (AGENTS.md §5, AP-14).
 """
 from __future__ import annotations
 

@@ -381,7 +381,7 @@ def test_the_dry_run_never_500s_when_the_pass_is_unreachable(
 
 def test_the_dry_run_is_reachable_from_the_cli_surface(app: FastAPI) -> None:
     """Tagged ``dictation``, so it becomes a ``jarvis api dictation`` command
-    for free — the CLI-first contract (CLAUDE.md §5)."""
+    for free — the CLI-first contract (AGENTS.md §5)."""
     spec = app.openapi()["paths"]["/api/dictation/polish/test"]["post"]
 
     assert spec["tags"] == ["dictation"]

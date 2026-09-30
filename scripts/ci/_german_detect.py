@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """German-text heuristic shared by the CI language-policy gate.
 
-The repo's Output Language Policy (CLAUDE.md, HIGHEST PRIORITY) requires every
+The repo's Output Language Policy (AGENTS.md, HIGHEST PRIORITY) requires every
 committed artifact to be English. This module provides ``looks_german`` — a
 lightweight, dependency-free heuristic the ``check_no_new_german`` gate runs over
 newly added diff lines.

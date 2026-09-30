@@ -78,7 +78,7 @@ def test_event_can_mark_a_self_initiated_interruption():
 
 
 def test_no_event_language_field_defaults_to_one_particular_language():
-    """CLAUDE.md §1: supported locales are equal, so a language field whose
+    """AGENTS.md §1: supported locales are equal, so a language field whose
     publisher omitted it must fall back to the SHARED default.
 
     These defaults were the literal "de", so any event published without a

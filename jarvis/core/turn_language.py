@@ -447,7 +447,7 @@ def resolve_output_language(
     preamble, spawn announcements, every canned status / error / clarify /
     timeout / provider-down phrase, the deterministic Computer-Use readbacks,
     and the TTS voice pin — must resolve language through THIS function so no
-    layer can diverge from another (CLAUDE.md "Runtime Output Language";
+    layer can diverge from another (AGENTS.md "Runtime Output Language";
     2026-06-18 forensic).
 
     Precedence, highest first:

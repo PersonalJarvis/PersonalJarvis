@@ -264,7 +264,7 @@ async def test_filtered_sentence_never_interrupts_a_healthy_answer(
 
     assert spoken == ["Der Bericht ist fertig.", "Sonst noch was?"]
     assert FALLBACK_PHRASES["de"] not in spoken
-    # ... and the drop is on the record (CLAUDE.md §7: nothing swallowed).
+    # ... and the drop is on the record (AGENTS.md §7: nothing swallowed).
     dropped = [r for r in caplog.records if "DROPPED" in r.getMessage()]
     assert len(dropped) == 1
     assert _POISON in dropped[0].getMessage()

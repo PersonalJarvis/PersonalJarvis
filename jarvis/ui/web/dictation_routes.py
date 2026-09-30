@@ -24,7 +24,7 @@ sidecar with them — a "deleted" dictation the app still holds a recording of
 would be a quiet lie.
 
 Why REST and not only the WebSocket command the chat mic button uses: under the
-CLI-first contract (CLAUDE.md §5) a capability that exists only in the UI is not
+CLI-first contract (AGENTS.md §5) a capability that exists only in the UI is not
 finished. Mounting this router also makes every action a
 ``jarvis api dictation <op>`` command for free — and *that* is the documented
 fallback on Wayland, where the compositor owns global shortcuts and the app
@@ -406,7 +406,7 @@ class StartBody(BaseModel):
         description=(
             # No assistant name here on purpose: this description is served in
             # /docs and in the generated CLI help, and a user-visible string
-            # never carries a fixed brand (CLAUDE.md §4). The sentence is about
+            # never carries a fixed brand (AGENTS.md §4). The sentence is about
             # this app's own window, so it needs no name at all.
             "auto = follow [dictation].target (insert, unless this app's own "
             "window is the one in front); insert = always paste into the app "

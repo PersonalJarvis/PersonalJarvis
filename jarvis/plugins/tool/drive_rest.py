@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 _DRIVE_BASE = "https://www.googleapis.com/drive/v3"
 _DRIVE_UPLOAD = "https://www.googleapis.com/upload/drive/v3/files"
 
-# User-facing error strings (English per CLAUDE.md; the brain rephrases to the
+# User-facing error strings (English per AGENTS.md; the brain rephrases to the
 # user's language). Kept distinct so the brain can tell "never connected" from
 # "was connected, token died — reconnect".
 _NOT_CONNECTED = "Google Drive is not connected — connect it in the Plugins view."

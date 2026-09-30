@@ -315,7 +315,7 @@ regressions in `tests/unit/plugins/tool/test_delegate_to_agent.py`. These are
 headless tests on the available host, not evidence of native macOS/Linux or
 paid-provider voice execution.
 
-**Binding rule:** [`CLAUDE.md`](../CLAUDE.md) §3 *"OS feature parity — macOS
+**Binding rule:** [`AGENTS.md`](../AGENTS.md) §3 *"OS feature parity — macOS
 and Linux are first-class"*. Every feature ships working on Windows, macOS,
 and Linux (desktop AND headless) in the same change. A Windows-only
 implementation may land only with a capability gate, honest degradation, and
@@ -696,7 +696,7 @@ procedural draft grants no tool permission and activates no registry triggers.
 
 - Fixing a gap: remove its row (git history keeps the record).
 - Landing a new Windows-only implementation: add a row (required by
-  CLAUDE.md §3) with impact, evidence, and off-Windows behavior.
+  AGENTS.md §3) with impact, evidence, and off-Windows behavior.
 - Re-audit cadence: rerun the five-area sweep after any release that touches
   platform seams (`jarvis/platform/`, `jarvis/cu/actuate/`, `jarvis/vision/`,
   `jarvis/audio/`, `jarvis/missions/isolation/`).

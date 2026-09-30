@@ -454,7 +454,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
                          "note": row["note"], "value": m.group(0)}
                     )
 
-        # English-only artifact gate (CLAUDE.md rule 1): no German outside the
+        # English-only artifact gate (AGENTS.md rule 1): no German outside the
         # allowlist may ship. `i18n-allow` inline marks and the path allowlist are
         # the only escapes — same contract as the CI/pre-commit language gate.
         if (

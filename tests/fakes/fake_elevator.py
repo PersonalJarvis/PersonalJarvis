@@ -1,6 +1,6 @@
 """Hand-built ``Elevator`` fake (Wave 3, sub-task 3.4; EK-3).
 
-Per CLAUDE.md the project uses real fakes, never ``unittest.mock``. A real
+Per AGENTS.md the project uses real fakes, never ``unittest.mock``. A real
 elevator triggers an interactive OS prompt (UAC / polkit / Touch-ID) that cannot
 run in CI, so :class:`FakeElevator` stands in for any
 :class:`jarvis.admin.elevator.Elevator`. It records every

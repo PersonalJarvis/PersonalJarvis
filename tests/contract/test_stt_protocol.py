@@ -9,7 +9,7 @@ deliberately exercised only via class-level shape checks. The Groq plugin is
 testable on any host because httpx is mocked at the transport layer.
 
 This test file is also the regression guard for the rule "plugin modules must
-not import from ``jarvis.*``" (see CLAUDE.md plugin section).
+not import from ``jarvis.*``" (see AGENTS.md plugin section).
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from jarvis.core.protocols import STTProvider
 
 ENTRY_POINT_GROUP = "jarvis.stt"
 # faster-whisper entry-point removed 2026-05-18 along with the dependency
-# (cloud-first doctrine — see CLAUDE.md PHILOSOPHY section).
+# (cloud-first doctrine — see AGENTS.md PHILOSOPHY section).
 EXPECTED_PROVIDERS = {"groq-api"}
 
 
@@ -104,7 +104,7 @@ _ALLOWED_PLUGIN_IMPORT_ROOT = "jarvis.plugins.stt."
 
 
 def test_groq_plugin_has_no_jarvis_imports():
-    """The Groq plugin must not import the app core (CLAUDE.md section 5).
+    """The Groq plugin must not import the app core (AGENTS.md section 5).
 
     Its own plugin group is the single exception — see
     :data:`_ALLOWED_PLUGIN_IMPORT_ROOT`.

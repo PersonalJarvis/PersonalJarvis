@@ -4,7 +4,7 @@ Before this, the only signals a dictation produced were the live transcript and
 the completion — both at or after the END. A surface therefore could not show
 "listening" until the first partial arrived (a partial interval plus an STT
 round-trip later, and never at all for a short press), and a refused start was
-a ``log.info`` in a file the desktop app cannot display (CLAUDE.md §9), so the
+a ``log.info`` in a file the desktop app cannot display (AGENTS.md §9), so the
 shortcut simply did nothing with no way to learn why.
 
 Pinned here:
