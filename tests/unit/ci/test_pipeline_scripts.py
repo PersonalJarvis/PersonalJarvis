@@ -70,6 +70,63 @@ def test_unrelated_python_change_leaves_the_updater_lane_off():
     assert result["updater"] is False
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        # Packaging: the spec, the build script, the entitlements and the single
+        # usage-string table both macOS bundles load.
+        "jarvis.spec",
+        "packaging/macos/build.sh",
+        "packaging/macos/entitlements.plist",
+        "packaging/macos/README.md",
+        "jarvis/core/macos_privacy_strings.py",
+        # The just-in-time permission service, its port and its HTTP surface.
+        "jarvis/platform/permission_service.py",
+        "jarvis/platform/permissions.py",
+        "jarvis/ui/web/permissions_routes.py",
+        # Every directory whose code asks for, or acts on, a macOS permission.
+        "jarvis/audio/capture.py",
+        "jarvis/cu/engine.py",
+        "jarvis/vision/screenshot.py",
+        "jarvis/screen_context/capture.py",
+        "jarvis/dictation/insert.py",
+        "jarvis/trigger/backends/quartz.py",
+        "jarvis/platform/window_state.py",
+        # The windows spelling of a path must classify the same way.
+        "jarvis\\core\\macos_privacy_strings.py",
+    ],
+)
+def test_macos_permission_and_packaging_paths_turn_on_the_macos_lane(path):
+    result = classify_changes.classify([path])
+
+    assert result["macos_desktop"] is True, path
+    assert result["full"] is False, path
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "jarvis/society/roster.py",
+        "jarvis/ui/web/society_browser_routes.py",
+        "jarvis/core/branding.py",
+        "packaging/windows/PersonalJarvis.iss",
+        "packaging/linux/build.sh",
+        "docs/macos-permissions.md",
+    ],
+)
+def test_unrelated_paths_leave_the_macos_lane_off(path):
+    assert classify_changes.classify([path])["macos_desktop"] is False, path
+
+
+def test_the_macos_lane_gate_names_the_new_paths_it_adds_to_the_prefix_tables():
+    """Guard the data, not just the outcome: a refactor must not drop an entry."""
+    assert {"jarvis.spec", "jarvis/core/macos_privacy_strings.py"} <= classify_changes._MACOS_FILES
+    assert "jarvis/ui/web/permissions_routes.py" in classify_changes._MACOS_FILES
+    assert {"packaging/macos/", "jarvis/screen_context/", "jarvis/dictation/"} <= set(
+        classify_changes._MACOS_PREFIXES
+    )
+
+
 def test_lockfile_change_reaches_deps_realtime_and_installer():
     result = classify_changes.classify(["requirements.txt"])
     assert result["deps"] and result["realtime"] and result["installer"]

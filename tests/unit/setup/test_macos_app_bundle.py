@@ -70,6 +70,44 @@ def test_bundle_layout_and_plist(tmp_path: Path, monkeypatch) -> None:
     assert macos_app_bundle_is_launchable(bundle) is True
 
 
+def test_bundle_plist_carries_the_shared_usage_strings_and_no_removed_key(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The managed app shows the same permission dialogs as the .dmg app (one table)."""
+    from jarvis.core import macos_privacy_strings as table
+
+    bundle = _build(tmp_path, monkeypatch)
+    info = plistlib.loads((bundle / "Contents" / "Info.plist").read_bytes())
+
+    for key, text in table.usage_descriptions().items():
+        assert info[key] == text, key
+    for key in table.REMOVED_USAGE_KEYS:
+        assert key not in info, key
+    # These three were missing from the managed bundle before the table existed.
+    for key in (
+        "NSDesktopFolderUsageDescription",
+        "NSDocumentsFolderUsageDescription",
+        "NSDownloadsFolderUsageDescription",
+    ):
+        assert info[key].strip()
+
+
+def test_cosmetic_usage_strings_do_not_force_an_installed_bundle_rebuild(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Adding prompt text must not rebuild installed bundles.
+
+    An ad-hoc rebuild is a new identity and re-asks every permission, so the
+    folder/volume/local-network strings ride the next rebuild that happens for
+    another reason instead of forcing one.
+    """
+    bundle = _build(tmp_path, monkeypatch)
+    info = plistlib.loads((bundle / "Contents" / "Info.plist").read_bytes())
+
+    assert info["JarvisBundleFormatVersion"] == 3
+    assert macos_app_bundle_is_launchable(bundle) is True
+
+
 def test_rerun_preserves_existing_bundle_byte_for_byte(tmp_path: Path, monkeypatch) -> None:
     first = _build(tmp_path, monkeypatch)
     executable_name = plistlib.loads((first / "Contents" / "Info.plist").read_bytes())[

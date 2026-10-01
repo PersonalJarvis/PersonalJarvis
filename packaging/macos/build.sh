@@ -53,6 +53,9 @@ APP_BUNDLE="${DIST_DIR}/${APP_NAME}.app"
 OUT_DIR="${DIST_DIR}/installers"
 FRONTEND_DIST="${REPO_ROOT}/jarvis/ui/web/dist"
 ENTITLEMENTS="${SCRIPT_DIR}/entitlements.plist"
+# The copy of ENTITLEMENTS that codesign embeds; see prepare_entitlements().
+NORMALIZED_ENTITLEMENTS="${DIST_DIR}/entitlements.normalized.plist"
+SIGNING_ENTITLEMENTS="${ENTITLEMENTS}"
 ICNS="${REPO_ROOT}/assets/icons/jarvis.icns"
 
 log() { printf '[macos-build] %s\n' "$*"; }
@@ -269,16 +272,41 @@ if building; then
   [ -x "${APP_BUNDLE}/Contents/MacOS/${BUNDLE_EXECUTABLE}" ] \
     || die "Info.plist names '${BUNDLE_EXECUTABLE}' as CFBundleExecutable, but Contents/MacOS/${BUNDLE_EXECUTABLE} does not exist"
   log "bundle executable: ${BUNDLE_EXECUTABLE}"
+  # plutil ships with macOS only. A malformed Info.plist would make Finder call
+  # the app damaged, so say so here, before signing and notarizing it.
+  if command -v plutil >/dev/null 2>&1; then
+    run plutil -lint "${APP_BUNDLE}/Contents/Info.plist"
+  fi
 fi
 log "app bundle: ${APP_BUNDLE}"
 
 # --- 3. Code signing --------------------------------------------------------
+
+# Apple documents no comment syntax for an entitlements file, so
+# entitlements.plist carries none (why each entry exists is written down in
+# packaging/macos/README.md). Where plutil exists - on macOS - the file is
+# validated and rewritten as canonical XML into a copy under dist/, and codesign
+# embeds that copy: a hand edit that is not a valid property list then fails
+# here, in seconds, not as an opaque signing error after the long freeze.
+# Elsewhere (a DRY_RUN rehearsal on another OS) the file is used as it is.
+prepare_entitlements() {
+  SIGNING_ENTITLEMENTS="${ENTITLEMENTS}"
+  if ! command -v plutil >/dev/null 2>&1; then
+    log "plutil not found - signing with ${ENTITLEMENTS} as it is"
+    return 0
+  fi
+  run mkdir -p "${DIST_DIR}"
+  run plutil -lint "${ENTITLEMENTS}"
+  run plutil -convert xml1 -o "${NORMALIZED_ENTITLEMENTS}" "${ENTITLEMENTS}"
+  SIGNING_ENTITLEMENTS="${NORMALIZED_ENTITLEMENTS}"
+}
 
 SIGNED_FOR_DISTRIBUTION=0
 if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   SIGNED_FOR_DISTRIBUTION=1
   log "signing with Developer ID identity: ${APPLE_SIGNING_IDENTITY}"
   [ -f "${ENTITLEMENTS}" ] || die "entitlements file missing: ${ENTITLEMENTS}"
+  prepare_entitlements
 
   # Inside-out first: codesign refuses to seal a bundle whose nested Mach-O
   # objects are unsigned or stale, and a PyInstaller bundle carries hundreds of
@@ -287,7 +315,7 @@ if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   if building; then
     while IFS= read -r -d '' object; do
       run codesign --force --timestamp --options runtime \
-        --entitlements "${ENTITLEMENTS}" \
+        --entitlements "${SIGNING_ENTITLEMENTS}" \
         --sign "${APPLE_SIGNING_IDENTITY}" "${object}"
     done < <(
       find "${APP_BUNDLE}/Contents" -type f \
@@ -303,7 +331,7 @@ if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   fi
 
   run codesign --force --deep --timestamp --options runtime \
-    --entitlements "${ENTITLEMENTS}" \
+    --entitlements "${SIGNING_ENTITLEMENTS}" \
     --sign "${APPLE_SIGNING_IDENTITY}" "${APP_BUNDLE}"
   run codesign --verify --strict --verbose=2 "${APP_BUNDLE}"
 else

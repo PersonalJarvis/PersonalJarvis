@@ -115,17 +115,30 @@ _BROWSER_FILES = {
 # standalone workflow also matched all of tests/** and jarvis/ui/**, which put
 # three 45-minute macOS jobs behind nearly every PR; the lane keeps the
 # platform code and the exact test files that job runs.
+#
+# The just-in-time permission service is called from many consumers, so the
+# lane also covers every directory that asks for, or acts on, a macOS
+# permission: capture and speech (jarvis/audio/), computer use (jarvis/cu/),
+# screenshots (jarvis/vision/, jarvis/screen_context/), dictation
+# (jarvis/dictation/), global shortcuts (jarvis/trigger/, which includes
+# jarvis/trigger/backends/) and the permission port, the service and window
+# control (jarvis/platform/: permissions.py, permission_service.py,
+# window_state.py). Packaging is covered too: the spec, packaging/macos/ and the
+# single usage-string table both bundles load.
 _MACOS_PREFIXES = (
     "install/",
     "jarvis/admin/",
     "jarvis/audio/",
     "jarvis/autostart/",
     "jarvis/cu/",
+    "jarvis/dictation/",
     "jarvis/platform/",
+    "jarvis/screen_context/",
     "jarvis/setup/",
     "jarvis/trigger/",
     "jarvis/vision/",
     "jarvis/ui/desktop",
+    "packaging/macos/",
     "tests/unit/platform/",
     "tests/unit/autostart/",
     "tests/unit/cu/",
@@ -136,6 +149,9 @@ _MACOS_FILES = {
     "pyproject.toml",
     "uv.lock",
     ".githooks/pre-push",
+    "jarvis.spec",
+    "jarvis/core/macos_privacy_strings.py",
+    "jarvis/ui/web/permissions_routes.py",
     "scripts/measure_boot.py",
     "scripts/measure_desktop_boot.py",
 }

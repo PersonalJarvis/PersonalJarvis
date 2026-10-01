@@ -753,6 +753,28 @@ stand-in `security` command on Linux; no Mac, no Apple account and no real
 notarization were available. Windows and Linux are unchanged — no TCC, no
 signing identity.
 
+**Fix pass 2026-10-01 (macOS: one table of usage strings).** The two macOS
+bundles declared different, partly wrong `NS...UsageDescription` sets: the
+downloadable `.dmg` app had no screen-capture string, the managed app had no
+Desktop / Documents / Downloads string, and the `.dmg` plist carried
+`NSSystemAdministrationUsageDescription` (the wrong key for Accessibility and
+Input Monitoring, which have none), a speech-recognition string and a camera
+string plus the camera entitlement, for APIs Jarvis never calls. Both bundles now
+load one stdlib-only table, `jarvis/core/macos_privacy_strings.py`, by path (the
+spec runs before the package is importable): microphone, screen capture (kept for
+parity; whether macOS reads that key is unverified), Apple events, Desktop,
+Documents, Downloads, removable and network volumes, and local network (reworded
+to the LAN hosts the person configures). The three unused keys and the camera
+entitlement are gone, `entitlements.plist` carries no XML comments (the reasoning
+moved to `packaging/macos/README.md`), and `scripts/ci/check_frozen_macos_app.py`
+asserts the table on the built app and, on a signed build, the entitlements
+`codesign` reports. The managed bundle's format version is bumped so an installed
+app is rebuilt once to carry the new strings. **Not verified:** no Mac, no
+hardened signed build and no real `codesign` output were available; the checks
+ran against the real `jarvis.spec` with stand-in PyInstaller names and recorded
+`codesign` output shapes on Linux. Windows and Linux are unchanged — no TCC, no
+usage strings.
+
 ## Audit verdict summary
 
 **No hard breakers found.** No feature crashes on macOS or headless Linux;

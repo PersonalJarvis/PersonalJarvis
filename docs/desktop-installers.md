@@ -128,12 +128,19 @@ freeze, so an unusable certificate fails early), `APPLE_SIGNING_IDENTITY`
 (optional: read from the imported certificate when absent), `APPLE_ID`,
 `APPLE_TEAM_ID` and `APPLE_APP_SPECIFIC_PASSWORD`; with none of them set it
 ad-hoc signs, skips notarization and prints a one-line notice. The `.app`'s
-identity (bundle id, minimum system version, and the microphone / speech /
-camera / Apple-Events usage strings macOS requires before it will let the
-process touch those APIs) comes from the `BUNDLE` block in `jarvis.spec`.
+identity (bundle id, minimum system version) comes from the `BUNDLE` block in
+`jarvis.spec`. The usage strings macOS shows in its permission dialogs
+(microphone, screen capture, Apple events, the Desktop / Documents / Downloads /
+removable-volume / network-volume folders, local network) come from ONE table,
+`jarvis/core/macos_privacy_strings.py`, which `jarvis.spec` and the managed
+source-install app both load by path, so the two apps cannot drift apart. There
+is deliberately no camera string, no speech-recognition string and no camera
+entitlement: Jarvis has no caller for either. The entitlements embedded by the
+Developer ID path live in `packaging/macos/entitlements.plist` (no comments; the
+reasoning is in `packaging/macos/README.md`).
 
-Two things in that block are easy to get wrong and invisible to a headless smoke
-run, so the macOS job checks the finished bundle
+Several things in that block are easy to get wrong and invisible to a headless
+smoke run, so the macOS job checks the finished bundle
 (`python scripts/ci/check_frozen_macos_app.py --app "dist/Personal Jarvis.app"`):
 
 - `LSBackgroundOnly` must be `False`. PyInstaller sets it to true whenever the
@@ -142,11 +149,31 @@ run, so the macOS job checks the finished bundle
 - The pyobjc frameworks the permission code loads by name (`AVFoundation`
   above all) must be in the frozen archive. That needs the `desktop-macos` extra
   on the build machine; the macOS job installs it.
+- Every usage string of the table must be in `Info.plist` with exactly that
+  text, and the removed keys must not be.
+- On a signed build, `codesign -d --entitlements :-` must report every
+  entitlement of `entitlements.plist` and not the camera one. An ad-hoc or
+  unsigned build embeds no entitlements, so the check skips itself with a NOTE
+  line; that is a skip, not a pass, and the hardened-runtime behaviour of a
+  signed build has never been run on a Mac (unverified).
 
 The frozen smoke boots the app twice and, on macOS, also reads its permission
 status each time: a microphone row that reads "unavailable" means the framework
 did not load inside the app (the check above only sees that the module is in the
-archive). The v2.5.0 image shipped with both defects (BUG-222).
+archive). The v2.5.0 image shipped with the first two defects (BUG-222).
+
+**Permission prompts.** Personal Jarvis asks for a macOS permission at the moment
+a feature you start needs it (the first dictation asks for the microphone, the
+first screen capture for Screen Recording, and so on) and never at launch;
+nothing is requested up front and no banner or wizard nags. Apple's own dialog or
+System Settings pane does the asking. Declining a permission degrades that one
+feature, with one click to the right System Settings pane, and leaves the rest of
+the app working. Settings > Privacy is passive: it shows the current state and
+offers the same actions, and never prompts by itself. This is the designed
+behaviour; it has not been exercised on a real Mac yet (unverified). The
+downloaded app and the managed source-install app are separate apps to macOS
+(`ai.personaljarvis.desktop` and `com.personal-jarvis.desktop`) and each keeps its
+own grants.
 
 ### Linux
 

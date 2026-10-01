@@ -37,11 +37,51 @@ see:
   permission code loads *by name*, which a freezer cannot discover on its own.
   They come from the `desktop-macos` extra, so install it on the build machine:
   `python3 -m pip install -e ".[desktop,desktop-macos]"` (`.[full]` includes it).
+* Every usage-description string in
+  `jarvis/core/macos_privacy_strings.py` must be in `Info.plist` with exactly
+  that text, and the keys that table lists as removed (camera, speech
+  recognition, system administration) must not be.
+* On a **signed** build, `codesign -d --entitlements :-` must report every
+  entitlement of `packaging/macos/entitlements.plist` and none of the removed
+  ones. An unsigned or ad-hoc build embeds no entitlements (`build.sh` passes
+  them only with a Developer ID identity), so that part is skipped with a
+  message saying so — it is not a pass.
 
-The v2.5.0 image had both defects (BUG-222). In CI the smoke boot of the app
-also asks it for its permission status and fails when the microphone row reads
-"unavailable", which is what a framework that did not load looks like from
+The v2.5.0 image had the first two defects (BUG-222). In CI the smoke boot of the
+app also asks it for its permission status and fails when the microphone row
+reads "unavailable", which is what a framework that did not load looks like from
 inside.
+
+### The usage strings have one source
+
+The `NS...UsageDescription` strings macOS shows in its permission dialogs live
+in exactly one file, `jarvis/core/macos_privacy_strings.py` (standard library
+only). `jarvis.spec` (this `.dmg` app) and
+`jarvis/setup/macos_app_bundle.py` (the managed source-install app) both load that
+file **by path**: the spec runs before the `jarvis` package is importable, so
+neither can use an ordinary import, and neither keeps a copy.
+`tests/unit/packaging/test_macos_privacy_strings.py` runs the real spec against
+stand-in PyInstaller classes and asserts that the spec's `info_plist`, the
+managed bundle's plist and the table agree. Add or reword a string in that file
+only.
+
+Keys that are deliberately **not** shipped, because Jarvis has no caller for
+them (least privilege; a string would promise access the app never uses):
+`NSCameraUsageDescription` (and the camera entitlement),
+`NSSpeechRecognitionUsageDescription` (speech-to-text is local or a cloud
+provider, never Apple's speech service) and
+`NSSystemAdministrationUsageDescription` (the wrong key for Accessibility and
+Input Monitoring, which have no usage-description key at all).
+`NSScreenCaptureUsageDescription` is kept for parity between the two bundles;
+Apple's documentation index has no page for that key, so whether it changes
+anything on macOS is **unverified**.
+
+Where `plutil` exists (it does on macOS), `build.sh` validates the built
+`Info.plist` with `plutil -lint` and signs with a canonical-XML copy of
+`entitlements.plist` made by `plutil -convert xml1` (written to
+`dist/entitlements.normalized.plist`; the tracked file is never rewritten).
+Anywhere else those steps are skipped, with a log line, and the script stays
+bash 3.2 clean.
 
 ## Signing and notarization
 
@@ -112,31 +152,79 @@ That build is fine for local testing and must not be published.
 
 macOS grants privacy permissions to an *app identity*, not to a folder, and
 Apple does not let an installer pre-approve any of them. The app therefore asks
-for each one at the moment it needs it, through Apple's own prompts:
+for a permission at the moment a feature the person starts needs it, never at
+launch, and Apple's own prompt or System Settings pane does the asking:
 
-* **Microphone** — voice input; the app is usable for text without it.
-* **Speech recognition** — on-device dictation.
-* **Camera** — only the vision features.
+* **Microphone** — dictation, talking to Jarvis, the wake word once it is
+  switched on; typed chat works without it.
 * **Screen recording** — screen capture and Computer-Use; granted in
-  System Settings > Privacy & Security, and macOS requires a restart of the app
-  afterwards.
-* **Accessibility / Input monitoring** — global hotkeys and Computer-Use input.
-* **Automation (Apple events)** — controlling other apps, e.g. the media
-  session.
+  System Settings > Privacy & Security. Whether macOS needs the app reopened
+  afterwards is **unverified** (reports conflict), so the app re-checks the
+  live state and only suggests a restart as a hint.
+* **Accessibility / Input monitoring** — typing and clicking for you
+  (Computer-Use, dictation paste) and global shortcuts. These two have no
+  usage-description key; the dialog text is fixed by macOS.
+* **Automation (Apple events)** — controlling other apps: Music or Spotify while
+  "Mute music while dictating" is on, and Terminal for sign-in and agent windows.
+* **Files and folders, local network** — asked by macOS itself the first time a
+  feature touches Desktop, Documents, Downloads, an external or network drive,
+  or a device on the local network.
+
+There is no camera and no speech-recognition row: Jarvis has no caller for
+either, so the bundle neither declares a string nor an entitlement for them.
 
 The downloaded app is its own app to macOS: bundle id `ai.personaljarvis.desktop`
 (`jarvis.spec`), separate from the managed bundle the source installer builds
 (`com.personal-jarvis.desktop`). Both are accepted as "the installed app" by the
-permission screens, and each keeps its own grants. Rows no enabled feature needs
-(Music/Spotify Automation while "Mute music while dictating" is off) are shown as
-optional and never asked for unprompted.
+permission code, and each keeps its own grants.
 
-Each of these needs *both* an entitlement in
-`packaging/macos/entitlements.plist` and a usage-description string in the
-bundle's `Info.plist` (built by `jarvis.spec`). Missing entitlement: the app is
-refused before the prompt appears. Missing usage string: macOS kills the app
-the moment it asks. Declining any of them leaves the app working, with that
-feature honestly unavailable.
+Each protected API needs *both* halves on a hardened (Developer ID) build: an
+entitlement in `packaging/macos/entitlements.plist` and a usage-description
+string in the bundle's `Info.plist` (the table in
+`jarvis/core/macos_privacy_strings.py`). Missing entitlement: the app is
+refused before the prompt appears. Missing usage string: macOS ends the process
+(microphone) or, as third parties report for other services, silently refuses
+without a prompt; the exact failure mode is unverified, which is why
+`check_frozen_macos_app.py` asserts the whole string table on every built app.
+Declining any permission leaves the app working, with that one feature honestly
+unavailable.
+
+## Entitlements (`entitlements.plist`)
+
+An entitlements file has no comment syntax Apple documents, so
+`entitlements.plist` carries none; this section is where the reasoning lives.
+
+Notarization requires the Hardened Runtime (`codesign --options runtime`), and
+the Hardened Runtime denies by default exactly the things this app needs. Every
+entry below is here because leaving it out breaks a shipped feature or stops the
+app from launching at all. Nothing is requested "just in case", because each one
+weakens a real platform protection. The file is only embedded by the Developer ID
+path of `build.sh`: the ad-hoc images published so far carry no entitlements, so
+every judgement below is **unverified on a hardened build** until the signed path
+has run once (`scripts/ci/check_frozen_macos_app.py` then reads them back with
+`codesign -d --entitlements :-`).
+
+Entitlements grant the app the *right* to ask; the usage strings are what the
+person reads in the prompt. A hardened app missing the entitlement is refused
+before the prompt appears.
+
+| Entitlement | Why |
+|---|---|
+| `com.apple.security.device.audio-input` | Microphone. The whole voice pipeline (wake word, dictation, calls) reads the default input device through PortAudio. Without it a hardened build fails every capture attempt instead of showing the microphone prompt. |
+| `com.apple.security.automation.apple-events` | Apple events. Jarvis drives other applications through AppleScript for the media-session and window-control paths (`jarvis/platform/media_session.py`, `music_player.py`). Sending an Apple event to another process from a hardened app requires this entitlement plus `NSAppleEventsUsageDescription`. |
+| `com.apple.security.cs.allow-unsigned-executable-memory` | Unsigned executable memory. Expected to be needed by a CPython application: ctypes/libffi build closure trampolines in memory they mark executable (sounddevice's PortAudio binding, vosk's libvosk binding, and several numeric wheels all go through ctypes), and the Hardened Runtime is documented to refuse such allocations without it. Whether this app really needs it has not been observed on a hardened build. It is the narrowest of the "allow ... memory" entitlements; `allow-jit` and its broader siblings are deliberately **not** requested. |
+| `com.apple.security.cs.disable-library-validation` | Library validation. A PyInstaller bundle `dlopen()`s dozens of third-party `.so`/`.dylib` files out of `Contents/Frameworks` and `Contents/Resources` at runtime (onnxruntime, PortAudio, libvosk, PyAV's FFmpeg libraries). Library validation demands every loaded library be signed by the same team ID as the main binary; the re-sign pass in `build.sh` does re-sign them, but any library loaded from a path the pass did not walk, or a plugin the user installs later into the same process, is then refused with an opaque "code signature invalid". This is the one entitlement that could be dropped later: it needs a build where every loadable object is provably signed by us, which the plugin system's "install a wheel at runtime" design currently rules out. |
+
+**Removed: `com.apple.security.device.camera`.** The old file requested it for
+"vision/screen-share features", but no code in Jarvis opens a camera (the web
+voice path asks for audio only, and screen capture is Screen Recording, not the
+camera), so it granted the right to ask for something nothing asks for.
+Re-adding it needs a camera feature, `NSCameraUsageDescription` in the string
+table and a caller in the same change.
+
+Screen Recording, Accessibility, Input Monitoring and posting events have no
+entitlement at all; they are gated by the person's decision in System Settings
+alone.
 
 ## Reaching the CLI
 

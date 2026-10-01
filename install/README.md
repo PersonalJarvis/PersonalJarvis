@@ -36,20 +36,28 @@ repair these artifacts, and uninstall removes them again. Developer checkouts
 and headless Linux hosts are deliberately not registered.
 
 On macOS, every launch path enters through the same app bundle so privacy
-grants stay attached to one identity. The source installer builds a native
-py2app alias launcher, signs it with a per-user code-signing certificate it
+grants stay attached to one identity. The source installer compiles a small
+native launcher (`jarvis/setup/macos_stub_launcher.c`) into
+`Personal Jarvis.app`, signs it with a per-user code-signing certificate it
 creates on the first run (macOS asks for the login password once to trust
 it; grants then survive every rebuild and update), verifies the identity from
 inside a LaunchServices process, and preserves the bundle unchanged across
 ordinary updates. Without that certificate the launcher is ad-hoc signed and a
 rebuild costs one round of re-granting. A separately distributed binary still requires the release
-pipeline's Developer-ID signing and notarization. Apple does not permit an installer to
-silently grant Microphone, Screen Recording, Accessibility, Input Monitoring,
-or input-control access. The app therefore presents one explicit button per
-permission during first launch, uses only Apple's native prompt/System Settings
-flows, and remains fully usable for text when the user declines. The installer
-stops instead of claiming success if the full profile or app-bundle registration
-fails.
+pipeline's Developer-ID signing and notarization. The installer stops instead of
+claiming success if the full profile or app-bundle registration fails.
+
+Apple does not permit an installer to silently grant Microphone, Screen
+Recording, Accessibility, Input Monitoring or input-control access, so the
+installer asks for none of them and neither does the first launch. Personal
+Jarvis asks at the moment a feature you start needs a permission: the first
+dictation asks for the microphone, the first screen capture asks for Screen
+Recording, and so on, each through Apple's own dialog or System Settings pane.
+If you decline, only that one feature is unavailable, with one click to the
+right System Settings pane, and everything else (typed chat included) keeps
+working. Settings > Privacy only shows the current state and offers the same
+actions; it never prompts by itself. This is how the app is built to behave; it
+has not been exercised on a real Mac yet (unverified).
 
 ## Current cryptography on every architecture
 

@@ -362,3 +362,143 @@ def test_a_failed_import_leaves_neither_the_certificate_nor_the_keychain_behind(
     assert calls[-2].startswith("list-keychains -d user -s /Users/runner/")
     assert calls[-1].startswith("delete-keychain ")
     assert "find-identity" not in [call.split()[0] for call in calls]
+
+
+# --- entitlements: validated and normalised before codesign embeds them -------
+
+_FAKE_PLUTIL = """#!/usr/bin/env bash
+# Stand-in for macOS `plutil`: log every call; `-convert xml1 -o OUT IN` copies.
+printf '%s\\n' "$*" >> "${FAKE_PLUTIL_LOG}"
+case "$1" in
+  -lint) [ -z "${FAKE_PLUTIL_LINT_FAILS:-}" ] || { echo "not a property list" >&2; exit 1; } ;;
+  -convert) cp "$5" "$4" ;;
+esac
+exit 0
+"""
+
+
+def _with_fake_plutil(tmp_path: Path) -> dict[str, str]:
+    bin_dir = tmp_path / "plutil-bin"
+    bin_dir.mkdir()
+    tool = bin_dir / "plutil"
+    tool.write_text(_FAKE_PLUTIL, encoding="utf-8")
+    tool.chmod(0o755)
+    log_file = tmp_path / "plutil.log"
+    log_file.write_text("", encoding="utf-8")
+    return {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "FAKE_PLUTIL_LOG": str(log_file),
+    }
+
+
+def test_with_plutil_the_entitlements_are_linted_and_normalised_before_signing(
+    layout: Path, tmp_path: Path
+) -> None:
+    env = _with_fake_plutil(tmp_path)
+
+    result = _rehearse(
+        layout,
+        APPLE_SIGNING_IDENTITY="Developer ID Application: Example (ABCDE12345)",
+        **env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    source = str(layout / "packaging" / "macos" / "entitlements.plist")
+    normalized = str(layout / "dist" / "entitlements.normalized.plist")
+    lint = f"plutil -lint {source}"
+    convert = f"plutil -convert xml1 -o {normalized} {source}"
+    sign = "codesign --force --deep --timestamp --options runtime"
+    assert lint in out and convert in out
+    assert out.index(lint) < out.index(convert) < out.index(sign)
+    # codesign embeds the normalised copy, never the tracked file directly.
+    signing_line = next(line for line in out.splitlines() if line.startswith(f"+ {sign}"))
+    assert f"--entitlements {normalized}" in out[out.index(sign) :]
+    assert source not in signing_line
+
+
+def test_an_ad_hoc_build_embeds_no_entitlements_so_plutil_is_never_asked(
+    layout: Path, tmp_path: Path
+) -> None:
+    result = _rehearse(layout, **_with_fake_plutil(tmp_path))
+
+    assert result.returncode == 0, result.stderr
+    assert "entitlements" not in result.stdout.lower()
+    assert "plutil" not in result.stdout
+
+
+@pytest.mark.skipif(shutil.which("plutil") is not None, reason="this host has a real plutil")
+def test_without_plutil_the_entitlements_file_is_used_as_it_is(layout: Path) -> None:
+    result = _rehearse(
+        layout,
+        APPLE_SIGNING_IDENTITY="Developer ID Application: Example (ABCDE12345)",
+    )
+
+    assert result.returncode == 0, result.stderr
+    source = str(layout / "packaging" / "macos" / "entitlements.plist")
+    assert "plutil not found" in result.stdout
+    assert f"--entitlements {source}" in result.stdout
+    assert "entitlements.normalized.plist" not in result.stdout
+
+
+def _function_text(name: str) -> str:
+    """One function of build.sh, cut out by its own opening line and closing brace."""
+    script = BUILD_SH.read_text(encoding="utf-8")
+    start = script.index(f"\n{name}() {{\n") + 1
+    end = script.index("\n}\n", start) + 3
+    return script[start:end]
+
+
+def _run_prepare(tmp_path: Path, **env: str) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
+    """Run build.sh's own prepare_entitlements() for real against a stand-in plutil."""
+    source = tmp_path / "entitlements.plist"
+    source.write_text("<plist><dict/></plist>\n", encoding="utf-8")
+    normalized = tmp_path / "dist" / "entitlements.normalized.plist"
+    harness = tmp_path / "prepare.sh"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "DRY_RUN=0\n"
+        f"DIST_DIR={tmp_path / 'dist'}\n"
+        f"ENTITLEMENTS={source}\n"
+        f"NORMALIZED_ENTITLEMENTS={normalized}\n"
+        'SIGNING_ENTITLEMENTS="${ENTITLEMENTS}"\n'
+        "log() { printf '[macos-build] %s\\n' \"$*\"; }\n"
+        + _function_text("run")
+        + _function_text("prepare_entitlements")
+        + 'prepare_entitlements\necho "SIGNING_ENTITLEMENTS=${SIGNING_ENTITLEMENTS}"\n',
+        encoding="utf-8",
+    )
+    clean = {"HOME": str(tmp_path), **_with_fake_plutil(tmp_path), **env}
+    result = subprocess.run(
+        ["bash", str(harness)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=clean,
+        check=False,
+    )
+    return result, source, normalized
+
+
+def test_the_real_prepare_step_signs_with_a_normalised_copy_and_leaves_the_source_alone(
+    tmp_path: Path,
+) -> None:
+    result, source, normalized = _run_prepare(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert f"SIGNING_ENTITLEMENTS={normalized}" in result.stdout
+    assert normalized.is_file()
+    assert source.read_text(encoding="utf-8") == "<plist><dict/></plist>\n"
+    calls = (tmp_path / "plutil.log").read_text(encoding="utf-8").splitlines()
+    assert calls == [f"-lint {source}", f"-convert xml1 -o {normalized} {source}"]
+
+
+def test_a_malformed_entitlements_file_fails_before_any_signing(tmp_path: Path) -> None:
+    result, _source, normalized = _run_prepare(tmp_path, FAKE_PLUTIL_LINT_FAILS="1")
+
+    assert result.returncode != 0
+    assert "SIGNING_ENTITLEMENTS=" not in result.stdout
+    assert not normalized.exists()
+    calls = (tmp_path / "plutil.log").read_text(encoding="utf-8").splitlines()
+    assert [call.split()[0] for call in calls] == ["-lint"]  # never reached -convert

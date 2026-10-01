@@ -28,6 +28,7 @@ locally signed app is a notarized artifact.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 import os
@@ -40,6 +41,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import ModuleType
 
 from jarvis.core.branding import (
     MACOS_APP_DIR_NAME as APP_DIR_NAME,
@@ -64,6 +66,12 @@ log = logging.getLogger(__name__)
 # forces existing bundles through a rebuild on the next ensure pass.
 # 3: one forced rebuild so the new signature-change TCC reset (BUG-083) heals
 # bundles whose grants were orphaned by the version-2 rebuild.
+# The shared usage-string table (jarvis/core/macos_privacy_strings.py) added
+# Desktop, Documents, Downloads, volume and local-network strings that this
+# bundle never carried. They are cosmetic prompt text, so the format version is
+# deliberately NOT bumped: a bump would rebuild every installed bundle, and an
+# ad-hoc rebuild is a new identity that re-asks every permission. The next
+# rebuild that happens for another reason carries the new strings.
 _BUNDLE_FORMAT_VERSION = 3
 
 # TCC service names this app ever requests; reset scope is always limited to
@@ -103,13 +111,28 @@ def last_error() -> str | None:
     return _LAST_ERROR
 
 
-_MIC_USAGE = f"{APP_NAME} listens on this microphone for your wake word and voice commands."
-_SCREEN_CAPTURE_USAGE = (
-    f"{APP_NAME} captures the screen only when you ask it to see or control applications."
-)
-_APPLE_EVENTS_USAGE = (
-    f"{APP_NAME} lowers Music/Spotify volume while you dictate and restores it afterwards."
-)
+_PRIVACY_STRINGS_PATH = Path(__file__).resolve().parents[1] / "core" / "macos_privacy_strings.py"
+
+
+def _privacy_strings() -> ModuleType:
+    """Load the shared usage-string table BY PATH, exactly as ``jarvis.spec`` does.
+
+    The managed app is built from a source checkout, so the file is on disk. The
+    path load (rather than an ordinary import) is what lets the parity test
+    prove that both bundles read the same file. Nothing runs when this module
+    is imported; the file is read when a plist is built (a few hundred bytes).
+    A frozen app carries no source file, and it never builds a plist (desktop
+    registration is a no-op there), so a missing file is a loud error here,
+    never an empty plist.
+    """
+    loader_spec = importlib.util.spec_from_file_location(
+        "_jarvis_macos_privacy_strings", _PRIVACY_STRINGS_PATH
+    )
+    if loader_spec is None or loader_spec.loader is None:
+        raise RuntimeError(f"cannot load the macOS usage strings from {_PRIVACY_STRINGS_PATH}")
+    module = importlib.util.module_from_spec(loader_spec)
+    loader_spec.loader.exec_module(module)
+    return module
 
 
 def _version() -> str:
@@ -265,14 +288,16 @@ def _is_macho_executable(path: Path) -> bool:
 def _codesign_issue(bundle: Path) -> str | None:
     """Return the codesign verification failure detail, or ``None`` if valid.
 
-    Deliberately verifies WITHOUT ``--strict`` and ``--deep``: the local app
-    is a py2app *alias* bundle whose entire design is symlinking the managed
-    checkout and Python runtime, and strict validation rejects every symlink
-    that leaves the bundle ("invalid destination for symbolic link") — it
-    failed on 100% of freshly built bundles on real macOS (Intel and Apple
-    Silicon alike). The ad-hoc signature only has to give the app a stable
-    local TCC identity; distribution-grade validation belongs to the separate
-    Developer-ID signing and notarization pipeline.
+    Deliberately verifies WITHOUT ``--strict`` and ``--deep``: the first
+    local app was a py2app *alias* bundle (since replaced by the native stub
+    launcher) whose entire design was symlinking the managed checkout and
+    Python runtime, and strict validation rejects every symlink that leaves the
+    bundle ("invalid destination for symbolic link") — it failed on 100% of
+    freshly built bundles on real macOS (Intel and Apple Silicon alike). The
+    native stub bundle has not been checked against ``--strict`` on a real Mac
+    (unverified), so the relaxed check stays. The ad-hoc signature only has to
+    give the app a stable local TCC identity; distribution-grade validation
+    belongs to the separate Developer-ID signing and notarization pipeline.
     """
     if sys.platform != "darwin":
         return None
@@ -673,10 +698,10 @@ def _bundle_plist() -> dict[str, object]:
         "CFBundleVersion": _version(),
         "JarvisBundleFormatVersion": _BUNDLE_FORMAT_VERSION,
         "LSMinimumSystemVersion": "11.0",
-        "NSAppleEventsUsageDescription": _APPLE_EVENTS_USAGE,
         "NSHighResolutionCapable": True,
-        "NSMicrophoneUsageDescription": _MIC_USAGE,
-        "NSScreenCaptureUsageDescription": _SCREEN_CAPTURE_USAGE,
+        # Every NS...UsageDescription string comes from the one table shared
+        # with jarvis.spec (the .dmg app), never from a copy kept here.
+        **_privacy_strings().usage_descriptions(),
     }
 
 

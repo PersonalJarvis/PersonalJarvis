@@ -66,6 +66,24 @@ def _package_version() -> str:
 VERSION = _package_version()
 
 
+def _macos_privacy_strings():
+    """Load ``jarvis/core/macos_privacy_strings.py`` by path.
+
+    The spec runs before ``jarvis`` is importable, and the managed app's
+    ``Info.plist`` loads the very same file the very same way, so the two
+    bundles cannot drift apart (tests/unit/packaging/test_macos_privacy_strings.py).
+    """
+    import importlib.util
+
+    path = PROJECT_ROOT / "jarvis" / "core" / "macos_privacy_strings.py"
+    loader_spec = importlib.util.spec_from_file_location("_jarvis_macos_privacy_strings", path)
+    if loader_spec is None or loader_spec.loader is None:
+        raise SystemExit(f"cannot load the macOS usage strings from {path}")
+    module = importlib.util.module_from_spec(loader_spec)
+    loader_spec.loader.exec_module(module)
+    return module
+
+
 # --- Data files -------------------------------------------------------------
 
 datas = []
@@ -442,43 +460,12 @@ if sys.platform == "darwin":
             "LSMinimumSystemVersion": MACOS_MIN_SYSTEM_VERSION,
             "LSApplicationCategoryType": "public.app-category.productivity",
             "NSHighResolutionCapable": True,
-            # Personal Jarvis is voice-first: without a usage string macOS kills
-            # the process the moment it touches the matching API.
-            "NSMicrophoneUsageDescription": (
-                "Personal Jarvis listens for your wake word and your spoken "
-                "requests. Audio stays on this Mac unless you configure a cloud "
-                "speech provider yourself."
-            ),
-            "NSSpeechRecognitionUsageDescription": (
-                "Personal Jarvis turns what you say into text so it can act on "
-                "your request."
-            ),
-            "NSCameraUsageDescription": (
-                "Personal Jarvis uses the camera only for features you start "
-                "yourself, such as showing it what is in front of you."
-            ),
-            "NSAppleEventsUsageDescription": (
-                "Personal Jarvis controls other applications on your behalf "
-                "when you ask it to, for example to open a file or a window."
-            ),
-            "NSSystemAdministrationUsageDescription": (
-                "Personal Jarvis needs Accessibility and Input Monitoring "
-                "access to type, click and read the screen for the automation "
-                "tasks you ask it to run."
-            ),
-            "NSDesktopFolderUsageDescription": (
-                "Personal Jarvis saves the files it produces for you to your "
-                "Desktop."
-            ),
-            "NSDocumentsFolderUsageDescription": (
-                "Personal Jarvis reads and writes the documents you point it at."
-            ),
-            "NSDownloadsFolderUsageDescription": (
-                "Personal Jarvis opens the downloads you ask it to work with."
-            ),
-            "NSLocalNetworkUsageDescription": (
-                "Personal Jarvis serves its own interface to your browser on "
-                "this machine."
-            ),
+            # Every NS...UsageDescription string comes from the single table in
+            # jarvis/core/macos_privacy_strings.py, which the managed app's
+            # Info.plist loads too. Without the microphone string macOS ends the
+            # process the moment it touches the microphone, so the table is
+            # asserted on the built app (scripts/ci/check_frozen_macos_app.py).
+            # Add or reword a string THERE, never here.
+            **_macos_privacy_strings().usage_descriptions(),
         },
     )
