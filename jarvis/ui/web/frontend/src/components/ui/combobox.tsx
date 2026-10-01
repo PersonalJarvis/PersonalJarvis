@@ -97,6 +97,10 @@ export interface ComboboxProps {
    * is on; the accessible name and the open list still carry the words.
    */
   iconOnly?: boolean;
+  /** Draw the selected option's icon on the trigger (default). */
+  triggerIcon?: boolean;
+  /** Draw the open/close chevron on the trigger (default). */
+  chevron?: boolean;
 }
 
 /** Panel height cap — roughly nine rows, enough to show that more exist. */
@@ -218,6 +222,8 @@ export function Combobox({
   testId,
   triggerHint = true,
   iconOnly = false,
+  triggerIcon = true,
+  chevron = true,
 }: ComboboxProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -502,7 +508,7 @@ export function Combobox({
           className,
         )}
       >
-        {selected?.icon}
+        {triggerIcon && selected?.icon}
         <span className={iconOnly ? "sr-only" : "min-w-0 flex-1 truncate"}>{triggerLabel}</span>
         {!iconOnly && triggerHint && selected?.hint && (
           <span className="shrink-0 truncate text-sm text-muted-foreground">
@@ -513,7 +519,7 @@ export function Combobox({
           aria-hidden="true"
           className={cn(
             "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-            iconOnly && "hidden",
+            (iconOnly || !chevron) && "hidden",
             // Body ink, not --primary: an open chevron is a decoration, and a
             // decoration is never brighter than the label it sits beside.
             open && "rotate-180 text-foreground",

@@ -12,6 +12,7 @@ import {
   NotebookPen,
   Paperclip,
   ShieldCheck,
+  ShieldOff,
   Square,
 } from "lucide-react";
 
@@ -552,7 +553,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       className={cn(
         "relative flex flex-col transition-[border-color,box-shadow]",
         minimal
-          ? "gap-1.5 rounded-[22px] border border-border bg-card px-3 pb-2.5 pt-3 shadow-rim focus-within:border-border-strong"
+          ? "gap-1 rounded-2xl border border-border bg-card px-2.5 pb-2 pt-2.5 shadow-rim focus-within:border-border-strong"
           : "gap-2 rounded-2xl border border-border-strong bg-card p-3 shadow-rim focus-within:border-primary/40",
         files.dragging && "border-primary/60",
       )}
@@ -602,7 +603,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           pasteRescue.onPaste();
           files.onPaste(e);
         }}
-        className={cn("max-h-[50vh] text-reading scrollbar-jarvis", minimal && "min-h-[52px] px-1.5")}
+        className={cn("max-h-[50vh] scrollbar-jarvis", minimal ? "min-h-[44px] px-1.5 text-base" : "text-reading")}
       />
       {minimal ? (
         <div className="flex items-center gap-1" data-testid="composer-row">
@@ -626,10 +627,12 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             }
             disabled={!connected || busy}
           />
+          {/* The stance in words, like the Codex app: a person should read
+              "Full access" before sending, not decode a glyph. A stance that
+              asks for nothing wears the warning hue. */}
           {provider && permissionModes.length > 0 && (
-            <span title={locks?.permissionMode ?? permissionDescription} className="inline-flex">
+            <span title={locks?.permissionMode ?? permissionDescription} className="inline-flex min-w-0">
               <Combobox
-                iconOnly
                 value={permissionValue}
                 groups={permissionGroups}
                 onChange={(v) => void setDraft({ permissionMode: v })}
@@ -638,7 +641,13 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
                 disabled={Boolean(locks?.permissionMode)}
                 testId="composer-permission"
                 triggerHint={false}
-                className="h-8 w-8 justify-center gap-0 rounded-full bg-transparent p-0 text-muted-foreground shadow-none hover:bg-secondary focus-visible:ring-1 [&_svg]:h-4 [&_svg]:w-4"
+                chevron={false}
+                className={cn(
+                  "h-8 w-auto max-w-[200px] gap-1.5 rounded-full bg-transparent px-2 py-0 text-xs font-medium shadow-none hover:bg-secondary focus-visible:ring-1 [&_svg]:h-3.5 [&_svg]:w-3.5",
+                  permissionModeIcon(permissionValue) === ShieldOff
+                    ? "text-warning [&_svg]:text-warning"
+                    : "text-muted-foreground",
+                )}
               />
             </span>
           )}
@@ -686,6 +695,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             disabled={!catalog || (Boolean(locks?.provider) && Boolean(locks?.model))}
             title={locks?.model ?? locks?.provider}
             className="max-w-[240px]"
+            // The model reads as a word; the provider's mark (with its red
+            // dot) only joins it when that seat is failing.
+            triggerIcon={Boolean(provider?.connected && liveHealthFor(provider, health[provider.id])?.status === "error")}
+            chevron={false}
           />
           {provider && effortLevels.length > 1 && (
             <Pick
@@ -1109,6 +1122,8 @@ function Pick({
   title,
   className,
   muted = false,
+  triggerIcon = true,
+  chevron = true,
 }: {
   testId: string;
   ariaLabel: string;
@@ -1123,6 +1138,8 @@ function Pick({
   className?: string;
   /** Muted ink — a secondary pick beside a primary one (the effort word). */
   muted?: boolean;
+  triggerIcon?: boolean;
+  chevron?: boolean;
 }) {
   // The Combobox draws the selected option's own icon; the leading glyph here
   // is the column's, shown when the option has none (model, effort, permission).
@@ -1144,6 +1161,8 @@ function Pick({
         disabled={disabled}
         testId={testId}
         triggerHint={false}
+        triggerIcon={triggerIcon}
+        chevron={chevron}
         className={cn(
           "h-7 w-auto max-w-[200px] gap-1.5 rounded-lg border-transparent bg-transparent py-0 pr-1.5 text-xs font-medium shadow-none",
           muted ? "text-muted-foreground" : "text-foreground",

@@ -202,19 +202,27 @@ function ChatStageContent() {
   // chat is coding sessions and never shows a spoken thread.
   if (surface === "jarvis" && voiceThreadId && !activeSessionId) return <VoiceThreadStage />;
 
-  // The front page opens the way the Claude app does: one short line and
-  // the composer, a little above the middle, nothing else to read first.
+  // The front page opens the way the Codex app does: the greeting alone in
+  // the middle of the page, the composer already where it will stay — at the
+  // bottom — so the first send moves nothing.
+  if (!hasContent && isJarvis) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center" data-testid="chat-stage" data-empty="true">
+        <div className="flex w-full flex-1 flex-col items-center justify-center px-6 pb-8">
+          <Greeting />
+        </div>
+        <div className="relative w-full max-w-[720px] px-6 pb-5 pt-2">
+          <AgentComposer autoFocus />
+        </div>
+      </div>
+    );
+  }
+
   if (!hasContent) {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center" data-testid="chat-stage" data-empty="true">
-        <div
-          className={
-            isJarvis
-              ? "flex w-full max-w-[680px] flex-1 flex-col justify-center gap-7 px-6 pb-[14vh]"
-              : "flex w-full max-w-[720px] flex-1 flex-col justify-center gap-8 px-6 pb-20"
-          }
-        >
-          {isJarvis ? <Greeting /> : <FolderHeadline folder={cwd} subtitle={subtitle} />}
+        <div className="flex w-full max-w-[720px] flex-1 flex-col justify-center gap-8 px-6 pb-20">
+          <FolderHeadline folder={cwd} subtitle={subtitle} />
           <AgentComposer autoFocus />
         </div>
       </div>

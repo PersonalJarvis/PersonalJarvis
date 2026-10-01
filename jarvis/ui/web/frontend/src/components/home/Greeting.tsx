@@ -32,9 +32,11 @@ export function Greeting({
       )}
       data-testid="home-greeting"
     >
-      <h1 className="flex items-center gap-3 font-display text-2xl text-foreground-strong [text-wrap:balance]">
-        <GigiMark size={34} className="rounded-[10px]" />
-        <span>{text}</span>
+      {/* The mark above, the line under it in regular weight — the Codex
+          app's opening, quieter than a bold headline beside a logo. */}
+      <GigiMark size={40} className="mb-4 rounded-xl opacity-90" />
+      <h1 className="text-2xl font-normal tracking-tight text-foreground [text-wrap:balance]">
+        {text}
       </h1>
       {subtitle && !muted && (
         <p className="mt-2 max-w-md text-base text-muted-foreground">{subtitle}</p>
