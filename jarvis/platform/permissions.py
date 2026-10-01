@@ -612,18 +612,6 @@ class SystemPermissionPort:
         self._bundle_identity_cache = (bundle_id, bundle_path, launched_as_bundle, stable)
         return self._bundle_identity_cache
 
-    def _tcc_bundle_id(self) -> str:
-        """The bundle id whose privacy rows belong to THIS running app.
-
-        ``tccutil reset`` must drop the rows of the app the user is looking at:
-        the .dmg build owns ``ai.personaljarvis.desktop`` and never touched the
-        managed bundle's rows, so resetting the managed id for it would report
-        success and change nothing. A process that is not an installed app
-        (a development run) keeps the managed id it always used.
-        """
-        running = self._bundle_identity()[0]
-        return running if running in ACCEPTED_BUNDLE_IDS else EXPECTED_BUNDLE_ID
-
     def _stable_identity(self) -> bool:
         """The cached static half of the runtime-access gate (darwin only)."""
         return self._bundle_identity()[3]
@@ -1414,13 +1402,29 @@ class SystemPermissionPort:
                 f"Would reset this app's {_LABELS[permission_id]} record.",
                 before,
             )
+        # ``tccutil reset`` is scoped to one bundle id, so only the installed app
+        # may name it - and only its OWN id: the .dmg build owns
+        # ai.personaljarvis.desktop and never touched the managed bundle's rows,
+        # while a development run (Terminal, bare Python) must not be able to
+        # wipe the installed app's grants.
+        if not before["app_identity"]["stable"]:
+            return PermissionOperation(
+                False,
+                permission_id.value,
+                "reset",
+                False,
+                False,
+                False,
+                "Relaunch Personal Jarvis from its installed app before resetting a permission.",
+                before,
+            )
         import subprocess  # lazy: this method is darwin-only at runtime
 
         from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
         try:
             result = subprocess.run(
-                ["/usr/bin/tccutil", "reset", service, self._tcc_bundle_id()],
+                ["/usr/bin/tccutil", "reset", service, before["app_identity"]["bundle_id"]],
                 capture_output=True,
                 text=True,
                 timeout=30,

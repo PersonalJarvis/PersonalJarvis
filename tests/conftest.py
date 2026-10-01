@@ -190,6 +190,17 @@ def _macos_shell_registration_in_tmp(tmp_path_factory, monkeypatch):  # noqa: AN
     monkeypatch.setattr(macos_dock, "_DEFAULTS", str(agents / "no-defaults"))
     monkeypatch.setattr(macos_dock, "_KILLALL", str(agents / "no-killall"))
     monkeypatch.setattr(macos_dock, "_marker_path", lambda: agents / "macos-dock-pinned")
+    # Suites that force ``platform_name="darwin"`` read - and, once every grant
+    # reads present, DELETE - the "macOS sees this app as new" note and the
+    # Automation answers of the developer's real data directory.
+    import jarvis.platform.permissions as permissions
+
+    monkeypatch.setattr(
+        permissions, "identity_reset_marker_path", lambda: agents / "macos-tcc-reset.json"
+    )
+    monkeypatch.setattr(
+        permissions, "automation_consent_path", lambda: agents / "macos-automation-consent.json"
+    )
     yield agents
 
 

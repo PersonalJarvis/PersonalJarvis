@@ -919,22 +919,16 @@ def test_an_app_that_is_not_ours_is_never_a_stable_identity(bundle_id: str | Non
 
 
 @pytest.mark.parametrize(
-    ("running_id", "expected"),
-    [
-        (EXPECTED_BUNDLE_ID, EXPECTED_BUNDLE_ID),
-        ("ai.personaljarvis.desktop", "ai.personaljarvis.desktop"),
-        # A development run is not an installed app: it keeps the managed id it
-        # always reset, never an arbitrary id read from the process.
-        ("org.python.python", EXPECTED_BUNDLE_ID),
-    ],
+    "running_id",
+    [EXPECTED_BUNDLE_ID, "ai.personaljarvis.desktop"],
 )
 def test_reset_drops_the_rows_of_the_app_that_is_running(
-    monkeypatch: pytest.MonkeyPatch, running_id: str, expected: str
+    monkeypatch: pytest.MonkeyPatch, running_id: str
 ) -> None:
     """``tccutil reset`` is scoped to one bundle id, so it must be the right one.
 
-    Resetting the managed id for the .dmg app reports success and changes
-    nothing, leaving a stranded grant stranded.
+    Resetting the managed id for the .dmg app would leave the .dmg app's own
+    rows untouched, leaving a stranded grant stranded.
     """
     import subprocess
 
@@ -951,7 +945,29 @@ def test_reset_drops_the_rows_of_the_app_that_is_running(
     operation = _port(modules).reset(PermissionId.SCREEN_RECORDING)
 
     assert operation.ok is True
-    assert commands == [["/usr/bin/tccutil", "reset", "ScreenCapture", expected]]
+    assert commands == [["/usr/bin/tccutil", "reset", "ScreenCapture", running_id]]
+
+
+@pytest.mark.parametrize("running_id", ["org.python.python", "com.apple.Terminal", None])
+def test_a_process_that_is_not_the_installed_app_cannot_reset_anything(
+    monkeypatch: pytest.MonkeyPatch, running_id: str | None
+) -> None:
+    """A development run must not be able to wipe the installed app's grants."""
+    import subprocess
+
+    modules, _, _ = _native_modules()
+    _installed_as(modules, running_id, "/Applications/Personal Jarvis.app")  # type: ignore[arg-type]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_a, **_k: pytest.fail("tccutil must not run for an unstable identity"),
+    )
+
+    operation = _port(modules).reset(PermissionId.SCREEN_RECORDING)
+
+    assert operation.ok is False
+    assert operation.performed is False
+    assert "installed app" in operation.message
 
 
 def test_a_live_window_probe_beats_the_frozen_screen_recording_preflight() -> None:
