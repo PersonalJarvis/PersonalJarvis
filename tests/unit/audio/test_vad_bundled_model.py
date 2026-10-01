@@ -100,7 +100,19 @@ def test_pyinstaller_spec_collects_bundled_vad_asset(monkeypatch) -> None:
     hooks = ModuleType("PyInstaller.utils.hooks")
     hooks.collect_data_files = lambda _package: []
     hooks.collect_submodules = lambda _package: []
+    hooks.collect_dynamic_libs = lambda _package: []
     hooks.copy_metadata = lambda _distribution: []
+    # The Swarm bundle step requires the real build extras; this guard only
+    # checks the VAD asset, so that step contributes nothing here.
+    real_run_path = runpy.run_path
+
+    def run_path(path, *args, **kwargs):
+        if Path(path).name == "swarm_bundle.py":
+            empty = {"binaries": [], "datas": [], "hiddenimports": []}
+            return {"collect_swarm_bundle": lambda _hooks: empty}
+        return real_run_path(path, *args, **kwargs)
+
+    monkeypatch.setattr(runpy, "run_path", run_path)
     utils = ModuleType("PyInstaller.utils")
     utils.hooks = hooks
     pyinstaller = ModuleType("PyInstaller")
