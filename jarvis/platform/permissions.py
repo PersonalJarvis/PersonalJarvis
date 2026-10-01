@@ -17,7 +17,7 @@ from collections.abc import Callable, Collection
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from jarvis.core.branding import (
     MACOS_APP_NAME as APP_NAME,
@@ -267,6 +267,86 @@ _SETTINGS_URLS: dict[PermissionId, str] = {
     ),
 }
 
+
+class RequestClass(StrEnum):
+    """How macOS asks for a permission (the "Class" column of the JIT policy table).
+
+    The just-in-time service reads this to decide what a native request can
+    achieve: whether to wait for an answer, or to send the user to Settings.
+    """
+
+    # An OS dialog with an answer button: the user can allow or deny in place.
+    DIALOG = "dialog"
+    # A request shows at most one dialog, and it only offers "Open System
+    # Settings": the user still has to flip a switch there.
+    PROMPT_ONCE = "prompt_once"
+    # The OS prompts by itself on first access; there is no request call to make.
+    # No :class:`PermissionId` has this class today (Files & Folders is not a
+    # port permission); it exists so the table speaks Apple's whole vocabulary.
+    NATIVE = "native"
+    # Nothing to ask natively (not a TCC grant).
+    NONE = "none"
+
+
+REQUEST_CLASS: dict[PermissionId, RequestClass] = {
+    PermissionId.MICROPHONE: RequestClass.DIALOG,
+    PermissionId.SCREEN_RECORDING: RequestClass.PROMPT_ONCE,
+    PermissionId.ACCESSIBILITY: RequestClass.PROMPT_ONCE,
+    PermissionId.INPUT_MONITORING: RequestClass.PROMPT_ONCE,
+    PermissionId.EVENT_POSTING: RequestClass.PROMPT_ONCE,
+    PermissionId.AUTOMATION: RequestClass.DIALOG,
+    # The Keychain is not TCC: its prompt belongs to the credential store and
+    # "Try again" replays a read, which is not a request in this sense.
+    PermissionId.CREDENTIAL_STORE: RequestClass.NONE,
+}
+
+# Permissions that share one Settings pane (and one request) share a family.
+# EVENT_POSTING is an ALIAS of ACCESSIBILITY for asking: one request, one pane,
+# one episode. The value is the canonical member of the family, which is also
+# what a UI shows and an event carries instead of the alias.
+PANE_FAMILY: dict[PermissionId, PermissionId] = {
+    PermissionId.MICROPHONE: PermissionId.MICROPHONE,
+    PermissionId.SCREEN_RECORDING: PermissionId.SCREEN_RECORDING,
+    PermissionId.ACCESSIBILITY: PermissionId.ACCESSIBILITY,
+    PermissionId.INPUT_MONITORING: PermissionId.INPUT_MONITORING,
+    PermissionId.EVENT_POSTING: PermissionId.ACCESSIBILITY,
+    PermissionId.AUTOMATION: PermissionId.AUTOMATION,
+    PermissionId.CREDENTIAL_STORE: PermissionId.CREDENTIAL_STORE,
+}
+
+# Where a person finds the switch, in plain English, for the Privacy page. The
+# pane names are static text on purpose: no OS sniffing. Apple does not document
+# the label per macOS release (UNVERIFIED): the Screen Recording pane is called
+# "Screen & System Audio Recording" from macOS 15 and was "Screen Recording"
+# before, and the Accessibility pane may be renamed again by a later release.
+# The Keychain has no pane, so it has no entry (like ``_SETTINGS_URLS``).
+_SETTINGS_PATH_PREFIX = "System Settings > Privacy & Security > "
+SETTINGS_PATH_TEXT: dict[PermissionId, str] = {
+    PermissionId.MICROPHONE: f"{_SETTINGS_PATH_PREFIX}Microphone",
+    PermissionId.SCREEN_RECORDING: f"{_SETTINGS_PATH_PREFIX}Screen & System Audio Recording",
+    PermissionId.ACCESSIBILITY: f"{_SETTINGS_PATH_PREFIX}Accessibility",
+    PermissionId.INPUT_MONITORING: f"{_SETTINGS_PATH_PREFIX}Input Monitoring",
+    PermissionId.EVENT_POSTING: f"{_SETTINGS_PATH_PREFIX}Accessibility",
+    PermissionId.AUTOMATION: f"{_SETTINGS_PATH_PREFIX}Automation",
+}
+
+
+def settings_path_text(permission_id: PermissionId | str) -> str | None:
+    """The plain-English System Settings path for a permission, ``None`` without a pane."""
+    return SETTINGS_PATH_TEXT.get(PermissionId(permission_id))
+
+
+# What :meth:`SystemPermissionPort.request_native` reports. Never evidence of a
+# grant: only ``state()`` says whether access exists.
+#   dialog_shown - a system dialog may be open right now, awaiting the user's
+#                  answer (the call returned before the answer): poll ``state()``.
+#   no_dialog    - nothing is open: access was already granted or decided, the
+#                  Automation target was not running, or the request was
+#                  synchronous and has finished: read ``state()`` for the answer.
+#   unavailable  - the request could not be made (not macOS, a missing framework
+#                  or symbol, an unusable target, or a native error).
+NativeRequestOutcome = Literal["dialog_shown", "no_dialog", "unavailable"]
+
 # Apple Event Manager constants for AEDeterminePermissionToAutomateTarget
 # (macOS 10.14+). Four-char codes are big-endian uint32; the OSStatus values
 # are stable ABI (AE.framework / MacErrors.h).
@@ -336,6 +416,60 @@ def _default_automation_probe(bundle_id: str, ask: bool) -> int | None:
         )
     finally:
         services.AEDisposeDesc(ctypes.byref(target))
+
+
+# How long the Automation consent dialog may stay unanswered before its runner
+# is killed. A person answers a dialog; a short timeout tore it down before
+# they could click and made every attempt ask again.
+_AUTOMATION_CONSENT_TIMEOUT_S = 120.0
+
+
+def _is_automation_target(bundle_id: object) -> bool:
+    """Whether ``bundle_id`` names a player in :data:`AUTOMATION_TARGETS`."""
+    return any(bundle_id == known for _name, known in AUTOMATION_TARGETS)
+
+
+def _automation_consent_script(bundle_id: str) -> str:
+    """One benign Apple Event to a player, guarded so it is never launched.
+
+    A bare ``tell application`` launches the app, so the script asks whether it
+    is running INSIDE the same script and does nothing when it is not. Only
+    ``bundle_id`` values from :data:`AUTOMATION_TARGETS` reach this function, so
+    nothing outside the fixed table is ever interpolated.
+    """
+    return (
+        f'if application id "{bundle_id}" is running then\n'
+        f'    tell application id "{bundle_id}" to get player state\n'
+        '    return "+"\n'
+        "else\n"
+        '    return "-"\n'
+        "end if"
+    )
+
+
+def _default_automation_consent_runner(script: str) -> Any:
+    """Run one AppleScript in a killable child so a dialog can be answered.
+
+    The consent dialog belongs to the app that asks. A child ``osascript`` is
+    attributed to its parent app (Apple DTS: algorithm undocumented, so
+    UNVERIFIED), and the child, unlike an in-process Apple Event call, can be
+    killed: ``subprocess.run`` kills it when the timeout passes. Returns the
+    ``CompletedProcess``; ``subprocess.TimeoutExpired`` and ``OSError`` propagate
+    to the caller, which owns the never-raise boundary.
+    """
+    import subprocess  # lazy: only the darwin request path reaches this
+
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+
+    return subprocess.run(  # noqa: S603, S607 - fixed argv, no shell
+        ["osascript", "-e", script],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=_AUTOMATION_CONSENT_TIMEOUT_S,
+        check=False,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+    )
 
 
 # IOKit HID access constants (IOHIDCheckAccess, macOS 10.15+). The SDK header
@@ -436,6 +570,27 @@ def _default_iohid_check(request_type: int) -> int | None:
         return None
 
 
+def _default_iohid_request(request_type: int) -> bool | None:
+    """``IOHIDRequestAccess`` for one request type; ``None`` when unavailable.
+
+    The way to ask for Input Monitoring without creating an event tap (BUG-058
+    class). Only the fallback for a Quartz binding that lacks
+    ``CGRequestListenEventAccess``. Never reached by a state read, and the
+    ctypes binding itself is UNVERIFIED on a real Mac.
+    """
+    try:
+        import ctypes
+
+        iokit = ctypes.CDLL("/System/Library/Frameworks/IOKit.framework/IOKit")
+        request = iokit.IOHIDRequestAccess
+        request.restype = ctypes.c_bool
+        request.argtypes = [ctypes.c_uint32]
+        return bool(request(request_type))
+    except Exception:  # noqa: BLE001 - a missing native bridge means "cannot ask"
+        log.debug("IOHIDRequestAccess is unavailable.", exc_info=True)
+        return None
+
+
 def _default_credential_store_backend() -> str:
     """Ask the config layer which credential backend is live right now."""
     from jarvis.core.config import credential_store_backend
@@ -459,6 +614,17 @@ _TCC_RESET_SERVICES: dict[PermissionId, str] = {
     PermissionId.INPUT_MONITORING: "ListenEvent",
     PermissionId.EVENT_POSTING: "PostEvent",
     PermissionId.AUTOMATION: "AppleEvents",
+}
+
+# The Info.plist key whose absence makes macOS terminate the process when the
+# permission's API is called (BUG-058 class); ``jarvis.core.macos_privacy_strings``
+# holds the strings themselves and a parity test keeps the key names equal.
+# A permission with no entry has no usage-description key. Screen Recording is
+# deliberately absent: Apple documents none (the string the bundles carry for it
+# is for parity, its effect is UNVERIFIED), so a missing one must not refuse the ask.
+_USAGE_DESCRIPTION_KEYS: dict[PermissionId, str] = {
+    PermissionId.MICROPHONE: "NSMicrophoneUsageDescription",
+    PermissionId.AUTOMATION: "NSAppleEventsUsageDescription",
 }
 
 _READY_STATES = frozenset({PermissionState.GRANTED, PermissionState.NOT_REQUIRED})
@@ -541,6 +707,8 @@ class SystemPermissionPort:
         credential_store_backend: Callable[[], str] = _default_credential_store_backend,
         credential_store_recover: Callable[[], bool] = _default_credential_store_recover,
         automation_probe: Callable[[str, bool], int | None] = _default_automation_probe,
+        iohid_request: Callable[[int], bool | None] = _default_iohid_request,
+        automation_consent_runner: Callable[[str], Any] = _default_automation_consent_runner,
     ) -> None:
         self._platform_name = platform_name
         self._module_loader = module_loader
@@ -549,6 +717,9 @@ class SystemPermissionPort:
         self._credential_store_backend = credential_store_backend
         self._credential_store_recover = credential_store_recover
         self._automation_probe = automation_probe
+        # Seams of :meth:`request_native` only; no state read ever reaches them.
+        self._iohid_request = iohid_request
+        self._automation_consent_runner = automation_consent_runner
         # This is operation state, not a cached permission probe. The set lives
         # only for the current process and therefore clears exactly when the
         # required app restart has happened.
@@ -615,6 +786,51 @@ class SystemPermissionPort:
     def _stable_identity(self) -> bool:
         """The cached static half of the runtime-access gate (darwin only)."""
         return self._bundle_identity()[3]
+
+    @property
+    def outside_installed_app(self) -> bool:
+        """Whether this process is NOT the installed app bundle.
+
+        ``True`` for a development run (Terminal, bare Python), for an app that
+        does not carry one of :data:`ACCEPTED_BUNDLE_IDS`, for one that runs
+        from outside the canonical application folders (a mounted ``.dmg``, the
+        Downloads folder), and everywhere off macOS, where there is no app
+        bundle at all. It is the same verdict ``app_identity.stable`` reports,
+        inverted, and it gates only whether we may start a native request on
+        our own: the grant of whatever app is responsible is still acted on
+        (design P6). Static for the life of the process.
+        """
+        if self.platform != "darwin":
+            return True
+        return not self._stable_identity()
+
+    def usage_string_present(self, permission_id: PermissionId | str) -> bool:
+        """Whether the main bundle carries the usage string the permission needs.
+
+        Calling the microphone or Apple Events API without its ``Info.plist``
+        string makes macOS terminate the process (BUG-058 class), so a caller
+        must refuse the native request when this is ``False``. ``True`` also
+        means "not applicable": the permission needs no key (Screen Recording,
+        Accessibility, Input Monitoring and the Keychain have none), this is not
+        macOS, or the process has no bundle id because the responsible code is a
+        terminal and not this app. An unreadable bundle fails closed (``False``).
+        """
+        permission = PermissionId(permission_id)
+        key = _USAGE_DESCRIPTION_KEYS.get(permission)
+        if key is None or self.platform != "darwin":
+            return True
+        if self._bundle_identity()[0] is None:
+            return True
+        foundation = self._load("Foundation")
+        try:
+            value = foundation.NSBundle.mainBundle().objectForInfoDictionaryKey_(key)
+        except Exception:  # noqa: BLE001 - an unreadable bundle must not look present
+            log.debug("Could not read %s from the main bundle.", key, exc_info=True)
+            return False
+        present = value is not None and bool(str(value).strip())
+        if not present:
+            log.debug("The main bundle has no %s; %s must not be requested.", key, permission.value)
+        return present
 
     def _app_identity(self) -> tuple[AppIdentity, bool]:
         if self.platform != "darwin":
@@ -819,6 +1035,33 @@ class SystemPermissionPort:
             return PermissionState.NOT_DETERMINED
         return PermissionState.GRANTED
 
+    def _automation_target_state(self, bundle_id: str) -> PermissionState:
+        """The Automation state for ONE player; read-only, never asks, never writes.
+
+        Apple Events answer only for a RUNNING target, so a player that is not
+        running reads ``NOT_DETERMINED``: unknown, not "never asked" (the answer
+        may well be on file). Nothing is recorded to stand in for it, and the
+        probe can hang for a running player without a window (Apple forums
+        thread 666528), so a caller that must not block runs this off its loop.
+        """
+        if not _is_automation_target(bundle_id):
+            log.debug(
+                "Automation state requested for %r, which is not a scriptable player.", bundle_id
+            )
+            return PermissionState.UNAVAILABLE
+        installed = self._installed_automation_targets()
+        if installed is None:
+            return PermissionState.UNAVAILABLE
+        if bundle_id not in installed:
+            # Nothing to script, so nothing to consent to.
+            return PermissionState.NOT_REQUIRED
+        appkit = self._load("AppKit")
+        if appkit is not None and self._running_automation_targets(appkit, bundle_id):
+            live = self._live_automation_state(bundle_id, ask=False)
+            if live is not None:
+                return live
+        return PermissionState.NOT_DETERMINED
+
     def _request_automation(self) -> None:
         """Ask for every installed player up front, launching it hidden if needed.
 
@@ -865,23 +1108,32 @@ class SystemPermissionPort:
                 except Exception:  # noqa: BLE001 - closing what we opened is best-effort
                     log.debug("Could not close a player opened for consent.", exc_info=True)
 
-    def _state(self, permission_id: PermissionId) -> PermissionState:
+    def _state(
+        self,
+        permission_id: PermissionId,
+        *,
+        deep: bool = True,
+        target: str | None = None,
+    ) -> PermissionState:
         if self.platform != "darwin":
             return PermissionState.NOT_REQUIRED
         if permission_id is PermissionId.CREDENTIAL_STORE:
             return self._credential_store_state()
         if permission_id is PermissionId.AUTOMATION:
+            if target is not None:
+                return self._automation_target_state(target)
             return self._automation_state()
         if permission_id is PermissionId.MICROPHONE:
             return self._microphone_state()
         if permission_id is PermissionId.SCREEN_RECORDING:
             preflight = self._boolean_state("Quartz", "CGPreflightScreenCaptureAccess")
-            if preflight is PermissionState.GRANTED:
+            if preflight is PermissionState.GRANTED or not deep:
                 return preflight
             # The preflight is frozen per process and can only go stale
             # NEGATIVE. Ask the window server whether the grant works right
             # now before telling the user a permission they just gave is
-            # missing (BUG-161).
+            # missing (BUG-161). Only a deep read does this: it enumerates the
+            # on-screen windows, which a hot path must never pay for.
             return PermissionState.GRANTED if self._screen_capture_live() else preflight
         if permission_id is PermissionId.ACCESSIBILITY:
             return self._boolean_state("ApplicationServices", "AXIsProcessTrusted")
@@ -911,7 +1163,13 @@ class SystemPermissionPort:
         # Accessibility grant and do not expose the separate PostEvent API.
         return ax_state
 
-    def _live_state(self, permission_id: PermissionId) -> PermissionState:
+    def _live_state(
+        self,
+        permission_id: PermissionId,
+        *,
+        deep: bool = True,
+        target: str | None = None,
+    ) -> PermissionState:
         """Probe once and retire a pending-restart flag the OS has overtaken.
 
         A pending restart means exactly one thing: "the grant is not usable in
@@ -924,14 +1182,38 @@ class SystemPermissionPort:
         even though every permission was granted, and no code path ever
         cleared it again (BUG-159).
         """
-        state = self._state(permission_id)
+        state = self._state(permission_id, deep=deep, target=target)
         if state in _READY_STATES:
             self._restart_required.discard(permission_id)
         return state
 
-    def state(self, permission_id: PermissionId | str) -> PermissionState:
-        """Probe one permission directly without constructing a full snapshot."""
-        return self._live_state(PermissionId(permission_id))
+    def state(
+        self,
+        permission_id: PermissionId | str,
+        *,
+        target: str | None = None,
+        deep: bool | None = None,
+    ) -> PermissionState:
+        """Probe one permission live, without a full snapshot and without asking.
+
+        Every read goes to the OS and nothing is cached. This never prompts:
+        no native request and no ``ask`` path is reachable from here.
+
+        ``target`` is only meaningful for Automation: the bundle id of one
+        player from :data:`AUTOMATION_TARGETS`. A target that is not one of
+        them reads ``UNAVAILABLE`` (logged at debug, never raised); for every
+        other permission it is ignored. Without a target, Automation keeps its
+        aggregate read over every installed player.
+
+        ``deep`` only matters for Screen Recording. ``False`` is the preflight
+        alone and NEVER enumerates windows. ``True`` also runs the window-title
+        oracle that sees a grant the frozen preflight still denies (BUG-161).
+        TRANSITIONAL: the default ``None`` is the pre-JIT behaviour, identical
+        to ``True``, because existing callers and their tests rely on it; the
+        service must pass ``deep=False`` explicitly. The cleanup stage flips the
+        default to ``False``.
+        """
+        return self._live_state(PermissionId(permission_id), deep=deep is not False, target=target)
 
     def runtime_access_granted(self, permission_id: PermissionId | str) -> bool:
         """Fail closed unless this installed app can use the grant right now."""
@@ -1223,6 +1505,129 @@ class SystemPermissionPort:
             prompt_key = app_services.kAXTrustedCheckOptionPrompt
             return bool(app_services.AXIsProcessTrustedWithOptions({prompt_key: True}))
         raise RuntimeError(f"Native permission request is unavailable: {name}")
+
+    def request_native(
+        self,
+        permission_id: PermissionId | str,
+        *,
+        target: str | None = None,
+    ) -> NativeRequestOutcome:
+        """Perform ONLY the native request for one permission; never raises.
+
+        It makes no eligibility, identity or foreground check: whether we may
+        ask at all is the caller's decision (design P6), and the caller must also
+        have confirmed :meth:`usage_string_present` first. The return value
+        says what the OS may now be doing (see :data:`NativeRequestOutcome`) and
+        is NEVER evidence of a grant: only :meth:`state` is. Nothing is
+        recorded here either: no pending-restart flag, no consent file.
+
+        EVENT_POSTING is an alias of ACCESSIBILITY for asking, so both make the
+        one Accessibility request. Automation needs ``target`` (a bundle id from
+        :data:`AUTOMATION_TARGETS`); it runs through a killable child, never
+        launches the player, and is synchronous: when it returns, any dialog has
+        been answered or torn down. A failure is logged at debug and reported
+        as ``"unavailable"``.
+        """
+        try:
+            permission = PermissionId(permission_id)
+        except (ValueError, TypeError):
+            log.debug("Native request for the unknown permission %r ignored.", permission_id)
+            return "unavailable"
+        if self.platform != "darwin":
+            return "unavailable"
+        if permission is PermissionId.EVENT_POSTING:
+            permission = PermissionId.ACCESSIBILITY
+        try:
+            return self._issue_native_request(permission, target)
+        except Exception:  # noqa: BLE001 - the native request boundary never raises
+            log.debug("The native %s request failed.", permission.value, exc_info=True)
+            return "unavailable"
+
+    def _issue_native_request(
+        self, permission_id: PermissionId, target: str | None
+    ) -> NativeRequestOutcome:
+        """The per-permission native call behind :meth:`request_native` (may raise)."""
+        if permission_id is PermissionId.CREDENTIAL_STORE:
+            # Replaying the failed Keychain read is the only supported way to
+            # make macOS show its prompt again. Synchronous: it has been
+            # answered when this returns.
+            self._credential_store_recover()
+            return "no_dialog"
+        if permission_id is PermissionId.AUTOMATION:
+            return self._request_automation_target(target)
+        if permission_id is PermissionId.MICROPHONE:
+            av = self._load("AVFoundation")
+            owner = getattr(av, "AVCaptureDevice", None)
+            request = getattr(owner, "requestAccessForMediaType_completionHandler_", None)
+            if not callable(request):
+                return "unavailable"
+            # The call returns nothing: the status read beforehand is the only
+            # way to tell a dialog (not determined) from a silent no-op.
+            before = self._microphone_state()
+            request(av.AVMediaTypeAudio, lambda _granted: None)
+            return "dialog_shown" if before is PermissionState.NOT_DETERMINED else "no_dialog"
+        if permission_id is PermissionId.ACCESSIBILITY:
+            app_services = self._load("ApplicationServices")
+            trusted_with_options = getattr(app_services, "AXIsProcessTrustedWithOptions", None)
+            prompt_key = getattr(app_services, "kAXTrustedCheckOptionPrompt", None)
+            if not callable(trusted_with_options) or prompt_key is None:
+                return "unavailable"
+            # Prompting is asynchronous and does not change the return value. A
+            # False answer covers both "the dialog is up now" and "macOS
+            # suppressed it", so it is reported as a dialog that MAY be open.
+            trusted = bool(trusted_with_options({prompt_key: True}))
+            return "no_dialog" if trusted else "dialog_shown"
+        if permission_id is PermissionId.SCREEN_RECORDING:
+            quartz = self._load("Quartz")
+            request = getattr(quartz, "CGRequestScreenCaptureAccess", None)
+            if not callable(request):
+                return "unavailable"
+            return "no_dialog" if bool(request()) else "dialog_shown"
+        if permission_id is PermissionId.INPUT_MONITORING:
+            # Asked through the request calls only, never by creating an event
+            # tap (BUG-058 class). The tri-state read beforehand tells a dialog
+            # (not determined) from a decision already on file.
+            before = self._iohid_state(_IOHID_REQUEST_LISTEN_EVENT)
+            quartz = self._load("Quartz")
+            request = getattr(quartz, "CGRequestListenEventAccess", None)
+            if callable(request):
+                answer: bool | None = bool(request())
+            else:
+                answer = self._iohid_request(_IOHID_REQUEST_LISTEN_EVENT)
+            if answer is None:
+                return "unavailable"
+            if answer or before in {PermissionState.GRANTED, PermissionState.DENIED}:
+                return "no_dialog"
+            return "dialog_shown"
+        raise RuntimeError(f"No native request exists for {permission_id.value}")
+
+    def _request_automation_target(self, target: str | None) -> NativeRequestOutcome:
+        """Ask for ONE player's Automation consent through a killable child.
+
+        The child is a guarded AppleScript, so a player that is not running is
+        left alone (nothing is launched, hidden or otherwise) and nothing is
+        asked for it. Nothing here holds a lock or writes a record.
+        """
+        import subprocess  # lazy: only the darwin request path reaches this
+
+        if target is None or not _is_automation_target(target):
+            log.debug("Automation consent needs a scriptable player, got %r.", target)
+            return "unavailable"
+        try:
+            completed = self._automation_consent_runner(_automation_consent_script(target))
+        except subprocess.TimeoutExpired:
+            # The runner has killed the child, so no dialog is left open; the
+            # state read tells whether the user answered in time.
+            log.debug("The Automation consent for %s was not answered in time.", target)
+            return "no_dialog"
+        if completed is None:
+            return "unavailable"
+        log.debug(
+            "The Automation consent run for %s ended with rc=%s.",
+            target,
+            getattr(completed, "returncode", None),
+        )
+        return "no_dialog"
 
     def request(
         self,
@@ -1557,12 +1962,18 @@ __all__ = [
     "AUTOMATION_TARGETS",
     "EXPECTED_BUNDLE_ID",
     "FEATURE_REQUIREMENTS",
+    "PANE_FAMILY",
+    "REQUEST_CLASS",
+    "SETTINGS_PATH_TEXT",
     "AppIdentity",
+    "NativeRequestOutcome",
     "PermissionId",
     "PermissionOperation",
     "PermissionState",
     "PermissionStatus",
+    "RequestClass",
     "SystemPermissionPort",
     "active_features",
     "get_system_permission_port",
+    "settings_path_text",
 ]
