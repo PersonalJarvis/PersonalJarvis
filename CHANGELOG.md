@@ -9,6 +9,10 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [2.5.1] — 2026-10-01
+
 ### Fixed
 
 - Restore the installation-guide link on the PyPI package page and unblock package publication.
