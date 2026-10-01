@@ -9,6 +9,10 @@
 #
 # Pin all signed artifacts to LF unconditionally on every platform.
 
+# Every POSIX shell script needs LF, including development and verification
+# helpers run from Windows checkouts through Git Bash, WSL or Docker.
+*.sh                        text eol=lf
+
 install/install.sh           text eol=lf
 install/install.ps1          text eol=lf
 install/installer.py         text eol=lf
