@@ -15,8 +15,8 @@ versioning per [SemVer](https://semver.org/).
 
 ### Fixed
 
-- **macOS: the downloaded app can use its permissions.** The `.dmg` app was never accepted as an installed app, so with every permission granted its microphone, shortcuts and Computer Use stayed disabled and no Allow button was offered. It is now recognised, `jarvis permissions` finds it, and "Ask again" resets its own permission records.
-- **macOS: the release image can be signed and notarized.** `packaging/macos/build.sh` now imports the Developer ID certificate secrets the workflow already passed along; until the Apple secrets are added the image stays ad-hoc signed (first launch needs Open Anyway, updates re-ask the permissions).
+- **macOS: the downloaded app is recognised as an installed app.** The `.dmg` app was never accepted as one, so (checked against faked macOS frameworks, not yet on a Mac) its microphone, shortcuts and Computer Use stayed disabled even with every permission granted, and no Allow button was offered. It is now recognised, `jarvis permissions` finds it, and "Ask again" targets its own permission records.
+- **macOS: the release workflow is prepared to sign and notarize the image.** `packaging/macos/build.sh` now imports the Developer ID certificate secrets the workflow already passed along (rehearsed and run against a stand-in keychain command, not yet end to end). Until the Apple secrets are added the image stays ad-hoc signed: the first launch needs Open Anyway and an update can ask for the permissions again.
 - Restore the installation-guide link on the PyPI package page and unblock package publication.
 
 This patch includes all v2.5.0 features: desktop pets, profile and keyboard-shortcut settings, workspace shell tabs, improved terminal editing, task recovery, native updates, and subscription-bound background work.

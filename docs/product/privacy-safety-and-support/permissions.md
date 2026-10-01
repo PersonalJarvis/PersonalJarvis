@@ -100,10 +100,12 @@ enabled features are missing. **Not now** puts those rows off: they stay in
 Settings, and the banner returns after a week or as soon as a different row
 needs attention.
 
-Grants made this way are recorded against the app's local signing
-certificate, which the installer creates once (macOS asks for your login
-password that one time). They survive every later update and rebuild of the
-app.
+For the app the installer builds on your Mac, grants made this way are recorded
+against a local signing certificate the installer creates once (macOS asks for
+your login password that one time), so they survive later updates and rebuilds.
+The app from the downloaded disk image is signed differently: unless it carries a
+stable Apple signature, macOS treats each new version as a new app and asks for
+its permissions again.
 
 Grant one item at a time instead:
 
@@ -228,7 +230,7 @@ Use](computer-use).
 | What you see | What it usually means | What to do |
 |---|---|---|
 | App identity warning or no permission actions | Jarvis is not the foreground installed app (the installer's app or the disk-image app in **Applications**), or the session is headless | Quit it and open the installed Personal Jarvis app in an interactive macOS session |
-| Permissions are asked for again after an update | The new version was signed differently, so macOS treats it as a new app and discarded the old grants | Allow them once more; the card says so when it detects this. Releases signed with a stable Apple certificate keep their grants |
+| Permissions are asked for again after an update | The new version was signed differently, so macOS treats it as a new app and discarded the old grants | Allow them once more. A build signed with a stable certificate keeps its grants across updates; an unsigned (ad-hoc) one does not |
 | **Denied** or **Not allowed**, but no prompt appears | macOS already recorded a choice or the native check cannot distinguish it | Use **Ask again** for a denied privacy row, then **Allow**; otherwise use **Open Settings**. For Keychain, use **Allow** |
 | **Restart now** refuses to restart | A Jarvis-Agent mission is still running | Finish or stop the mission, then use **Restart now** again |
 | The card says **Not required**, but the feature is blocked | The host is not macOS, or a browser, device, display session, Wayland, or file boundary owns the failure | Test the feature directly and review the relevant host or browser settings |

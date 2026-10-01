@@ -43,9 +43,9 @@ your setup, permissions, and the tools you connect.
 
 > **macOS:** the downloaded disk image is not Apple-notarized yet, so the first
 > launch needs **System Settings > Privacy & Security > Open Anyway** (macOS 15;
-> right-click > Open works up to macOS 14), and each update asks for the macOS
-> permissions again. The one-line installer below builds the app on your Mac and
-> needs neither.
+> right-click > Open works up to macOS 14), and an update can ask for the macOS
+> permissions again. The one-line installer below builds the app on your Mac, so
+> it needs no Open Anyway step.
 
 Prefer the command line? Use the installer below.
 

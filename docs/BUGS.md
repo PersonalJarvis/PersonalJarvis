@@ -15514,15 +15514,15 @@ safe in destructors); `__del__` only enqueues and takes no lock. The worker is
 started in ordinary code (`LockedRecognizer.__init__`, `release_recognizer`).
 Guard: `tests/unit/plugins/wake/test_vosk_native.py::test_dropping_the_proxy_inside_an_executor_submit_does_not_deadlock`.
 
-## BUG-222: the downloaded macOS app could not use a single permission — it was never accepted as "the installed app" (HIGH, FIXED 2026-10-01)
+## BUG-222: the downloaded macOS app could not use a single permission — it was never accepted as "the installed app" (HIGH, FIXED 2026-10-01, unit-tested only)
 
-**Symptom.** On the app from the release `.dmg`, macOS permissions looked
-impossible. With microphone, screen, accessibility and input access all given in
-System Settings, every feature still read "not ready", the microphone never
-captured (wake word and voice dead), the banner told the user to relaunch the
-app from its installed location — where it already was — and no **Allow** or
-**Open Settings** button was offered. The app did not even appear in the
-Microphone list of System Settings, because it never got as far as asking.
+**Symptom (reproduced against the port with faked macOS frameworks; not yet
+observed on a Mac).** Run as the `.dmg` app with every grant present, the
+permission screens read every feature "not ready", refuse microphone capture
+(wake word and voice dead), tell the user to relaunch the app from its installed
+location — where it already is — and offer no **Allow** or **Open Settings**
+button. With no request button, a user has no in-app way to be asked at all, and
+enabling the app by hand in System Settings would not change the verdict.
 
 **Cause.** `SystemPermissionPort` accepted exactly one bundle id,
 `com.personal-jarvis.desktop`, the managed local bundle. The `.dmg` build
@@ -15541,8 +15541,9 @@ permission surface — and nothing ever ran the port as the `.dmg` app.
   identity; `permissions.ACCEPTED_BUNDLE_IDS` is what the identity gate, the
   `jarvis permissions` CLI and the UI's "expected id" now use. Anything else
   (Terminal, Python, an app that merely shares the name) is still refused.
-- `tccutil reset` targets the id of the app that is RUNNING. Resetting the
-  managed id for the `.dmg` app reported success and changed nothing.
+- `tccutil reset` targets the id of the app that is RUNNING. It is scoped to one
+  bundle id, so resetting the managed id would have left the `.dmg` app's own
+  rows untouched (the documented behaviour of `tccutil`; not observed).
 - `jarvis permissions request|open-settings` find the `.dmg` app instead of
   reporting "app not found" (`installed_macos_app_bundle_path`).
 
@@ -15552,11 +15553,14 @@ id), `tests/unit/setup/test_macos_dmg_identity.py` (the literal in `jarvis.spec`
 equals the branding constant, the two ids stay distinct, the lookup),
 `tests/unit/cli_ctl/test_commands_permissions.py`.
 
+**Verification.** Unit level only, on Linux, against faked AppKit / Quartz /
+AVFoundation; the new `.dmg` tests fail on the old code. Nothing was run on a Mac.
+
 **Class rule.** A fail-closed identity gate needs a test that runs it as EVERY
 shipped identity. An id duplicated in a build spec that cannot import the
 constant needs a parity test, or it drifts silently.
 
-## BUG-223: every public macOS download was ad-hoc signed — the first launch was blocked and every update forgot every grant (HIGH, FIXED 2026-10-01; signing needs the maintainer's Apple account)
+## BUG-223: every public macOS download was ad-hoc signed — the first launch was blocked and every update forgot every grant (HIGH, FIXED IN CODE 2026-10-01; signing still needs the maintainer's Apple account)
 
 **Symptom.** The `.dmg` behind the README's macOS link opens with "Apple cannot
 check it for malicious software", and after each update the app asks for every
@@ -15575,7 +15579,7 @@ and that build is the published asset.
 **Cause, two layers.**
 
 1. No Developer ID identity is configured: that needs an Apple Developer Program
-   membership only the maintainer can hold.
+   membership and its credentials, which only the maintainer can provide.
 2. Configuring it would not have worked. The workflow passed
    `APPLE_CERTIFICATE_P12_BASE64` / `APPLE_CERTIFICATE_PASSWORD` to `build.sh`,
    which never read them; a GitHub runner starts with an empty keychain, so
@@ -15583,31 +15587,39 @@ and that build is the published asset.
 
 An ad-hoc signature is a hash of the app's bytes, and macOS pins every privacy
 grant to it: each release is a stranger and its grants are gone (BUG-083,
-BUG-217). A Developer ID signature keeps one identity — Team ID plus bundle id —
-for the life of the product, which is why apps from the big vendors never ask
-twice.
+BUG-217). A Developer ID signature gives the app one identity — Team ID plus
+bundle id — across versions, so its grants can persist. (BUG-218 calls the
+`.dmg` build "notarized": it is built to be, but every image published so far is
+ad-hoc.)
 
 **Fix.** `packaging/macos/build.sh` imports the certificate into a throw-away
 keychain when both secrets are present (search list restored and keychain
 deleted on exit), reads the signing identity from it when
 `APPLE_SIGNING_IDENTITY` is not given, and refuses a certificate without its
 password before the long freeze. No secret reaches the log. Without secrets
-nothing changes. **Still open, by nature:** the six `APPLE_*` secrets
-(`docs/desktop-installers.md` §4) have to be added before a build can be signed
-and notarized.
+nothing changes. **Still open, by nature:** the Apple secrets (five required,
+`APPLE_SIGNING_IDENTITY` optional; `docs/desktop-installers.md` §4) have to be
+added before a build can be signed and notarized, and that path has never run.
 
 **Guards.** `tests/unit/packaging/test_macos_build_script.py` rehearses the
-script with `DRY_RUN=1` in a scratch copy of the layout: unchanged ad-hoc path
-without secrets, import order, identity read back, no secret in the output,
-early refusal.
+script with `DRY_RUN=1` in a scratch copy of the layout (unchanged ad-hoc path
+without secrets, import order, no secret in the output, early refusal) and runs
+the REAL import branch against a stand-in `security` command: call order, the
+identity read back from the certificate, search list restored and keychain
+deleted on success and on failure, no certificate file left behind.
 
-## BUG-224: macOS asked for Music and Spotify control — and opened both apps — for a feature that is off (MEDIUM, FIXED 2026-10-01)
+**Verification.** Off a Mac only: `bash -n`, ShellCheck `-S style`, the tests
+above. Not run: a real keychain, `codesign`, `notarytool`, `stapler`, or the
+bash 3.2 parse gate (`scripts/ci/check_shell_bash32.py` needs a Mac or Docker).
 
-**Symptom.** "Set up everything" and the app-wide banner demanded the
-Automation (Music & Spotify) permission on every Mac, launched Music and
-Spotify hidden to show the consent dialog, and kept the banner on screen until
-it was answered — although "Mute music while dictating" is opt-in and off by
-default.
+## BUG-224: macOS asked for Music and Spotify control — and opened both apps — for a feature that is off (MEDIUM, FIXED 2026-10-01, unit-tested only)
+
+**Symptom (from the code paths of BUG-217's guided flow; not yet observed on a
+Mac).** "Set up everything" and the app-wide banner demanded the Automation
+(Music & Spotify) permission on every Mac — Music ships with macOS — started
+Music (and Spotify, when installed) hidden to show the consent dialog, and kept
+the banner on screen until it was answered, although "Mute music while
+dictating" is opt-in and off by default.
 
 **Cause.** `FEATURE_REQUIREMENTS` marked every permission needed by some
 feature as missing, whether or not the user had turned that feature on.
@@ -15630,3 +15642,7 @@ permissions stay wanted, operations report the same policy, the note retires),
 `tests/unit/ui/web/test_permissions_routes.py`, `usePermissions.test.tsx`,
 `PermissionsAlertBanner.test.tsx`, `PermissionsPanel.test.tsx`,
 `src/lib/permissionsBannerDismissal.test.ts`.
+
+**Verification.** Unit tests with faked native frameworks, vitest, a production
+build and a light/dark look at the banner and the rows in Chromium on Linux.
+Nothing was run in the macOS desktop app.

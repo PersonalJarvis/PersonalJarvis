@@ -26,7 +26,7 @@ which is how the flow is rehearsed off a Mac.
 
 ## Signing and notarization
 
-All four settings come from the environment, so the same script serves a
+All settings come from the environment, so the same script serves a
 maintainer's Mac and both GitHub runners:
 
 | Variable | Meaning |
@@ -45,10 +45,13 @@ keychain (removed again on exit, search list restored), reads the signing
 identity back from it when `APPLE_SIGNING_IDENTITY` is not given, and never
 prints a secret. A Mac that already holds the identity in its login keychain
 needs neither variable. Getting the certificate needs an Apple Developer Program
-membership: create a *Developer ID Application* certificate in the developer
-portal, export it from Keychain Access as `.p12` together with its chain, encode
-it with `base64 -i certificate.p12 | pbcopy`, and store the six values as GitHub
-Actions secrets.
+membership. The steps, as Apple documents them and not yet followed end to end
+for this project: create a *Developer ID Application* certificate in the
+developer portal, export it from Keychain Access as `.p12` together with its
+chain, encode it with `base64 -i certificate.p12 | pbcopy`, and store the five
+required values (`APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and
+the two `APPLE_CERTIFICATE_*` ones) as GitHub Actions secrets;
+`APPLE_SIGNING_IDENTITY` is optional on CI.
 
 With the identity set, the script signs every nested Mach-O object inside the
 bundle before sealing the bundle itself (Apple's guidance is inside-out;
@@ -71,16 +74,19 @@ That build is fine for local testing and must not be published.
 
 * **Signed and notarized build:** a normal double-click. Nothing to explain.
 * **Unsigned or ad-hoc build** (every image published so far): macOS refuses the
-  first double-click ("Personal Jarvis can't be opened because Apple cannot
-  check it for malicious software"). On macOS 15 and later, open **System
-  Settings > Privacy & Security**, scroll to the message about Personal Jarvis,
-  choose **Open Anyway** and confirm with your password. Up to macOS 14,
-  **right-click (or Control-click) the app in Finder, choose Open, then Open
-  again** also works. macOS remembers the decision for that copy of the app.
-  Alternatively `xattr -dr com.apple.quarantine "/Applications/Personal Jarvis.app"`.
-  An ad-hoc signature is a hash of the app's bytes, so every update is a new app
-  to macOS and every permission is asked for again; only a Developer ID
-  signature keeps one identity across versions.
+  first double-click (the dialog says Apple cannot check the app, or could not
+  verify it is free of malware, depending on the macOS version). On macOS 15 and
+  later, open **System Settings > Privacy & Security**, scroll to the message
+  about Personal Jarvis, choose **Open Anyway** and confirm with your password.
+  Up to macOS 14, **right-click (or Control-click) the app in Finder, choose
+  Open, then Open again** also works. macOS remembers the decision for that copy
+  of the app. Alternatively
+  `xattr -dr com.apple.quarantine "/Applications/Personal Jarvis.app"`. These
+  steps follow Apple's published behaviour and have not been tried on a Mac for
+  this project. An ad-hoc signature is a hash of the app's bytes, so an update is
+  a new app to macOS and its permissions are asked for again; a downloaded image
+  keeps one identity across versions only when it is signed with a stable
+  certificate, which for a public download means a Developer ID one.
 
 ## Permission prompts
 
@@ -143,19 +149,25 @@ The in-app updater downloads the `.dmg` for this Mac's architecture from the
 GitHub Release, verifies it against `installers-SHA256SUMS.txt` from the same
 release, mounts it with `hdiutil attach`, replaces the running
 `Personal Jarvis.app` atomically, detaches the image and relaunches with
-`open`. Because the bundle identifier does not change, the privacy grants the
-user already gave survive the update - that is the entire reason every launch
-path has to enter through one bundle identity.
+`open`. Whether the privacy grants the user already gave survive the update
+depends on the signature, not on the bundle identifier alone: with a Developer
+ID signature the identity (bundle id plus Team ID) is the same in every version
+and the grants stay; with the ad-hoc images published so far each version is a
+new app to macOS and every permission is asked for again. Either way, every
+launch path has to enter through one bundle identity.
 
 ## What has NOT been verified
 
 The macOS CI runners build and publish the **ad-hoc** images (PyInstaller,
 `codesign -s -`, `hdiutil`; the v2.5.0 build log shows it). The signed and
-notarized path has never run for real: it needs the six secrets above, and with
-them the first real `codesign`, `notarytool` and `stapler` pass, Gatekeeper on a
-downloaded image, and the permission prompts of a signed app are all still to be
-seen. What has been checked off a Mac: `bash -n`, ShellCheck 0.11.0 at `-S style`
-with zero findings, and a `DRY_RUN=1` rehearsal of the unsigned path, the
-certificate import and the signed/notarized path
+notarized path has never run for real: it needs the Apple secrets above, and with
+them the first real `codesign`, `notarytool` and `stapler` pass, the first
+import into a real keychain, Gatekeeper on a downloaded image, and the permission
+prompts of a signed app are all still to be seen. The certificate export steps
+and the first-launch steps for each macOS version are written from Apple's
+documentation, not from a run. What has been checked off a Mac: `bash -n`,
+ShellCheck 0.11.0 at `-S style` with zero findings, a `DRY_RUN=1` rehearsal of
+the unsigned path, the certificate import and the signed/notarized path, and the
+real import branch run against a stand-in `security` command
 (`tests/unit/packaging/test_macos_build_script.py`), including that no secret
 reaches the output.

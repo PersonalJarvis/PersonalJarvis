@@ -159,8 +159,11 @@ signing step ever reads a file from the repository.
 Without the macOS secrets the published `.dmg` is ad-hoc signed and not
 notarized: macOS blocks the first launch (System Settings > Privacy & Security >
 Open Anyway) and treats every update as a new app, so every permission is asked
-for again. `packaging/macos/build.sh` imports the certificate into a temporary
-keychain on the runner; `packaging/macos/README.md` lists how to obtain it.
+for again. `packaging/macos/build.sh` is written to import the certificate into
+a temporary keychain on the runner and read the signing identity from it; that
+step has been rehearsed (`DRY_RUN`) and run against a stand-in `security`
+command, but not yet against a real keychain or with an Apple account.
+`packaging/macos/README.md` lists how to obtain the certificate.
 
 On Windows the workflow signs the **setup executable**. That is the file the
 browser marks with Mark-of-the-Web, so it is the signature SmartScreen weighs;
