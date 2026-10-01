@@ -136,6 +136,30 @@ def frozen_self_command(
     return [executable]
 
 
+def restart_workdir(
+    source_root: str,
+    *,
+    frozen: bool | None = None,
+    environ: dict[str, str] | None = None,
+) -> str:
+    """Directory the restart helper runs in and reads ``jarvis.toml`` from.
+
+    A source install uses its checkout. A frozen build must not: inside an
+    AppImage the bundle is a private mount that disappears with the old
+    process, so a helper parked there cannot even spawn the new version. Its
+    ``jarvis.toml`` lives in the per-user data directory the runtime hook
+    points ``JARVIS_CONFIG`` at, so that directory is the stable choice.
+    """
+    is_frozen_build = _frozen() if frozen is None else frozen
+    if not is_frozen_build:
+        return source_root
+    env = os.environ if environ is None else environ
+    config = (env.get("JARVIS_CONFIG") or "").strip()
+    if config and Path(config).parent.is_dir():
+        return str(Path(config).parent)
+    return str(Path.home())
+
+
 def relauncher_command(
     pid: int,
     cwd: str,

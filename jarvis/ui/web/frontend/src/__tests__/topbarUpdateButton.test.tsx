@@ -454,4 +454,54 @@ describe("TopBar update button", () => {
     await waitFor(() => expect(urls).toContain("/api/update/apply?force=true"));
     expect(urls.some((url) => url.startsWith("/api/settings/restart-app"))).toBe(false);
   });
+
+  it("tells the user to restart when nothing could close the app after an install", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.startsWith("/api/update/status")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              managed: true,
+              current: "1.5.3",
+              latest: "1.6.0",
+              update_available: true,
+              notes: null,
+            }),
+          };
+        }
+        if (url.startsWith("/api/update/apply")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              ok: true,
+              restart_required: false,
+              quitting: false,
+              handover: "PersonalJarvis.AppImage was replaced",
+            }),
+          };
+        }
+        return { ok: true, status: 200, json: async () => ({}) };
+      }),
+    );
+
+    render(<TopBar />);
+    await openAndInstall();
+
+    await waitFor(() =>
+      expect(
+        useEventStore
+          .getState()
+          .toasts.some(
+            (toast) => toast.kind === "warning" && toast.message.includes("AppImage was replaced"),
+          ),
+      ).toBe(true),
+    );
+    // Not stuck on "Restarting…": the control is usable again.
+    expect(screen.queryByText("Restarting…")).toBeNull();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
 });

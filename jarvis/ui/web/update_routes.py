@@ -925,6 +925,29 @@ def _running_missions(request: Request | None) -> list[str]:
         return []
 
 
+def _refuse_if_missions_run(request: Request | None, *, force: bool) -> None:
+    """Raise the restart route's 409 when quitting now would kill missions."""
+    if force:
+        return
+    running = _running_missions(request)
+    if running:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "missions_running",
+                "missions": [{"id": mid, "title": ""} for mid in running],
+            },
+        )
+
+
+def _desktop_can_quit(request: Request | None) -> bool:
+    """True when a desktop window exists that ``_quit_for_update`` can close."""
+    if request is None:
+        return False
+    desktop = getattr(request.app.state, "desktop_app", None)
+    return callable(getattr(desktop, "request_quit", None))
+
+
 def _quit_for_update(request: Request | None) -> bool:
     """Close the desktop app so the handed-over installer can take its place.
 
@@ -960,16 +983,7 @@ async def _apply_frozen(
     single byte is downloaded — and refuses with 409 unless ``force`` is set.
     """
     _progress.begin(INSTALL_KIND_FROZEN)
-    if not force:
-        running = _running_missions(request)
-        if running:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": "missions_running",
-                    "missions": [{"id": mid, "title": ""} for mid in running],
-                },
-            )
+    _refuse_if_missions_run(request, force=force)
     current = _running_version()
     asset_name = _frozen_asset_name()
     if asset_name is None:
@@ -1042,10 +1056,23 @@ async def _apply_frozen(
         # the time it returns the verify phase is already over — the window is
         # closed here rather than announced, to keep the bar truthful.
         _progress.advance(PHASE_VERIFYING, 1.0, detail=None)
+        # The download can take minutes; a mission started meanwhile must get
+        # the same protection, so the guard runs again right before the point
+        # of no return.
+        _refuse_if_missions_run(request, force=force)
         _progress.enter(PHASE_INSTALLING)
+        # Without a window to close (``jarvis serve``, a browser-only AppImage)
+        # this process keeps running, so a relaunch waiter would only start a
+        # second instance that bounces off the lock: the user restarts instead.
+        relaunch = _desktop_can_quit(request)
         # hdiutil, a directory swap and a detached spawn all block; keep the
         # event loop (and therefore the UI this answer travels back over) free.
-        handover = await asyncio.to_thread(apply_installer, installer)
+        handover = await asyncio.to_thread(
+            lambda: apply_installer(installer, relaunch=relaunch)
+        )
+    except HTTPException:
+        shutil.rmtree(workdir, ignore_errors=True)
+        raise
     except InstallerUpdateError as exc:
         shutil.rmtree(workdir, ignore_errors=True)
         _progress.fail(str(exc))
@@ -1066,9 +1093,12 @@ async def _apply_frozen(
     if not quitting:
         handover = f"{handover} — restart Personal Jarvis to finish the update"
 
-    # The download is deliberately NOT deleted: on Windows the installer that
-    # replaces this app is running from it right now. The OS reclaims the temp
-    # directory; deleting it here would kill the update mid-flight.
+    # On Windows the installer that replaces this app is running from the
+    # download right now, so it stays (deleting it would kill the update). On
+    # macOS and Linux the swap is already done, and nothing reclaims a
+    # hundreds-of-MB file in the temp directory on its own.
+    if sys.platform != "win32":
+        shutil.rmtree(workdir, ignore_errors=True)
     log.info("[update] %s installed from %s (%s)", release_tag, asset.name, workdir)
 
     global _status_cache, _status_cache_until, _status_cache_root
@@ -1227,7 +1257,10 @@ async def update_apply(request: Request, force: bool = False) -> dict[str, objec
                 return await _apply_frozen(request, force=force)
             return await _apply_managed()
         except HTTPException as exc:
-            _progress.fail(str(exc.detail))
+            detail = exc.detail
+            if isinstance(detail, dict) and detail.get("error") == "missions_running":
+                detail = "missions are running — confirm to update anyway"
+            _progress.fail(str(detail))
             raise
         except Exception as exc:  # noqa: BLE001 — re-raised; this only records it
             _progress.fail(f"{type(exc).__name__}: {exc}")

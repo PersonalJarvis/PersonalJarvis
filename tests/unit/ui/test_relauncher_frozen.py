@@ -173,3 +173,25 @@ def test_entry_point_dispatches_the_relauncher_flag() -> None:
     )
     assert result.returncode == 2
     assert "usage:" not in result.stderr.lower()
+
+
+# --------------------------------------------------------------------------- #
+# restart_workdir — where the helper runs and reads jarvis.toml from
+# --------------------------------------------------------------------------- #
+def test_source_install_restarts_from_its_checkout() -> None:
+    assert relauncher.restart_workdir("/repo", frozen=False, environ={}) == "/repo"
+
+
+def test_frozen_build_restarts_from_the_config_directory(tmp_path: Path) -> None:
+    """An AppImage bundle is a mount that dies with the old process."""
+    config = tmp_path / "jarvis.toml"
+    config.write_text("", encoding="utf-8")
+    assert relauncher.restart_workdir(
+        "/run/appimage/.mount_abc", frozen=True, environ={"JARVIS_CONFIG": str(config)}
+    ) == str(tmp_path)
+
+
+def test_frozen_build_without_a_config_falls_back_to_home() -> None:
+    assert relauncher.restart_workdir("/run/appimage/.mount_abc", frozen=True, environ={}) == str(
+        Path.home()
+    )
