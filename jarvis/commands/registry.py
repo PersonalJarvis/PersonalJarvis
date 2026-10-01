@@ -408,8 +408,10 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "prompt is the complete task the agent runs each time: sources, steps, "
                 "output. Speak the returned next_run; on timezone_required ask the user."
             ),
+            # Not dangerous: the user ordered it, and a routine is paused or
+            # deleted in one step (a second spoken yes was a live complaint).
             method="POST", path="/api/society/agents/{agent_id}/routines",
-            path_params=("agent_id",), ui_section="agents", dangerous=True,
+            path_params=("agent_id",), ui_section="agents",
             params={"type": "object", "properties": {
                 "agent_id": _str_param("Agent id or exact name.", min_length=1),
                 "title": _str_param("Short routine name.", min_length=1, max_length=200),
