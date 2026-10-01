@@ -935,6 +935,25 @@ class FakeTCC:
             return AE_EVENT_NOT_PERMITTED
         return AE_EVENT_WOULD_REQUIRE_USER_CONSENT
 
+    def automation_consent_runner(self, script: str) -> SimpleNamespace:
+        """Seam ``automation_consent_runner``: the killable ``osascript`` child.
+
+        Stands in for ``subprocess.run(["osascript", "-e", script])`` of the
+        port's Automation request. The guarded script only sends its Apple Event
+        when the player RUNS, so a player that is not running is left alone and
+        nothing is asked (the AppleScript answers ``-``). The runner is
+        synchronous like the real child; a ``NEVER_ANSWERED`` dialog stays open
+        for :meth:`answer` exactly as in :meth:`automation_probe`.
+        """
+        for _name, bundle_id in AUTOMATION_TARGETS:
+            if f'"{bundle_id}"' not in script:
+                continue
+            running = bundle_id in self._running
+            if running:
+                self.automation_probe(bundle_id, True)
+            return SimpleNamespace(returncode=0, stdout="+" if running else "-", stderr="")
+        return SimpleNamespace(returncode=1, stdout="", stderr="unknown target")
+
     # --------------------------------------------------------- credential store
 
     def credential_store_backend(self) -> str:
@@ -1008,6 +1027,8 @@ class FakeTCC:
             "credential_store_backend": self.credential_store_backend,
             "credential_store_recover": self.credential_store_recover,
             "automation_probe": self.automation_probe,
+            "automation_consent_runner": self.automation_consent_runner,
+            "iohid_request": self.iohid_request,
         }
         seams.update(overrides)
         return SystemPermissionPort(**seams)
