@@ -1125,3 +1125,38 @@ def test_steering_tools_are_declared_before_the_size_budget_runs_out(ledger):
     runtime = LiveTools(Crowded(), ledger, "s", language="en", backend_model="")
     declared = runtime.declarations()
     assert "workspace-orchestrate" in {runtime._names.get(d["name"]) for d in declared}
+
+
+@pytest.mark.asyncio
+async def test_a_read_is_not_discarded_when_the_user_kept_talking(ledger):
+    class Reads(Gateway):
+        def catalog(self):
+            return (
+                SupervisorToolDescriptor("list-agents", "List agents", {"type": "object"}, "safe"),
+                *super().catalog(),
+            )
+
+    gateway = Reads()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    runtime.revision = 2
+    read = {"name": "list-agents", "arguments_json": "{}"}
+    assert (await runtime.execute("r", "call_tool", read, 1))["success"]
+    action = {"name": "write-file", "arguments_json": '{"text":"x"}'}
+    assert (await runtime.execute("w", "call_tool", action, 1))["status"] == "superseded"
+
+
+@pytest.mark.parametrize(
+    ("fragment", "counts"),
+    [("Mhm.", False), (" hm", False), ("Ähm", False), (" Ja", True), ("stop", True)],  # i18n-allow
+)
+def test_only_words_beyond_a_backchannel_count_as_new_input(fragment, counts):
+    from jarvis.live.session import _says_something
+
+    assert _says_something(fragment) is counts
+
+
+def test_a_refusal_that_ran_nothing_does_not_block_reconnecting(ledger):
+    ledger.claim("s", "bye", "end_call", {}, 0)
+    ledger.finish("s", "bye", {"success": False, "executed": False, "error": "Stay on the call."})
+    resumable, _ = ledger.recovery_state("s")
+    assert resumable

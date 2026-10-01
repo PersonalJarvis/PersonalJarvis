@@ -233,9 +233,13 @@ class LiveTools:
         operation_token = self.cancel_token
         if operation_token.is_cancelled():
             return {"success": False, "status": "cancelled"}
-        if revision != self.revision:
+        if revision != self.revision and not self._reads_only(name, args):
+            # Only an action can be overtaken by what the user said meanwhile;
+            # a search or a read answers the same either way (11 reads were
+            # discarded live and re-bought as paid rounds).
             return {
                 "success": False,
+                "executed": False,
                 "status": "superseded",
                 "error": "The request changed before execution. Re-evaluate the latest user input.",
             }
@@ -261,6 +265,7 @@ class LiveTools:
                 # called end_call instead of confirm_action and the call dropped.
                 refusal: dict = {
                     "success": False,
+                    "executed": False,
                     "error": "The user did not ask to hang up. Stay on the call.",
                 }
                 if self._pending:
@@ -294,6 +299,7 @@ class LiveTools:
                 # Say why, or the model asks the same question again and again.
                 return {
                     "success": False,
+                    "executed": False,
                     "error": "This action has not been explicitly approved.",
                     "reason": "no pending approval"
                     if pending is None
@@ -328,6 +334,7 @@ class LiveTools:
         if descriptor is None:
             return {
                 "success": False,
+                "executed": False,
                 "error": "Tool is no longer available. Discover the current catalog.",
             }
         import jsonschema  # type: ignore[import-untyped]
@@ -382,6 +389,15 @@ class LiveTools:
                 "next_step": _APPROVAL_NEXT_STEP,
             }
         return self._result(result)
+
+    def _reads_only(self, name: str, args: dict) -> bool:
+        """True for a call that only reads: tool search or a safe-tier tool."""
+        if name == "discover_tools":
+            return True
+        if name == "call_tool":
+            name = str(args.get("name", ""))
+        canonical = self._names.get(name, name)
+        return any(d.name == canonical and d.risk_tier == "safe" for d in self.catalog())
 
     def _user_approved(self) -> bool:
         """True when the latest user text is a short, unvetoed yes in any locale.
