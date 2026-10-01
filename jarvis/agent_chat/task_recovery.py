@@ -53,11 +53,13 @@ class ToolRecovery:
     unresolved: dict[tuple[str, str], str] = field(default_factory=dict)
     declined: bool = False
     blocked: bool = False
+    had_tool_calls: bool = False
 
     def observe(self, event: dict[str, Any]) -> None:
         payload = event.get("payload") or {}
         call_id = str(payload.get("call_id") or "")
         if event.get("kind") == "tool_call":
+            self.had_tool_calls = True
             arguments = json.dumps(payload.get("input") or {}, sort_keys=True, default=str)
             self.calls[call_id] = (
                 str(payload.get("name") or "tool"),

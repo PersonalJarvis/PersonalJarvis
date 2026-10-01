@@ -2663,13 +2663,13 @@ async def run_cli_turn(
             recovery.declined = True
         return answer
 
-    handle = replace(handle, emit=observe, request_approval=ask)
     if session.surface == "society":
         from jarvis.society.reply_preference import resolve_agent_reply_language
 
         handle.output_language = await resolve_agent_reply_language(
             session.session_id, user_text, getattr(handle, "output_language", "")
         )
+    handle = replace(handle, emit=observe, request_approval=ask)
     if getattr(handle, "output_language", "") and not user_text.startswith("/goal"):
         user_text += "\nRespond in this language: " + handle.output_language
     ident: jarvis_harness.Identity | None = None
@@ -2723,6 +2723,7 @@ async def run_cli_turn(
         if (
             outcome.status == "error"
             and resume
+            and not recovery.had_tool_calls
             and _resume_was_lost(outcome.error)
             and not handle.cancel.is_set()
         ):
@@ -2748,7 +2749,7 @@ async def run_cli_turn(
         if (
             (
                 (outcome.status == "error" and _tool_abort_is_recoverable(outcome.error))
-                or (outcome.status == "done" and receipt_hint is not None)
+                or (outcome.status in {"done", "error"} and receipt_hint is not None)
             )
             and not recovery.declined
             and not recovery.blocked

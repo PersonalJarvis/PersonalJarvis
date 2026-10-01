@@ -223,6 +223,48 @@ async def test_user_denial_never_starts_a_second_attempt(turn, monkeypatch):
     assert len(attempts) == 1
 
 
+async def test_resolved_language_remains_visible_to_the_caller(turn, monkeypatch):
+    handle, _, origin = turn
+
+    async def once(*args, **kwargs):
+        return runner_cli._Outcome("done", None, {}, None, "s")
+
+    monkeypatch.setattr(runner_cli, "_run_cli_once", once)
+    await runner_cli.run_cli_turn(handle, origin.user_text, "claude-cli", identity=True)
+    assert handle.output_language == "en"
+
+
+async def test_missing_file_after_progress_does_not_restart_a_fresh_conversation(turn, monkeypatch):
+    handle, _, origin = turn
+    resumes = []
+
+    async def once(handle, prompt, runner, resume, **kwargs):
+        resumes.append(resume)
+        if len(resumes) == 1:
+            for call_id, name, output, error in [
+                ("write", "Write", "Saved", False),
+                ("read", "Read", "File does not exist", True),
+            ]:
+                await handle.emit(make_event("tool_call", {"call_id": call_id, "name": name}))
+                await handle.emit(
+                    make_event(
+                        "tool_result",
+                        {
+                            "call_id": call_id,
+                            "output": output,
+                            "is_error": error,
+                        },
+                    )
+                )
+            return runner_cli._Outcome("error", "File does not exist", {}, None, "existing")
+        assert "without repeating completed actions" in prompt
+        return runner_cli._Outcome("done", None, {}, None, "existing")
+
+    monkeypatch.setattr(runner_cli, "_run_cli_once", once)
+    await runner_cli.run_cli_turn(handle, origin.user_text, "claude-cli", identity=True)
+    assert resumes == ["existing", "existing"]
+
+
 @pytest.mark.parametrize("cancelled,disabled", [(False, False), (True, False), (False, True)])
 async def test_persistent_failure_is_bounded_and_stopping_wins(
     turn, monkeypatch, cancelled, disabled
