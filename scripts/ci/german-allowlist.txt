@@ -471,3 +471,7 @@ tests/unit/memory/test_profile_capture.py
 # --- Agent society (2026-09-01): the focus alias table maps the words people
 #     write in agent descriptions (de/en) onto capability ids ---
 jarvis/society/focus.py
+
+# --- Local voice engine bench (2026-10-01): the German speech-input corpus the
+#     P0 bench renders, transcribes and sends to the local LLM (ADR-0037) ---
+jarvis/voice_engine/bench/corpus/de.json
