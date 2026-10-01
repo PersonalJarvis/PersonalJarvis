@@ -39,6 +39,14 @@ const ShortcutOverlay = lazy(() =>
   import("@/components/ShortcutOverlay").then((m) => ({ default: m.ShortcutOverlay })),
 );
 import { shouldOpenShortcutOverlay } from "@/lib/shortcutOverlayTrigger";
+/*
+  Lazy for the same reason: the switcher carries every locale for its
+  cross-language search, and nobody needs it before the first Ctrl+Space.
+*/
+const QuickSwitcher = lazy(() =>
+  import("@/components/QuickSwitcher").then((m) => ({ default: m.QuickSwitcher })),
+);
+import { isQuickSwitchChord } from "@/lib/quickSwitchChord";
 import { JarvisDock } from "@/components/JarvisDock";
 import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
@@ -104,6 +112,25 @@ export default function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  /*
+    Ctrl+Space opens the quick switcher — the Spotlight-style "type a section,
+    press Enter" launcher. Listened for in the CAPTURE phase so it also works
+    while a terminal pane has focus: xterm handles keys on its own textarea and
+    would otherwise swallow the chord as a NUL byte for the agent. Pressing it
+    again closes the switcher, the way Spotlight's own chord toggles.
+  */
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat || !isQuickSwitchChord(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setSwitcherOpen((open) => !open);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);
 
   useWebSocket();
@@ -384,6 +411,13 @@ export default function App() {
       <CliConnectPoller />
       {/* Blocking onboarding gate — overlays everything until first-run setup is complete. */}
       <OnboardingGate activeSection={activeSection} />
+      {/* Ctrl+Space anywhere; the chunk loads on first use. Main window only:
+          a detached solo window IS one section, there is nowhere to switch. */}
+      {switcherOpen && (
+        <Suspense fallback={null}>
+          <QuickSwitcher open onOpenChange={setSwitcherOpen} />
+        </Suspense>
+      )}
       {/* `?` anywhere in the app opens this; the chunk loads on first use. */}
       {shortcutsOpen && (
         <Suspense fallback={null}>

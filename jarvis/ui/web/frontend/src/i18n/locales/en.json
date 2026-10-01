@@ -1617,8 +1617,20 @@
       "zoom_in": "Larger terminal text",
       "zoom_out": "Smaller terminal text",
       "zoom_reset": "Reset terminal text size",
-      "open_overlay": "Open this list"
+      "open_overlay": "Open this list",
+      "quick_switch": "Quick switch to any section"
     }
+  },
+  "quick_switch": {
+    "title": "Go to",
+    "placeholder": "Where to? Agentic IDE, Settings, Skills …",
+    "no_results": "Nothing matches.",
+    "group_sections": "Sections",
+    "group_settings": "Settings",
+    "current": "You are here",
+    "hint_open": "Open",
+    "hint_close": "Close",
+    "terminal_grid": "Terminal grid"
   },
   "board_view": {
     "title": "Board",

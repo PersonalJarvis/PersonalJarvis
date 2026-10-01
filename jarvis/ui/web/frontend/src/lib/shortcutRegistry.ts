@@ -103,6 +103,12 @@ export const SHORTCUTS: readonly Shortcut[] = [
     keys: ["?"],
     labelKey: "shortcut_overlay.workspace.open_overlay",
   },
+  {
+    kind: "fixed",
+    area: "workspace",
+    keys: ["Ctrl", "Space"],
+    labelKey: "shortcut_overlay.workspace.quick_switch",
+  },
 ] as const;
 
 /** Areas in the order the overlay renders them. */

@@ -1584,8 +1584,20 @@
       "zoom_in": "Texto del terminal más grande",
       "zoom_out": "Texto del terminal más pequeño",
       "zoom_reset": "Restablecer el tamaño del texto",
-      "open_overlay": "Abrir esta lista"
+      "open_overlay": "Abrir esta lista",
+      "quick_switch": "Saltar rápido a cualquier sección"
     }
+  },
+  "quick_switch": {
+    "title": "Ir a",
+    "placeholder": "¿Adónde? Agentic IDE, Ajustes, Skills …",
+    "no_results": "No hay coincidencias.",
+    "group_sections": "Secciones",
+    "group_settings": "Ajustes",
+    "current": "Estás aquí",
+    "hint_open": "Abrir",
+    "hint_close": "Cerrar",
+    "terminal_grid": "Cuadrícula de terminales"
   },
   "board_view": {
     "title": "Tablero",

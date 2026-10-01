@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { isTourEvent } from "@/components/onboarding/tourEvents";
-import { lazy, Suspense, useMemo, useRef, useState, type ComponentType, type LazyExoticComponent } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ComponentType, type LazyExoticComponent } from "react";
 import { Loader2, Search, X } from "lucide-react";
 import {
   NAV_FOOTER_ITEMS,
@@ -10,6 +10,7 @@ import {
   type NavItem,
 } from "@/components/layout/navGroups";
 import { useEventStore } from "@/store/events";
+import { useSettingsJump } from "@/store/settingsJump";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { useT, useUiLanguage } from "@/i18n";
 import { isComboboxPanelEvent } from "@/components/ui/combobox";
@@ -214,6 +215,15 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [searchTarget, setSearchTarget] = useState<string | null>(null);
   const { health: sectionHealth } = useSectionHealth();
+
+  // A group picked in the quick switcher while the hub was closed (or open on
+  // another tab) — take it over once; see store/settingsJump.
+  const pendingJump = useSettingsJump((s) => s.target);
+  useEffect(() => {
+    if (pendingJump === null) return;
+    const target = useSettingsJump.getState().take();
+    if (target) setSearchTarget(target);
+  }, [pendingJump]);
 
   const { content, highlight } = resolveHubTab(active);
   const Content = TAB_CONTENT[content];

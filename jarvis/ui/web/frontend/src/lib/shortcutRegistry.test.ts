@@ -17,6 +17,7 @@ import {
   type FixedShortcut,
 } from "./shortcutRegistry";
 import { shouldOpenShortcutOverlay } from "./shortcutOverlayTrigger";
+import { isQuickSwitchChord } from "./quickSwitchChord";
 
 /** Turn a declared chord into the event the matcher would see. */
 function eventFor(keys: string[], isMac: boolean) {
@@ -99,6 +100,26 @@ describe("fixed chords agree with the matcher that implements them", () => {
         target: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("the quick switcher chord", () => {
+  it("declares the chord its matcher accepts", () => {
+    const entry = shortcutsForArea("workspace").find(
+      (s) => s.labelKey === "shortcut_overlay.workspace.quick_switch",
+    ) as FixedShortcut;
+    expect(entry.keys).toEqual(["Ctrl", "Space"]);
+    const chord = { key: " ", code: "Space", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false };
+    expect(isQuickSwitchChord(chord)).toBe(true);
+  });
+
+  it("leaves the voice toggle's Ctrl+Alt+Space and plain typing alone", () => {
+    const base = { key: " ", code: "Space", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false };
+    expect(isQuickSwitchChord({ ...base, altKey: true })).toBe(false);
+    expect(isQuickSwitchChord({ ...base, shiftKey: true })).toBe(false);
+    expect(isQuickSwitchChord({ ...base, metaKey: true })).toBe(false);
+    expect(isQuickSwitchChord({ ...base, ctrlKey: false })).toBe(false);
+    expect(isQuickSwitchChord({ ...base, key: "k", code: "KeyK" })).toBe(false);
   });
 });
 

@@ -1584,8 +1584,20 @@
       "zoom_in": "Terminaltext größer",
       "zoom_out": "Terminaltext kleiner",
       "zoom_reset": "Terminaltextgröße zurücksetzen",
-      "open_overlay": "Diese Liste öffnen"
+      "open_overlay": "Diese Liste öffnen",
+      "quick_switch": "Schnell zu jedem Bereich springen"
     }
+  },
+  "quick_switch": {
+    "title": "Gehe zu",
+    "placeholder": "Wohin? Agentic IDE, Einstellungen, Skills …",
+    "no_results": "Nichts gefunden.",
+    "group_sections": "Bereiche",
+    "group_settings": "Einstellungen",
+    "current": "Du bist hier",
+    "hint_open": "Öffnen",
+    "hint_close": "Schließen",
+    "terminal_grid": "Terminal-Raster"
   },
   "board_view": {
     "title": "Board",
