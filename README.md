@@ -21,7 +21,11 @@ https://github.com/user-attachments/assets/9930ca95-5015-4ade-9a16-975c77d179fd
 
 Want to try Personal Jarvis later? **Star this repository** to keep it handy.
 
-![Flow from a user request through Jarvis to the computer, browser, apps, agents, models, and services, then back as a result with run history.](https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/request-to-result.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/request-flow-dark.svg" />
+  <source media="(prefers-color-scheme: light)" srcset="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/request-flow-light.svg" />
+  <img alt="How a request flows: you ask by voice or chat, Jarvis picks the way, then answers, acts on your desktop, browser, plugins or MCP, or delegates to an agent; every action passes a risk check and the result comes back with a run history." src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/request-flow-dark.svg" width="1200" />
+</picture>
 
 **Why it is different:** Jarvis coordinates the tools you already have. A request
 can move from voice or chat to [computer use](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/computer-use.md),

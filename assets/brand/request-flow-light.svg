@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 392" width="1200" height="392" role="img" aria-labelledby="title desc">
+<title id="title">How a request flows through Personal Jarvis</title>
+<desc id="desc">1. You ask by voice or chat. 2. Jarvis decides how to handle it. 3. It answers directly, acts with your desktop, browser, plugins or MCP tools, or delegates to an agent such as Codex or Claude Code. 4. Every action passes a risk check (safe, monitor, ask you, block), and you approve risky steps. 5. The result comes back with a recorded run history.</desc>
+<rect x="0.5" y="0.5" width="1199" height="391" rx="20" fill="#ffffff" stroke="#d0d7de"/>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<text x="140.0" y="52" font-size="12" font-weight="700" text-anchor="middle" letter-spacing="1.6"><tspan fill="#b7860b">1</tspan><tspan fill="#59636e" dx="8">ASK</tspan></text>
+<text x="362.0" y="52" font-size="12" font-weight="700" text-anchor="middle" letter-spacing="1.6"><tspan fill="#b7860b">2</tspan><tspan fill="#59636e" dx="8">DECIDE</tspan></text>
+<text x="624.0" y="52" font-size="12" font-weight="700" text-anchor="middle" letter-spacing="1.6"><tspan fill="#b7860b">3</tspan><tspan fill="#59636e" dx="8">DO</tspan></text>
+<text x="854.0" y="52" font-size="12" font-weight="700" text-anchor="middle" letter-spacing="1.6"><tspan fill="#b7860b">4</tspan><tspan fill="#59636e" dx="8">CHECK</tspan></text>
+<text x="1061.0" y="52" font-size="12" font-weight="700" text-anchor="middle" letter-spacing="1.6"><tspan fill="#b7860b">5</tspan><tspan fill="#59636e" dx="8">DELIVER</tspan></text>
+<rect x="32" y="112" width="216" height="176" rx="14" fill="#f6f8fa" stroke="#d0d7de"/>
+<g transform="translate(50 128) scale(0.9)" fill="none" stroke="#57606a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="13" rx="4"/><path d="M4.5 11a7.5 7.5 0 0 0 15 0M12 18.5V22"/></g>
+<text x="78" y="146" font-size="19" font-weight="700" fill="#1f2328" text-anchor="start">You</text>
+<rect x="48" y="162" width="184" height="66" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<text x="62" y="190" font-size="14" font-weight="400" fill="#1f2328" text-anchor="start">“Sort my downloads</text>
+<text x="62" y="212" font-size="14" font-weight="400" fill="#1f2328" text-anchor="start">and file the invoices.”</text>
+<rect x="48" y="244" width="80" height="26" rx="13" fill="none" stroke="#d0d7de"/>
+<text x="88" y="262" font-size="13" font-weight="400" fill="#59636e" text-anchor="middle">voice</text>
+<rect x="140" y="244" width="80" height="26" rx="13" fill="none" stroke="#d0d7de"/>
+<text x="180" y="262" font-size="13" font-weight="400" fill="#59636e" text-anchor="middle">chat</text>
+<path d="M248 200H285" fill="none" stroke="#b7860b" stroke-width="2"/><path d="M292 200l-9-5v10z" fill="#b7860b"/>
+<rect x="292" y="136" width="140" height="128" rx="16" fill="#fff8dc" stroke="#b7860b" stroke-width="2"/>
+<path transform="translate(351.0 152)" d="M11 0c.8 5.2 4.8 9.2 11 11-6.2 1.8-10.2 5.8-11 11-.8-5.2-4.8-9.2-11-11 6.2-1.8 10.2-5.8 11-11z" fill="#b7860b"/>
+<text x="362.0" y="214" font-size="22" font-weight="700" fill="#5c4300" text-anchor="middle">Jarvis</text>
+<text x="362.0" y="238" font-size="13" font-weight="400" fill="#59636e" text-anchor="middle">picks the way</text>
+<path d="M432 200C458.0 200 458.0 112.0 477 112.0" fill="none" stroke="#b7860b" stroke-width="2"/><path d="M484 112.0l-9-5v10z" fill="#b7860b"/>
+<rect x="484" y="76.0" width="280" height="72" rx="12" fill="#f6f8fa" stroke="#d0d7de"/>
+<g transform="translate(502 100.0) scale(1.0)" fill="none" stroke="#57606a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/></g>
+<text x="540" y="108.0" font-size="16" font-weight="700" fill="#1f2328" text-anchor="start">Answer</text>
+<text x="540" y="129.0" font-size="13" font-weight="400" fill="#59636e" text-anchor="start">Replies right away</text>
+<path d="M432 200C458.0 200 458.0 200.0 477 200.0" fill="none" stroke="#b7860b" stroke-width="2"/><path d="M484 200.0l-9-5v10z" fill="#b7860b"/>
+<rect x="484" y="164.0" width="280" height="72" rx="12" fill="#f6f8fa" stroke="#d0d7de"/>
+<g transform="translate(502 188.0) scale(1.0)" fill="none" stroke="#57606a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l13 7-6 1.5L9.5 18z"/><path d="M12.5 12.5 18 18"/></g>
+<text x="540" y="196.0" font-size="16" font-weight="700" fill="#1f2328" text-anchor="start">Act</text>
+<text x="540" y="217.0" font-size="13" font-weight="400" fill="#59636e" text-anchor="start">Desktop, browser, plugins, MCP</text>
+<path d="M432 200C458.0 200 458.0 288.0 477 288.0" fill="none" stroke="#b7860b" stroke-width="2"/><path d="M484 288.0l-9-5v10z" fill="#b7860b"/>
+<rect x="484" y="252.0" width="280" height="72" rx="12" fill="#f6f8fa" stroke="#d0d7de"/>
+<g transform="translate(502 276.0) scale(1.0)" fill="none" stroke="#57606a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3.2"/><circle cx="17" cy="9.5" r="2.6"/><path d="M2.5 20c.6-3.8 2.8-5.8 5.5-5.8s4.9 2 5.5 5.8M14.5 15c2.6-.6 5.3.8 6 4.5"/></g>
+<text x="540" y="284.0" font-size="16" font-weight="700" fill="#1f2328" text-anchor="start">Delegate</text>
+<text x="540" y="305.0" font-size="13" font-weight="400" fill="#59636e" text-anchor="start">Agents, Codex, Claude Code</text>
+<path d="M764 112.0H787" fill="none" stroke="#afb8c1" stroke-width="2"/><path d="M794 112.0l-9-5v10z" fill="#afb8c1"/>
+<path d="M764 200.0H787" fill="none" stroke="#afb8c1" stroke-width="2"/><path d="M794 200.0l-9-5v10z" fill="#afb8c1"/>
+<path d="M764 288.0H787" fill="none" stroke="#afb8c1" stroke-width="2"/><path d="M794 288.0l-9-5v10z" fill="#afb8c1"/>
+<rect x="794" y="76" width="120" height="248" rx="14" fill="#f6f8fa" stroke="#d0d7de"/>
+<g transform="translate(842.0 90) scale(1.0)" fill="none" stroke="#57606a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 4.5 5.5v6c0 4.6 3.1 8.4 7.5 10 4.4-1.6 7.5-5.4 7.5-10v-6z"/><path d="m8.8 12 2.3 2.3 4.2-4.6"/></g>
+<text x="854.0" y="134" font-size="14" font-weight="700" fill="#1f2328" text-anchor="middle">Risk check</text>
+<rect x="808" y="148" width="92" height="24" rx="12" fill="#1a7f37" stroke="#1a7f37" fill-opacity="0.10" stroke-opacity="0.55"/>
+<text x="854.0" y="165" font-size="13" font-weight="600" fill="#1a7f37" text-anchor="middle">safe</text>
+<rect x="808" y="180" width="92" height="24" rx="12" fill="#0969da" stroke="#0969da" fill-opacity="0.10" stroke-opacity="0.55"/>
+<text x="854.0" y="197" font-size="13" font-weight="600" fill="#0969da" text-anchor="middle">monitor</text>
+<rect x="808" y="212" width="92" height="24" rx="12" fill="#9a6700" stroke="#9a6700" fill-opacity="0.10" stroke-opacity="0.55"/>
+<text x="854.0" y="229" font-size="13" font-weight="600" fill="#9a6700" text-anchor="middle">ask you</text>
+<rect x="808" y="244" width="92" height="24" rx="12" fill="#cf222e" stroke="#cf222e" fill-opacity="0.10" stroke-opacity="0.55"/>
+<text x="854.0" y="261" font-size="13" font-weight="600" fill="#cf222e" text-anchor="middle">block</text>
+<text x="854.0" y="292" font-size="12" font-weight="400" fill="#59636e" text-anchor="middle">You approve</text>
+<text x="854.0" y="309" font-size="12" font-weight="400" fill="#59636e" text-anchor="middle">risky steps</text>
+<path d="M914 200H947" fill="none" stroke="#b7860b" stroke-width="2"/><path d="M954 200l-9-5v10z" fill="#b7860b"/>
+<rect x="954" y="76" width="214" height="248" rx="14" fill="#f6f8fa" stroke="#d0d7de"/>
+<g transform="translate(972 94) scale(1.0)" fill="none" stroke="#1a7f37" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10.5"/><path d="m7.5 12.3 3.1 3.1 6-6.4"/></g>
+<text x="1004" y="112" font-size="17" font-weight="700" fill="#1f2328" text-anchor="start">Result</text>
+<text x="972" y="142" font-size="13" font-weight="400" fill="#59636e" text-anchor="start">Answer, file, or report</text>
+<path d="M972 160H1150" stroke="#d0d7de"/>
+<text x="972" y="186" font-size="11" font-weight="700" fill="#59636e" text-anchor="start" letter-spacing="1.4">RUN HISTORY</text>
+<path d="M978 212V296" stroke="#d0d7de" stroke-width="2"/>
+<circle cx="978" cy="212" r="4" fill="#f6f8fa" stroke="#b7860b" stroke-width="2"/>
+<text x="994" y="216" font-size="13" font-weight="400" fill="#1f2328" text-anchor="start">Plan made</text>
+<circle cx="978" cy="240" r="4" fill="#f6f8fa" stroke="#b7860b" stroke-width="2"/>
+<text x="994" y="244" font-size="13" font-weight="400" fill="#1f2328" text-anchor="start">Browser, 6 steps</text>
+<circle cx="978" cy="268" r="4" fill="#f6f8fa" stroke="#b7860b" stroke-width="2"/>
+<text x="994" y="272" font-size="13" font-weight="400" fill="#1f2328" text-anchor="start">You approved 1 change</text>
+<circle cx="978" cy="296" r="4" fill="#f6f8fa" stroke="#b7860b" stroke-width="2"/>
+<text x="994" y="300" font-size="13" font-weight="400" fill="#1f2328" text-anchor="start">Report saved</text>
+<text x="600.0" y="366" font-size="13" font-weight="400" fill="#59636e" text-anchor="middle">Runs on your computer  ·  Any model, local or hosted  ·  Windows, macOS, Linux</text>
+</g></svg>
