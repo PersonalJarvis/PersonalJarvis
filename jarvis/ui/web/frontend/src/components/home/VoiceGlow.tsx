@@ -1,74 +1,262 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import { readVoiceInputLevel } from "@/lib/voiceInputLevel";
 import { voiceOutputLevelRef } from "@/lib/voiceOutputLevel";
+import { releaseWebglContext } from "@/hooks/useWebglSurface";
+import { createGlowRenderer } from "@/components/home/voiceGlowRenderer";
+import { createVoiceFollower } from "@/components/home/voiceFollower";
 
 /**
- * The soft light behind voice mode's composer — the Claude app's voice glow,
- * in this theme's one signal hue.
+ * The light behind voice mode's composer — the Claude app's voice glow, in
+ * this theme's one signal hue.
  *
- * Three overlapping pools of accent light rise from the bottom edge, each
- * drifting sideways on its own slow rhythm, so the light shimmers rather
- * than sitting still. At rest (no call) it is a faint, motionless wash.
- * While a call is open the pools drift gently; when someone speaks — you
- * (the microphone level) or the assistant (the playback level), whichever
- * is louder — they swell, brighten and sway wider, so the bottom of the
- * page visibly moves with the voice. The levels are read on animation
- * frames — no React state, no re-render per frame — and only while a call
- * is open. Reduced motion keeps the light and drops the movement.
+ * An aurora rises from the bottom edge: a soft haze with a flowing crest,
+ * curtains of light drifting up through it, and a bright core along the
+ * edge (components/home/voiceGlowRenderer, one WebGL shader). At rest (no
+ * call) it is a faint, motionless wash. While a call is open it flows; when
+ * someone speaks — you (the microphone level) or the assistant (the
+ * playback level), whichever is louder — the light stands taller, flows
+ * faster and its core flares with each syllable
+ * (components/home/voiceFollower turns the raw level into those smooth
+ * signals). Levels are read on animation frames — no React state, no
+ * re-render per frame — and the loop stops once the light has settled after
+ * a call. Reduced motion keeps the light and drops the movement.
+ *
+ * Where WebGL is unavailable, or the context is lost, the light falls back
+ * to three CSS pools that move with the same signals.
  *
  * Purely decorative: no pointer events, hidden from screen readers.
  */
 export function VoiceGlow({ active }: { active: boolean }) {
+  const [webgl, setWebgl] = useState(webglAvailable);
+  return (
+    <div
+      aria-hidden
+      data-testid="voice-glow"
+      data-renderer={webgl ? "webgl" : "css"}
+      className="pointer-events-none absolute inset-x-0 bottom-0 h-[38vh] overflow-hidden"
+    >
+      {webgl ? (
+        <ShaderGlow active={active} onUnavailable={() => setWebgl(false)} />
+      ) : (
+        <CssGlow active={active} />
+      )}
+    </div>
+  );
+}
+
+function webglAvailable(): boolean {
+  return typeof window !== "undefined" && typeof window.WebGLRenderingContext !== "undefined";
+}
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+/** The loudest voice right now: the assistant's playback or your microphone. */
+function currentVoiceLevel(now: number): number {
+  return Math.max(voiceOutputLevelRef.current ?? 0, readVoiceInputLevel(now));
+}
+
+/** How long the light takes to come up when a call opens and to settle after. */
+const POWER_TAU_S = 0.5;
+
+/**
+ * Contexts handed back one task after an unmount, so React's development
+ * effect replay (same canvas, same context) can reclaim them first — the
+ * same dance as hooks/useWebglSurface.
+ */
+const pendingReleases = new Map<HTMLCanvasElement, number>();
+
+function ShaderGlow({ active, onUnavailable }: { active: boolean; onUnavailable: () => void }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const activeRef = useRef(active);
+  const wakeRef = useRef<() => void>(() => {});
+  const unavailableRef = useRef(onUnavailable);
+
+  useEffect(() => {
+    unavailableRef.current = onUnavailable;
+  }, [onUnavailable]);
+
+  useEffect(() => {
+    activeRef.current = active;
+    wakeRef.current();
+  }, [active]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const pending = pendingReleases.get(canvas);
+    if (pending !== undefined) {
+      window.clearTimeout(pending);
+      pendingReleases.delete(canvas);
+    }
+    const renderer = createGlowRenderer(canvas);
+    if (!renderer) {
+      unavailableRef.current();
+      return;
+    }
+
+    const reduced = prefersReducedMotion();
+    const follower = createVoiceFollower();
+    let signals = { level: 0, pulse: 0 };
+    // Flow time is ACCUMULATED (faster while someone speaks), never
+    // computed as clock * speed(level): that form turned every change in
+    // loudness into a jump of the whole pattern.
+    let time = 12;
+    let power = 0;
+    let color: [number, number, number] = [61, 139, 255];
+    let light = false;
+    let sinceTheme = 0;
+    let last = -1;
+    let frame = 0;
+    let running = false;
+
+    const readTheme = () => {
+      const channels = getComputedStyle(canvas)
+        .getPropertyValue("--accent-rgb")
+        .trim()
+        .split(/[\s,]+/)
+        .map(Number);
+      if (channels.length >= 3 && channels.slice(0, 3).every(Number.isFinite)) {
+        color = [channels[0], channels[1], channels[2]];
+      }
+      light = canvas.closest(".dark") === null;
+    };
+    const draw = () =>
+      renderer.render({ time, level: signals.level, pulse: signals.pulse, power, light, color });
+
+    const tick = (now: number) => {
+      const dt = last < 0 ? 0 : Math.min(0.1, (now - last) / 1000);
+      last = now;
+      const live = activeRef.current;
+      signals = follower.step(dt, live ? currentVoiceLevel(now) : 0);
+      power += ((live ? 1 : 0) - power) * (1 - Math.exp(-dt / POWER_TAU_S));
+      time += dt * (0.55 + signals.level * 1.4);
+      sinceTheme += dt;
+      if (sinceTheme > 0.5) {
+        sinceTheme = 0;
+        readTheme();
+      }
+      if (!live && power < 0.002 && signals.level < 0.002 && signals.pulse < 0.002) {
+        // Settled after a call: one last resting frame, then no loop at all.
+        power = 0;
+        signals = { level: 0, pulse: 0 };
+        draw();
+        running = false;
+        return;
+      }
+      draw();
+      frame = requestAnimationFrame(tick);
+    };
+
+    const wake = () => {
+      if (reduced || typeof requestAnimationFrame === "undefined") {
+        power = activeRef.current ? 1 : 0;
+        readTheme();
+        draw();
+        return;
+      }
+      if (running) return;
+      running = true;
+      last = -1;
+      frame = requestAnimationFrame(tick);
+    };
+    wakeRef.current = wake;
+
+    const fit = () => {
+      const box = canvas.getBoundingClientRect();
+      if (renderer.resize(box.width, box.height) && !running) draw();
+    };
+    readTheme();
+    fit();
+    draw();
+    wake();
+
+    const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
+    resizeObserver?.observe(canvas);
+    // A theme switch while the light rests must repaint the resting frame.
+    const themeObserver =
+      typeof MutationObserver !== "undefined"
+        ? new MutationObserver(() => {
+            readTheme();
+            if (!running) draw();
+          })
+        : null;
+    themeObserver?.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "style", "data-theme"],
+    });
+
+    // A lost context (GPU reset, the page out of contexts) would otherwise
+    // leave Chromium's broken-canvas placeholder on screen. Claim the event
+    // and hand over to the CSS light; a decorative glow is not worth a
+    // rebuild dance.
+    const onLost = (event: Event) => {
+      event.preventDefault();
+      cancelAnimationFrame(frame);
+      running = false;
+      unavailableRef.current();
+    };
+    canvas.addEventListener("webglcontextlost", onLost);
+
+    return () => {
+      wakeRef.current = () => {};
+      cancelAnimationFrame(frame);
+      running = false;
+      resizeObserver?.disconnect();
+      themeObserver?.disconnect();
+      canvas.removeEventListener("webglcontextlost", onLost);
+      renderer.dispose();
+      pendingReleases.set(
+        canvas,
+        window.setTimeout(() => {
+          pendingReleases.delete(canvas);
+          releaseWebglContext(canvas);
+        }, 0),
+      );
+    };
+  }, []);
+
+  return <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />;
+}
+
+/** The fallback: three pools of accent light that move with the same signals. */
+function CssGlow({ active }: { active: boolean }) {
   const blobRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   useEffect(() => {
     const blobs = blobRefs.current.filter((b): b is HTMLDivElement => b !== null);
-    const reduced =
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (!active || reduced || typeof requestAnimationFrame === "undefined") {
+    if (!active || prefersReducedMotion() || typeof requestAnimationFrame === "undefined") {
       blobs.forEach((el) => {
         el.style.opacity = active ? "0.7" : "0.3";
         el.style.transform = "translateX(-50%)";
       });
       return;
     }
-    // Two cascaded smoothers: an envelope (quick rise, slow fall — a voice,
-    // not a meter) and a short glide on top of it, so the ~30 Hz level
-    // samples never reach the light as steps. Both are time-based, so the
-    // motion feels the same at 60 Hz, 144 Hz or after a dropped frame.
-    let envelope = 0;
-    let level = 0;
+    const follower = createVoiceFollower();
     let last = -1;
     let frame = 0;
-    // Each pool's sway position is ACCUMULATED, never computed as
-    // sin(time * speed(level)). That form multiplied the level by the time
-    // since page load (thousands of seconds), so the smallest change in
-    // loudness threw every pool to a random spot on each frame — the
-    // jumping, glitching light. Accumulating keeps the path continuous: the
-    // voice only changes how fast the pools travel, never where they are.
+    // Each pool's sway position is accumulated, for the same reason as the
+    // shader's flow time: the voice changes how fast it travels, never where.
     const sway = BLOBS.map((b) => b.phase);
     const breath = BLOBS.map((b) => b.phase * 2);
     const tick = (now: number) => {
       const dt = last < 0 ? 0 : Math.min(0.1, (now - last) / 1000);
       last = now;
-      const target = Math.max(voiceOutputLevelRef.current ?? 0, readVoiceInputLevel(now));
-      envelope += (target - envelope) * (1 - Math.exp(-dt / (target > envelope ? 0.06 : 0.45)));
-      level += (envelope - level) * (1 - Math.exp(-dt / 0.12));
-      // Lift quiet speech so a normal voice visibly moves the light.
-      const voice = Math.min(1, Math.pow(level, 0.7));
+      const voice = follower.step(dt, currentVoiceLevel(now)).level;
       BLOBS.forEach((b, i) => {
         const el = blobs[i];
         if (!el) return;
-        // Sway: a slow drift always, a little quicker and wider with the voice.
         sway[i] += dt * b.speed * (1 + voice * 1.2);
         breath[i] += dt * b.speed * 1.3;
         const x = Math.sin(sway[i]) * (b.drift + voice * 5);
-        // Breathing: each pool brightens and dims softly on its own.
         const glow = 0.5 + 0.5 * Math.sin(breath[i]);
-        el.style.opacity = String(Math.min(1, 0.5 + voice * 0.45 + glow * 0.08).toFixed(3));
+        el.style.opacity = Math.min(1, 0.5 + voice * 0.45 + glow * 0.08).toFixed(3);
         el.style.transform =
           `translateX(calc(-50% + ${x.toFixed(2)}%)) ` +
           `scale(${(1 + voice * 0.1).toFixed(3)}, ${(1 + voice * b.lift).toFixed(3)})`;
@@ -80,7 +268,7 @@ export function VoiceGlow({ active }: { active: boolean }) {
   }, [active]);
 
   return (
-    <div aria-hidden data-testid="voice-glow" className="pointer-events-none absolute inset-x-0 bottom-0 h-[38vh] overflow-hidden">
+    <>
       {BLOBS.map((b, i) => (
         <div
           key={i}
@@ -106,7 +294,7 @@ export function VoiceGlow({ active }: { active: boolean }) {
           }}
         />
       ))}
-    </div>
+    </>
   );
 }
 
