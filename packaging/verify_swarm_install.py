@@ -295,6 +295,30 @@ class WorkspaceCleanupError(RuntimeError):
     """The native smoke's files must remain available for cleanup diagnosis."""
 
 
+class NativeInstallerError(RuntimeError):
+    """The platform installer refused; only its exit code is safe to report."""
+
+    def __init__(self, returncode: int, target: Path) -> None:
+        super().__init__(f"Native installer failed ({returncode})")
+        self.returncode = returncode
+        self.target = target
+
+
+def processes_under(target: Path) -> list[str]:
+    """Executable names (never paths or arguments) still running from ``target``."""
+    try:
+        import psutil  # noqa: PLC0415 - optional diagnostic dependency
+    except ImportError:
+        return []
+    root = os.path.normcase(str(target.resolve()))
+    names: list[str] = []
+    for process in psutil.process_iter(["name", "exe"]):
+        exe = process.info.get("exe") or ""
+        if exe and os.path.normcase(exe).startswith(root):
+            names.append(str(process.info.get("name") or "unknown"))
+    return sorted(names)
+
+
 def remove_workspace(root: Path) -> None:
     """Retry transient Windows file locks only after process containment drained."""
     if not root.is_absolute() or not root.name.startswith("jarvis-native-smoke-"):
@@ -416,9 +440,9 @@ class NativeRunner:
             "/TASKS=",
             f"/DIR={self.target}",
         ]
-        rc, _out, err = self.run(command, timeout_s=600)
+        rc, _out, _err = self.run(command, timeout_s=600)
         if rc:
-            raise RuntimeError(f"Native installer failed ({rc}): {err[:300]}")
+            raise NativeInstallerError(rc, self.target)
 
 
 def install(installer: Path, root: Path, env: dict[str, str]) -> Path:
@@ -654,6 +678,14 @@ def run(installer: Path, report: Path, *, live_provider: str = "", live_model: s
             result["live_provider_verification"]["status"] = "failed"
         if isinstance(exc, LiveVerificationError):
             result["failure"] = str(exc)
+        if isinstance(exc, NativeInstallerError):
+            # Inno Setup exit codes are documented (7 = preparing failed, e.g.
+            # files in use); process names show what still holds the target.
+            result["installer_exit_code"] = exc.returncode
+            try:
+                result["processes_in_target"] = processes_under(exc.target)
+            except Exception as probe_error:  # noqa: BLE001 - diagnosis must not mask the failure
+                result["processes_in_target_error"] = type(probe_error).__name__
         if isinstance(exc, WorkspaceCleanupError):
             result["cleanup"] = "failed"
             cause = exc.__cause__

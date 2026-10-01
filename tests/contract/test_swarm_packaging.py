@@ -344,3 +344,17 @@ def test_native_windows_target_cannot_execute_before_job_assignment(monkeypatch,
             assert child.wait(timeout=10) == 0
         assert marker.read_text(encoding="utf-8") == "yes"
     assert observed.saw_suspended_target
+
+
+def test_installer_refusal_reports_only_exit_code_and_process_names(monkeypatch, tmp_path):
+    runner = NATIVE_SMOKE["NativeRunner"](tmp_path / "application", {})
+    monkeypatch.setattr(runner, "run", lambda argv, timeout_s: (7, "", "C:/private/log text"))
+    monkeypatch.setattr(sys, "platform", "win32")
+    with pytest.raises(NATIVE_SMOKE["NativeInstallerError"]) as caught:
+        runner.spawn_detached(["setup.exe", "/SILENT"])
+    assert caught.value.returncode == 7
+    assert "private" not in str(caught.value)
+    # The interpreter running this test lives outside the empty target.
+    assert NATIVE_SMOKE["processes_under"](tmp_path / "application") == []
+    names = NATIVE_SMOKE["processes_under"](Path(sys.executable).parent)
+    assert names and all("/" not in name and "\\" not in name for name in names)
