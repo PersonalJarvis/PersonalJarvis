@@ -11,4 +11,12 @@ Implementation plan:  docs/phase6-prompt-chain.md
 """
 from __future__ import annotations
 
-__version__ = "0.1.0"
+from .supervisor import MissionSupervisor, SupervisedMission, SupervisorSnapshot
+
+__version__ = "0.2.0"
+
+__all__ = [
+    "MissionSupervisor",
+    "SupervisedMission",
+    "SupervisorSnapshot",
+]
