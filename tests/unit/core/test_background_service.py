@@ -461,3 +461,60 @@ def test_service_age_constants_are_sane() -> None:
     assert bg.HANDOVER_POLL_S < 1.0
     assert bg.TAKEOVER_WAIT_S < bg.PARENT_EXIT_WAIT_S
     assert bg.HANDOVER_MAX_AGE_S > bg.TAKEOVER_WAIT_S
+
+
+def test_service_is_findable_the_moment_it_holds_the_lock(monkeypatch) -> None:
+    from jarvis.ui import desktop_app, desktop_log
+    from jarvis.ui.web import launcher
+
+    monkeypatch.setattr(desktop_log, "_install_desktop_log_sink", lambda _path: None)
+    monkeypatch.setenv("JARVIS_VOICE", "1")
+    monkeypatch.setenv("JARVIS_PRIMARY_INSTANCE", "0")
+    monkeypatch.setattr(desktop_app, "acquire_single_instance_lock", lambda **_kw: "lock")
+    assert launcher._prepare_background_service(launcher._parse_args([bg.SERVICE_FLAG])) == "lock"
+    marker = bg.read_marker()
+    assert marker is not None and marker["pid"] == os.getpid()
+
+
+def test_hand_back_lets_running_routines_finish_first() -> None:
+    from jarvis.ui.web import launcher
+
+    class _Draining:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def pending_work(self) -> tuple[int, int]:
+            self.calls += 1
+            return (1, 1 if self.calls < 4 else 0)
+
+    scheduler = _Draining()
+    state = SimpleNamespace(task_scheduler=scheduler, channel_manager=_Channels())
+    asyncio.run(launcher._drain_running_routines(state, drain_s=5.0, poll_s=0.01))
+    assert scheduler.calls == 4
+
+
+def test_drain_is_bounded() -> None:
+    from jarvis.ui.web import launcher
+
+    state = _state(running=1)
+
+    async def scenario() -> None:
+        await asyncio.wait_for(
+            launcher._drain_running_routines(state, drain_s=0.05, poll_s=0.01), 1.0
+        )
+
+    asyncio.run(scenario())
+
+
+def test_tray_quit_all_skips_the_hand_off(monkeypatch) -> None:
+    pytest.importorskip("pystray")
+    from jarvis.ui.tray import JarvisTray, TrayCommand
+
+    seen: list[str] = []
+    tray = JarvisTray(on_command=lambda cmd: seen.append(cmd.action))
+    monkeypatch.setattr(tray, "stop", lambda: seen.append("stopped"))
+    menu = tray._build_menu()
+    item = next(i for i in menu.items if str(i.text) == "Quit and stop background agents")
+    item._action(None, item)
+    assert seen == ["quit_all", "stopped"]
+    assert isinstance(tray._command_queue.get_nowait(), TrayCommand)

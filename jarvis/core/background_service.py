@@ -48,6 +48,8 @@ IDLE_CHECK_S = 300.0
 IDLE_STRIKES = 2
 #: How long the desktop waits for the service to hand back before stopping it.
 TAKEOVER_WAIT_S = 45.0
+#: How long a handing-back service lets routine runs in flight finish.
+HANDOVER_DRAIN_S = 30.0
 
 
 # ---------------------------------------------------------------------------

@@ -6105,7 +6105,10 @@ class DesktopApp:
                     # backend bus (the same bus the CU context's KillSwitch is
                     # bound to) from this non-async pystray bridge thread.
                     self._publish_kill_requested_threadsafe()
-                elif action == "quit":
+                elif action in ("quit", "quit_all"):
+                    if action == "quit_all":
+                        # Nothing keeps running: no background agent service.
+                        self._skip_background_handoff = True
                     self._user_requested_quit = True
                     self._arm_force_exit(after_s=20.0)
                     # Detached windows too: webview.start() returns only once

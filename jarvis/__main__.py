@@ -484,7 +484,7 @@ async def _run_tray_app(debug: bool = False) -> int:
                 cmd: TrayCommand = await asyncio.wait_for(command_queue.get(), timeout=0.5)
             except TimeoutError:
                 continue
-            if cmd.action == "quit":
+            if cmd.action in ("quit", "quit_all"):
                 stop_event.set()
                 return
             if cmd.action == "pause":

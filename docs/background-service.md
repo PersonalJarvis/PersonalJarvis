@@ -12,6 +12,8 @@ Routines and chat channels keep running after the desktop app is closed.
 - Opening the app again takes over from the service in a couple of seconds.
   Nothing has to be stopped by hand.
 - With nothing to keep, closing the app stops everything, as before.
+- **Quit and stop background agents** in the app's tray menu quits without
+  the hand-off.
 - **Settings → App settings → Keep agents running after closing** turns the
   hand-off off. The same card shows what a quit would keep right now, and
   offers **At login, start only the background agents** (needs "Launch app at
@@ -43,8 +45,11 @@ single-instance lock (`data/jarvis.lock`):
 3. **Hand-back on launch** (`launcher._take_over_from_background_service` →
    `take_over_from_service`). A desktop launch that finds the service drops
    `handover{suffix}.request`; the service polls that file every 0.5 s, shuts
-   down and releases the lock; the desktop takes it and boots normally. A
-   service that does not let go within 45 s is stopped. A file carries the
+   lets routine runs already in flight finish (up to 30 s), shuts down and
+   releases the lock; the desktop takes it and boots normally. A service that
+   does not let go within 45 s is stopped. The service writes its marker the
+   moment it holds the lock, and removes it and the instance sidecar before
+   releasing the lock, so a desktop reopened mid-boot always finds it. A file carries the
    request (not HTTP) because it works while the service is still booting
    and needs no credentials.
 4. **Self-exit.** The service checks every 5 minutes that it still has work
@@ -59,7 +64,8 @@ Log: `<data dir>/jarvis_background.log`, next to `jarvis_desktop.log`.
 - Spoken routines (`speak` actions) fail in the service: there is no voice
   without the app. Agent routines and chat channels are unaffected.
 - A turn that is running in the desktop at the moment of quitting is
-  interrupted, as before; the service starts fresh. The Agentic IDE's coding
+  interrupted, as before; the service starts fresh. A routine run in the
+  service that needs longer than 30 s after the app reopens is cut off. The Agentic IDE's coding
   agents are unaffected — they live in the PTY host.
 - macOS draws no menu-bar icon for the service (status items need the main
   thread, which the service's event loop owns). Open the app to stop it, or
@@ -75,4 +81,6 @@ Log: `<data dir>/jarvis_background.log`, next to `jarvis_desktop.log`.
   then call `launcher._take_over_from_background_service()` and confirm the
   lock is returned, the service exits with code 0 and the marker is gone.
   Measured 2026-10-01 on Windows 11: hand-back 2.4 s, process gone at 2.4 s
-  (in-process spawn) and 11.7 s (detached spawn, 5 s exit-hook flush).
+  (in-process spawn) and 11.7 s (detached spawn, 5 s exit-hook flush). Same
+  round trip in Docker `python:3.11-slim` (no display, no tray): hand-back
+  3.1 s, exit code 0.

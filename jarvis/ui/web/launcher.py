@@ -952,14 +952,9 @@ async def _run_headless(args) -> int:
         # stale-detection in acquire_single_instance_lock reclaims it — so the
         # leak is self-healing, not permanent.
         if _headless_lock is not None:
-            try:
-                _headless_lock.release()
-            except Exception as exc:  # noqa: BLE001 — best-effort release on shutdown
-                import logging as _logging
-
-                _logging.getLogger(__name__).debug(
-                    "headless lock release failed on shutdown: %s", exc
-                )
+            # Sidecar (and the service marker) go BEFORE the lock: the next
+            # holder may take the lock the moment it is free and write its own
+            # sidecar, which a late unlink here would then delete.
             try:
                 from jarvis.ui.desktop_app import META_FILE_PATH
 
@@ -970,10 +965,18 @@ async def _run_headless(args) -> int:
                 _logging.getLogger(__name__).debug(
                     "headless sidecar cleanup failed on shutdown: %s", exc
                 )
-        if _service_lock is not None:
-            from jarvis.core.background_service import clear_marker
+            if _service_lock is not None:
+                from jarvis.core.background_service import clear_marker
 
-            clear_marker()
+                clear_marker()
+            try:
+                _headless_lock.release()
+            except Exception as exc:  # noqa: BLE001 — best-effort release on shutdown
+                import logging as _logging
+
+                _logging.getLogger(__name__).debug(
+                    "headless lock release failed on shutdown: %s", exc
+                )
 
     return 0
 
@@ -994,6 +997,9 @@ def _arm_service_exit_backstop(after_s: float) -> None:
     threading.Thread(target=_force, name="background-exit-backstop", daemon=True).start()
 
 
+_SERVICE_EXIT_LOCK = threading.Lock()
+
+
 def _exit_background_service(code: int) -> None:
     """End the service process now, after a bounded flush of the exit hooks.
 
@@ -1005,6 +1011,10 @@ def _exit_background_service(code: int) -> None:
     """
     import atexit
 
+    if not _SERVICE_EXIT_LOCK.acquire(blocking=False):
+        # The other exit path (backstop or normal return) is already ending
+        # the process; a second flush would run the exit hooks twice.
+        return
     flush = threading.Thread(
         target=atexit._run_exitfuncs,  # noqa: SLF001 — the only public-free way to drain them
         name="background-exit-flush",
@@ -1054,6 +1064,12 @@ def _prepare_background_service(args):
         logger.info("background: the app is already running ({}) — service not started", exc)
         return None
     os.environ["JARVIS_PRIMARY_INSTANCE"] = "1"
+    # Findable the instant it holds the lock: a desktop reopened during this
+    # boot must ask for a hand-back, never read the holder as a stuck app.
+    try:
+        bg.write_marker(0)
+    except OSError as exc:
+        logger.warning("background: service marker not written: {}", exc)
     logger.info("background: agent service starting (pid={})", os.getpid())
     return lock
 
@@ -1096,6 +1112,33 @@ def _start_background_service_duties(state, stop_event):
     return task, tray
 
 
+async def _drain_running_routines(state, *, drain_s: float, poll_s: float) -> None:
+    """Let routine runs already in flight finish (bounded) before stopping.
+
+    Stopping cancels their token; a long agent run would otherwise be lost
+    just because the user opened the window. The desktop waits longer than
+    this budget before it stops the service itself.
+    """
+    from loguru import logger
+
+    from jarvis.core import background_service as bg
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + drain_s
+    running = bg.work_from_state(state).running
+    if running:
+        logger.info(
+            "background: {} routine run(s) still in flight — up to {:.0f}s to finish",
+            running,
+            drain_s,
+        )
+    while running and loop.time() < deadline:
+        await asyncio.sleep(poll_s)
+        running = bg.work_from_state(state).running
+    if running:
+        logger.warning("background: {} run(s) still going — they stop with the service", running)
+
+
 async def _watch_background_service(
     state,
     stop_event,
@@ -1119,6 +1162,7 @@ async def _watch_background_service(
     while not stop_event.is_set():
         await asyncio.sleep(poll)
         if bg.handover_requested():
+            await _drain_running_routines(state, drain_s=bg.HANDOVER_DRAIN_S, poll_s=poll)
             logger.info("background: the desktop app is opening — handing the agents back")
             stop_event.set()
             return

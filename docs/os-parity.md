@@ -89,8 +89,8 @@ bare `python:3.11-slim`.
   login entry on all three (Task Scheduler / startup shortcut, LaunchAgent via
   LaunchServices `--args`, XDG `.desktop`).
 - **Verified:** Windows 11 live (detached spawn, parent wait, routine fired,
-  hand-back 2.4 s). macOS and Linux: same code paths, unit-tested, not run live
-  from this machine.
+  hand-back 2.4 s). Linux: headless `python:3.11-slim` in Docker (boot, no
+  tray, hand-back 3.1 s). macOS: same code paths, unit-tested, not run live.
 
 ## Persistent Agentic IDE terminals (2026-09-28, T3)
 
