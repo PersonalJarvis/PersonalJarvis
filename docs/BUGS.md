@@ -15514,7 +15514,7 @@ safe in destructors); `__del__` only enqueues and takes no lock. The worker is
 started in ordinary code (`LockedRecognizer.__init__`, `release_recognizer`).
 Guard: `tests/unit/plugins/wake/test_vosk_native.py::test_dropping_the_proxy_inside_an_executor_submit_does_not_deadlock`.
 
-## BUG-222: the downloaded macOS app could not use a single permission — it was never accepted as "the installed app", it shipped without the microphone framework, and its Info.plist said background-only (HIGH, FIXED IN CODE 2026-10-01; the build changes still need one macOS build)
+## BUG-222: the downloaded macOS app could not use a single permission — it was never accepted as "the installed app", it shipped without the microphone framework, and its Info.plist said background-only (HIGH, FIXED 2026-10-01; built and booted on macOS CI runners, not yet tried on a user's Mac)
 
 **Symptom (the identity part reproduced against the port with faked macOS
 frameworks; none of it observed on a Mac).** Run as the `.dmg` app with every
@@ -15594,11 +15594,23 @@ distinct, the lookup), `tests/unit/cli_ctl/test_commands_permissions.py`,
 `tests/unit/packaging/test_frozen_browser_smoke.py` (the decision, and `boot()`
 itself against a stand-in app).
 
-**Verification.** Unit level only, on Linux, against faked AppKit / Quartz /
-AVFoundation; the new `.dmg` tests fail on the old code, and the probe fails on
-the published image. Nothing was run on a Mac, and the new `jarvis.spec` and
-workflow steps have not been run on a macOS runner: the probe exists so the first
-such build proves them or fails loudly.
+**Verification.** Unit level on Linux, against faked AppKit / Quartz /
+AVFoundation: the new `.dmg` tests fail on the old code, and the probe fails on
+the published image. On macOS CI runners: a branch dispatch of "Desktop
+installers" (run 36923225371, commit 43eeb7ae, no release published) built the
+image with the new `jarvis.spec` and `desktop-macos` extra on both the Apple
+Silicon (`macos-15`) and the Intel (`macos-15-intel`) runner; on both,
+`check_frozen_macos_app.py` passed, and the smoke booted the frozen app twice and
+read its permission status from it: microphone `granted`, bundle id
+`ai.personaljarvis.desktop` — so AVFoundation loads inside the app and the
+published image's "unavailable" is gone. The `granted` itself reflects the hosted
+runner's setup, not a user's decision. A first dispatch on the commit before the
+booted-app check existed (run 36922688589, arm64 only, cancelled afterwards)
+passed the same build and probe. **Not verified:** anything on a user's Mac —
+the window and Dock behaviour with `LSBackgroundOnly` off (the smoke starts the
+executable directly, not through LaunchServices), the permission prompts
+themselves, Gatekeeper and notarization (the runs were ad-hoc signed: no Apple
+secrets).
 
 **Known limits, not changed here.** `Contents/MacOS/jarvis` (the CLI inside the
 bundle) resolves to the same main bundle, so started from a terminal it would be

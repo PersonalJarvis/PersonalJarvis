@@ -731,8 +731,11 @@ had no `AVFoundation` module in its frozen archive (the port loads it by name, s
 the microphone permission reads "unavailable" for good) and `LSBackgroundOnly` in
 its `Info.plist` (PyInstaller sets it when the last executable is a console one).
 `jarvis.spec` and the macOS job now cover both, and
-`scripts/ci/check_frozen_macos_app.py` fails a build that regresses; those build
-changes have not yet run on a macOS runner.
+`scripts/ci/check_frozen_macos_app.py` fails a build that regresses. A branch
+dispatch of the installer workflow built the image on the Apple Silicon and the
+Intel runner, the check passed, and the booted app reported a readable
+microphone permission under the `.dmg` bundle id (BUG-222); still not tried on a
+user's Mac.
 (3) The published `.dmg` was ad-hoc signed and not notarized (the v2.5.0 build
 log says so), and the workflow's certificate secrets were never imported by
 `build.sh`: it now imports them into a throw-away keychain, before the long
