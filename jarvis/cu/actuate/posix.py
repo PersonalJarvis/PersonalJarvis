@@ -34,6 +34,28 @@ _NO_BACKEND_MSG = (
 )
 
 
+def _require_macos_human_input_clear() -> None:
+    """Refuse synthetic input while physical macOS HID ownership is unsafe.
+
+    This check lives at the dispatch layer rather than only at tool entry so a
+    person taking over after planning/grounding still wins before the next OS
+    event. It is intentionally a no-op off macOS.
+    """
+    if sys.platform != "darwin":
+        return
+    from jarvis.cu.human_activity import (  # noqa: PLC0415
+        human_input_allows_automation,
+    )
+
+    allowed, detail = human_input_allows_automation()
+    if not allowed:
+        raise ActuationUnavailable(
+            "Pausing macOS Computer-Use because physical-input ownership is "
+            f"unsafe ({detail}). Retry after the user stops interacting and "
+            "hardware input state is readable."
+        )
+
+
 # The numpad, which pynput's ``Key`` enum does not model at all — it has no
 # member for a keypad digit or operator on any platform. They are addressed by
 # raw virtual key instead, which pynput passes straight to the OS
@@ -192,6 +214,7 @@ class PosixActuator(Actuator):
 
     def move(self, x: int, y: int) -> None:
         if sys.platform == "darwin":
+            _require_macos_human_input_clear()
             import Quartz  # type: ignore[import-not-found] # noqa: PLC0415
 
             event = Quartz.CGEventCreateMouseEvent(
@@ -306,6 +329,7 @@ class PosixActuator(Actuator):
         dx = n if d == "right" else -n if d == "left" else 0
         dy = n if d == "up" else -n if d == "down" else 0
         if sys.platform == "darwin":
+            _require_macos_human_input_clear()
             import Quartz  # type: ignore[import-not-found] # noqa: PLC0415
 
             event = Quartz.CGEventCreateScrollWheelEvent(
@@ -355,6 +379,8 @@ class PosixActuator(Actuator):
                     mapped.append("num" + normalized[6:])
                 else:
                     mapped.append(normalized)
+            if sys.platform == "darwin":
+                _require_macos_human_input_clear()
             with synthetic_input():
                 self._pyautogui.hotkey(*mapped)
             return
@@ -368,11 +394,19 @@ class PosixActuator(Actuator):
                 resolved.append(kl)
             else:
                 raise ValueError(f"Unknown key: {k!r}")
+        pressed: list[Any] = []
         with synthetic_input():
-            for r in resolved:
-                self._keyboard.press(r)
-            for r in reversed(resolved):
-                self._keyboard.release(r)
+            try:
+                for r in resolved:
+                    if sys.platform == "darwin":
+                        _require_macos_human_input_clear()
+                    self._keyboard.press(r)
+                    pressed.append(r)
+            finally:
+                # A handoff/failure after one modifier went down must never
+                # leave Command/Option/Ctrl/Shift logically held.
+                for r in reversed(pressed):
+                    self._keyboard.release(r)
 
     @staticmethod
     def _quartz_button_spec(quartz: Any, button: str) -> tuple[Any, Any, Any, Any]:
@@ -410,16 +444,24 @@ class PosixActuator(Actuator):
 
         down, up, _dragged, button_id = cls._quartz_button_spec(Quartz, button)
         for click_state in range(1, 3 if double else 2):
-            for event_type in (down, up):
-                event = Quartz.CGEventCreateMouseEvent(
-                    None, event_type, point, button_id,
-                )
-                Quartz.CGEventSetIntegerValueField(
-                    event,
-                    Quartz.kCGMouseEventClickState,
-                    click_state,
-                )
-                Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+            # Ownership is checked immediately before each irreversible button
+            # down. Once down is posted, its matching up must always be emitted
+            # so a handoff can never leave the desktop with a stuck button.
+            _require_macos_human_input_clear()
+            press = Quartz.CGEventCreateMouseEvent(None, down, point, button_id)
+            Quartz.CGEventSetIntegerValueField(
+                press,
+                Quartz.kCGMouseEventClickState,
+                click_state,
+            )
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, press)
+            release = Quartz.CGEventCreateMouseEvent(None, up, point, button_id)
+            Quartz.CGEventSetIntegerValueField(
+                release,
+                Quartz.kCGMouseEventClickState,
+                click_state,
+            )
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, release)
 
     @classmethod
     def _quartz_drag(
@@ -432,12 +474,14 @@ class PosixActuator(Actuator):
         import Quartz  # type: ignore[import-not-found] # noqa: PLC0415
 
         down, up, dragged, button_id = cls._quartz_button_spec(Quartz, "left")
+        _require_macos_human_input_clear()
         press = Quartz.CGEventCreateMouseEvent(None, down, start, button_id)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, press)
         steps = max(2, min(40, int(max(0.0, duration_s) * 60)))
         pause = max(0.0, duration_s) / steps
         try:
             for index in range(1, steps + 1):
+                _require_macos_human_input_clear()
                 point = (
                     int(start[0] + (end[0] - start[0]) * index / steps),
                     int(start[1] + (end[1] - start[1]) * index / steps),
@@ -449,7 +493,16 @@ class PosixActuator(Actuator):
                 if pause:
                     time.sleep(pause)
         finally:
-            release = Quartz.CGEventCreateMouseEvent(None, up, end, button_id)
+            # Cleanup is exempt from the ownership guard: Jarvis may have
+            # already posted button-down. Release at the *current* cursor so a
+            # user takeover does not pull the pointer to the planned endpoint.
+            release_point = start
+            try:
+                current = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))
+                release_point = (int(current.x), int(current.y))
+            except Exception:  # noqa: BLE001 - release must still be attempted
+                logger.debug("cannot read cursor for drag cleanup", exc_info=True)
+            release = Quartz.CGEventCreateMouseEvent(None, up, release_point, button_id)
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, release)
 
     def type_text(self, text: str, *, delay_s: float = 0.02) -> int:  # type: ignore[override]
@@ -463,9 +516,9 @@ class PosixActuator(Actuator):
         can stay honest about a partial/failed type instead of claiming a full
         success (the base contract widens ``None`` -> dropped-count).
         """
-        # Typing is synthetic input too, and it runs for seconds — the window
-        # is held open for the whole burst rather than stamped per character
-        # (jarvis.platform.self_input).
+        # Typing is synthetic input too, and it can run for seconds. On macOS
+        # check physical HID ownership before every character so a person does
+        # not have to wait for a long text burst to finish before taking over.
         from jarvis.platform.self_input import synthetic_input  # noqa: PLC0415
 
         if self._keyboard is None:
@@ -490,9 +543,23 @@ class PosixActuator(Actuator):
                         "for Unicode input).",
                         dropped,
                     )
-                self._pyautogui.typewrite(text, interval=delay_s)
+                if sys.platform == "darwin":
+                    for char in text:
+                        _require_macos_human_input_clear()
+                        self._pyautogui.typewrite(char, interval=0.0)
+                        if delay_s > 0:
+                            time.sleep(delay_s)
+                else:
+                    self._pyautogui.typewrite(text, interval=delay_s)
                 return dropped
         with synthetic_input():
+            if sys.platform == "darwin":
+                for char in text:
+                    _require_macos_human_input_clear()
+                    self._keyboard.type(char)
+                    if delay_s > 0:
+                        time.sleep(delay_s)
+                return 0
             if delay_s <= 0:
                 self._keyboard.type(text)
                 return 0
