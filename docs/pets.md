@@ -200,6 +200,16 @@ Two row conventions make the pet feel alive:
   closed to widest. While a live output level is fresh (under 250 ms old),
   the renderer picks the frame from that level, lightly smoothed, so the mouth
   follows the real voice. Without a level the row swings back and forth.
+- **Idle acts.** A pet may ship little one-shot scenes it plays on its own
+  while nothing happens: the dragon spits fire, the cat chases a ball of
+  yarn. They live on a second sheet, declared next to the animations:
+  `"acts_sheet": "acts.png"` and `"acts": {"fire": {"row": 0, "frames": 8,
+  "fps": 9}, ...}` (1-24 character slugs, at most 12 acts, one row each,
+  always one-shot). The renderer (`ui/orb/pet_renderer.py`) starts one at
+  random 6-18 s into an idle stretch and then every 14-40 s, never the same
+  act twice in a row; any other state cancels it, and the overlay's frame
+  timer covers the wait, so idling costs nothing extra. A user upload is a
+  single sheet, so the store drops `acts` from an uploaded `pet.json`.
 
 Rules the loader enforces (`jarvis/ui/pets/manifest.py`):
 
@@ -230,7 +240,6 @@ committed PNGs match the script). User-created pets live in
 | `bolt` | Bolt | A battery: charges while thinking, sparks on success, runs flat asleep |
 | `mochi` | Mochi | A jelly blob that wobbles while listening |
 | `shelly` | Shelly | A snail: the shell spins while thinking, it withdraws to sleep |
-| `pip` | Pip | A baby: babbles while talking, cries on errors, naps under a blanket |
 | `ember` | Ember | A baby dragon: smoke rings while thinking, a fire breath on success, a sooty cough on errors, naps in its eggshell |
 
 ## Adding a pet

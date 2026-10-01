@@ -6045,9 +6045,6 @@
       "shelly": {
         "description": "A snail: the shell spins while thinking, it withdraws to sleep."
       },
-      "pip": {
-        "description": "A baby with a pacifier: babbles while talking, naps under a blanket."
-      },
       "ember": {
         "description": "A baby dragon: blows smoke rings while thinking, breathes fire on success."
       }

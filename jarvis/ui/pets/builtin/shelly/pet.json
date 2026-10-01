@@ -68,5 +68,44 @@
       "fps": 10,
       "loop": true
     }
+  },
+  "acts_sheet": "acts.png",
+  "acts": {
+    "turbo": {
+      "row": 0,
+      "frames": 8,
+      "fps": 10,
+      "loop": false
+    },
+    "peek_hide": {
+      "row": 1,
+      "frames": 8,
+      "fps": 7,
+      "loop": false
+    },
+    "leaf_munch": {
+      "row": 2,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    },
+    "shell_polish": {
+      "row": 3,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    },
+    "rain_drop": {
+      "row": 4,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    },
+    "stalk_knot": {
+      "row": 5,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    }
   }
 }

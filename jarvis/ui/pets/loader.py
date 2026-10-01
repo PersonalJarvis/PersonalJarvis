@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 
@@ -26,6 +26,7 @@ from jarvis.ui.pets.manifest import (
     USER_ID_RE,
     PetManifest,
     PetManifestError,
+    check_act_cells,
     check_cells,
     check_sheet_size,
     parse_manifest,
@@ -57,6 +58,10 @@ class PetPack:
     manifest: PetManifest
     directory: Path
     frames: Mapping[str, tuple[Image.Image, ...]]
+    #: Decoded idle acts by name (empty when the pet has none).
+    acts: Mapping[str, tuple[Image.Image, ...]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
 
 def builtin_root() -> Path:
@@ -115,20 +120,25 @@ def read_manifest(pet_dir: Path, *, builtin: bool) -> PetManifest:
         raise PetManifestError(
             f"pet.json names the id '{manifest.id}' but its folder is '{pet_dir.name}'."
         )
-    sheet_path = pet_dir / manifest.sheet
+    check_cells(manifest, *_probe_png(pet_dir / manifest.sheet, manifest.sheet))
+    if manifest.acts and manifest.acts_sheet is not None:
+        check_act_cells(manifest, *_probe_png(pet_dir / manifest.acts_sheet, manifest.acts_sheet))
+    return manifest
+
+
+def _probe_png(path: Path, name: str) -> tuple[int, int]:
+    """The ``(width, height)`` of a sheet, from its header only."""
     try:
-        if sheet_path.stat().st_size > MAX_SHEET_BYTES:
+        if path.stat().st_size > MAX_SHEET_BYTES:
             raise PetManifestError("The sprite sheet is larger than 2 MB.")
-        with Image.open(sheet_path) as probe:
+        with Image.open(path) as probe:
             if probe.format != "PNG":
                 raise PetManifestError("The sprite sheet must be a PNG image.")
-            width, height = probe.size
+            return probe.size
     except FileNotFoundError as exc:
-        raise PetManifestError(f"The sprite sheet '{manifest.sheet}' is missing.") from exc
+        raise PetManifestError(f"The sprite sheet '{name}' is missing.") from exc
     except (OSError, SyntaxError, Image.DecompressionBombError) as exc:
         raise PetManifestError("The sprite sheet could not be read as a PNG.") from exc
-    check_cells(manifest, width, height)
-    return manifest
 
 
 def normalize_sheet(image: Image.Image) -> Image.Image:
@@ -154,14 +164,7 @@ def load_pet(pet_dir: Path, *, builtin: bool) -> PetPack:
     """Load and decode the pet in ``pet_dir``. Raises :class:`PetManifestError`."""
     pet_dir = Path(pet_dir)
     manifest = read_manifest(pet_dir, builtin=builtin)
-    try:
-        with Image.open(pet_dir / manifest.sheet) as raw:
-            raw.load()
-            sheet = normalize_sheet(raw)
-    except (OSError, SyntaxError, Image.DecompressionBombError) as exc:
-        raise PetManifestError("The sprite sheet could not be decoded.") from exc
-    check_sheet_size(*sheet.size)
-
+    sheet = _decode(pet_dir / manifest.sheet)
     size = manifest.frame_size
     by_row: dict[str, tuple[Image.Image, ...]] = {}
     frames: dict[str, tuple[Image.Image, ...]] = {}
@@ -174,7 +177,32 @@ def load_pet(pet_dir: Path, *, builtin: bool) -> PetPack:
                 for col in range(spec.frames)
             )
         frames[state] = by_row[resolved]
-    return PetPack(manifest=manifest, directory=pet_dir, frames=MappingProxyType(frames))
+    acts: dict[str, tuple[Image.Image, ...]] = {}
+    if manifest.acts and manifest.acts_sheet is not None:
+        acts_sheet = _decode(pet_dir / manifest.acts_sheet)
+        for name, spec in manifest.acts.items():
+            top = spec.row * size
+            acts[name] = tuple(
+                acts_sheet.crop((col * size, top, (col + 1) * size, top + size))
+                for col in range(spec.frames)
+            )
+    return PetPack(
+        manifest=manifest,
+        directory=pet_dir,
+        frames=MappingProxyType(frames),
+        acts=MappingProxyType(acts),
+    )
+
+
+def _decode(path: Path) -> Image.Image:
+    try:
+        with Image.open(path) as raw:
+            raw.load()
+            sheet = normalize_sheet(raw)
+    except (OSError, SyntaxError, Image.DecompressionBombError) as exc:
+        raise PetManifestError("The sprite sheet could not be decoded.") from exc
+    check_sheet_size(*sheet.size)
+    return sheet
 
 
 def load_default_pet() -> PetPack | None:

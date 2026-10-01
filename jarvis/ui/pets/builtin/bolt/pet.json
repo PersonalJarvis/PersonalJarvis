@@ -68,5 +68,44 @@
       "fps": 10,
       "loop": true
     }
+  },
+  "acts_sheet": "acts.png",
+  "acts": {
+    "power_surge": {
+      "row": 0,
+      "frames": 8,
+      "fps": 10,
+      "loop": false
+    },
+    "drain_flop": {
+      "row": 1,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    },
+    "spark_juggle": {
+      "row": 2,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    },
+    "robot_dance": {
+      "row": 3,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    },
+    "self_check": {
+      "row": 4,
+      "frames": 8,
+      "fps": 7,
+      "loop": false
+    },
+    "static_hair": {
+      "row": 5,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    }
   }
 }

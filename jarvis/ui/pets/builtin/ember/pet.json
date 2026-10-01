@@ -68,5 +68,44 @@
       "fps": 10,
       "loop": true
     }
+  },
+  "acts_sheet": "acts.png",
+  "acts": {
+    "fire_burst": {
+      "row": 0,
+      "frames": 8,
+      "fps": 9,
+      "loop": false
+    },
+    "smoke_rings": {
+      "row": 1,
+      "frames": 8,
+      "fps": 7,
+      "loop": false
+    },
+    "wing_stretch": {
+      "row": 2,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    },
+    "tail_chase": {
+      "row": 3,
+      "frames": 8,
+      "fps": 10,
+      "loop": false
+    },
+    "egg_peek": {
+      "row": 4,
+      "frames": 8,
+      "fps": 6,
+      "loop": false
+    },
+    "sneeze": {
+      "row": 5,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    }
   }
 }

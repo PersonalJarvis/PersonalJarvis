@@ -17,7 +17,7 @@ from jarvis.ui.pets.states import DEFAULT_PET_ID, PET_STATES
 REPO_ROOT = Path(__file__).resolve().parents[4]
 BUILD_SCRIPT = REPO_ROOT / "scripts" / "pets" / "build_pets.py"
 PACKAGE_DIR = REPO_ROOT / "jarvis" / "ui" / "pets"
-EXPECTED_PETS = ("gigi", "miso", "brew", "bolt", "mochi", "shelly", "pip", "ember")
+EXPECTED_PETS = ("gigi", "miso", "brew", "bolt", "mochi", "shelly", "ember")
 
 
 def _builder() -> ModuleType:
@@ -89,6 +89,10 @@ def test_committed_pet_matches_the_generator(generated: Path, pet_id: str) -> No
     assert (ours / "pet.json").read_text(encoding="utf-8") == (fresh / "pet.json").read_text(
         encoding="utf-8"
     )
+    if (fresh / "acts.png").exists():
+        assert _pixels(ours / "acts.png") == _pixels(fresh / "acts.png"), (
+            f"{pet_id}: run `python scripts/pets/build_pets.py` and commit the result"
+        )
 
 
 def test_committed_template_matches_the_generator(generated: Path) -> None:
@@ -117,3 +121,18 @@ def test_the_renderer_conventions_hold(pet_id: str) -> None:
     talking = pack.frames["talking"]
     for before, after in zip(talking, talking[1:], strict=False):
         assert before.tobytes() != after.tobytes()
+
+
+@pytest.mark.parametrize("pet_id", EXPECTED_PETS)
+def test_every_builtin_pet_has_idle_acts(pet_id: str) -> None:
+    """Now and then an idle pet does something on its own (docs/pets.md)."""
+    pack = load_pet(builtin_root() / pet_id, builtin=True)
+    assert 4 <= len(pack.acts) <= 12
+    idle = pack.frames["idle"][0].tobytes()
+    for name, spec in pack.manifest.acts.items():
+        assert not spec.loop
+        frames = pack.acts[name]
+        assert len(frames) == spec.frames >= 2
+        for frame in frames:
+            assert frame.getchannel("A").getbbox() is not None, f"{name} has an empty frame"
+        assert any(frame.tobytes() != idle for frame in frames), f"{name} never moves"

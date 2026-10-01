@@ -442,3 +442,94 @@ def test_garbage_levels_are_ignored() -> None:
     renderer.feed_level(float("nan"), clock.now)
     renderer.feed_level("loud", clock.now)  # type: ignore[arg-type]
     assert renderer.frame_key()[-1] in range(4)
+
+
+# --- idle acts ----------------------------------------------------------------
+
+
+class _ActManifest(_Manifest):
+    def __init__(self) -> None:
+        super().__init__(48, _Pack().manifest._specs)
+        self.acts = {"wave": _Spec(0, 3, 10, False), "hop": _Spec(1, 2, 10, False)}
+
+
+class _ActPack(_Pack):
+    def __init__(self) -> None:
+        super().__init__()
+        self.manifest = _ActManifest()
+        self.acts = {
+            name: tuple(
+                Image.new("RGBA", (48, 48), (200, 40 * i, spec.row, 255))
+                for i in range(spec.frames)
+            )
+            for name, spec in self.manifest.acts.items()
+        }
+
+
+class _Rng:
+    """Picks the low end of every range and the first allowed act."""
+
+    def uniform(self, low: float, high: float) -> float:
+        return low
+
+    def choice(self, options: list[str]) -> str:
+        return options[0]
+
+
+def _act_renderer(clock: _Clock) -> pr.PetRenderer:
+    renderer, _ = _renderer(clock, loader=_Loader({"fake": _ActPack()}), rng=_Rng())
+    return renderer
+
+
+def test_an_idle_pet_plays_an_act_after_a_while_and_returns_to_idle() -> None:
+    clock = _Clock()
+    renderer = _act_renderer(clock)
+    first_delay, gap = pr.ACT_FIRST_DELAY_S[0], pr.ACT_GAP_S[0]
+    assert renderer.frame_key()[2] == "idle"
+    clock.now += first_delay - 0.01
+    assert renderer.frame_key()[2] == "idle"
+    clock.now += 0.02
+    assert renderer.frame_key()[2:] == ("act:wave", 0)
+    clock.now += 0.1
+    assert renderer.frame_key()[2:] == ("act:wave", 1)
+    clock.now += 0.25  # past the act's 0.3 s
+    assert renderer.frame_key()[2] == "idle"
+    clock.now += gap + 0.01
+    # Never the same act twice in a row.
+    assert renderer.frame_key()[2:] == ("act:hop", 0)
+
+
+def test_any_other_state_cancels_the_act() -> None:
+    clock = _Clock()
+    renderer = _act_renderer(clock)
+    clock.now += pr.ACT_FIRST_DELAY_S[0] + 0.01
+    assert renderer.frame_key()[2] == "act:wave"
+    renderer.on_mode("listen")
+    assert renderer.frame_key()[2] == "listening"
+
+
+def test_the_overlay_sleeps_until_the_act_is_due_and_through_its_end() -> None:
+    clock = _Clock()
+    renderer = _act_renderer(clock)
+    clock.now += pr.ACT_FIRST_DELAY_S[0] - 0.1
+    assert renderer.next_frame_delay_ms() <= 105  # the act is due in 0.1 s
+    clock.now += 0.1
+    renderer.frame_key()
+    clock.now += 0.25  # on the act's last frame
+    assert renderer.next_frame_delay_ms() <= 52  # until the act ends, not "never"
+
+
+def test_act_frames_are_scaled_with_the_states() -> None:
+    clock = _Clock()
+    renderer = _act_renderer(clock)
+    clock.now += pr.ACT_FIRST_DELAY_S[0] + 0.01
+    frame = renderer.render()
+    assert frame.size == renderer.size
+    assert frame.getpixel((0, 0))[0] == 200
+
+
+def test_a_pet_without_acts_just_idles() -> None:
+    clock = _Clock()
+    renderer, _ = _renderer(clock)
+    clock.now += 120.0
+    assert renderer.frame_key()[2] == "idle"

@@ -68,5 +68,38 @@
       "fps": 10,
       "loop": true
     }
+  },
+  "acts_sheet": "acts.png",
+  "acts": {
+    "lid_flip": {
+      "row": 0,
+      "frames": 8,
+      "fps": 10,
+      "loop": false
+    },
+    "steam_heart": {
+      "row": 1,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    },
+    "pour_self": {
+      "row": 2,
+      "frames": 8,
+      "fps": 7,
+      "loop": false
+    },
+    "whistle_tune": {
+      "row": 3,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    },
+    "bubble_hiccup": {
+      "row": 4,
+      "frames": 8,
+      "fps": 10,
+      "loop": false
+    }
   }
 }
