@@ -2,9 +2,10 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { AgenticTerminal } from "./AgenticTerminal";
 import { AgentMark } from "./AgentMark";
 import { ForkPaneDialog, type ForkMode, type ForkSource } from "./ForkPaneDialog";
+import { MovePaneDialog, type MovePaneRequest } from "./MovePaneDialog";
 import type { PaneSplitDirection } from "./WorkspaceTerminalHeader";
 import type { SessionState, TerminalState } from "@/lib/agenticIdeApi";
-import { forkTerminal, moveTerminal, placeTerminal, renameTerminal, transferTerminal, type PaneMovePosition } from "@/lib/agenticIdeApi";
+import { forkTerminal, moveTerminal, placeTerminal, renameTerminal, transferTerminal, type PaneMovePosition, type TransferPlacement } from "@/lib/agenticIdeApi";
 import { useComputerChoices } from "@/hooks/useComputers";
 import { useThemeValue } from "@/hooks/useTheme";
 import { useEventStore } from "@/store/events";
@@ -195,11 +196,18 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     }
   }, [pushToast]);
 
-  // "Move to <workspace>", from the pane menu or by dropping the pane on a
-  // workspace in the sidebar: the pane leaves this grid and joins that tab
-  // with its agent still running, and that tab's grid re-joins it.
+  // "Move to <workspace>…", from the pane menu or by dropping the pane on a
+  // workspace in the sidebar: a dialog asks where in that grid it goes, then
+  // the pane leaves this grid and joins that tab with its agent still
+  // running, and that tab's grid re-joins it.
   const [transferring, setTransferring] = useState<string | null>(null);
-  const transfer = useCallback(async (sourceId: string, target: WorkspaceChoice) => {
+  const [moving, setMoving] = useState<{ id: string; request: MovePaneRequest } | null>(null);
+  const askWhere = useCallback((sourceId: string, target: WorkspaceChoice) => {
+    const terminal = latest.current.session.terminals.find((entry) => idOf(entry) === sourceId);
+    if (!terminal || target.id === latest.current.session.id) return;
+    setMoving({ id: sourceId, request: { pane: { name: terminal.name, agent: terminal.agent, displayName: terminal.display_name }, target } });
+  }, []);
+  const transfer = useCallback(async (sourceId: string, target: WorkspaceChoice, placement: TransferPlacement | null = null) => {
     const owner = latest.current.session;
     const terminal = owner.terminals.find((entry) => idOf(entry) === sourceId);
     if (!terminal || target.id === owner.id || saveInFlight.current || latest.current.disabled) return;
@@ -207,14 +215,16 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     latest.current.onMutationStart?.();
     setTransferring(sourceId);
     try {
-      const result = await transferTerminal(terminal.history_id ? `pane:${terminal.history_id}` : terminal.name, owner.id, target.id);
+      const result = await transferTerminal(terminal.history_id ? `pane:${terminal.history_id}` : terminal.name, owner.id, target.id, placement);
       if (!mounted.current) return;
+      setMoving(null);
       const next = result.state.session;
       if (next && latest.current.session === owner && next.id === owner.id) latest.current.onChanged(next);
       const renamed = result.terminal.name !== terminal.name ? ` as ${result.terminal.name}` : "";
       pushToast("success", `${terminal.name} moved to ${target.name}${renamed}. Its agent keeps running.`);
       setAnnouncement(`${terminal.name} moved to ${target.name}${renamed}.`);
     } catch (error) {
+      // The dialog stays open, so another place can be picked.
       if (mounted.current) pushToast("error", (error as Error).message);
     } finally {
       saveInFlight.current = false;
@@ -290,7 +300,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
       const workspace = armed ? workspaceAt(release.clientX, release.clientY) : null;
       const target = workspace ? null : targetAt(release.clientX, release.clientY);
       cleanup();
-      if (armed && workspace) void transfer(id, workspace);
+      if (armed && workspace) askWhere(id, workspace);
       else if (armed && target?.allowed) void move(id, target.id, target.position);
     };
     dragCleanup.current = cleanup;
@@ -299,7 +309,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     window.addEventListener("pointercancel", onCancel, true);
     window.addEventListener("blur", cleanup);
     window.addEventListener("keydown", onKey, true);
-  }, [move, transfer]);
+  }, [move, askWhere]);
 
   const rename = async (terminal: TerminalState, name: string) => {
     const owner = latest.current.session;
@@ -451,7 +461,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             branch={terminal.branch || undefined}
             computerName={computerName(terminal)} placementItems={placementItems(terminal)}
             workspaceItems={transferring || saving || disabled ? [] : workspaces.filter((workspace) => workspace.id !== session.id)
-              .map((workspace) => ({ label: `Move to ${workspace.name}`, run: () => void transfer(id, workspace) }))}
+              .map((workspace) => ({ label: `Move to ${workspace.name}…`, run: () => askWhere(id, workspace) }))}
             onFork={terminal.accepts_prompts === false ? undefined : () => setForking({ name: terminal.name, agent: terminal.agent, displayName: terminal.display_name, workspaceId: session.id })} />
           {drag?.target?.id === id && <div aria-hidden="true" data-testid="dock-preview" data-position={drag.target.position}
             className={cn("pointer-events-none absolute z-20 flex items-center justify-center border-2 p-2", minimal ? "rounded-none" : "rounded-xl", drag.target.allowed ? "border-ring/70 bg-accent/[0.15]" : "border-destructive bg-background/80",
@@ -488,5 +498,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     </div>}
     <span className="sr-only" role="status">{announcement}</span>
     <ForkPaneDialog source={forking} busy={forkBusy} onCancel={() => setForking(null)} onConfirm={(choice) => void fork(choice)} />
+    <MovePaneDialog request={moving?.request ?? null} busy={transferring !== null} onCancel={() => setMoving(null)}
+      onConfirm={(placement) => { if (moving) void transfer(moving.id, moving.request.target, placement); }} />
   </div>;
 }

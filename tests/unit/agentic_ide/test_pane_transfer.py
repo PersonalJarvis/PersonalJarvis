@@ -273,3 +273,89 @@ async def test_the_route_tells_a_missing_pane_from_a_missing_tab(
 
     assert missing_pane.value.status_code == 404
     assert missing_tab.value.status_code == 409
+
+
+# ------------------------------------------------------------------ placement
+async def test_a_chosen_place_shares_that_panes_room(registry: Registry, tmp_path: Path) -> None:
+    """Beside the pane the user picked, the way a split carves it."""
+    source = await registry.start(str(tmp_path), [{"agent": "claude"}], name="Jarvis")
+    target = await registry.start(str(tmp_path), [{"agent": "claude"}], name="Blog")
+    await registry.add_terminal(workspace_id=target.id, direction="right")  # Blog: T1 | T2
+
+    _, _, moved = await registry.transfer_terminal(
+        "T1", workspace_id=source.id, target_workspace_id=target.id, anchor="T1", side="below"
+    )
+
+    assert moved.name == "T3"
+    assert [(t.name, t.column, t.slot) for t in target.terminals] == [
+        ("T1", 0, 0),
+        ("T3", 0, 1),
+        ("T2", 1, 0),
+    ]
+
+
+async def test_left_of_a_pane_puts_it_first_in_the_row(
+    registry: Registry, tmp_path: Path
+) -> None:
+    source, target = await _two_tabs(registry, tmp_path, first=1, second=1)
+
+    await registry.transfer_terminal(
+        "T1", workspace_id=source.id, target_workspace_id=target.id, anchor="T1", side="left"
+    )
+
+    assert [t.name for t in target.terminals] == ["T2", "T1"]
+
+
+async def test_a_place_without_room_changes_nothing(registry: Registry, tmp_path: Path) -> None:
+    """Refused before the pane leaves its tab — never half-way between two."""
+    source = await registry.start(str(tmp_path), [{"agent": "claude"}], name="Jarvis")
+    target = await registry.start(str(tmp_path), [{"agent": "claude"}], name="Blog")
+    for _ in range(session_mod.MAX_GRID_COLUMNS - 1):
+        await registry.add_terminal(workspace_id=target.id, direction="right")
+    before = [t.name for t in target.terminals]
+
+    with pytest.raises(SessionError, match="No room"):
+        await registry.transfer_terminal(
+            "T1", workspace_id=source.id, target_workspace_id=target.id, anchor="T1", side="right"
+        )
+
+    assert [t.name for t in source.terminals] == ["T1"]
+    assert [t.name for t in target.terminals] == before
+
+
+async def test_an_unknown_anchor_is_refused(registry: Registry, tmp_path: Path) -> None:
+    source, target = await _two_tabs(registry, tmp_path)
+
+    with pytest.raises(SessionError, match="No terminal called 'Mika' in Blog"):
+        await registry.transfer_terminal(
+            "T1", workspace_id=source.id, target_workspace_id=target.id, anchor="Mika"
+        )
+    assert len(source.terminals) == 2
+
+
+async def test_the_layout_route_describes_another_tab(registry: Registry, tmp_path: Path) -> None:
+    """The map the move dialog draws: shape and panes, nothing heavier."""
+    _, target = await _two_tabs(registry, tmp_path)
+
+    body = routes.get_workspace_layout(target.id)
+
+    assert body["name"] == "Blog"
+    assert [t["name"] for t in body["terminals"]] == ["T1", "T2"]
+    assert body["layout"] is not None
+    with pytest.raises(HTTPException) as missing:
+        routes.get_workspace_layout("ide_missing")
+    assert missing.value.status_code == 404
+
+
+async def test_the_route_passes_the_chosen_place(registry: Registry, tmp_path: Path) -> None:
+    source, target = await _two_tabs(registry, tmp_path, first=1, second=1)
+
+    await routes.transfer_terminal(
+        _request(),
+        "T1",
+        routes.TransferTerminalRequest(
+            workspace_id=source.id, target_workspace_id=target.id, anchor="T1", side="above"
+        ),
+    )
+
+    assert [(t.name, t.slot) for t in target.terminals] == [("T2", 0), ("T1", 1)]

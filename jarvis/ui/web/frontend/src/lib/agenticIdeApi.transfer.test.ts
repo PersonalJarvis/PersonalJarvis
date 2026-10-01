@@ -5,7 +5,7 @@
  * the pane menu already offers a move the server cannot do yet.
  */
 import { afterEach, expect, it, vi } from "vitest";
-import { transferTerminal } from "./agenticIdeApi";
+import { fetchWorkspaceLayout, transferTerminal } from "./agenticIdeApi";
 
 function answer(status: number, body: unknown) {
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), { status })));
@@ -32,4 +32,22 @@ it("passes on the server's own reason", async () => {
 it("asks for a restart when the backend predates the route", async () => {
   answer(404, { detail: "Not Found" });
   await expect(transferTerminal("T1", "w1", "w2")).rejects.toThrow("restart the app");
+});
+
+it("names the chosen place in the target grid", async () => {
+  answer(200, { terminal: { name: "T2" }, state: {} });
+
+  await transferTerminal("T1", "w1", "w2", { anchor: "pane:b1", side: "below" });
+
+  const [, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+  expect(JSON.parse(init.body)).toEqual({ workspace_id: "w1", target_workspace_id: "w2", anchor: "pane:b1", side: "below" });
+});
+
+it("reads another workspace's shape from its own route", async () => {
+  answer(200, { id: "w2", name: "Blog", layout: null, terminals: [], max_terminals: 16 });
+
+  const view = await fetchWorkspaceLayout("w2");
+
+  expect((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe("/api/agentic-ide/workspaces/w2/layout");
+  expect(view.name).toBe("Blog");
 });

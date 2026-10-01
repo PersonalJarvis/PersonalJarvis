@@ -110,7 +110,7 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 
 - `jarvis ide archive-terminal <name> --restore --workspace --dry-run` — Hide a coding session from the chat list, or restore it.
 - `jarvis ide close-terminals <names> --yes --dry-run` — Stop several coding agents and close their terminal panes.
-- `jarvis ide move-terminal <name> <target_workspace> --workspace --dry-run` — Move a terminal pane into another open workspace.
+- `jarvis ide move-terminal <name> <target_workspace> --workspace --beside --side --dry-run` — Move a terminal pane into another open workspace.
 - `jarvis ide rename-terminal <name> <new_name> --dry-run` — Rename a running terminal pane without restarting its agent.
 
 ## local-models

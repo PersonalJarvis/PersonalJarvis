@@ -312,6 +312,9 @@ MIN_VIEWER_ROWS = 4
 # the same placements the split buttons already express — the difference is that
 # these move a pane that exists instead of opening one.
 MOVE_POSITIONS = ("swap", "left", "right", "above", "below")
+# Where a pane moved in from another workspace may sit beside a pane there.
+# No swap: the pane it would trade places with has nowhere to go.
+TRANSFER_SIDES = ("left", "right", "above", "below")
 # Transport ceiling for one injected prompt. Raised from 4000 once composed
 # prompts became structured briefs that describe the code they point at: at
 # 4000 the cap, not the writer, was deciding where a brief ended. Bracketed
@@ -6078,7 +6081,13 @@ class Registry:
             return moved
 
     async def transfer_terminal(
-        self, wanted: str, *, workspace_id: str | None, target_workspace_id: str
+        self,
+        wanted: str,
+        *,
+        workspace_id: str | None,
+        target_workspace_id: str,
+        anchor: str | None = None,
+        side: str = "right",
     ) -> tuple[Session, Session, Terminal]:
         """Move pane ``wanted`` out of its workspace into another OPEN one.
 
@@ -6099,6 +6108,12 @@ class Registry:
           own (the field a worktree fork uses), so a later restart resumes the
           same conversation in the same place instead of an empty chat in the
           new folder. Moved back home, the field empties again.
+
+        ``anchor`` names a pane of the TARGET tab to put the moved one beside,
+        on ``side`` (``left``/``right``/``above``/``below``): the two then
+        share that pane's rectangle and nothing else moves — the meaning a
+        split has. A side with no room left in the grid is refused before
+        anything changes. Without an anchor the pane joins the workspace edge.
 
         Returns ``(source, target, terminal)``. Moving a pane into the tab it is
         already in is a no-op, not an error — a drop the user took back.
@@ -6131,8 +6146,23 @@ class Registry:
                     f"{term.name} is still being set up on its computer. "
                     "Move it once it has started there."
                 )
+            if anchor is not None and side not in TRANSFER_SIDES:
+                allowed = ", ".join(f"'{item}'" for item in TRANSFER_SIDES)
+                raise SessionError(f"Side must be one of {allowed}.")
 
             old_key, old_name = term.key, term.name
+            # Its call-sign, key and place in the new tab are all settled
+            # BEFORE anything changes: a place with no room refuses the move
+            # rather than leaving the pane half-way between two tabs.
+            new_name = _unique_name(old_name, {normalize(t.name) for t in target.terminals})
+            keys = {t.key for t in target.terminals}
+            new_key = old_key if old_key not in keys else (normalize(new_name) or "t")
+            stem, suffix = new_key, 2
+            while new_key in keys:
+                new_key = f"{stem}{suffix}"
+                suffix += 1
+            placed = self._placed_beside(target, new_key, anchor, side)
+
             cwd = term.cwd(source.folder)
             term.folder = "" if _same_folder(cwd, target.folder) else cwd
 
@@ -6174,21 +6204,20 @@ class Registry:
             term.prompt_viewers.clear()
 
             # Into the new one with a call-sign and key that are free there.
-            term.name = _unique_name(old_name, {normalize(t.name) for t in target.terminals})
-            keys = {t.key for t in target.terminals}
-            key = old_key if old_key not in keys else (normalize(term.name) or "t")
-            stem, suffix = key, 2
-            while key in keys:
-                key = f"{stem}{suffix}"
-                suffix += 1
-            term.key = key
+            term.name, term.key = new_name, new_key
             target.terminals.append(term)
-            # It joins the workspace edge like an anchor-less add: no pane was
-            # chosen to sit beside, and every pane then gets an even share.
-            target.layout = layout_tree.append_pane(target.layout, term.key)
-            columns, rows = layout_tree.grid_span(target.layout)
-            if columns > MAX_GRID_COLUMNS or rows > MAX_GRID_ROWS:
-                self._row_major_grid(target)
+            if placed is not None:
+                # Beside the pane the user picked: the two share that pane's
+                # room, the same local meaning a split has.
+                target.layout = placed
+            else:
+                # It joins the workspace edge like an anchor-less add: no
+                # pane was chosen to sit beside.
+                target.layout = layout_tree.append_pane(target.layout, term.key)
+                columns, rows = layout_tree.grid_span(target.layout)
+                if columns > MAX_GRID_COLUMNS or rows > MAX_GRID_ROWS:
+                    self._row_major_grid(target)
+            # Every pane then gets an even share, as after any add.
             target.layout = layout_tree.evened(target.layout)
             self._renumber(target)
             await self._persist()
@@ -6200,6 +6229,36 @@ class Registry:
                 term.name,
             )
             return source, target, term
+
+    @staticmethod
+    def _placed_beside(
+        target: Session, key: str, anchor: str | None, side: str
+    ) -> layout_tree.LayoutNode | None:
+        """``target``'s tree with pane ``key`` split off ``anchor`` — or None.
+
+        None means no place was asked for. A named pane that is not there, or
+        a side that would push the grid past its largest shape, is refused:
+        quietly re-dealing the grid would put the pane somewhere the user did
+        not choose.
+        """
+        if anchor is None:
+            return None
+        beside = target.find(anchor)
+        if beside is None:
+            known = ", ".join(t.name for t in target.terminals) or "none"
+            raise SessionError(f"No terminal called {anchor!r} in {target.name}. Running: {known}.")
+        tree = target.layout or layout_tree.from_grid(
+            (t.key, t.column, t.slot) for t in target.terminals
+        )
+        placed = layout_tree.split_pane(tree, beside.key, key, cast("Any", side))
+        columns, rows = layout_tree.grid_span(placed)
+        if columns > MAX_GRID_COLUMNS or rows > MAX_GRID_ROWS:
+            where = {"left": "left of", "right": "right of"}.get(side, side)
+            raise SessionError(
+                f"No room {where} {beside.name}: a workspace holds at most "
+                f"{MAX_GRID_COLUMNS} columns and {MAX_GRID_ROWS} rows."
+            )
+        return placed
 
     async def refold(self, depth: int) -> Session:
         """Re-deal every pane into columns ``depth`` deep, in reading order.

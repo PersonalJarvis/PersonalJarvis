@@ -66,16 +66,29 @@ def move_terminal(
         str | None,
         typer.Option("--workspace", help="Workspace id the terminal is in now."),
     ] = None,
+    beside: Annotated[
+        str | None,
+        typer.Option("--beside", help="Pane of the target workspace to place it next to."),
+    ] = None,
+    side: Annotated[
+        str,
+        typer.Option("--side", help="left, right, above or below the --beside pane."),
+    ] = "right",
     dry_run: bool = options.dry_opt(),
 ) -> None:
     """Move a terminal pane into another open workspace.
 
     Its agent keeps running. The pane may get another call-sign when the
     target workspace already has one by that name; the answer says which.
+    With --beside it shares that pane's place in the grid; without, it joins
+    the right edge.
     """
     body: dict[str, object] = {"target_workspace_id": target_workspace}
     if workspace:
         body["workspace_id"] = workspace
+    if beside:
+        body["anchor"] = beside
+        body["side"] = side
     invoke.run(
         "POST",
         f"/api/agentic-ide/terminals/{quote(name, safe='')}/transfer",

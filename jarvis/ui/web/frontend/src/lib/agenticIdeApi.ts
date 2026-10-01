@@ -1494,6 +1494,30 @@ export async function moveTerminal(
   return body.state.session;
 }
 
+/** Which side of a pane in the target workspace a moved pane goes on. */
+export type TransferSide = "left" | "right" | "above" | "below";
+
+/** Where in the target grid a moved pane lands: beside `anchor`, on `side`. */
+export interface TransferPlacement {
+  /** A pane of the TARGET workspace: its call-sign or `pane:<history_id>`. */
+  anchor: string;
+  side: TransferSide;
+}
+
+/** One open workspace's shape: what a placement map draws. */
+export interface WorkspaceLayoutView {
+  id: string;
+  name: string;
+  layout: LayoutNode | null;
+  terminals: Pick<TerminalState, "key" | "name" | "agent" | "display_name" | "history_id">[];
+  max_terminals: number;
+}
+
+/** The split tree and panes of an open workspace that may not be on screen. */
+export async function fetchWorkspaceLayout(workspaceId: string): Promise<WorkspaceLayoutView> {
+  return getJson<WorkspaceLayoutView>(`/api/agentic-ide/workspaces/${encodeURIComponent(workspaceId)}/layout`);
+}
+
 /** What moving a pane into another workspace answers with. */
 export interface TerminalTransfer {
   /** The pane as it is now — its call-sign may have changed in the new tab. */
@@ -1509,19 +1533,25 @@ export interface TerminalTransfer {
  * The agent is not restarted: its process, conversation and folder stay as
  * they are, and only the tab that lists and draws it changes. The pane keeps
  * its call-sign unless the target tab already has one by that name — the
- * answer's `terminal.name` is the one it answers to now.
+ * answer's `terminal.name` is the one it answers to now. With a `placement`
+ * it shares that pane's room in the target grid; without, it joins the edge.
  */
 export async function transferTerminal(
   name: string,
   workspaceId: string,
   targetWorkspaceId: string,
+  placement?: TransferPlacement | null,
 ): Promise<TerminalTransfer> {
   const res = await fetch(
     `/api/agentic-ide/terminals/${encodeURIComponent(name)}/transfer`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workspace_id: workspaceId, target_workspace_id: targetWorkspaceId }),
+      body: JSON.stringify({
+        workspace_id: workspaceId,
+        target_workspace_id: targetWorkspaceId,
+        ...(placement ? { anchor: placement.anchor, side: placement.side } : {}),
+      }),
     },
   );
   if (!res.ok) {

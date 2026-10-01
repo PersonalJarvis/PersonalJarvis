@@ -85,6 +85,7 @@ from jarvis.agentic_ide import (
     drop_analysis,
     drops,
     git_changes,
+    layout_tree,
     native_picker,
     notifications,
     prompt_attachments,
@@ -408,6 +409,17 @@ class TransferTerminalRequest(BaseModel):
     target_workspace_id: str = Field(
         min_length=1,
         description="Open workspace to move the pane into.",
+    )
+    anchor: str | None = Field(
+        default=None,
+        description=(
+            "A pane of the target workspace to put the moved one beside "
+            "(call-sign or 'pane:<history_id>'). Omitted, it joins the edge."
+        ),
+    )
+    side: Literal["left", "right", "above", "below"] = Field(
+        default="right",
+        description="Which side of the anchor pane it goes on; ignored without one.",
     )
 
 
@@ -2928,6 +2940,38 @@ async def move_terminal(name: str, req: MoveTerminalRequest) -> dict:
     }
 
 
+@router.get(
+    "/workspaces/{workspace_id}/layout",
+    summary="Where every pane of one open workspace sits",
+)
+def get_workspace_layout(workspace_id: str) -> dict:
+    """The split tree and the panes of ``workspace_id``, without anything else.
+
+    ``/state`` draws only the workspace on screen. Placing a pane INTO another
+    tab needs that tab's shape, and its full state (transcripts, recaps,
+    prompt statistics per pane) is the wrong price for a small map.
+    """
+    session = get_registry().get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="That workspace is not open.")
+    return {
+        "id": session.id,
+        "name": session.name,
+        "layout": layout_tree.to_dict(session.layout) if session.layout else None,
+        "terminals": [
+            {
+                "key": t.key,
+                "name": t.name,
+                "agent": t.agent,
+                "display_name": t.display_name,
+                "history_id": t.history_id,
+            }
+            for t in session.terminals
+        ],
+        "max_terminals": MAX_TERMINALS,
+    }
+
+
 @router.post(
     "/terminals/{name}/transfer",
     summary="Move a terminal into another open workspace",
@@ -2944,7 +2988,11 @@ async def transfer_terminal(request: Request, name: str, req: TransferTerminalRe
     registry = get_registry()
     try:
         source, target, term = await registry.transfer_terminal(
-            name, workspace_id=req.workspace_id, target_workspace_id=req.target_workspace_id
+            name,
+            workspace_id=req.workspace_id,
+            target_workspace_id=req.target_workspace_id,
+            anchor=req.anchor,
+            side=req.side,
         )
     except SessionError as exc:
         # A pane or workspace that is not there is not found; a full or busy

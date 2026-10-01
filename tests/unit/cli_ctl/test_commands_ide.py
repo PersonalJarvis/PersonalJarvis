@@ -90,3 +90,16 @@ def test_move_terminal_names_both_workspaces(capture_api) -> None:
     assert call["method"] == "POST"
     assert call["path"] == "/api/agentic-ide/terminals/T2/transfer"
     assert call["body"] == {"target_workspace_id": "ide_blog", "workspace_id": "ide_jarvis"}
+
+
+def test_move_terminal_can_name_its_place(capture_api) -> None:
+    result = runner.invoke(
+        app, ["ide", "move-terminal", "T2", "ide_blog", "--beside", "T1", "--side", "below"]
+    )
+
+    assert result.exit_code == 0
+    assert capture_api["calls"][-1]["body"] == {
+        "target_workspace_id": "ide_blog",
+        "anchor": "T1",
+        "side": "below",
+    }

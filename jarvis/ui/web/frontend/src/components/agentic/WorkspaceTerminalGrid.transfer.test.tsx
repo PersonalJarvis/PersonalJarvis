@@ -1,6 +1,7 @@
 /**
  * Moving a pane into another open workspace, from its menu or by dropping it
- * on that workspace's row in the sidebar.
+ * on that workspace's row in the sidebar. Both ask where in that grid it goes
+ * (MovePaneDialog) before anything moves.
  *
  * The agent keeps running; only the tab that lists it changes. What the grid
  * owes is to send the pane's stable identity (never a call-sign another tab
@@ -10,8 +11,8 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { SessionState } from "@/lib/agenticIdeApi";
-const api = vi.hoisted(() => ({ transfer: vi.fn(), move: vi.fn(), toast: vi.fn() }));
-vi.mock("@/lib/agenticIdeApi", () => ({ transferTerminal: api.transfer, moveTerminal: api.move }));
+const api = vi.hoisted(() => ({ transfer: vi.fn(), move: vi.fn(), toast: vi.fn(), layout: vi.fn() }));
+vi.mock("@/lib/agenticIdeApi", () => ({ transferTerminal: api.transfer, moveTerminal: api.move, fetchWorkspaceLayout: api.layout }));
 vi.mock("@/store/events", () => ({ useEventStore: (select: (state: unknown) => unknown) => select({ pushToast: api.toast }) }));
 vi.mock("./AgenticTerminal", () => ({ AgenticTerminal: (props: {
   name: string;
@@ -51,19 +52,28 @@ function sidebarRow(id: string, name: string): HTMLElement {
   return row;
 }
 
-beforeEach(() => { vi.clearAllMocks(); });
+/** Blog, as the move dialog's map draws it: one Claude pane. */
+const blog = { id: "w2", name: "Blog", layout: { pane: "t1" }, max_terminals: 16,
+  terminals: [{ key: "t1", name: "T1", agent: "claude", display_name: "Claude Code", history_id: "b-T1" }] };
+
+beforeEach(() => { vi.clearAllMocks(); api.layout.mockResolvedValue(blog); });
 afterEach(() => { cleanup(); document.body.innerHTML = ""; });
 
-it("offers every other open workspace and moves the pane by its identity", async () => {
+it("offers every other open workspace and moves the pane to the place picked", async () => {
   api.transfer.mockResolvedValue({ terminal: { name: "T3" }, state: { session: makeSession(["T1"]) } });
   const onChanged = vi.fn();
   render(<WorkspaceTerminalGrid {...props} session={makeSession()} onChanged={onChanged} />);
 
-  expect(screen.queryByRole("button", { name: "T2: Move to Personal Jarvis" })).toBeNull();
-  expect(screen.getByRole("button", { name: "T2: Move to VMs" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "T2: Move to Blog" }));
+  expect(screen.queryByRole("button", { name: "T2: Move to Personal Jarvis…" })).toBeNull();
+  expect(screen.getByRole("button", { name: "T2: Move to VMs…" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "T2: Move to Blog…" }));
 
-  await waitFor(() => expect(api.transfer).toHaveBeenCalledExactlyOnceWith("pane:h-T2", "w1", "w2"));
+  // Nothing moves until a place is confirmed.
+  fireEvent.click(await screen.findByRole("button", { name: "Place T2 below T1" }));
+  expect(api.transfer).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByTestId("move-pane-confirm"));
+
+  await waitFor(() => expect(api.transfer).toHaveBeenCalledExactlyOnceWith("pane:h-T2", "w1", "w2", { anchor: "pane:b-T1", side: "below" }));
   await waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
   expect(onChanged.mock.calls[0][0].terminals.map((t: { name: string }) => t.name)).toEqual(["T1"]);
   // It arrived under another call-sign; the user is told which.
@@ -75,14 +85,18 @@ it("says why a move was refused and keeps the pane", async () => {
   const onChanged = vi.fn(), onMutationEnd = vi.fn();
   render(<WorkspaceTerminalGrid {...props} session={makeSession()} onChanged={onChanged} onMutationEnd={onMutationEnd} />);
 
-  fireEvent.click(screen.getByRole("button", { name: "T1: Move to Blog" }));
+  fireEvent.click(screen.getByRole("button", { name: "T1: Move to Blog…" }));
+  await screen.findByRole("button", { name: "Place T1 below T1" });
+  fireEvent.click(screen.getByTestId("move-pane-confirm"));
 
   await waitFor(() => expect(api.toast).toHaveBeenCalledWith("error", "Blog already has the maximum of 12 terminals."));
   expect(onChanged).not.toHaveBeenCalled();
   expect(onMutationEnd).toHaveBeenCalledOnce();
+  // Still open: another place can be picked.
+  expect(screen.getByTestId("move-pane-dialog")).toBeTruthy();
 });
 
-it("moves a pane dropped on a workspace in the sidebar, lighting the row while it hovers", async () => {
+it("asks where a pane dropped on a workspace in the sidebar goes, lighting the row while it hovers", async () => {
   api.transfer.mockResolvedValue({ terminal: { name: "T1" }, state: { session: makeSession(["T2"]) } });
   const row = sidebarRow("w2", "Blog");
   render(<WorkspaceTerminalGrid {...props} session={makeSession()} />);
@@ -94,7 +108,12 @@ it("moves a pane dropped on a workspace in the sidebar, lighting the row while i
   fireEvent.pointerUp(window, { pointerId: 1, clientX: 1200, clientY: 40 });
 
   expect(row.hasAttribute("data-pane-drop-active")).toBe(false);
-  await waitFor(() => expect(api.transfer).toHaveBeenCalledExactlyOnceWith("pane:h-T1", "w1", "w2"));
+  expect(await screen.findByText("Move T1 to Blog")).toBeTruthy();
+  expect(api.transfer).not.toHaveBeenCalled();
+  await screen.findByRole("button", { name: "Place T1 below T1" });
+  fireEvent.click(screen.getByTestId("move-pane-confirm"));
+  // "Automatic" is the default: no place named.
+  await waitFor(() => expect(api.transfer).toHaveBeenCalledExactlyOnceWith("pane:h-T1", "w1", "w2", null));
   expect(api.move).not.toHaveBeenCalled();
 });
 
