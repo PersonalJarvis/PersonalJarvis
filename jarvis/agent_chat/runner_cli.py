@@ -65,7 +65,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -78,7 +78,7 @@ from jarvis.agent_chat.permissions import normalize_permission
 from jarvis.agent_chat.runner_api import TurnHandle
 from jarvis.agent_chat.tool_context import register_turn, unregister_turn
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
-from jarvis.core.response_style import KEEP_GOING_ON_TOOL_FAILURE
+from jarvis.core.response_style import KEEP_GOING_ON_TOOL_FAILURE, TASK_EXECUTION_GUIDANCE
 
 log = logging.getLogger(__name__)
 
@@ -1252,6 +1252,7 @@ def _with_identity(
                 "a plan, memory note, shell command or workspace file for scheduling. "
                 "Use existing connected-account information; ask only for essential "
                 "missing information. "
+                + TASK_EXECUTION_GUIDANCE + "\n"
                 + KEEP_GOING_ON_TOOL_FAILURE
                 + " Existing permission rules still apply.\n"
                 + CONVERSATIONAL_TURN_REMINDER
@@ -2571,12 +2572,16 @@ def _tool_abort_is_recoverable(error: str | None) -> bool:
     return any(m in low for m in _TOOL_ABORT_MARKERS)
 
 
-def _keep_going_prompt(user_text: str, error: str | None) -> str:
+def _keep_going_prompt(
+    user_text: str, error: str | None, *, receipt_hint: str | None = None,
+) -> str:
     err = (error or "the last tool call failed").strip()[:500]
+    review = f"{receipt_hint}\n\n" if receipt_hint else ""
     return (
         "The last tool call was cancelled or failed:\n"
         f"{err}\n\n"
         f"{KEEP_GOING_ON_TOOL_FAILURE}\n\n"
+        f"{review}"
         "Original request:\n"
         f"{user_text}"
     )
@@ -2642,6 +2647,23 @@ async def run_cli_turn(
     t0 = time.perf_counter()
     session = handle.session
     resume = session.vendor_session
+    from jarvis.agent_chat.task_recovery import ToolRecovery, blocks_automatic_recovery
+
+    recovery = ToolRecovery()
+    original_emit = handle.emit
+    original_ask = handle.request_approval
+
+    async def observe(event: dict[str, Any]) -> None:
+        recovery.observe(event)
+        await original_emit(event)
+
+    async def ask(call_id: str, name: str, args: dict[str, Any], summary: str) -> str:
+        answer = await original_ask(call_id, name, args, summary)
+        if answer in {"deny", "cancel"}:
+            recovery.declined = True
+        return answer
+
+    handle = replace(handle, emit=observe, request_approval=ask)
     if session.surface == "society":
         from jarvis.society.reply_preference import resolve_agent_reply_language
 
@@ -2722,9 +2744,16 @@ async def run_cli_turn(
             outcome = await _run_cli_once(
                 handle, user_text, runner, None, identity=ident, bridge=bridge
             )
+        receipt_hint = recovery.hint() if identity else None
         if (
-            outcome.status == "error"
-            and _tool_abort_is_recoverable(outcome.error)
+            (
+                (outcome.status == "error" and _tool_abort_is_recoverable(outcome.error))
+                or (outcome.status == "done" and receipt_hint is not None)
+            )
+            and not recovery.declined
+            and not recovery.blocked
+            and not blocks_automatic_recovery(outcome.error)
+            and not handle.tools_disabled
             and not handle.cancel.is_set()
         ):
             # Print-mode Grok/agy abort the process after a cancelled tool
@@ -2737,7 +2766,7 @@ async def run_cli_turn(
             )
             recovered = await _run_cli_once(
                 handle,
-                _keep_going_prompt(user_text, outcome.error),
+                _keep_going_prompt(user_text, outcome.error, receipt_hint=receipt_hint),
                 runner,
                 outcome.vendor_session or resume,
                 identity=ident,

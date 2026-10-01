@@ -36,6 +36,17 @@ uses an explicit HTTP transport type; omitting it hid the server from the
 actual Claude tool catalog despite successful protocol-level tests. Browser
 actions were not executed in this qualification.
 
+Behavioral acceptance uses a fresh agent and an ordinary request to check
+repository issues every day at 09:00, without tool names, an implementation
+sequence or earlier chat history. The agent independently saves the routine,
+reads it back and confirms the next execution without a clarification round.
+The shared execution guidance stays at the front of compact briefings and is
+refreshed on resumed CLI turns. Recoverable tool failures can trigger one
+continuation even after a successful process exit; unrelated successful calls
+do not erase failed task parts. User denials, policy blocks, missing login and
+quota failures do not trigger that continuation. This is a receipt check,
+not a semantic guarantee that every arbitrary user goal was accomplished.
+
 Protocol references: [AsyncSSH port forwarding](https://asyncssh.readthedocs.io/en/latest/),
 [OpenCode MCP](https://opencode.ai/docs/mcp-servers/),
 [Kimi MCP configuration](https://github.com/MoonshotAI/kimi-cli/blob/main/README.md),
