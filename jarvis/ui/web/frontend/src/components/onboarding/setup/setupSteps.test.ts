@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { HOW_BEATS } from "./HowWalk";
 import { resumeStep, SETUP_STEP_IDS, SETUP_STEPS, stepsFor } from "./setupSteps";
 
 const SRC = join(__dirname, "..", "..", "..");
@@ -48,6 +49,20 @@ describe("setup steps", () => {
       // Settings groups get theirs from a template: data-tour={`settings-${section.id}`}.
       const group = anchor.startsWith("settings-") && code.includes("data-tour={`settings-${section.id}`}");
       expect(literal || group, anchor).toBe(true);
+    }
+  });
+
+  it("let the pet's walk point only at anchors the app actually sets", () => {
+    const code = sources(SRC)
+      .filter((f) => !f.includes(join("components", "onboarding")))
+      .map((f) => readFileSync(f, "utf8"))
+      .join("
+");
+    for (const beat of HOW_BEATS) {
+      if (!beat.anchor) continue;
+      const literal = code.includes(`data-tour="${beat.anchor}"`);
+      const nav = beat.anchor.startsWith("nav-") && code.includes("data-tour={`nav-${item.id}`}");
+      expect(literal || nav, beat.anchor).toBe(true);
     }
   });
 

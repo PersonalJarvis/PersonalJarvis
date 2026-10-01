@@ -1,6 +1,5 @@
 import { ArrowLeft, Lock } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { MascotGigi, type MascotAction } from "@/components/MascotGigi";
 import { Switch } from "@/components/ui/switch";
 import type { useOnboarding } from "@/hooks/useOnboarding";
 import { switchBrainProvider, useProviders } from "@/hooks/useProviders";
@@ -9,6 +8,7 @@ import { useWakeWord } from "@/hooks/useWakeWord";
 import { fetchAgentConnections } from "@/lib/agentChatApi";
 import { clearApiKeysTabRequest, requestApiKeysTab } from "@/lib/apiKeysTab";
 import { fill, setUiLanguage, useLocaleChunk, useT, useUiLanguage, type UiLanguage } from "@/i18n";
+import type { PetState } from "@/lib/petStates";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { planKeysComplete, slotEffective, startableProviders } from "../brainPlans";
@@ -16,17 +16,21 @@ import { ProgressDots } from "../ProgressDots";
 import { Spotlight } from "../tour/Spotlight";
 import { PrimaryAction, QuietAction, Status } from "../ui";
 import { resumeStep, SETUP_STEPS, stepsFor, type SetupStepId } from "./setupSteps";
+import { GuidePetFigure } from "../pet/GuidePet";
+import { HowWalk } from "./HowWalk";
 import { useAnchorRect } from "./useAnchorRect";
 
 type Onb = ReturnType<typeof useOnboarding>;
 
-const MASCOT: Record<SetupStepId, MascotAction> = {
-  welcome: "wave",
-  keys: "look-left",
-  subscriptions: "spin",
-  voice: "look-right",
-  permissions: "look-left",
-  ready: "jump",
+/** How the guiding pet looks on each step's card. */
+const PET: Record<SetupStepId, PetState> = {
+  welcome: "success",
+  how: "talking",
+  keys: "searching",
+  subscriptions: "working",
+  voice: "listening",
+  permissions: "idle",
+  ready: "success",
 };
 
 const LANGS: UiLanguage[] = ["en", "de", "es"];
@@ -146,6 +150,9 @@ export function SetupTour({
 
   if (!ready) return null;
 
+  // The explanation is its own walk through the real app, told by the pet.
+  if (stepId === "how") return <HowWalk onDone={() => { cheer(); next(); }} />;
+
   const footer = (
     <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
       <div>
@@ -173,12 +180,12 @@ export function SetupTour({
         role="dialog"
         aria-modal="true"
         aria-labelledby="setup-title"
-        className="rounded-2xl border border-border bg-popover p-5 text-popover-foreground shadow-float"
+        className="max-h-[calc(100vh-24px)] overflow-y-auto rounded-2xl border border-border bg-popover p-5 text-popover-foreground shadow-float"
         data-testid="setup-card"
         data-step={stepId}
       >
         <div className="flex items-start gap-3">
-          <MascotGigi size={40} reactToVoice={false} enableComments={false} cue={{ action: MASCOT[stepId], key: cue }} />
+          <GuidePetFigure key={cue} state={PET[stepId]} px={48} />
           <div className="min-w-0 flex-1">
             <h2 id="setup-title" className="text-base font-semibold tracking-tight text-foreground">
               {t(`first_run.${stepId}.title`)}

@@ -11,7 +11,7 @@ import type { TourPlacement } from "../tour/tourSteps";
 /** Must match `ONBOARDING_STEPS` in jarvis/setup/onboarding_meta.py. */
 // Permissions precede voice so the macOS microphone grant exists before the
 // wake-word group's own microphone test.
-export const SETUP_STEP_IDS = ["welcome", "keys", "subscriptions", "permissions", "voice", "ready"] as const;
+export const SETUP_STEP_IDS = ["welcome", "how", "keys", "subscriptions", "permissions", "voice", "ready"] as const;
 
 export type SetupStepId = (typeof SETUP_STEP_IDS)[number];
 
@@ -32,6 +32,8 @@ export interface SetupStep {
 
 export const SETUP_STEPS: Record<SetupStepId, SetupStep> = {
   welcome: { id: "welcome", placement: "inside", width: 420 },
+  // The pet's walk through the real app (HowWalk) places itself beat by beat.
+  how: { id: "how", placement: "inside", width: 500 },
   keys: { id: "keys", section: "apikeys", anchor: "apikeys-page", placement: "left", width: 320 },
   subscriptions: {
     id: "subscriptions",
