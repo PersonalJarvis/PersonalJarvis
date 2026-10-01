@@ -206,7 +206,7 @@ Two row conventions make the pet feel alive:
   `"acts_sheet": "acts.png"` and `"acts": {"fire": {"row": 0, "frames": 8,
   "fps": 9}, ...}` (1-24 character slugs, at most 12 acts, one row each,
   always one-shot). The renderer (`ui/orb/pet_renderer.py`) starts one at
-  random 6-18 s into an idle stretch and then every 14-40 s, never the same
+  random 40-100 s into an idle stretch and then every 1.5-4 min, never the same
   act twice in a row; any other state cancels it, and the overlay's frame
   timer covers the wait, so idling costs nothing extra. A user upload is a
   single sheet, so the store drops `acts` from an uploaded `pet.json`.

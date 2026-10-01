@@ -81,9 +81,10 @@ LEVEL_OPEN_SPAN = 0.45
 _CROP_MARGIN = 1
 
 #: Seconds of idling before the first idle act, as a random ``(low, high)`` range.
-ACT_FIRST_DELAY_S = (6.0, 18.0)
+#: Long on purpose: a pet that is mostly still feels calm, not hyperactive.
+ACT_FIRST_DELAY_S = (40.0, 100.0)
 #: Seconds between the end of one idle act and the next, as a random range.
-ACT_GAP_S = (14.0, 40.0)
+ACT_GAP_S = (90.0, 240.0)
 #: Frame-key prefix of an idle act (an act and a state can share a name).
 _ACT_KEY = "act:"
 

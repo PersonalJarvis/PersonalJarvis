@@ -490,7 +490,7 @@ def test_an_idle_pet_plays_an_act_after_a_while_and_returns_to_idle() -> None:
     assert renderer.frame_key()[2] == "idle"
     clock.now += 0.02
     assert renderer.frame_key()[2:] == ("act:wave", 0)
-    clock.now += 0.1
+    clock.now += 0.11
     assert renderer.frame_key()[2:] == ("act:wave", 1)
     clock.now += 0.25  # past the act's 0.3 s
     assert renderer.frame_key()[2] == "idle"
