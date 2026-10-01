@@ -21,8 +21,6 @@ https://github.com/user-attachments/assets/9930ca95-5015-4ade-9a16-975c77d179fd
 
 Want to try Personal Jarvis later? **Star this repository** to keep it handy.
 
-![Flow from a user request through Jarvis to the computer, browser, apps, agents, models, and services, then back as a result with run history.](https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/request-to-result.svg)
-
 **Why it is different:** Jarvis coordinates the tools you already have. A request
 can move from voice or chat to [computer use](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/computer-use.md),
 [Codex or Claude Code](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/agentic-ide.md), [local or hosted models](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/local-ai-providers.md),
@@ -82,6 +80,11 @@ The idea is simple: one place on your computer where you say what you need, and 
 It runs on your own machine with whichever model you like, local ones included, and it's free. There's no account to create, and nothing sends your data anywhere you didn't connect yourself.
 
 ## One request, several ways to get it done
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/how-a-request-runs-dark.svg" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/how-a-request-runs-light.svg" alt="You ask by voice or chat. Jarvis picks a route: answer directly, act on your desktop, browser, apps and tools, or hand longer work to an agent. Every action passes a risk check of safe, monitor, ask you, or block, and the result comes back with every step saved in history." width="100%" />
+</picture>
 
 | Stage | What Jarvis connects |
 |---|---|
