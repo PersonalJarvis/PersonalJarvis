@@ -1474,7 +1474,7 @@ async def get_agents(quick: bool = False) -> AgentsResponse:
 
 
 def _quick_agent_catalog() -> AgentsResponse:
-    """Resolve launchable coding agents without executing any CLI probe."""
+    """Resolve launchable terminals, including plain shells, without CLI probes."""
     from jarvis.workspace import agents as workspace_agents
     from jarvis.workspace import launch_picks
 
@@ -1492,7 +1492,7 @@ def _quick_agent_catalog() -> AgentsResponse:
             accepts_prompts=accepts_prompts(spec.name),
             **launch_picks.offered(spec.name),
         )
-        for spec in workspace_agents.coding_agents()
+        for spec in workspace_agents.list_agents()
     ]
     return AgentsResponse(
         terminal_available=workspace_agents.pty_available(),
