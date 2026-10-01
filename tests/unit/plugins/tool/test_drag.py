@@ -114,6 +114,7 @@ def test_drag_tool_identity():
     assert t.risk_tier == "monitor"
     assert {"x1", "y1", "x2", "y2"} <= set(t.schema["required"])
 
+
 async def test_drag_reports_actuation_unavailable_verbatim(monkeypatch):
     """Wayland/headless: the actionable capability-probe message must reach
     the model verbatim (no generic 'failed' wrapper around it)."""
@@ -134,10 +135,11 @@ async def test_drag_reports_actuation_unavailable_verbatim(monkeypatch):
 
 
 def test_perform_drag_posix_routes_through_capability_probe(monkeypatch):
-    """Drag must use the capability-probed actuator and verify both endpoints."""
+    """Drag must use the guarded capability-probed actuator and verify endpoints."""
     drags: list[tuple] = []
 
     class _FakeActuator:
+        name = "fake-posix"
         current = (0, 0)
 
         def move(self, x, y):
@@ -151,7 +153,7 @@ def test_perform_drag_posix_routes_through_capability_probe(monkeypatch):
             self.current = (x2, y2)
 
     monkeypatch.setattr(
-        "jarvis.cu.actuate.base.get_actuator", lambda: _FakeActuator()
+        "jarvis.cu.actuate._base_get_actuator", lambda: _FakeActuator()
     )
     drag_mod._perform_drag(1, 2, 3, 4, 0.25)
     assert drags == [(1, 2, 3, 4, 0.25)]
