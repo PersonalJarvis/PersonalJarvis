@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile
 from pydantic import BaseModel
 
 from jarvis.app_actions import catalog as catalog_mod
@@ -234,3 +234,28 @@ async def test_a_misspelled_parameter_is_refused_before_anything_runs(app: FastA
     assert "limt" in (result.error or "") and "limit" in (result.error or "")
     ran = await tool.execute({"action_id": action_id, "params": {"limit": 3}}, None)
     assert ran.success and ran.output["response"]["limit"] == 3
+
+
+def test_a_long_response_is_shortened_into_valid_json() -> None:
+    import json
+
+    from jarvis.plugins.tool.app_action import _MAX_RESPONSE_CHARS, _trim
+
+    big = {"items": [{"name": f"skill-{i}", "notes": "x" * 300} for i in range(500)]}
+    trimmed = _trim(big)
+    assert trimmed["truncated"] is True
+    assert len(json.dumps(trimmed)) <= _MAX_RESPONSE_CHARS + 100
+    assert trimmed["data"]["items"][0]["name"] == "skill-0"
+    assert trimmed["data"]["items"][-1].endswith("more")
+
+
+def test_a_file_upload_is_not_offered_as_an_action() -> None:
+
+    application = FastAPI()
+
+    @application.post("/api/skills/upload")
+    async def upload(file: UploadFile) -> dict[str, Any]:
+        return {}
+
+    paths = {e.path for e in build_catalog(application.openapi()).values()}
+    assert "/api/skills/upload" not in paths

@@ -257,6 +257,10 @@ class RunAppActionTool:
                 )
         except httpx.HTTPError as exc:
             return None, f"transport error: {exc}"
+        kind = resp.headers.get("content-type", "")
+        if resp.content and not kind.startswith(("application/json", "text/")):
+            # An image or download read as text is noise; say what came back.
+            return resp.status_code, {"content_type": kind, "bytes": len(resp.content)}
         try:
             data = resp.json() if resp.content else None
         except ValueError:
@@ -268,7 +272,33 @@ def _trim(data: Any) -> Any:
     from jarvis.plugins.tool.app_command import _without_snapshots
 
     data = _without_snapshots(data)
-    text = json.dumps(data, ensure_ascii=False, default=str)
-    if len(text) <= _MAX_RESPONSE_CHARS:
+    if _size(data) <= _MAX_RESPONSE_CHARS:
         return data
-    return {"truncated": True, "preview": text[:_MAX_RESPONSE_CHARS]}
+    # Shorten structurally so the model still gets valid JSON: long lists keep
+    # their first items plus a count, long strings their start. Cutting the
+    # serialized text mid-item handed over broken data.
+    for keep in (20, 8, 3, 1):
+        shortened = _shorten(data, keep)
+        if _size(shortened) <= _MAX_RESPONSE_CHARS:
+            return {"truncated": True, "data": shortened}
+    return {
+        "truncated": True,
+        "note": "The response is too large; narrow the request with its parameters.",
+    }
+
+
+def _size(data: Any) -> int:
+    return len(json.dumps(data, ensure_ascii=False, default=str))
+
+
+def _shorten(data: Any, keep: int, depth: int = 0) -> Any:
+    if depth > 6:
+        return "..."
+    if isinstance(data, list):
+        items = [_shorten(item, keep, depth + 1) for item in data[:keep]]
+        return items + ([f"... {len(data) - keep} more"] if len(data) > keep else [])
+    if isinstance(data, dict):
+        return {k: _shorten(v, keep, depth + 1) for k, v in data.items()}
+    if isinstance(data, str) and len(data) > 200 * keep:
+        return data[: 200 * keep] + "..."
+    return data

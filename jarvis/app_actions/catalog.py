@@ -186,6 +186,8 @@ def _entry(
         or is_excluded(path)
         or operation.get("x-jarvis-exclude")
         or _carries_secret(operation, components)
+        # A file upload has no JSON body a model could fill; it only failed.
+        or "multipart/form-data" in ((operation.get("requestBody") or {}).get("content") or {})
     ):
         return None
     properties: dict[str, Any] = {}
