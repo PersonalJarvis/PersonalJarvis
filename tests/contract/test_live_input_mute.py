@@ -11,7 +11,7 @@ import pytest
 
 from jarvis.core import runtime_refs
 from jarvis.core.bus import EventBus
-from jarvis.core.events import VoiceMuteChanged
+from jarvis.core.events import VoiceInputHeld, VoiceMuteChanged
 from jarvis.live.native import NativeLiveVoiceSession
 from jarvis.live.session import LiveVoiceSession
 
@@ -98,3 +98,37 @@ async def test_an_ended_call_stops_following_the_mute(call):
     await call.bus.publish(VoiceMuteChanged(muted=True, source="pet_strip"))
     assert call.page == []
     assert call.session._input_muted is False
+
+
+@pytest.mark.asyncio
+async def test_a_dictation_holds_the_call_input_until_it_is_delivered(call):
+    call.session._watch_input_mute()
+    await call.bus.publish(VoiceInputHeld(held=True, reason="dictation"))
+    assert call.page[-1] == {"type": "input_mute", "muted": True}
+    await call.session.handle_audio_frame(PCM)
+    assert call.connection.sent == []
+
+    await call.bus.publish(VoiceInputHeld(held=False, reason="dictation"))
+    assert call.page[-1] == {"type": "input_mute", "muted": False}
+    await call.session.handle_audio_frame(PCM)
+    assert len(call.connection.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_releasing_the_hold_never_unmutes_the_user(call):
+    call.session._watch_input_mute()
+    await call.bus.publish(VoiceMuteChanged(muted=True, source="pet_strip"))
+    await call.bus.publish(VoiceInputHeld(held=True, reason="dictation"))
+    await call.bus.publish(VoiceInputHeld(held=False, reason="dictation"))
+    assert call.page[-1] == {"type": "input_mute", "muted": True}
+    await call.session.handle_audio_frame(PCM)
+    assert call.connection.sent == []
+
+
+@pytest.mark.asyncio
+async def test_a_call_that_starts_during_a_dictation_adopts_the_hold(call):
+    call.pipeline.is_voice_input_held = True
+    call.session._watch_input_mute()
+    assert call.session._input_muted is True
+    await call.session.handle_audio_frame(PCM)
+    assert call.connection.sent == []

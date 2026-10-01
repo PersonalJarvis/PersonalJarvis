@@ -79,6 +79,7 @@ from jarvis.core.events import (
     TranscriptionUpdate,
     UtteranceCaptured,
     VoiceBootStatus,
+    VoiceInputHeld,
     VoiceMuteChanged,
     VoiceMuteToggleRequested,
     VoiceSessionEnded,
@@ -2382,6 +2383,10 @@ class SpeechPipeline:
         # and the moment ``_dictation_task`` exists (or the handover is refused),
         # and never both at once. See ``_begin_dictation_handover``.
         self._dictation_handover_task: asyncio.Task[None] | None = None
+        # A dictation started beside a live call, and whether that call's input
+        # is held for it. See ``_live_call_owns_microphone``.
+        self._dictation_beside_call = False
+        self._voice_input_held = False
         # 0.0 is a real value here — "no ceiling" — so it must NOT be coerced
         # to a default the way an absent or malformed setting is. The old
         # ``or 300.0`` did exactly that and made the off switch unreachable
@@ -10850,9 +10855,68 @@ class SpeechPipeline:
                 "The voice pipeline is not running, so dictation cannot start.",
             )
             return False
+        if self._live_call_owns_microphone():
+            # A live call keeps running: its input is held, not hung up.
+            return self._commit_dictation(
+                loop, target=target, source=source, beside_call=True
+            )
         if self._voice_session_holds_microphone():
             return self._begin_dictation_handover(loop, target=target, source=source)
         return self._commit_dictation(loop, target=target, source=source)
+
+    def _live_call_owns_microphone(self) -> bool:
+        """True while a live realtime call captures the microphone in the WebView.
+
+        Such a call owns its own capture (getUserMedia, with the browser's echo
+        cancellation), so a dictation does not have to take the device away
+        from it. Instead the dictation records through its own capture and the
+        call's input is HELD until the text is delivered (``VoiceInputHeld``):
+        the conversation stays open and the dictated words never become a turn.
+        Push-to-talk is excluded — its raw recording is the pipeline's own
+        stream, and that lane keeps the ordinary handover.
+        """
+        if getattr(self, "_ptt_mode", False):
+            return False
+        try:
+            from jarvis.live.runtime import owns_microphone
+        except Exception:  # noqa: BLE001 — no live stack means no live call
+            log.debug("live call registry unavailable", exc_info=True)
+            return False
+        return owns_microphone()
+
+    @property
+    def is_voice_input_held(self) -> bool:
+        """Whether a dictation currently holds a live call's input back.
+
+        Read by a call that starts DURING such a dictation, so it adopts the
+        hold instead of hearing the dictated words.
+        """
+        return bool(getattr(self, "_voice_input_held", False))
+
+    def _set_voice_input_held(self, held: bool) -> None:
+        """Hold or release a live call's input and tell the call. Never raises."""
+        if bool(getattr(self, "_voice_input_held", False)) == held:
+            return
+        self._voice_input_held = held
+        log.info(
+            "Live call input %s for the dictation.",
+            "held" if held else "released",
+        )
+        self._publish_event_soon(VoiceInputHeld(held=held, reason="dictation"))
+
+    def _on_beside_call_dictation_done(self, _task: asyncio.Task[None]) -> None:
+        """Give the call its voice back once the dictation has fully ended.
+
+        A done-callback rather than a ``finally``: it runs for every end of the
+        task, including one cancelled before its first step, so the call can
+        never be left deaf. The task ends only after the text was delivered,
+        which is the moment the user may talk to the call again.
+        """
+        try:
+            self._dictation_beside_call = False
+            self._set_voice_input_held(False)
+        except Exception:  # noqa: BLE001 — a release must never become a crash
+            log.warning("Releasing the live call input failed", exc_info=True)
 
     def _voice_session_holds_microphone(self) -> bool:
         """True while the VOICE lane owns the one input device.
@@ -11013,26 +11077,42 @@ class SpeechPipeline:
             log.debug("Dictation handover callback failed", exc_info=True)
 
     def _commit_dictation(
-        self, loop: asyncio.AbstractEventLoop, *, target: str, source: str = "api"
+        self,
+        loop: asyncio.AbstractEventLoop,
+        *,
+        target: str,
+        source: str = "api",
+        beside_call: bool = False,
     ) -> bool:
         """Arm the wake block, announce the turn and spawn the recording task.
 
         The commit point shared by the direct start and the handover, so both
         arrive in the dictation lane through exactly one door. Always returns
         ``True``; every reason not to be here is checked by ``start_dictation``.
+
+        ``beside_call`` means a live call keeps running next to this dictation:
+        its input is held until the task ends, and the call's hangup event is
+        left alone — it belongs to the call, not to this recording.
         """
         self._dictation_started_by = str(source or "api")
         self._dictation_discard_requested = False
+        self._dictation_beside_call = beside_call
         # A fresh dictation session must NOT inherit a stale hangup. ``_hangup_event``
         # is set by every "auflegen" and is otherwise only cleared when the next
         # VOICE session is accepted (``_run_session``). The dictation lane shares
         # that event in its ``asyncio.wait`` gate, so a leftover hangup from an
         # earlier voice call would finalize this session on its first tick — the
         # mic appears to "stop the instant you click it". Clear it here, mirroring
-        # the voice-path ``self._hangup_event.clear()`` at session accept.
+        # the voice-path ``self._hangup_event.clear()`` at session accept. Beside
+        # a live call the event is the CALL's: clearing it could swallow a
+        # hangup the user just asked for, and the lane does not wait on it.
         hangup = getattr(self, "_hangup_event", None)
-        if hangup is not None:
+        if hangup is not None and not beside_call:
             hangup.clear()
+        if beside_call:
+            # Held BEFORE the recording task exists, so the call stops hearing
+            # the user as early as possible.
+            self._set_voice_input_held(True)
         # Stored RAW ("auto" / "insert" / "chat"). ``auto`` is resolved when the
         # recording ENDS, not here: the window that matters is the one in front
         # when the text is delivered. Clicking "Start dictating" in the app and
@@ -11076,10 +11156,13 @@ class SpeechPipeline:
         self._dictation_task = loop.create_task(
             self._dictation_session(), name="dictation"
         )
+        if beside_call:
+            self._dictation_task.add_done_callback(self._on_beside_call_dictation_done)
         log.info(
-            "🎙️ dictation started (transcribe-only, target=%s, via=%s).",
+            "🎙️ dictation started (transcribe-only, target=%s, via=%s%s).",
             self._dictation_target,
             self._dictation_started_by,
+            ", beside a live call" if beside_call else "",
         )
         return True
 
@@ -13150,7 +13233,14 @@ class SpeechPipeline:
                     else None
                 )
                 stop_task = asyncio.create_task(self._dictation_stop_event.wait())
-                hangup_task = asyncio.create_task(self._hangup_event.wait())
+                # Beside a live call the hangup event is the CALL's: hanging up
+                # the conversation must not throw away what is being dictated.
+                hangup_event = (
+                    asyncio.Event()
+                    if getattr(self, "_dictation_beside_call", False)
+                    else self._hangup_event
+                )
+                hangup_task = asyncio.create_task(hangup_event.wait())
                 # Only a recording the HOLD key started is owed a release edge;
                 # the watchdog ends it when the key is physically up and that
                 # edge never came (BUG-191). It sets the stop event, so it is
@@ -13173,7 +13263,7 @@ class SpeechPipeline:
                         timeout=self._dictation_max_s or None,
                         return_when=asyncio.FIRST_COMPLETED,
                     )
-                    hung_up = hangup_task in done or self._hangup_event.is_set()
+                    hung_up = hangup_task in done or hangup_event.is_set()
                     if getattr(self, "_dictation_discard_requested", False):
                         # The bar's close-X: end it like a hangup — nothing
                         # transcribed, nothing delivered.

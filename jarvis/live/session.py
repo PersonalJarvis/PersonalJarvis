@@ -51,6 +51,13 @@ def _pipeline_input_muted() -> bool:
     return bool(getattr(get_speech_pipeline(), "is_muted", False))
 
 
+def _pipeline_input_held() -> bool:
+    """Whether a dictation beside the call holds the user's audio back."""
+    from jarvis.core.runtime_refs import get_speech_pipeline
+
+    return bool(getattr(get_speech_pipeline(), "is_voice_input_held", False))
+
+
 def _summary_index(event: dict) -> int:
     """The summary part a reasoning-summary event belongs to (0 when absent)."""
     try:
@@ -128,7 +135,11 @@ class LiveVoiceSession:
         # The mute on the pet strip, the Jarvis Bar or the orb. A browser call
         # owns its microphone in the WebView, out of reach of the pipeline's own
         # capture gate, so the session drops the frames and tells the page.
+        # ``_input_muted`` is what the frame gate and the page obey: the
+        # user's mute OR a dictation holding the input (see ``VoiceInputHeld``).
         self._input_muted = False
+        self._user_muted = False
+        self._input_held = False
         self._watching_input_mute = False
         self._media_timeout: asyncio.TimerHandle | None = None
         self._active_model = ""
@@ -624,29 +635,52 @@ class LiveVoiceSession:
 
     def _watch_input_mute(self) -> None:
         """Adopt the current microphone mute and follow it until the call ends."""
-        self._input_muted = _pipeline_input_muted()
+        self._user_muted = _pipeline_input_muted()
+        self._input_held = _pipeline_input_held()
+        self._input_muted = self._user_muted or self._input_held
         if self._bus is None or self._watching_input_mute:
             return
-        from jarvis.core.events import VoiceMuteChanged
+        from jarvis.core.events import VoiceInputHeld, VoiceMuteChanged
 
         self._bus.subscribe(VoiceMuteChanged, self._on_input_mute_changed)
+        self._bus.subscribe(VoiceInputHeld, self._on_input_held_changed)
         self._watching_input_mute = True
 
     def _stop_watching_input_mute(self) -> None:
         if not self._watching_input_mute or self._bus is None:
             return
-        from jarvis.core.events import VoiceMuteChanged
+        from jarvis.core.events import VoiceInputHeld, VoiceMuteChanged
 
         self._bus.unsubscribe(VoiceMuteChanged, self._on_input_mute_changed)
+        self._bus.unsubscribe(VoiceInputHeld, self._on_input_held_changed)
         self._watching_input_mute = False
 
     async def _on_input_mute_changed(self, event: Any) -> None:
+        """Follow the user's own microphone mute."""
+        self._user_muted = bool(event.muted)
+        await self._apply_input_mute()
+
+    async def _on_input_held_changed(self, event: Any) -> None:
+        """Follow a dictation that borrows the user's voice beside the call.
+
+        The call stays open; only the audio stops reaching the model until the
+        dictated text has been delivered, so it never becomes a spoken turn.
+        """
+        self._input_held = bool(event.held)
+        log.info(
+            "Live call input %s (%s).",
+            "held" if self._input_held else "released",
+            getattr(event, "reason", "") or "unknown",
+        )
+        await self._apply_input_mute()
+
+    async def _apply_input_mute(self) -> None:
         """Drop the user's audio from now on and let the page silence its track.
 
         Dropping frames here covers the PCM socket. A WebRTC call sends its
         audio straight to the provider, so only the page can silence that one.
         """
-        self._input_muted = bool(event.muted)
+        self._input_muted = self._user_muted or self._input_held
         if self._closing:
             return
         try:
