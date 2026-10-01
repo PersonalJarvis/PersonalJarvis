@@ -274,7 +274,7 @@ async def test_closing_a_resumed_pane_does_not_resurrect_it(
     await fake_pty.spawns[-1]["on_closed"]("fake-pty-1", 1)
 
     assert len(fake_pty.spawns) == spawns_before, "the agent must stay stopped"
-    assert registry.session.find("T1") is None, "and its pane must be gone"
+    assert registry.session is None, "and its empty workspace must be gone"
 
 
 async def test_closing_the_workspace_does_not_resurrect_a_resumed_pane(
