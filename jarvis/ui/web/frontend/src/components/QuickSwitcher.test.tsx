@@ -1,7 +1,7 @@
 /**
  * The quick switcher end to end: type, Enter, you are there.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 // Radix Dialog and cmdk touch browser APIs jsdom does not ship.
@@ -23,6 +23,8 @@ import { QuickSwitcher } from "./QuickSwitcher";
 import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { useSettingsJump } from "@/store/settingsJump";
+import { useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { useIdeProjectsStore } from "@/store/ideProjects";
 
 function renderOpen() {
   const state = { open: true };
@@ -75,5 +77,90 @@ describe("QuickSwitcher", () => {
     renderOpen();
     fireEvent.change(screen.getByTestId("quick-switcher-input"), { target: { value: "zzqxv" } });
     expect(screen.queryByTestId("quick-switch-settings")).toBeNull();
+  });
+
+  describe("live results", () => {
+    const PANE = {
+      workspace_id: "ws-2",
+      workspace_name: "Blog",
+      folder: "/work/blog",
+      workspace_active: false,
+      key: "T3",
+      history_id: "h1",
+      name: "codex-3",
+      agent: "codex",
+      display_name: "Codex",
+      accepts_prompts: true,
+      status: "live",
+      exit_code: null,
+      activity: "idle",
+      activity_since: 0,
+      worked: true,
+      started_at: 0,
+      last_output_at: 0,
+      last_prompt: "speed up the mobile pages",
+      last_prompt_at: 0,
+      recap: "Blog speed: mobile pages twice as fast",
+      has_resume: false,
+      readable: true,
+      account: null,
+      account_label: null,
+      archived: false,
+    };
+
+    beforeEach(() => {
+      useEventStore.setState({
+        conversations: [
+          {
+            kind: "voice",
+            id: "c1",
+            title: "Browser acceptance",
+            preview: "check the browser",
+            created_ms: 1,
+            updated_ms: 2,
+            message_count: 3,
+          },
+        ],
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          if (String(url).includes("/api/agentic-ide/panes")) {
+            return new Response(JSON.stringify({ panes: [PANE], active_id: "ws-1" }), { status: 200 });
+          }
+          return new Response("{}", { status: 404 });
+        }),
+      );
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("lists recent chats before anything is typed", () => {
+      renderOpen();
+      expect(screen.getByTestId("quick-switch-chat-c1")).toBeTruthy();
+    });
+
+    it("finds a chat by several words of its title", () => {
+      renderOpen();
+      fireEvent.change(screen.getByTestId("quick-switcher-input"), { target: { value: "browser accept" } });
+      expect(screen.getByTestId("quick-switch-chat-c1")).toBeTruthy();
+    });
+
+    it("finds a terminal by its title and frames it in its workspace", async () => {
+      renderOpen();
+      fireEvent.change(screen.getByTestId("quick-switcher-input"), { target: { value: "mobile pages" } });
+      const row = await screen.findByTestId("quick-switch-pane-ws-2-codex-3");
+      fireEvent.click(row);
+      expect(useEventStore.getState().activeSection).toBe("agentic-ide");
+      expect(useIdeProjectsStore.getState().action).toMatchObject({
+        kind: "activate-workspace",
+        workspaceId: "ws-2",
+      });
+      expect(useIdeSidePanelStore.getState().spotlight).toEqual({ workspaceId: "ws-2", pane: "codex-3" });
+    });
+
+    it("opens with the text typed into the sidebar bar", () => {
+      render(<QuickSwitcher open onOpenChange={() => {}} initialQuery="agen" />);
+      expect((screen.getByTestId("quick-switcher-input") as HTMLInputElement).value).toBe("agen");
+    });
   });
 });

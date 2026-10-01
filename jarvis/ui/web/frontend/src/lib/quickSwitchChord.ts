@@ -186,3 +186,20 @@ export function quickSwitchComboProblem(
   if (primaryOnly) return "app_reserved";
   return null;
 }
+
+const MAC_GLYPH: Record<string, string> = { ctrl: "⌃", alt: "⌥", shift: "⇧", meta: "⌘" };
+const PC_NAME: Record<string, string> = { ctrl: "Ctrl", alt: "Alt", shift: "Shift", meta: "Win" };
+const MOD_ORDER = ["ctrl", "alt", "shift", "meta"] as const;
+
+/**
+ * The chord as keycap labels, for a hint next to the sidebar search bar
+ * ("Ctrl", "Space" — or "⌥", "Space" on a Mac). Small on purpose: the full
+ * formatter lives with the recorder, outside the startup chunk.
+ */
+export function chordCaps(combo: string, platform: ChordPlatform = hostChordPlatform()): string[] {
+  const { mods, keys } = parseChord(combo);
+  const names = platform === "mac" ? MAC_GLYPH : PC_NAME;
+  const key = (token: string) =>
+    token === "space" ? "Space" : token.length === 1 ? token.toUpperCase() : token[0].toUpperCase() + token.slice(1);
+  return [...MOD_ORDER.filter((m) => mods.has(m)).map((m) => names[m]), ...keys.map(key)];
+}

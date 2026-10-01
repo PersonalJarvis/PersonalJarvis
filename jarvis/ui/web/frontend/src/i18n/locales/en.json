@@ -1689,7 +1689,14 @@
     "current": "You are here",
     "hint_open": "Open",
     "hint_close": "Close",
-    "terminal_grid": "Terminal grid"
+    "terminal_grid": "Terminal grid",
+    "sidebar_placeholder": "Search {name}",
+    "sidebar_search": "Search",
+    "group_chats": "Chats",
+    "group_recent_chats": "Recent chats",
+    "group_terminals": "Terminals",
+    "group_workspaces": "Workspaces",
+    "untitled_chat": "Untitled chat"
   },
   "board_view": {
     "title": "Board",

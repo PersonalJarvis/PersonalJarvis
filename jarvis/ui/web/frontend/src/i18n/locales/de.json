@@ -1656,7 +1656,14 @@
     "current": "Du bist hier",
     "hint_open": "Öffnen",
     "hint_close": "Schließen",
-    "terminal_grid": "Terminal-Raster"
+    "terminal_grid": "Terminal-Raster",
+    "sidebar_placeholder": "{name} durchsuchen",
+    "sidebar_search": "Suchen",
+    "group_chats": "Chats",
+    "group_recent_chats": "Letzte Chats",
+    "group_terminals": "Terminals",
+    "group_workspaces": "Arbeitsbereiche",
+    "untitled_chat": "Chat ohne Titel"
   },
   "board_view": {
     "title": "Board",

@@ -10,6 +10,8 @@ import {
 } from "@/components/layout/Sidebar";
 import { NAV_GROUPS, NAV_FOOTER_ITEMS, SETTINGS_HUB_IDS } from "@/components/layout/navGroups";
 import { isSectionId, useEventStore } from "@/store/events";
+import { useQuickSwitcher } from "@/store/quickSwitcher";
+import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
 import { useHomeStore } from "@/store/home";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
@@ -236,7 +238,11 @@ describe("Sidebar header avatar", () => {
   // nothing stable to assert. What matters is that the avatar shows the mark
   // and not a stale public/ path a browser would serve from cache.
   test("renders the Gigi app mark from the bundle, not a public path", () => {
+    // The mark heads the identity row, which returns when the quick
+    // switcher (and with it the search bar) is switched off.
+    useQuickSwitchSettings.setState({ enabled: false });
     const { container } = renderSidebar();
+    useQuickSwitchSettings.setState({ enabled: true });
     const avatar = container.querySelector('[data-testid="sidebar-style-avatar"]');
     expect(avatar).not.toBeNull();
     expect(avatar?.getAttribute("data-variant")).toBe("logo");
@@ -323,21 +329,44 @@ describe("Sidebar assistant name header", () => {
 
     renderSidebar();
 
-    expect(screen.getByText("Ruben")).toBeTruthy();
-    expect(screen.queryByText("Jarvis")).toBeNull();
+    // The name lives in the search bar's accessible name now.
+    const bar = screen.getByTestId("sidebar-search");
+    expect(bar.getAttribute("aria-label")).toContain("Ruben");
+    expect(bar.getAttribute("aria-label")).not.toContain("Jarvis");
   });
 
   test("follows a live assistant-name change", () => {
     useEventStore.setState({ assistantName: "Nova" });
     renderSidebar();
-    expect(screen.getByText("Nova")).toBeTruthy();
+    const bar = () => screen.getByTestId("sidebar-search").getAttribute("aria-label") ?? "";
+    expect(bar()).toContain("Nova");
 
     act(() => {
       useEventStore.setState({ assistantName: "Athena" });
     });
 
-    expect(screen.getByText("Athena")).toBeTruthy();
-    expect(screen.queryByText("Nova")).toBeNull();
+    expect(bar()).toContain("Athena");
+    expect(bar()).not.toContain("Nova");
+  });
+
+  test("the search bar opens the quick switcher with the typed key", () => {
+    renderSidebar();
+    const bar = screen.getByTestId("sidebar-search");
+    fireEvent.keyDown(bar, { key: "a" });
+    expect(useQuickSwitcher.getState()).toMatchObject({ open: true, initialQuery: "a" });
+    act(() => useQuickSwitcher.getState().hide());
+    fireEvent.click(bar);
+    expect(useQuickSwitcher.getState()).toMatchObject({ open: true, initialQuery: "" });
+    act(() => useQuickSwitcher.getState().hide());
+  });
+
+  test("switching the quick switcher off brings the name row back", () => {
+    useEventStore.setState({ assistantName: "Ruben" });
+    useQuickSwitchSettings.setState({ enabled: false });
+    renderSidebar();
+    expect(screen.queryByTestId("sidebar-search")).toBeNull();
+    expect(screen.getByText("Ruben")).toBeTruthy();
+    useQuickSwitchSettings.setState({ enabled: true });
   });
 });
 

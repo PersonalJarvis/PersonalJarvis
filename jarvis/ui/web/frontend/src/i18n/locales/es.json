@@ -1656,7 +1656,14 @@
     "current": "Estás aquí",
     "hint_open": "Abrir",
     "hint_close": "Cerrar",
-    "terminal_grid": "Cuadrícula de terminales"
+    "terminal_grid": "Cuadrícula de terminales",
+    "sidebar_placeholder": "Buscar en {name}",
+    "sidebar_search": "Buscar",
+    "group_chats": "Chats",
+    "group_recent_chats": "Chats recientes",
+    "group_terminals": "Terminales",
+    "group_workspaces": "Espacios de trabajo",
+    "untitled_chat": "Chat sin título"
   },
   "board_view": {
     "title": "Tablero",

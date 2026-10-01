@@ -28,6 +28,8 @@ import { RecentChats } from "@/components/home/RecentChats";
 import { useHomeStore } from "@/store/home";
 import { IdeProjectTree } from "@/components/agentic/IdeProjectTree";
 import { useIdeProjectsStore } from "@/store/ideProjects";
+import { SidebarSearchBar } from "@/components/layout/SidebarSearchBar";
+import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
 import { useAppInstance } from "@/hooks/useAppInstance";
 import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
 import { GigiMark } from "@/components/GigiMark";
@@ -170,6 +172,9 @@ export function Sidebar({
   const toggleIdeVoice = useIdeProjectsStore((s) => s.toggleVoice);
   const voiceState = useEventStore((s) => s.voiceState);
   const assistantName = useEventStore((s) => s.assistantName);
+  // The search bar takes the identity row's place while the quick
+  // switcher is on; switched off, the row comes back as it was.
+  const searchBarOn = useQuickSwitchSettings((s) => s.enabled);
   // The dev instance (a second, restartable app beside the live one — see
   // jarvis.core.instance) shows a small tag so the two windows are never
   // confused; the default app shows nothing here.
@@ -349,7 +354,7 @@ export function Sidebar({
             railed ? "flex-col justify-center gap-1.5" : "w-full gap-2",
           )}
         >
-          <span
+          {(railed || !searchBarOn) && <span
             data-testid="sidebar-style-avatar"
             data-variant="logo"
             title={railed ? `${assistantName} — ${voiceLabel}` : undefined}
@@ -365,7 +370,7 @@ export function Sidebar({
               </span>
             )}
             <GigiMark size={railed ? 36 : 20} />
-          </span>
+          </span>}
           {/* One quiet row, like the workspace switcher in Linear or Cursor:
               mark, name, status dot. It used to be a two-line identity card
               whose second line said "Ready" for as long as nothing was wrong,
@@ -373,7 +378,49 @@ export function Sidebar({
               the loudest spot in the column. The dot says "fine" on its own
               (its hover and accessible name still carry the word); the word
               only appears when there IS news: starting, offline, error. */}
-          {!railed && (
+          {!railed && searchBarOn && (
+            <SidebarSearchBar
+              assistantName={assistantName}
+              status={
+                <>
+                  {voiceHasNews && (
+                    <span className="max-w-[7rem] shrink-0 truncate text-xs text-muted-foreground">
+                      {voiceLabel}
+                    </span>
+                  )}
+                  {devTag && (
+                    <span
+                      data-testid="sidebar-instance-tag"
+                      title={t("sidebar.instance_dev_hint")}
+                      className="shrink-0 rounded-sm bg-primary px-1.5 text-xs font-medium leading-none text-primary-foreground"
+                    >
+                      {devTag}
+                    </span>
+                  )}
+                  {showSpinner ? (
+                    <Loader2
+                      className="h-3 w-3 shrink-0 animate-spin text-muted-foreground"
+                      data-testid="voice-starting-spinner"
+                      aria-hidden
+                    />
+                  ) : (
+                    <span
+                      data-testid="sidebar-voice-dot"
+                      role="img"
+                      aria-label={voiceLabel}
+                      title={voiceLabel}
+                      className={cn(
+                        "h-1.5 w-1.5 shrink-0 rounded-full",
+                        vs.dot,
+                        vs.pulse && "animate-jarvis-pulse",
+                      )}
+                    />
+                  )}
+                </>
+              }
+            />
+          )}
+          {!railed && !searchBarOn && (
             <div
               className="flex min-w-0 flex-1 items-center gap-2 text-sm"
               title={voiceLabel}
