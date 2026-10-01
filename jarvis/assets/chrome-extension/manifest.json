@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Jarvis Chrome Connection",
+  "version": "1.0.0",
+  "minimum_chrome_version": "120",
+  "description": "Connect this Chrome profile to Jarvis. Only Jarvis-created, visible tabs are controlled; logins stay in Chrome.",
+  "permissions": ["debugger", "tabs", "storage", "alarms", "idle", "declarativeNetRequestWithHostAccess"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {"service_worker": "background.mjs", "type": "module"},
+  "action": {"default_popup": "popup.html", "default_title": "Jarvis Chrome connection"},
+  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'; connect-src http://127.0.0.1:* ws://127.0.0.1:*"}
+}
