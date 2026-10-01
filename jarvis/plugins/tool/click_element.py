@@ -239,6 +239,24 @@ class ClickElementTool:
                 ),
             )
 
+        # Human takeover on macOS: hardware-originated events use Quartz's HID
+        # state table, which excludes Jarvis's own synthetic session events.
+        # Check immediately before any semantic OR pointer action so right/
+        # double clicks cannot bypass the handoff guard.
+        if sys.platform == "darwin":
+            from jarvis.cu.human_activity import human_input_allows_automation
+
+            allowed, detail = await asyncio.to_thread(human_input_allows_automation)
+            if not allowed:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=(
+                        "Pausing click_element because recent physical mouse or "
+                        f"keyboard activity was detected ({detail})."
+                    ),
+                )
+
         # 5. Accessibility-first on macOS. AXPress acts on the semantic control,
         # not on pixels. Editable controls often expose no AXPress, so AXFocused
         # is the second semantic path. Only an explicitly unsupported semantic
