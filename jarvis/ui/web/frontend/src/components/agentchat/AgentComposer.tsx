@@ -217,7 +217,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     onAttachProblem,
   );
   // A shortcut appshot parked for "the next message" joins this one.
-  useAppshotClaim(files.attachFiles, surface === "jarvis", activeSessionId ?? "new");
+  useAppshotClaim(files.attachFiles, surface === "jarvis");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pasteRescue = usePasteRescue();
 
