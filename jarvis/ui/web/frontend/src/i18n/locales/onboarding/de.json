@@ -14,7 +14,7 @@
     },
     "keys": {
       "title": "Einen API-Schlüssel eintragen",
-      "lede": "Das ist die Seite API-Keys. Füge einen Schlüssel in eine Anbieter-Karte ein und speichere ihn. Mit OpenAI oder Gemini reicht ein einziger Schlüssel für Live-Sprache.",
+      "lede": "Dein Assistent braucht einen KI-Schlüssel, um zu denken und zu sprechen; ohne ihn bleiben Chat und Sprache aus. Das ist die Seite API-Keys: Füge einen Schlüssel in eine Anbieter-Karte ein und speichere ihn. Mit OpenAI oder Gemini reicht ein einziger Schlüssel für Live-Sprache.",
       "waiting": "Warte auf einen Schlüssel…",
       "connecting": "Alles wird eingeschaltet…",
       "connected": "Verbunden: {provider}.",

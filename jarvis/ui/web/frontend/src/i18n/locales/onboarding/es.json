@@ -14,7 +14,7 @@
     },
     "keys": {
       "title": "Añade una clave de API",
-      "lede": "Esta es la página Claves API. Pega una clave en la tarjeta de un proveedor y guárdala. Con OpenAI o Gemini basta una sola clave para la voz en directo.",
+      "lede": "Tu asistente necesita una clave de IA para pensar y hablar; sin ella, el chat y la voz siguen apagados. Esta es la página Claves API: pega una clave en la tarjeta de un proveedor y guárdala. Con OpenAI o Gemini basta una sola clave para la voz en directo.",
       "waiting": "Esperando una clave…",
       "connecting": "Activando todo…",
       "connected": "Conectado: {provider}.",
