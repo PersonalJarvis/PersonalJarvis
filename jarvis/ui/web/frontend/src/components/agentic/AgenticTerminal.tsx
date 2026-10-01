@@ -525,6 +525,8 @@ interface AgenticTerminalProps {
   computerName?: string;
   /** Compact header only: "Run on …" / "Bring back" menu entries. */
   placementItems?: { label: string; run: () => void }[];
+  /** Compact header only: "Move to <workspace>" menu entries. */
+  workspaceItems?: { label: string; run: () => void }[];
   /** Registry identity and optional custom logo for the compact header. */
   agent?: string;
   agentLogoUrl?: string;
@@ -665,6 +667,7 @@ export function AgenticTerminal({
   branch,
   computerName,
   placementItems,
+  workspaceItems,
   agent,
   agentLogoUrl,
   recap,
@@ -2643,6 +2646,7 @@ export function AgenticTerminal({
     branch,
     computerName,
     placementItems,
+    workspaceItems,
   };
 
   return (

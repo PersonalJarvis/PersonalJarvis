@@ -1494,6 +1494,40 @@ export async function moveTerminal(
   return body.state.session;
 }
 
+/** What moving a pane into another workspace answers with. */
+export interface TerminalTransfer {
+  /** The pane as it is now — its call-sign may have changed in the new tab. */
+  terminal: TerminalState;
+  source_workspace_id: string;
+  target_workspace_id: string;
+  state: IdeState;
+}
+
+/**
+ * Move a running pane into another open workspace.
+ *
+ * The agent is not restarted: its process, conversation and folder stay as
+ * they are, and only the tab that lists and draws it changes. The pane keeps
+ * its call-sign unless the target tab already has one by that name — the
+ * answer's `terminal.name` is the one it answers to now.
+ */
+export async function transferTerminal(
+  name: string,
+  workspaceId: string,
+  targetWorkspaceId: string,
+): Promise<TerminalTransfer> {
+  const res = await fetch(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/transfer`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace_id: workspaceId, target_workspace_id: targetWorkspaceId }),
+    },
+  );
+  if (!res.ok) throw new Error(await detail(res));
+  return (await res.json()) as TerminalTransfer;
+}
+
 /**
  * Give one pane another call-sign.
  *

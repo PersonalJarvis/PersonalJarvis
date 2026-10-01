@@ -12,6 +12,15 @@ const EXPANSION_KEY = "jarvis.ide.projectExpansion.v1";
 const WORKSPACE_DRAG_MIME = "application/x-jarvis-workspace-id";
 const PROJECT_DRAG_MIME = "application/x-jarvis-project-id";
 /**
+ * An open workspace row accepts a terminal pane dragged out of the grid: the
+ * grid reads these attributes under the pointer and lights the row with
+ * `data-pane-drop-active` while the pane hovers it (WorkspaceTerminalGrid).
+ */
+function paneDropProps(workspace: ProjectWorkspace | null): Record<string, string> {
+  return workspace?.status === "open" ? { "data-pane-drop-workspace": workspace.id, "data-pane-drop-name": workspace.name } : {};
+}
+const PANE_DROP_ACTIVE = "data-[pane-drop-active=true]:bg-primary/10 data-[pane-drop-active=true]:ring-1 data-[pane-drop-active=true]:ring-inset data-[pane-drop-active=true]:ring-primary/60";
+/**
  * What a 405 on a reorder means: this view already knows drag and drop, but
  * the backend serving it predates the endpoint — a restart brings the two
  * back in step. Shown instead of the server's bare "Method Not Allowed",
@@ -432,6 +441,7 @@ export function IdeProjectTree() {
     return <div key={project.id} className="mb-px" data-testid={`ide-project-${project.id}`}>
       <div draggable={projectDraggable}
         data-testid={`ide-project-header-${project.id}`}
+        {...paneDropProps(solo)}
         onContextMenu={(event) => solo ? openWorkspaceMenu(event, project.id, solo.id) : openProjectMenu(event, project.id)}
         onDragStart={(event) => {
           if (!projectDraggable) { event.preventDefault(); return; }
@@ -465,7 +475,7 @@ export function IdeProjectTree() {
           clearProjectDragState();
           void moveProject(sourceId, project.id, before);
         }}
-        className={`group relative flex min-h-8 items-center rounded-md transition-colors hover:bg-muted ${active ? "text-foreground" : ""} ${soloSelected || soloPending ? "bg-muted" : ""} ${isProjectDragged ? "opacity-40" : ""} ${isProjectDropBefore ? "before:absolute before:-top-0.5 before:left-2 before:right-2 before:h-0.5 before:rounded-full before:bg-primary" : ""} ${isProjectDropAfter ? "after:absolute after:-bottom-0.5 after:left-2 after:right-2 after:h-0.5 after:rounded-full after:bg-primary" : ""} ${projectDraggable ? "cursor-grab active:cursor-grabbing" : ""}`}>
+        className={`group relative flex min-h-8 items-center rounded-md transition-colors hover:bg-muted ${active ? "text-foreground" : ""} ${soloSelected || soloPending ? "bg-muted" : ""} ${isProjectDragged ? "opacity-40" : ""} ${isProjectDropBefore ? "before:absolute before:-top-0.5 before:left-2 before:right-2 before:h-0.5 before:rounded-full before:bg-primary" : ""} ${isProjectDropAfter ? "after:absolute after:-bottom-0.5 after:left-2 after:right-2 after:h-0.5 after:rounded-full after:bg-primary" : ""} ${projectDraggable ? "cursor-grab active:cursor-grabbing" : ""} ${PANE_DROP_ACTIVE}`}>
         {renamingId === project.id ? <form className="flex min-w-0 flex-1 items-center gap-1 px-2" onSubmit={(event) => { event.preventDefault(); const name = draftName.trim(); if (name && name !== project.name) void mutate(project, { name }); else setRenamingId(null); }}>
           <input autoFocus aria-label={`Rename ${project.name}`} value={draftName} maxLength={80} disabled={working}
             onChange={(event) => setDraftName(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setRenamingId(null); } }}
@@ -529,6 +539,7 @@ export function IdeProjectTree() {
           const isDropAfter = dropTarget?.id === workspace.id && !dropTarget.before;
           return <div key={workspace.id}
             data-testid={`ide-workspace-row-${workspace.id}`}
+            {...paneDropProps(workspace)}
             draggable={draggable}
             onContextMenu={(event) => openWorkspaceMenu(event, project.id, workspace.id)}
             onDragStart={(event) => {
@@ -562,7 +573,7 @@ export function IdeProjectTree() {
               clearDragState();
               void moveWorkspace(sourceId, workspace.id, before);
             }}
-            className={`group/space relative flex min-h-8 items-center rounded-md transition-colors hover:bg-muted ${selected ? "bg-muted text-foreground" : ""} ${pending ? "bg-muted/80 text-foreground" : ""} ${isDragged ? "opacity-40" : ""} ${isDropBefore ? "before:absolute before:-top-0.5 before:left-2 before:right-2 before:h-0.5 before:rounded-full before:bg-primary" : ""} ${isDropAfter ? "after:absolute after:-bottom-0.5 after:left-2 after:right-2 after:h-0.5 after:rounded-full after:bg-primary" : ""}`}>
+            className={`group/space relative flex min-h-8 items-center rounded-md transition-colors hover:bg-muted ${selected ? "bg-muted text-foreground" : ""} ${pending ? "bg-muted/80 text-foreground" : ""} ${isDragged ? "opacity-40" : ""} ${isDropBefore ? "before:absolute before:-top-0.5 before:left-2 before:right-2 before:h-0.5 before:rounded-full before:bg-primary" : ""} ${isDropAfter ? "after:absolute after:-bottom-0.5 after:left-2 after:right-2 after:h-0.5 after:rounded-full after:bg-primary" : ""} ${PANE_DROP_ACTIVE}`}>
             {renamingWorkspaceId === workspace.id ? (
               <form
                 className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1"
