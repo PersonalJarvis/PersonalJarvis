@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import time
 from pathlib import Path
 
 import pytest
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 
+from jarvis.ui.pets import store as store_module
 from jarvis.ui.pets.loader import load_pet
 from jarvis.ui.pets.manifest import USER_ID_RE, PetManifestError
 from jarvis.ui.pets.states import PET_FORMAT
@@ -179,3 +182,32 @@ def test_delete_never_leaves_the_root(store: PetStore, tmp_path: Path) -> None:
 
 def test_list_of_a_missing_root_is_empty(tmp_path: Path) -> None:
     assert PetStore(tmp_path / "nothing").list() == []
+
+
+def test_the_number_of_user_pets_is_capped(
+    store: PetStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(store_module, "MAX_USER_PETS", 2)
+    sheet = _png(_sheet([1], columns=1))
+    _add(store, sheet)
+    _add(store, sheet)
+    assert store.count() == 2
+    with pytest.raises(PetManifestError, match="already have 2 pets"):
+        _add(store, sheet)
+    assert store.count() == 2
+
+
+def test_stale_staging_folders_are_swept_and_fresh_ones_kept(store: PetStore) -> None:
+    store.root.mkdir(parents=True)
+    stale = store.root / ".staging-crashed"
+    fresh = store.root / ".staging-in-progress"
+    stale.mkdir()
+    (stale / "sheet.png").write_bytes(b"half")
+    fresh.mkdir()
+    old = time.time() - 2 * 3600
+    os.utime(stale, (old, old))
+
+    assert store.list() == []
+
+    assert not stale.exists()
+    assert fresh.is_dir()

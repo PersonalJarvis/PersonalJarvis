@@ -604,7 +604,10 @@ class SubprocessBarOverlay:
             return
         from ui.orb.controls import toggle_speaker_mute
 
-        if toggle_speaker_mute() is None:
+        # Same source names as the in-process orb window, so the pipeline's
+        # VoiceSpeakerMuteChanged says which control the user pressed.
+        source = "pet" if getattr(self, "_style", "") == "pet" else "orb"
+        if toggle_speaker_mute(source=source) is None:
             log.debug("orb speaker toggle had no live pipeline in the parent")
 
     def _dispatch_talk_action(self) -> None:
@@ -788,6 +791,9 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
     def toggle_visible(self) -> None:
         # The host knows whether the pet is on screen; this proxy only guesses.
         # The guess matters for one thing: a respawn replaying a hidden pet.
+        # It is an optimistic mirror: the host sends no confirmation, so
+        # ``pet_user_hidden`` (and the REST ``visible`` built on it) can drift
+        # if the host drops the command; the next set_visible re-syncs it.
         self._user_visible = not self._user_visible
         self._send({"op": "toggle_visible"})
 

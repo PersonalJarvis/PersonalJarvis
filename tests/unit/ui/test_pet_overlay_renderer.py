@@ -304,3 +304,45 @@ def test_the_built_in_default_pet_loads_through_the_real_engine() -> None:
         assert renderer.state() in PET_STATES
         assert renderer.render().size == renderer.size
         assert pr.MIN_FRAME_DELAY_MS <= renderer.next_frame_delay_ms() <= pr.MAX_FRAME_DELAY_MS
+
+
+# --- memory and failure (review fixes) ------------------------------------------
+
+
+class _SharedRowPack(_Pack):
+    """Like the real loader: fallback states share their source row's tuple."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        shared = self.frames["idle"]
+        for state in ("thinking", "error", "sleeping"):
+            self.frames[state] = shared
+
+
+def test_states_that_share_a_row_are_scaled_once() -> None:
+    pack = _SharedRowPack()
+    distinct = {id(sequence): sequence for sequence in pack.frames.values()}
+    renderer, calls = _renderer(_Clock(), loader=_Loader({"fake": pack}))
+    assert len(calls) == sum(len(sequence) for sequence in distinct.values())
+    frames = renderer._frames  # noqa: SLF001 — the scaled cache under test
+    assert frames["sleeping"] is frames["idle"]
+
+
+def test_a_frame_that_will_not_scale_leaves_the_strip_only() -> None:
+    clock = _Clock()
+
+    def _broken(frame: Image.Image, scale: int, key: tuple[int, int, int]) -> Image.Image:
+        raise ValueError("bad frame")
+
+    renderer = pr.PetRenderer(
+        "fake",
+        clock=clock,
+        loader=_Loader({"fake": _Pack()}),
+        to_color_key=_broken,
+        machine=PetStateMachine(clock),
+    )
+    assert renderer.has_figure is False
+    assert renderer.pet_id == "none"
+    assert renderer._frames == {}  # noqa: SLF001 — nothing half-filled is kept
+    assert renderer.size[1] == 1
+    assert renderer.render().size == renderer.size

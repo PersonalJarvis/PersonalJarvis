@@ -29,7 +29,10 @@ one click.
 - **The status bubble** under the strip. It shows short, condensed lines of
   what Jarvis is doing: the live transcript while listening, a "Thinking …"
   header with the current reason, tool or progress line while thinking, and
-  the condensed reply while talking. It collapses to two lines, expands to six
+  the condensed reply while talking. Only spoken replies appear there (voice
+  and realtime channels); typed-chat and background answers stay in the app
+  window, so the always-on-top bubble never puts them on a shared screen. It
+  collapses to two lines, expands to six
   on click, and fades out six seconds after the last update while idle. It can
   be switched off (`[ui] pet_bubble`).
 - **The pet "None"** (`pet_id = "none"`) shows the control strip and the
@@ -37,8 +40,9 @@ one click.
 
 The pet stays on screen while Jarvis is idle. The global shortcut
 (`[trigger] hotkey_pet_toggle`, default `alt+win+p`) hides it or brings it
-back and to the front; hiding lasts until the next app start. On Wayland,
-global shortcuts are a no-op, as for every other shortcut.
+back and to the front; hiding lasts until the next app start. The shortcut is
+changed on the My Pets page (Customize); an empty value switches it off. On
+Wayland, global shortcuts are a no-op, as for every other shortcut.
 
 ## States
 
@@ -52,13 +56,23 @@ equal.
 | `listening` | wake word, `VoiceSessionStarted`, `SystemStateChanged(LISTENING)`, dictation |
 | `thinking` | `SystemStateChanged(THINKING)` |
 | `talking` | `AudioOutFirst`, `SystemStateChanged(SPEAKING)` with audible output |
-| `success` (one-shot, 1.5 s) | `ActionExecuted(success=True)`, `SpeechSpoken.spoken_kind` in `action_done`/`completion`, `JarvisAgentBackgroundCompleted(success=True)` |
-| `error` (one-shot, 2 s) | `ErrorOccurred`, `ActionExecuted(success=False)`, `SpeechSpoken.spoken_kind` in `timeout`/`unavailable`/`stt_unavailable`, `VoiceSessionEnded(hangup_reason="error")` |
+| `success` (one-shot, 1.5 s) | `SpeechSpoken.spoken_kind` in `action_done`/`completion`, `JarvisAgentBackgroundCompleted(success=True)`, `ActionExecuted(success=True)` while no turn is running |
+| `error` (one-shot, 2 s) | `ErrorOccurred(recoverable=False)`, `SpeechSpoken.spoken_kind` in `timeout`/`unavailable`/`stt_unavailable`, `VoiceSessionEnded(hangup_reason="error")`, `ActionExecuted(success=False)` while no turn is running |
 | `sleeping` | five minutes without any Jarvis event; any event wakes it |
 
 States come only from real bus events (`ui/orb/bus_bridge.py`); nothing is
 simulated. The classic voice pipeline does not publish `ErrorOccurred`, so on
 that path an error shows through the `SpeechSpoken` kinds.
+
+The one-shots report what the user experiences, not every internal step:
+
+- a tool result inside a running voice or typed turn (any state other than
+  `IDLE`, `ERROR` or `PAUSED`) is a step of that turn and plays nothing; the
+  turn's own end reports how it went;
+- a recoverable `ErrorOccurred` (a retry or fallback the user never notices)
+  plays nothing;
+- at most one one-shot plays per three seconds. The only exception is an error
+  right after a success, because the failure is the news.
 
 ## Sprite format `jarvis-pet/1`
 

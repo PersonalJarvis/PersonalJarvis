@@ -181,7 +181,9 @@ class PetRenderer:
             try:
                 pack = self._loader(requested)
             except Exception:  # noqa: BLE001 — a broken pack must not kill the overlay
-                log.warning("pet %r failed to load; showing the strip only", requested)
+                log.warning(
+                    "pet %r failed to load; showing the strip only", requested, exc_info=True
+                )
                 pack = None
         self._pack = pack
         # The id of what actually loaded: an unknown id falls back to the
@@ -205,18 +207,42 @@ class PetRenderer:
         self._blank = None
         pack = self._pack
         if pack is None:
-            strip_w, _strip_h = orb_controls.pet_strip_size(self._dpi_ratio)
-            self._factor = 1
-            self._size = (max(1, strip_w), 1)
+            self._use_strip_only_size()
             return
         edge = int(pack.manifest.frame_size)
-        self._factor = pixel_factor(edge, self._dpi_ratio, self._pet_scale)
-        frames: Mapping[str, Any] = pack.frames
-        for state, sequence in frames.items():
-            self._frames[str(state)] = tuple(
-                self._to_color_key(frame, self._factor, self._color_key) for frame in sequence
+        factor = pixel_factor(edge, self._dpi_ratio, self._pet_scale)
+        source: Mapping[str, Any] = pack.frames
+        # States that borrow another row (STATE_FALLBACKS) share the SAME
+        # source tuple in the pack; scale each tuple once, or a pet with only
+        # an ``idle`` row would hold seven scaled copies of it.
+        scaled_by_source: dict[int, tuple[Image.Image, ...]] = {}
+        frames: dict[str, tuple[Image.Image, ...]] = {}
+        try:
+            for state, sequence in source.items():
+                scaled = scaled_by_source.get(id(sequence))
+                if scaled is None:
+                    scaled = tuple(
+                        self._to_color_key(frame, factor, self._color_key) for frame in sequence
+                    )
+                    scaled_by_source[id(sequence)] = scaled
+                frames[str(state)] = scaled
+        except Exception:  # noqa: BLE001 — a frame that will not scale must not kill the overlay
+            log.warning(
+                "pet %r could not be scaled; showing the strip only", self._pet_id, exc_info=True
             )
-        self._size = (edge * self._factor, edge * self._factor)
+            self._pack = None
+            self._pet_id = NO_PET_ID
+            self._use_strip_only_size()
+            return
+        self._frames = frames
+        self._factor = factor
+        self._size = (edge * factor, edge * factor)
+
+    def _use_strip_only_size(self) -> None:
+        """No figure: the window is a 1 px line as wide as the strip."""
+        strip_w, _strip_h = orb_controls.pet_strip_size(self._dpi_ratio)
+        self._factor = 1
+        self._size = (max(1, strip_w), 1)
 
     @property
     def pet_id(self) -> str:

@@ -10,6 +10,8 @@ on to unmute again.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 from PIL import Image
 
@@ -198,4 +200,48 @@ def test_the_speaker_toggle_mutes_and_then_unmutes_again(pipeline: _Pipeline) ->
     assert controls.toggle_speaker_mute() is True
     assert pipeline._volume == 0.0
     assert controls.toggle_speaker_mute() is False
+    assert pipeline._volume == pytest.approx(0.7)
+
+
+class _ConfiguredPipeline(_Pipeline):
+    """A pipeline whose voice was silenced elsewhere, with ``[tts].volume`` set."""
+
+    def __init__(self, configured: float) -> None:
+        super().__init__(0.0)
+
+        class _Tts:
+            volume = configured
+
+        class _Config:
+            tts = _Tts()
+
+        self._config = _Config()
+
+
+@pytest.mark.parametrize("configured,expected", [(0.4, 0.4), (0.0, 1.0)])
+def test_unmuting_a_voice_silenced_elsewhere_restores_the_configured_volume(
+    monkeypatch: pytest.MonkeyPatch, configured: float, expected: float
+) -> None:
+    monkeypatch.setattr(controls, "_PRE_MUTE_VOLUME", {})
+    live = _ConfiguredPipeline(configured)
+    runtime_refs.set_speech_pipeline(live)
+    try:
+        assert controls.toggle_speaker_mute() is False
+        assert live._volume == pytest.approx(expected)
+    finally:
+        runtime_refs.set_speech_pipeline(None)
+
+
+def test_concurrent_toggles_never_lose_the_remembered_volume(pipeline: _Pipeline) -> None:
+    # The disc (Tk thread) and the in-app button (a REST worker) can toggle at
+    # the same moment; an even number of toggles must end audible again.
+    def _toggle_many() -> None:
+        for _ in range(50):
+            controls.toggle_speaker_mute()
+
+    workers = [threading.Thread(target=_toggle_many) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=10.0)
     assert pipeline._volume == pytest.approx(0.7)

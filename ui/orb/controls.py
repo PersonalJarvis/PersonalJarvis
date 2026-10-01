@@ -32,6 +32,7 @@ import logging
 import math
 import os
 import sys
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -684,13 +685,17 @@ def toggle_speaker_mute(source: str = "orb") -> bool | None:
     setter = getattr(pipeline, "set_tts_volume", None)
     if not callable(setter):
         return None
-    current = _current_tts_volume(pipeline)
-    if current > 0.0:
-        _remember_volume(pipeline, current)
-        _apply_volume(setter, 0.0, source)
-        return True
-    _apply_volume(setter, _remembered_volume(pipeline), source)
-    return False
+    # Read-modify-write under one lock: the Tk thread (this disc) and a REST
+    # worker (the in-app button) can toggle at the same moment, and two
+    # interleaved reads would both "mute" and lose the remembered volume.
+    with _SPEAKER_TOGGLE_LOCK:
+        current = _current_tts_volume(pipeline)
+        if current > 0.0:
+            _remember_volume(pipeline, current)
+            _apply_volume(setter, 0.0, source)
+            return True
+        _apply_volume(setter, _remembered_volume(pipeline), source)
+        return False
 
 
 def _apply_volume(setter: Callable[..., object], volume: float, source: str) -> None:
@@ -711,6 +716,9 @@ def _apply_volume(setter: Callable[..., object], volume: float, source: str) -> 
 #: Where the pre-mute volume is parked, keyed per pipeline instance so a
 #: restarted pipeline cannot inherit a stale value.
 _PRE_MUTE_VOLUME: dict[int, float] = {}
+
+#: Serialises :func:`toggle_speaker_mute` across the Tk and REST threads.
+_SPEAKER_TOGGLE_LOCK = threading.Lock()
 
 
 def _current_tts_volume(pipeline: object) -> float:
@@ -737,7 +745,21 @@ def _remember_volume(pipeline: object, volume: float) -> None:
 
 
 def _remembered_volume(pipeline: object) -> float:
-    return _PRE_MUTE_VOLUME.get(id(pipeline), 1.0)
+    """The volume to unmute to.
+
+    The value parked by this toggle wins. Without one (the voice was silenced
+    elsewhere, e.g. the in-app slider at 0) the configured ``[tts].volume``
+    is restored, so unmuting never jumps to full volume for someone who keeps
+    the voice quiet; only a configured 0 falls back to 1.0.
+    """
+    remembered = _PRE_MUTE_VOLUME.get(id(pipeline))
+    if remembered is not None and remembered > 0.0:
+        return remembered
+    config = getattr(pipeline, "_config", None)
+    configured = getattr(getattr(config, "tts", None), "volume", None)
+    if isinstance(configured, int | float) and configured > 0.0:
+        return max(0.0, min(1.0, float(configured)))
+    return 1.0
 
 
 def speaker_is_muted() -> bool:

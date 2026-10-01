@@ -32,6 +32,7 @@ from jarvis.core.events import (
     SystemStateChanged,
     TranscriptionUpdate,
     UiLanguageChanged,
+    VoiceBootStatus,
     VoiceSessionEnded,
     VoiceSessionStarted,
     VoiceSpeakerMuteChanged,
@@ -279,7 +280,7 @@ def test_a_swapped_in_surface_gets_every_callback_and_the_live_mutes(monkeypatch
         (SpeechSpoken(text="Offline.", spoken_kind="unavailable"), "error"),
         (SpeechSpoken(text="Can't hear.", spoken_kind="stt_unavailable"), "error"),
         (JarvisAgentBackgroundCompleted(success=True), "success"),
-        (ErrorOccurred(layer="brain", message="boom"), "error"),
+        (ErrorOccurred(layer="brain", message="boom", recoverable=False), "error"),
         (VoiceSessionEnded(session_id="s", hangup_reason="error"), "error"),
     ],
 )
@@ -316,7 +317,7 @@ async def test_status_lines_reach_only_a_surface_that_wants_them() -> None:
     _bridge_, bus = _bridge(bar)
     await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
     await bus.publish(ActionProposed(tool_name="web_search", rationale="Checking the news"))
-    await bus.publish(AssistantTextDelta(text="Here it is.", done=True))
+    await bus.publish(AssistantTextDelta(channel="voice", text="Here it is.", done=True))
     assert bar.of("status") == []
 
 
@@ -358,19 +359,21 @@ async def test_progress_announcements_are_thinking_lines(fast_status) -> None:
 async def test_a_streamed_reply_shows_its_latest_complete_sentence(fast_status) -> None:
     pet = _Pet()
     _bridge_, bus = _bridge(pet)
-    await bus.publish(AssistantTextDelta(text="It is sunny. Tomorrow it"))
+    await bus.publish(AssistantTextDelta(channel="voice", text="It is sunny. Tomorrow it"))
     assert pet.of("status")[-1] == ("status", "Answer", "It is sunny.")
 
     await asyncio.sleep(0.03)
-    await bus.publish(AssistantTextDelta(text="It is sunny. Tomorrow it rains.", done=True))
+    await bus.publish(
+        AssistantTextDelta(channel="voice", text="It is sunny. Tomorrow it rains.", done=True)
+    )
     assert pet.of("status")[-1] == ("status", "Answer", "Tomorrow it rains.")
 
 
 async def test_the_final_snapshot_beats_the_rate_limit() -> None:
     pet = _Pet()
     _bridge_, bus = _bridge(pet)
-    await bus.publish(AssistantTextDelta(text="First."))
-    await bus.publish(AssistantTextDelta(text="First. Second.", done=True))
+    await bus.publish(AssistantTextDelta(channel="voice", text="First."))
+    await bus.publish(AssistantTextDelta(channel="voice", text="First. Second.", done=True))
     assert [c[2] for c in pet.of("status")] == ["First.", "Second."]
 
 
@@ -405,7 +408,7 @@ async def test_headers_follow_the_interface_language(fast_status) -> None:
 
     await bus.publish(UiLanguageChanged(language="es"))
     await asyncio.sleep(0.03)
-    await bus.publish(AssistantTextDelta(text="Hola.", done=True))  # i18n-allow
+    await bus.publish(AssistantTextDelta(channel="voice", text="Hola.", done=True))  # i18n-allow
     assert pet.of("status")[-1][1] == "Respuesta"  # i18n-allow
 
 
@@ -442,3 +445,119 @@ async def test_a_mascot_still_hides_when_a_preview_is_retracted() -> None:
     await bus.publish(WakeCandidateDetected(active=True))
     await bus.publish(WakeCandidateDetected(active=False))
     assert mascot.calls[-1] == ("hide",)
+
+
+# ---------------------------------------------------------------------------
+# outcomes report what the user experiences (review fixes)
+# ---------------------------------------------------------------------------
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+async def test_a_recoverable_error_plays_nothing() -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet)
+    await bus.publish(ErrorOccurred(layer="brain", message="retrying", recoverable=True))
+    assert pet.of("outcome") == []
+
+
+@pytest.mark.parametrize("success", [True, False])
+async def test_a_tool_result_inside_a_turn_is_not_an_outcome(success: bool) -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet)
+    await bus.publish(SystemStateChanged(previous="IDLE", new_state="THINKING"))
+    await bus.publish(ActionExecuted(tool_name="web_search", success=success))
+    assert pet.of("outcome") == []
+
+
+async def test_outcomes_are_throttled_but_an_error_after_a_success_shows() -> None:
+    pet = _Pet()
+    bridge, bus = _bridge(pet)
+    clock = _Clock()
+    bridge._clock = clock  # noqa: SLF001 — the throttle's clock
+    await bus.publish(JarvisAgentBackgroundCompleted(success=True))
+    clock.now += 1.0
+    await bus.publish(SpeechSpoken(text="Done.", spoken_kind="action_done"))
+    clock.now += 0.5
+    await bus.publish(SpeechSpoken(text="Too slow.", spoken_kind="timeout"))
+    clock.now += 0.5
+    await bus.publish(ErrorOccurred(layer="brain", message="x", recoverable=False))
+    clock.now += 3.5
+    await bus.publish(SpeechSpoken(text="Finished.", spoken_kind="completion"))
+    assert [c[1] for c in pet.of("outcome")] == ["success", "error", "success"]
+
+
+# ---------------------------------------------------------------------------
+# status lines: spoken replies only, every turn opens with its header
+# ---------------------------------------------------------------------------
+
+
+async def test_typed_and_background_replies_stay_out_of_the_bubble(fast_status) -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet)
+    await bus.publish(AssistantTextDelta(channel="chat", text="Typed answer.", done=True))
+    await bus.publish(AssistantTextDelta(channel="", text="Background answer.", done=True))
+    assert pet.of("status") == []
+    await bus.publish(AssistantTextDelta(channel="realtime", text="Spoken answer.", done=True))
+    assert pet.of("status")[-1] == ("status", "Answer", "Spoken answer.")
+
+
+async def test_every_follow_up_turn_reopens_the_listening_header(fast_status) -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet)
+    await bus.publish(SystemStateChanged(previous="IDLE", new_state="LISTENING"))
+    await bus.publish(SystemStateChanged(previous="LISTENING", new_state="THINKING"))
+    await bus.publish(SystemStateChanged(previous="THINKING", new_state="SPEAKING"))
+    await bus.publish(SystemStateChanged(previous="SPEAKING", new_state="LISTENING"))
+    headers = [c[1] for c in pet.of("status")]
+    assert headers.count("Listening …") == 2
+    assert pet.of("status")[-1] == ("status", "Listening …", "")
+
+
+async def test_a_long_reply_is_cut_from_its_end() -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet)
+    reply = "Some words. " * 5_000 + "The last sentence."
+    await bus.publish(AssistantTextDelta(channel="voice", text=reply, done=True))
+    assert pet.of("status")[-1] == ("status", "Answer", "The last sentence.")
+
+
+# ---------------------------------------------------------------------------
+# the backend loop: pinned early, never replaced by a throwaway one
+# ---------------------------------------------------------------------------
+
+
+async def test_the_voice_ready_signal_pins_the_backend_loop() -> None:
+    pet = _Pet()
+    bridge, bus = _bridge(pet)
+    bridge._loop = None  # noqa: SLF001 — as if attach() had run off the loop
+    await bus.publish(VoiceBootStatus(ready=True))
+    assert bridge._loop is asyncio.get_running_loop()  # noqa: SLF001
+
+
+def test_a_gesture_after_the_backend_loop_stopped_is_dropped() -> None:
+    bus = EventBus()
+    seen: list[ComposeRequested] = []
+
+    async def _record(event: ComposeRequested) -> None:
+        seen.append(event)
+
+    bus.subscribe(ComposeRequested, _record)
+    pet = _Pet()
+    bridge = OrbBusBridge(bus=bus, orb=pet)  # type: ignore[arg-type]
+    bridge.attach()
+    stopped = asyncio.new_event_loop()
+    try:
+        bridge._loop = stopped  # noqa: SLF001 — captured once, no longer running
+        pet.callbacks["compose"]()
+        # Running the publish on a throwaway loop instead is the 2026-06-28
+        # cross-loop crash; the gesture is dropped.
+        assert seen == []
+    finally:
+        stopped.close()

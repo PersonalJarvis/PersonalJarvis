@@ -259,6 +259,18 @@ PET_STATUS_LANGUAGES: tuple[str, ...] = ("en", "de", "es")
 # snapshots per second; repainting the bubble for each one is flicker.
 PET_STATUS_MIN_INTERVAL_S = 0.3
 
+# Minimum spacing of two pet one-shots (success / error). A burst of results is
+# one thing that happened; replaying the one-shot for each is flicker.
+PET_OUTCOME_MIN_INTERVAL_S = 3.0
+
+# Reply channels whose streamed text the pet shows. Typed chat and background
+# work are read in the app window, not in an always-on-top bubble.
+PET_STATUS_REPLY_CHANNELS = frozenset({"voice", "realtime"})
+
+# The most text a status line is cut from. A reply can be pages long; only its
+# end matters for the latest sentence, and condensing pages per update is waste.
+PET_STATUS_INPUT_CHARS = 400
+
 # Announcement kinds that describe work in progress (the pet's "thinking" line).
 # A completion or a sub-agent readback is an ANSWER, and it is spoken anyway.
 _PET_THINKING_ANNOUNCEMENT_KINDS = frozenset({"preamble", "progress"})
@@ -286,6 +298,11 @@ def _last_sentence(text: str, *, complete_only: bool = False) -> str:
     if complete_only and len(pieces) > 1 and not _SENTENCE_END_RE.search(pieces[-1]):
         return pieces[-2]
     return pieces[-1]
+
+
+def _tail_sentence(text: str, *, complete_only: bool = False) -> str:
+    """:func:`_last_sentence` of the last ``PET_STATUS_INPUT_CHARS`` of ``text``."""
+    return _last_sentence((text or "")[-PET_STATUS_INPUT_CHARS:], complete_only=complete_only)
 
 
 def _humanize_tool_name(tool_name: str) -> str:
@@ -333,6 +350,10 @@ class OrbBusBridge:
         # interval has passed, so the LAST update of a burst is never lost.
         self._status_feed = StatusFeed(time.monotonic, min_interval_s=PET_STATUS_MIN_INTERVAL_S)
         self._status_flush_task: asyncio.Task | None = None
+        # Clock for the pet's outcome throttle (replaceable in tests) and the
+        # last one-shot it played, as (kind, time).
+        self._clock = time.monotonic
+        self._last_outcome: tuple[str, float] | None = None
         self._mic_level_unsub = None  # mic_level subscription (registered in attach)
         self._tts_recency_unsub = None  # level_tap subscription (TTS-active tracker)
         # Monotonic time of the last TTS output level. The state label
@@ -366,7 +387,7 @@ class OrbBusBridge:
         # forever with no way back — the "it never goes away and I can't tell
         # why" failure class. A deadline cannot stick the way a latch can.
         self._dictation_failsafe_task: asyncio.Task | None = None
-        self._rng = random.Random()
+        self._rng = random.Random()  # noqa: S311 — idle-animation timing, not cryptography
         self._listening_transcript_text = ""
         # True while the pipeline is mid-completion-buffer (paused on an
         # incomplete fragment, waiting for the rest). Used so the next
@@ -441,19 +462,26 @@ class OrbBusBridge:
         the Tk thread. Fire-and-forget; never blocks the Tk mainloop.
 
         Falls back to a one-shot ``asyncio.run`` ONLY when no backend loop was
-        ever captured (the Tk-only test harness). In the live app a state event
-        always fires before the orb is clickable, so the captured-loop path is
-        the one that runs — and the throwaway-loop cross-event-loop crash that
-        froze the mic (2026-06-28) cannot recur."""
+        ever captured (the Tk-only test harness). In the live app ``attach()``
+        runs on the backend loop, so the loop is known before any surface is
+        clickable — including the desktop pet, which is on screen from boot.
+        A loop that WAS captured but no longer runs (shutdown) drops the
+        gesture instead: running the publish on a throwaway loop is the
+        cross-event-loop crash that froze the mic (2026-06-28)."""
         loop = self._loop
-        if loop is not None and loop.is_running():
-            try:
-                asyncio.run_coroutine_threadsafe(coro, loop)
-            except RuntimeError as exc:
-                log.warning("%s publish dropped: %s", label, exc)
+        if loop is not None:
+            if loop.is_running():
+                try:
+                    asyncio.run_coroutine_threadsafe(coro, loop)
+                except RuntimeError as exc:
+                    coro.close()
+                    log.warning("%s publish dropped: %s", label, exc)
+                return
+            coro.close()
+            log.info("%s publish dropped: the backend loop is no longer running", label)
             return
-        # No backend loop reachable — last resort so the gesture is not silently
-        # swallowed in a Tk-only harness. Never the live-app path.
+        # No backend loop was ever captured — the Tk-only harness. Last resort
+        # so the gesture is not silently swallowed there.
         try:
             asyncio.run(coro)
         except RuntimeError as exc:
@@ -632,6 +660,7 @@ class OrbBusBridge:
         without ``set_muted`` (the mascot orb) is simply skipped — the call is a
         no-op, never an error. The write is a quick atomic flag set on the
         surface; no Tk marshal needed (the bar reads it on its own frame loop)."""
+        self._remember_loop()
         setter = getattr(self._orb, "set_muted", None)
         if not callable(setter):
             return
@@ -811,15 +840,38 @@ class OrbBusBridge:
         self._status_flush_task = loop.create_task(_flush(), name="orb-pet-status-flush")
 
     def _pet_outcome(self, kind: str) -> None:
-        """Play the pet's one-shot ``success`` / ``error`` (no-op elsewhere)."""
+        """Play the pet's one-shot ``success`` / ``error`` (no-op elsewhere).
+
+        At most one outcome per ``PET_OUTCOME_MIN_INTERVAL_S``: a burst of
+        results is one thing that happened, not a flicker of celebrations. The
+        one exception is an error right after a success — the failure is the
+        news the user must not miss.
+        """
+        now = self._clock()
+        last = self._last_outcome
+        if last is not None and now - last[1] < PET_OUTCOME_MIN_INTERVAL_S:
+            if not (kind == "error" and last[0] == "success"):
+                return
+        self._last_outcome = (kind, now)
         self._call_surface("set_pet_outcome", kind)
+
+    def _turn_in_progress(self) -> bool:
+        """Is a voice or typed turn running right now?
+
+        A tool result inside a turn is a step of that turn, not its outcome:
+        the turn's own end (``SpeechSpoken`` kinds, a hang-up for an error)
+        reports how it went.
+        """
+        return self._last_state not in ("IDLE", "ERROR", "PAUSED")
 
     async def _on_speaker_mute_changed(self, event: VoiceSpeakerMuteChanged) -> None:
         """Mirror the pipeline's speaker mute (TTS volume 0) on the surface."""
+        self._remember_loop()
         self._call_surface("set_speaker_muted", bool(event.muted))
 
     async def _on_pet_visibility_toggle(self, event: PetVisibilityToggleRequested) -> None:
         """The pet shortcut: hide the pet, or show it and bring it forward."""
+        self._remember_loop()
         log.info("OrbBridge pet visibility toggle (source=%s)", event.source or "unknown")
         self._call_surface("toggle_visible")
 
@@ -835,6 +887,11 @@ class OrbBusBridge:
             self._offer_status("thinking", line)
 
     async def _on_action_executed(self, event: ActionExecuted) -> None:
+        """A tool result is an outcome only when no turn is running (work
+        finished in the background or between turns). Inside a turn it is a
+        step; a failed step the turn recovers from is not the user's failure."""
+        if self._turn_in_progress():
+            return
         self._pet_outcome("success" if event.success else "error")
 
     async def _on_speech_spoken(self, event: SpeechSpoken) -> None:
@@ -844,7 +901,11 @@ class OrbBusBridge:
         elif kind in PET_ERROR_SPOKEN_KINDS:
             self._pet_outcome("error")
 
-    async def _on_error_occurred(self, _event: ErrorOccurred) -> None:
+    async def _on_error_occurred(self, event: ErrorOccurred) -> None:
+        """Only an error nothing recovers from is shown: a provider retry or a
+        fallback the user never notices must not make the pet look broken."""
+        if event.recoverable:
+            return
         self._pet_outcome("error")
 
     async def _on_announcement(self, event: AnnouncementRequested) -> None:
@@ -858,8 +919,16 @@ class OrbBusBridge:
         ``text`` is the cumulative snapshot, so only its last sentence matters.
         The final snapshot (``done``) is forced through the rate limit, or the
         bubble could stop one sentence short of the answer.
+
+        Spoken replies only (``voice`` / ``realtime``): a typed-chat or
+        background reply is read in the app window, and an always-on-top
+        bubble would put it on every shared screen.
         """
-        line = _last_sentence(event.text, complete_only=not event.done)
+        if event.channel not in PET_STATUS_REPLY_CHANNELS:
+            return
+        if not getattr(self._orb, "wants_status_lines", False):
+            return
+        line = _tail_sentence(event.text, complete_only=not event.done)
         if line:
             self._offer_status("talking", line, force=bool(event.done))
 
@@ -1095,6 +1164,9 @@ class OrbBusBridge:
         web-UI escape hatches, not permission to advertise a working microphone.
         ``ready=False`` (warm-up start) leaves the gate closed.
         """
+        # Runs on the backend loop: pin it here too, so a surface that is
+        # clickable before the first state edge (the pet) marshals correctly.
+        self._remember_loop()
         if not event.voice_usable:
             return
         self._voice_usable = True
@@ -1226,6 +1298,11 @@ class OrbBusBridge:
                 self._last_response_text = ""
                 self._show_listening_transcript("")
                 self._completion_continuation = False
+                # Every fresh turn of a conversation, not only the first one,
+                # opens the pet's bubble with its "Listening …" header; the
+                # reset keeps the feed from treating it as a repeat.
+                self._status_feed.reset()
+                self._offer_status("listening", "", force=True)
             self._cancel_idle_scheduler()
         elif state == "WAITING_FOR_COMPLETION":
             # User paused mid-sentence; the pipeline buffered an incomplete
@@ -1361,7 +1438,8 @@ class OrbBusBridge:
         # diverge.
         self._listening_transcript_text = event.text.strip()
         self._show_listening_transcript(self._listening_transcript_text)
-        self._offer_status("listening", _last_sentence(self._listening_transcript_text))
+        if getattr(self._orb, "wants_status_lines", False):
+            self._offer_status("listening", _tail_sentence(self._listening_transcript_text))
 
     async def _on_response_generated(self, event: ResponseGenerated) -> None:
         """Capture Jarvis's reply so the orb bubble can show it while speaking.
@@ -1378,7 +1456,9 @@ class OrbBusBridge:
         # The pet's talking line, for reply paths that stream no
         # ``AssistantTextDelta``; after a streamed reply this is the same
         # sentence again and the feed treats it as such.
-        line = _last_sentence(self._last_response_text)
+        if not getattr(self._orb, "wants_status_lines", False):
+            return
+        line = _tail_sentence(self._last_response_text)
         if line:
             self._offer_status("talking", line)
 

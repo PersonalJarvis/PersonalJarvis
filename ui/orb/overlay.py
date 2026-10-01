@@ -1294,6 +1294,9 @@ class OrbCommentBubble:
         self._status_showing = False
         self._status_expanded = False
         self._status_anchor: tuple[int, int, int, int] | None = None
+        # (width, height) of the status bubble as last painted; a drag only
+        # moves a bubble of this size instead of repainting it.
+        self._status_size: tuple[int, int] | None = None
         self._status_auto_hide_ms: int | None = None
         self._ui_scale = 1.0
         self._build()
@@ -1725,10 +1728,34 @@ class OrbCommentBubble:
             self._arm_status_hide()
 
     def move_status(self, anchor: tuple[int, int, int, int]) -> None:
-        """Follow the pet (drag, resize) without restarting the fade timer."""
+        """Follow the pet (drag, resize) without restarting the fade timer.
+
+        A drag calls this for every mouse motion, and neither the text nor the
+        width changes then: only the window moves. The canvas is repainted
+        only when nothing was painted yet.
+        """
         self._status_anchor = anchor
-        if self._status_showing:
+        if not self._status_showing:
+            return
+        size = self._status_size
+        if size is None or self._top is None:
             self._render_status()
+            return
+        x, y = self._status_position(size[0], size[1], anchor)
+        try:
+            self._top.geometry(f"+{x}+{y}")
+        except tk.TclError:
+            logging.getLogger("jarvis.orb").debug("pet status bubble move failed", exc_info=True)
+
+    def _status_position(
+        self, bubble_w: int, height: int, anchor: tuple[int, int, int, int]
+    ) -> tuple[int, int]:
+        """Top-left corner for a bubble of this size: under the strip when it
+        fits above ``limit_bottom``, else over the figure."""
+        center_x, below_y, above_y, limit_bottom = anchor
+        x = max(8, min(center_x - bubble_w // 2, self._screen_w - bubble_w - 8))
+        y = below_y if below_y + height <= limit_bottom else max(8, above_y - height)
+        return x, y
 
     def arm_auto_hide(self, delay_ms: int | None) -> None:
         """(Re)arm or cancel the status fade timer."""
@@ -1790,9 +1817,7 @@ class OrbCommentBubble:
         if header_line:
             height += header_lh + (PET_BUBBLE_HEADER_GAP if lines else 0)
 
-        center_x, below_y, above_y, limit_bottom = self._status_anchor
-        x = max(8, min(center_x - bubble_w // 2, self._screen_w - bubble_w - 8))
-        y = below_y if below_y + height <= limit_bottom else max(8, above_y - height)
+        x, y = self._status_position(bubble_w, height, self._status_anchor)
         try:
             self._top.geometry(f"{bubble_w}x{height}+{x}+{y}")
             self._canvas.configure(width=bubble_w, height=height)
@@ -1827,8 +1852,10 @@ class OrbCommentBubble:
             self._top.lift()
         except tk.TclError:
             logging.getLogger("jarvis.orb").debug("pet status bubble paint failed", exc_info=True)
+            self._status_size = None
             return False
         self._status_showing = True
+        self._status_size = (bubble_w, height)
         return True
 
     def _cancel_timers(self) -> None:
@@ -1848,6 +1875,7 @@ class OrbCommentBubble:
     def hide(self) -> None:
         self._status_showing = False
         self._status_expanded = False
+        self._status_size = None
         if self._top is None:
             return
         if self._dismiss_after_id is not None:
@@ -2424,7 +2452,7 @@ class OrbOverlay:
         self._root: tk.Tk | None = None
         self._canvas: tk.Canvas | None = None
         self._comment_bubble: OrbCommentBubble | None = None
-        self._renderer: MascotRenderer | VoiceOrbRenderer | None = None
+        self._renderer: MascotRenderer | VoiceOrbRenderer | PetRenderer | None = None
         # Cached mascot anchor + min-show-time guard.
         self._mascot_x: int = 0
         self._mascot_y: int = 0

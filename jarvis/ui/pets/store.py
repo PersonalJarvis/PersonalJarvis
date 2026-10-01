@@ -15,6 +15,7 @@ import os
 import secrets
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 from PIL import Image
@@ -43,6 +44,15 @@ SHEET_NAME = "sheet.png"
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _MAX_MANIFEST_CHARS = 64 * 1024
 
+#: Upper bound of user-created pets. Each one is up to 2 MB on disk, and the
+#: settings grid shows them all; a cap keeps a scripted upload loop from
+#: filling the data directory.
+MAX_USER_PETS = 50
+
+_STAGING_PREFIX = ".staging-"
+#: A staging folder older than this is debris from a crash mid-save.
+_STALE_STAGING_S = 3600.0
+
 #: The frame size tried first when an upload does not name one (the template's).
 _PREFERRED_FRAME_SIZE = 48
 
@@ -61,7 +71,22 @@ class PetStore:
 
     def list(self) -> list[PetManifest]:
         """Every valid user pet; broken ones are skipped with a warning."""
+        self._sweep_stale_staging()
         return list_custom(self.root)
+
+    def count(self) -> int:
+        """How many user pets exist (folders with a manifest), without decoding them."""
+        if not self.root.is_dir():
+            return 0
+        try:
+            return sum(
+                1
+                for entry in self.root.iterdir()
+                if USER_ID_RE.match(entry.name) and (entry / MANIFEST_NAME).is_file()
+            )
+        except OSError as exc:
+            _log.warning("could not count user pets in %s: %s", self.root, exc)
+            return 0
 
     def directory(self, pet_id: str) -> Path | None:
         """The folder of an existing user pet, or ``None``."""
@@ -85,6 +110,10 @@ class PetStore:
         each row's frame count is its run of non-empty cells from the left.
         Raises :class:`PetManifestError` with a user-readable message.
         """
+        if self.count() >= MAX_USER_PETS:
+            raise PetManifestError(
+                f"You already have {MAX_USER_PETS} pets. Delete one to add another."
+            )
         sheet = _decode_sheet(sheet_bytes)
         width, height = sheet.size
         pet_id = "u" + secrets.token_hex(8)
@@ -137,9 +166,37 @@ class PetStore:
 
     # -- internals ------------------------------------------------------
 
+    def _sweep_stale_staging(self, *, now: float | None = None) -> None:
+        """Remove staging folders a crash left behind (older than an hour).
+
+        A fresh one belongs to a save in progress (another thread, another
+        request), so only old ones go.
+        """
+        if not self.root.is_dir():
+            return
+        cutoff = (time.time() if now is None else now) - _STALE_STAGING_S
+        try:
+            entries = list(self.root.iterdir())
+        except OSError as exc:
+            _log.debug("staging sweep skipped for %s: %s", self.root, exc)
+            return
+        for entry in entries:
+            if not entry.name.startswith(_STAGING_PREFIX):
+                continue
+            try:
+                if entry.is_symlink() or not entry.is_dir():
+                    continue
+                if entry.stat().st_mtime >= cutoff:
+                    continue
+                shutil.rmtree(entry)
+                _log.info("removed a stale pet staging folder %s", entry.name)
+            except OSError as exc:
+                _log.debug("could not remove stale staging folder %s: %s", entry, exc)
+
     def _write(self, manifest: PetManifest, sheet: Image.Image) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
-        staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=self.root))
+        self._sweep_stale_staging()
+        staging = Path(tempfile.mkdtemp(prefix=_STAGING_PREFIX, dir=self.root))
         try:
             _write_atomic(staging / SHEET_NAME, _encode_png(sheet))
             text = json.dumps(manifest.to_json(), indent=2, ensure_ascii=False) + "\n"

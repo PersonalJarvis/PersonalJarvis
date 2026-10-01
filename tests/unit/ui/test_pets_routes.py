@@ -23,9 +23,10 @@ from jarvis.core import config as config_module
 from jarvis.core.config import UIConfig
 from jarvis.core.events import PetChanged
 from jarvis.ui.pets import loader
+from jarvis.ui.pets import store as store_module
 from jarvis.ui.pets.manifest import MAX_SHEET_BYTES
 from jarvis.ui.pets.states import DEFAULT_PET_ID, PET_STATES
-from jarvis.ui.web.pets_routes import router
+from jarvis.ui.web.pets_routes import MAX_REQUEST_BYTES, router
 
 FRAME = 32
 
@@ -336,6 +337,42 @@ def test_upload_refusals_are_400_with_a_sentence(env, sheet: bytes) -> None:
 
 def test_upload_rejects_a_frame_size_that_is_not_a_number(env) -> None:
     assert _upload(env, frame_size="big").status_code == 400
+
+
+def test_a_body_declared_too_large_is_refused_before_parsing(env) -> None:
+    r = env.client.post(
+        "/api/pets",
+        content=b"x" * (MAX_REQUEST_BYTES + 1),
+        headers={"content-type": "multipart/form-data; boundary=pets"},
+    )
+    assert r.status_code == 413
+    assert "too large" in r.json()["detail"]
+    assert not any(env.data.glob("pets/u*"))
+
+
+def test_a_chunked_body_is_cut_off_at_the_ceiling(env) -> None:
+    chunk = b"y" * (64 * 1024)
+    chunks = (MAX_REQUEST_BYTES // len(chunk)) + 4
+
+    def _stream():
+        for _ in range(chunks):
+            yield chunk
+
+    r = env.client.post(
+        "/api/pets",
+        content=_stream(),
+        headers={"content-type": "multipart/form-data; boundary=pets"},
+    )
+    assert r.status_code == 413
+    assert not any(env.data.glob("pets/u*"))
+
+
+def test_the_pet_cap_is_a_400_with_a_sentence(env, monkeypatch) -> None:
+    monkeypatch.setattr(store_module, "MAX_USER_PETS", 1)
+    assert _upload(env).status_code == 201
+    r = _upload(env)
+    assert r.status_code == 400
+    assert "already have 1 pets" in r.json()["detail"]
 
 
 def test_upload_rejects_a_manifest_that_is_not_json(env) -> None:

@@ -50,6 +50,10 @@ _MAX_INLINE_CODE = 30
 #: A first sentence shorter than this borrows the next one (clipped if needed).
 _SHORT_SENTENCE = 20
 
+#: Only the head of a text is condensed. The gist is its first sentence, and
+#: running the markdown patterns over pages of reply on a bus handler is waste.
+MAX_INPUT_CHARS = 600
+
 _SENTENCE_MARKS = ".!?:" + ELLIPSIS
 
 
@@ -125,7 +129,7 @@ def condense(text: str, *, max_chars: int = 90) -> str:
     """
     if not isinstance(text, str) or not text.strip() or max_chars < 1:
         return ""
-    text = _strip_blocks(text)
+    text = _strip_blocks(text[:MAX_INPUT_CHARS])
 
     headings: list[str] = []
     body: list[str] = []

@@ -33,19 +33,81 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
+from starlette.responses import Response
+from starlette.types import Message, Receive
 
 from jarvis.core.config import clamp_pet_scale, normalize_pet_id
 from jarvis.ui.pets.states import DEFAULT_PET_ID, NO_PET_ID, PET_STATES
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/pets", tags=["pets"])
+#: Ceiling of a whole request body on this router: the 2 MB sheet plus the
+#: manifest and the form overhead. Checked BEFORE the multipart parser runs,
+#: because Starlette spools an entire upload to disk before a handler (or a
+#: FastAPI dependency) ever sees it — a per-handler read cap alone would still
+#: accept a multi-gigabyte body.
+MAX_REQUEST_BYTES = 3 * 1024 * 1024
+
+_TOO_LARGE = "The upload is too large (the sprite sheet may be at most 2 MB)."
+
+
+def _limited_receive(receive: Receive, limit: int) -> Receive:
+    """Wrap ``receive`` so a body without ``Content-Length`` stops at ``limit``."""
+    seen = 0
+
+    async def counting() -> Message:
+        nonlocal seen
+        message = await receive()
+        if message.get("type") == "http.request":
+            seen += len(message.get("body", b""))
+            if seen > limit:
+                raise HTTPException(status_code=413, detail=_TOO_LARGE)
+        return message
+
+    return counting
+
+
+class _BodyLimitRoute(APIRoute):
+    """An ``APIRoute`` that refuses an oversized body before parsing it.
+
+    A declared ``Content-Length`` above :data:`MAX_REQUEST_BYTES` is answered
+    with 413 at once; a chunked body without one is counted while it streams
+    and cut off at the same ceiling.
+    """
+
+    def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
+        handler = super().get_route_handler()
+
+        async def limited(request: Request) -> Response:
+            if request.method in ("POST", "PUT", "PATCH"):
+                declared = request.headers.get("content-length")
+                if declared is None:
+                    request = Request(
+                        request.scope, _limited_receive(request.receive, MAX_REQUEST_BYTES)
+                    )
+                else:
+                    try:
+                        size = int(declared)
+                    except ValueError:
+                        raise HTTPException(
+                            status_code=400, detail="Invalid Content-Length header."
+                        ) from None
+                    if size > MAX_REQUEST_BYTES:
+                        raise HTTPException(status_code=413, detail=_TOO_LARGE)
+            return await handler(request)
+
+        return limited
+
+
+router = APIRouter(prefix="/api/pets", tags=["pets"], route_class=_BodyLimitRoute)
 
 #: A user-created pet's sheet never changes: a new upload gets a new id.
 _IMMUTABLE_CACHE = {"Cache-Control": "public, max-age=31536000, immutable"}

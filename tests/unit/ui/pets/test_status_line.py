@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from jarvis.ui.pets.status_line import ELLIPSIS, StatusFeed, condense
+from jarvis.ui.pets.status_line import ELLIPSIS, MAX_INPUT_CHARS, StatusFeed, condense
 
 
 class FakeClock:
@@ -103,3 +103,15 @@ def test_feed_ignores_empty_pairs_and_resets() -> None:
     feed.offer("", "Same line.")
     feed.reset()
     assert feed.offer("", "Same line.") == ("", "Same line.")
+
+
+def test_only_the_head_of_a_long_text_is_condensed() -> None:
+    # Pages of unpunctuated text (a table, a log) must not be worked through
+    # on a bus handler; the gist comes from the head alone.
+    text = "Here is the summary of the run " + "| cell " * 50_000
+    assert len(text) > 10 * MAX_INPUT_CHARS
+    line = condense(text)
+    assert line.startswith("Here is the summary")
+    assert len(line) <= 90
+    # A sentence that starts after the cap is not part of the gist.
+    assert "Tail" not in condense("x" * (MAX_INPUT_CHARS + 10) + " Tail sentence.")

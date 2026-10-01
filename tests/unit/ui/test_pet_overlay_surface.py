@@ -18,7 +18,7 @@ from jarvis.ui.desktop_app import DesktopApp
 from jarvis.ui.jarvisbar.null_overlay import NullOverlay
 from jarvis.ui.jarvisbar.subprocess_overlay import SubprocessMascotOverlay
 from ui.orb import controls
-from ui.orb.overlay import OrbOverlay
+from ui.orb.overlay import OrbCommentBubble, OrbOverlay
 
 # --- OrbOverlay (never started: no Tk root under pytest) --------------------------
 
@@ -278,3 +278,42 @@ def test_the_speaker_toggle_still_works_with_an_older_setter(live_pipeline) -> N
     assert pipeline.volume == 0.0
     assert controls.toggle_speaker_mute() is False
     assert pipeline.volume == pytest.approx(0.8)
+
+
+
+@pytest.mark.parametrize("style,source", [("pet", "pet"), ("voice_orb", "orb")])
+def test_the_macos_speaker_disc_names_its_source(live_pipeline, style: str, source: str) -> None:
+    pipeline = live_pipeline(_SourcePipeline())
+    proxy = SubprocessMascotOverlay(style=style)
+    proxy._dispatch_speaker_toggle()  # noqa: SLF001 — the child's speaker event
+    assert pipeline.sources == [source]
+
+
+# --- dragging moves the status bubble without repainting it ---------------------------
+
+
+class _RecordingTop:
+    def __init__(self) -> None:
+        self.geometries: list[str] = []
+
+    def geometry(self, spec: str) -> None:
+        self.geometries.append(spec)
+
+
+def test_a_drag_only_moves_the_painted_status_bubble() -> None:
+    bubble = OrbCommentBubble.__new__(OrbCommentBubble)  # no Tk: geometry only
+    top = _RecordingTop()
+    bubble._top = top  # noqa: SLF001
+    bubble._screen_w = 1920  # noqa: SLF001
+    bubble._status_showing = True  # noqa: SLF001
+    bubble._status_size = (240, 60)  # noqa: SLF001
+    repaints: list[bool] = []
+    bubble._render_status = lambda: repaints.append(True) or True  # type: ignore[method-assign]
+
+    # (center_x, below_y, above_y, limit_bottom): room below the strip.
+    bubble.move_status((500, 300, 100, 1000))
+    # No room below: the bubble sits over the figure instead.
+    bubble.move_status((500, 980, 700, 1000))
+
+    assert top.geometries == ["+380+300", "+380+640"]
+    assert repaints == []
