@@ -105,3 +105,31 @@ async def test_coding_result_survives_chat_event_storage_and_enters_followup_con
     messages = messages_from_events([{"kind": "notice", "payload": notices[0][1]}])
     assert "deployment pending" in messages[0].content
     assert "Fix login" in messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_chat_factory_installs_one_lazy_result_bridge(tmp_path):
+    server = WebServer.__new__(WebServer)
+    server.cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path)))
+    server.bus = EventBus()
+    server.app = SimpleNamespace(state=SimpleNamespace(agent_chat=None))
+    first = server._build_agent_chat_service()
+    first.store.close()
+    service = server._build_agent_chat_service()
+    server.app.state.agent_chat = service
+    session = service.store.create_session(
+        provider="openai", model="", effort="", cwd=str(tmp_path), surface="jarvis",
+    )
+    queue = service.subscribe(session.session_id)
+    try:
+        await server.bus.publish(DelegationResultReady(
+            session_id=session.session_id, request_id="job", agent_name="T1",
+            status="completed", text="Reported outcome", report="Task and evidence",
+        ))
+        assert queue.qsize() == 1
+        notice = queue.get_nowait()
+        assert notice["kind"] == "notice"
+        assert notice["payload"]["report"] == "Task and evidence"
+    finally:
+        service.unsubscribe(session.session_id, queue)
+        service.store.close()

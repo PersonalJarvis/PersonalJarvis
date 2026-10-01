@@ -179,9 +179,6 @@ class WebServer:
         # unchanged. See docs/superpowers/specs/2026-05-11-pre-thinking-ack-
         # flash-brain-design.md §4.
         self.bus.subscribe(AnnouncementRequested, self._forward_preamble_to_chat)
-        from jarvis.core.events import DelegationResultReady
-
-        self.bus.subscribe(DelegationResultReady, self._forward_delegation_to_chat)
         from jarvis.core import runtime_refs
         from jarvis.missions.tool_approvals import (
             MissionToolApprovalCoordinator,
@@ -3846,6 +3843,11 @@ class WebServer:
             except Exception:  # noqa: BLE001 — the name is cosmetic
                 return "Jarvis"
 
+        from jarvis.core.events import DelegationResultReady
+
+        # Install on first chat use, keeping result tracking off the boot path.
+        self.bus.unsubscribe(DelegationResultReady, self._forward_delegation_to_chat)
+        self.bus.subscribe(DelegationResultReady, self._forward_delegation_to_chat)
         return AgentChatService(store, assistant_name=_name, bus=lambda: self.bus)
 
     async def stop(self) -> None:
