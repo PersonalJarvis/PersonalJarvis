@@ -23,7 +23,20 @@
  * active language.
  */
 import type { LucideIcon } from "lucide-react";
-import { BookA, Grid3x3, Keyboard, Languages, MessageSquare, Mic, Phone, Puzzle, Plug, Sparkles, FlaskConical, KeyRound } from "lucide-react";
+import {
+  ChatIcon,
+  ConnectorIcon,
+  DictionaryIcon,
+  KeyIcon,
+  LanguageIcon,
+  PaneGridIcon,
+  PhoneIcon,
+  PluginIcon,
+  ShortcutsIcon,
+  SkillIcon,
+  TestFlaskIcon,
+  VoiceIcon,
+} from "@/components/icons/sectionIcons";
 import en from "@/i18n/locales/en.json";
 import de from "@/i18n/locales/de.json";
 import es from "@/i18n/locales/es.json";
@@ -135,7 +148,7 @@ function expand(item: NavItem): QuickSwitchEntry[] {
           surface: "voice",
           labelKey: "sidebar.surface_voice",
           fallbackLabel: "Voice",
-          icon: Mic,
+          icon: VoiceIcon,
           aliases: ALIASES.voice,
         }),
         entry(item, {
@@ -143,37 +156,37 @@ function expand(item: NavItem): QuickSwitchEntry[] {
           surface: "chat",
           labelKey: "sidebar.surface_chat",
           fallbackLabel: "Chat",
-          icon: MessageSquare,
+          icon: ChatIcon,
           aliases: ALIASES.chat,
         }),
       ];
     case "plugins":
       return [
-        tab("plugins", "nav.plugins", Plug, "nav.extensions"),
-        tab("skills", "nav.skills", Sparkles, "nav.extensions"),
-        tab("mcps", "nav.mcps", Puzzle, "nav.extensions"),
+        tab("plugins", "nav.plugins", PluginIcon, "nav.extensions"),
+        tab("skills", "nav.skills", SkillIcon, "nav.extensions"),
+        tab("mcps", "nav.mcps", ConnectorIcon, "nav.extensions"),
       ];
     case "clis":
       return [
         entry(item, { labelKey: "nav.clis", fallbackLabel: "CLIs" }),
-        tab("cli-test-hub", "nav.cli_test_hub", FlaskConical, "nav.clis"),
+        tab("cli-test-hub", "nav.cli_test_hub", TestFlaskIcon, "nav.clis"),
       ];
     case "agentic-ide":
       return [
         entry(item),
-        tab("agentic-ide-classic", "quick_switch.terminal_grid", Grid3x3, "nav.agentic_ide"),
+        tab("agentic-ide-classic", "quick_switch.terminal_grid", PaneGridIcon, "nav.agentic_ide"),
       ];
     case "apikeys":
-      return [entry(item), tab("telephony", "nav.telephony", Phone, "nav.apikeys")];
+      return [entry(item), tab("telephony", "nav.telephony", PhoneIcon, "nav.apikeys")];
     case "settings":
-      return [entry(item), tab("languages", "nav.languages", Languages, "nav.settings")];
+      return [entry(item), tab("languages", "nav.languages", LanguageIcon, "nav.settings")];
     case "dictation":
       return [
         entry(item),
-        tab("dictionary", "nav.dictionary", BookA, "nav.voice"),
-        tab("voice-shortcuts", "nav.voice_shortcuts", Keyboard, "nav.voice"),
-        tab("voice-language", "nav.voice_language", Languages, "nav.voice"),
-        tab("voice-api-keys", "nav.voice_api_keys", KeyRound, "nav.voice"),
+        tab("dictionary", "nav.dictionary", DictionaryIcon, "nav.voice"),
+        tab("voice-shortcuts", "nav.voice_shortcuts", ShortcutsIcon, "nav.voice"),
+        tab("voice-language", "nav.voice_language", LanguageIcon, "nav.voice"),
+        tab("voice-api-keys", "nav.voice_api_keys", KeyIcon, "nav.voice"),
       ];
     default:
       return [entry(item)];

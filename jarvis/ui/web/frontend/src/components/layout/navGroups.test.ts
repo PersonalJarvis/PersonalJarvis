@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MessageSquare } from "lucide-react";
+import { ChatIcon } from "@/components/icons/sectionIcons";
 
 import { NAV_GROUPS, presentNavItem } from "@/components/layout/navGroups";
 
@@ -11,7 +11,7 @@ describe("presentNavItem", () => {
     for (const surface of ["voice", "chat"] as const) {
       const row = presentNavItem(chats, surface);
       expect(row.labelKey).toBe("sidebar.surface_chat");
-      expect(row.icon).toBe(MessageSquare);
+      expect(row.icon).toBe(ChatIcon);
     }
   });
 

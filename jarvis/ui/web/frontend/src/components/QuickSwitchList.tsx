@@ -11,14 +11,14 @@
  * once per mount, so the callers mount this only while it is shown.
  */
 import { Command } from "cmdk";
+import type { LucideIcon } from "lucide-react";
 import {
-  FolderOpen,
-  MessageSquare,
-  Mic,
-  Settings2,
-  SquareTerminal,
-  type LucideIcon,
-} from "lucide-react";
+  ChatIcon,
+  FolderIcon,
+  SettingsIcon,
+  TerminalIcon,
+  VoiceIcon,
+} from "@/components/icons/sectionIcons";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useT, useUiLanguage } from "@/i18n";
 import { useEventStore } from "@/store/events";
@@ -298,7 +298,7 @@ export function QuickSwitchList({
               key={`${row.kind}:${row.id}`}
               value={`chat:${row.kind}:${row.id}`}
               testId={`quick-switch-chat-${row.id}`}
-              icon={row.kind === "voice" ? Mic : MessageSquare}
+              icon={row.kind === "voice" ? VoiceIcon : ChatIcon}
               label={row.title || t("quick_switch.untitled_chat")}
               detail={formatChatWhen(row.updatedMs)}
               size={size}
@@ -314,7 +314,7 @@ export function QuickSwitchList({
               key={`${pane.workspace_id}:${pane.name}`}
               value={`pane:${pane.workspace_id}:${pane.name}`}
               testId={`quick-switch-pane-${pane.workspace_id}-${pane.name}`}
-              icon={SquareTerminal}
+              icon={TerminalIcon}
               label={paneTitle(pane)}
               detail={`${pane.key} · ${pane.workspace_name}`}
               size={size}
@@ -330,7 +330,7 @@ export function QuickSwitchList({
               key={workspace.id}
               value={`workspace:${workspace.id}`}
               testId={`quick-switch-workspace-${workspace.id}`}
-              icon={FolderOpen}
+              icon={FolderIcon}
               label={workspace.name}
               detail={workspace.branch || folderName(workspace.folder)}
               size={size}
@@ -346,7 +346,7 @@ export function QuickSwitchList({
               key={match.id}
               value={`setting:${match.id}`}
               testId={`quick-switch-setting-${match.id}`}
-              icon={Settings2}
+              icon={SettingsIcon}
               label={match.label}
               detail={label("nav.settings", "Settings")}
               size={size}

@@ -4,7 +4,6 @@ import {
   ChevronDown,
   ChevronLeft,
   MoreHorizontal,
-  Store,
   Plus,
 } from "lucide-react";
 import {
@@ -32,6 +31,7 @@ import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
 import { useAppInstance } from "@/hooks/useAppInstance";
 import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
 import { GigiMark } from "@/components/GigiMark";
+import { MarketplaceIcon } from "@/components/icons/sectionIcons";
 import { startNewTextChat } from "@/lib/newChat";
 import { useUserName } from "@/hooks/useUserName";
 import { useAgentChatStore } from "@/store/agentChat";
@@ -584,7 +584,7 @@ export function Sidebar({
           <button type="button" onClick={() => setActive("marketplace")} title={t("nav.marketplace")}
             aria-label={t("nav.marketplace")} data-testid="nav-row-marketplace"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <Store aria-hidden strokeWidth={1.75} className="h-4 w-4" />
+            <MarketplaceIcon aria-hidden strokeWidth={1.75} className="h-4 w-4" />
           </button>
         </div>
       </div>
