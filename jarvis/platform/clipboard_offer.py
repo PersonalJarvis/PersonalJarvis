@@ -1,51 +1,20 @@
-"""Offer text on the Windows clipboard and OBSERVE who reads it.
+"""Observe real Windows clipboard rendering without treating silence as failure.
 
-Why this exists
----------------
-Jarvis does not paste; it asks the foreground application to paste by sending
-a synthetic chord. Two things about that are unknowable from the outside:
-whether the chord means "paste" in that application at all (an xterm.js
-terminal left to itself swallows Ctrl+V as ``^V`` and cancels the browser's
-paste), and WHEN the application reads the clipboard — a WebView that pastes
-through an async IPC bridge can read hundreds of milliseconds later on a busy
-machine, after a timer-based "restore the previous clipboard" has already put
-the old content back (the 2026-08-24 BridgeMind report).
+A message-only window owns a delayed Unicode text offer. The first successful
+render records the reader PID; cached reads produce no further events. Clipboard
+watchers can consume that first render, so no event is never proof that a paste
+failed, and merely opening the clipboard is never insertion evidence.
 
-Windows offers one mechanism that turns both into a measurement: **delayed
-rendering**. A clipboard owner may publish a format with a ``NULL`` handle;
-the data is requested through ``WM_RENDERFORMAT`` only when some process
-actually calls ``GetClipboardData``. Because the reader must hold the
-clipboard open at that moment, ``GetOpenClipboardWindow`` names it. So
-"did the paste land, and when?" becomes "which process read the clipboard
-after the chord went out?" — a fact, not a guess.
-
-The one limit, measured: the system renders ONCE. After the first reader the
-text is cached and later readers are served silently. A host with a clipboard
-watcher — a Remote Desktop client (``msrdc.exe`` reads within 5 ms of every
-write) or the clipboard-history service — therefore consumes the render before
-the chord is even sent, and from then on the offer is *blind*: a paste can no
-longer be proven absent, only (by polling for who holds the clipboard open)
-occasionally proven present. Callers must treat the two states differently;
-:mod:`jarvis.dictation.insert` does.
-
-Design
-------
-* One hidden message-only window on a dedicated thread owns the clipboard for
-  the duration of the offer and answers ``WM_RENDERFORMAT`` with the text.
-* Every render request is recorded with the reader's pid and executable name.
-* On :meth:`ClipboardOffer.stop` the text is rendered for real before the
-  window goes away (``WM_RENDERALLFORMATS`` contract), so the clipboard still
-  holds the text afterwards — the "one Ctrl+V away" guarantee of
-  :mod:`jarvis.dictation.insert` survives.
-* Losing ownership (another app copied something) is recorded, never raised.
-
-Windows only, imported lazily by its one caller. On any other OS
-:func:`available` is ``False`` and nothing here is constructed.
+The dedicated thread waits on native messages. Stopping renders the transcript
+for later manual paste. A caller with delivery evidence may request restoration;
+ownership is checked under the same clipboard lock as the replacement, preserving
+any newer user copy. All native imports are lazy and this helper is inert off Windows.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import threading
 import time
@@ -72,50 +41,13 @@ class ClipboardRead:
     #: Seconds since the offer went up.
     at: float
     #: ``render`` — the system asked us for the text (a real ``GetClipboardData``);
-    #: ``open`` — the process merely held the clipboard open, seen by polling.
-    #: Once the text has been rendered and cached, ``open`` is the only
-    #: evidence left (see :meth:`ClipboardOffer.rendered`).
+    #: Historical consumers may supply ``open``; it is not delivery evidence.
     observed: str = "render"
 
 
 def available() -> bool:
     """Can a delayed-rendering offer be made on this host?"""
-    return sys.platform == "win32"
-
-
-def _exe_name(pid: int) -> str:
-    """Executable name for *pid*, ``""`` when it cannot be read. Never raises."""
-    if pid <= 0:
-        return ""
-    try:
-        import ctypes  # noqa: PLC0415 — lazy (HN-7)
-        from ctypes import wintypes  # noqa: PLC0415
-
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-        kernel32.OpenProcess.restype = wintypes.HANDLE
-        kernel32.QueryFullProcessImageNameW.argtypes = [
-            wintypes.HANDLE,
-            wintypes.DWORD,
-            wintypes.LPWSTR,
-            ctypes.POINTER(wintypes.DWORD),
-        ]
-        kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
-        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
-        if not handle:
-            return ""
-        try:
-            buf = ctypes.create_unicode_buffer(1024)
-            size = wintypes.DWORD(1024)
-            if not kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
-                return ""
-            return buf.value.replace("/", "\\").rsplit("\\", 1)[-1].lower()
-        finally:
-            kernel32.CloseHandle(handle)
-    except Exception:  # noqa: BLE001 — a nameless reader is still a reader
-        log.debug("could not resolve exe name for pid %s", pid, exc_info=True)
-        return ""
+    return os.name == "nt" and sys.platform == "win32"
 
 
 class ClipboardOffer:
@@ -140,6 +72,8 @@ class ClipboardOffer:
         self._read_event = threading.Event()
         self._ready = threading.Event()
         self._done = threading.Event()
+        self._stop_requested = threading.Event()
+        self._lifecycle_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._hwnd: int = 0
         self._started_at = 0.0
@@ -148,6 +82,8 @@ class ClipboardOffer:
         #: True once the text was handed to a reader. From then on the system
         #: caches it and answers later readers itself — no more render events.
         self.rendered = False
+        self.restored = False
+        self._restore_text: str | None = None
         self._wndproc_ref: object = None  # keeps the ctypes callback alive
 
     # -- public ---------------------------------------------------------
@@ -156,12 +92,20 @@ class ClipboardOffer:
         """Take the clipboard. ``True`` when the offer is up."""
         if not available():
             return False
-        self._thread = threading.Thread(
-            target=self._run, name="jarvis-clipboard-offer", daemon=True
-        )
-        self._thread.start()
-        self._ready.wait(timeout_s)
-        return self._ok
+        with self._lifecycle_lock:
+            if self._stop_requested.is_set():
+                return False
+            if self._thread is None:
+                self._thread = threading.Thread(
+                    target=self._run, name="jarvis-clipboard-offer", daemon=True
+                )
+                self._thread.start()
+        if not self._ready.wait(timeout_s):
+            # A late worker must never take the clipboard after our caller
+            # already chose its fallback delivery route.
+            self.stop()
+            return False
+        return self._ok and not self._done.is_set()
 
     def reads(self) -> list[ClipboardRead]:
         with self._lock:
@@ -183,29 +127,54 @@ class ClipboardOffer:
                         return read
                 self._read_event.clear()
             remaining = deadline - time.monotonic()
-            if remaining <= 0 or self._done.is_set():
+            if remaining <= 0 or self._done.is_set() or self.lost_ownership:
                 return None
-            self._read_event.wait(min(remaining, 0.05))
+            self._read_event.wait(remaining)
 
     def elapsed(self) -> float:
         """Seconds since the offer went up."""
         return time.monotonic() - self._started_at if self._started_at else 0.0
 
-    def stop(self, *, timeout_s: float = 1.0) -> None:
-        """Render the text for real and give the window up. Idempotent."""
-        if self._thread is None:
+    def stop(self, *, timeout_s: float = 2.0, restore_text: str | None = None) -> None:
+        """Finish the offer, optionally restoring text only while we still own it."""
+        self._restore_text = restore_text
+        self._stop_requested.set()
+        thread = self._thread
+        if thread is None:
             return
         if self._hwnd:
             try:
                 import ctypes  # noqa: PLC0415
+                from ctypes import wintypes  # noqa: PLC0415
 
-                ctypes.WinDLL("user32").PostMessageW(self._hwnd, _WM_APP_STOP, 0, 0)
+                user32 = ctypes.WinDLL("user32", use_last_error=True)
+                user32.PostMessageW.argtypes = [
+                    wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+                ]
+                user32.PostMessageW.restype = wintypes.BOOL
+                if not user32.PostMessageW(self._hwnd, _WM_APP_STOP, 0, 0):
+                    log.debug("clipboard offer stop message was refused")
             except Exception:  # noqa: BLE001 — the thread's own timeout covers it
                 log.debug("could not post stop to the clipboard offer window", exc_info=True)
-        self._thread.join(timeout_s)
-        self._thread = None
+        thread.join(timeout_s)
+        if not thread.is_alive():
+            self._thread = None
 
     # -- thread body ----------------------------------------------------
+
+    def _restore_owned_text(self, user32, hwnd: int, render) -> None:
+        """Check ownership and replace text under one native clipboard lock."""
+        if self._restore_text is None or not user32.OpenClipboard(hwnd):
+            return
+        try:
+            if user32.GetClipboardOwner() == hwnd and user32.EmptyClipboard():
+                self.restored = render(self._restore_text)
+                if self.restored:
+                    self._text = self._restore_text
+                else:
+                    render()
+        finally:
+            user32.CloseClipboard()
 
     def _run(self) -> None:
         try:
@@ -219,6 +188,8 @@ class ClipboardOffer:
             self._read_event.set()
 
     def _pump(self) -> None:
+        if not available() or self._stop_requested.is_set():
+            return
         import ctypes  # noqa: PLC0415
         from ctypes import wintypes  # noqa: PLC0415
 
@@ -251,6 +222,17 @@ class ClipboardOffer:
         ]
         user32.CreateWindowExW.restype = wintypes.HWND
         user32.DestroyWindow.argtypes = [wintypes.HWND]
+        user32.IsWindow.argtypes = [wintypes.HWND]
+        user32.IsWindow.restype = wintypes.BOOL
+        user32.UnregisterClassW.argtypes = [wintypes.LPCWSTR, wintypes.HINSTANCE]
+        user32.UnregisterClassW.restype = wintypes.BOOL
+        user32.PeekMessageW.argtypes = [
+            ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT,
+            wintypes.UINT,
+        ]
+        user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+        user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+        user32.DispatchMessageW.restype = ctypes.c_ssize_t
         user32.OpenClipboard.argtypes = [wintypes.HWND]
         user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
         user32.SetClipboardData.restype = wintypes.HANDLE
@@ -266,9 +248,9 @@ class ClipboardOffer:
         kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
         kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 
-        def render() -> bool:
+        def render(value: str | None = None) -> bool:
             """Hand the real text to whoever asked. Clipboard must be open."""
-            buf = ctypes.create_unicode_buffer(self._text)
+            buf = ctypes.create_unicode_buffer(self._text if value is None else value)
             size = ctypes.sizeof(buf)
             handle = kernel32.GlobalAlloc(_GMEM_MOVEABLE, size)
             if not handle:
@@ -298,12 +280,14 @@ class ClipboardOffer:
             try:
                 if msg == _WM_RENDERFORMAT:
                     pid = reader_pid()
-                    read = ClipboardRead(pid=pid, exe=_exe_name(pid), at=self.elapsed())
-                    with self._lock:
-                        self._reads.append(read)
-                    self._read_event.set()
                     if int(wparam) == _CF_UNICODETEXT and render():
                         self.rendered = True
+                        # Publish only successfully rendered data, and keep
+                        # filesystem/process queries off the target's read.
+                        read = ClipboardRead(pid=pid, exe="", at=self.elapsed())
+                        with self._lock:
+                            self._reads.append(read)
+                        self._read_event.set()
                     return 0
                 if msg == _WM_RENDERALLFORMATS:
                     # We are about to stop owning the clipboard: leave the text
@@ -317,9 +301,10 @@ class ClipboardOffer:
                     return 0
                 if msg == _WM_DESTROYCLIPBOARD:
                     self.lost_ownership = True
+                    self._read_event.set()
                     return 0
                 if msg == _WM_APP_STOP:
-                    user32.DestroyWindow(hwnd)
+                    self._stop_requested.set()
                     return 0
                 if msg == _WM_DESTROY:
                     user32.PostQuitMessage(0)
@@ -363,6 +348,8 @@ class ClipboardOffer:
 
         taken = False
         for _attempt in range(10):
+            if self._stop_requested.is_set():
+                break
             if user32.OpenClipboard(hwnd):
                 try:
                     user32.EmptyClipboard()
@@ -386,12 +373,8 @@ class ClipboardOffer:
         self._ok = True
         self._ready.set()
 
-        # A message pump that also POLLS: once the text is rendered the system
-        # serves later readers from its cache and sends no more render events,
-        # so the only trace a paste leaves is the reader briefly holding the
-        # clipboard open. Sampling that every millisecond is cheap and catches
-        # a WebView's multi-format read comfortably; a missed sample only
-        # means "no positive evidence", never a wrong claim.
+        # Clipboard opening is not a read or an insertion acknowledgment.
+        # Wait for native messages; never sample the clipboard every millisecond.
         msg = wintypes.MSG()
         user32.MsgWaitForMultipleObjectsEx.argtypes = [
             wintypes.DWORD,
@@ -400,38 +383,28 @@ class ClipboardOffer:
             wintypes.DWORD,
             wintypes.DWORD,
         ]
-        seen_open: set[int] = set()
         running = True
         try:
-            while running:
+            while running and not self._stop_requested.is_set():
                 while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
                     if msg.message == 0x0012:  # WM_QUIT
                         running = False
                         break
                     user32.TranslateMessage(ctypes.byref(msg))
                     user32.DispatchMessageW(ctypes.byref(msg))
-                if not running:
+                if not running or self._stop_requested.is_set():
                     break
-                holder = user32.GetOpenClipboardWindow()
-                if holder and holder != hwnd:
-                    pid = wintypes.DWORD()
-                    user32.GetWindowThreadProcessId(holder, ctypes.byref(pid))
-                    if pid.value and pid.value not in seen_open:
-                        seen_open.add(int(pid.value))
-                        read = ClipboardRead(
-                            pid=int(pid.value),
-                            exe=_exe_name(int(pid.value)),
-                            at=self.elapsed(),
-                            observed="open",
-                        )
-                        with self._lock:
-                            self._reads.append(read)
-                        self._read_event.set()
                 # QS_ALLINPUT = 0x04FF, MWMO_INPUTAVAILABLE = 0x0004
-                user32.MsgWaitForMultipleObjectsEx(0, None, 1, 0x04FF, 0x0004)
+                user32.MsgWaitForMultipleObjectsEx(0, None, 1000, 0x04FF, 0x0004)
         finally:
-            user32.UnregisterClassW(class_name, wc.hInstance)
-            self._hwnd = 0
+            # A newer copy of identical text still belongs to its new owner.
+            try:
+                self._restore_owned_text(user32, hwnd, render)
+            finally:
+                if user32.IsWindow(hwnd):
+                    user32.DestroyWindow(hwnd)
+                user32.UnregisterClassW(class_name, wc.hInstance)
+                self._hwnd = 0
 
 
 __all__ = ["ClipboardOffer", "ClipboardRead", "available"]
