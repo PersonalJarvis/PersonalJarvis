@@ -42,10 +42,10 @@
 }
 .trace-rail > .trace-step::before {
   top: 0;
-  height: 6px;
+  height: 7px;
 }
 .trace-rail > .trace-step::after {
-  top: 26px;
+  top: 25px;
   bottom: 0;
 }
 .trace-rail > .trace-step:first-child::before,
@@ -104,7 +104,8 @@
   mask-image: linear-gradient(to bottom, transparent 0, black 2.5rem);
 }
 
-/* The opened conversation fold lines its thread up under the pill's mark. */
+/* The opened conversation fold, and the approvals shown beside it while it
+   is closed, line their thread up under the pill's mark. */
 .trace-fold-open {
   padding-left: 5px;
 }

@@ -233,7 +233,7 @@ function Disclosure({ label, children, forced = false, initiallyOpen = false, ic
         onClick={() => setChoice({ phase, open: !open })}>
         <Node live={live}>{icon}</Node>
         <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{label}</span>
-        {trailing ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{trailing}</span> : null}
+        {trailing ? <span className="shrink-0 text-xs leading-6 tabular-nums text-muted-foreground">{trailing}</span> : null}
         {children && !forced ? <ChevronRight aria-hidden className={cn("mt-[5px] h-3.5 w-3.5 shrink-0 opacity-40 transition group-hover/trace:opacity-90", open && "rotate-90")} /> : null}
       </button>
       {summary}
@@ -684,7 +684,7 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
     const rest = restGroups ? traceGroupItems({ groups: restGroups, ...groupProps }) : [];
     const items: RailItem[] = fold
       ? [{ key: "trace:fold", rail: false, node: <ConversationWorkFold durationMs={durationMs} blocks={fold.workAll}
-          attention={<Rail items={fold.approvals.map(block => ({ key: block.callId, rail: !block.question, node: <TraceTool block={block} status={status} onDecide={onDecide} /> }))} />}>
+          attention={<div className="trace-fold-open"><Rail items={fold.approvals.map(block => ({ key: block.callId, rail: !block.question, node: <TraceTool block={block} status={status} onDecide={onDecide} /> }))} /></div>}>
           <Rail items={[...main, ...(foldedError ? [errorItem(foldedError, "trace:folded-error")] : [])]} />
         </ConversationWorkFold> }, ...rest]
       : main;
