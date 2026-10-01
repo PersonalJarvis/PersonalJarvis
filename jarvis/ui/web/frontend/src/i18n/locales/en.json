@@ -5985,7 +5985,10 @@
       "talking": "Talking",
       "success": "Success",
       "error": "Error",
-      "sleeping": "Sleeping"
+      "sleeping": "Sleeping",
+      "working": "Working",
+      "searching": "Searching",
+      "held": "Being carried"
     },
     "builtin": {
       "gigi": {

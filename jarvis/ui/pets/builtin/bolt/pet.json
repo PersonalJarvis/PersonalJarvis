@@ -49,6 +49,24 @@
       "frames": 6,
       "fps": 3,
       "loop": true
+    },
+    "working": {
+      "row": 7,
+      "frames": 8,
+      "fps": 8,
+      "loop": true
+    },
+    "searching": {
+      "row": 8,
+      "frames": 8,
+      "fps": 8,
+      "loop": true
+    },
+    "held": {
+      "row": 9,
+      "frames": 6,
+      "fps": 10,
+      "loop": true
     }
   }
 }

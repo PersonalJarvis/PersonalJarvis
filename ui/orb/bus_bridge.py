@@ -81,6 +81,7 @@ from jarvis.sessions.constants import (
     SPOKEN_KIND_TIMEOUT,
     SPOKEN_KIND_UNAVAILABLE,
 )
+from jarvis.ui.pets.actions import action_for_tool
 from jarvis.ui.pets.status_line import StatusFeed, condense, parse_reasoning_summary
 from ui.orb.animations import IDLE_ANIMATION_POOL
 
@@ -369,6 +370,8 @@ class OrbBusBridge:
         self._card_visible = False
         self._reasoning_title = ""
         self._agent_tasks: dict[str, tuple[str, float]] = {}
+        #: Last background-work flag sent to the pet (``set_pet_busy``).
+        self._pet_busy = False
         self._card_fallback_task: asyncio.Task | None = None
         self._card_clear_task: asyncio.Task | None = None
         # Clock for the pet's outcome throttle (replaceable in tests) and the
@@ -850,6 +853,14 @@ class OrbBusBridge:
         for key in stale:
             self._agent_tasks.pop(key, None)
 
+    def _sync_pet_busy(self) -> None:
+        """The pet works while an agent task runs; tell it when that flips."""
+        self._expire_agent_tasks()
+        busy = bool(self._agent_tasks)
+        if busy != self._pet_busy:
+            self._pet_busy = busy
+            self._call_surface("set_pet_busy", busy)
+
     def _agent_title(self) -> str:
         """Title of the newest running agent task ("" when none runs)."""
         self._expire_agent_tasks()
@@ -1064,6 +1075,7 @@ class OrbBusBridge:
         """A tool is about to run: its reason (else its name) is the detail."""
         if not self._wants_card():
             return
+        self._call_surface("set_pet_action", action_for_tool(event.tool_name))
         detail = (event.rationale or "").strip() or _humanize_tool_name(event.tool_name)
         if detail:
             self._show_card(self._card_title(), detail)
@@ -1072,6 +1084,7 @@ class OrbBusBridge:
         """A tool call some path reports without an ``ActionProposed``."""
         if not self._wants_card():
             return
+        self._call_surface("set_pet_action", action_for_tool(event.tool_name))
         detail = _humanize_tool_name(event.tool_name)
         if detail:
             self._show_card(self._card_title(), detail)
@@ -1083,6 +1096,8 @@ class OrbBusBridge:
         background or between turns). Inside a turn it is a step; a failed step
         the turn recovers from is not the user's failure.
         """
+        if self._wants_card():
+            self._call_surface("set_pet_action", None)  # the step is over
         if self._card_visible:
             self._show_card(
                 self._card_title(), self._label("step_done" if event.success else "step_failed")
@@ -1112,6 +1127,7 @@ class OrbBusBridge:
         title = condense(event.utterance or "", max_chars=PET_CARD_TITLE_CHARS)
         title = title or self._label("working")
         self._agent_tasks[str(event.trace_id)] = (title, self._clock())
+        self._sync_pet_busy()
         self._show_card(title, self._label("working_detail"), force=True)
 
     async def _on_agent_task_completed(self, event: JarvisAgentTaskCompleted) -> None:
@@ -1124,6 +1140,7 @@ class OrbBusBridge:
             # oldest running task is the best match, and it must not keep the
             # card up forever.
             entry = self._agent_tasks.pop(next(iter(self._agent_tasks)))
+        self._sync_pet_busy()
         title = entry[0] if entry is not None else self._card_title()
         self._show_card(
             title,
@@ -2179,6 +2196,7 @@ class OrbBusBridge:
         """
         if event.success:
             self._pet_outcome("success")
+        self._sync_pet_busy()
         if self._wants_card() and (self._card_visible or self._agent_tasks):
             title = condense(event.utterance or "", max_chars=PET_CARD_TITLE_CHARS)
             self._show_card(

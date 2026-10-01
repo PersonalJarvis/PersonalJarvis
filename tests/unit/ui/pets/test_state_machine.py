@@ -6,7 +6,13 @@ import pytest
 
 from jarvis.ui.jarvisbar.modes import MODES
 from jarvis.ui.pets.state_machine import MODE_STATES, PetStateMachine
-from jarvis.ui.pets.states import ONE_SHOT_SECONDS, PET_STATES, SLEEP_AFTER_SECONDS
+from jarvis.ui.pets.states import (
+    ACTION_HOLD_SECONDS,
+    ACTION_STATES,
+    ONE_SHOT_SECONDS,
+    PET_STATES,
+    SLEEP_AFTER_SECONDS,
+)
 
 
 class FakeClock:
@@ -172,3 +178,76 @@ def test_outcome_while_asleep_wakes_then_returns_to_idle(
     assert machine.state() == "success"
     clock.advance(ONE_SHOT_SECONDS["success"])
     assert machine.state() == "idle"
+
+
+# --- Action states, background work and holding ------------------------------
+
+
+def test_a_tool_step_shows_its_action_while_thinking(machine: PetStateMachine) -> None:
+    machine.on_mode("think")
+    machine.on_action("searching")
+    assert machine.state() == "searching"
+    machine.on_action("working")
+    assert machine.state() == "working"
+    machine.on_action(None)
+    assert machine.state() == "thinking"
+
+
+def test_talking_closes_the_action(machine: PetStateMachine) -> None:
+    machine.on_mode("think")
+    machine.on_action("working")
+    machine.on_mode("speak")
+    assert machine.state() == "talking"
+    machine.on_mode("idle")
+    assert machine.state() == "idle"
+
+
+def test_an_action_without_a_result_expires(machine: PetStateMachine, clock: FakeClock) -> None:
+    machine.on_mode("think")
+    machine.on_action("working")
+    assert machine.next_change_in() == pytest.approx(ACTION_HOLD_SECONDS)
+    clock.advance(ACTION_HOLD_SECONDS)
+    assert machine.state() == "thinking"
+    assert machine.state_started_at() == clock.now
+
+
+def test_an_unknown_action_is_ignored(machine: PetStateMachine) -> None:
+    machine.on_mode("think")
+    machine.on_action("juggling")
+    assert machine.state() == "thinking"
+
+
+def test_background_work_keeps_an_idle_pet_working_and_awake(
+    machine: PetStateMachine, clock: FakeClock
+) -> None:
+    machine.on_busy(True)
+    assert machine.state() == "working"
+    assert machine.next_change_in() is None
+    clock.advance(SLEEP_AFTER_SECONDS * 2)
+    assert machine.state() == "working"
+    machine.on_mode("listen")
+    assert machine.state() == "listening"
+    machine.on_mode("idle")
+    assert machine.state() == "working"
+    machine.on_busy(False)
+    assert machine.state() == "idle"
+
+
+def test_holding_beats_everything_and_letting_go_restores(machine: PetStateMachine) -> None:
+    machine.on_mode("speak")
+    machine.on_held(True)
+    assert machine.state() == "held"
+    machine.on_outcome("success")
+    assert machine.state() == "held"
+    machine.on_held(False)
+    assert machine.state() == "success"
+
+
+def test_a_held_pet_never_falls_asleep(machine: PetStateMachine, clock: FakeClock) -> None:
+    machine.on_held(True)
+    clock.advance(SLEEP_AFTER_SECONDS * 2)
+    assert machine.state() == "held"
+
+
+def test_every_new_state_is_a_pet_state() -> None:
+    assert set(ACTION_STATES) | {"held"} <= set(PET_STATES)

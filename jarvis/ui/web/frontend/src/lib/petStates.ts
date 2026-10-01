@@ -17,6 +17,9 @@ export const PET_STATES = [
   "success",
   "error",
   "sleeping",
+  "working",
+  "searching",
+  "held",
 ] as const;
 
 export type PetState = (typeof PET_STATES)[number];
@@ -32,6 +35,9 @@ export const STATE_FALLBACKS: Readonly<Record<Exclude<PetState, "idle">, PetStat
   success: "idle",
   error: "idle",
   sleeping: "idle",
+  working: "thinking",
+  searching: "working",
+  held: "listening",
 };
 
 /** The pet id that shows the control strip with no figure ("None" in the UI). */

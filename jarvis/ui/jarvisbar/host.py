@@ -173,6 +173,11 @@ def dispatch(surface: Any, msg: dict[str, Any]) -> bool:
         )
     elif op == "set_pet_outcome":
         _call(surface, "set_pet_outcome", str(msg.get("kind", "")))
+    elif op == "set_pet_action":
+        kind = msg.get("kind")
+        _call(surface, "set_pet_action", None if kind is None else str(kind))
+    elif op == "set_pet_busy":
+        _call(surface, "set_pet_busy", bool(msg.get("busy", False)))
     elif op == "show_status":
         # "header"/"line" are the keys an older parent still sends.
         title = msg.get("title", msg.get("header", ""))

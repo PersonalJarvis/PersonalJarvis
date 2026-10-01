@@ -777,6 +777,12 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
     def set_pet_outcome(self, kind: str) -> None:
         self._send({"op": "set_pet_outcome", "kind": str(kind)})
 
+    def set_pet_action(self, kind: str | None) -> None:
+        self._send({"op": "set_pet_action", "kind": None if kind is None else str(kind)})
+
+    def set_pet_busy(self, busy: bool) -> None:
+        self._send({"op": "set_pet_busy", "busy": bool(busy)})
+
     def show_status(self, title: str = "", detail: str = "") -> None:
         self._send({"op": "show_status", "title": str(title), "detail": str(detail)})
 

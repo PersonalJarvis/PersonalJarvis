@@ -5952,7 +5952,10 @@
       "talking": "Spricht",
       "success": "Geschafft",
       "error": "Fehler",
-      "sleeping": "Schläft"
+      "sleeping": "Schläft",
+      "working": "Arbeitet",
+      "searching": "Sucht",
+      "held": "Wird getragen"
     },
     "builtin": {
       "gigi": {

@@ -578,3 +578,40 @@ def test_a_hidden_pet_hides_its_strip_even_mid_conversation() -> None:
     pet._window_mapped = lambda: False  # type: ignore[method-assign]
     pet._sync_controls_visibility()
     assert strip.calls == ["hide"]
+
+
+# --- Action states reach the pet in-process and through the macOS proxy ------
+
+
+class _ActionSurface:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def set_pet_action(self, kind: str | None) -> None:
+        self.calls.append(("action", kind))
+
+    def set_pet_busy(self, busy: bool) -> None:
+        self.calls.append(("busy", busy))
+
+
+def test_the_macos_proxy_and_host_carry_actions_and_busy() -> None:
+    from jarvis.ui.jarvisbar import host
+
+    proxy = SubprocessMascotOverlay(style="pet")
+    sent: list[dict] = []
+    proxy._send = sent.append  # type: ignore[method-assign]
+    proxy.set_pet_action("searching")
+    proxy.set_pet_action(None)
+    proxy.set_pet_busy(True)
+    surface = _ActionSurface()
+    for message in sent:
+        host.dispatch(surface, message)
+    assert surface.calls == [("action", "searching"), ("action", None), ("busy", True)]
+
+
+def test_pet_action_calls_are_safe_before_the_window_exists() -> None:
+    pet = OrbOverlay(style="pet")
+    pet.set_pet_action("working")
+    pet.set_pet_action("juggling")  # unknown: ignored
+    pet.set_pet_action(None)
+    pet.set_pet_busy(True)

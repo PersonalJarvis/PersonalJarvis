@@ -407,6 +407,15 @@ class PetRenderer:
     def on_activity(self) -> None:
         self._machine.on_activity()
 
+    def on_action(self, kind: str | None) -> None:
+        self._machine.on_action(kind)
+
+    def on_busy(self, busy: bool) -> None:
+        self._machine.on_busy(busy)
+
+    def on_held(self, held: bool) -> None:
+        self._machine.on_held(held)
+
     def state(self) -> str:
         return str(self._machine.state())
 

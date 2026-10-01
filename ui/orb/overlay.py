@@ -69,7 +69,7 @@ from jarvis.core.config import DEFAULT_CONFIG_FILE as JARVIS_TOML_PATH
 from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness
 from jarvis.ui.jarvisbar.modes import MODES
 from jarvis.ui.overlay_styles import LEGACY_STYLE_ALIASES, ORB_STYLES, PERSISTENT_ORB_STYLES
-from jarvis.ui.pets.states import DEFAULT_PET_ID, NO_PET_ID, ONE_SHOT_STATES
+from jarvis.ui.pets.states import ACTION_STATES, DEFAULT_PET_ID, NO_PET_ID, ONE_SHOT_STATES
 from ui.orb import controls as orb_controls
 from ui.orb.animations import (
     ANIMATION_REGISTRY,
@@ -3177,6 +3177,9 @@ class OrbOverlay:
         dy = event.y_root - self._drag_state.start_root_y
         if not self._drag_state.moved and (abs(dx) + abs(dy)) < DRAG_THRESHOLD_PX:
             return
+        if not self._drag_state.moved and self._style == "pet":
+            # Picked up: a real drag, not a click.
+            self._apply_pet_feed("on_held", True)
         self._drag_state.moved = True
         new_x = event.x_root - self._drag_state.offset_x
         new_y = event.y_root - self._drag_state.offset_y
@@ -3198,6 +3201,8 @@ class OrbOverlay:
         self._drag_state = None
         if state is None or not state.moved:
             return  # click, not drag
+        if self._style == "pet":
+            self._apply_pet_feed("on_held", False)
 
         screens = screens_from_tk(self._root)
         monitor_geo, monitor_name = self._monitor_at_orb_center(screens)
@@ -4024,6 +4029,29 @@ class OrbOverlay:
         if outcome not in ONE_SHOT_STATES:
             return
         self._enqueue_ui(lambda: self._apply_outcome(outcome))
+
+    def set_pet_action(self, kind: str | None) -> None:
+        """Show what Jarvis is doing inside a turn. Thread-safe.
+
+        ``working`` (a tool step) or ``searching`` (a lookup); ``None`` ends it.
+        """
+        action = str(kind or "").strip().lower() or None
+        if action is not None and action not in ACTION_STATES:
+            return
+        self._enqueue_ui(lambda: self._apply_pet_feed("on_action", action))
+
+    def set_pet_busy(self, busy: bool) -> None:
+        """An agent task is running in the background: the pet works. Thread-safe."""
+        flag = bool(busy)
+        self._enqueue_ui(lambda: self._apply_pet_feed("on_busy", flag))
+
+    def _apply_pet_feed(self, method: str, value: object) -> None:
+        """Hand one input to the pet's state machine and repaint (Tk thread)."""
+        renderer = getattr(self, "_renderer", None)
+        if not isinstance(renderer, PetRenderer):
+            return
+        getattr(renderer, method)(value)
+        self._kick_frame()
 
     def show_status(self, title: str = "", detail: str = "") -> None:
         """Show or update the pet's status card (bold title, muted detail). Thread-safe."""

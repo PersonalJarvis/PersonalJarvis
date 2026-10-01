@@ -89,6 +89,11 @@ equal.
 | `success` (one-shot, 1.5 s) | `SpeechSpoken.spoken_kind` in `action_done`/`completion`, `JarvisAgentBackgroundCompleted(success=True)`, `ActionExecuted(success=True)` while no turn is running |
 | `error` (one-shot, 2 s) | `ErrorOccurred(recoverable=False)`, `SpeechSpoken.spoken_kind` in `timeout`/`unavailable`/`stt_unavailable`, `VoiceSessionEnded(hangup_reason="error")`, `ActionExecuted(success=False)` while no turn is running |
 | `sleeping` | five minutes without any Jarvis event; any event wakes it |
+| `working` | a tool step that changes, sends or runs something (`ActionProposed` / `ToolCallStarted`) while thinking; also an agent task running in the background while Jarvis is otherwise idle (`JarvisAgentTaskStarted` until `JarvisAgentTaskCompleted`) |
+| `searching` | a tool step that looks something up: its name contains a word like search, find, read, fetch, browse, query, list or wiki (`jarvis/ui/pets/actions.py`) |
+| `held` | the user drags the pet with the mouse (from the first real movement until the release) |
+
+Precedence, highest first: `held`, a one-shot, `listening` / `talking`, an action state, background work, `thinking` / `idle`, `sleeping`. An action ends with the tool's `ActionExecuted`, when Jarvis starts talking or the turn ends, and at the latest after 12 seconds without a newer tool call. A pet whose sheet has no row for a new state borrows one: `working` -> `thinking`, `searching` -> `working`, `held` -> `listening`.
 
 States come only from real bus events (`ui/orb/bus_bridge.py`); nothing is
 simulated. The classic voice pipeline does not publish `ErrorOccurred`, so on
@@ -117,7 +122,9 @@ A pet is a folder with two files:
 The sheet is a grid of square cells. `frame_size` is 32, 48 or 64 source
 pixels. Each state is one row with up to eight frames. By convention the rows
 follow the order of `PET_STATES`: `idle`, `listening`, `thinking`, `talking`,
-`success`, `error`, `sleeping`.
+`success`, `error`, `sleeping`, `working`, `searching`, `held`. The last three
+rows are optional for user-made pets (a 64 px sheet has room for only eight
+rows); the missing ones fall back as described under *States*.
 
 ```json
 {
@@ -190,7 +197,7 @@ committed PNGs match the script). User-created pets live in
   number of non-empty cells.
 - **As a developer:** add a builder to `scripts/pets/build_pets.py`, run it,
   and commit the generated folder. The parity and completeness tests require
-  every built-in pet to provide all seven states.
+  every built-in pet to provide all ten states.
 
 ## Interfaces
 
@@ -206,6 +213,8 @@ name.
 | `set_pet(pet_id)` | Swap the figure live; `"none"` shows the strip only |
 | `set_pet_look(scale, bubble)` | Apply size and card on/off live |
 | `set_pet_outcome(kind)` | Play the one-shot `success` or `error` |
+| `set_pet_action(kind)` | `working` / `searching` for the running tool step, `None` when it ended |
+| `set_pet_busy(busy)` | An agent task is running in the background |
 | `show_status(title, detail="")` | Show or update the thinking card (already condensed) |
 | `clear_status(linger_s=1.5)` | Take the card down after `linger_s` |
 | `wants_status_lines` (attribute) | True only for the pet: the bridge feeds the card to nothing else |
