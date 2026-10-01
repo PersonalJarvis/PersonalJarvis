@@ -2791,6 +2791,18 @@ async def _run_cli_once(
     # A society agent placed on another computer runs its CLI there over SSH.
     placement = await placement_for_session(session)
     remote_token = _REMOTE_PLANNING.set(placement is not None)
+    planned_prompt = user_text
+    if placement is not None and not getattr(handle, "tools_disabled", False):
+        # Also refresh resumed conversations which remember the old missing bridge.
+        planned_prompt = (
+            "<jarvis_remote_context>\n"
+            "You run on the connected computer. Jarvis MCP tools are connected for this turn "
+            "under your own identity and permissions, including persistent routines, memory "
+            "and the visible Jarvis browser on the main computer. Inspect the real tools; "
+            "earlier messages saying they were unavailable are outdated. Native file tools "
+            "and society_shell run on the connected computer; Jarvis file tools access "
+            "your workspace on the main computer.\n</jarvis_remote_context>\n\n" + user_text
+        )
 
     try:
         with cli_catalog_scope(
@@ -2818,7 +2830,7 @@ async def _run_cli_once(
                 # newly available models keep the required model/effort pairing.
                 await asyncio.to_thread(read_agy_models, required_model=session.model)
             plan: CliPlan = planner(
-                prompt=user_text,
+                prompt=planned_prompt,
                 cwd=cwd,
                 model=session.model,
                 effort=effort,
@@ -2898,6 +2910,8 @@ async def _run_cli_once(
                 local_cwd=str(cwd),
                 env=plan.env,
                 system_prompt_files=prompt_files,
+                session_id=session.session_id,
+                tools_enabled=not getattr(handle, "tools_disabled", False),
             )
         except RemoteCliUnavailable as exc:
             return _Outcome("error", str(exc), {}, None, None)
