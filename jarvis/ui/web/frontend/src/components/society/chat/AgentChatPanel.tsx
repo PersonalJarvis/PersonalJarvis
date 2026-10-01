@@ -1020,7 +1020,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     setValue: (next) => { setValue(next); fieldRef.current?.setText(next); },
     onModel: () => composerRef.current?.querySelector<HTMLButtonElement>("[data-chat-model-trigger]")?.click(),
   });
-  const dictation = useComposerDictation(value, (next) => {
+  const dictation = useComposerDictation((next) => {
     const text = typeof next === "function" ? next(value) : next;
     setValue(text);
     fieldRef.current?.setText(text);

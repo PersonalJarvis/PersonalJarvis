@@ -146,7 +146,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     dictating,
     stop: stopDictation,
     toggle: toggleDictation,
-  } = useComposerDictation(value, setValue);
+  } = useComposerDictation(setValue);
 
   // Files going in with this message. Held here rather than in the store: they
   // belong to the sentence being typed, and a chat opened elsewhere must not
