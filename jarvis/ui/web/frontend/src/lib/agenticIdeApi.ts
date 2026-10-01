@@ -1524,7 +1524,15 @@ export async function transferTerminal(
       body: JSON.stringify({ workspace_id: workspaceId, target_workspace_id: targetWorkspaceId }),
     },
   );
-  if (!res.ok) throw new Error(await detail(res));
+  if (!res.ok) {
+    const message = await detail(res);
+    // The route's own 404 names the missing pane; a bare "Not Found" (or a
+    // 405) means the backend serving this view predates the route.
+    if (res.status === 405 || (res.status === 404 && message === "Not Found")) {
+      throw new Error("This view is newer than the backend — restart the app and try again.");
+    }
+    throw new Error(message);
+  }
   return (await res.json()) as TerminalTransfer;
 }
 
