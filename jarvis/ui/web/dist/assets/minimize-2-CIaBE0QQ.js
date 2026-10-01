@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/minimize-2-CIaBE0QQ.js
 import{d as e}from"./index-Di0IKcOq.js";/**
+|||||||| parent of 03c196911 (fix(chats): include realtime voice chats in recent history):jarvis/ui/web/dist/assets/minimize-2-C8Lhjxr0.js
+import{l as e}from"./index-CuJ-jNO-.js";/**
+========
+import{l as e}from"./index-ChPAV4uw.js";/**
+>>>>>>>> 03c196911 (fix(chats): include realtime voice chats in recent history):jarvis/ui/web/dist/assets/minimize-2-BN9bQ5Nx.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

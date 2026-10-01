@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/PairConversation-CKm13F-3.js
 import{d as M,r as n,j as e,u as R,cu as A,X as q,c as k,cv as B}from"./index-Di0IKcOq.js";import{C as D}from"./WorkTrace-bGlWSY3L.js";import{L as H}from"./lock-K1LMu2D1.js";/**
+|||||||| parent of 03c196911 (fix(chats): include realtime voice chats in recent history):jarvis/ui/web/dist/assets/PairConversation-BtEarWt2.js
+import{l as M,r as n,j as e,u as R,cq as q,X as A,c as k,cr as B}from"./index-CuJ-jNO-.js";import{C as D}from"./WorkTrace-CfUtxnVz.js";import{L as H}from"./lock-DYvl59zk.js";/**
+========
+import{l as M,r as n,j as e,u as R,cq as q,X as A,c as k,cr as B}from"./index-ChPAV4uw.js";import{C as D}from"./WorkTrace-BkwwKZnD.js";import{L as H}from"./lock-DGjk__lM.js";/**
+>>>>>>>> 03c196911 (fix(chats): include realtime voice chats in recent history):jarvis/ui/web/dist/assets/PairConversation-B9e0Xp4x.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

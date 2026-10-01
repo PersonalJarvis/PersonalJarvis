@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Archive, ChevronDown, MessageSquare, Pin, PinOff, Trash2 } from "lucide-react";
+import { Archive, ChevronDown, MessageSquare, Mic, Pin, PinOff, Trash2 } from "lucide-react";
 
 import { useAgentChatStore } from "@/store/agentChat";
 import { useT } from "@/i18n";
@@ -158,7 +158,7 @@ function ChatRowItem({
         type="button"
         onClick={onOpen}
         title={title}
-        aria-label={title}
+        aria-label={row.kind === "voice" ? `${t("all_chats.filter_voice")}: ${title}` : title}
         data-testid="recent-chat-row"
         data-kind={row.kind}
         className={cn(
@@ -169,7 +169,11 @@ function ChatRowItem({
           active ? "jarvis-nav-active bg-secondary text-foreground" : "hover:bg-secondary",
         )}
       >
-        {pinned && <MessageSquare aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />}
+        {row.kind === "voice" ? (
+          <Mic aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
+        ) : pinned ? (
+          <MessageSquare aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
+        ) : null}
         <span className="min-w-0 flex-1 truncate text-[13px] leading-5 text-foreground">{compactChatTitle(title)}</span>
 
       </button>

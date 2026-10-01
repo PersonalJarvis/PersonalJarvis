@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/useWebglSurface-CWF3Ph2s.js
 import{r as Dr}from"./index-Di0IKcOq.js";import{r as tp}from"./graphDimension-DJVCpmtl.js";/**
+|||||||| parent of 03c196911 (fix(chats): include realtime voice chats in recent history):jarvis/ui/web/dist/assets/useWebglSurface-DApy5gpv.js
+import{r as Dr}from"./index-CuJ-jNO-.js";import{r as tp}from"./graphDimension-DxVUK6N3.js";/**
+========
+import{r as Dr}from"./index-ChPAV4uw.js";import{r as tp}from"./graphDimension-DyF7V1rO.js";/**
+>>>>>>>> 03c196911 (fix(chats): include realtime voice chats in recent history):jarvis/ui/web/dist/assets/useWebglSurface-Chwivzrb.js
  * @license
  * Copyright 2010-2026 Three.js Authors
  * SPDX-License-Identifier: MIT

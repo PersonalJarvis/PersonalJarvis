@@ -106,6 +106,21 @@ describe("RecentChats", () => {
     ]);
   });
 
+  it("identifies voice chats in recent and pinned history without duplicating them", async () => {
+    render(<RecentChats />);
+    const voice = screen.getByRole("button", { name: "Voice: Spoken thread" });
+    expect(voice.getAttribute("data-kind")).toBe("voice");
+    expect(voice.querySelector("svg.lucide-mic")).toBeTruthy();
+    expect(screen.getByTitle("Agent chat").querySelector("svg.lucide-mic")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Pin chat: Spoken thread" }));
+    expect(screen.getByTestId("pinned-chats").contains(
+      screen.getByRole("button", { name: "Voice: Spoken thread" }),
+    )).toBe(true);
+    expect(screen.getAllByTitle("Spoken thread")).toHaveLength(1);
+    expect(screen.getByTitle("Spoken thread").querySelector("svg.lucide-mic")).toBeTruthy();
+    await flush();
+  });
+
   it("opens an agent chat on the chat surface even from the voice stage", async () => {
     render(<RecentChats />);
     // The classic brain's text threads are no longer listed — the chat

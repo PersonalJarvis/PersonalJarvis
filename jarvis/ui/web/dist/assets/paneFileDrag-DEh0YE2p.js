@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/paneFileDrag-DEh0YE2p.js
 import{d as A,r as p,j as c,b6 as N,c as m,aw as F}from"./index-Di0IKcOq.js";/**
+|||||||| parent of 03c196911 (fix(chats): include realtime voice chats in recent history):jarvis/ui/web/dist/assets/paneFileDrag-BuN0ro3h.js
+import{l as A,r as p,j as c,by as N,c as m,at as F}from"./index-CuJ-jNO-.js";/**
+========
+import{l as A,r as p,j as c,by as N,c as m,at as F}from"./index-ChPAV4uw.js";/**
+>>>>>>>> 03c196911 (fix(chats): include realtime voice chats in recent history):jarvis/ui/web/dist/assets/paneFileDrag-BaX1yOKv.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

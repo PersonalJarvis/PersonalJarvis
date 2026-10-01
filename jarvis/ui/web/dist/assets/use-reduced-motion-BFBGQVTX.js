@@ -1,1 +1,7 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/use-reduced-motion-BFBGQVTX.js
 import{r as o}from"./index-Di0IKcOq.js";const t={current:null},r={current:!1},s=typeof window<"u";function c(){if(r.current=!0,!!s)if(window.matchMedia){const e=window.matchMedia("(prefers-reduced-motion)"),n=()=>t.current=e.matches;e.addEventListener("change",n),n()}else t.current=!1}function u(){!r.current&&c();const[e]=o.useState(t.current);return e}export{r as h,c as i,t as p,u};
+|||||||| parent of 03c196911 (fix(chats): include realtime voice chats in recent history):jarvis/ui/web/dist/assets/use-reduced-motion-CFttHQ58.js
+import{r as o}from"./index-CuJ-jNO-.js";const t={current:null},r={current:!1},s=typeof window<"u";function c(){if(r.current=!0,!!s)if(window.matchMedia){const e=window.matchMedia("(prefers-reduced-motion)"),n=()=>t.current=e.matches;e.addEventListener("change",n),n()}else t.current=!1}function u(){!r.current&&c();const[e]=o.useState(t.current);return e}export{r as h,c as i,t as p,u};
+========
+import{r as o}from"./index-ChPAV4uw.js";const t={current:null},r={current:!1},s=typeof window<"u";function c(){if(r.current=!0,!!s)if(window.matchMedia){const e=window.matchMedia("(prefers-reduced-motion)"),n=()=>t.current=e.matches;e.addEventListener("change",n),n()}else t.current=!1}function u(){!r.current&&c();const[e]=o.useState(t.current);return e}export{r as h,c as i,t as p,u};
+>>>>>>>> 03c196911 (fix(chats): include realtime voice chats in recent history):jarvis/ui/web/dist/assets/use-reduced-motion-a6xAMQPr.js

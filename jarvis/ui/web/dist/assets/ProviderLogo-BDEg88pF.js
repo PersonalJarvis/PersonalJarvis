@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/ProviderLogo-BDEg88pF.js
 import{_ as u,a as m,b as f,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as L,n as q,o as M,p as W,q as C,r as D,s as P,t as R,u as H,v as O,w as S}from"./xai-ELXAGfWY.js";import{d as $,j as i,c as n,Y as E}from"./index-Di0IKcOq.js";/**
+|||||||| parent of 03c196911 (fix(chats): include realtime voice chats in recent history):jarvis/ui/web/dist/assets/ProviderLogo-Q2NiqdnR.js
+import{_ as u,a as m,b as f,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as L,n as q,o as M,p as W,q as C,r as D,s as P,t as R,u as H,v as O,w as S}from"./xai-ELXAGfWY.js";import{l as U,j as i,c as n,U as $}from"./index-CuJ-jNO-.js";/**
+========
+import{_ as u,a as m,b as f,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as L,n as q,o as M,p as W,q as C,r as D,s as P,t as R,u as H,v as O,w as S}from"./xai-ELXAGfWY.js";import{l as U,j as i,c as n,U as $}from"./index-ChPAV4uw.js";/**
+>>>>>>>> 03c196911 (fix(chats): include realtime voice chats in recent history):jarvis/ui/web/dist/assets/ProviderLogo-XxXumrPF.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.
