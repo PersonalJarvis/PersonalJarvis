@@ -60,12 +60,13 @@ def test_linux_preserves_unrelated_command(
     link = bin_dir / "jarvis"
     if symlink:
         link.symlink_to(tmp_path / "missing-other-install")
+        original_target = link.readlink()
     else:
         link.write_text("unrelated command", encoding="utf-8")
     installer.step_cli_links(dry_run=False)
     assert "Keeping existing" in capsys.readouterr().out
     if symlink:
-        assert link.readlink() == tmp_path / "missing-other-install"
+        assert link.readlink() == original_target
     else:
         assert link.read_text(encoding="utf-8") == "unrelated command"
     assert (bin_dir / "jarvisctl").is_symlink()
