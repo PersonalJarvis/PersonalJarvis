@@ -234,9 +234,7 @@ _ADAPTERS: dict[str, _Adapter] = {
         launch=_discovered_launch,
         # ``agy --conversation <id>`` is the long form; there is no short flag.
         resume=lambda session_id: ("--conversation", session_id),
-        discover=lambda cwd, started, taken, home: _discover_antigravity(
-            cwd, started, taken, home
-        ),
+        discover=lambda cwd, started, taken, home: _discover_antigravity(cwd, started, taken, home),
         exists=lambda handle, home: _agy_conversation_exists(handle, home),
     ),
 }
@@ -1146,14 +1144,7 @@ def _agy_conversation_db(root: Path, session_id: str) -> Path | None:
 
 
 def _agy_transcript(root: Path, session_id: str) -> Path:
-    return (
-        root
-        / "brain"
-        / session_id
-        / ".system_generated"
-        / "logs"
-        / "transcript.jsonl"
-    )
+    return root / "brain" / session_id / ".system_generated" / "logs" / "transcript.jsonl"
 
 
 def _agy_log_has_user_turn(log: Path) -> bool:
@@ -1247,9 +1238,7 @@ def _agy_summaries_for_cwd(root: Path, cwd: str) -> list[tuple[float, str]]:
                 uris = []
             if not isinstance(uris, list):
                 continue
-            if not any(
-                _agy_cwd_matches(_agy_file_uri_path(str(uri)), cwd) for uri in uris
-            ):
+            if not any(_agy_cwd_matches(_agy_file_uri_path(str(uri)), cwd) for uri in uris):
                 continue
             try:
                 stamp = datetime.fromisoformat(str(row[2] or "").replace("Z", "+00:00"))

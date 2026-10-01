@@ -79,10 +79,10 @@ describe("compact workspace terminal header", () => {
     const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 30 });
     fireEvent(screen.getByText("Dana"), event);
     expect(event.defaultPrevented).toBe(true);
-    expect(activate).toHaveBeenCalled();
+    expect(activate).not.toHaveBeenCalled();
     const menu = screen.getByRole("menu", { name: "Actions for Dana" });
     expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(expect.arrayContaining(
-      ["Split right…", "Split down…", "Split left…", "Split up…", "Maximize", "Close pane"]));
+      ["Split right…", "Split down…", "Split left…", "Split up…", "Zoom", "Close pane"]));
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Split left…" }));
     expect(add).toHaveBeenCalledWith("left");
     fireEvent(screen.getByText("Dana"), new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
@@ -103,7 +103,7 @@ describe("compact workspace terminal header", () => {
     render(<WorkspaceTerminalHeader {...BASE} onRename={async () => true} onOpenConversation={() => {}} />);
     const more = screen.getByRole("button", { name: "More actions for Dana" });
     fireEvent.click(more);
-    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Rename" }));
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Rename pane" }));
     fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
     expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Conversation history" }));
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
@@ -129,7 +129,7 @@ describe("compact workspace terminal header", () => {
     const rename = vi.fn().mockResolvedValue(false);
     render(<WorkspaceTerminalHeader {...BASE} onRename={rename} />);
     fireEvent.click(screen.getByRole("button", { name: "More actions for Dana" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename pane" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Name for Dana" }), { target: { value: "Installer" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save name" })); });
     expect(rename).toHaveBeenCalledWith("Installer");

@@ -56,8 +56,16 @@ _PRIVATE_MODE_RE = re.compile(r"\x1b\[\?([0-9;]+)([hl])")
 # after any byte, including between ``ESC[?10`` and ``00h``.
 _PRIVATE_MODE_PARTIAL_RE = re.compile(r"\x1b(?:\[(?:\?(?:[0-9;]*))?)?$")
 _PRIVATE_MODE_PARTIAL_MAX = 128
-#: ``ESC [ 2 J`` — erase the whole screen, the first thing a full repaint sends.
-_FULL_CLEAR = "\x1b[2J"
+# A full erase is either ED 2, or ED 0 after moving to the top-left cell.
+# Codex uses the latter. Missing it made successful redraws trigger all five
+# height nudges, visibly moving the terminal down and up every half second.
+# Only intervening controls that cannot move the cursor are accepted.
+# Kept in step with frontend/terminalRepaint.ts by shared protocol fixtures.
+_FULL_CLEAR_RE = re.compile(
+    r"\x1b\[2J|\x1b\[(?:0*1?)(?:;0*1?)?[Hf]"
+    r"(?:\x1b\[[0-9;:]*m|\x1b\[\?(?:25|2026)[hl])*\x1b\[0*J"
+)
+_FULL_CLEAR_SCAN_TAIL = 128
 
 _DECORATION_CHARS = set("─│┌┐└┘├┤┬┴┼━┃╭╮╯╰═║╔╗╚╝╠╣╦╩╬▀▄█▌▐░▒▓▔▁·.-_=*#~ ")
 _SPINNER_CHARS = set("|/\\-◐◓◑◒✻✽✢·✳✶⣿")
@@ -256,18 +264,19 @@ class ReplayBuffer:
         if not chunk:
             return
         self._note_modes(chunk)
+        previous = len(self._clear_scan_tail)
         scanned = self._clear_scan_tail + chunk
-        # The tail is shorter than the sequence, so no erase is counted twice.
-        erases = scanned.count(_FULL_CLEAR)
-        self.clears += erases
-        self._clear_scan_tail = scanned[-(len(_FULL_CLEAR) - 1) :]
+        # The longer scan tail can contain an already counted erase. Count
+        # only matches completed by this read, including split home/ED pairs.
+        erases = [match for match in _FULL_CLEAR_RE.finditer(scanned) if match.end() > previous]
+        self.clears += len(erases)
+        self._clear_scan_tail = scanned[-_FULL_CLEAR_SCAN_TAIL:]
         if erases:
-            # A fresh frame has started, even when the erase was split across
-            # two reads and so cannot rebase the buffer below.
+            # A fresh frame has started, including an erase split across reads.
             self.awaiting_frame = False
             if self.holds_screen:
                 self._paints_frames = True
-        erase = chunk.rfind(_FULL_CLEAR) if self.holds_screen else -1
+        erase = erases[-1].start() if erases and self.holds_screen else -1
         if erase >= 0:
             # A full-screen agent just emptied its screen, so everything it
             # drew before this is gone from it — and what follows is a frame
@@ -279,7 +288,7 @@ class ReplayBuffer:
             # answered — which a busy Claude Code does only half the time
             # (2026-09-29). The modes the dropped bytes negotiated are kept
             # the same way ``rebase_for_resize`` keeps them.
-            self._rebase(chunk[erase:])
+            self._rebase(scanned[erase:])
             return
         self._chunks.append(chunk)
         self._size += len(chunk)

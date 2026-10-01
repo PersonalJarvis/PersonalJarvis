@@ -109,6 +109,11 @@ DETACHABLE_VIEWS: dict[str, str] = {
     # picture is something you keep looking at WHILE you carry on working, and
     # on a second monitor it stops competing with the section that produced it.
     "visualization": "Visualization",
+    # The Jarvis X annotation editor. Never a section of the main window: it
+    # opens from a capture's thumbnail card or the library, always on one
+    # item (``&item=<id>``), and ONE editor window is reused — opening another
+    # capture navigates it instead of stacking windows (open_jarvisx_editor).
+    "jarvisx-editor": "Jarvis X Editor",
 }
 META_FILE_PATH = DATA_DIR / ".jarvis-running"
 #: Timeout for the initial lock acquire, in seconds. 0 = non-blocking,
@@ -4850,7 +4855,7 @@ class DesktopApp:
 
         return resolve_theme(self._configured_theme())
 
-    def open_detached_window(self, view: str) -> dict[str, Any]:
+    def open_detached_window(self, view: str, query: str = "") -> dict[str, Any]:
         """Open ``view`` in its own solo window — MUST run on a worker thread.
 
         pywebview materializes runtime windows only from a thread whose name is
@@ -4862,11 +4867,22 @@ class DesktopApp:
         honest degrade on hosts whose webview backend cannot create runtime
         windows.
         """
-        fallback = f"/?view={view}&solo=1"
+        suffix = f"&{query}" if query else ""
+        fallback = f"/?view={view}&solo=1{suffix}"
         if view not in DETACHABLE_VIEWS:
             return {"ok": False, "reason": "unknown_view"}
         existing = self._detached_windows.get(view)
         if existing is not None:
+            if query:
+                # Same window, new content: navigate it rather than open a
+                # second one (the title is the window's identity on Windows).
+                try:
+                    existing.load_url(f"{self._url()}{fallback}")
+                except Exception as exc:  # noqa: BLE001
+                    from loguru import logger
+
+                    logger.opt(exception=exc).warning("Detached '{}' could not navigate", view)
+                    return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
             _bring_window_to_front_by_title(self._detached_title(view))
             return {"ok": True, "already_open": True, "view": view}
         if self._window is None and not self._detached_windows:
@@ -4880,7 +4896,7 @@ class DesktopApp:
             title = self._detached_title(view)
             window = webview.create_window(
                 title,
-                f"{self._url()}/?view={view}&solo=1",
+                f"{self._url()}{fallback}",
                 width=1100,
                 height=750,
                 min_size=(800, 520),
@@ -4909,6 +4925,16 @@ class DesktopApp:
         window.events.closed += lambda v=view: self._on_detached_closed(v)
         self._publish_detached_event_threadsafe(view, opened=True)
         return {"ok": True, "already_open": False, "view": view}
+
+    def open_jarvisx_editor(self, item_id: str) -> dict[str, Any]:
+        """Open (or re-point) the Jarvis X editor window on one capture.
+
+        Worker-thread only, like :meth:`open_detached_window`: the card click
+        and ``POST /api/jarvisx/items/<id>/open-editor`` both reach it through
+        ``asyncio.to_thread``. ``item_id`` is the library's hex id, validated
+        by the caller, so it is safe to put into the URL as is.
+        """
+        return self.open_detached_window("jarvisx-editor", query=f"item={item_id}")
 
     def close_detached_window(self, view: str) -> dict[str, Any]:
         """Close the detached window for ``view`` — worker-thread only.
@@ -5065,6 +5091,9 @@ class DesktopApp:
 
     def _hook_main_window_lifecycle(self) -> None:
         """Attach the closing/closed contract to the current main window."""
+        from jarvis.ui.winforms_errors import register_winforms_error_logging
+
+        register_winforms_error_logging(self._window)
         self._window.events.closing += self._on_window_closing
         self._window.events.closed += self._on_main_window_closed
         # Real paths for dropped files/folders (see jarvis/ui/native_drop.py).

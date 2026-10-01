@@ -212,7 +212,8 @@ async def placement_for_session(session: Any) -> tuple[str, str] | None:
     session_id = str(getattr(session, "session_id", "") or "")
     if not session_id.startswith("society:"):
         return None
-    agent_id = session_id.split(":", 1)[1]
+    # Scheduled executions retain their owner's remote placement too.
+    agent_id = session_id.split(":", 2)[1]
     from .runtime import current_runtime
 
     runtime = current_runtime()

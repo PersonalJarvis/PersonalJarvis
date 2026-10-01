@@ -996,6 +996,18 @@ class AnnouncementRequested(Event):
     report: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DelegationResultReady(Event):
+    """A coding result addressed to one existing Jarvis text conversation."""
+
+    session_id: str = ""
+    request_id: str = ""
+    agent_name: str = ""
+    status: str = ""
+    text: str = ""
+    report: str = ""
+
+
 # Mission completion — bridged from the per-mission MissionBus to drive When-Then rules
 
 @dataclass(frozen=True, slots=True)
@@ -1264,6 +1276,48 @@ class AppshotTaken(Event):
     target_label: str = ""
     width: int = 0
     height: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class JarvisXItemCreated(Event):
+    """Jarvis X saved a new screenshot or recording to its library.
+
+    Metadata only; the file is served by ``/api/jarvisx/items/<id>/file``.
+    """
+
+    id: str = ""
+    #: ``image`` | ``video``.
+    kind: str = ""
+    #: ``region`` | ``window`` | ``fullscreen``.
+    mode: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class JarvisXItemUpdated(Event):
+    """A library item changed (an annotated copy was saved)."""
+
+    id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class JarvisXItemDeleted(Event):
+    """A library item and its files were deleted."""
+
+    id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class JarvisXRecordingChanged(Event):
+    """A Jarvis X screen recording started or stopped.
+
+    Published on start and on stop only (not per second); a UI that shows a
+    running timer counts ``elapsed_s`` forward itself.
+    """
+
+    recording: bool = False
+    #: ``region`` | ``fullscreen`` while recording, ``""`` once stopped.
+    mode: str = ""
+    elapsed_s: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

@@ -301,7 +301,16 @@ def test_the_mcp_route_reads_the_session_header_and_ignores_junk():
     assert mcp_server_routes.session_ref({"headers": [(b"x-jarvis-chat-session", b"../x")]}) is None
 
 
-@pytest.mark.parametrize("value", ["society:nala", "society:gmail-agent", "sess-1", "0123abcd"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "society:nala",
+        "society:gmail-agent",
+        "society:reddit-community-agent:routine:task123:exec456",
+        "sess-1",
+        "0123abcd",
+    ],
+)
 def test_session_header_preserves_canonical_chat_scopes(value):
     assert (
         mcp_server_routes.session_ref({"headers": [(b"x-jarvis-chat-session", value.encode())]})

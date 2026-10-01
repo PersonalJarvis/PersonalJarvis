@@ -8,6 +8,7 @@ the clipboard before any keystroke, and it stays there when the paste fails.**
 from __future__ import annotations
 
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -75,6 +76,9 @@ def wired(monkeypatch: pytest.MonkeyPatch):
     # These tests pin the PLAIN chord path (every OS). The Windows path that
     # watches who reads the clipboard has its own file: test_insert_verified.py.
     monkeypatch.setattr(insert_mod, "_clipboard_offer_factory", lambda: None)
+    # Preserve coverage of the existing POSIX plain route. Windows degrades
+    # honestly to paste_sent if its read-observation helper is unavailable.
+    monkeypatch.setattr(insert_mod, "os", SimpleNamespace(name="posix"))
     return clipboard, actuator
 
 

@@ -362,6 +362,11 @@ class _OpenAIRealtimeSession:
                 _RESPONSE_STALL_S if response_start_timeout_s is None else response_start_timeout_s
             ),
         )
+        # A local cascade can emit its text before the TTS has produced PCM.
+        # Its declared startup budget covers that first-audio preparation too.
+        self._first_audio_timeout_s = (
+            self._response_start_timeout_s if response_start_timeout_s is not None else None
+        )
         # A capacity-one server must release the old pipeline before opening a
         # replacement. Hosted endpoints retain make-before-break; self-hosted
         # endpoints can opt into serial replacement plus bounded drain retries.
@@ -418,7 +423,7 @@ class _OpenAIRealtimeSession:
         now = time.monotonic()
         self._response_started_at = now
         self._last_response_activity = now
-        self._response_output_started = False
+        self._response_output_started = self._response_audio_started = False
         self._last_item_id = ""
         # Whether THIS response's transcript arrived as a delta stream. Servers
         # split here: OpenAI streams it token by token, a self-hosted stack that
@@ -542,6 +547,8 @@ class _OpenAIRealtimeSession:
             self._last_response_activity = time.monotonic()
             if event_type in _RESPONSE_OUTPUT_EVENTS:
                 self._response_output_started = True
+            if event_type == "response.output_audio.delta":
+                self._response_audio_started = True
         if event_type == "response.output_audio.delta":
             self._last_item_id = str(getattr(event, "item_id", "") or "")
             yield _ProviderEvent(
@@ -636,7 +643,7 @@ class _OpenAIRealtimeSession:
             elif len(self._accepted_response_ids) == 1:
                 self._accepted_response_ids.pop()
             self._response_idle.set()
-            self._response_output_started = False
+            self._response_output_started = self._response_audio_started = False
             usage = _usage_from_response(getattr(event, "response", None))
             if usage is not None:
                 # Every response bills its own pass over the session context,
@@ -816,7 +823,7 @@ class _OpenAIRealtimeSession:
             await self._conn.response.cancel()
         finally:
             self._response_idle.set()
-            self._response_output_started = False
+            self._response_output_started = self._response_audio_started = False
 
     async def send_tool_result(self, call_id: str, name: str, result: dict[str, Any]) -> None:
         del name
@@ -848,7 +855,7 @@ class _OpenAIRealtimeSession:
             now = time.monotonic()
             self._response_started_at = now
             self._last_response_activity = now
-            self._response_output_started = False
+            self._response_output_started = self._response_audio_started = False
             marker = uuid4().hex
             self._pending_response_markers.add(marker)
             response: dict[str, Any] = {
@@ -861,7 +868,7 @@ class _OpenAIRealtimeSession:
             except BaseException:
                 self._pending_response_markers.discard(marker)
                 self._response_idle.set()
-                self._response_output_started = False
+                self._response_output_started = self._response_audio_started = False
                 raise
 
     @staticmethod
@@ -924,7 +931,7 @@ class _OpenAIRealtimeSession:
                 now = time.monotonic()
                 self._response_started_at = now
                 self._last_response_activity = now
-                self._response_output_started = False
+                self._response_output_started = self._response_audio_started = False
                 self._server_heard_user_since_response = False
                 self._auto_adopted_unanswered_input = True
                 await self._rearm_session_contract()
@@ -1051,6 +1058,20 @@ class _OpenAIRealtimeSession:
             return False
         return time.monotonic() >= self._transcript_deadline
 
+    def _response_stall_budget_s(self) -> float:
+        contract = self._session_contract or {}
+        modalities = contract.get(
+            "output_modalities", contract.get("modalities", ["audio"])
+        )
+        if (
+            self._first_audio_timeout_s is not None
+            and not self._response_audio_started
+            and not self._response_had_tool_calls
+            and "audio" in modalities
+        ):
+            return self._first_audio_timeout_s
+        return _RESPONSE_STALL_S
+
     def _response_lifecycle_stalled(self) -> bool:
         """Whether an in-flight response exceeded its current phase budget.
 
@@ -1068,7 +1089,8 @@ class _OpenAIRealtimeSession:
         if self._response_idle.is_set():
             return False
         if self._response_output_started:
-            return time.monotonic() - self._last_response_activity >= _RESPONSE_STALL_S
+            gap = time.monotonic() - self._last_response_activity
+            return gap >= self._response_stall_budget_s()
         return time.monotonic() - self._response_started_at >= self._response_start_timeout_s
 
     def _maybe_begin_rebuild(self) -> None:
@@ -1076,7 +1098,7 @@ class _OpenAIRealtimeSession:
             if self._response_output_started:
                 reason = (
                     "in-flight response stopped producing events for "
-                    f"{_RESPONSE_STALL_S:.0f} s after output began — "
+                    f"{self._response_stall_budget_s():.0f} s after output began — "
                     "response.done is not coming"
                 )
             else:
@@ -1246,7 +1268,7 @@ class _OpenAIRealtimeSession:
         now = time.monotonic()
         self._response_started_at = now
         self._last_response_activity = now
-        self._response_output_started = False
+        self._response_output_started = self._response_audio_started = False
         self._server_heard_user_since_response = False
         self._auto_adopted_unanswered_input = False
         self._response_idle.set()
@@ -1278,7 +1300,7 @@ class _OpenAIRealtimeSession:
         self._pending_response_markers.clear()
         self._accepted_response_ids.clear()
         self._response_idle.set()
-        self._response_output_started = False
+        self._response_output_started = self._response_audio_started = False
         try:
             if self._connection_is_open:
                 try:

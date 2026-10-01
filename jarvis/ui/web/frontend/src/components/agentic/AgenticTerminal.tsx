@@ -136,11 +136,14 @@ import {
   PARKED_RECHECK_MS,
 } from "./offscreenBuffer";
 import { installQuerySuppression } from "./terminalQueries";
+import { installSynchronizedOutput } from "./terminalSynchronizedOutput";
+import { FULL_SCREEN_ERASE_SCAN_TAIL, hasFullScreenErase } from "./terminalRepaint";
 import {
   bindTerminalScrollRegion,
   captureWheelForTerminalHistory,
 } from "./terminalScrollSurface";
 import { installMouseSelection } from "./terminalMouseSelection";
+import { installPromptSelectionBridge } from "./terminalPromptSelection";
 import {
   openPaneSocket,
   type PaneSocket,
@@ -150,6 +153,7 @@ import { PromptReceipt } from "./PromptReceipt";
 import { PromptHistoryButton } from "./PromptHistoryButton";
 import { PaneConversationDialog } from "./PaneConversationDialog";
 import { WorkspaceTerminalHeader } from "./WorkspaceTerminalHeader";
+import { usePaneContextMenu } from "./usePaneContextMenu";
 import { useT } from "@/i18n";
 
 /**
@@ -242,9 +246,6 @@ export const REBUILD_SETTLE_MAX_MS = 450;
  * for the erase, bounded by this, and still under {@link CURTAIN_MAX_MS}.
  */
 export const REPAINT_WAIT_MAX_MS = 1_400;
-
-/** The whole-screen erase a full-screen agent's repaint starts with. */
-const FULL_SCREEN_ERASE = "\x1b[2J";
 
 /**
  * The longest an active pane's surface may stay behind a curtain, full stop.
@@ -489,6 +490,7 @@ export interface PaneRecapActions {
 }
 
 interface AgenticTerminalProps {
+  onSwapWithFocused?: () => void;
   /** Terminal call-sign — also the WS path segment. */
   name: string;
   /**
@@ -658,6 +660,7 @@ interface AgenticTerminalProps {
 }
 
 export function AgenticTerminal({
+  onSwapWithFocused,
   name,
   workspaceId,
   displayName,
@@ -701,6 +704,7 @@ export function AgenticTerminal({
   layoutBusy = false,
   sizeLead = false,
 }: AgenticTerminalProps) {
+  const paneMenu = usePaneContextMenu(headerMode === "compact" || headerMode === "minimal");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRegionRef = useRef<HTMLDivElement | null>(null);
   const terminalRegionId = useId();
@@ -1036,6 +1040,10 @@ export function AgenticTerminal({
     } catch {
       /* proposed API unavailable in this build — widths stay at Unicode 6 */
     }
+    // Align before the renderer joins the shared glyph atlas and before the
+    // first fit/handshake. Correcting spacing afterwards changes the grid and
+    // invalidates every existing pane's cache just to open an empty terminal.
+    alignTerminalCells(term);
     term.open(container);
     // The wheel always moves xterm's own history, even while a normal-buffer
     // CLI has negotiated mouse tracking — otherwise scrolling only "works"
@@ -1053,6 +1061,7 @@ export function AgenticTerminal({
       // The fallback renderer starts on an empty surface.
       term.refresh(0, term.rows - 1);
     });
+    const synchronizedOutput = installSynchronizedOutput(term);
     termRef.current = term;
     fitRef.current = fit;
     setTerminalEpoch((current) => current + 1);
@@ -1073,6 +1082,7 @@ export function AgenticTerminal({
     // A plain left-button drag selects text even while the agent's CLI has
     // mouse tracking on, which every coding agent negotiates at start-up.
     const disposeMouseSelection = installMouseSelection(container, term, isMac);
+    const disposePromptSelection = installPromptSelectionBridge(term, keys.add, isMac);
     // The desktop IDE reserves its platform copy chord for copying. In
     // particular, an unselected Ctrl+C on Windows/Linux must not reach Codex
     // as `^C`, where it cancels the current turn or exits the pane.
@@ -1368,12 +1378,12 @@ export function AgenticTerminal({
     const noteRepaintOutput = (text: string) => {
       if (!repaintPending) return;
       const scanned = eraseScanTail + text;
-      if (scanned.includes(FULL_SCREEN_ERASE)) {
+      if (hasFullScreenErase(scanned)) {
         repaintPending = false;
         eraseScanTail = "";
         return;
       }
-      eraseScanTail = scanned.slice(-(FULL_SCREEN_ERASE.length - 1));
+      eraseScanTail = scanned.slice(-FULL_SCREEN_ERASE_SCAN_TAIL);
     };
 
     const clearSettleTimers = () => {
@@ -1523,6 +1533,7 @@ export function AgenticTerminal({
         setTailReady(false);
         armCurtainWatchdog();
       }
+      synchronizedOutput.reset();
       term.reset();
       // A normal-buffer CLI's replay is its whole scrollback — up to the
       // server's 128 KB (see `ReplayBuffer`) — and xterm parses it in time
@@ -2284,10 +2295,12 @@ export function AgenticTerminal({
       io?.disconnect();
       disposeFontSync();
       disposeMouseSelection();
+      disposePromptSelection();
       disposeCopyBridge();
       disposePasteBridge();
       disposeNewlineBridge();
       disposeQuerySuppression();
+      synchronizedOutput.dispose();
       try {
         socket?.close();
       } catch {
@@ -2414,24 +2427,25 @@ export function AgenticTerminal({
    * change has to invalidate it or the old palette keeps being painted.
    *
    * `terminalEpoch` is in here, and in the size effect below, for a reason the
-   * appearance prop alone cannot cover: these effects fire on CHANGES, and the
-   * terminal underneath them can be replaced without one. Every rebuild bumps
-   * the epoch, so the pane restates the current theme and size to the new
-   * terminal instead of trusting that it was born with them.
+   * appearance prop alone cannot cover: the terminal can be replaced without
+   * either prop changing. Check the replacement's actual options, but leave a
+   * correctly initialized terminal alone. Clearing its shared atlas on mount
+   * makes every existing WebGL pane rebuild its glyphs too.
    */
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    term.options.theme = themeFor(appearance);
+    const theme = themeFor(appearance);
+    if (term.options.theme === theme) return;
+    term.options.theme = theme;
     clearTerminalTextureAtlas(term);
   }, [appearance, terminalEpoch]);
 
   useEffect(() => {
     const term = termRef.current;
-    if (!term) return;
-    // A no-op on a terminal already built at this size (xterm's setter drops a
-    // write of the identical value), which is what makes restating it on every
-    // rebuild free.
+    if (!term || term.options.fontSize === fontSize) return;
+    // The setter itself skips unchanged values; the alignment, atlas clear and
+    // resize below must also run only for an actual size change.
     term.options.fontSize = fontSize;
     // A new size is a new glyph advance, and so a new fraction of a pixel for
     // the canvas renderer to floor away. Re-align before the fit below, or the
@@ -2622,6 +2636,10 @@ export function AgenticTerminal({
   const minimal = headerMode === "minimal";
   const tile = PANE_TILE[appearance];
   const headerProps = {
+    contextMenuRequest: paneMenu.request,
+    sendRightClicks: paneMenu.sendRightClicks,
+    onToggleSendRightClicks: paneMenu.toggleSendRightClicks,
+    onSwapWithFocused,
     name,
     workspaceId,
     promptCount,
@@ -2789,6 +2807,7 @@ export function AgenticTerminal({
       >
         <div
           ref={containerRef}
+          {...paneMenu.handlers}
           data-testid={`agentic-terminal-host-${name}`}
           // Read by ./index.css, which anchors the contents to the bottom for
           // the length of a drag — see the rule there for why that is the side

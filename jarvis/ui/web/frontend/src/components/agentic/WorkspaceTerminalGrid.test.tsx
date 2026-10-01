@@ -8,10 +8,13 @@ vi.mock("@/store/events", () => ({ useEventStore: (select: (state: unknown) => u
 vi.mock("./AgenticTerminal", () => ({ AgenticTerminal: (props: {
   name: string; onToggleMaximize: () => void; onRestart: () => void; restartToken: number;
   onFocus: () => void;
+  active?: boolean; focused?: boolean;
+  onSwapWithFocused?: () => void;
   onArrangeStart?: (event: React.PointerEvent) => void;
   headerMode?: string; markFocus?: boolean;
-}) => <div onMouseDown={props.onFocus} data-testid={`pane-${props.name}`} data-header-mode={props.headerMode} data-mark-focus={String(props.markFocus)}>
+}) => <div onMouseDown={props.onFocus} data-testid={`pane-${props.name}`} data-header-mode={props.headerMode} data-mark-focus={String(props.markFocus)} data-active={String(props.active)} data-focused={String(props.focused)}>
   <button onClick={props.onToggleMaximize}>Maximize {props.name}</button>
+  <button disabled={!props.onSwapWithFocused} onClick={props.onSwapWithFocused}>Swap {props.name}</button>
   <button type="button" data-ide-drag-handle="true" onPointerDown={props.onArrangeStart}>Move {props.name}</button>
   <button onClick={props.onRestart}>Restart {props.name}</button>
   <output data-testid={`restart-${props.name}`}>{props.restartToken}</output>
@@ -51,6 +54,29 @@ function Controlled() {
 }
 beforeEach(() => { vi.clearAllMocks(); });
 afterEach(cleanup);
+
+it("parks retained terminals and releases keyboard focus while their workspace is inactive", () => {
+  const session = makeSession(["T1"]);
+  const view = render(<WorkspaceTerminalGrid {...props} session={session} selected="T1" />);
+  const pane = screen.getByTestId("pane-T1");
+  expect(pane.getAttribute("data-active")).toBe("true");
+  expect(pane.getAttribute("data-focused")).toBe("true");
+  view.rerender(<WorkspaceTerminalGrid {...props} session={session} selected="T1" active={false} />);
+  expect(screen.getByTestId("pane-T1")).toBe(pane);
+  expect(pane.getAttribute("data-active")).toBe("false");
+  expect(pane.getAttribute("data-focused")).toBe("false");
+});
+
+it("swaps the context pane with the selected pane by stable identity", async () => {
+  api.move.mockResolvedValue(makeSession());
+  const { rerender } = render(<WorkspaceTerminalGrid {...props} selected="T1" session={makeSession()} />);
+  expect((screen.getByRole("button", { name: "Swap T1" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Swap T3" }));
+  await waitFor(() => expect(api.move).toHaveBeenCalledExactlyOnceWith("pane:T3", "pane:T1", "swap"));
+  await waitFor(() => expect((screen.getByRole("button", { name: "Swap T3" }) as HTMLButtonElement).disabled).toBe(false));
+  rerender(<WorkspaceTerminalGrid {...props} selected="T1" disabled session={makeSession()} />);
+  expect((screen.getByRole("button", { name: "Swap T3" }) as HTMLButtonElement).disabled).toBe(true);
+});
 
 it("swaps immediately, persists once and preserves mounted terminal nodes", async () => {
   let finish!: (state: SessionState) => void;
@@ -220,6 +246,16 @@ it("drags the seam between two panes to resize them and saves the new sizes", as
     await act(async () => { vi.advanceTimersByTime(1000); });
     expect(api.weights).toHaveBeenCalledTimes(1);
   } finally { vi.useRealTimers(); }
+});
+
+it("leaves a maximize request pending until its retained workspace is active", () => {
+  act(() => useIdeChatStore.setState({ paneRequest: { workspaceId: "w1", pane: "T1", nonce: 6, maximize: true } }));
+  const session = makeSession();
+  const view = render(<WorkspaceTerminalGrid {...props} session={session} active={false} />);
+  expect(useIdeChatStore.getState().paneRequest?.maximize).toBe(true);
+  view.rerender(<WorkspaceTerminalGrid {...props} session={session} active />);
+  expect(useIdeChatStore.getState().paneRequest?.maximize).toBe(false);
+  act(() => useIdeChatStore.setState({ paneRequest: null }));
 });
 
 it("maximizes the pane the office asked for, once, and only in its own workspace", () => {

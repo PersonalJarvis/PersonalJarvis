@@ -71,13 +71,13 @@ export function NewWorkspaceFields({ projects, target, onTarget, name, onName, d
       <Dialog.Root open={picking} onOpenChange={setPicking}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-[90] bg-[rgb(var(--scrim-rgb)/0.4)]" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-[91] flex max-h-[85vh] w-[min(680px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-popover p-4 text-foreground shadow-float">
+          <Dialog.Content onEscapeKeyDown={(e) => { if (e.target instanceof Element && e.target.closest("[data-escape-local]")) e.preventDefault(); }} className="fixed left-1/2 top-1/2 z-[91] flex max-h-[85vh] w-[min(680px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-popover p-4 text-foreground shadow-float">
             <Dialog.Title className="pr-8 text-sm font-semibold">{t("society.office.mission_ws_choose_title")}</Dialog.Title>
             <Dialog.Description className="mt-1 text-xs text-muted-foreground">{t("society.office.mission_ws_choose_hint")}</Dialog.Description>
             <Dialog.Close aria-label={t("society.office.mission_ws_close")} className="absolute right-3 top-3 rounded p-1 hover:bg-secondary"><X className="h-4 w-4" /></Dialog.Close>
             <div className="my-3 min-h-0 overflow-auto">
               <Suspense fallback={<p className="text-xs text-muted-foreground">{t("society.office.mission_loading")}</p>}>
-                {picking && <FolderPicker selected={candidate} onSelect={setCandidate} />}
+                {picking && <FolderPicker selected={candidate} onSelect={setCandidate} className="p-0" />}
               </Suspense>
             </div>
             <button type="button" disabled={!candidate}

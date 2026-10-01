@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "personal-jarvis"
 version = "2.3.2"
-description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
+description = "Turn your computer into an AI agent that coordinates apps, tools, models, and other agents"
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
 # Apache-2.0 from 2.0.0 on. Releases up to 1.6.0 shipped MIT and stay MIT —

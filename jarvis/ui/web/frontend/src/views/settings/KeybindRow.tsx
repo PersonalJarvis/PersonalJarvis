@@ -194,14 +194,16 @@ export function ComboChips({ combo }: { combo: string }) {
 export function validationText(
   v: ComboValidation,
   t: (key: string) => string,
+  actionLabel?: (action: string) => string | undefined,
 ): string | null {
   if (v.status === "error" && v.reason === "collision" && v.conflict) {
     // The conflict carries the ACTION ID (unique); the message names it the way
     // the UI labels that row. An id the frontend does not know yet (a newer
     // backend) falls back to the raw id instead of rendering an empty name.
     const labelKey = ACTION_LABEL_KEY[v.conflict.action as KeybindAction];
+    const named = actionLabel?.(v.conflict.action) ?? (labelKey ? t(labelKey) : undefined);
     return t("settings_view.keybinds.validation.collision")
-      .replace("{action}", labelKey ? t(labelKey) : v.conflict.action)
+      .replace("{action}", named ?? v.conflict.action)
       .replace("{combo}", formatCombo(v.conflict.combo));
   }
   const cautions = v.cautions ?? [];
@@ -235,6 +237,12 @@ export interface KeybindRowProps {
    * pins the dictation mode to "hold"). Failures are the owner's to report.
    */
   onSaved?: (combo: string) => void | Promise<void>;
+  /**
+   * Names a sibling row for "already used by …" when the rows are not the
+   * voice keybinds (whose labels `ACTION_LABEL_KEY` knows) — another feature's
+   * shortcut list reusing this recorder.
+   */
+  actionLabel?: (action: string) => string | undefined;
 }
 
 /**
@@ -253,6 +261,7 @@ export function KeybindRow({
   variant = "settings",
   suggestions,
   onSaved,
+  actionLabel,
 }: KeybindRowProps) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -287,11 +296,11 @@ export function KeybindRow({
     for (const [act, c] of Object.entries(config.keybinds)) {
       if (act === action) continue;
       const labelKey = ACTION_LABEL_KEY[act as KeybindAction];
-      const lbl = labelKey ? t(labelKey) : act;
+      const lbl = actionLabel?.(act) ?? (labelKey ? t(labelKey) : act);
       for (const tok of comboTokens(c ?? "")) out[tok] = lbl;
     }
     return out;
-  }, [config, action, t]);
+  }, [config, action, t, actionLabel]);
 
   // The OTHER actions' combos keyed by their ACTION ID. Keying by the translated
   // label collapsed two rows that happen to share a label into one entry, so one
@@ -316,7 +325,7 @@ export function KeybindRow({
     () => validateCombo(combo, otherCombos),
     [combo, otherCombos],
   );
-  const validationMsg = validationText(validation, t);
+  const validationMsg = validationText(validation, t, actionLabel);
 
   // Click-to-assign: toggle a key in/out of the combo without a physical press.
   // Functional update — toggles dispatched before the next render must each

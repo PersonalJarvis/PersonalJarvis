@@ -70,6 +70,7 @@ class FakeSshState:
     username: str = "root"
     #: False plays a server with ``PasswordAuthentication no`` (keys only).
     password_login: bool = True
+    port_forwarding: bool = False
     authorized: set[str] = field(default_factory=set)
     commands: list[str] = field(default_factory=list)
     #: The raw SSH command lines, as the user's login shell would parse them.
@@ -90,6 +91,9 @@ class _Server(asyncssh.SSHServer):
 
     def begin_auth(self, username: str) -> bool:
         return True
+
+    def server_requested(self, listen_host: str, listen_port: int) -> bool:
+        return self._state.port_forwarding and listen_host == "127.0.0.1"
 
     def password_auth_supported(self) -> bool:
         return self._state.password_login

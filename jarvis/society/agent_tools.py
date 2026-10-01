@@ -219,6 +219,10 @@ class MessageAgentTool:
                         FailureReason.BLOCKED_BY_POLICY, "no success reply was requested"
                     )
         trace_id = parent.trace_id if parent is not None else None
+        if caller.agent_id == rt.lead_id and parent is None:
+            from jarvis.core.delegation import origin_metadata
+            config = getattr(ctx, "config", None) or {}
+            payload.update(origin_metadata(language=str(config.get("output_language") or "")))
         env = await rt.say(
             from_agent=caller.agent_id,
             to_agent=target.agent_id,

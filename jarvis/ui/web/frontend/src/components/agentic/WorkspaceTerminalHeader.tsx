@@ -7,10 +7,15 @@ import { usePaneTitle } from "@/store/paneRecaps";
 import { PromptHistoryButton } from "./PromptHistoryButton";
 import { SplitAboveIcon, SplitBelowIcon, SplitLeftIcon, SplitRightIcon } from "./splitIcons";
 import { PANE_BRAND, PANE_CHROME, PANE_TILE, themeFor, type PaneEdgeState, type TerminalAppearance } from "./terminalThemes";
+import type { PaneMenuRequest } from "./usePaneContextMenu";
 
 export type PaneSplitDirection = "right" | "down" | "left" | "above";
 
 interface Props {
+  contextMenuRequest?: PaneMenuRequest | null;
+  onSwapWithFocused?: () => void;
+  sendRightClicks?: boolean;
+  onToggleSendRightClicks?: () => void;
   name: string;
   workspaceId?: string;
   promptCount?: number;
@@ -52,7 +57,7 @@ interface Props {
 }
 
 type MenuIcon = ComponentType<SVGProps<SVGSVGElement>>;
-interface MenuItem { label: string; run: () => void; Icon?: MenuIcon; separated?: boolean }
+interface MenuItem { label: string; run: () => void; Icon?: MenuIcon; separated?: boolean; disabled?: boolean }
 
 const SPLIT_ITEMS: { direction: PaneSplitDirection; label: string; Icon: MenuIcon }[] = [
   { direction: "right", label: "Split right", Icon: SplitRightIcon },
@@ -65,6 +70,7 @@ const ACTION_CLASS = "flex h-7 w-7 shrink-0 items-center justify-center rounded 
 
 /** Quiet workspace chrome; terminal rendering and connection state stay in AgenticTerminal. */
 export function WorkspaceTerminalHeader({
+  contextMenuRequest, onSwapWithFocused, sendRightClicks = false, onToggleSendRightClicks,
   name, workspaceId, promptCount = 0, agent, agentLogoUrl, displayName, status, appearance, arranging = false,
   maximized = false, addDisabled = false, onArrangeStart, onActivate, onToggleMaximize,
   onAdd, onClose, onRename, onOpenConversation, onOpenChat, onRestart, onFork, branch,
@@ -86,6 +92,9 @@ export function WorkspaceTerminalHeader({
   const [renameError, setRenameError] = useState("");
   const stopped = status === "exited" || status === "error";
   const menuOpen = menuPosition !== null;
+  useEffect(() => {
+    if (contextMenuRequest) setMenuPosition(contextMenuRequest);
+  }, [contextMenuRequest]);
   const variables = {
     "--pane-ink": brand.ink,
     "--pane-ink-muted": brand.inkMuted,
@@ -95,7 +104,7 @@ export function WorkspaceTerminalHeader({
 
   useEffect(() => {
     if (!menuOpen) return;
-    menuRef.current?.querySelector<HTMLButtonElement>("[role=menuitem]")?.focus();
+    menuRef.current?.querySelector<HTMLButtonElement>("button[role^=menuitem]:not(:disabled)")?.focus();
     const outside = (event: globalThis.PointerEvent) => {
       if (event.target instanceof Node && !menuRef.current?.contains(event.target) && !moreRef.current?.contains(event.target)) setMenuPosition(null);
     };
@@ -130,7 +139,6 @@ export function WorkspaceTerminalHeader({
     if (event.shiftKey || draft !== null) return;
     event.preventDefault();
     event.stopPropagation();
-    onActivate?.();
     setMenuPosition({ left: event.clientX, top: event.clientY });
   };
   const choose = (action: () => void) => { setMenuPosition(null); action(); };
@@ -164,7 +172,7 @@ export function WorkspaceTerminalHeader({
   </form>;
 
   const menu = createPortal(<div ref={menuRef} id={menuId} role="menu" hidden={!menuOpen} aria-label={`Actions for ${name}`}
-      className={`fixed z-[90] w-[200px] border p-1 shadow-lg ${tile ? "rounded-none" : "rounded-lg"}`}
+      className={`fixed z-[90] w-[260px] max-w-[calc(100vw-16px)] border p-1 shadow-lg ${tile ? "rounded-none" : "rounded-lg"}`}
       style={{ ...variables, ...(menuPosition ?? { left: 0, top: 0 }), borderColor: chrome.border, background: chrome.float }}
       onPointerDown={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
@@ -176,18 +184,19 @@ export function WorkspaceTerminalHeader({
         if (event.key === "Tab") { setMenuPosition(null); moreRef.current?.focus(); return; }
         if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
         event.preventDefault();
-        const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("[role=menuitem]") ?? []);
+        const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("button[role^=menuitem]:not(:disabled)") ?? []);
         const at = items.indexOf(document.activeElement as HTMLButtonElement);
         const index = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (at + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
         items[index]?.focus();
       }}>
       {([
-        onRename && { label: "Rename", run: () => { setDraft(name); setRenameError(""); } },
+        onRename && { label: "Rename pane", run: () => { setDraft(name); setRenameError(""); } },
+        { label: "Swap with focused pane", disabled: !onSwapWithFocused, run: () => onSwapWithFocused?.() },
         onFork && !addDisabled && { label: "Fork…", Icon: BranchIcon, run: onFork },
         ...(onAdd && !addDisabled ? SPLIT_ITEMS.map((item, index) => ({
           label: `${item.label}…`, Icon: item.Icon, separated: index === 0, run: () => onAdd(item.direction),
         })) : []),
-        onToggleMaximize && { label: maximized ? "Restore size" : "Maximize", separated: true,
+        onToggleMaximize && { label: maximized ? "Unzoom" : "Zoom", separated: true,
           Icon: maximized ? Minimize2 : Maximize2, run: onToggleMaximize },
         onOpenConversation && { label: "Conversation history", run: onOpenConversation },
         onOpenChat && { label: "Open as chat", run: onOpenChat },
@@ -195,11 +204,18 @@ export function WorkspaceTerminalHeader({
         ...(workspaceItems ?? []).map((item, index) => ({ ...item, Icon: FolderInput, separated: index === 0 })),
         ...(placementItems ?? []).map((item, index) => ({ ...item, Icon: Server, separated: index === 0 })),
       ] as (MenuItem | false | undefined | null)[]).filter((item): item is MenuItem => Boolean(item)).map((item) =>
-        <button type="button" role="menuitem" key={item.label} onClick={() => choose(item.run)}
-          className={`flex w-full items-center gap-2 rounded px-2.5 py-2 text-left text-xs hover:bg-[color:var(--pane-chip)] focus:bg-[color:var(--pane-chip)] focus:outline-none ${item.separated ? "mt-1 border-t border-[color:var(--pane-chip)] pt-2" : ""}`}>
+        <button type="button" role="menuitem" key={item.label} disabled={item.disabled} onClick={() => choose(item.run)}
+          className={`flex w-full items-center gap-2 rounded px-2.5 py-2 text-left text-xs disabled:opacity-40 hover:bg-[color:var(--pane-chip)] focus:bg-[color:var(--pane-chip)] focus:outline-none ${item.separated ? "mt-1 border-t border-[color:var(--pane-chip)] pt-2" : ""}`}>
           {item.Icon && <item.Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}{item.label}
         </button>,
       )}
+      {onToggleSendRightClicks && <button type="button" role="menuitemcheckbox" aria-checked={sendRightClicks}
+        onClick={() => choose(onToggleSendRightClicks)}
+        title="Shift+right-click opens the pane menu while forwarding is enabled."
+        className="flex w-full items-center gap-2 rounded px-2.5 py-2 text-left text-xs hover:bg-[color:var(--pane-chip)] focus:bg-[color:var(--pane-chip)] focus:outline-none">
+        <Check aria-hidden="true" className={`h-3.5 w-3.5 shrink-0 ${sendRightClicks ? "" : "invisible"}`} />
+        <span>Send right-clicks to pane{sendRightClicks && <span className="block text-[10px] text-[color:var(--pane-ink-muted)]">Shift + right-click: pane menu</span>}</span>
+      </button>}
       <PromptHistoryButton terminal={name} workspaceId={workspaceId} count={promptCount} triggerMode="menu-item"
         onOpen={() => setMenuPosition(null)} restoreFocus={() => moreRef.current?.focus()} />
       {onClose && <button type="button" role="menuitem" onClick={() => choose(onClose)}

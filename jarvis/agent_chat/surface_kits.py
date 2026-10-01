@@ -32,6 +32,7 @@ __all__ = [
 #: The ladder key of the Jarvis ladder (``permissions.JARVIS_LADDER``) —
 #: spelled here so the kit table does not import the permissions module.
 _JARVIS_LADDER: Final[str] = "jarvis"
+_SOCIETY_LADDER: Final[str] = "society"
 
 ToolsBuilder = Callable[[Any, Any], dict[str, Tool]]
 ExtraBuilder = Callable[[Any, Any], Awaitable[str]]
@@ -275,7 +276,7 @@ _KITS: Final[dict[str, SurfaceKit]] = {
         # with Jarvis' tools over MCP and its own hands; on an API row Jarvis'
         # brain runner drives the agent's own tool set.
         cli_seats=True,
-        ladder=_JARVIS_LADDER,
+        ladder=_SOCIETY_LADDER,
         uses_stance=True,
         tool_origin="society",
         session_tools=_society_tools,

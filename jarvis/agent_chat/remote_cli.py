@@ -14,9 +14,9 @@ What does NOT travel:
 * Local paths and secrets. The environment is an allow-list of a few
   prompt-suppressing variables; the CLI uses the login it has on the remote
   machine (``claude login`` / ``codex login`` there), never this box's.
-* Jarvis' own MCP tools. That endpoint listens on this computer's localhost
-  and a remote CLI cannot reach it, so ``--mcp-config`` / the Codex
-  ``mcp_servers`` overrides are dropped for remote turns.
+Jarvis tools travel through a turn-scoped reverse SSH forward. Local MCP
+configuration is replaced with a remote loopback endpoint; the main computer's
+control credential never leaves this process.
 
 On every OS the turn is started by a small launcher uploaded first, with the
 system prompt as a file next to it (``jarvis.computers.remote_os``): the SSH
@@ -189,6 +189,7 @@ class RemoteCliProcess:
         stack: contextlib.AsyncExitStack,
         *,
         stop: Callable[[], Awaitable[None]] | None = None,
+        revoke: Callable[[], None] | None = None,
     ) -> None:
         self._process = process
         self._stack = stack
@@ -199,6 +200,20 @@ class RemoteCliProcess:
         #: Ends the remote process tree on a computer where hanging up does not.
         self._stop = stop
         self._stopping: asyncio.Task[None] | None = None
+        self._revoke = revoke
+        self._reaper = (
+            asyncio.create_task(self._reap(), name="remote-tools-cleanup") if revoke else None
+        )
+
+    async def _reap(self) -> None:
+        try:
+            await self._process.wait_closed()
+        except Exception:  # noqa: BLE001 — a disconnect still revokes this turn
+            log.debug("remote tools: process channel closed with an error", exc_info=True)
+        finally:
+            assert self._revoke is not None
+            self._revoke()
+            await self._release()
 
     @property
     def returncode(self) -> int | None:
@@ -212,10 +227,14 @@ class RemoteCliProcess:
                 await asyncio.shield(self._stopping)
         with contextlib.suppress(Exception):  # a torn-down channel reports no status
             await self._process.wait_closed()
+        if self._reaper is not None:
+            await asyncio.shield(self._reaper)
         await self._release()
         return self.returncode
 
     def kill(self) -> None:
+        if self._revoke is not None:
+            self._revoke()
         if self._stop is not None:
             if self._stopping is None:
                 self._stopping = asyncio.get_running_loop().create_task(
@@ -257,7 +276,7 @@ class RemoteCliProcess:
         await self._stack.aclose()
 
 
-def placement_note(computer: Any, remote_cwd: str) -> str:
+def placement_note(computer: Any, remote_cwd: str, *, tools_connected: bool = False) -> str:
     """The system-prompt section that tells a remote CLI where it runs.
 
     The briefing it rides on was written for this computer; without the note
@@ -278,8 +297,16 @@ def placement_note(computer: Any, remote_cwd: str) -> str:
         "\n\n## Where you run\n\n"
         f"You run on the connected computer {where}, reached over SSH from the "
         f"person's main computer — not on the main computer itself. Your working "
-        f"folder there is {remote_cwd}. Jarvis' own tools (the jarvis MCP tools) "
-        "are not available on that computer; work with the files and programs there.\n"
+        f"folder there is {remote_cwd}. "
+        + (
+            "Jarvis tools are connected over SSH under your own chat identity. "
+            "Use society_routines and society_propose_change for persistent routines; "
+            "use society_browser for the visible Jarvis browser on the main computer. "
+            "Native file tools run here. Use society_shell for remote commands. "
+            "Jarvis file tools, memory and app services remain on the main computer.\n"
+            if tools_connected else
+            "Jarvis tools are not connected for this turn; work with the files and programs here.\n"
+        )
     )
 
 
@@ -293,6 +320,7 @@ async def _launch(
     remote_cwd: str,
     env: dict[str, str],
     prompts: dict[str, str],
+    tool_config: Any = None,
 ) -> str:
     """Upload the system prompt and a launcher; the command line that runs it.
 
@@ -315,9 +343,13 @@ async def _launch(
         remote_cwd=remote_cwd,
         uploaded_prompt_files=uploaded,
     )
+    command_env = remote_env(env)
+    if tool_config is not None:
+        command_argv = tool_config.apply(command_argv)
+        command_env.update(tool_config.env)
     launcher = f"{remote_os.LAUNCH_DIR}/{remote_os.launcher_name(agent_id)}"
     script = remote_os.launcher_script(
-        host, remote_cwd, command_argv, remote_env(env), pid_file=_pid_file(agent_id)
+        host, remote_cwd, command_argv, command_env, pid_file=_pid_file(agent_id)
     )
     await remote_os.upload_text(opened, host, launcher, script, private=True)
     return host.launcher_command(launcher)
@@ -339,6 +371,8 @@ async def spawn(
     local_cwd: str,
     env: dict[str, str],
     system_prompt_files: dict[str, str] | None = None,
+    session_id: str = "",
+    tools_enabled: bool = True,
 ) -> RemoteCliProcess:
     """Start the CLI on ``computer_id`` inside the agent's remote workspace."""
     from jarvis.computers import remote_os
@@ -346,8 +380,17 @@ async def spawn(
     from jarvis.computers.ssh import SshError
     from jarvis.society.remote import remote_workspace_expr
 
+    from .remote_mcp import RemoteMcpBridge, RemoteToolsUnavailable
+    from .remote_mcp_config import SUPPORTED_RUNNERS, configure
+
     stack = contextlib.AsyncExitStack()
+    bridge = None
     try:
+        if session_id and tools_enabled and runner not in SUPPORTED_RUNNERS:
+            raise RemoteCliUnavailable(
+                "This coding CLI cannot connect to Jarvis tools remotely. "
+                "Choose a CLI with MCP support in the agent's model settings."
+            )
         opened = await stack.enter_async_context(get_service().session(computer_id))
         computer = get_service().get(computer_id)
         host = await remote_os.remote_host(computer_id, opened)
@@ -377,13 +420,27 @@ async def spawn(
                 "Ready for coding agents) and log in once, or set the agent to run on "
                 "this computer."
             )
-        note = placement_note(computer, remote_cwd)
+        tool_config = None
+        if session_id and tools_enabled:
+            bridge = await RemoteMcpBridge.open(opened.conn, session_id)
+            stack.push_async_callback(bridge.aclose)
+            tool_config = await configure(
+                opened, host, stack, runner=runner, cwd=remote_cwd,
+                url=bridge.url, token=bridge.app.token,
+            )
+            # Revocation precedes potentially slow SFTP cleanup on disconnect.
+            stack.callback(bridge.app.revoke)
+        note = placement_note(computer, remote_cwd, tools_connected=tool_config is not None)
         prompts = {path: text + note for path, text in (system_prompt_files or {}).items()}
         command = await _launch(
-            opened, host, agent_id, argv, binary, local_cwd, remote_cwd, env, prompts
+            opened, host, agent_id, argv, binary, local_cwd, remote_cwd, env, prompts,
+            tool_config=tool_config,
         )
         log.info("agent chat: %s turn for %s runs on %s", runner, agent_id, computer.name)
         process = await opened.conn.create_process(command, encoding=None)
+    except RemoteToolsUnavailable as exc:
+        await stack.aclose()
+        raise RemoteCliUnavailable(str(exc)) from exc
     except (ComputerError, SshError) as exc:
         await stack.aclose()
         raise RemoteCliUnavailable(f"Could not reach the agent's computer: {exc.message}") from exc
@@ -397,4 +454,6 @@ async def spawn(
         # (measured), and a POSIX CLI may ignore the hang-up until it writes.
         await remote_os.run_script(opened, host, stop_command, timeout_s=30)
 
-    return RemoteCliProcess(process, stack, stop=stop)
+    return RemoteCliProcess(
+        process, stack, stop=stop, revoke=bridge.app.revoke if bridge is not None else None,
+    )

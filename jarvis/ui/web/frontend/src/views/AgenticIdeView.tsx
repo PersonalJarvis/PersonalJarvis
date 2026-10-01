@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FolderPlus, Loader2, X } from "lucide-react";
 import { FolderPicker } from "@/components/agentic/FolderPicker";
 import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/components/agentic/VoiceBubble";
-import { WorkspaceTerminalGrid } from "@/components/agentic/WorkspaceTerminalGrid";
+import { RetainedWorkspaceGrid } from "@/components/agentic/RetainedWorkspaceGrid";
 import { WorkspaceAgentSetup } from "@/components/agentic/WorkspaceAgentSetup";
 import { RunOnPicker, storeRunOn, storedRunOn } from "@/components/agentic/RunOnPicker";
 import { WorkspaceOptionsDialog } from "@/components/agentic/WorkspaceOptionsDialog";
@@ -138,11 +138,14 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     const dialog = document.querySelector<HTMLElement>("[data-ide-dialog]");
     if (!dialog) return;
     const focusable = () => [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')];
-    (focusable()[0] ?? dialog).focus();
+    (dialog.querySelector<HTMLElement>("[data-autofocus]") ?? focusable()[0] ?? dialog).focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        // A field that backs out of itself on Escape (the folder picker's path
+        // and new-folder fields) gets the key instead of the whole dialog closing.
+        if (event.target instanceof Element && event.target.closest("[data-escape-local]")) return;
         event.preventDefault();
-        if (workspaceProject && busy) { event.stopPropagation(); return; }
+        if ((workspaceProject || projectDialog) && busy) { event.stopPropagation(); return; }
         setProjectDialog(false); setWorkspaceProject(null); setRenameOpen(false); setAgentPicker(null);
         return;
       }
@@ -485,7 +488,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
 
     <main className="min-h-0 flex-1">
       <IdeSidePanelFrame markInUse={paneStyle === "minimal"}>
-      {session ? <WorkspaceTerminalGrid key={session.id} session={session} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
+      {session ? <RetainedWorkspaceGrid session={session} onScreen={onScreen} workspaceIds={state.workspaces?.map((workspace) => workspace.id)} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
         onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} maxPanes={maxPanes} fontSize={fontSize} appearance={appearance} disabled={busy}
         onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} paneStyle={paneStyle} workspaces={state.workspaces ?? []} />
       : <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
@@ -565,13 +568,34 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       </section>
     </div>}
 
-    {projectDialog && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setProjectDialog(false); }}>
-      <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="Connect project" className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
-        <div className="flex items-center justify-between border-b border-border px-5 py-3"><h2 className="text-sm font-semibold">Connect project folder</h2><button type="button" aria-label="Close" onClick={() => setProjectDialog(false)}><X className="h-4 w-4" /></button></div>
-        <div className="min-h-0 flex-1 overflow-auto px-5 py-3"><FolderPicker selected={projectPath} onSelect={setProjectPath} /></div>
-        <div className="border-t border-border px-5 py-3"><label className="block text-xs text-muted-foreground">Project name (optional)<input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder={projectPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? "Project name"} className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" /></label>
-          <div className="mt-3 flex justify-end gap-2"><button type="button" onClick={() => setProjectDialog(false)} className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent">Cancel</button><button type="button" disabled={busy || !projectPath} onClick={connect} className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50">Connect project</button></div>
-        </div>
+    {projectDialog && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) setProjectDialog(false); }}>
+      {/* A fixed height, so the dialog does not jump each time a folder with
+          a different number of subfolders is opened. */}
+      <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="Connect project" aria-describedby="connect-project-hint" aria-busy={busy}
+        className="flex h-[min(46rem,90vh)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+        <header className="shrink-0 px-6 pb-1 pt-6">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-xl font-semibold tracking-tight">Connect a project</h2>
+            <button type="button" aria-label="Close" disabled={busy} onClick={() => setProjectDialog(false)}
+              className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><X className="h-5 w-5" /></button>
+          </div>
+          <p id="connect-project-hint" className="mt-1 text-sm text-muted-foreground">Choose the folder your coding agents will work in. Open it in the list, find it by name, or make a new one.</p>
+        </header>
+        <div className="flex min-h-0 flex-1 flex-col px-3"><FolderPicker selected={projectPath} onSelect={setProjectPath} /></div>
+        <footer className="flex shrink-0 flex-wrap items-end gap-3 border-t border-border bg-muted/20 px-6 py-4">
+          <label className="min-w-[14rem] flex-1 text-xs font-medium text-muted-foreground">Project name <span className="font-normal opacity-70">(optional)</span>
+            <input value={projectName} onChange={(event) => setProjectName(event.target.value)}
+              onKeyDown={(event) => { if (event.key === "Enter" && projectPath && !busy) { event.preventDefault(); connect(); } }}
+              placeholder={projectPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? "Uses the folder name"}
+              className="mt-1.5 h-10 w-full rounded-lg border border-input bg-background/60 px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring/30" />
+          </label>
+          <div className="flex gap-2">
+            <button type="button" disabled={busy} onClick={() => setProjectDialog(false)} className="h-10 rounded-lg px-4 text-sm text-muted-foreground hover:bg-muted disabled:opacity-50">Cancel</button>
+            <button type="button" disabled={busy || !projectPath} onClick={connect} title={projectPath ? undefined : "Choose a folder first"}
+              className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50">
+              {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}Connect project</button>
+          </div>
+        </footer>
       </section>
     </div>}
 
