@@ -8,7 +8,7 @@ base URL — and use it everywhere a built-in provider works: Pipeline Mode
 
 Companion documents: [`docs/architecture-overview.md`](architecture-overview.md),
 [`docs/anti-drift-three-layer.md`](anti-drift-three-layer.md),
-[`CLAUDE.md`](../CLAUDE.md) §3 (open-source universality), §5 (architecture
+[`AGENTS.md`](../AGENTS.md) §3 (open-source universality), §5 (architecture
 essentials), AP-21/AP-22 (capability gating, cross-family fallback).
 
 ---
@@ -105,7 +105,7 @@ provider; the adapter kind is that knowledge made selectable.
 
 `adapter` crosses Python → TOML → Pydantic → REST/OpenAPI → TypeScript → UI
 dropdown. That is precisely the shape that produced BUG-008 four times. It gets
-the five-layer pattern **preemptively** (CLAUDE.md §5), with one source of truth
+the five-layer pattern **preemptively** (AGENTS.md §5), with one source of truth
 and a parity test:
 
 ```
@@ -754,7 +754,7 @@ export function probeCustomProvider(id: string): Promise<{ ok: boolean; detail: 
 
 **Note on the task brief:** `src/lib/agentBrand.ts` is *not* the provider brand
 list — it derives the user-visible agent name from the configured wake word
-(CLAUDE.md §4). It needs **no change**, and must not gain provider knowledge.
+(AGENTS.md §4). It needs **no change**, and must not gain provider knowledge.
 The provider list the brief means is the backend `provider_spec.py` catalog,
 surfaced through `useProviders.ts`.
 
@@ -779,7 +779,7 @@ Deliberately small — the card machinery is already generic:
    `/providers/{id}/realtime-options` route, which is spec-driven and therefore
    already works once S1 lands.
 
-New i18n keys (English source, all supported locales per §1 of CLAUDE.md):
+New i18n keys (English source, all supported locales per §1 of AGENTS.md):
 `apikeys_custom.add`, `.edit`, `.remove`, `.adapter`, `.adapter_help`,
 `.base_url_required`, `.probe_ok`, `.probe_failed`, `.insecure_http_warning`,
 `.remove_confirm`.

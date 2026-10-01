@@ -1183,8 +1183,30 @@ export async function resolveDroppedFolder(payload: {
 export async function startIdeSession(
   folder: string,
   terminals: TerminalPlan[],
-  options: { projectId?: string; name?: string; computerId?: string } = {},
+  options: OpenWorkspaceOptions = {},
 ): Promise<IdeState> {
+  return (await openIdeWorkspace(folder, terminals, options)).state;
+}
+
+export interface OpenWorkspaceOptions {
+  projectId?: string;
+  name?: string;
+  computerId?: string;
+  /** Told the backend's one-line report, e.g. which files stayed on this PC. */
+  onMessage?: (message: string) => void;
+}
+
+/**
+ * `startIdeSession` for a caller that goes on to use the new panes: the new
+ * workspace ITSELF, beside the state. `state.session` is only whichever
+ * workspace is at the front when the answer is built, and another window can
+ * bring a different one forward in between.
+ */
+export async function openIdeWorkspace(
+  folder: string,
+  terminals: TerminalPlan[],
+  options: OpenWorkspaceOptions = {},
+): Promise<{ session: SessionState; state: IdeState }> {
   const res = await fetch("/api/agentic-ide/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1198,12 +1220,14 @@ export async function startIdeSession(
     }),
   });
   if (!res.ok) throw new Error(await detail(res));
-  const body = (await res.json()) as { session: SessionState; state: IdeState };
+  const body = (await res.json()) as { session: SessionState; state: IdeState; message?: string };
+  if (body.message) options.onMessage?.(body.message);
   // `state` is authoritative; `session` alone is kept as the fallback for a
   // backend that predates the workspace bar.
-  return (
-    body.state ?? { ...EMPTY_IDE_STATE, active: true, session: body.session }
-  );
+  return {
+    session: body.session,
+    state: body.state ?? { ...EMPTY_IDE_STATE, active: true, session: body.session },
+  };
 }
 
 /** Shape a pre-workspace-bar backend does not send. */
@@ -1348,14 +1372,20 @@ export async function addTerminal(payload: {
   model?: string;
   effort?: string;
   permission_mode?: string;
-}): Promise<SessionState> {
+  /**
+   * Where the new pane runs: a connected computer's id, or null for this PC.
+   * Omitted, it runs where its anchor (or the whole workspace) runs.
+   */
+  computer_id?: string | null;
+}, options: { onMessage?: (message: string) => void } = {}): Promise<SessionState> {
   const res = await fetch("/api/agentic-ide/terminals", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(await detail(res));
-  const body = (await res.json()) as { state: IdeState };
+  const body = (await res.json()) as { state: IdeState; message?: string };
+  if (body.message) options.onMessage?.(body.message);
   if (!body.state.session)
     throw new Error("The workspace closed while adding a terminal.");
   return body.state.session;

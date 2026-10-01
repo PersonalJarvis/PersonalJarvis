@@ -156,7 +156,7 @@ clipboard-*.mp4
 # Generated images downloaded from a chat assistant.
 ChatGPT Image *
 
-# Canonical home for development/verification screenshots (see CLAUDE.md).
+# Canonical home for development/verification screenshots (see AGENTS.md).
 # The app's boot sweep consolidates stray root captures here and auto-prunes
 # them after 10 days (jarvis/core/screenshots.py). Folder is created on boot.
 /screenshots/
@@ -205,7 +205,7 @@ Desktop.ini
 # ...except the security-github skill: RETIRED 2026-08-05. It orchestrated the
 # depersonalized public-release push — a staging build, a parallel clone, a
 # frontend build, and a sub-agent that read every tracked file hunting for
-# personal data, on every push. A push is `git push` now (CLAUDE.md §2). The
+# personal data, on every push. A push is `git push` now (AGENTS.md §2). The
 # ignore rules stay as a tombstone so a stray local copy can never be
 # versioned; do not re-add the skill without the maintainer's say-so.
 .claude/skills/security-github/
@@ -449,7 +449,7 @@ docs/reports/*marketing-readiness*
 # The file that defines what must never be public was itself the most complete
 # public inventory of that data. distribution-denylist.txt has withheld
 # `scripts/ci/privacy_gate/**` since the build-a-snapshot era, but that era ended
-# when releasing became a plain `git push` (CLAUDE.md §2), so nothing filtered
+# when releasing became a plain `git push` (AGENTS.md §2), so nothing filtered
 # them any more and they stayed live on the public default branch.
 #
 # They remain on disk: the local pre-push docs scan and strip_and_scan.py still

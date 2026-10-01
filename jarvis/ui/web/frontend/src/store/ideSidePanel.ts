@@ -15,6 +15,15 @@ export type SidePanelTabId = "agents" | "changes" | "files" | "git" | "office";
 
 export const SIDE_PANEL_TAB_IDS: readonly SidePanelTabId[] = ["agents", "changes", "files", "git", "office"];
 
+/**
+ * DOM id of the panel host, for the toggle's `aria-controls`.
+ *
+ * It lives here rather than in the panel's module because the toggle sits in
+ * the always-loaded window caption: importing it from `IdeSidePanel` linked the
+ * whole panel (explorer, git overview, agents overview) into the entry chunk.
+ */
+export const SIDE_PANEL_ID = "ide-side-panel";
+
 const OPEN_KEY = "jarvis.agenticIde.sidePanelOpen";
 // v4: the panel starts with Agents alone and the other tabs are added from
 // its "+" menu (maintainer, 2026-09-28); older lists opened every tab.
@@ -84,6 +93,14 @@ interface IdeSidePanelState {
    */
   maximized: boolean;
   setMaximized: (maximized: boolean) => void;
+  /**
+   * The reader is working in the panel: their last press landed in it rather
+   * than in a terminal. The panel then wears the blue "you are here" frame a
+   * focused terminal wears, and the terminal lets go of its own. A press on
+   * a pane hands it back. Not persisted.
+   */
+  inUse: boolean;
+  setInUse: (inUse: boolean) => void;
 }
 
 const initialTabs = storedTabs();
@@ -102,8 +119,10 @@ export const useIdeSidePanelStore = create<IdeSidePanelState>((set, get) => {
     setSpotlight: (spotlight) => set({ spotlight }),
     maximized: false,
     setMaximized: (maximized) => set({ maximized: maximized && get().open }),
+    inUse: false,
+    setInUse: (inUse) => { if (get().inUse !== inUse) set({ inUse: inUse && get().open }); },
     setOpen: (open) => {
-      if (!open) set({ spotlight: null, maximized: false });
+      if (!open) set({ spotlight: null, maximized: false, inUse: false });
       commit({ open });
     },
     toggle: () => get().setOpen(!get().open),
@@ -120,7 +139,7 @@ export const useIdeSidePanelStore = create<IdeSidePanelState>((set, get) => {
       if (index < 0) return;
       const rest = tabs.filter((tab) => tab !== id);
       if (rest.length === 0) {
-        set({ spotlight: null, maximized: false });
+        set({ spotlight: null, maximized: false, inUse: false });
         commit({ open: false, tabs: DEFAULT_TABS, active: DEFAULT_TABS[0] });
         return;
       }

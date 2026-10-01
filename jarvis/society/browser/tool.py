@@ -63,7 +63,11 @@ def lead_browser_tools(session: Any = None, *, read_only: bool = False) -> dict[
     runtime = current_runtime()
     if runtime is None:
         return {}
-    pick = (session.provider, session.model) if session is not None else None
+    # Not every surface passes a full ChatSession (the jarvis-chat kit hands
+    # over a lightweight namespace), so only pin a model when both are known.
+    provider = getattr(session, "provider", None)
+    model = getattr(session, "model", None)
+    pick = (provider, model) if provider and model else None
     return {
         BROWSER_TOOL_NAME: BrowserTool(
             runtime,
@@ -195,7 +199,7 @@ class BrowserTool:
         if verdict is Verdict.BLOCK:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "browser use is blocked for you")
         trace_id = f"browser:{caller.agent_id}:{getattr(ctx, 'trace_id', '')}"[:120]
-        if verdict is Verdict.QUEUE:
+        if verdict is Verdict.QUEUE and getattr(ctx, "approved_by", None) != "user":
             item = await rt.approvals.enqueue(
                 agent_id=caller.agent_id,
                 trace_id=trace_id,

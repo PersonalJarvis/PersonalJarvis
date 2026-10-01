@@ -1,11 +1,12 @@
-"""The read-only health script and its parser.
+"""The read-only health scripts and their parser.
 
-A check runs ONE command over SSH: a POSIX shell script that prints labelled
-sections (hostname, OS, cores, memory, disk, uptime, load). It only reads —
-nothing is installed or changed. Linux answers every section; macOS answers
-through its own tools; a machine whose login shell is not POSIX (a Windows
-OpenSSH server) answers little or nothing, and the check still counts as
-online with fewer facts.
+A check runs ONE script over SSH that prints labelled sections (hostname, OS,
+cores, memory, disk, uptime, load). It only reads — nothing is installed or
+changed. Linux answers every section of :data:`PROBE_SCRIPT`; macOS answers
+through its own tools; a Windows OpenSSH server gets
+:data:`WINDOWS_PROBE_SCRIPT` (PowerShell, sent on stdin), which prints the
+same sections in the same shapes, so one parser reads all three. Windows has
+no load average; that section stays empty.
 """
 
 from __future__ import annotations
@@ -27,6 +28,30 @@ echo "@@df"; df -Pk / 2>/dev/null | tail -n 1
 echo "@@uptime"; cat /proc/uptime 2>/dev/null
 echo "@@loadavg"; cat /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null
 echo "@@end"
+""".strip()
+
+#: The same sections from a Windows computer, in the shapes the Linux tools
+#: print (``/etc/os-release`` lines, ``/proc/meminfo`` kB, ``df -Pk`` columns).
+WINDOWS_PROBE_SCRIPT = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+$os = Get-CimInstance Win32_OperatingSystem
+'@@hostname'; $env:COMPUTERNAME
+'@@uname'; "Windows $($os.Version) $env:PROCESSOR_ARCHITECTURE"
+'@@os'; 'ID=windows'; "PRETTY_NAME=$($os.Caption -replace '^Microsoft ', '')"
+'@@nproc'; [Environment]::ProcessorCount
+'@@meminfo'
+"MemTotal: $($os.TotalVisibleMemorySize) kB"
+"MemAvailable: $($os.FreePhysicalMemory) kB"
+'@@df'
+$drive = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'"
+if ($drive -and $drive.Size) {
+  $total = [int64]($drive.Size / 1KB); $free = [int64]($drive.FreeSpace / 1KB)
+  "$env:SystemDrive $total $($total - $free) $free - $env:SystemDrive\"
+}
+'@@uptime'
+if ($os.LastBootUpTime) { [int64]((Get-Date) - $os.LastBootUpTime).TotalSeconds }
+'@@loadavg'
+'@@end'
 """.strip()
 
 

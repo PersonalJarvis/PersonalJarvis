@@ -26,7 +26,7 @@ what Wave 1 changes (and what it does not).
 The post-install runtime threat model — Brain provider API keys, Computer-Use
 risk-tier policy, Mission-Manager worker isolation — is out of scope here.
 That work lives in `docs/jarvis-agents-bridge.md`, `jarvis/safety/risk_tier.py`,
-and the Phase-6 isolation invariants in `CLAUDE.md`.
+and the Phase-6 isolation invariants in `AGENTS.md`.
 
 ---
 
@@ -786,7 +786,7 @@ can verify the same release months later by re-running the verifier.
 **Honest deferral — the Wave 4 axis is in TRANSITION MODE, not
 hard-required.** Reasoning:
 
-- The €5/month VPS doctrine (CLAUDE.md "Cloud-First Philosophy") includes
+- The €5/month VPS doctrine (AGENTS.md "Cloud-First Philosophy") includes
   hosts with `python:3.11-slim` and `debian:bookworm-slim` defaults,
   both of which carry OpenSSL ≤ 3.0.x. Hard-requiring 3.5+ in the
   verifier would block axes A+B+C from running on >70% of low-spec VPS
@@ -993,7 +993,7 @@ over a failure.
   (`python3-xlib`, `uvloop`'s Linux wheel, etc.). Windows desktop
   installs that pass through `installer.py --with-desktop` will hit a
   failed `pip install --require-hashes` on those transitive deps. The
-  cloud-first VPS path is the binding doctrine (CLAUDE.md §"Cloud-First
+  cloud-first VPS path is the binding doctrine (AGENTS.md §"Cloud-First
   Philosophy"); Windows desktop is a power-user extra. Wave 6.1 will
   ship a separate `requirements-windows.txt` generated under Windows
   containerization.

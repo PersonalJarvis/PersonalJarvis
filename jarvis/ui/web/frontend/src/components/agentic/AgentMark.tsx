@@ -44,6 +44,14 @@ const AGENT_LOGOS: Record<string, LogoAsset> = {
   opencode: { url: "/agent-logos/opencode.svg", ground: "dark" },
 };
 
+/**
+ * The shipped brand file for an agent and the ground it needs, or null for an
+ * agent without one. For drawing the mark where no DOM exists (a canvas).
+ */
+export function agentLogoAsset(agent: string): { url: string; ground: LogoGround } | null {
+  return AGENT_LOGOS[agent] ?? null;
+}
+
 interface AgentMarkProps {
   agent: string;
   label: string;

@@ -9,7 +9,7 @@ engaged for ``fail.Keyring`` was skipped, ``keyring.set_password`` raised
 ``KeyringLocked``, and ``set_secret`` returned False. The in-app POST
 ``/secrets/{key}`` route turns that into HTTP 500, so pasting a key in the UI
 failed and nothing persisted. A locked/unusable OS keyring must degrade to the
-file store at RUNTIME, keeping the "recoverable in-app" guarantee (CLAUDE.md §3).
+file store at RUNTIME, keeping the "recoverable in-app" guarantee (AGENTS.md §3).
 """
 
 from __future__ import annotations

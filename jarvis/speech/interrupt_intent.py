@@ -23,7 +23,7 @@ Design rules
   model call here would add exactly the latency barge-in exists to remove
   (AP-9/AP-11), and prompt compliance is not a correctness boundary
   (BUG-047 class rule).
-* **Every locale equal** (CLAUDE.md §1). German, English and Spanish carry the
+* **Every locale equal** (AGENTS.md §1). German, English and Spanish carry the
   same vocabulary depth; adding a locale means adding its tokens, never
   special-casing a "default" language.
 * **Whole-utterance anchored.** A stop token only counts at the START of the

@@ -149,7 +149,7 @@ VOICE_BUBBLE_DURATION_MS = 30_000
 
 # Shown in the orb bubble while the brain is thinking and no reply text exists
 # yet. User-facing German conversational UI on purpose: the same bubble renders
-# the German live transcript and the German reply, and CLAUDE.md keeps
+# the German live transcript and the German reply, and AGENTS.md keeps
 # user-facing conversational content German. Single source of truth so it is
 # trivially translatable later.
 THINKING_BUBBLE_TEXT = "Denke nach …"  # i18n-allow
@@ -1264,7 +1264,7 @@ class OrbBusBridge:
         """The dictation shortcut was pressed and DECLINED — say so on screen.
 
         This is the whole reported bug. Every refusal used to end as a
-        ``log.info`` in a file the desktop app cannot open (CLAUDE.md §9: the
+        ``log.info`` in a file the desktop app cannot open (AGENTS.md §9: the
         window is a WebView with no dev tools), so on the maintainer's
         configuration — one wake word, ``session_idle_timeout_s = 0``, no hangup
         key — a voice conversation stayed open all day and from then on EVERY

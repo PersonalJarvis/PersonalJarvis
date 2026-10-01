@@ -94,6 +94,9 @@ WITHHELD: Final[dict[str, str]] = {
     "POST /api/society/browser/install": "installs software on the machine — never from outside",
     "POST /api/society/browser/repair": "repairs host software; local owner setup",
     "POST /api/society/agents/{agent_id}/browser/cancel": "local browser control belongs to the owner UI",
+    "GET /api/society/agents/{agent_id}/browser/open": (
+        "whether the owner UI may attach its live view; local process state"
+    ),
     "POST /api/society/agents/{agent_id}/browser/session": (
         "prepares the host browser environment; owner UI, not an external agent command"
     ),
@@ -153,6 +156,21 @@ WITHHELD: Final[dict[str, str]] = {
     "PATCH /api/society/agents/{agent_id}/routines/{task_id}": (
         "editing a routine changes recurring spend; the owner does it on the "
         "routine card where the schedule is visible, not via a remote client"
+    ),
+    "POST /api/society/agents/{agent_id}/routines/{task_id}/operation": (
+        "pausing, deleting or running a routine now changes recurring spend; "
+        "the owner does it on the routine card, not via a remote client"
+    ),
+    "GET /api/society/chat-groups": (
+        "group chats are the owner's own chat layout in the app; a remote "
+        "client addresses agents directly"
+    ),
+    "POST /api/society/chat-groups": "arranging the owner's group chats is app-only UI state",
+    "PATCH /api/society/chat-groups/{group_id}": (
+        "renaming or regrouping the owner's group chats is app-only UI state"
+    ),
+    "DELETE /api/society/chat-groups/{group_id}": (
+        "ungrouping the owner's chats is app-only UI state"
     ),
 }
 

@@ -53,7 +53,7 @@ from pathlib import Path
 from typing import Iterable
 
 # Windows console defaults to cp1252; arrows and em-dashes crash there.
-# Same pattern as jarvis/__main__.py — convention from CLAUDE.md.
+# Same pattern as jarvis/__main__.py — convention from AGENTS.md.
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"):

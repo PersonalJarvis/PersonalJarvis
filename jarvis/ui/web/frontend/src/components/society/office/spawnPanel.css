@@ -1,0 +1,29 @@
+/* The spawn point's panel. Theme tokens plus the checkpoints' gold, so light and dark mode both work. */
+.office-panel[data-panel="spawn"]:focus-visible, .office-panel[data-panel="launch"]:focus-visible { outline:none; }
+/* Nothing in it shrinks: a tall launcher scrolls the panel body instead of squashing the hero. */
+.office-spawn { display:flex; flex-direction:column; gap:12px; }
+.office-spawn > * { flex:none; }
+
+/* The hero: the spawn mark on gold, a title and one line of what happens. */
+.office-spawn-hero { position:relative; overflow:hidden; display:flex; align-items:flex-start; gap:12px; padding:14px; border-radius:14px; border:1px solid rgb(240 169 43 / .38); background:radial-gradient(120% 140% at 100% 0%, rgb(245 184 61 / .22), transparent 60%), hsl(var(--background) / .55); }
+.office-spawn-mark { flex:none; display:inline-flex; align-items:center; justify-content:center; width:44px; height:44px; border-radius:14px; background:linear-gradient(160deg, #ffd476, #f0a92b); color:#1f1300; box-shadow:0 6px 18px rgb(240 169 43 / .4); }
+.office-spawn-mark svg { width:24px; height:24px; }
+.office-spawn-hero > div { min-width:0; }
+.office-spawn-hero strong { display:block; margin-bottom:3px; font-size:14px; }
+.office-spawn-hero p { margin:0; font-size:12px; line-height:1.45; color:hsl(var(--muted-foreground)); }
+
+/* Three numbered steps side by side. */
+.office-spawn-steps { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px; }
+.office-spawn-steps li { display:flex; flex-direction:column; gap:6px; padding:9px 10px; border:1px solid hsl(var(--border)); border-radius:11px; background:hsl(var(--secondary) / .5); color:hsl(var(--foreground)); font-size:11.5px; line-height:1.35; }
+.office-spawn-steps li span { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; background:hsl(var(--foreground)); color:hsl(var(--background)); font-size:11px; font-weight:700; }
+
+/* The one big action. */
+.office-spawn-go { display:inline-flex; align-items:center; justify-content:center; gap:8px; height:40px; border:0; border-radius:12px; background:linear-gradient(160deg, #ffd476, #f0a92b); color:#1f1300; font:inherit; font-size:13.5px; font-weight:700; cursor:pointer; box-shadow:0 4px 14px rgb(240 169 43 / .35); transition:transform .12s, box-shadow .12s, opacity .12s; }
+.office-spawn-go svg { width:16px; height:16px; }
+.office-spawn-go:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 6px 20px rgb(240 169 43 / .5); }
+.office-spawn-go:disabled { opacity:.45; cursor:not-allowed; }
+.office-spawn-go:focus-visible { outline:2px solid hsl(var(--ring)); outline-offset:2px; }
+.office-spawn-foot { margin:0; font-size:11px; text-align:center; color:hsl(var(--muted-foreground)); }
+
+@media (prefers-reduced-motion:reduce) { .office-spawn-go { transition:none; } .office-spawn-go:hover:not(:disabled) { transform:none; } }
+@media (max-width:420px) { .office-spawn-steps { grid-template-columns:1fr; } }

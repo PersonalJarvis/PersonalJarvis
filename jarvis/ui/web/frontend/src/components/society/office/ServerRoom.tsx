@@ -9,7 +9,9 @@
  * The LEDs twinkle from a single throttled useFrame per row that rewrites the
  * instance colours in place — no per-frame allocation. The screens redraw on
  * a slow timer and read the floor's live panes, so the cluster load follows
- * the coding agents at work.
+ * the coding agents at work. The status wall is the exception: it shows what
+ * the Agentic IDE's agents really spent (the Spend section's read model), and
+ * a click on it dives in and opens Spend.
  *
  * Pieces are built in local space centred on the origin, front facing +z, and
  * stay inside their FURNITURE_SIZE box.
@@ -21,8 +23,10 @@ import {
   RepeatWrapping, SphereGeometry, SRGBColorSpace, TorusGeometry, type Texture,
 } from "three";
 import { useWorkspacePanesStore } from "@/store/workspacePanes";
+import { EMPTY_FILTERS, useCostSummary, type CostFilters, type CostSummary } from "@/hooks/useCosts";
 import { cachedCanvasTexture, canvasMaterial } from "./canvasMaterials";
 import { paneOccupants } from "./codingFloor";
+import { useMonitorDive } from "./CommandOffice";
 import { Box, GEO, MAT, matte, Rounded } from "./OfficeFurniture";
 import { FURNITURE_SIZE, type Furniture, type FurnitureKind } from "./officeLayout";
 
@@ -687,7 +691,51 @@ function tempColour(t: number): string {
   return "#e5553f";
 }
 
-function drawStatusWall(ctx: Ctx, w: number, h: number, data: ClusterData, tick: number): void {
+/** What the status wall shows: the Agentic IDE's spend over the Spend section's default window. */
+export interface IdeSpend {
+  days: number;
+  cost: number;
+  billed: number;
+  tokens: number;
+  sessions: number;
+  /** Cost per bucket (a day), oldest first. */
+  series: { key: string; cost: number }[];
+  /** The costliest models, most expensive first. */
+  models: { name: string; cost: number }[];
+}
+
+/** The wall's numbers from a cost summary. Pure. */
+export function ideSpendFrom(summary: CostSummary | undefined, days: number): IdeSpend | null {
+  if (!summary) return null;
+  const { totals } = summary;
+  return {
+    days,
+    cost: totals.cost_usd,
+    billed: Math.max(0, totals.cost_usd - totals.subscription_usd),
+    tokens: totals.tokens_total,
+    sessions: summary.refs_total,
+    series: summary.series.map((b) => ({ key: b.key, cost: b.cost_usd })),
+    models: [...summary.by_model].sort((a, b) => b.cost_usd - a.cost_usd).slice(0, 5).map((b) => ({ name: b.key, cost: b.cost_usd })),
+  };
+}
+
+/** $1,234 · $12.30 · $0.042: whole dollars once it is large, cents below. Pure. */
+export function formatUsd(v: number): string {
+  if (v >= 1000) return `$${Math.round(v).toLocaleString("en-US")}`;
+  if (v >= 1) return `$${v.toFixed(2)}`;
+  if (v > 0) return `$${v.toFixed(3)}`;
+  return "$0";
+}
+
+/** 1.2B · 34.5M · 812K · 950. Pure. */
+export function formatCount(v: number): string {
+  if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
+  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+  if (v >= 1e3) return `${Math.round(v / 1e3)}K`;
+  return String(Math.round(v));
+}
+
+function drawStatusWall(ctx: Ctx, w: number, h: number, spend: IdeSpend | null, failed: boolean): void {
   ctx.fillStyle = SCREEN_BG;
   ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = "#5eead4";
@@ -696,22 +744,21 @@ function drawStatusWall(ctx: Ctx, w: number, h: number, data: ClusterData, tick:
   ctx.textAlign = "left";
   ctx.fillStyle = "#e6f1ff";
   ctx.font = FONT(44, 700);
-  ctx.fillText("NOC", 36, 50);
-  ctx.fillStyle = "#3dff8a";
-  ctx.beginPath();
-  ctx.arc(160, 50, 11, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.textAlign = "right";
+  ctx.fillText("AGENTIC IDE", 36, 50);
+  const titleW = ctx.measureText("AGENTIC IDE").width;
   ctx.fillStyle = "#8fa3ba";
+  ctx.font = FONT(30);
+  ctx.fillText(`SPEND · ${spend ? `${spend.days}D` : "…"}`, 36 + titleW + 24, 52);
+  ctx.textAlign = "right";
   ctx.font = FONT(34);
   ctx.fillText(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), w - 36, 50);
-  // KPI tiles: GPU load, agents working, nodes up, power.
-  const load = Math.round((data.load + 0.03 * Math.sin(tick * 0.8)) * 100);
+  // KPI tiles: what the IDE's agents cost, what of it an API key paid, tokens, sessions.
+  const dash = failed ? "n/a" : "…";
   const tiles: [string, string, string][] = [
-    ["GPU", `${load}%`, load > 80 ? "#e8b23a" : "#5eead4"],
-    ["AGENTS", `${data.working}/${data.total}`, "#7dd3fc"],
-    ["NODES", "50/50", "#3dff8a"],
-    ["kW", (18 + data.load * 24 + 0.4 * Math.sin(tick)).toFixed(1), "#c4b5fd"],
+    ["COST", spend ? formatUsd(spend.cost) : dash, "#5eead4"],
+    ["API BILLED", spend ? formatUsd(spend.billed) : dash, "#e8b23a"],
+    ["TOKENS", spend ? formatCount(spend.tokens) : dash, "#7dd3fc"],
+    ["SESSIONS", spend ? String(spend.sessions) : dash, "#c4b5fd"],
   ];
   const tw = (w - 72 - 3 * 20) / 4;
   tiles.forEach(([label, value, colour], i) => {
@@ -725,27 +772,60 @@ function drawStatusWall(ctx: Ctx, w: number, h: number, data: ClusterData, tick:
     ctx.font = FONT(24);
     ctx.fillText(label, x + 22, 126);
     ctx.fillStyle = colour;
-    ctx.font = FONT(58, 700);
+    ctx.font = FONT(value.length > 8 ? 46 : 58, 700);
     ctx.fillText(value, x + 22, 184);
   });
-  // Cluster load over time, and a thermal strip of the ten racks.
-  drawChart(ctx, 36, 256, w * 0.62, h - 292, tick, 1.7, data.load, "#5eead4", "rgba(94,234,212,0.16)");
-  const gx = 36 + w * 0.62 + 30, gw = w - gx - 36;
-  const cell = (gw - 4 * 10) / 5;
-  ctx.textAlign = "center";
-  for (let i = 0; i < 10; i += 1) {
-    const cx = gx + (i % 5) * (cell + 10);
-    const cy = 262 + Math.floor(i / 5) * (cell + 34);
-    const t = Math.max(0, Math.min(1, data.load * 0.75 + 0.2 * hash01(i * 3.1 + Math.floor(tick / 3))));
-    ctx.fillStyle = tempColour(t);
-    ctx.fillRect(cx, cy, cell, cell);
-    ctx.fillStyle = "#07120f";
-    ctx.font = FONT(22, 700);
-    ctx.fillText(`${Math.round(19 + t * 12)}°`, cx + cell / 2, cy + cell / 2);
-    ctx.fillStyle = "#8fa3ba";
-    ctx.font = FONT(18);
-    ctx.fillText(`${i < 5 ? "A" : "B"}0${(i % 5) + 1}`, cx + cell / 2, cy + cell + 15);
+  // Cost per day as bars, and the costliest models beside it.
+  const cx = 36, cy = 262, cw = w * 0.6, ch = h - cy - 44;
+  ctx.strokeStyle = "rgba(120,160,200,0.14)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i += 1) {
+    ctx.beginPath(); ctx.moveTo(cx, cy + (ch * i) / 4); ctx.lineTo(cx + cw, cy + (ch * i) / 4); ctx.stroke();
   }
+  const bars = spend?.series ?? [];
+  const peak = Math.max(0, ...bars.map((b) => b.cost));
+  if (peak > 0) {
+    const bw = cw / bars.length;
+    bars.forEach((b, i) => {
+      const bh = (b.cost / peak) * ch;
+      ctx.fillStyle = i === bars.length - 1 ? "#5eead4" : "rgba(94,234,212,0.55)";
+      ctx.fillRect(cx + i * bw + bw * 0.15, cy + ch - bh, Math.max(2, bw * 0.7), bh);
+    });
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#8fa3ba";
+    ctx.font = FONT(20);
+    ctx.fillText(`${formatUsd(peak)} / day peak`, cx, cy + ch + 24);
+  } else {
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#4b5d72";
+    ctx.font = FONT(26);
+    ctx.fillText(spend ? "no spend in this window" : failed ? "spend unavailable" : "loading…", cx + cw / 2, cy + ch / 2);
+  }
+  const mx = cx + cw + 40, mw = w - mx - 36;
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#8fa3ba";
+  ctx.font = FONT(22);
+  ctx.fillText("TOP MODELS", mx, cy + 8);
+  const models = spend?.models ?? [];
+  const top = models[0]?.cost || 1;
+  models.forEach((m, i) => {
+    const y = cy + 48 + i * ((ch - 30) / 5);
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#e6f1ff";
+    ctx.font = FONT(22, 600);
+    const cost = formatUsd(m.cost);
+    const room = mw - ctx.measureText(cost).width - 20;
+    let name = m.name;
+    while (name.length > 3 && ctx.measureText(`${name}…`).width > room) name = name.slice(0, -1);
+    ctx.fillText(name === m.name ? name : `${name}…`, mx, y);
+    ctx.textAlign = "right";
+    ctx.fillStyle = "#5eead4";
+    ctx.fillText(cost, mx + mw, y);
+    ctx.fillStyle = "#101a28";
+    ctx.fillRect(mx, y + 18, mw, 6);
+    ctx.fillStyle = "#1f9d8b";
+    ctx.fillRect(mx, y + 18, Math.max(4, (mw * m.cost) / top), 6);
+  });
 }
 
 function drawThroughput(ctx: Ctx, w: number, h: number, data: ClusterData, tick: number): void {
@@ -823,17 +903,23 @@ function Screen({ w, h, material }: { w: number; h: number; material: MeshBasicM
 
 const WALL = { w: 2.3, h: 0.94, y: 1.6 };
 
-/** A floor-standing status display: the cluster at a glance for the whole room. */
+/** The Spend section's default window, narrowed to what the Agentic IDE's agents spent. */
+const IDE_SPEND_FILTERS: CostFilters = { ...EMPTY_FILTERS, surfaces: ["agentic-ide"] };
+
+/** A floor-standing status display: the Agentic IDE's spend for the whole room. A click dives into it and opens Spend. */
 export function StatusWall() {
-  const data = useClusterData();
-  const tick = useTicker(2500);
-  const screen = useCanvasScreen(1280, Math.round((1280 * WALL.h) / WALL.w), `${tick}:${data.load}:${data.working}:${data.total}`,
-    (ctx, w, h) => drawStatusWall(ctx, w, h, data, tick));
+  const summary = useCostSummary(IDE_SPEND_FILTERS);
+  const spend = ideSpendFrom(summary.data, IDE_SPEND_FILTERS.days);
+  // The clock in the corner moves once a minute; the numbers when the summary answers.
+  const tick = useTicker(30_000);
+  const screen = useCanvasScreen(1280, Math.round((1280 * WALL.h) / WALL.w), `${tick}:${summary.dataUpdatedAt}:${summary.isError}`,
+    (ctx, w, h) => drawStatusWall(ctx, w, h, spend, summary.isError && !spend));
+  const dive = useMonitorDive("costs", [WALL.w, WALL.h], 0.0155);
   return (
     <group>
       <Box size={[1.3, 0.03, 0.28]} position={[0, 0.015, 0]} material={SRV.cabinet} />
       {[-0.5, 0.5].map((x) => <Box key={x} size={[0.07, WALL.y - 0.1, 0.06]} position={[x, (WALL.y - 0.1) / 2, -0.06]} material={SRV.cabinetEdge} />)}
-      <group position={[0, WALL.y, -0.02]}>
+      <group position={[0, WALL.y, -0.02]} {...dive}>
         <Screen w={WALL.w} h={WALL.h} material={screen} />
       </group>
       <Box size={[WALL.w - 0.1, 0.012, 0.012]} position={[0, WALL.y - WALL.h / 2 - 0.05, -0.02]} material={SRV.ice} cast={false} />

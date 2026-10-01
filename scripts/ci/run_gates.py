@@ -48,7 +48,7 @@ def _gates(base: str) -> list[Gate]:
         Gate(
             "mirrors",
             (
-                (PY, ci + "sync_agents_md.py", "--check"),
+                (PY, ci + "check_agents_md.py"),
                 (PY, ci + "sync_agents_dir.py", "--check"),
                 (PY, ci + "sync_codex_agents.py", "--check"),
             ),

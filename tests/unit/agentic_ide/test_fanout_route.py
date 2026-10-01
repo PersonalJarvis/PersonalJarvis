@@ -1,7 +1,7 @@
 """The REST surface for running a fleet: spawn, split, deliver.
 
 Why this route exists at all, given the voice path already works: the CLI-first
-contract (CLAUDE.md §5) says a capability that lives only in the voice path is
+contract (AGENTS.md §5) says a capability that lives only in the voice path is
 not done. Speaking is how the maintainer uses this, but the same fleet has to
 be startable from the terminal, from a script, and from the workspace UI — and
 one route is also what keeps those three from growing three different ideas of

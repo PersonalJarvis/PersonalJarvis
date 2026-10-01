@@ -1,7 +1,11 @@
-# Agent office map
+# Agent office map (Jarvis Verse)
+
+Product name: **Jarvis Verse** (since 2026-09-30). The interface calls the
+whole map, the Map tab and the IDE side-panel tab "Jarvis Verse"; the code keeps
+its `office` identifiers, and rooms and floors inside it keep their own names.
 
 Status: **walkable prototype built 2026-09-28, awaiting the maintainer's visual review.**
-It replaces the Mars colony as the renderer behind **Agents > Map**. The Mars
+It replaces the Mars colony as the renderer behind **Agents > Jarvis Verse**. The Mars
 code, its backend contracts and the communications station remain in the tree
 and reachable from the Agents workspace; only the map surface changed.
 
@@ -57,6 +61,10 @@ target runs WebGL.
 - **Middle:** departments = provider families (`providerLabel`; empty means
   Jarvis' own brain), two columns, at least four (spare ones are "Open space"),
   at most six (the rest fold into "Other"). Benches of back-to-back desks.
+- **Spawn point (both floors):** a round pad with a terminal on the crossing of
+  the centre aisle and the cross aisle nearest the floor's middle, the one plaza
+  every route passes. `layout.arrival` (south of the terminal) is where anyone
+  new to the floor appears.
 - **South strip:** an open reception/lobby with the elevator, the reception desk
   and the agent board; a walled break room with couches, coffee bar, water
   cooler, arcade and beanbags.
@@ -75,8 +83,8 @@ target runs WebGL.
   cooler, team table, strolling or chatting at a busy colleague's desk. Spots are
   reserved so nobody sits on anybody. All of it is client-side, deterministic
   per agent, costs no tokens and never starts or stops work. Reduced motion
-  places agents without walking. Agents created while the office is open arrive
-  by the elevator.
+  places agents without walking. Agents created while the office is open appear
+  on the spawn pad in a column of light and walk to their desk.
 - **The person's character** (`OfficePlayer.tsx`, `playerProfile.ts`): WASD /
   arrows (camera-relative, Shift runs) or click the floor to walk; E interacts
   with the nearest agent or checkpoint. Name and body are chosen in the
@@ -85,8 +93,9 @@ target runs WebGL.
   character; zoom out and it is the overview. Everything stays clickable from
   afar, so walking is optional. A right-drag pan or a fly-to stops following;
   moving resumes it.
-- **Checkpoints** (`OfficePanels.tsx`): reception → create an agent (existing
-  dialog); agent board → list, show on map, open, agent management; team room →
+- **Checkpoints** (`OfficePanels.tsx`): spawn point → spawn a new Jarvis agent
+  (existing create dialog; a host without one, like the IDE side panel, gets the
+  office's own copy); reception → help, and create an agent too; agent board → list, show on map, open, agent management; team room →
   pick agents and create a team (existing chat groups), gather teams at the
   table; wardrobe → your look; lead office → talk to the lead; break room → call
   free agents for a coffee break (visual only).
@@ -132,6 +141,13 @@ the floor plan differ.
   department per IDE workspace; no lead office and no wardrobe (a quiet zone
   takes their place, built from existing furniture); reception with the
   elevator and the break room stay. The agents office layout is unchanged.
+- **Spawn point** (2026-09-30): the coding floor's spawn point replaces the old
+  lobby kiosk. Its panel is Mission Control's launcher (CLI, workspace, how
+  many, optional first task, through the IDE's own `POST /terminals`); every new
+  pane appears on the pad and walks to its desk. `SpawnPoint.tsx` builds pad,
+  terminal and fittings in each floor's own materials (oak, bronze and a mint
+  glow with the brass ghost downstairs; walnut, brass and amber with a brass
+  `>_` upstairs); two gyroscope rings turn round the floor token.
 - **Gigi follows**: on the coding floor Jarvis (Gigi) flies in "follow" mode,
   hovering beside and behind the person's head with a smoothed lag and never
   inside a wall, including in the elevator. In the agents office Gigi keeps
@@ -223,7 +239,7 @@ contemporary kit with tone-on-tone patterns. Seat height, desk height, monitor
 screen position and every footprint are unchanged, so poses, live screens and
 navigation work as before. Still in the earlier style and waiting on the
 maintainer's review of this reference before they follow: the lead suite, the
-reception desk and kiosk, the team room table and chairs, the lockers and
+reception desk, the team room table and chairs, the lockers and
 mirror, the coffee bar, the water cooler and the arcade.
 
 ## 6. Plan

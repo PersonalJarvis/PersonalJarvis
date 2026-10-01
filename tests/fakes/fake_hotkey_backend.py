@@ -1,6 +1,6 @@
 """FakeHotkeyBackend — drop-in stand-in for a ``HotkeyBackend`` (AD-6 seam).
 
-Convention (CLAUDE.md): fakes over mocks. This fake satisfies the
+Convention (AGENTS.md): fakes over mocks. This fake satisfies the
 ``jarvis.trigger.backends.HotkeyBackend`` ``Protocol`` and records the lifecycle
 calls so a test can prove ``HotkeyTrigger`` drives the backend correctly
 (register → start → stop → unregister) without touching any OS or optional

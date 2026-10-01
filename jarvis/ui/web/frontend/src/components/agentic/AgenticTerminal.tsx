@@ -69,6 +69,14 @@ import {
   X,
 } from "lucide-react";
 import { SplitBelowIcon, SplitRightIcon } from "./splitIcons";
+import {
+  holdsSizeLead,
+  mayLeadSize,
+  onSizeLeadReleased,
+  releaseSizeLead,
+  sizeLeadKey,
+  takeSizeLead,
+} from "./paneSizeLead";
 // A leaf module with no DOM and no terminal in it, which is the point: the
 // wizard quotes this same number before any pane exists — see ./layout.
 import { cn } from "@/lib/utils";
@@ -76,6 +84,7 @@ import {
   MINIMUM_CONTRAST_RATIO,
   PANE_BRAND,
   PANE_CHROME,
+  PANE_TILE,
   themeFor,
   type TerminalAppearance,
 } from "./terminalThemes";
@@ -493,8 +502,21 @@ interface AgenticTerminalProps {
   workspaceId?: string;
   /** Agent label shown in the pane header ("Claude Code"). */
   displayName: string;
-  /** Compact workspace chrome is opt-in; legacy grids retain their existing header. */
-  headerMode?: "legacy" | "compact";
+  /**
+   * Compact workspace chrome is opt-in; legacy grids retain their existing
+   * header. "none" draws the bare terminal for a host that brings its own
+   * title bar (the office's pane panel) — no header, no border of its own.
+   * "minimal" is the multiplexer tile: a square 1px frame, a slim square
+   * title row with the compact header's controls, and the pane the reader
+   * works in outlined in the signal hue.
+   */
+  headerMode?: "legacy" | "compact" | "minimal" | "none";
+  /**
+   * Minimal tiles only: may the focused pane wear the blue "you are here"
+   * edge right now? Off while the reader works in the IDE's side panel, which
+   * then wears it instead. The pane stays the prompt target either way.
+   */
+  markFocus?: boolean;
   /** Compact header only: opens the fork dialog for this pane. */
   onFork?: () => void;
   /** Compact header only: the worktree branch this pane runs on, if any. */
@@ -624,6 +646,13 @@ interface AgenticTerminalProps {
    * one, and the backend spawns a new agent for it.
    */
   restartToken?: number;
+  /**
+   * Open as THE view of this pane in this window: while mounted it sizes the
+   * pane, and the same pane's other viewers here (the IDE grid behind the
+   * office's pane window) follow it instead of taking the size back on every
+   * gesture. Read at mount. See ./paneSizeLead.
+   */
+  sizeLead?: boolean;
 }
 
 export function AgenticTerminal({
@@ -631,6 +660,7 @@ export function AgenticTerminal({
   workspaceId,
   displayName,
   headerMode = "legacy",
+  markFocus = true,
   onFork,
   branch,
   computerName,
@@ -666,6 +696,7 @@ export function AgenticTerminal({
   showArrangeHandle = false,
   arranging = false,
   layoutBusy = false,
+  sizeLead = false,
 }: AgenticTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRegionRef = useRef<HTMLDivElement | null>(null);
@@ -678,6 +709,15 @@ export function AgenticTerminal({
   const claimResizeRef = useRef<(() => void) | null>(null);
   /** The claim a gesture inside the pane makes — see `takeOwnership`. */
   const takeOwnershipRef = useRef<(() => void) | null>(null);
+  /**
+   * This viewer's identity in the window's size-lead registry (./paneSizeLead),
+   * and whether it held the lead when its terminal was last torn down. Both
+   * outlive the connect effect: a rebuild (a restart, the font arriving, the
+   * grid settling) is the same viewer, and must come back holding the lead it
+   * had rather than leaving the pane leaderless for another viewer to claim.
+   */
+  const leadTokenRef = useRef<object>({});
+  const heldLeadRef = useRef(false);
   const visibilityRef = useRef<{
     show: (afterFlush?: () => void) => void;
     park: () => void;
@@ -844,8 +884,8 @@ export function AgenticTerminal({
 
   // Only the focused pane's cursor blinks. A blinking cursor repaints its pane
   // twice a second forever, and on a wall of a dozen idle terminals that was
-  // the renderer's biggest standing cost (CPU diet, 2026-08-22). The unfocused
-  // panes keep a steady cursor, so where the agent is typing stays visible.
+  // the renderer's biggest standing cost (CPU diet, 2026-08-22). Unfocused
+  // panes draw no cursor at all — see `cursorInactiveStyle` below.
   useEffect(() => {
     const term = termRef.current;
     if (term) term.options.cursorBlink = focused;
@@ -943,6 +983,10 @@ export function AgenticTerminal({
       // Only the focused pane blinks — see the `focused` effect above.
       cursorBlink: focusedRef.current,
       cursorStyle: "bar",
+      // xterm's default for a terminal without keyboard focus is a hollow box.
+      // On a wall of panes that box sat in every idle prompt and read as a
+      // stray glyph; the agent's own prompt already marks where input goes.
+      cursorInactiveStyle: "none",
       scrollback: 10000,
       // Required by the Unicode 11 width provider below.
       allowProposedApi: true,
@@ -1566,6 +1610,18 @@ export function AgenticTerminal({
     let owned = false;
     /** Is this pane showing a geometry another viewer chose? See reclaimOnGesture. */
     let displaced = false;
+    /*
+     * This viewer's place among the pane's viewers in THIS window. The server
+     * settles who sizes the pane between windows; inside one, a second viewer
+     * of the same pane (the office's pane window over the IDE grid) would
+     * otherwise take the size back on every gesture and the two would trade it
+     * every GESTURE_RECLAIM_MS. See ./paneSizeLead.
+     */
+    const leadKey = sizeLeadKey(workspaceId, name);
+    const leadToken = leadTokenRef.current;
+    if (sizeLead || heldLeadRef.current) takeSizeLead(leadKey, leadToken);
+    heldLeadRef.current = false;
+    const mayLead = () => mayLeadSize(leadKey, leadToken);
 
     /*
      * May this pane take the shared size without being asked to?
@@ -1585,6 +1641,7 @@ export function AgenticTerminal({
      * that had just been made to fill the window (2026-08-25).
      */
     const viewerMayOwn = () =>
+      mayLead() &&
       activeRef.current &&
       (typeof document === "undefined" ||
         typeof document.hasFocus !== "function" ||
@@ -1802,9 +1859,15 @@ export function AgenticTerminal({
      * desktop shell's answer to that question can lag the truth, and a click
      * that is not allowed to take the pane back leaves the user with no way
      * to do so at all.
+     *
+     * It also makes this viewer the pane's lead in this window, so the view
+     * the user just pressed keeps the size instead of another viewer of the
+     * same pane here taking it straight back on the next mouse move.
      */
     const takeOwnership = () => {
-      if (activeRef.current) sendResize(true);
+      if (!activeRef.current) return;
+      takeSizeLead(leadKey, leadToken);
+      sendResize(true);
     };
     takeOwnershipRef.current = takeOwnership;
     /**
@@ -1824,7 +1887,10 @@ export function AgenticTerminal({
      */
     let lastGestureReclaimAt = 0;
     const reclaimOnGesture = () => {
-      if (!displaced || !activeRef.current) return;
+      // Another viewer of this pane in this very window holds it: the gesture
+      // is as much that viewer's as this one's, and taking the size back here
+      // is what made the two trade it forever.
+      if (!displaced || !activeRef.current || !mayLead()) return;
       const now = Date.now();
       if (now - lastGestureReclaimAt < GESTURE_RECLAIM_MS) return;
       lastGestureReclaimAt = now;
@@ -1833,6 +1899,19 @@ export function AgenticTerminal({
     window.addEventListener("pointermove", reclaimOnGesture, { passive: true });
     window.addEventListener("pointerdown", reclaimOnGesture, true);
     window.addEventListener("keydown", reclaimOnGesture, true);
+    /*
+     * The lead viewer went away (the office's pane window closed): the size is
+     * this window's to set again, and this pane's tile is what it shows. Its
+     * own refits stayed quiet while it only watched, so nothing else would
+     * hand the agent this tile's size back.
+     */
+    const stopLeadWatch = onSizeLeadReleased(leadKey, () => {
+      if (disposed) return;
+      // A claim, not a request: the lead that just left was THIS window's,
+      // closed from here, and a request would be answered with the size the
+      // departed viewer chose — whatever the desktop shell says about focus.
+      sendResize(activeRef.current);
+    });
 
     /*
      * The size this socket connects with. The tile's own measurement when there
@@ -2211,6 +2290,13 @@ export function AgenticTerminal({
       } catch {
         /* ignore */
       }
+      // After the socket, so this viewer is gone before another one of the
+      // pane here takes the size back.
+      stopLeadWatch();
+      // Remembered for a rebuild of this same viewer; forgotten on unmount,
+      // when nothing reads it again.
+      heldLeadRef.current = holdsSizeLead(leadKey, leadToken);
+      releaseSizeLead(leadKey, leadToken);
       // Before the terminal: frees this pane's WebGL context slot.
       renderer.dispose();
       term.dispose();
@@ -2510,14 +2596,58 @@ export function AgenticTerminal({
     return () => container.removeEventListener("paste", onPaste, true);
   }, [attach, name]);
 
+  /*
+   * A primary press anywhere on the pane makes it the pane in use.
+   *
+   * The frame's own bubbling handler never saw presses INTO a coding agent's
+   * output: while the CLI tracks the mouse, ./terminalMouseSelection turns a
+   * plain press into a selection press, and xterm's selection service then
+   * stops it from propagating (so the CLI does not get it). The pane stayed
+   * unselected — no highlight, prompts aimed at the previous pane. The
+   * terminal region therefore also listens in the capture phase, which runs
+   * before any of xterm's listeners; the event identity keeps the two
+   * handlers from doing the work twice for one press.
+   */
+  const handledPress = useRef<Event | null>(null);
+  const pressPane = (event: React.MouseEvent) => {
+    if (event.button !== 0 || handledPress.current === event.nativeEvent) return;
+    handledPress.current = event.nativeEvent;
+    onFocus?.();
+    takeOwnershipRef.current?.();
+  };
   const chrome = PANE_CHROME[appearance];
+  const minimal = headerMode === "minimal";
+  const tile = PANE_TILE[appearance];
+  const headerProps = {
+    name,
+    workspaceId,
+    promptCount,
+    agent: agent ?? "",
+    agentLogoUrl,
+    displayName,
+    status: visibleStatus,
+    appearance,
+    arranging,
+    maximized,
+    addDisabled: splitDisabled,
+    onArrangeStart,
+    onActivate: () => { onFocus?.(); takeOwnershipRef.current?.(); },
+    onToggleMaximize: toggleMaximizeAndFocus,
+    onAdd: onSplit ? (direction: SplitDirection) => onSplit(direction) : undefined,
+    onClose,
+    onRename,
+    onOpenConversation: () => setHistoryOpen(true),
+    onOpenChat,
+    onRestart,
+    onFork,
+    branch,
+    computerName,
+    placementItems,
+  };
 
   return (
     <div
-      onMouseDown={() => {
-        onFocus?.();
-        takeOwnershipRef.current?.();
-      }}
+      onMouseDown={pressPane}
       {...dragHandlers}
       className={cn(
         // One quiet border per pane; the focused one carries the workspace's
@@ -2531,8 +2661,9 @@ export function AgenticTerminal({
         // click landed, and the ring around it faded in over the next 150 ms.
         // On a grid where the focused pane is the one standing accent, that
         // read as a flicker rather than as a pane taking focus.
-        "relative flex h-full w-full flex-col overflow-hidden border backdrop-blur-[4px]",
-        headerMode === "compact" ? "rounded-2xl" : "rounded-lg",
+        "relative flex h-full w-full flex-col overflow-hidden backdrop-blur-[4px]",
+        headerMode === "none" ? "border-0" : "border",
+        headerMode === "compact" ? "rounded-2xl" : headerMode === "none" || minimal ? "rounded-none" : "rounded-lg",
         "transition-[box-shadow,border-color,opacity] duration-150 ease-out motion-reduce:transition-none",
         // Focus steps the RIM one notch, from the structural hairline to
         // `--border-strong`, and stops there. It used to add a translucent
@@ -2541,7 +2672,7 @@ export function AgenticTerminal({
         // call-sign plate, the accent hairline under it, the visible action
         // cluster). A rim is the second separation device, never the first,
         // and a shadow belongs only to something that floats.
-        focused && "border-border-strong",
+        focused && !minimal && "border-border-strong",
         // Being carried, and "a prompt just landed here", are the two states
         // that must be findable across a wall of twelve. They get the fill —
         // a solid `--primary` edge plus the sanctioned focus ring — because
@@ -2572,39 +2703,28 @@ export function AgenticTerminal({
          * red when it failed, unchanged while it is connecting or live. See
          * `PANE_CHROME.edge` for why only those two states are marked.
          */
+        //
+        // A minimal tile paints its focused edge here too: the signal hue is a
+        // per-appearance literal (`PANE_TILE`), not a class, for the same
+        // reason the resting edge is. The pane the reader clicked into must be
+        // findable at a glance across a full grid, so its edge is doubled by an
+        // inner line of the same hue — see the focus ring at the end of the
+        // frame for why that line is its own layer.
         borderColor:
-          focused || dragging || justDelivered
+          dragging || justDelivered
             ? undefined
-            : chrome.edge[visibleStatus],
+            : minimal
+              ? focused && markFocus ? tile.focus : tile.edge[visibleStatus]
+              : focused
+                ? undefined
+                : chrome.edge[visibleStatus],
       }}
+      data-pane-style={minimal ? "minimal" : undefined}
       data-testid={`agentic-pane-${name}`}
     >
-      {headerMode === "compact" ? <WorkspaceTerminalHeader
-        name={name}
-        workspaceId={workspaceId}
-        promptCount={promptCount}
-        agent={agent ?? ""}
-        agentLogoUrl={agentLogoUrl}
-        displayName={displayName}
-        status={visibleStatus}
-        appearance={appearance}
-        arranging={arranging}
-        maximized={maximized}
-        addDisabled={splitDisabled}
-        onArrangeStart={onArrangeStart}
-        onActivate={() => { onFocus?.(); takeOwnershipRef.current?.(); }}
-        onToggleMaximize={toggleMaximizeAndFocus}
-        onAdd={onSplit ? (direction) => onSplit(direction) : undefined}
-        onClose={onClose}
-        onRename={onRename}
-        onOpenConversation={() => setHistoryOpen(true)}
-        onOpenChat={onOpenChat}
-        onRestart={onRestart}
-        onFork={onFork}
-        branch={branch}
-        computerName={computerName}
-        placementItems={placementItems}
-      /> : <PaneHeader
+      {headerMode === "compact" ? <WorkspaceTerminalHeader {...headerProps} />
+      : minimal ? <WorkspaceTerminalHeader {...headerProps} variant="tile" focused={focused && markFocus} />
+      : headerMode === "none" ? null : <PaneHeader
         workspaceId={workspaceId}
         status={visibleStatus}
         statusDetail={statusDetail}
@@ -2656,6 +2776,7 @@ export function AgenticTerminal({
       */}
       <div
         ref={terminalRegionRef}
+        onMouseDownCapture={pressPane}
         id={terminalRegionId}
         className={cn(
           "relative min-h-0 flex-1 overflow-hidden px-1.5 pb-0.5 pt-0.5",
@@ -2757,6 +2878,21 @@ export function AgenticTerminal({
             )}
           </div>
         </div>
+      )}
+      {/*
+        The focused tile's inner edge line, drawn ABOVE everything in the pane.
+        As an inset shadow on the frame it sat underneath the title row, whose
+        own translucent ground dimmed it: the blue read darker along the top
+        than down the terminal (maintainer, 2026-09-30). One layer on top keeps
+        the line the same brightness all the way round.
+      */}
+      {minimal && focused && markFocus && !dragging && !justDelivered && (
+        <div
+          aria-hidden="true"
+          data-testid={`pane-focus-ring-${name}`}
+          className="pointer-events-none absolute inset-0 z-[45]"
+          style={{ boxShadow: `inset 0 0 0 1px ${tile.focus}` }}
+        />
       )}
     </div>
   );

@@ -1,6 +1,6 @@
 """Latency instrumentation for the voice hot path (Wave 0 — omni-latency suite).
 
-Design constraints (CLAUDE.md AP-9 / AP-18):
+Design constraints (AGENTS.md AP-9 / AP-18):
   * ``perf_counter`` marks are free; emission is fire-and-forget on the EventBus
     so the hot path never ``await``s telemetry.
   * A disabled tracker is a near-zero no-op (guarded before any allocation).

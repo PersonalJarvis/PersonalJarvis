@@ -772,7 +772,7 @@ def test_no_open_workspace_changes_nothing() -> None:
 )
 def test_recall_of_the_users_past_delegates_as_private_data(utterance: str) -> None:
     """Explicit recall of the user's own past is strong evidence: only the
-    orchestrator (Wiki memory / awareness episodes) can answer it."""
+    orchestrator (Wiki memory) can answer it."""
     plan = plan_turn(utterance)
     assert plan.path is TurnPath.ORCHESTRATOR
     assert TurnReason.PRIVATE_DATA in plan.reasons

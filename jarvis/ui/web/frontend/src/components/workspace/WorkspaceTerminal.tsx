@@ -21,6 +21,7 @@ import {
 } from "../agentic/terminalThemes";
 import { useThemeValue } from "@/hooks/useTheme";
 import { TERMINAL_FONT_STACK, syncTerminalFont } from "@/lib/terminalFont";
+import { requestConnect } from "@/lib/connectBudget";
 import {
   activateTerminalLink,
   TERMINAL_OSC_LINK_HANDLER,
@@ -122,6 +123,7 @@ export function WorkspaceTerminal({
     }
 
     let ws: WebSocket | null = null;
+    let cancelConnect: () => void = () => {};
     let disposed = false;
     let everLive = false;
 
@@ -154,63 +156,74 @@ export function WorkspaceTerminal({
       if (agentName) params.agent = agentName;
       else if (installName) params.install = installName;
 
-      ws = new WebSocket(buildUrl(paneKey, params));
-      ws.onopen = () => {
-        setStatus("connecting");
-        // Push the ACTUAL pane size to the PTY now that we can send. The spawn
-        // used a best-effort size (the mount-time fit often runs before the
-        // grid cell is measured), and resizes fired while the socket was still
-        // connecting were dropped — so without this the agent's full-screen TUI
-        // keeps drawing at the wrong dimensions (cramped / clipped on the
-        // right). A second deferred fit catches any late grid layout.
-        sendResize();
-        requestAnimationFrame(sendResize);
-      };
-      ws.onmessage = (ev) => {
-        let msg: { t?: string; d?: string; code?: number; message?: string };
+      // Workspace panes share the same connection budget as the app and IDE
+      // sockets. A grid mounting at once must not bypass the wake-storm cap.
+      cancelConnect = requestConnect(() => {
+        if (disposed) return;
         try {
-          msg = JSON.parse(ev.data as string);
+          ws = new WebSocket(buildUrl(paneKey, params));
         } catch {
+          setStatus("error");
+          setError("Connection to the terminal failed.");
           return;
         }
-        if (msg.t === "o") term.write(msg.d ?? "");
-        else if (msg.t === "ready") {
-          everLive = true;
-          setStatus("live");
-          term.focus();
-        } else if (msg.t === "exit") {
-          setStatus("exited");
-          term.write(`\r\n\x1b[33m[process exited: ${msg.code ?? "?"}]\x1b[0m\r\n`);
-        } else if (msg.t === "error") {
+        ws.onopen = () => {
+          setStatus("connecting");
+          // Push the ACTUAL pane size to the PTY now that we can send. The spawn
+          // used a best-effort size (the mount-time fit often runs before the
+          // grid cell is measured), and resizes fired while the socket was still
+          // connecting were dropped — so without this the agent's full-screen TUI
+          // keeps drawing at the wrong dimensions (cramped / clipped on the
+          // right). A second deferred fit catches any late grid layout.
+          sendResize();
+          requestAnimationFrame(sendResize);
+        };
+        ws.onmessage = (ev) => {
+          let msg: { t?: string; d?: string; code?: number; message?: string };
+          try {
+            msg = JSON.parse(ev.data as string);
+          } catch {
+            return;
+          }
+          if (msg.t === "o") term.write(msg.d ?? "");
+          else if (msg.t === "ready") {
+            everLive = true;
+            setStatus("live");
+            term.focus();
+          } else if (msg.t === "exit") {
+            setStatus("exited");
+            term.write(`\r\n\x1b[33m[process exited: ${msg.code ?? "?"}]\x1b[0m\r\n`);
+          } else if (msg.t === "error") {
+            setStatus("error");
+            setError(msg.message ?? "terminal error");
+          }
+        };
+        ws.onerror = () => {
           setStatus("error");
-          setError(msg.message ?? "terminal error");
-        }
-      };
-      ws.onerror = () => {
-        setStatus("error");
-        setError("Connection to the terminal failed.");
-      };
-      ws.onclose = (ev) => {
-        if (everLive) {
-          setStatus("exited");
-        } else if (!disposed) {
-          // Closed during the handshake (e.g. 4401 auth) — surface it honestly
-          // instead of hanging on "connecting" forever (mirrors PtyTerminal).
-          setStatus("error");
-          setError((e) =>
-            e ??
-            (ev.code === 4401
-              ? "Terminal authorization failed — reopen to retry."
-              : `Terminal connection closed (code ${ev.code || "?"}).`),
-          );
-        }
-      };
+          setError("Connection to the terminal failed.");
+        };
+        ws.onclose = (ev) => {
+          if (everLive) {
+            setStatus("exited");
+          } else if (!disposed) {
+            // Closed during the handshake (e.g. 4401 auth) — surface it honestly
+            // instead of hanging on "connecting" forever (mirrors PtyTerminal).
+            setStatus("error");
+            setError((e) =>
+              e ??
+              (ev.code === 4401
+                ? "Terminal authorization failed — reopen to retry."
+                : `Terminal connection closed (code ${ev.code || "?"}).`),
+            );
+          }
+        };
 
-      term.onData((data) => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ t: "i", d: data }));
-        }
-      });
+        term.onData((data) => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ t: "i", d: data }));
+          }
+        });
+      }, 0);
     }
 
     window.addEventListener("resize", sendResize);
@@ -219,6 +232,7 @@ export function WorkspaceTerminal({
 
     return () => {
       disposed = true;
+      cancelConnect();
       window.removeEventListener("resize", sendResize);
       ro.disconnect();
       disposeFontSync();

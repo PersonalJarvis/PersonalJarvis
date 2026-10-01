@@ -5,7 +5,7 @@
 # Boots the FastAPI + WebSocket backend and serves the prebuilt browser UI, so a
 # user reaches the full Router-Brain experience through any browser without a
 # desktop install. NO desktop extras (tray, overlay, hotkey, local voice) — those
-# are opt-in and useless in a headless container (see CLAUDE.md, cloud-first
+# are opt-in and useless in a headless container (see AGENTS.md, cloud-first
 # doctrine). Bring your own provider keys via environment variables.
 #
 #   docker build -t personal-jarvis .

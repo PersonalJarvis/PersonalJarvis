@@ -1,7 +1,7 @@
 """Transcript cleanup filter — ``jarvis.plugins.stt.transcript_filter``.
 
 The German and Spanish strings in this file are the speech under test: a filter
-that removes German hesitation sounds cannot be tested in English (CLAUDE.md §1,
+that removes German hesitation sounds cannot be tested in English (AGENTS.md §1,
 allowed category 4).
 """
 from __future__ import annotations

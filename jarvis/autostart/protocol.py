@@ -1,6 +1,6 @@
 """Autostart-at-login seam — protocol + wire types (the 7th cross-platform port).
 
-Login autostart follows the established "six ports" pattern (CLAUDE.md →
+Login autostart follows the established "six ports" pattern (AGENTS.md →
 *Cross-platform desktop features*): one ``Protocol`` + one per-OS implementation
 + a capability factory + a graceful logged null-fallback (AD-5/AD-6).
 

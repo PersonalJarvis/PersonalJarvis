@@ -1,5 +1,40 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Connected computers that run Windows (2026-09-30, T3)
+
+This one is about the REMOTE side: the machine Jarvis connects to under
+Computers, whatever OS Jarvis itself runs on. Linux and macOS computers take
+the POSIX paths they always took. A Windows computer with the OpenSSH server
+runs commands in `cmd.exe` (or PowerShell as its `DefaultShell`), which runs
+no POSIX shell and mangles its own command line: every non-ASCII letter
+arrived as two U+FFFD characters, a line break ends the command, and the line
+stops at 8 191 characters. `jarvis/computers/remote_os.py` asks each computer
+once (one `echo` that sh, cmd and PowerShell answer differently) and then:
+
+| Feature | Linux / macOS computer | Windows computer |
+|---|---|---|
+| Health check and facts | POSIX probe | PowerShell probe on stdin, same sections; no load average |
+| Planting the app's key (password login) | `~/.ssh/authorized_keys` | PowerShell: `administrators_authorized_keys` for admins, ACL by SID (works on a German Windows), UTF-8 without BOM |
+| Readiness and install | tmux, git, Node, CLIs; apt/dnf/yum/apk/pacman/brew | git (Git for Windows), Node, CLIs; winget and npm; "admin" instead of root |
+| Society agent's CLI turn | `exec env … <cli>` on the command line; cancel = hang up | system prompt uploaded as a file, CLI started by a Git Bash launcher uploaded over SFTP; cancel ends the launcher's process tree with `taskkill /T` first, because hanging up ends only cmd and bash and left the CLI running (measured) |
+| Society agent's shell tool | sh in `~/jarvis-agents/<id>` | Git Bash in the same folder; PowerShell when Git for Windows is missing |
+| IDE panes | tmux session; survives app close and network loss, re-attached | no tmux: the agent runs in the SSH terminal (ConPTY) and ends with the channel; a plain terminal is PowerShell |
+| IDE folder sync, conversation copy | POSIX scripts | the same scripts in Git Bash; SFTP paths as `/C:/…` |
+| Keep working when this PC closes | offered | not offered (and refused on quit): its agents would stop with the connection |
+
+Git for Windows is the one prerequisite beyond the SSH server, and every
+feature that needs it says so in one sentence. Verified live against a
+Windows 11 Pro VM (German locale): facts, readiness, a CLI start through the
+launcher, a cancelled turn leaving no process behind, an agent shell command
+with non-ASCII output, a PowerShell pane (closing it, or the app, ends its
+program there), and a git folder sent over and brought back with an edit made
+there. Covered
+by `tests/unit/computers/test_windows_remote.py` against a scripted Windows
+SSH server. Not verified live: planting the key with a password (unit-tested
+only; the VM already had the key), a Windows computer whose `DefaultShell` is
+PowerShell (handled by prefixing `&`, unit-tested only), the winget install
+leg, and a Windows Server install without winget.
+
 ## Persistent Agentic IDE terminals (2026-09-28, T3)
 
 Coding-agent panes now live in a separate PTY host process
@@ -280,7 +315,7 @@ regressions in `tests/unit/plugins/tool/test_delegate_to_agent.py`. These are
 headless tests on the available host, not evidence of native macOS/Linux or
 paid-provider voice execution.
 
-**Binding rule:** [`CLAUDE.md`](../CLAUDE.md) §3 *"OS feature parity — macOS
+**Binding rule:** [`AGENTS.md`](../AGENTS.md) §3 *"OS feature parity — macOS
 and Linux are first-class"*. Every feature ships working on Windows, macOS,
 and Linux (desktop AND headless) in the same change. A Windows-only
 implementation may land only with a capability gate, honest degradation, and
@@ -553,8 +588,6 @@ experiences today.
 | P-29 | Low | Subscription voice | The dedicated ChatGPT-subscription voice login is an interactive browser flow, so a headless Linux host — and a graphical Linux desktop that ships no terminal emulator able to host the login for its full lifetime — can never CONNECT the profile there (an existing login still reports ready and calls work through the browser voice bridge) | `jarvis/codex_app_server.py::_login_required_state`, `_linux_login_terminal_missing`, `start_codex_subscription_login`, `jarvis/codex_auth.py::_LINUX_LOGIN_TERMINALS` | Both cases report the same `lifecycle_unavailable` truth on every surface (card, activation, voice-mode, Test), each with its own actionable reason — "run Jarvis on a desktop" or "install one of these terminals" — and never an enabled Connect button that can only produce an error toast |
 | P-24 | Medium | Dictation shortcut | The global dictation/call shortcut needs `pynput` on Linux/X11, and `pynput` hard-requires `evdev` — which is published **source-only** (verified on PyPI 2026-07-28: evdev 1.9.3 ships an sdist and no wheels) and compiles against the kernel headers. Putting it in `[full]` would break the one advertised install path on a stock `python:3.11-slim`, so it is the opt-in `[desktop-linux]` extra instead. Wayland is a separate, unfixable-by-install case: the compositor owns global shortcuts by design (the XDG `GlobalShortcuts` portal lets the *compositor* assign the keys, and no wlroots compositor implements it at all) | `pyproject.toml` (`desktop-linux`), `jarvis/platform/probes.py::has_hotkey`, `jarvis/trigger/backends/noop.py::explain_unavailable` | X11 without the extra: no global shortcut, and the log/UI now names the actual cause and the exact `pip install` that fixes it (it used to blame Wayland unconditionally). Wayland: no global shortcut at all — bind a compositor shortcut to `jarvis api dictation start`. On both, dictation still works from the Jarvis Bar, the Dictation view and the CLI, and voice still works via the wake word |
 | P-25 | Medium | Dictation insertion | Pasting the transcript into another application is blocked, silently, in three OS-specific situations: Windows UIPI when the foreground window is elevated and Jarvis is not (`SendInput` reports success and the input is discarded), macOS Secure Input while a password field is focused, and Wayland outright (no synthetic input). Detection exists for the first two; Wayland is refused up front. Two further silent failures are Windows-only in their FIX: a chord the target does not bind as "paste" (an xterm.js terminal in a Tauri/Electron app swallows Ctrl+V as `^V`), and a target that reads the clipboard late (an async WebView bridge on a busy machine) after the 120 ms restore timer had already put the previous clipboard back | `jarvis/dictation/insert.py::describe_target`, `_insert_windows_verified`, `jarvis/platform/clipboard_offer.py`, `jarvis/platform/input_isolation.py::windows_foreground_window_is_elevated`, `macos_secure_input_enabled` | All three blocks degrade to the SAME honest outcome instead of silence: the transcript is left on the clipboard, the result is reported as `clipboard_only`, and the bar plus the Dictation view say why and that Ctrl+V will paste it. **Windows** additionally offers the text with delayed rendering and watches who reads it: on a host without a clipboard watcher (no Remote Desktop client, clipboard history off — the default) a paste is proven by the target's read, silence cascades Ctrl+V → Ctrl+Shift+V → Shift+Insert → typing (line breaks as Shift+Enter), and the route is remembered per executable; on a host with a watcher the offer is blind, ONE chord goes out (never a guessed second paste) and the previous clipboard is restored after a 2 s grace only if the dictated text is still on it. **macOS / Linux X11**: plain chord + 120 ms timer restore, unchanged — no delayed-rendering equivalent exists there (NSPasteboard promises and X11 selections notify the owner too, but are a follow-up). macOS Secure Input detection is implemented but has not been verified on real hardware from this machine |
-| P-02 | Low | Awareness | Idle detection has no Wayland backend (Windows GetLastInputInfo, macOS Quartz, Linux X11 `xprintidle` all exist since 2026-07-16); Wayland exposes no global idle time without portal support | `jarvis/awareness/watchers/idle.py` | Wayland: one honest log line, watcher does not start |
-| P-03 | Low | Awareness | Window-focus watcher has no Wayland backend (Windows event hook, macOS NSWorkspace, Linux X11 polling all exist since 2026-07-16); Wayland hides the foreground window by design | `jarvis/awareness/watchers/window.py` | Wayland: one honest log line, watcher does not start |
 | P-04 | Medium | CU typing | Linux desktop Unicode text input needs the system `xdotool` binary (pip cannot install it); the pyautogui fallback used on Linux drops non-ASCII chars (umlauts, CJK, emoji) without it | `jarvis/cu/actuate/posix.py::type_text`, `jarvis/plugins/tool/type_text.py` | With `xdotool` (installer provisions it since 2026-07-15): fine. Without, the drop is now reported HONESTLY (2026-07-23): an all-non-ASCII text fails with an actionable "install xdotool" error, and a mixed text types its ASCII portion and warns that the rest was dropped — no more silent success |
 | P-05 | Low | Wiki | Wiki search hard-fails (RuntimeError with actionable apt/pysqlite3 remediation) on distros whose system SQLite lacks FTS5 | `jarvis/memory/wiki/fts_index.py:279` | `python:3.11-slim` and macOS ship FTS5 — only exotic/old distros affected; message is honest. Decision 2026-07-16: kept as honest hard error — a pysqlite3 shim would rewire seven wiki modules for an exotic audience |
 | P-07 | Low | Audio | No macOS/Linux host-API preference exists (the Windows-name-driven tables are intentionally inert off Windows — documented in-code since 2026-07-16), and headset-name heuristics are Windows-centric | `jarvis/audio/player.py`, `jarvis/audio/capture.py` | Device auto-pick falls back to OS default order — works, less clever than on Windows |
@@ -663,7 +696,7 @@ procedural draft grants no tool permission and activates no registry triggers.
 
 - Fixing a gap: remove its row (git history keeps the record).
 - Landing a new Windows-only implementation: add a row (required by
-  CLAUDE.md §3) with impact, evidence, and off-Windows behavior.
+  AGENTS.md §3) with impact, evidence, and off-Windows behavior.
 - Re-audit cadence: rerun the five-area sweep after any release that touches
   platform seams (`jarvis/platform/`, `jarvis/cu/actuate/`, `jarvis/vision/`,
   `jarvis/audio/`, `jarvis/missions/isolation/`).

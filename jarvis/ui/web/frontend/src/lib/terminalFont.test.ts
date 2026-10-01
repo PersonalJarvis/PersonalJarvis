@@ -18,6 +18,7 @@ import {
   alignTerminalCells,
   syncTerminalFont,
   terminalFontSettled,
+  warmTerminalFont,
   whenTerminalFontReady,
 } from "./terminalFont";
 
@@ -426,6 +427,39 @@ describe("whenTerminalFontReady", () => {
     }
   });
 
+  it("asks for the weight it waits on, so a Medium body cut does not sit out the timeout", async () => {
+    // Every weight is declared, only the ones asked for by name get loaded —
+    // the way a browser treats @font-face faces nothing has drawn with yet.
+    const requested = new Set<string>();
+    const listeners = new Set<() => void>();
+    const weightOf = (spec: string) => spec.trim().split(/\s+/)[0];
+    const set = {
+      check: vi.fn((spec: string) => requested.has(weightOf(spec))),
+      load: vi.fn((spec: string) => {
+        requested.add(weightOf(spec));
+        return Promise.resolve([]);
+      }),
+      addEventListener: (type: string, fn: () => void) => {
+        if (type === "loadingdone") listeners.add(fn);
+      },
+      removeEventListener: (_type: string, fn: () => void) => {
+        listeners.delete(fn);
+      },
+      [Symbol.iterator]: () => [{ family: '"JetBrains Mono"' }][Symbol.iterator](),
+    } as unknown as FontFaceSet;
+    vi.useFakeTimers();
+    try {
+      let resolved = false;
+      void whenTerminalFontReady(15, { fonts: set }).then(() => {
+        resolved = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(resolved).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("gives up after the bounded wait, so an offline pane still opens", async () => {
     vi.useFakeTimers();
     try {
@@ -453,5 +487,24 @@ describe("whenTerminalFontReady", () => {
     });
     await Promise.resolve();
     expect(resolved).toBe(true);
+  });
+});
+
+describe("warmTerminalFont", () => {
+  it("asks for every weight a pane draws with, ahead of any pane", () => {
+    const load = vi.fn(() => Promise.resolve([]));
+    const original = Object.getOwnPropertyDescriptor(document, "fonts");
+    Object.defineProperty(document, "fonts", { configurable: true, value: { load } });
+    try {
+      warmTerminalFont(15);
+      const specs = load.mock.calls.map((call) => String((call as unknown[])[0]));
+      expect(specs).toEqual([
+        expect.stringMatching(/^500 15px "JetBrains Mono"$/),
+        expect.stringMatching(/^700 15px "JetBrains Mono"$/),
+      ]);
+    } finally {
+      if (original) Object.defineProperty(document, "fonts", original);
+      else delete (document as unknown as { fonts?: unknown }).fonts;
+    }
   });
 });

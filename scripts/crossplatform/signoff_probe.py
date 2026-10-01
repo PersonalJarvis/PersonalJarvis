@@ -29,7 +29,7 @@ Usage::
 missing capability) it prints what is needed and exits cleanly — it never fakes a
 result and never raises.
 
-Output language: English (CLAUDE.md Output-Language Policy).
+Output language: English (AGENTS.md Output-Language Policy).
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ import argparse
 import sys
 from dataclasses import dataclass
 
-# cp1252 is the Windows console default (CLAUDE.md "Windows specifics"); this
+# cp1252 is the Windows console default (AGENTS.md "Windows specifics"); this
 # script prints check-mark / arrow glyphs, so force UTF-8 to avoid a
 # UnicodeEncodeError on the maintainer's box.
 try:  # pragma: no cover - depends on the console stream type

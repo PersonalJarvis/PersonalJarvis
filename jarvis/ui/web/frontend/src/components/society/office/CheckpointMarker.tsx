@@ -17,10 +17,12 @@ import { cachedCanvasTexture } from "./canvasMaterials";
 import type { Checkpoint, CheckpointKind } from "./officeLayout";
 import { CHECKPOINT_GOLD } from "./officePalette";
 
-export type CheckpointIcon = "plus" | "list" | "team" | "shirt" | "star" | "coffee" | "updown" | "target";
+export type CheckpointIcon = "spawn" | "plus" | "list" | "team" | "shirt" | "star" | "coffee" | "updown" | "target";
 
 /** Stroke-only icons in a 24 × 24 box (round caps and joins). */
 export const CHECKPOINT_ICON_PATHS: Record<CheckpointIcon, string> = {
+  // The spawn point: a plus between two arcs, a portal opening.
+  spawn: "M12 8.5v7M8.5 12h7M5.2 7.5A8 8 0 0 1 18.8 7.5M18.8 16.5A8 8 0 0 1 5.2 16.5",
   plus: "M12 5v14M5 12h14",
   list: "M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01",
   team: "M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5M16.5 11a2.5 2.5 0 1 0 0-5M18 14.5c2 .6 3.5 2.4 3.5 5",
@@ -35,7 +37,7 @@ export const CHECKPOINT_ICON_PATHS: Record<CheckpointIcon, string> = {
 
 /** The icon each checkpoint wears, on its floor token and in the reception's list of places. */
 export const CHECKPOINT_ICON: Record<CheckpointKind, CheckpointIcon> = {
-  create: "plus", manage: "list", team: "team", wardrobe: "shirt", lead: "star", break: "coffee", elevator: "updown", mission: "target",
+  spawn: "spawn", launch: "spawn", create: "plus", manage: "list", team: "team", wardrobe: "shirt", lead: "star", break: "coffee", elevator: "updown", mission: "target",
 };
 
 const TOKEN_RADIUS = 0.36;

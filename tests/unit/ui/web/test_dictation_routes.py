@@ -780,7 +780,7 @@ def _described_strings(node: Any) -> Iterator[str]:
 
 
 def test_no_openapi_description_hardcodes_an_assistant_name(app: FastAPI) -> None:
-    """CLAUDE.md §4: a user-visible string never carries a fixed brand.
+    """AGENTS.md §4: a user-visible string never carries a fixed brand.
 
     These descriptions are user-visible twice over — the /docs page and the
     generated ``jarvis api dictation --help`` — so a sentence naming the

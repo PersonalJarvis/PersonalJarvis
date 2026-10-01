@@ -18,7 +18,7 @@ import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/agentic/controls";
 import { Panel, StatusDot } from "@/components/extensions/primitives";
-import { Register, StepFooter, StepSection } from "@/components/onboarding/primitives";
+import { Register, StepFooter, StepSection } from "@/components/ui/editorial";
 import { switchBrainProvider } from "@/hooks/useProviders";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";

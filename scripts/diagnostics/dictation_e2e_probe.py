@@ -59,7 +59,7 @@ Exit codes
 3   nothing failed but something stayed NOT_PROVEN.
 
 This is a diagnostic, not a product surface, so it deliberately lives outside
-the CLI-first REST contract (CLAUDE.md §5). Cross-platform by capability probe:
+the CLI-first REST contract (AGENTS.md §5). Cross-platform by capability probe:
 Windows, macOS and Linux/X11 press the key; Wayland and headless hosts refuse
 with a reason instead of pretending.
 """

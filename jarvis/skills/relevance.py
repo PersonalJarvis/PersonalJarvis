@@ -245,7 +245,7 @@ def normalize_text(text: str) -> str:
 #: Cyrillic, Greek, Hebrew, Arabic or CJK, so every fuzzy name lookup below
 #: failed closed for those scripts and a skill authored by voice in such a
 #: language was reachable only by its exact key — the very BUG-158 failure,
-#: left open for most of the world. All locales are equal (CLAUDE.md §1).
+#: left open for most of the world. All locales are equal (AGENTS.md §1).
 _NAME_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
 

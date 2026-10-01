@@ -880,7 +880,12 @@ async def _switch_subagent(
             "error_kind": "unknown_provider",
             "error": (f"{provider!r} is not a {brand}-capable provider. Available: {known}."),
         }
-    has_credential = bool(cfg_mod.get_jarvis_agent_secret(canon))
+    # Keyless local providers (Ollama, local OpenAI-compatible servers) have
+    # no Agent key slot at all, so demanding one bricks the only setup a
+    # keyless user has (AP-21/22).
+    has_credential = canon in _NO_CREDENTIAL_PROVIDERS or bool(
+        cfg_mod.get_jarvis_agent_secret(canon)
+    )
     if canon == "claude-api" and not has_credential:
         try:
             from jarvis.missions.isolation.env import read_live_claude_oauth_token

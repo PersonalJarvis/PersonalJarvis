@@ -438,7 +438,15 @@ class CodingSupervision:
         if row["state"] != "running" or row["revision"] != revision:
             return
         incoming = IncomingMessage(**row["outbox"])
-        await service.send(row["session_id"], incoming.prompt, incoming=incoming, direct_user=False)
+        routine_session = row["session_id"].startswith(f"society:{row['agent_id']}:routine:")
+        send_kwargs = {"incoming": incoming, "direct_user": False}
+        if routine_session:
+            send_kwargs["routine_run"] = True
+        await service.send(
+            row["session_id"],
+            incoming.prompt,
+            **send_kwargs,
+        )
         row.update(outbox=None, turns=row["turns"] + 1)
         if row["revision"] == revision and row["state"] == "running":
             row["awaiting_action"] = True

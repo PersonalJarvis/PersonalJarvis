@@ -12,7 +12,7 @@ the ack exists to bridge:
   to pass.
 
 The gate now validates against the turn's ALREADY-resolved output language
-through ``jarvis.core.turn_language`` (CLAUDE.md §1: one resolver for every
+through ``jarvis.core.turn_language`` (AGENTS.md §1: one resolver for every
 layer), which fails open on anything indeterminate and covers de/en/es equally.
 A genuine, high-confidence mismatch must still be blocked.
 """

@@ -6,10 +6,8 @@
 # here is skipped by that deletion so a deliberately dist-only file is not wiped
 # every release.
 #
-# AGENTS.md: public-facing contributor guide that lives only in the public repo
-# (the working tree uses CLAUDE.md instead). Verified as the only dist-only file
-# on 2026-05-31; re-checked each run by the skill's reconcile diff.
-AGENTS.md
+# AGENTS.md used to be listed here while the working tree kept CLAUDE.md; it is
+# the tracked rulebook now (2026-09-30), so it ships like any other file.
 
 # Preserve the reviewed public bug register while the local register's newer
 # live-session evidence remains withheld by the distribution denylist.

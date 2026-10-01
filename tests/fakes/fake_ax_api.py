@@ -1,6 +1,6 @@
 """Hand-built macOS Accessibility (AX) API fake (Wave 2.1, EK-3).
 
-Per CLAUDE.md the project uses real fakes, never ``unittest.mock``. The real
+Per AGENTS.md the project uses real fakes, never ``unittest.mock``. The real
 ``pyobjc`` stack cannot be installed on the Windows dev box, and the real
 AX-tree capture only runs on a macOS leg under a granted Accessibility
 permission (``skip_ci``). This fake gives the flatten + role-normalization +

@@ -33,7 +33,7 @@ beforeEach(() => {
   useWorkspacePanesStore.setState({ panes: [], activeId: null, loaded: true, load: async () => {} });
   useIdeProjectsStore.setState({ activeWorkspaceId: null });
   useEventStore.setState({ activeSection: "agentic-ide" });
-  useIdeSidePanelStore.setState({ open: false, tabs: ["agents"], active: "agents", maximized: false });
+  useIdeSidePanelStore.setState({ open: false, tabs: ["agents"], active: "agents", maximized: false, inUse: false });
 });
 
 afterEach(cleanup);
@@ -122,12 +122,12 @@ describe("IdeSidePanel", () => {
     expect(screen.queryByTestId("ide-side-panel-rail")).toBeNull();
   });
 
-  it("adds the Office tab from + and shows the coding floor in a compact stage", async () => {
+  it("adds the Jarvis Verse tab from + and shows the coding floor in a compact stage", async () => {
     act(() => useIdeSidePanelStore.setState({ open: true, tabs: ["agents"], active: "agents" }));
     render(<Harness />);
     fireEvent.click(screen.getByTestId("ide-side-panel-add"));
     const item = screen.getByTestId("ide-side-panel-add-office");
-    expect(item.textContent).toContain("Office");
+    expect(item.textContent).toContain("Jarvis Verse");
     expect(item.getAttribute("aria-checked")).toBe("false");
     fireEvent.click(item);
     expect(useIdeSidePanelStore.getState()).toMatchObject({ active: "office", tabs: ["agents", "office"] });
@@ -165,7 +165,7 @@ describe("IdeSidePanel", () => {
     expect(screen.getByTestId("office-stage")).toBe(stage);
 
     fireEvent.click(screen.getByTestId("ide-side-panel-maximize"));
-    expect(screen.getByTestId("ide-side-panel-body").className).toBe("h-full");
+    expect(screen.getByTestId("ide-side-panel-body").className).toBe("relative h-full");
     expect(screen.getByTestId("ide-side-panel-grid").className).not.toContain("invisible");
     expect(screen.getByTestId("office-stage")).toBe(stage);
   });
@@ -182,5 +182,28 @@ describe("IdeSidePanel", () => {
     render(<Harness />);
     fireEvent.click(screen.getByTestId("ide-side-panel-rail-office"));
     expect(useIdeSidePanelStore.getState()).toMatchObject({ open: true, active: "office" });
+  });
+
+  it("frames the panel in blue while the reader works in it", () => {
+    useIdeSidePanelStore.setState({ open: true });
+    const { rerender } = render(<IdeSidePanelFrame markInUse><div data-testid="grid">grid</div></IdeSidePanelFrame>);
+    expect(screen.queryByTestId("ide-side-panel-in-use")).toBeNull();
+    fireEvent.pointerDown(screen.getByTestId("ide-side-panel-tab-agents"));
+    expect(useIdeSidePanelStore.getState().inUse).toBe(true);
+    const ring = screen.getByTestId("ide-side-panel-in-use");
+    expect(ring.className).toContain("ring-accent");
+    expect(ring.className).toContain("pointer-events-none");
+    // A press on the grid is the grid's business (the pane hands the frame back).
+    fireEvent.pointerDown(screen.getByTestId("grid"));
+    expect(useIdeSidePanelStore.getState().inUse).toBe(true);
+    act(() => useIdeSidePanelStore.getState().setInUse(false));
+    expect(screen.queryByTestId("ide-side-panel-in-use")).toBeNull();
+    // The classic pane style draws no blue frames at all.
+    act(() => useIdeSidePanelStore.getState().setInUse(true));
+    rerender(<IdeSidePanelFrame><div data-testid="grid">grid</div></IdeSidePanelFrame>);
+    expect(screen.queryByTestId("ide-side-panel-in-use")).toBeNull();
+    // Closing the panel ends its turn as the area in use.
+    act(() => useIdeSidePanelStore.getState().setOpen(false));
+    expect(useIdeSidePanelStore.getState().inUse).toBe(false);
   });
 });

@@ -209,7 +209,7 @@ _CUDA_DLL_PACKAGE_DIRS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
 #: together) and installed from inside the app by
 #: :func:`jarvis.speech.local_install.start_gpu_libraries_install`, because a
 #: GPU that the app cannot reach is not something a person should have to fix
-#: in a terminal (CLAUDE.md §2, credentials-and-capabilities recoverable in-app).
+#: in a terminal (AGENTS.md §2, credentials-and-capabilities recoverable in-app).
 GPU_LIBRARY_PACKAGES: Final[tuple[str, ...]] = (
     "nvidia-cublas-cu12>=12.4,<13",
     "nvidia-cudnn-cu12>=9,<10",

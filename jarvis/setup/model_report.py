@@ -6,7 +6,7 @@ check) can print a per-model truth instead of a flat "all models are on disk".
 It answers the only question that matters to a fresh downloader: *is the thing
 really here, and if not, why?*
 
-Design contract (CLAUDE.md section 3 — a flaky probe must never brick an
+Design contract (AGENTS.md section 3 — a flaky probe must never brick an
 install):
 
 - **Read-only + best-effort.** Every probe is wrapped so a failure reads as

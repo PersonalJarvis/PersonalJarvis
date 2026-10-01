@@ -166,3 +166,49 @@ def test_tmux_command_is_create_or_attach_and_quiet() -> None:
     assert "status off" in command
     assert "'/srv/my app'" in command
     assert remote_terminal.tmux_session_name("a/b c") == "jv-a-b-c"
+
+
+async def test_two_workspaces_same_call_sign_stay_apart(
+    pool: SshPtyPool, tmux_server: FakeTmuxServer
+) -> None:
+    """Call-signs restart at T1 per workspace; the pool must not key on them."""
+    first, second = Screen(), Screen()
+    one = await _spawn(pool, first, identity_id="ws1-t1")
+    two = await _spawn(pool, second, identity_id="ws2-t1")
+    await first.wait_for("ready")
+    await second.wait_for("ready")
+
+    assert one != two
+    assert pool.has(one) and pool.has(two)
+    assert pool.write(one, "to-first")
+    await first.wait_for("echo:to-first")
+    assert "to-first" not in second.text
+
+
+async def test_several_panes_re_attach_once_each_after_a_drop(
+    pool: SshPtyPool, tmux_server: FakeTmuxServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A drop must not turn into panes cutting each other's fresh channels."""
+    monkeypatch.setattr(remote_terminal, "RECONNECT_DELAYS_S", (0.05, 0.1, 0.1, 0.1))
+    screens = [Screen() for _ in range(4)]
+    terminals = [
+        await _spawn(pool, screen, identity_id=f"pane{index}")
+        for index, screen in enumerate(screens)
+    ]
+    for screen in screens:
+        await screen.wait_for("ready")
+
+    tmux_server.drop_connections()
+    for _ in range(300):
+        if len(tmux_server.tmux.attaches) >= len(screens):
+            break
+        await asyncio.sleep(0.02)
+    await asyncio.sleep(0.4)
+
+    assert sorted(tmux_server.tmux.attaches) == sorted(
+        tmux_session_name(f"pane{index}") for index in range(4)
+    ), "every pane re-joined exactly once"
+    for terminal, screen in zip(terminals, screens, strict=True):
+        assert screen.closed == []
+        assert pool.write(terminal, "still-here")
+        await screen.wait_for("echo:still-here")

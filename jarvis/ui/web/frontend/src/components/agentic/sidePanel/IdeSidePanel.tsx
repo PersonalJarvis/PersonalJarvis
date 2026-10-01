@@ -4,7 +4,7 @@ import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { PaneResizer } from "@/components/layout/PaneResizer";
-import { useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { SIDE_PANEL_ID, useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { useExplorerPathRouting } from "@/store/ideExplorer";
 import { usePaneReviewTracking } from "@/store/paneReviews";
 import { useIdeProjectsStore } from "@/store/ideProjects";
@@ -21,8 +21,6 @@ const OFFICE_MIN_PX = 520;
 /** Terminal canvas kept visible while the panel is open. */
 const GRID_RESERVED_PX = 320;
 
-export const SIDE_PANEL_ID = "ide-side-panel";
-
 const HEADER_BTN =
   "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors " +
   "hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring " +
@@ -36,9 +34,15 @@ const HEADER_BTN =
  * size, so opening or closing it never changes the sibling identity of a live
  * terminal or its PTY socket — the same trick the legacy explorer used.
  */
-export function IdeSidePanelFrame({ children }: { children: ReactNode }) {
+/**
+ * `markInUse`: frame the panel in the signal blue while the reader works in it,
+ * the way a focused terminal tile is framed (the minimal pane style).
+ */
+export function IdeSidePanelFrame({ children, markInUse = false }: { children: ReactNode; markInUse?: boolean }) {
   const t = useT();
   const open = useIdeSidePanelStore((state) => state.open);
+  const inUse = useIdeSidePanelStore((state) => state.inUse);
+  const setInUse = useIdeSidePanelStore((state) => state.setInUse);
   const active = useIdeSidePanelStore((state) => state.active);
   const maximized = useIdeSidePanelStore((state) => state.maximized);
   // Ctrl+click on a path in any terminal opens it in the Explorer tab.
@@ -125,9 +129,18 @@ export function IdeSidePanelFrame({ children }: { children: ReactNode }) {
                 />
               </div>
             )}
-            {/* Same element either way, so the live office scene is never remounted. */}
-            <div data-testid="ide-side-panel-body" className={maximized ? "absolute inset-0 z-30" : "h-full"}>
+            {/* Same element either way, so the live office scene is never remounted.
+                A press anywhere in it (capture phase: the office canvas and the
+                terminals in it stop their own events) makes it the area in use. */}
+            <div data-testid="ide-side-panel-body" className={maximized ? "absolute inset-0 z-30" : "relative h-full"}
+              onPointerDownCapture={() => setInUse(true)}>
               <IdeSidePanel />
+              {/* The "you are here" frame, drawn over everything in the panel so
+                  no tab header or scene can cover part of it. */}
+              {markInUse && inUse && (
+                <div aria-hidden="true" data-testid="ide-side-panel-in-use"
+                  className="pointer-events-none absolute inset-0 z-40 ring-2 ring-inset ring-accent" />
+              )}
             </div>
           </>
         )}

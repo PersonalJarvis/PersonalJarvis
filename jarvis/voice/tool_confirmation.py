@@ -14,7 +14,7 @@ response``) resolves it on turn N+1. This module owns only the deterministic
 PHRASING — no LLM call (AP-11), no I/O. The yes/no classifier is shared with the
 self-mod flow (``jarvis.voice.echo_confirmation``).
 
-Runtime Output Language doctrine (CLAUDE.md): every spoken phrase table carries
+Runtime Output Language doctrine (AGENTS.md): every spoken phrase table carries
 de / en / es; an unrecognised tag resolves through ``DEFAULT_LOCALE`` — never an
 empty string (AD-OE6 zero-silent-drop), never a per-layer hardcoded constant.
 """

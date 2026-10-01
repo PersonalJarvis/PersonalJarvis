@@ -1,7 +1,7 @@
 """Fail-closed tests for the release-completeness gate's pure helpers.
 
 The gate exists so a release can never SILENTLY ship without local work
-(CLAUDE.md section 2 + docs/device-parity-debugging.md). These tests pin the
+(AGENTS.md section 2 + docs/device-parity-debugging.md). These tests pin the
 decision logic that does not need a live git repo or network: dirty-path
 parsing (renames included), the volatile-telemetry allowlist, version-parity
 reading, and the published-release tag match.

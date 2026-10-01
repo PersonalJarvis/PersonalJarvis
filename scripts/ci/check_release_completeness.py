@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Release-completeness gate - a release ships the ENTIRE current local state.
 
-The recurring failure this gate exists for (CLAUDE.md §2 + §3 device-parity
+The recurring failure this gate exists for (AGENTS.md §2 + §3 device-parity
 triage, docs/device-parity-debugging.md): a release is cut while fixes still
 sit uncommitted or unpublished on the dev box, or with a stale frontend
 bundle - and every other device then runs "the new version" without them,
@@ -282,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     if failed:
         print(
             "\ncheck_release_completeness: gate FAILED - this release would NOT "
-            "ship the entire current local state (CLAUDE.md section 2)."
+            "ship the entire current local state (AGENTS.md section 2)."
         )
         return 1
     print("\ncheck_release_completeness: OK -release ships the full local state.")

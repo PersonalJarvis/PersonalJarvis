@@ -166,7 +166,7 @@ export function SocietyView() {
   );
 
   return (
-    <div className={mode === "world" ? "fixed inset-x-0 bottom-0 top-8 z-30 flex flex-col bg-background" : "relative flex h-full min-h-0 w-full flex-col"} data-testid="society-view">
+    <div className={mode === "world" ? "fixed inset-x-0 bottom-0 top-8 z-30 flex flex-col bg-background" : "relative flex h-full min-h-0 w-full flex-col"} data-testid="society-view" data-tour="agents-page">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Map mode takes the native window fullscreen, so the switch cannot
             live inside the map HUD: it would shrink into the corner and strand

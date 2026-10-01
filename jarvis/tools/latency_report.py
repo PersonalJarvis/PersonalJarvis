@@ -98,7 +98,7 @@ class Aggregation:
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point — returns an exit code."""
-    # CLAUDE.md "Windows specifics": new CLI modules must reconfigure stdout
+    # AGENTS.md "Windows specifics": new CLI modules must reconfigure stdout
     # to UTF-8 or stick to ASCII. The report uses → and · so UTF-8 is needed.
     # ``reconfigure`` is a no-op on POSIX where stdout is already utf-8.
     with contextlib.suppress(AttributeError, ValueError):

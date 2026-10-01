@@ -59,11 +59,10 @@ view angles, in motion and with the app's supported appearances. Separate
 artistic findings from measured engineering results. Iterate on this small
 scene until it establishes the desired visual standard.
 
-**Obtain the user's approval of that specific runtime reference scene before
-batch-producing or replacing further asset families.** A request to set up this
-pipeline, a technical pass, a Blender render or an agent-written approval file
-does not constitute that approval. Existing explicit approval applies within
-its stated scope; do not ask again unless the approved direction changes.
+No separate user approval of the reference scene is required before
+batch-producing or replacing further asset families (maintainer decision,
+2026-09-30). The optional approval record below stays available for studies
+that want one.
 
 ### 4. Reusable kit and family rollout
 

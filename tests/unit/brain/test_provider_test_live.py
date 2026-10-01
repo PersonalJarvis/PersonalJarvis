@@ -135,3 +135,34 @@ async def test_existing_realtime_adapters_keep_their_contract(probe):
     assert isinstance(probe.opened[0], RealtimeSessionConfig)
     assert probe.connection.closed
     assert not probe.receiving.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "status", "words"),
+    [
+        ({"code": "insufficient_quota", "message": "private provider body"}, "no_credits",
+         "no credits"),
+        ({"code": "rate_limit_exceeded", "message": "private provider body"}, "rate_limited",
+         "too many requests"),
+        ({"code": "invalid_api_key", "message": "private provider body"}, "error",
+         "selected session"),
+    ],
+)
+async def test_rejected_live_probe_names_the_cause_without_the_body(
+    probe, error, status, words
+):
+    """Live 2026-09-29: an empty balance read as "check the model settings"."""
+    from jarvis.brain.provider_test import classify_provider_error
+
+    async def receive():
+        return {"type": "error", "error": error}
+
+    probe.connection.receive = receive
+    with pytest.raises(RuntimeError) as caught:
+        await _default_realtime_probe(probe.spec, probe.cfg, timeout_s=1)
+    message = str(caught.value)
+    assert words in message
+    assert "private provider body" not in message
+    assert classify_provider_error(message) == status
+    assert probe.connection.closed

@@ -71,6 +71,40 @@ def _typed_error(exc: RosterError | RoomError) -> HTTPException:
     )
 
 
+def _validated_chat_runner(
+    rt: SocietyRuntime,
+    agent: AgentRecord,
+    provider: str,
+    *,
+    approval_mode: str | None = None,
+    permission_ceiling: str | None = None,
+) -> str:
+    """Reject a runner change that cannot honor the effective chat approval."""
+    from jarvis.agent_chat.permissions import normalize_permission, society_mode_supported
+    from jarvis.agent_chat.service import resolve_runner
+
+    runner = resolve_runner(provider, surface="society")
+    mode = approval_mode if approval_mode is not None else (
+        str(agent.approval_mode) if agent.approval_mode is not None else ""
+    )
+    if mode and not society_mode_supported(runner, mode):
+        raise HTTPException(422, "This runner cannot provide an actionable approval for that mode.")
+    ceiling = str(
+        permission_ceiling if permission_ceiling is not None else agent.permission_ceiling
+    )
+    if not mode and ceiling != "safe" and not society_mode_supported(runner, "ask"):
+        raise HTTPException(
+            422, "This runner cannot provide an actionable approval for this legacy agent."
+        )
+    chat = rt.chat_service()
+    if chat is not None and chat.store.get_session(agent.session_id) is not None:
+        override = chat.store.permission_override(agent.session_id)
+        if override and override not in ("plan", "read-only"):
+            if not society_mode_supported(runner, normalize_permission("society", override)):
+                raise HTTPException(422, "This runner cannot honor the chat's approval choice.")
+    return runner
+
+
 # ------------------------------------------------------------------- models
 
 
@@ -90,6 +124,7 @@ class CreateAgentBody(BaseModel):
     denies: list[str] | None = None
     skills: list[str] | None = None
     permission_ceiling: str | None = None
+    approval_mode: str | None = None
     approval_rules: dict[str, list[str]] | None = None
     daily_budget_usd: float | None = None
     max_concurrent_runs: int | None = None
@@ -125,6 +160,7 @@ class PatchAgentBody(BaseModel):
     skills: list[str] | None = None
     knowledge_scope: str | None = None
     permission_ceiling: str | None = None
+    approval_mode: str | None = None
     approval_rules: dict[str, list[str]] | None = None
     daily_budget_usd: float | None = None
     max_concurrent_runs: int | None = None
@@ -262,6 +298,16 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
         from jarvis.society.inherit import inherit_creator_fields
 
         fields = inherit_creator_fields(fields, creator)
+    requested_mode = str(fields.get("approval_mode") or "bypass")
+    provider = str(fields.get("provider") or body.provider)
+    if provider:
+        from jarvis.agent_chat.permissions import society_mode_supported
+        from jarvis.agent_chat.service import resolve_runner
+
+        if not society_mode_supported(resolve_runner(provider, surface="society"), requested_mode):
+            raise HTTPException(
+                422, "This runner cannot provide an actionable approval for that mode."
+            )
     derived_focus, derived_rules = rt.derive(body.title, description)
     if body.focus is None and derived_focus:
         fields["focus"] = derived_focus
@@ -315,6 +361,14 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
     if has_brief(brief):
         # A brief rewrites the standing instructions as a whole.
         fields["description"] = compose_description(body.description or "", brief)
+    if any(key in fields for key in ("provider", "approval_mode", "permission_ceiling")):
+        _validated_chat_runner(
+            rt,
+            agent,
+            body.provider or agent.provider,
+            approval_mode=body.approval_mode,
+            permission_ceiling=fields.get("permission_ceiling"),
+        )
     if ("title" in fields or "description" in fields) and "focus" not in fields:
         # A prose edit must not wipe what the agent earned in its chat: the
         # derived focus is APPENDED to the existing order (existing first,
@@ -336,6 +390,19 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
         updated = await rt.roster.update(agent.agent_id, fields)
     except RosterError as exc:
         raise _typed_error(exc) from exc
+    if "approval_mode" in fields:
+        svc = rt.chat_service()
+        if (
+            svc is not None
+            and svc.store.get_session(updated.session_id) is not None
+            and not svc.is_running(updated.session_id)
+        ):
+            from jarvis.society.chat_binding import ensure_session
+
+            # An active turn keeps its pinned seat. An idle one rebinds through
+            # the roster plus any narrower chat override instead of replacing
+            # that override with the card's new default.
+            ensure_session(svc, rt.config(), updated)
     if "state" in fields:
         await rt.checkpoints.refresh(agent.agent_id)
         updated = await rt.roster.get(agent.agent_id) or updated
@@ -356,7 +423,10 @@ async def bind_agent_chat(agent_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(503, "agent chat service unavailable")
     from jarvis.society.chat_binding import ensure_session
 
-    session = ensure_session(svc, rt.config(), agent)
+    try:
+        session = ensure_session(svc, rt.config(), agent)
+    except PermissionError as exc:
+        raise HTTPException(422, str(exc)) from exc
     return {"session": session.to_dict(), "agent_id": agent.agent_id}
 
 
@@ -685,7 +755,6 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
     """Move the agent onto another provider / model / effort / subscription seat.
     Its canonical chat is re-seated at once (transcript kept)."""
     from jarvis.agent_chat.catalog import offers
-    from jarvis.agent_chat.service import resolve_runner
 
     rt = await _runtime(request)
     agent = await rt.roster.resolve(agent_id)
@@ -696,13 +765,14 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
             422,
             {"reason": str(FailureReason.BLOCKED_BY_POLICY), "detail": "provider not offered"},
         )
+    target_runner = _validated_chat_runner(rt, agent, body.provider)
+    chat = rt._get_chat()
     fields = {
         "provider": body.provider.strip().lower(),
         "model": body.model.strip(),
         "effort": body.effort.strip(),
         "account_id": body.account_id.strip(),
     }
-    chat = rt._get_chat()
     if chat is not None and hasattr(chat, "controls") and chat.store.get_session(agent.session_id):
         await chat.controls.pause(agent.session_id, "Model settings changed")
         await chat.controls._clear_saved_native(agent.session_id)
@@ -722,7 +792,7 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
             log.info("society: %s re-seat deferred: %s", agent.agent_id, exc)
     return {
         "agent": _agent_row(updated, request),
-        "runner": resolve_runner(updated.provider, surface="society"),
+        "runner": target_runner,
         "reseated": reseated,
     }
 

@@ -55,6 +55,10 @@ describe("setupPrompt", () => {
     const prompt = setupPrompt("George", "ssh-ed25519 AAAA george@desk");
     expect(prompt).toContain("ssh-ed25519 AAAA george@desk");
     expect(prompt).toContain("administrators_authorized_keys");
+    // Group names are localized ("Administratoren"); only the SIDs work everywhere.
+    expect(prompt).toContain("*S-1-5-32-544:F");
+    expect(prompt).not.toContain('"Administrators:F"');
+    expect(prompt).toContain("Git for Windows");
     expect(prompt).not.toContain("BEGIN OPENSSH PRIVATE KEY");
     expect(prompt.trim().endsWith(`${CONNECT_MARKER} <account>@<address>:<port>`)).toBe(true);
   });

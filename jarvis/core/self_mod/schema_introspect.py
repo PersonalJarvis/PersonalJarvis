@@ -158,8 +158,7 @@ def resolve_model_for_path(path: str) -> type[BaseModel]:
     """Navigate ``JarvisConfig`` along ``path`` to the model owning the leaf.
 
     More robust than ``getattr(jarvis.core.config, name)``: it follows the real
-    schema, so a section model defined in a submodule (e.g.
-    ``AwarenessPrivacyConfig``) and never re-exported into ``config`` still
+    schema, so a section model defined in a submodule and never re-exported into ``config`` still
     resolves. This is the canonical anti-drift check for an introspected spec.
     """
     from jarvis.core.config import JarvisConfig

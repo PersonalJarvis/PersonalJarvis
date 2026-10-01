@@ -203,7 +203,7 @@ _REFUSAL_DE: dict[str, str] = {
     "repos": "Ich habe aktuell keinen Zugriff auf deine Repositories.",  # i18n-allow
     "deployments": "Ich habe aktuell keinen Zugriff auf deine Deployments.",  # i18n-allow
     "cloud": "Ich habe aktuell keinen Zugriff auf deine Cloud-Abrechnung.",  # i18n-allow
-    "activity": "Ich kann gerade nicht auf deinen Aktivitätsverlauf zugreifen.",  # i18n-allow
+    "activity": "Ich zeichne keinen Aktivitätsverlauf auf.",  # i18n-allow
 }
 _REFUSAL_DE_FALLBACK = "Dafuer habe ich aktuell keinen Datenzugriff."  # i18n-allow
 
@@ -214,12 +214,12 @@ _REFUSAL_EN: dict[str, str] = {
     "repos": "I have no access to your repositories right now.",
     "deployments": "I have no access to your deployments right now.",
     "cloud": "I have no access to your cloud billing right now.",
-    "activity": "I can't access your activity history right now.",
+    "activity": "I don't keep a history of your activity.",
 }
 _REFUSAL_EN_FALLBACK = "I have no data access for that right now."
 
 # Spoken Spanish voice replies (TTS-safe, deterministic). All locales are
-# equal (CLAUDE.md §1): a Spanish-speaking user gets the refusal in Spanish,
+# equal (AGENTS.md §1): a Spanish-speaking user gets the refusal in Spanish,
 # not the English table because no Spanish one existed.
 _REFUSAL_ES: dict[str, str] = {
     "calendar": "Ahora mismo no tengo acceso a tu calendario.",  # i18n-allow
@@ -228,7 +228,7 @@ _REFUSAL_ES: dict[str, str] = {
     "repos": "Ahora mismo no tengo acceso a tus repositorios.",  # i18n-allow
     "deployments": "Ahora mismo no tengo acceso a tus despliegues.",  # i18n-allow
     "cloud": "Ahora mismo no tengo acceso a tu facturación en la nube.",  # i18n-allow
-    "activity": "Ahora mismo no puedo acceder a tu historial de actividad.",  # i18n-allow
+    "activity": "No guardo un historial de tu actividad.",  # i18n-allow
 }
 _REFUSAL_ES_FALLBACK = "Ahora mismo no tengo acceso a esos datos."  # i18n-allow
 
@@ -245,7 +245,7 @@ def _refusal_language(resolved: object, text: str) -> str:
     """Which language the deterministic refusal is spoken in.
 
     The turn's ALREADY-resolved output language wins outright — this module
-    must never re-derive it (CLAUDE.md §1: one resolver,
+    must never re-derive it (AGENTS.md §1: one resolver,
     ``resolve_output_language``, decides for all layers). It used to sniff the
     utterance with a private de/en-only heuristic, so an explicit
     ``brain.reply_language`` pin was ignored: a Spanish-pinned user asking in

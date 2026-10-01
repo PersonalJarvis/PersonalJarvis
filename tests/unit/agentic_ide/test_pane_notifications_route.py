@@ -1,4 +1,4 @@
-"""The bell's REST surface — the CLI-first half (CLAUDE.md §5).
+"""The bell's REST surface — the CLI-first half (AGENTS.md §5).
 
 The panel in the header is one client of this. The other is a terminal: the
 same three questions ("what stopped?", "stop counting these", "throw them

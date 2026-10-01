@@ -71,6 +71,37 @@ class FakeSocket {
 
 describe("agent-chat store surfaces", () => {
 
+  it("reconciles a Society permission draft from a clamped PATCH response", async () => {
+    const active = { ...session("society:reader", "society"), permission_mode: "plan" };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(active), { status: 200 })));
+    const store = createAgentChatStore("society", "reader");
+    store.setState({ activeSessionId: active.session_id, activeSession: active });
+
+    await store.getState().setDraft({ permissionMode: "bypass" });
+
+    expect(store.getState().activeSession?.permission_mode).toBe("plan");
+    expect(store.getState().draft.permissionMode).toBe("plan");
+  });
+
+  it("keeps the latest Society draft while session PATCHes complete in order", async () => {
+    const active = { ...session("society:reader", "society"), permission_mode: "plan" };
+    const pending: Array<(response: Response) => void> = [];
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => pending.push(resolve))));
+    const store = createAgentChatStore("society", "reader-serial");
+    store.setState({ activeSessionId: active.session_id, activeSession: active });
+
+    const first = store.getState().setDraft({ permissionMode: "ask" });
+    const second = store.getState().setDraft({ permissionMode: "bypass" });
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    pending[0](new Response(JSON.stringify({ ...active, permission_mode: "ask" })));
+    await first;
+    expect(store.getState().draft.permissionMode).toBe("bypass");
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    pending[1](new Response(JSON.stringify({ ...active, permission_mode: "plan" })));
+    await second;
+    expect(store.getState().draft.permissionMode).toBe("plan");
+  });
+
   it("snaps a stored mode the row's ladder does not know onto the row's default", async () => {
     // The v1 draft was shared with the IDE and could carry a vendor word
     // ("skip-permissions"); on the Jarvis ladder that must become "ask", not

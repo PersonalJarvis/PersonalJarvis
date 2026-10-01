@@ -69,7 +69,7 @@ Sub-Jarvis explicitly or implicitly wants to write a **new doc** or
 
 Do NOT trigger on:
 
-- Code comments, docstrings, type hints — those follow the CLAUDE.md rule
+- Code comments, docstrings, type hints — those follow the AGENTS.md rule
   (code identifiers in English), but need no doc scaffold.
 - Commit messages and PR descriptions — those are build artifacts.
 - Memory entries — the ``auto-memory`` is responsible for those.
@@ -197,7 +197,7 @@ Before the file is written, go through the quality checklist from
 7. **What's next ≤ 5 bullets**: Does the footer block respect the K8s cap?
 8. **Verification section in how-tos**: Concrete pytest command,
    concrete log marker, concrete Computer-Use step? (Verify-before-ship
-   mandate from CLAUDE.md.)
+   mandate from AGENTS.md.)
 9. **No TODO/FIXME/TBD in the body** when ``status: active``? If it is a stub:
    ``status: draft`` in the frontmatter and mark it in the body.
 

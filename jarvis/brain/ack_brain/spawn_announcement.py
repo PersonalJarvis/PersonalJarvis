@@ -536,7 +536,7 @@ class SpawnAnnouncementComposer:
             return None
         # ``lang`` is already this turn's resolved output language — validate
         # against it through the single resolver, never a local detector
-        # (CLAUDE.md §1). Only a high-confidence mismatch rejects; an
+        # (AGENTS.md §1). Only a high-confidence mismatch rejects; an
         # indeterminate verdict keeps the announcement, since staying silent on
         # a language guess is worse than an odd-sounding one.
         if validate_output_language(trimmed, resolved_language=lang).should_block:

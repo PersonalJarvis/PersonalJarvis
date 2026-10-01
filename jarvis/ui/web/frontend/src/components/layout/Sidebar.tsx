@@ -17,6 +17,7 @@ import {
   type NavItem,
 } from "@/components/layout/navGroups";
 import { useEventStore } from "@/store/events";
+import { useSectionPrefetch } from "@/hooks/useSectionPrefetch";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useSectionHealth } from "@/hooks/useProviders";
@@ -32,7 +33,8 @@ import { useAgentChatStore } from "@/store/agentChat";
 import { IdeProjectTree } from "@/components/agentic/IdeProjectTree";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useAppInstance } from "@/hooks/useAppInstance";
-import { usePublishIdentity } from "@/components/marketplace/PublishIdentity";
+// The query alone, not ./PublishIdentity: the sign-in UI stays out of the entry chunk.
+import { usePublishIdentity } from "@/components/marketplace/publishIdentityQuery";
 import { GigiMark } from "@/components/GigiMark";
 import * as Dialog from "@radix-ui/react-dialog";
 import { startNewVoiceRun } from "@/lib/chatsApi";
@@ -167,6 +169,8 @@ export function Sidebar({
   collapsed = false,
 }: SidebarProps = {}) {
   const t = useT();
+  const profilePrefetch = useSectionPrefetch("profile");
+  const marketplacePrefetch = useSectionPrefetch("marketplace");
   const active = useEventStore((s) => s.activeSection);
   const setActive = useEventStore((s) => s.setActiveSection);
   const activeIdeWorkspaceId = useIdeProjectsStore((s) => s.activeWorkspaceId);
@@ -499,7 +503,7 @@ export function Sidebar({
         </nav> : <nav aria-label={t("sidebar.sections")} className="space-y-1 px-2 py-2">
           <ul className="space-y-1">
             <li><Dialog.Root open={newChatOpen} onOpenChange={(open) => { if (!startingVoiceRef.current) setNewChatOpen(open); }}>
-              <Dialog.Trigger asChild><button type="button" data-testid="sidebar-new-chat"
+              <Dialog.Trigger asChild><button type="button" data-testid="sidebar-new-chat" data-tour="new-chat"
               aria-label={t("sidebar.new_chat")} title={t("sidebar.new_chat")} className={rowClass}>
               <Plus aria-hidden className="h-4 w-4 shrink-0" />
               {!railed && <span>{t("sidebar.new_chat")}</span>}
@@ -548,8 +552,9 @@ export function Sidebar({
           needs care, must be visible without opening anything. */}
       <div className="shrink-0 border-t border-border p-2">
         <div className={cn("flex items-center gap-1", railed && "flex-col")}>
-          <button type="button" onClick={() => setActive("profile")} title={t("nav.profile")}
+          <button type="button" {...profilePrefetch} onClick={() => setActive("profile")} title={t("nav.profile")}
             data-testid="sidebar-profile-toggle"
+            data-tour="settings"
             className={cn(rowClass, "min-w-0 flex-1", hubActive && "jarvis-nav-active bg-secondary text-foreground")}>
             <span className="relative shrink-0">
               <UserCircle2 aria-hidden className="h-7 w-7" />
@@ -559,7 +564,7 @@ export function Sidebar({
             </span>
             {!railed && <span className="min-w-0 flex-1 truncate text-left">{identity.data?.signed_in ? identity.data.login || t("nav.profile") : t("nav.profile")}</span>}
           </button>
-          <button type="button" onClick={() => setActive("marketplace")} title={t("nav.marketplace")}
+          <button type="button" {...marketplacePrefetch} onClick={() => setActive("marketplace")} title={t("nav.marketplace")}
             aria-label={t("nav.marketplace")} data-testid="nav-row-marketplace"
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <Store aria-hidden className="h-5 w-5" />
@@ -611,6 +616,7 @@ function NavRow({
   warnTitle?: string;
   onClick: () => void;
 }) {
+  const prefetch = useSectionPrefetch(item.id);
   const Icon = item.icon;
   const hint = alert ? alertTitle : warn ? warnTitle : undefined;
   /*
@@ -639,6 +645,8 @@ function NavRow({
         <button
           type="button"
           data-testid={`nav-row-${item.id}`}
+          {...prefetch}
+          data-tour={`nav-${item.id}`}
           onClick={onClick}
           title={compact ? `${label}${hint ? ` — ${hint}` : ""}` : hint}
           aria-label={compact ? label : undefined}

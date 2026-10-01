@@ -24,7 +24,7 @@ _NUMBER_RE = re.compile(r"^(\d{4})-")
 
 # Legacy duplicates that pre-date this test. Adding to this list MUST
 # be accompanied by an ADR explaining why a renumber was not feasible
-# (typically: published inbound links from CLAUDE.md, BUGS.md, or other
+# (typically: published inbound links from AGENTS.md, BUGS.md, or other
 # ADRs). The Wave-4 doc flags these for a follow-up renumber sweep.
 _ALLOWED_DUPLICATES: frozenset[str] = frozenset({
     "0009",  # awareness-architecture + self-healing-worker-critic

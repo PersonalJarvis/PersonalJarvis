@@ -9,10 +9,153 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [2.4.4] — 2026-09-30
+
+### Added
+
+- **First run inside the real app.** Onboarding is one morphing card plus a
+  guided tour of the app, and the first-run setup happens in the real
+  interface instead of a separate flow.
+- **Minimal IDE tiles.** Agentic IDE panes default to multiplexer-style tiles
+  with a slim title row; the working pane always wears a blue edge, and the
+  classic cards are one click away in Workspace options.
+- **Jarvis Verse spawn point** in the middle of both floors: drop files or
+  open a new workspace from there. Pane nameplates show the coding CLI's logo
+  on two lines, desk monitors draw a pane the way the IDE does, and the pane
+  window wears the minimal tile look.
+- **Windows computers.** A connected Windows machine now works for agents and
+  the IDE, with a Windows-aware setup prompt, readiness check and quit
+  offload; a cancelled turn ends its CLI there.
+
 ### Changed
 
-- Center API Keys settings and show provider cards in two columns when the
-  window is wide enough, with a single column in narrower windows.
+- Background work stays on subscriptions once one is connected; nothing the
+  user did not start bills an API key on its own.
+- Jarvis' learning notebooks stay small and compacted.
+- AGENTS.md is the only agent instructions file.
+
+### Fixed
+
+- Reopening Jarvis right after closing it no longer stalls for minutes.
+- Remote panes come back safely, fork whole, and never read a stale local
+  transcript aloud.
+- The wake word keeps its primary decoder when a slow sibling is demoted.
+- An agent's Chromium starts only when it is needed.
+- The loop watchdog says when a stall is the machine running out of memory.
+- Clicking into a coding agent's output selects its pane; the repository
+  picker closes as soon as a pick is saved.
+
+---
+
+## [2.4.3] — 2026-09-30
+
+### Fixed
+
+- Raise the urllib3 security floor to 2.8.0 (CVE-2026-97687..97689, published
+  after 2.4.2 was tagged). The strict dependency audit refused 2.4.2's signed
+  install scripts on it; 2.4.3 ships everything 2.4.2 contains plus the fixed
+  dependency, the desktop installers and the signed install scripts.
+
+### Changed
+
+- The README hero video shows Agents, Jarvis Verse and the Agentic IDE.
+- Desktop sections load on navigation intent, so switching sections starts
+  sooner.
+
+---
+
+## [2.4.2] — 2026-09-30
+
+### Fixed
+
+- Waiting for a process tree to exit no longer fails on Linux when a process
+  is caught mid-shutdown. psutil 7.2 raised `OSError: [Errno 22]` for such a
+  process; it stopped the Linux desktop installer build for 2.4.1 and could
+  break stopping the local voice server, a mission worker's commands or the
+  uninstaller. 2.4.2 ships the 2.4.1 application with this fix and the
+  desktop installers for Windows, macOS and Linux.
+
+---
+
+## [2.4.1] — 2026-09-30
+
+### Fixed
+
+- Raise the pyjwt security floor to 2.14.0 (locked 2.15.1). pyjwt 2.13.0,
+  pulled in by the MCP SDK and Twilio, carries ten advisories; the
+  sign-installer workflow's strict dependency audit refused 2.4.0 on it, so
+  2.4.0 reached PyPI without signed install scripts. 2.4.1 is the same
+  application with the fixed dependency.
+
+---
+
+## [2.4.0] — 2026-09-30
+
+### Added
+
+- **Jarvis Verse.** The Jarvis agents now live on a walkable 3D office map:
+  toy-style figures with an outfit wardrobe, a lead executive suite, a team
+  meeting room, a break lounge, Mission Control with live Spend, Agents and IDE
+  monitors, and a coding floor (reached by elevator) where every Agentic IDE
+  pane appears as a figure with a live terminal you can type into, opened
+  as a movable, resizable window.
+- **Computers.** Settings > System > Computers connects servers and local VMs
+  over SSH — the connect dialog asks only for the address and works out the
+  way in (key, password or a provider's API; 14 provider presets). IDE panes,
+  workspaces and Jarvis agents can run on a connected computer, chosen when
+  the agent or workspace is added.
+- **Agentic IDE.** Git tab with branches, pull requests and CI state; an
+  explorer with git changes and diffs; fork a coding agent's chat into its own
+  worktree; coding agents keep running across app restarts and resume after a
+  power-off; a live agents side panel; drag-and-drop ordering; up to 16 agents
+  per workspace.
+- **Voice readback.** Jarvis reports back when a pane or agent finishes a job,
+  and the live voice model can reason about those reports on the next call.
+- **Agent chat.** Agents can ask short multiple-choice question series; group
+  chats of several agents; per-agent approval modes (Bypass, Ask, Always ask).
+  New agents start on Bypass; blocks, denied capabilities and explicit
+  require-approval rules still apply.
+- **App actions.** Jarvis can run any app action under a per-action
+  allow / ask / block policy (Settings > Jarvis actions).
+- **Appshots.** Show the assistant the front window on a shortcut, a button or
+  a spoken request.
+- Model discovery through a public feed, so subscription model pickers gain new
+  frontier releases without an app update.
+- Jarvis keeps its own self-learning loop in memory.
+- A restrained, milestone-driven boot splash.
+
+### Changed
+
+- The settings hub opens as a centred dialog over the app; API Keys shows
+  provider cards in two columns on wide windows.
+- The lead agent carries the wake-word name on every surface.
+- Local realtime voice setup: one "apply, test and use" step that starts the
+  selected models with Jarvis.
+- README and product description rewritten around "your computer becomes an AI
+  agent".
+- CI rebuilt as a lane-gated orchestrator with one required `CI gate` check;
+  a release tag is only admitted after `CI gate` passed on that exact commit.
+
+### Removed
+
+- The activity recorder (awareness layer) and its recall tools: it put a
+  snapshot into every turn and summarised work in the background at a token
+  cost the product no longer wants. Old `[awareness]` config tables are
+  ignored.
+
+### Fixed
+
+- The GPT-Live API key is reserved for the voice call; background work runs on
+  subscriptions.
+- Around 110 fixes across the Agentic IDE (glyph soup after maximize, shredded
+  panes after minimize, blank repaint areas), the office map, agent chat,
+  Computers, voice and the desktop shell.
+- Passphrase-protected SSH keys can be added (bcrypt is now a dependency).
+- Silent exception handlers and blocking async routes introduced since 2.3.2
+  are logged, explained or moved off the event loop; native select popups are
+  replaced by the branded dropdown.
 
 ---
 

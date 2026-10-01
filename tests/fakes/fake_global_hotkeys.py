@@ -1,6 +1,6 @@
 """FakeGlobalHotkeys — drop-in stand-in for the ``global_hotkeys`` module.
 
-Convention (CLAUDE.md): fakes over mocks. The real ``global_hotkeys`` package
+Convention (AGENTS.md): fakes over mocks. The real ``global_hotkeys`` package
 registers Windows-wide low-level keyboard hooks via ``win32api`` and spawns an
 OS polling thread — neither of which can run on a headless Linux CI box (the
 cloud-first VPS doctrine). This fake replicates the *observable contract* of

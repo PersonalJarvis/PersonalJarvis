@@ -238,7 +238,7 @@ describe("the drift guard", () => {
 
   it("covers every talking type and both room brackets", () => {
     expect(new Set(WORLD_MSG_TYPES)).toEqual(
-      new Set(["SAY", "QUERY", "ANSWER", "PROPOSE", "ROOM_OPEN", "ROOM_SETTLE"]),
+      new Set(["SAY", "QUERY", "ANSWER", "PROPOSE", "ASSIGN", "ROOM_OPEN", "ROOM_SETTLE"]),
     );
   });
 });

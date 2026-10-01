@@ -326,8 +326,6 @@ class TestSeedRegistry:
             # LLM-visible router tool — phantom-vehicle routing fix; the dead
             # 'openclaw' capability id was still being advertised).
             "tool.spawn-worker",
-            "tool.awareness-snapshot",
-            "tool.awareness-recall",
             "tool.run-skill",
             "tool.wiki-recall",
             "tool.wiki-page-read",
@@ -419,8 +417,6 @@ class TestSeedRegistry:
     def test_requires_evidence_false_for_read_only(self) -> None:
         """Read-only tools must have requires_evidence=False."""
         read_only_ids = {
-            "tool.awareness-snapshot",
-            "tool.awareness-recall",
             "tool.wiki-recall",
             "tool.wiki-page-read",
         }

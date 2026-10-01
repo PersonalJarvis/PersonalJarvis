@@ -149,7 +149,7 @@ def _assert_model_is_current(model_id: str, registry: httpx.Client) -> None:
 
 
 def test_the_shortlist_was_reviewed_within_twelve_months() -> None:
-    """CLAUDE.md §4: nothing a year old ships as a local default. The review
+    """AGENTS.md §4: nothing a year old ships as a local default. The review
     date is printed in the panel, so it must be both true and recent — the
     per-tag checks above catch a retired tag, this catches a list nobody has
     looked at."""

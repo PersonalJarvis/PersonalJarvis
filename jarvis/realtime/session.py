@@ -65,6 +65,7 @@ from jarvis.core.turn_language import (
 )
 from jarvis.realtime.audio import StreamingPcm16Resampler
 from jarvis.realtime.protocol import RealtimeSessionConfig, RealtimeUnavailableError
+from jarvis.realtime.report_prompt import clip_report, report_update_prompt
 from jarvis.realtime.scrub_gate import ScrubHoldGate
 from jarvis.realtime.tools import canonical_tool_wire_name
 from jarvis.sessions.constants import (
@@ -1706,7 +1707,7 @@ _DELEGATE_BRIDGE_TEXTS: dict[str, tuple[str, ...]] = {
 
 #: Why the call is ending when NO voice engine could be opened. Carries every
 #: supported locale, resolved through the session's one language resolver
-#: (CLAUDE.md §1 runtime rule 3) — never a de/en-only table and never a
+#: (AGENTS.md §1 runtime rule 3) — never a de/en-only table and never a
 #: per-layer default. Deliberately two distinct causes rather than one generic
 #: apology: "it did not come up in time" and "it could not be reached" send the
 #: user to different places, and the whole point of speaking here is that the
@@ -1823,7 +1824,7 @@ def _pick_delegate_bridge_text(language: str) -> str:
 #: abandoned. One short, honest sentence: the user needs to know the work
 #: stopped, because a silent cancellation is indistinguishable from a session
 #: that simply ignored them — which is the failure this whole path exists to
-#: end. Same locale coverage as every other runtime pool (CLAUDE.md §1).
+#: end. Same locale coverage as every other runtime pool (AGENTS.md §1).
 _INTERRUPT_ACK_TEXTS: dict[str, tuple[str, ...]] = {
     "de": (  # i18n-allow: localized runtime voice output
         "Okay, ich habe das gestoppt.",  # i18n-allow
@@ -2189,6 +2190,19 @@ def _preferences_block(config: Any, *, compact: bool = False) -> str:
         return ""
 
 
+def _learned_block(*, compact: bool = False) -> str:
+    """Jarvis' learned notebooks (cached snapshot; at most one ``stat``).
+
+    Degrades to ``""`` so a notebook fault never blocks the session handshake.
+    """
+    try:
+        from jarvis.memory.learning.notebook import snapshot_block
+
+        return snapshot_block(compact=compact)
+    except Exception:  # noqa: BLE001 — never break the voice session on a notebook fault
+        return ""
+
+
 def _session_instructions(
     language: str,
     *,
@@ -2335,6 +2349,7 @@ def _session_instructions(
         "classic text brain configuration."
     )
     history_lost_line = _HISTORY_LOST_INSTRUCTION if history_lost else ""
+    learned = _learned_block(compact=compact)
     if compact:
         # Static-first / dynamic-last: everything that is identical from turn
         # to turn forms one stable prefix, so Ollama's KV prefix cache skips
@@ -2343,6 +2358,7 @@ def _session_instructions(
         parts = [
             persona,
             preferences,
+            learned,
             _ONE_SPEAKER_DIRECTIVE,
             _COMPLETE_THE_REQUEST_DIRECTIVE,
             tool_directive,
@@ -2367,6 +2383,10 @@ def _session_instructions(
         # for THIS user (tone, dialect, address, defaults) and must frame the
         # whole spoken output, while safety and tool rules below stay above them.
         preferences,
+        # What Jarvis has learned about this user across earlier calls and
+        # chats (jarvis/memory/learning). Background knowledge, framed as data
+        # below the user's own standing instructions.
+        learned,
         _ONE_SPEAKER_DIRECTIVE,
         # Right after the one-speaker rule, because the two shape the same
         # thing: how much of the turn belongs to this reply. One says "do not
@@ -3352,7 +3372,7 @@ class RealtimeVoiceSession:
         utterance it was computed for.
 
         Every ``[skills]`` knob travels with it. Reading only some of the
-        section is a silent config switch (CLAUDE.md §7).
+        section is a silent config switch (AGENTS.md §7).
         """
         key = str(text or "").strip()
         if not key:
@@ -4661,6 +4681,7 @@ class RealtimeVoiceSession:
         text: str,
         spoken_kind: str,
         detail: str | None = None,
+        report: str | None = None,
     ) -> bool:
         """Retain an owed background result for later delegated follow-ups.
 
@@ -4687,6 +4708,10 @@ class RealtimeVoiceSession:
         note = f"[{label}]\n{cleaned}".strip()
         if metadata:
             note = f"{note}\nResult metadata: {metadata}".strip()
+        material = str(report or "").strip()
+        if material:
+            # So "what exactly did it change?" is answerable next turn.
+            note = f"{note}\nFull report:\n{clip_report(material)}"
         self._remember_delegate_turn("", note)
         return True
 
@@ -4697,8 +4722,13 @@ class RealtimeVoiceSession:
         language: str,
         spoken_kind: str,
         detail: str | None = None,
+        report: str | None = None,
     ) -> bool:
         """Let an idle, healthy live model render one standardized readback.
+
+        With ``report`` the model is handed an agent's full report and asked to
+        reason over it (:mod:`jarvis.realtime.report_prompt`); ``text`` stays
+        the honest fallback that is spoken verbatim if the turn never renders.
 
         ``False`` means the caller must keep the classic TTS path. Refusing a
         busy session is load-bearing: Gemini text input interrupts generation,
@@ -4720,6 +4750,7 @@ class RealtimeVoiceSession:
             text=cleaned,
             spoken_kind=spoken_kind,
             detail=detail,
+            report=report,
         )
         send_text = getattr(self._session, "send_text", None)
         if (
@@ -4761,8 +4792,17 @@ class RealtimeVoiceSession:
         self._drop_provider_output_until_user_turn = False
         await self._ensure_turn_started()
         try:
+            material = str(report or "").strip()
             await send_text(
-                _external_update_prompt(
+                report_update_prompt(
+                    cleaned,
+                    material,
+                    language=resolved_language,
+                    kind=state.spoken_kind,
+                    opener=SPEAK_REQUEST_OPENER,
+                )
+                if material
+                else _external_update_prompt(
                     cleaned,
                     language=resolved_language,
                     kind=state.spoken_kind,

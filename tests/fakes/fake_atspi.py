@@ -1,6 +1,6 @@
 """Hand-built Linux AT-SPI fake (Wave 2.2, EK-3).
 
-Per CLAUDE.md the project uses real fakes, never ``unittest.mock``. ``pyatspi``
+Per AGENTS.md the project uses real fakes, never ``unittest.mock``. ``pyatspi``
 is GObject-Introspection, distro-packaged (not on PyPI) and cannot be installed
 on the Windows dev box; the real AT-SPI capture only runs on a Linux leg with a
 live accessibility bus (``skip_ci``). This fake gives the flatten +

@@ -35,6 +35,15 @@ def test_early_log_path_honours_the_env_override(monkeypatch, tmp_path: Path):
     assert desktop_log_path() == tmp_path / "jarvis_desktop.log"
 
 
+_REAL_HOLDER_ALIVE = launcher._holder_alive
+
+
+@pytest.fixture(autouse=True)
+def _holder_stays_alive(monkeypatch):
+    """The recovery tests model a holder that lives; pid 4242 may not exist here."""
+    monkeypatch.setattr(launcher, "_holder_alive", lambda _pid: True)
+
+
 class _Lock:
     pass
 
@@ -56,7 +65,7 @@ class _Calls:
     def read_meta(self):
         return self.meta
 
-    def ask(self, title, message):
+    def ask(self, title, message, dismiss=None):
         self.asked.append((title, message))
         return self.consent
 
@@ -433,6 +442,86 @@ def test_replacement_without_window_has_a_bounded_wait_and_is_not_killed(monkeyp
     assert len(calls.reported) == 1
     assert "47896" in calls.reported[0]
     assert "stopped process" not in calls.reported[0]
+
+
+def test_a_holder_that_exits_during_the_question_closes_it_and_starts_normally():
+    """Live 2026-09-30: the question stayed up ~5 min after the old instance had
+    quit, and the app only started when the user clicked Yes. The box now
+    withdraws itself, and nothing is killed."""
+    calls = _Calls(focused=False, meta={"pid": 4242}, consent=False)
+    exited = {"now": False}
+    withdrawn: list[bool] = []
+
+    def ask(title, message, dismiss=None):
+        calls.asked.append((title, message))
+        exited["now"] = True  # the old instance finishes quitting meanwhile
+        withdrawn.append(dismiss.wait(5.0))
+        return False  # a withdrawn box answers like "No"
+
+    def acquire():
+        calls.acquired += 1
+        if not exited["now"]:
+            raise SingleInstanceError("Jarvis is already running (pid=4242).")
+        return _Lock()
+
+    lock = launcher._recover_from_already_running(
+        RuntimeError("Jarvis is already running (pid=4242)."),
+        focus=calls.focus,
+        read_meta=calls.read_meta,
+        ask=ask,
+        terminate=calls.terminate,
+        acquire=acquire,
+        process_age=lambda _pid: None,
+        discover_pid=_meta_pid,
+        holder_alive=lambda _pid: not exited["now"],
+        watch_interval=0.01,
+    )
+
+    assert isinstance(lock, _Lock)
+    assert withdrawn == [True]
+    assert len(calls.asked) == 1
+    assert calls.terminated == []
+
+
+def test_a_holder_that_exits_but_keeps_the_lock_is_reported(monkeypatch):
+    calls = _Calls(focused=False, meta={"pid": 4242}, consent=False)
+    monkeypatch.setattr(launcher, "_report_startup_failure", calls.reported.append)
+    slept: list[float] = []
+
+    def ask(title, message, dismiss=None):
+        dismiss.wait(5.0)
+        return False
+
+    assert (
+        launcher._recover_from_already_running(
+            RuntimeError("Jarvis is already running (pid=4242)."),
+            focus=calls.focus,
+            read_meta=calls.read_meta,
+            ask=ask,
+            terminate=calls.terminate,
+            acquire=calls.acquire,  # stays held: nothing was terminated
+            process_age=lambda _pid: None,
+            discover_pid=_meta_pid,
+            sleep=slept.append,
+            holder_alive=lambda _pid: False,
+            watch_interval=0.01,
+        )
+        is None
+    )
+    assert calls.terminated == []
+    assert slept and all(delay == 0.5 for delay in slept)
+    assert "start lock is still held" in calls.reported[0]
+
+
+def test_holder_alive_is_false_only_for_a_process_that_is_gone():
+    import os
+    import subprocess
+    import sys
+
+    assert _REAL_HOLDER_ALIVE(os.getpid()) is True
+    child = subprocess.Popen([sys.executable, "-c", "pass"])  # noqa: S603 — our own interpreter
+    child.wait(timeout=30)
+    assert _REAL_HOLDER_ALIVE(child.pid) is False
 
 
 def test_lock_io_failure_is_reported_without_terminating_holder(monkeypatch):

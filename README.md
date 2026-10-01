@@ -1,35 +1,36 @@
+# Personal Jarvis
+
+## Your computer becomes an AI agent.
+
+Personal Jarvis is an open-source desktop app that connects your computer, AI
+models, tools, services, and specialized agents. Give it a task in chat or by
+voice. Jarvis can use the browser and desktop, call connected tools, delegate
+longer work, and bring the result back to one workspace.
+
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/banner.png" alt="Personal Jarvis" width="860" />
+  <a href="https://pypi.org/project/personal-jarvis/"><img alt="PyPI" src="https://img.shields.io/pypi/v/personal-jarvis?labelColor=0A0A0A&amp;color=F7F7F4" /></a>
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE"><img alt="Apache 2.0" src="https://img.shields.io/badge/License-Apache_2.0-F7F7F4?labelColor=0A0A0A" /></a>
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PersonalJarvis/PersonalJarvis/actions/workflows/ci.yml/badge.svg" /></a>
 </p>
 
-<h3 align="center">Your AI assistant, built for the agentic era.</h3>
+![Flow from a user request through Jarvis to the computer, browser, apps, agents, models, and services, then back as a result with run history.](https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/brand/request-to-result.svg)
 
-<p align="center">
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-666666?labelColor=333333" alt="Apache 2.0 license" /></a>
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/releases/latest"><img src="https://img.shields.io/github/v/release/PersonalJarvis/PersonalJarvis?label=release&labelColor=333333&color=666666" alt="latest release" /></a>
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/stargazers"><img src="https://img.shields.io/github/stars/PersonalJarvis/PersonalJarvis?labelColor=333333&color=666666&logo=github" alt="GitHub stars" /></a>
-  <a href="https://x.com/PersonalJarvis"><img src="https://img.shields.io/badge/follow-%40PersonalJarvis-000000?logo=x&logoColor=white" alt="follow @PersonalJarvis on X" /></a>
-</p>
+**Why it is different:** Jarvis coordinates the tools you already have. A request
+can move from voice or chat to [computer use](#computer-use-and-connected-channels),
+[Codex or Claude Code](#coding-workspace), [local or hosted models](#local-models),
+[plugins and MCP](#plugins-skills-and-mcp), or a [background agent](#jarvis-agents).
+[Memory](#memory-and-knowledge), [agent learning](#jarvis-agents), and
+[routines](#scheduled-work-and-workflows) provide context and recurring work.
+You can inspect actions, approvals, and output in the app. What runs depends on
+your setup, permissions, and the tools you connect.
 
-Personal Jarvis is an open-source AI assistant that runs on your own computer and that you simply talk to. Say your wake phrase and it answers out loud, works your browser and desktop apps, and runs your coding agents for you: Claude Code, Codex, OpenCode, Kimi and others sit side by side in one workspace, and you can tell any of them what to do by voice ("tell T1 to run the tests"). One app for Windows, macOS and Linux, or headless on a server.
+**Try it:** [Install on Windows, macOS, or Linux](#install) ·
+[See the agents at work](#jarvis-agents) ·
+[Read the first-run guide](#your-first-steps-in-the-desktop-app)
 
-**Voice first.** Talking is the main way you drive it. The wake phrase is detected on your own machine, and then Jarvis opens a live two-way audio session: you can interrupt it mid-sentence, and it keeps the conversation going while the actual work happens behind it. With [GPT-Live](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/gpt-live.md), OpenAI's realtime voice carries the conversation over WebRTC while a separate thinking model does the reasoning and the tool calls, both on the same OpenAI key and with cloud recording switched off. Gemini Live is there too. If you'd rather keep your voice at home, Jarvis installs and manages a local realtime server on your own GPU (12 GB and up) that listens, thinks through Ollama and speaks entirely on your machine, and stays warm so the next call connects right away. Whichever you pick, every action goes through the same approvals, runs exactly once even if the connection drops, and keeps going after you hang up.
+## Install
 
-**A team of agents, not a single chatbot.** Jarvis is the one you talk to, and behind it you build a team. Each agent has its own name, instructions, memory and browser, runs its own routines on a schedule, learns from what worked in its past runs, and stops to ask you a multiple choice question when it isn't sure. You can watch them work in a small office you can walk through, and move any of them onto another computer over SSH. Coding work gets the same treatment: in the [Agentic IDE](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/agentic-ide.md) every coding agent has its own pane and, if you want, its own git worktree, and Jarvis always knows what each one is doing ("what is T2 working on?").
-
-**It conducts your tools instead of replacing them.** Most AI apps want you to move into their chat and their subscription. Jarvis sits on top of what you already have: your Claude Code or Codex plan, one API key from any provider, or a local model through Ollama. It turns them into a single assistant you can talk to, and you can swap any of them without touching anything else.
-
-**How it's built.** A Python core and a React desktop app, both running locally. A small router only decides where a request goes (answer, tool, or agent) and every action passes through one executor with a risk policy (safe, monitor, ask, block), so nothing that could change your system happens without your approval, and every run is recorded. State, memory and keys stay on your machine; there is no account, no paid tier and no analytics. The whole design is in the [architecture overview](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/architecture-overview.md).
-
-[Website](https://personaljarvis.ai) · [Docs](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/welcome-to-personal-jarvis.md) · [Getting started](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/first-run-setup.md) · [How it works](#how-it-works) · [Discord](https://discord.gg/x7USduHxbc) · [X](https://x.com/PersonalJarvis)
-
-https://github.com/user-attachments/assets/bd2d5f3c-c601-475e-a37e-f532ea6ef6ea
-
-<p align="center"><sub>A real, unedited click-through of the app, sped up only where agents are thinking.</sub></p>
-
-## install
-
-**Windows (PowerShell)**
+**Windows — PowerShell**
 
 ```powershell
 irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex
@@ -41,7 +42,66 @@ irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install
 curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
 ```
 
-The installer checks for Python 3.11+ and Git, offers to install what is missing, sets up the app and opens it. Run it again to update. [install options →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/install/README.md)
+The installer checks Python 3.11+ and Git, offers to install missing prerequisites
+through the host package manager, installs the applicable desktop components,
+registers the desktop launcher, and opens the app. Language, wake phrase, and provider setup happen in the app.
+OS permissions and hardware capabilities affect voice and desktop control.
+Re-running the installer updates an existing installation.
+
+For a minimal server installation, use `pip install personal-jarvis` and
+`jarvis serve`. Open the local address reported at startup; the default is
+`http://localhost:47821`. Remote browser microphone access requires HTTPS.
+See the [headless deployment guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md).
+
+The idea is simple: one place on your computer where you say what you need, and it happens. You talk to Jarvis or type to it, and it works out whether to just answer, do something on your computer for you, or pass the job to an agent that keeps at it while you get on with your day. You can always see what it's doing, and it asks before it touches anything that matters.
+
+It runs on your own machine with whichever model you like, local ones included, and it's free. There's no account to create, and nothing sends your data anywhere you didn't connect yourself.
+
+## One request, several ways to get it done
+
+| Stage | What Jarvis connects |
+|---|---|
+| **Ask** | Start in chat or Voice Chat. Jarvis Voice separately dictates into other apps. |
+| **Act** | Use the host desktop and browser through Computer Use, or call a connected plugin, skill, CLI, or MCP tool. |
+| **Delegate** | Hand longer work to a background mission, a persistent specialist, or a Codex/Claude Code coding session when configured. Bounded parallel workers can split suitable work. |
+| **Keep context** | Use the local wiki and private agent lessons; schedule routines for recurring tasks. |
+| **Review** | Follow approvals and activity, then open the answer, file, or report in the conversation or Artifacts. |
+
+The app runs on Windows, macOS, and Linux, with headless use for server-capable
+features. Desktop control needs a supported graphical session and OS permission.
+Local models and speech are optional; hosted providers and connected services
+receive the content required for their requests. See [privacy and local data](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/privacy-and-local-data.md).
+
+## Start with chat or voice
+
+[Website](https://personaljarvis.ai) · [Docs](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/welcome-to-personal-jarvis.md) · [Getting started](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/first-run-setup.md) · [How it works](#how-it-works) · [Discord](https://discord.gg/x7USduHxbc) · [X](https://x.com/PersonalJarvis)
+
+https://github.com/user-attachments/assets/9930ca95-5015-4ade-9a16-975c77d179fd
+
+<p align="center"><sub>A real click-through of the app: every frame is recorded, waiting is sped up, and a few moments are zoomed in.</sub></p>
+
+## Jarvis Agents
+
+Build a team you can return to. Each agent has an identity, a direct conversation,
+standing instructions, and access to the tools you grant it. Pick a connected
+model or supported agent account for the work, and keep the conversations in
+one workspace.
+
+- **Talk directly to a specialist.** Select an agent from the roster and continue its chat.
+- **Give it a standing brief.** Configure its instructions, model access, and tools.
+- **Set up recurring work.** Per-agent routines expose instructions, scheduling, and execution history.
+- **Inspect its work.** Read messages and tool activity, and open produced files in Artifacts.
+- **Explore the world view.** The workspace also has a visual map of the team.
+
+Persistent agents and isolated coding missions have different lifecycles.
+Coding missions can use worktree isolation and critic review; an ordinary
+agent chat is not a new isolated worktree on every message.
+For suitable tasks, a mission can fan out to a bounded group of child workers.
+Each child has its own result; this is controlled delegation rather than an
+unlimited self-spawning swarm.
+
+[Agent guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/jarvis-agents.md) ·
+[Agent learning](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/agent-society/self-learning.md) · [Routines](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/routines.md)
 
 You need Windows, macOS or Linux, plus one API key from a supported provider or a local model. A microphone helps if you want to talk to it. You don't need a GPU; speech recognition and local models run fine on a normal machine, just slower.
 
@@ -74,7 +134,12 @@ Start with a [good first issue](https://github.com/PersonalJarvis/PersonalJarvis
 
 If you are an AI agent helping with this repository, read [`AGENTS.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/AGENTS.md) first.
 
-## thanks
+Panes have call signs so you can address a particular session through Jarvis:
+*"Tell T1 to run the tests"* or *"What is T2 working on?"* Return to the workspace
+to inspect output, respond to a prompt, or take over manually. A terminal becoming
+idle is not proof that its result is correct; inspect its changes and validation.
+You can also send one brief to several coding panes, with a delivery result for
+each pane. This is the coding workspace's parallel-agent path.
 
 If Personal Jarvis is useful to you, a star helps other people find it. Sponsors are listed in [SPONSORS.md](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SPONSORS.md).
 

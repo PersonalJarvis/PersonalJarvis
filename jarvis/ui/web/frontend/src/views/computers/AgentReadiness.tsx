@@ -95,6 +95,8 @@ export function AgentReadiness({ computer }: { computer: Computer }) {
   }
 
   const data = readiness.data;
+  // A Windows computer needs Git for Windows instead of tmux, and an admin, not root.
+  const windows = data?.os === "Windows" || computer.facts?.os_id === "windows";
   return (
     <div data-testid="computer-readiness">
     <Panel className="p-5">
@@ -122,7 +124,9 @@ export function AgentReadiness({ computer }: { computer: Computer }) {
           {readiness.isFetching ? <Loader2 className="animate-spin" /> : <RefreshCw />}
         </Button>
       </div>
-      <p className="mb-4 text-sm text-muted-foreground">{t("computers.ready_body")}</p>
+      <p className="mb-4 text-sm text-muted-foreground">
+        {t(windows ? "computers.ready_body_windows" : "computers.ready_body")}
+      </p>
 
       {!online && <p className="text-sm text-muted-foreground">{t("computers.ready_offline")}</p>}
       {readiness.isError && <p role="alert" className="text-sm text-destructive">{errorText(readiness.error)}</p>}
@@ -182,7 +186,9 @@ export function AgentReadiness({ computer }: { computer: Computer }) {
                 )}
               </Button>
               {!data.root && !data.sudo && (
-                <span className="text-xs text-muted-foreground">{t("computers.ready_needs_root")}</span>
+                <span className="text-xs text-muted-foreground">
+                  {t(windows ? "computers.ready_needs_admin" : "computers.ready_needs_root")}
+                </span>
               )}
             </div>
           )}

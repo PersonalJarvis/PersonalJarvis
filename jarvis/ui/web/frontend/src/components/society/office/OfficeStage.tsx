@@ -6,7 +6,7 @@
  * up is the coding floor: a figure per IDE coding session, its terminal live
  * on the monitor, and Gigi flying along with the person.
  */
-import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { advance, Canvas } from "@react-three/fiber";
 import { useReducedMotion } from "framer-motion";
@@ -45,6 +45,9 @@ import "./officeFloors.css";
 import { OfficeMinimap } from "./OfficeMinimap";
 import { OfficeCompass } from "./OfficeCompass";
 import { OfficeFullMap } from "./OfficeFullMap";
+
+// Only loaded when a host without its own create dialog (the IDE's side panel) spawns an agent.
+const CreateAgentDialog = lazy(() => import("../create/CreateAgentDialog").then((m) => ({ default: m.CreateAgentDialog })));
 
 // Dev-only handles for runtime checks of walking and panels.
 if (import.meta.env.DEV && typeof window !== "undefined") Object.assign(window, { __officeStore: useOfficeStore, __officePlayer: player, __officeAgents: agentPositions, __officeSeated: seatedAtDesk,
@@ -99,9 +102,10 @@ function useRosterRefresh(awake: boolean) {
 }
 
 /**
- * Agents created while the office is open arrive by the elevator; everyone
- * else is simply there. Each floor keeps its own memory, so riding up or down
- * never makes a whole floor "arrive".
+ * Agents created while the office is open appear on the spawn pad in the
+ * middle of the floor and walk to their desk; everyone else is simply there.
+ * Each floor keeps its own memory, so riding up or down never makes a whole
+ * floor "arrive".
  */
 function useNewcomers(active: SocietyAgent[], floor: OfficeFloor): ReadonlySet<string> {
   const [newcomers, setNewcomers] = useState<{ floor: OfficeFloor; ids: ReadonlySet<string> }>({ floor, ids: new Set() });
@@ -163,7 +167,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   const walkers = useMemo<WalkerContext>(() => {
     const desks = allDesks(layout);
     return {
-      layout, grid, book, spawn: layout.spawn,
+      layout, grid, book, spawn: layout.arrival,
       colleagues: () => desks.filter((d) => d.agentId && agentsRef.current.get(d.agentId)?.state === "working")
         .map((d) => ({ agentId: d.agentId as string, desk: d })),
     };
@@ -271,10 +275,19 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     if (coding && !compact) useEventStore.getState().setActiveSection("agentic-ide");
     else onOpenLedger?.();
   }, [coding, compact, onOpenLedger]);
+  // Spawning a Jarvis agent (the spawn point, reception): the host's create dialog, or the office's own
+  // where the host has none. The panel closes and the camera turns to the pad, where the agent appears.
+  const [creating, setCreating] = useState(false);
+  const createAgent = useCallback(() => {
+    const store = useOfficeStore.getState();
+    store.select(null);
+    if (Math.hypot(player.x - layout.arrival.x, player.z - layout.arrival.z) > 4) store.focusOn(layout.arrival);
+    if (onCreateAgent) onCreateAgent(); else setCreating(true);
+  }, [onCreateAgent, layout]);
   const actions = useMemo<OfficeActions>(() => ({
     onOpenAgent: openAgent,
-    onOpenLedger: openList, onCreateAgent, onOpenGroup,
-  }), [openAgent, openList, onCreateAgent, onOpenGroup]);
+    onOpenLedger: openList, onCreateAgent: createAgent, onOpenGroup,
+  }), [openAgent, openList, createAgent, onOpenGroup]);
 
   // Escape closes an open panel before it can leave the map.
   useEffect(() => {
@@ -333,7 +346,8 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   const playerName = profile.name.trim() || t("society.office.you");
   const showHintBar = useOfficeSettings((s) => s.showHintBar);
   const receptionOpen = selection?.kind === "checkpoint" && selection.id === "create";
-  const missionOpen = selection?.kind === "checkpoint" && selection.id === "mission";
+  // Mission Control and the spawn point carry forms: they get the wide slot, like reception.
+  const widePanel = selection?.kind === "checkpoint" && (selection.id === "mission" || selection.id === "spawn" || selection.id === "launch");
 
   // A full-view office draws no more pixels than a side-panel one would afford.
   const dpr = useDprBudget(hostRef);
@@ -392,11 +406,13 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
       </div>
 
       {selection?.kind === "arcade" && <ArcadeCabinet onClose={() => select(null)} />}
-      {selection && selection.kind !== "arcade" && (
-        <div className="office-panel-slot" data-wide={receptionOpen || missionOpen || undefined}>
-          {selection.kind === "agent" && selectedAgent && (selectedPane
-            ? <PaneCommandPanel occupant={selectedPane} onOpen={() => openPaneSession(selectedPane.pane)} onClose={() => select(null)} />
-            : <AgentPanel agent={selectedAgent} actions={actions} onClose={() => select(null)} />)}
+      {/* A coding session is a window of its own on the stage, not a panel in the corner slot. */}
+      {selection?.kind === "agent" && selectedPane && (
+        <PaneCommandPanel occupant={selectedPane} compact={compact} onOpen={() => openPaneSession(selectedPane.pane)} onClose={() => select(null)} />
+      )}
+      {selection && selection.kind !== "arcade" && !(selection.kind === "agent" && selectedPane) && (
+        <div className="office-panel-slot" data-wide={receptionOpen || widePanel || undefined}>
+          {selection.kind === "agent" && selectedAgent && <AgentPanel agent={selectedAgent} actions={actions} onClose={() => select(null)} />}
           {selection.kind === "checkpoint" && (
             <CheckpointPanel id={selection.id} floor={floor} agents={active} layout={layout} sample={!coding && (roster.data?.sample ?? false)}
               profile={profile} onProfile={updateProfile} actions={actions} onClose={() => select(null)} />
@@ -423,6 +439,11 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
       <OfficeFullMap open={mapOpen} onOpen={() => setMapOpen(true)} onClose={() => setMapOpen(false)}
         layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null} />
       {!compact && showHintBar && <p className="office-hud office-help" data-office-ui>{t("society.office.help")}</p>}
+      {creating && (
+        <Suspense fallback={null}>
+          <CreateAgentDialog open onClose={() => setCreating(false)} onCreated={() => setCreating(false)} />
+        </Suspense>
+      )}
     </section>
   );
 }

@@ -9,6 +9,9 @@ on the server while the PC is off, and the next start shows them running there.
 Bounded by the quit sequence's timeout: a quit is never held open for long,
 and a move that could not finish leaves the pane where it was (the placement
 is recorded only after the move completed).
+
+A Windows computer is never a target: it has no tmux, so its panes end with
+the app's SSH connection (``jarvis.computers.remote_terminal``).
 """
 
 from __future__ import annotations
@@ -48,13 +51,30 @@ def set_target(computer_id: str | None) -> None:
     os.replace(tmp, path)
 
 
+def _is_windows(computer_id: str) -> bool:
+    """From the last check's facts: no network call while the app quits."""
+    from jarvis.computers.store import ComputerStore
+
+    computer = ComputerStore().get(computer_id)
+    facts = computer.facts if computer is not None else None
+    return facts is not None and facts.os_id == "windows"
+
+
 async def offload_before_quit(registry: Any) -> list[str]:
     """Move every workspace with a locally running agent. Returns their ids."""
     computer_id = target()
     if not computer_id:
         return []
+    if _is_windows(computer_id):
+        # No tmux there: a pane lives exactly as long as this app's SSH channel,
+        # so moving it at quit would end the agent instead of saving it.
+        logger.warning(
+            "Agentic IDE: not moving panes on quit — {} runs Windows, where they would stop",
+            computer_id,
+        )
+        return []
     moved: list[str] = []
-    for workspace in list(registry.sessions()):
+    for workspace in list(registry.sessions):
         running_here = [
             term for term in workspace.terminals if term.pty_id and not term.computer_id
         ]

@@ -12,7 +12,7 @@ Two failure modes this pins, both of which are invisible until a user reports
    ``raw_text`` turns the user's filler switch into a no-op (AP-31) and makes
    wake judge an edited transcript (AP-27).
 
-The German fixtures are the speech under test (CLAUDE.md §1, category 4).
+The German fixtures are the speech under test (AGENTS.md §1, category 4).
 """
 from __future__ import annotations
 

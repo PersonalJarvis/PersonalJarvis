@@ -7,7 +7,7 @@
  * everything else is client-side choreography that costs no tokens and never
  * starts or stops work.
  */
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Html } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { DoubleSide, Vector3, type Group, type Mesh, type MeshBasicMaterial } from "three";
@@ -34,7 +34,9 @@ import type { ChatLine } from "./deskChat";
 import type { DeskChat } from "./useDeskChats";
 import { officeTalkChat, useOfficeTalk } from "./officeTalk";
 import { deliverySpot, ERRAND_SPEED, useErrandFeed, useGigiErrands } from "./gigiErrands";
-import { isPaneAgentId } from "./codingFloor";
+import { isPaneAgentId, plateTitle } from "./codingFloor";
+import { promptOpening } from "@/components/agentic/sessionTitle";
+import { agentLogoAsset } from "@/components/agentic/AgentMark";
 
 /** The agent's symbol walks behind it as a little pet, about a fifth of its height. */
 export const PET_SIZE_M = 0.26;
@@ -89,23 +91,77 @@ function Nameplate({ agent, activity, selected, onSelect, height = OFFICE_FIGURE
     last.current = scale;
     plate.current.style.transform = `scale(${scale.toFixed(2)})`;
   });
+  const [open, setOpen] = useState(false);
   const detail = agent.state !== "idle" ? t(`society.office.state_${agent.state}`) : activity ? t(`society.office.activity_${activity}`) : "";
+  const pane = isPaneAgentId(agent.agentId);
+  const logo = pane ? agentLogoAsset(agent.provider) : null;
+  const state = (
+    <span className="office-plate-state" title={t(`society.office.state_${agent.state}`)}>
+      <i aria-hidden />{detail ? <em>{detail}</em> : null}
+    </span>
+  );
   return (
     <group ref={anchor} position={[0, height, 0]}>
-      <Html center zIndexRange={[20, 0]}>
+      {/* An opened plate draws above its neighbours' plates and bubbles, which sit shoulder to shoulder at a desk row. */}
+      <Html center zIndexRange={open ? [40, 30] : [20, 0]}>
         <button ref={plate} type="button" data-office-ui className="office-plate" data-state={agent.state} data-selected={selected || undefined}
+          data-pane={pane || undefined} data-open={open || undefined}
           onClick={(event) => { event.stopPropagation(); onSelect(agent.agentId); }}
+          onPointerEnter={() => setOpen(true)} onPointerLeave={() => setOpen(false)}
+          onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
           aria-label={t("society.office.open_agent").replace("{0}", agent.name)}>
-          <span className="office-plate-badge" style={{ background: agent.palette.primary }} aria-hidden>
-            {agent.tier === "lead" ? "★" : (isPaneAgentId(agent.agentId) ? agent.provider : agent.name).slice(0, 1).toUpperCase()}
-          </span>
-          <span className="office-plate-name" title={agent.name}>{agent.name}</span>
-          <span className="office-plate-state" title={t(`society.office.state_${agent.state}`)}>
-            <i aria-hidden />{detail ? <em>{detail}</em> : null}
-          </span>
+          {pane && logo ? <PaneLogo url={logo.url} ground={logo.ground} /> : (
+            <span className="office-plate-badge" style={{ background: agent.palette.primary }} aria-hidden>
+              {agent.tier === "lead" ? "★" : (pane ? agent.provider : agent.name).slice(0, 1).toUpperCase()}
+            </span>
+          )}
+          {pane ? <PanePlateText agent={agent} open={open} state={state} /> : (
+            <>
+              <span className="office-plate-name" title={agent.name}>{agent.name}</span>
+              {state}
+            </>
+          )}
         </button>
       </Html>
     </group>
+  );
+}
+
+/**
+ * The coding CLI's own mark in front of a pane's plate, instead of a lettered
+ * hexagon: a floor of Claude panes read "C", "C", "C", which named nothing.
+ * Drawn here rather than with `AgentMark`, whose `ink` marks follow the app
+ * theme's text colour — the plate is dark in both themes, so a light-mode ink
+ * mark would vanish on it. An `ink` mark is masked in the plate's own white;
+ * a full-colour lockup keeps its colours on a dark tile it can sit on.
+ */
+function PaneLogo({ url, ground }: { url: string; ground: "ink" | "dark" | "any" }) {
+  if (ground === "ink") {
+    const mask = { WebkitMaskImage: `url("${url}")`, maskImage: `url("${url}")` };
+    return <span className="office-plate-logo" data-ground="ink" aria-hidden><i style={mask} /></span>;
+  }
+  return <span className="office-plate-logo" data-ground={ground} aria-hidden><img src={url} alt="" draggable={false} /></span>;
+}
+
+/**
+ * A coding pane's plate: its title on two lines (subject, then result and run
+ * state), so the words that tell four "Office …" panes apart are never the ones
+ * clipped. Hovered or focused, it opens to the whole title, the call-sign that
+ * finds the pane in the IDE, and the opening of what it was last asked.
+ */
+function PanePlateText({ agent, open, state }: { agent: SocietyAgent; open: boolean; state: ReactNode }) {
+  const { subject, result } = plateTitle(agent.name);
+  const asked = open ? promptOpening(agent.description) : "";
+  return (
+    <span className="office-plate-text">
+      <span className="office-plate-name">{subject}</span>
+      <span className="office-plate-line">
+        {result ? <span className="office-plate-result">{result}</span> : null}
+        {state}
+      </span>
+      {open ? <span className="office-plate-sign">{agent.title}</span> : null}
+      {asked && asked !== agent.name ? <span className="office-plate-asked">“{asked}”</span> : null}
+    </span>
   );
 }
 

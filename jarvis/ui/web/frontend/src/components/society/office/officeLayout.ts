@@ -8,7 +8,7 @@
  * south-east, so tall rooms stand in the north and the lobby lies in front.
  *
  *   ┌──────────── north strip: Lead office · Team room · Wardrobe ───────────┐
- *   │                   departments (open office, 2 columns)                 │
+ *   │        departments (open office, 2 columns) · spawn point in the middle  │
  *   └──── south strip: Reception + lobby (Agent board) · Break room ─────────┘
  *
  * The coding floor (variant "coding", one elevator ride up) keeps the same
@@ -17,10 +17,16 @@
  * office and the wardrobe. It has no lead desks. Mission Control is a modern
  * office: a walnut slat wall with a live video wall, a desk with three live
  * monitors and a lounge corner; working it starts new coding agents and
- * briefs several at once. Only it, the elevator and the break room are
- * checkpoints there.
+ * briefs several at once. Only it, the spawn point, the elevator and the
+ * break room are checkpoints there.
+ *
+ * Both floors have a spawn point in their middle: a round pad with a
+ * terminal on the crossing of the centre aisle and the cross aisle nearest
+ * the floor's centre. It spawns new Jarvis agents downstairs and new coding
+ * agents upstairs, and everyone new to the floor appears on its pad.
  */
 import type { AgentRunState, AgentTier } from "../data";
+import { agentsAmbience } from "./agentsAmbience";
 import { codingAmbience } from "./codingAmbience";
 
 export interface OfficeAgentInput {
@@ -78,9 +84,11 @@ export interface WallSegment { x1: number; z1: number; x2: number; z2: number; r
 
 /**
  * "elevator" rides between the floors and stands in front of the lobby elevator on both of them.
- * "mission" is Mission Control, the coding floor's centre hub.
+ * "mission" is Mission Control on the coding floor.
+ * "spawn" (agents floor) and "launch" (coding floor) are the spawn point in the floor's middle:
+ * a new Jarvis agent downstairs, a new coding agent upstairs.
  */
-export type CheckpointKind = "create" | "manage" | "team" | "wardrobe" | "lead" | "break" | "elevator" | "mission";
+export type CheckpointKind = "spawn" | "launch" | "create" | "manage" | "team" | "wardrobe" | "lead" | "break" | "elevator" | "mission";
 
 /** A place the person can walk to (or click from afar) to act. "floor" = the open office, outside every room. */
 export interface Checkpoint extends Point {
@@ -97,9 +105,13 @@ export interface Checkpoint extends Point {
 }
 
 export type FurnitureKind =
-  | "meetingTable" | "teamBoard" | "receptionDesk" | "kiosk" | "lockers" | "mirror"
+  | "meetingTable" | "teamBoard" | "receptionDesk" | "lockers" | "mirror"
   | "coffeeBar" | "waterCooler" | "couch" | "coffeeTable" | "arcade" | "beanbag"
   | "bookshelf" | "plant" | "rug" | "elevator"
+  // Break room lounge: sofa modules and their corner, the oak coffee table, a kilim, the bookcase wall,
+  // the reading nook, foosball, monsteras and the arcade's game mat.
+  | "breakSofa" | "breakSofaCorner" | "breakTable" | "breakRug" | "breakBookcase" | "readingNook" | "foosball" | "breakPlant"
+  | "arcadeMat"
   // Lead office: the executive suite.
   | "leadWall" | "executiveRug" | "guestChair" | "chesterfield" | "loungeTable" | "executiveBar" | "globe" | "floorLamp"
   | "dogBed" | "treatJar"
@@ -109,7 +121,14 @@ export type FurnitureKind =
   // Coding floor: the server room — rack rows round a cold aisle, the NOC console and status wall, UPS, fire suppression.
   | "serverRack" | "coldAisle" | "nocConsole" | "statusWall" | "ups" | "fireSuppression"
   // Team room: the slat wall behind the board, a credenza, fiddle-leaf figs and a wool rug.
-  | "teamWall" | "credenza" | "designerPlant" | "teamRug";
+  | "teamWall" | "credenza" | "designerPlant" | "teamRug"
+  // Wardrobe (agents floor): the oak wardrobe wall, a bulb-lit mirror, a tailor's dummy, a bench, a coat stand, a round rug.
+  | "wardrobeWall" | "dressingMirror" | "tailorDummy" | "dressingBench" | "coatStand" | "roundRug"
+  // Lobby (agents floor): the brand wall, the Agent board totem, the waiting lounge, olive trees, the award vitrine, the mat.
+  | "brandWall" | "agentTotem" | "lobbySofa" | "lobbyArmchair" | "lobbyTable" | "sideTable" | "lobbyLamp" | "oliveTree"
+  | "awardCase" | "entranceMat" | "lobbyRug"
+  // The spawn point in the middle of both floors: the flat pad and the terminal standing on it.
+  | "spawnPad" | "spawnTerminal";
 
 /**
  * Footprint (x-extent × z-extent before rotation) and height of each piece.
@@ -122,7 +141,6 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   teamBoard: { w: 2.6, d: 0.2, h: 1.9, solid: true },
   // The counter is 1.1 m; its slatted back wall with the help display rises to 2.2 m.
   receptionDesk: { w: 2.8, d: 0.9, h: 2.2, solid: true },
-  kiosk: { w: 1.0, d: 0.5, h: 1.8, solid: true },
   lockers: { w: 2.4, d: 0.5, h: 1.9, solid: true },
   mirror: { w: 0.9, d: 0.12, h: 1.9, solid: true },
   coffeeBar: { w: 2.4, d: 0.7, h: 1.05, solid: true },
@@ -135,6 +153,17 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   plant: { w: 0.6, d: 0.6, h: 1.3, solid: true },
   rug: { w: 1, d: 1, h: 0.02, solid: false },
   elevator: { w: 2.2, d: 0.4, h: 2.4, solid: true },
+  // Break room: the sofa modules keep the couch's box; the coffee table carries a chess game and board games;
+  // the reading nook is the armchair plus its floor lamp; the foosball box includes the rod handles.
+  breakSofa: { w: 2.2, d: 0.9, h: 0.85, solid: true },
+  breakSofaCorner: { w: 0.9, d: 0.9, h: 0.85, solid: true },
+  breakTable: { w: 1.3, d: 0.75, h: 0.5, solid: true },
+  breakRug: { w: 1, d: 1, h: 0.02, solid: false },
+  breakBookcase: { w: 2.8, d: 0.4, h: 2.05, solid: true },
+  readingNook: { w: 0.9, d: 0.9, h: 1.75, solid: true },
+  foosball: { w: 1.3, d: 1.05, h: 0.8, solid: true },
+  breakPlant: { w: 0.7, d: 0.7, h: 1.9, solid: true },
+  arcadeMat: { w: 1, d: 1, h: 0.02, solid: false },
   leadWall: { w: 7.9, d: 0.38, h: 2.9, solid: true },
   executiveRug: { w: 1, d: 1, h: 0.02, solid: false },
   guestChair: { w: 0.74, d: 0.74, h: 0.92, solid: true },
@@ -149,7 +178,7 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   // Mission Control: a display on a floor stand; the box is the screen's width and the base plate's depth.
   commandWall: { w: 7.8, d: 0.3, h: 2.7, solid: true },
   // Desk and chair together; not a solid box, navigation walks round commandDeskObstacles.
-  commandDesk: { w: 2.8, d: 2.1, h: 1.45, solid: false },
+  commandDesk: { w: 2.8, d: 2.1, h: 1.7, solid: false },
   // Server room: a row of five 42U racks, its ladder tray on top; the aisle between two rows (floor tiles,
   // overhead trays, a light) is walkable; the NOC console includes its stool.
   serverRack: { w: 3.0, d: 1.0, h: 2.3, solid: true },
@@ -164,7 +193,39 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   credenza: { w: 2.2, d: 0.46, h: 1.1, solid: true },
   designerPlant: { w: 0.8, d: 0.8, h: 2.0, solid: true },
   teamRug: { w: 1, d: 1, h: 0.02, solid: false },
+  // Wardrobe: four open oak bays with rails, shelves and drawers; the mirror stands on splayed feet.
+  wardrobeWall: { w: 4.36, d: 0.62, h: 2.05, solid: true },
+  dressingMirror: { w: 1.1, d: 0.3, h: 2.05, solid: true },
+  tailorDummy: { w: 0.5, d: 0.5, h: 1.75, solid: true },
+  dressingBench: { w: 1.3, d: 0.5, h: 0.5, solid: true },
+  coatStand: { w: 0.5, d: 0.5, h: 1.85, solid: true },
+  roundRug: { w: 1, d: 1, h: 0.02, solid: false },
+  // Lobby: the ghost and the wordmark on the brand wall; the totem is the Agent board ("manage").
+  brandWall: { w: 3.2, d: 0.36, h: 2.9, solid: true },
+  agentTotem: { w: 0.9, d: 0.5, h: 2.1, solid: true },
+  lobbySofa: { w: 2.3, d: 0.95, h: 0.8, solid: true },
+  lobbyArmchair: { w: 0.8, d: 0.82, h: 0.82, solid: true },
+  // The top is at 0.4 m; magazines, a bowl and a sprig in a vase stand on it.
+  lobbyTable: { w: 1.2, d: 0.75, h: 0.6, solid: true },
+  sideTable: { w: 0.5, d: 0.5, h: 0.65, solid: true },
+  lobbyLamp: { w: 0.5, d: 0.5, h: 1.75, solid: true },
+  oliveTree: { w: 1.2, d: 1.2, h: 2.5, solid: true },
+  awardCase: { w: 1.3, d: 0.42, h: 1.95, solid: true },
+  entranceMat: { w: 1, d: 1, h: 0.02, solid: false },
+  lobbyRug: { w: 1, d: 1, h: 0.02, solid: false },
+  // The spawn point: a flat round pad everyone walks over, and the double-sided terminal on it (its crest
+  // tops out at 2.2 m). The pad fits the 3.2 m aisle crossing with a margin to every department.
+  spawnPad: { w: 2 * 1.42, d: 2 * 1.42, h: 0.02, solid: false },
+  spawnTerminal: { w: 1.2, d: 0.7, h: 2.2, solid: true },
 };
+
+/**
+ * The spawn point's numbers, shared by the layout, the renderer and the tests:
+ * the walk-in radius round the terminal, how far south of it "walk there" and
+ * a newcomer's arrival stand, and the height of its floating token (above
+ * the terminal's crest).
+ */
+export const SPAWN = { reach: 1.15, approach: 0.95, tokenY: 2.85 } as const;
 
 export interface Furniture extends Point {
   id: string;
@@ -172,7 +233,7 @@ export interface Furniture extends Point {
   /** Rotation about +y. 0 = the prop's front faces +z (south, towards the camera). */
   rotationY: number;
   room: RoomKind | "floor";
-  /** Only rugs (plain, executive and the team rug) are sized per instance (w × d); everything else uses FURNITURE_SIZE. */
+  /** Only rugs (plain, executive, team, lobby) and the entrance mat are sized per instance (w × d); everything else uses FURNITURE_SIZE. */
   size?: { w: number; d: number };
 }
 
@@ -187,6 +248,8 @@ export interface OfficeLayout {
   departments: Department[];
   /** Lead desks live in the lead office; the coding floor has none (its rect is Mission Control). */
   lead: Rect & { desks: DeskSlot[] };
+  /** Mission Control's desk on the coding floor, as a seat the person can take; absent downstairs. */
+  command?: DeskSlot;
   rooms: Room[];
   walls: WallSegment[];
   furniture: Furniture[];
@@ -196,6 +259,8 @@ export interface OfficeLayout {
   obstacles: Rect[];
   /** Where the person's character starts. */
   spawn: Point;
+  /** Where someone new to the floor (an agent created during the visit) appears: on the spawn pad. */
+  arrival: Point;
   /** The walkable floor inside the railing. */
   floor: Rect;
   /** The whole slab, railing included. */
@@ -228,7 +293,8 @@ const AISLE = 3.2;
  * from. On the floor the desk is turned round, so the chair stands between
  * it and the wall. The renderer and navigation both read these numbers.
  */
-export const COMMAND_DESK = { w: 2.6, d: 0.86, chairZ: 0.72 } as const;
+/** `chairZ` equals SEAT_OFFSET, so the chair is exactly where seatOf() puts a seated person. */
+export const COMMAND_DESK = { w: 2.6, d: 0.86, chairZ: 0.62 } as const;
 /** How far round Mission Control's desk the person can use it, from the desk's centre. */
 export const COMMAND_REACH = 1.9;
 /** The desk piece's origin sits this far from the desk's centre, towards the chair: its box covers desk and chair. */
@@ -328,7 +394,7 @@ export function deskRect(desk: Pick<DeskSlot, "x" | "z" | "size">): Rect {
   return { minX: desk.x - w / 2, maxX: desk.x + w / 2, minZ: desk.z - d / 2, maxZ: desk.z + d / 2 };
 }
 
-/** A planter box at each end of a coding-floor bench: its width, length and the gap to the end desk. */
+/** A planter box at each end of a bench (both floors): its width, length and the gap to the end desk. */
 export const BENCH_PLANTER = { w: 0.36, d: 1.56, gap: 0.14 } as const;
 
 /**
@@ -373,11 +439,12 @@ export function chairRect(seat: Point, half = CHAIR_HALF): Rect {
 
 /** What a walker bumps into at Mission Control's desk: the desk top and the chair, nothing in between. */
 export function commandDeskObstacles(desk: Point): Rect[] {
-  const { w, d, chairZ } = COMMAND_DESK;
+  const { w, d } = COMMAND_DESK;
   return [
     { minX: desk.x - w / 2, maxX: desk.x + w / 2, minZ: desk.z - d / 2, maxZ: desk.z + d / 2 },
-    // The desk is turned round on the floor: its chair stands north of it, towards the wall.
-    chairRect({ x: desk.x, z: desk.z - chairZ }),
+    // The desk is turned round on the floor, facing south: its chair stands north of it,
+    // towards the wall (seatOf). A boss chair, so it takes the executive chair's footprint.
+    executiveChairRect({ x: desk.x, z: desk.z, facing: "south" }),
   ];
 }
 
@@ -475,10 +542,12 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
   const wardrobeRoom: Room = { id: eastKind, kind: eastKind, walled: true, minX: teamRoom.maxX, maxX, minZ: topZ, maxZ: northMaxZ,
     doors: [{ side: "south", at: (teamRoom.maxX + maxX) / 2, width: 1.5 }] };
 
-  // Departments between the strips.
+  // Departments between the strips, and the centre line of each cross aisle between two rows.
   const departments: Department[] = [];
+  const crossAisles: number[] = [];
   let z = northMaxZ + AISLE;
   for (let row = 0; row < rows; row += 1) {
+    if (row > 0) crossAisles.push(z - AISLE / 2);
     for (let col = 0; col < COLUMNS; col += 1) {
       const index = row * COLUMNS + col;
       const group = groups[index];
@@ -497,6 +566,11 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
 
   // South strip: an open reception/lobby in the west, a walled break room in the east.
   const southMinZ = bottomZ - SOUTH_DEPTH;
+  // The spawn point: on the centre aisle, at the crossing nearest the floor's middle (a
+  // single row of departments, which the minimum never allows, falls back to the south aisle).
+  const plazaZ = (crossAisles.length > 0 ? crossAisles : [southMinZ - AISLE / 2])
+    .reduce((best, c) => (Math.abs(c - (topZ + bottomZ) / 2) < Math.abs(best - (topZ + bottomZ) / 2) ? c : best));
+  const plaza: Point = { x: minX + DEPT_WIDTH + centreAisle / 2, z: plazaZ };
   const breakW = 10.5;
   const receptionRoom: Room = { id: "reception", kind: "reception", walled: false, minX, maxX: maxX - breakW, minZ: southMinZ, maxZ: bottomZ, doors: [] };
   const breakRoom: Room = { id: "break", kind: "break", walled: true, minX: maxX - breakW, maxX, minZ: southMinZ, maxZ: bottomZ,
@@ -596,28 +670,50 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
       { id: "server-ups", kind: "ups", x: wx0 + 0.06 + FURNITURE_SIZE.ups.d / 2, z: topZ + 6.0, rotationY: Math.PI / 2, room: "server" },
       { id: "server-fire", kind: "fireSuppression", x: wardrobeRoom.maxX - 0.06 - FURNITURE_SIZE.fireSuppression.d / 2, z: topZ + 6.0, rotationY: -Math.PI / 2, room: "server" },
     ] satisfies Furniture[] : [
-      // Wardrobe: lockers and a mirror.
-      { id: "wardrobe-lockers", kind: "lockers", x: wcx - 0.2, z: topZ + 0.4, rotationY: 0, room: "wardrobe" },
-      { id: "wardrobe-mirror", kind: "mirror", x: wardrobeRoom.maxX - 0.25, z: tcz, rotationY: -Math.PI / 2, room: "wardrobe" },
+      // Wardrobe: an open oak wardrobe along the north wall, a bulb-lit mirror
+      // on the west side facing the room, a tailor's dummy, a bench on the east
+      // side, a round rug under the checkpoint, a fig and a coat stand by the door.
+      { id: "wardrobe-wall", kind: "wardrobeWall", x: wcx, z: topZ + 0.06 + FURNITURE_SIZE.wardrobeWall.d / 2, rotationY: 0, room: "wardrobe" },
+      { id: "wardrobe-rug", kind: "roundRug", x: wcx, z: tcz + 0.3, rotationY: 0, room: "wardrobe", size: { w: 2.8, d: 2.8 } },
+      { id: "wardrobe-mirror", kind: "dressingMirror", x: wx0 + 0.06 + FURNITURE_SIZE.dressingMirror.d / 2, z: tcz - 0.6, rotationY: Math.PI / 2, room: "wardrobe" },
+      { id: "wardrobe-dummy", kind: "tailorDummy", x: wardrobeRoom.maxX - 0.6, z: topZ + 1.4, rotationY: -Math.PI / 4, room: "wardrobe" },
+      { id: "wardrobe-bench", kind: "dressingBench", x: wardrobeRoom.maxX - 0.06 - FURNITURE_SIZE.dressingBench.d / 2, z: tcz + 0.1, rotationY: -Math.PI / 2, room: "wardrobe" },
+      { id: "wardrobe-plant", kind: "designerPlant", x: wx0 + 0.5, z: northMaxZ - 0.5, rotationY: 0, room: "wardrobe" },
+      { id: "wardrobe-stand", kind: "coatStand", x: wardrobeRoom.maxX - 0.4, z: northMaxZ - 0.45, rotationY: 0, room: "wardrobe" },
     ] satisfies Furniture[]),
     // Reception and lobby.
     { id: "elevator", kind: "elevator", x: rx0 + 0.25, z: bottomZ - 2.6, rotationY: Math.PI / 2, room: "reception" },
     { id: "reception-desk", kind: "receptionDesk", x: rx0 + 3.2, z: southMinZ + 2.6, rotationY: 0, room: "reception" },
-    { id: "kiosk", kind: "kiosk", x: receptionRoom.maxX - 2.2, z: southMinZ + 2.2, rotationY: 0, room: "reception" },
-    { id: "lobby-plant-a", kind: "plant", x: rx0 + 0.6, z: southMinZ + 0.8, rotationY: 0, room: "reception" },
-    { id: "lobby-plant-b", kind: "plant", x: receptionRoom.maxX - 0.8, z: bottomZ - 0.7, rotationY: 0, room: "reception" },
-    // Break room: couches around a table, coffee bar, water cooler, arcade, beanbags.
-    { id: "break-rug", kind: "rug", x: bx0 + 3.6, z: bz0 + 4.6, rotationY: 0, room: "break", size: { w: 5.6, d: 4.2 } },
-    { id: "break-couch-a", kind: "couch", x: bx0 + 3.6, z: bz0 + 6.3, rotationY: Math.PI, room: "break" },
-    { id: "break-couch-b", kind: "couch", x: bx0 + 1.75, z: bz0 + 4.6, rotationY: Math.PI / 2, room: "break" },
-    { id: "break-table", kind: "coffeeTable", x: bx0 + 3.6, z: bz0 + 4.6, rotationY: 0, room: "break" },
+    // The spawn point in the middle of the floor: the pad, and the terminal on it facing the lobby.
+    { id: "spawn-pad", kind: "spawnPad", x: plaza.x, z: plaza.z, rotationY: 0, room: "floor" },
+    { id: "spawn-terminal", kind: "spawnTerminal", x: plaza.x, z: plaza.z, rotationY: 0, room: "floor" },
+    ...(coding ? [
+      // The coding lobby keeps only its plants: new coding agents are spawned in the middle of the floor.
+      { id: "lobby-plant-a", kind: "plant", x: rx0 + 0.6, z: southMinZ + 0.8, rotationY: 0, room: "reception" },
+      { id: "lobby-plant-b", kind: "plant", x: receptionRoom.maxX - 0.8, z: bottomZ - 0.7, rotationY: 0, room: "reception" },
+    ] satisfies Furniture[] : lobbyFurniture(receptionRoom)),
+    // Break room lounge (both floors): an L-shaped sectional — module A along the
+    // south facing north, module B along the west facing east, the corner module
+    // joining them — round an oak coffee table on a kilim; the bookcase wall and
+    // the coffee bar on the north wall; the reading nook in the north-west corner
+    // by the dog's basket; foosball, beanbags, the water station and the arcade
+    // on its pixel mat in the east; monsteras in two corners.
+    { id: "break-rug", kind: "breakRug", x: bx0 + 3.4, z: bz0 + 4.9, rotationY: 0, room: "break", size: { w: 5.2, d: 4.2 } },
+    { id: "break-sofa-a", kind: "breakSofa", x: bx0 + 3.3, z: bz0 + 6.3, rotationY: Math.PI, room: "break" },
+    { id: "break-sofa-b", kind: "breakSofa", x: bx0 + 1.75, z: bz0 + 4.75, rotationY: Math.PI / 2, room: "break" },
+    { id: "break-sofa-corner", kind: "breakSofaCorner", x: bx0 + 1.75, z: bz0 + 6.3, rotationY: Math.PI, room: "break" },
+    { id: "break-table", kind: "breakTable", x: bx0 + 3.35, z: bz0 + 4.8, rotationY: 0, room: "break" },
     { id: "coffee-bar", kind: "coffeeBar", x: bx0 + 7.9, z: bz0 + 0.5, rotationY: 0, room: "break" },
     { id: "water-cooler", kind: "waterCooler", x: breakRoom.maxX - 0.45, z: bz0 + 2.6, rotationY: -Math.PI / 2, room: "break" },
     { id: "arcade", kind: "arcade", x: breakRoom.maxX - 0.6, z: bottomZ - 0.7, rotationY: -Math.PI / 2, room: "break" },
-    { id: "beanbag-a", kind: "beanbag", x: bx0 + 7.2, z: bz0 + 5.4, rotationY: 0, room: "break" },
-    { id: "beanbag-b", kind: "beanbag", x: bx0 + 8.4, z: bz0 + 6.3, rotationY: 0, room: "break" },
-    { id: "break-shelf", kind: "bookshelf", x: bx0 + 2.2, z: bz0 + 0.3, rotationY: 0, room: "break" },
-    { id: "break-plant", kind: "plant", x: bx0 + 0.6, z: bottomZ - 0.6, rotationY: 0, room: "break" },
+    { id: "arcade-mat", kind: "arcadeMat", x: breakRoom.maxX - 1.5, z: bottomZ - 0.7, rotationY: 0, room: "break", size: { w: 1.1, d: 1.2 } },
+    { id: "foosball", kind: "foosball", x: bx0 + 8.1, z: bz0 + 4.1, rotationY: 0, room: "break" },
+    { id: "beanbag-a", kind: "beanbag", x: bx0 + 6.6, z: bz0 + 6.1, rotationY: 0, room: "break" },
+    { id: "beanbag-b", kind: "beanbag", x: bx0 + 7.8, z: bz0 + 6.75, rotationY: 0, room: "break" },
+    { id: "break-shelf", kind: "breakBookcase", x: bx0 + 2.4, z: bz0 + 0.06 + FURNITURE_SIZE.breakBookcase.d / 2, rotationY: 0, room: "break" },
+    { id: "break-nook", kind: "readingNook", x: bx0 + 0.53, z: bz0 + 0.58, rotationY: 0, room: "break" },
+    { id: "break-plant", kind: "breakPlant", x: bx0 + 0.6, z: bottomZ - 0.6, rotationY: 0, room: "break" },
+    { id: "break-plant-e", kind: "breakPlant", x: breakRoom.maxX - 0.45, z: bz0 + 5.9, rotationY: 0, room: "break" },
   ];
   for (const dept of departments) {
     furniture.push({ id: `${dept.id}-plant-w`, kind: "plant", x: dept.minX + 0.45, z: dept.maxZ - 0.45, rotationY: 0, room: "floor" });
@@ -626,17 +722,19 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
 
   const table = furniture.find((f) => f.id === "team-table")!;
   const spots: Spot[] = [
-    // Couch seats: couch A faces north (rotated π), couch B faces east.
-    { id: "couch-a1", kind: "couch", pose: "sit", x: bx0 + 3.0, z: bz0 + 6.15, facing: Math.PI, room: "break" },
-    { id: "couch-a2", kind: "couch", pose: "sit", x: bx0 + 4.2, z: bz0 + 6.15, facing: Math.PI, room: "break" },
-    { id: "couch-b1", kind: "couch", pose: "sit", x: bx0 + 1.9, z: bz0 + 4.0, facing: Math.PI / 2, room: "break" },
-    { id: "couch-b2", kind: "couch", pose: "sleep", x: bx0 + 1.9, z: bz0 + 5.2, facing: Math.PI / 2, room: "break" },
+    // Couch seats: sofa module A faces north (rotated π), module B faces east;
+    // the reading nook's armchair faces south, into the room.
+    { id: "couch-a1", kind: "couch", pose: "sit", x: bx0 + 2.7, z: bz0 + 6.15, facing: Math.PI, room: "break" },
+    { id: "couch-a2", kind: "couch", pose: "sit", x: bx0 + 3.7, z: bz0 + 6.15, facing: Math.PI, room: "break" },
+    { id: "couch-b1", kind: "couch", pose: "sit", x: bx0 + 1.9, z: bz0 + 4.3, facing: Math.PI / 2, room: "break" },
+    { id: "couch-b2", kind: "couch", pose: "sleep", x: bx0 + 1.9, z: bz0 + 5.35, facing: Math.PI / 2, room: "break" },
+    { id: "couch-nook", kind: "couch", pose: "sit", x: bx0 + 0.61, z: bz0 + 0.72, facing: 0, room: "break" },
     { id: "coffee-1", kind: "coffee", pose: "stand", x: bx0 + 7.3, z: bz0 + 1.4, facing: Math.PI, room: "break" },
     { id: "coffee-2", kind: "coffee", pose: "stand", x: bx0 + 8.5, z: bz0 + 1.4, facing: Math.PI, room: "break" },
     { id: "cooler", kind: "cooler", pose: "stand", x: breakRoom.maxX - 1.2, z: bz0 + 2.6, facing: Math.PI / 2, room: "break" },
     { id: "arcade", kind: "arcade", pose: "stand", x: breakRoom.maxX - 1.45, z: bottomZ - 0.7, facing: Math.PI / 2, room: "break" },
-    { id: "beanbag-a", kind: "beanbag", pose: "sit", x: bx0 + 7.2, z: bz0 + 5.4, facing: Math.PI * 1.25, room: "break" },
-    { id: "beanbag-b", kind: "beanbag", pose: "sit", x: bx0 + 8.4, z: bz0 + 6.3, facing: Math.PI * 1.25, room: "break" },
+    { id: "beanbag-a", kind: "beanbag", pose: "sit", x: bx0 + 6.6, z: bz0 + 6.1, facing: Math.PI * 1.25, room: "break" },
+    { id: "beanbag-b", kind: "beanbag", pose: "sit", x: bx0 + 7.8, z: bz0 + 6.75, facing: Math.PI * 1.25, room: "break" },
     { id: "shelf-break", kind: "shelf", pose: "stand", x: bx0 + 2.2, z: bz0 + 1.1, facing: Math.PI, room: "break" },
     ...(coding ? [
       // Mission Control: the sofa facing east, the open shelf on the east wall.
@@ -649,6 +747,9 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     ] satisfies Spot[] : [
       // In front of the feature wall's east bookcase.
       { id: "shelf-lead", kind: "shelf", pose: "stand", x: leadRoom.maxX - 1.45, z: topZ + 1.05, facing: Math.PI, room: "lead" },
+      // Browsing the wardrobe's jacket rail.
+      { id: "shelf-wardrobe", kind: "shelf", pose: "stand", x: wcx - 1.0, z: topZ + 1.3, facing: Math.PI, room: "wardrobe" },
+      ...lobbySpots(receptionRoom),
     ] satisfies Spot[]),
     { id: "board", kind: "board", pose: "stand", x: tcx - 0.6, z: topZ + 1.2, facing: Math.PI, room: "team" },
   ];
@@ -670,17 +771,22 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
   }
 
   const reception = furniture.find((f) => f.id === "reception-desk")!;
-  const kiosk = furniture.find((f) => f.id === "kiosk")!;
   const elevator = furniture.find((f) => f.id === "elevator")!;
+  // The spawn point's ring surrounds the terminal; "walk there" and newcomers stand south of it, facing the screen.
+  const arrival: Point = { x: plaza.x, z: plaza.z + SPAWN.approach };
+  const spawnStop: Checkpoint = { id: coding ? "launch" : "spawn", room: "floor", x: plaza.x, z: plaza.z, radius: SPAWN.reach,
+    tokenY: SPAWN.tokenY, approach: arrival };
   // The elevator's doors face east into the lobby; its checkpoint is the floor in front of them.
   const elevatorStop: Checkpoint = { id: "elevator", room: "reception", x: elevator.x + 0.95, z: elevator.z, radius: 1.0 };
   const breakStop: Checkpoint = { id: "break", room: "break", x: bx0 + 5.6, z: bz0 + 2.6, radius: 1.8 };
   // Mission Control's stop is a ring round the desk, usable from every side; "walk there" ends in front of the desk.
   const missionStop: Checkpoint = { id: "mission", room: "command", x: commandDeskAt.x, z: commandDeskAt.z - 0.3, radius: COMMAND_REACH,
     tokenY: 2.25, approach: { x: commandDeskAt.x, z: commandDeskAt.z + COMMAND_DESK.d / 2 + 0.55 } };
-  const checkpoints: Checkpoint[] = coding ? [missionStop, elevatorStop, breakStop] : [
+  const board = furniture.find((f) => f.id === AGENT_BOARD_ID);
+  const checkpoints: Checkpoint[] = coding ? [spawnStop, missionStop, elevatorStop, breakStop] : [
+    spawnStop,
     { id: "create", room: "reception", x: reception.x, z: reception.z + 1.7, radius: 1.2 },
-    { id: "manage", room: "reception", x: kiosk.x, z: kiosk.z + 1.4, radius: 1.1 },
+    ...(board ? [{ id: "manage", room: "reception", x: board.x, z: board.z + 1.4, radius: 1.1 } satisfies Checkpoint] : []),
     { id: "team", room: "team", x: tcx + 2.2, z: northMaxZ - 1.05, radius: 0.95 },
     { id: "wardrobe", room: "wardrobe", x: wcx, z: tcz + 0.8, radius: 1.5 },
     { id: "lead", room: "lead", x: minX + leadW / 2, z: northMaxZ - 1.5, radius: 1.3 },
@@ -701,10 +807,12 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     ...departments.map((d) => ({ minX: d.minX + 0.2, maxX: d.maxX - 0.2, minZ: d.minZ + 0.02, maxZ: d.minZ + 0.2 })),
     ...furniture.filter((f) => FURNITURE_SIZE[f.kind].solid).map(footprint),
     ...(coding ? commandDeskObstacles(commandDeskAt) : []),
-    // Planter boxes at the bench ends on the coding floor.
-    ...(coding ? departments.flatMap(benchPlanters).map((p) => p.rect) : []),
+    // Planter boxes at the bench ends (walnut on the coding floor, oak on the agents floor).
+    ...departments.flatMap(benchPlanters).map((p) => p.rect),
     // The coding floor's tree planters, bookcases and troughs along the windows.
     ...(coding ? codingAmbience({ departments, rooms }) : []).map(({ minX, maxX, minZ, maxZ }) => ({ minX, maxX, minZ, maxZ })),
+    // The agents floor's olive trees, window benches and planters along the windows.
+    ...(coding ? [] : agentsAmbience({ departments, rooms })).map(({ minX, maxX, minZ, maxZ }) => ({ minX, maxX, minZ, maxZ })),
     // The posts of an open room's name arch are solid too; nobody walks through them.
     ...rooms.filter((r) => !r.walled).flatMap(archPosts).map((p) => ({
       minX: p.x - ARCH.post / 2, maxX: p.x + ARCH.post / 2, minZ: p.z - ARCH.post / 2, maxZ: p.z + ARCH.post / 2,
@@ -717,10 +825,63 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
   };
   return {
     variant, departments, lead, rooms, walls, furniture, spots, checkpoints, obstacles,
+    // Its chair faces south, towards the door: seatOf() puts the person north of the desk.
+    ...(coding ? { command: { id: "command", x: commandDeskAt.x, z: commandDeskAt.z, facing: "south" as const, agentId: null,
+      size: { w: COMMAND_DESK.w, d: COMMAND_DESK.d } } } : {}),
     spawn: { x: rx0 + 1.4, z: bottomZ - 2.6 },
+    arrival,
     floor,
     bounds: { minX: minX - EDGE, maxX: maxX + EDGE, minZ: topZ - EDGE, maxZ: bottomZ + EDGE },
   };
+}
+
+/** The lobby lounge's sofa, relative to the reception room's west and north edges. */
+const LOBBY_LOUNGE = { dx: 6.0, dz: 5.35 };
+/** The agents floor's Agent board totem; the "manage" checkpoint stands in front of it. */
+const AGENT_BOARD_ID = "agent-board";
+
+/**
+ * The agents floor's lobby round the reception desk and the elevator: the
+ * brand wall on the west edge north of the elevator, an olive tree at each
+ * end of the room and one by the lounge, the award vitrine south of the
+ * elevator with the mat in front of its doors, and the waiting lounge — a
+ * sofa facing south, armchairs either side of the coffee table on a rug. The
+ * walk from the elevator north past the desk and east to the break room
+ * stays clear.
+ */
+function lobbyFurniture(room: Rect): Furniture[] {
+  const x0 = room.minX, z0 = room.minZ;
+  const lx = x0 + LOBBY_LOUNGE.dx, lz = z0 + LOBBY_LOUNGE.dz;
+  const piece = (id: string, kind: FurnitureKind, x: number, z: number, rotationY = 0, size?: { w: number; d: number }): Furniture =>
+    ({ id, kind, x, z, rotationY, room: "reception", ...(size ? { size } : {}) });
+  return [
+    // The Agent board: a touch-screen totem in the lobby's north-east corner.
+    piece(AGENT_BOARD_ID, "agentTotem", room.maxX - 2.2, z0 + 2.2),
+    piece("lobby-brand-wall", "brandWall", x0 + 0.22, z0 + 2.55, Math.PI / 2),
+    piece("lobby-olive-nw", "oliveTree", x0 + 0.65, z0 + 0.35),
+    piece("lobby-olive-se", "oliveTree", room.maxX - 0.75, room.maxZ - 0.7),
+    piece("lobby-olive-s", "oliveTree", x0 + 2.7, room.maxZ - 0.55),
+    piece("lobby-awards", "awardCase", x0 + 0.26, room.maxZ - 0.62, Math.PI / 2),
+    piece("lobby-mat", "entranceMat", x0 + 1.3, room.maxZ - 2.6, 0, { w: 1.1, d: 1.9 }),
+    piece("lobby-rug", "lobbyRug", lx, lz + 0.75, 0, { w: 4.8, d: 2.9 }),
+    piece("lobby-sofa", "lobbySofa", lx, lz),
+    piece("lobby-table", "lobbyTable", lx, lz + 1.05),
+    piece("lobby-chair-w", "lobbyArmchair", lx - 1.8, lz + 1.1, Math.PI / 2),
+    piece("lobby-chair-e", "lobbyArmchair", lx + 1.8, lz + 1.1, -Math.PI / 2),
+    piece("lobby-side-table", "sideTable", lx - 1.5, lz - 0.05),
+    piece("lobby-lamp", "lobbyLamp", lx + 1.5, lz - 0.1),
+  ];
+}
+
+/** Seats in the lobby lounge: two on the sofa (facing south), one in each armchair (facing the table). */
+function lobbySpots(room: Rect): Spot[] {
+  const lx = room.minX + LOBBY_LOUNGE.dx, lz = room.minZ + LOBBY_LOUNGE.dz;
+  return [
+    { id: "couch-lobby-1", kind: "couch", pose: "sit", x: lx - 0.55, z: lz + 0.15, facing: 0, room: "reception" },
+    { id: "couch-lobby-2", kind: "couch", pose: "sit", x: lx + 0.55, z: lz + 0.15, facing: 0, room: "reception" },
+    { id: "couch-lobby-w", kind: "couch", pose: "sit", x: lx - 1.78, z: lz + 1.1, facing: Math.PI / 2, room: "reception" },
+    { id: "couch-lobby-e", kind: "couch", pose: "sit", x: lx + 1.78, z: lz + 1.1, facing: -Math.PI / 2, room: "reception" },
+  ];
 }
 
 /** Every desk on the floor, lead office first. */

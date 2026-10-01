@@ -5,7 +5,7 @@ a skill by name, enforces DRAFT/DISABLED/block-tier rejection, and returns the
 rendered skill body as instructions for the brain to follow — it never
 macro-executes. Optional ``resource`` argument serves bundled files
 (progressive disclosure L3). Tests use Fakes (no ``unittest.mock``) per
-``CLAUDE.md`` testing-conventions.
+``AGENTS.md`` testing-conventions.
 """
 from __future__ import annotations
 

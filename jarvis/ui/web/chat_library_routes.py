@@ -24,7 +24,7 @@ agent, a timestamp and a one-line preview; opening the conversation is a
 separate call against the coding CLI's own transcript. So this router has no
 Brain dependency, no session dependency and no filesystem cost beyond a few
 small JSON reads — it works headless and on a fresh install with no keys at all
-(CLAUDE.md §3).
+(AGENTS.md §3).
 
 ``exists`` on a project is reported rather than acted on. A folder can be
 missing because an external drive is unplugged or a network share is late, and

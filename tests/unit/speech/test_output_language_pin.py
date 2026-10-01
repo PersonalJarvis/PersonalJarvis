@@ -9,7 +9,7 @@ pipeline did NOT — it re-derived the turn language from text/STT alone. These
 tests pin the unified contract: ``SpeechPipeline._output_language`` resolves the
 turn's output language through ``resolve_output_language``, so a selected
 language reaches the ack preamble, the canned phrases and the TTS voice, while
-``auto`` still mirrors the input. See CLAUDE.md "Runtime Output Language".
+``auto`` still mirrors the input. See AGENTS.md "Runtime Output Language".
 """
 
 from __future__ import annotations

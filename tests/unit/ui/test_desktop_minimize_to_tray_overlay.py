@@ -161,8 +161,10 @@ def test_window_closing_quits_and_does_not_minimise() -> None:
     assert result is True  # destroy allowed → full shutdown, not minimise
     assert app._user_requested_quit is True
     assert app._window.hidden is False  # NOT hidden — the window is destroyed
-    # The bar is torn down in shutdown(), never on the closing callback itself.
-    assert bar.hidden is False
+    # The bar leaves with the window instead of waiting for shutdown(): on
+    # 2026-09-30 the teardown in between took ~90 s and the bar stayed up.
+    app._overlay_close_thread.join(timeout=5.0)
+    assert bar.hidden is True
 
 
 def test_window_closing_quits_regardless_of_bar_persistence() -> None:
@@ -193,4 +195,33 @@ def test_window_closing_allows_genuine_quit() -> None:
 
     assert result is True  # allow the destroy → shutdown() handles teardown
     assert app._window.hidden is False  # not minimised
-    assert bar.hidden is False  # suppress NOT run on a real quit
+    assert bar._persistent is True  # the minimise-suppress path did NOT run
+
+
+def test_close_to_quit_arms_the_backstop_only_under_a_real_window_loop() -> None:
+    """The force-exit timer counts from the click while webview.start() runs —
+    and never inside a test or a boot that has no window loop to tear down."""
+    armed: list[float] = []
+
+    for running in (False, True):
+        app = _app(persistent=True, orb=None, bridge=None)
+        app._window = FakeWindow()
+        app._user_requested_quit = False
+        app._webview_running = running
+        app._arm_force_exit = lambda *, after_s, _armed=armed: _armed.append(after_s)
+
+        app._on_window_closing()
+        app._on_window_closing()  # a second closing event changes nothing
+
+    assert armed == [DesktopApp._CLOSE_QUIT_BACKSTOP_S]
+
+
+def test_shutdown_stops_an_overlay_the_close_already_stopped() -> None:
+    """Stopping twice is harmless: the close and shutdown() both call it."""
+    bar = FakeBar()
+    app = _app(persistent=True, orb=bar, bridge=None)
+
+    app._stop_overlay()
+    app._stop_overlay()
+
+    assert bar.hidden is True

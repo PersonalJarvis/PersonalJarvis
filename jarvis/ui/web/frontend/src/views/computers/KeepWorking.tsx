@@ -3,6 +3,8 @@
  * app safe for running coding agents: on quit, every IDE workspace with an
  * agent running on this machine moves to the chosen computer (folder,
  * uncommitted edits and conversation included) and carries on there in tmux.
+ * Windows computers are not offered: without tmux their agents stop with the
+ * app's connection.
  */
 import { useEffect, useState } from "react";
 import { Loader2, MoonStar } from "lucide-react";
@@ -55,10 +57,14 @@ export function KeepWorking({ computers }: { computers: Computer[] }) {
     }
   }
 
+  // A Windows computer has no tmux: agents moved there at quit would stop with
+  // this PC's connection, so it is no target (the backend refuses it as well).
+  const isWindows = (computer: Computer) => computer.facts?.os_id === "windows";
+  const hasWindows = computers.some(isWindows);
   const options = [
     { id: null as string | null, label: t("computers.keep_off") },
     ...computers
-      .filter((computer) => computer.health.status !== "provisioning")
+      .filter((computer) => computer.health.status !== "provisioning" && !isWindows(computer))
       .map((computer) => ({ id: computer.id as string | null, label: computer.name })),
   ];
 
@@ -96,6 +102,7 @@ export function KeepWorking({ computers }: { computers: Computer[] }) {
               );
             })}
           </div>
+          {hasWindows && <p className="mt-2 text-xs text-muted-foreground">{t("computers.keep_windows_note")}</p>}
           {error && <p role="alert" className="mt-2 text-sm text-destructive">{error}</p>}
         </div>
       </div>

@@ -25,7 +25,7 @@ shape:
 
 Whatever language the conversation happened in is kept verbatim. It is input
 DATA for the writer, not output: the brief the writer produces from it is
-English like every other artifact (CLAUDE.md §1).
+English like every other artifact (AGENTS.md §1).
 """
 from __future__ import annotations
 

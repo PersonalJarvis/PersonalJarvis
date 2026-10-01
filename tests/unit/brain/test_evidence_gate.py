@@ -103,16 +103,15 @@ def test_general_cost_question_does_not_force_gcloud():
     assert v.kind == "pass"
 
 
-# --- activity / window-history domain (2026-06-18 confabulation fix) ----------
+# --- activity / window-history domain -----------------------------------------
 
 
-def test_activity_question_forces_awareness_recall():
-    """'Was hatte ich heute offen?' must FORCE awareness-recall.
+def test_activity_question_is_refused_honestly():
+    """'Was hatte ich heute offen?' gets an honest refusal.
 
-    Live 2026-06-18: the fast brain answered "der lokale Verlaufsspeicher ist
-    nicht verfügbar" WITHOUT ever calling awareness-recall (proven from the log:
-    no tool execution line). Mandating the always-on internal tool removes the
-    model's discretion to confabulate an outage.
+    Jarvis keeps no activity history (the awareness recorder was removed
+    2026-09-30), so no tool serves the domain. The gate must answer
+    honestly instead of letting the model invent a timeline.
     """
     from jarvis.core.config import EvidenceDomainsConfig
 
@@ -128,12 +127,11 @@ def test_activity_question_forces_awareness_recall():
             enabled=True,
             domains=domains,
             capability_registry=CapabilityRegistry(),
-            domain_tool_map={"activity": "awareness-recall"},
+            domain_tool_map={},
             refusal_hint_fn=None,
         )
-        assert v.kind == "require_tool", utterance
-        assert v.tool_name == "awareness-recall", utterance
-        assert "NEVER invent" in v.directive
+        assert v.kind == "honest_refusal", utterance
+        assert v.domain == "activity", utterance
 
 
 def test_activity_hard_negative_bare_offen_does_not_trigger():
@@ -146,7 +144,7 @@ def test_activity_hard_negative_bare_offen_does_not_trigger():
         enabled=True,
         domains=domains,
         capability_registry=CapabilityRegistry(),
-        domain_tool_map={"activity": "awareness-recall"},
+        domain_tool_map={},
         refusal_hint_fn=None,
     )
     assert v.kind == "pass"

@@ -103,7 +103,7 @@ def test_the_tk_surface_still_rejects_an_unknown_mode() -> None:
 @pytest.mark.parametrize("mode", modes.MODES)
 def test_the_ipc_proxy_accepts_and_forwards_every_mode(mode: str) -> None:
     """The macOS proxy must put every mode on the wire, or the feature is
-    Windows/Linux-only — a silent OS-parity hole (CLAUDE.md §3)."""
+    Windows/Linux-only — a silent OS-parity hole (AGENTS.md §3)."""
     proxy = subprocess_mod.SubprocessBarOverlay.__new__(
         subprocess_mod.SubprocessBarOverlay
     )

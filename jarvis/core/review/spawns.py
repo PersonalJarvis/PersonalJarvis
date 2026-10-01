@@ -61,7 +61,7 @@ DEFAULT_REVIEWER_BUDGET_USD = 0.05
 # ----------------------------------------------------------------------
 #
 # Candidate names for the Jarvis-Agent worker harness, in preference order.
-# ``jarvis_agent`` is the canonical name (CLAUDE.md §4 rename); ``openclaw``
+# ``jarvis_agent`` is the canonical name (AGENTS.md §4 rename); ``openclaw``
 # is the pre-rename back-compat alias, mirroring the
 # ``AliasChoices("jarvis_agent", "openclaw")`` pattern already used for the
 # ``[harness.jarvis_agent]`` config block (jarvis/core/config.py). Neither is

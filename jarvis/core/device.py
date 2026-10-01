@@ -3,7 +3,7 @@
 Single source of truth for the question "which compute device may this component
 use?". Personal Jarvis is cloud-first: the baseline user is on a headless
 ``python:3.11-slim`` VPS with no GPU, never the maintainer's CUDA workstation
-(CLAUDE.md §3, ``docs/adr/0024-cpu-first-device-selection.md``). So the DEFAULT
+(AGENTS.md §3, ``docs/adr/0024-cpu-first-device-selection.md``). So the DEFAULT
 is always CPU, and a GPU is used only when a component BOTH (a) is EXPLICITLY
 asked for one via config, AND (b) has a VERIFIED capability to run it.
 

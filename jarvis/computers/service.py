@@ -28,14 +28,15 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
-from jarvis.computers import cloud, identity, local_vm, providers
+from jarvis.computers import cloud, identity, local_vm, providers, remote_os
 from jarvis.computers.models import (
     AuthMethod,
     Computer,
     ComputerHealth,
+    LoginMode,
     ProviderId,
 )
-from jarvis.computers.probe import PROBE_SCRIPT, parse_probe
+from jarvis.computers.probe import PROBE_SCRIPT, WINDOWS_PROBE_SCRIPT, parse_probe
 from jarvis.computers.ssh import (
     MAX_COMMAND_TIMEOUT_S,
     CommandResult,
@@ -43,6 +44,7 @@ from jarvis.computers.ssh import (
     SshError,
     SshTarget,
     authorize_key_command,
+    authorize_key_script_windows,
     close,
     open_session,
     run_command,
@@ -55,6 +57,18 @@ log = logging.getLogger(__name__)
 _HOST_RE = re.compile(r"^[A-Za-z0-9._:\-\[\]]{1,253}$")
 _USER_RE = re.compile(r"^[A-Za-z0-9._\-]{1,64}$")
 _PROBE_TIMEOUT_S = 25.0
+
+
+async def _probe(opened: Session, host: remote_os.RemoteHost) -> CommandResult:
+    """The health script in the language the computer speaks."""
+    if host.windows:
+        return await remote_os.run_powershell(
+            # PowerShell alone took 6 s to start on a busy Windows VM.
+            opened,
+            WINDOWS_PROBE_SCRIPT,
+            timeout_s=_PROBE_TIMEOUT_S * 2,
+        )
+    return await run_command(opened, PROBE_SCRIPT, timeout_s=_PROBE_TIMEOUT_S)
 
 
 class ComputerError(Exception):
@@ -88,6 +102,21 @@ def _forget_secrets(computer_id: str, *, keep: str | None = None) -> None:
         delete_secret(_passphrase_slot(computer_id))
 
 
+def _bcrypt_kdf_available() -> bool:
+    """Whether a passphrase-protected OpenSSH key can be unlocked here.
+
+    ssh-keygen's default key format derives the encryption key with bcrypt's
+    KDF. It is a declared dependency (``asyncssh[bcrypt]``), but an install
+    that lost it must say THAT rather than blame the user's passphrase.
+    """
+    try:
+        import bcrypt
+    except ImportError:
+        # The answer IS the missing module; the caller turns it into a sentence.
+        return False
+    return hasattr(bcrypt, "kdf")
+
+
 def import_private_key(pem: str | None, passphrase: str | None) -> Any:
     """The user's own SSH key as an asyncssh key; a 400 sentence when unusable."""
     import asyncssh
@@ -103,6 +132,13 @@ def import_private_key(pem: str | None, passphrase: str | None) -> Any:
     try:
         return asyncssh.import_private_key(text + "\n", passphrase or None)
     except asyncssh.KeyEncryptionError as exc:
+        if passphrase and not _bcrypt_kdf_available():
+            raise ComputerError(
+                "This protected key cannot be unlocked on this install: the "
+                "bcrypt package is missing. Reinstall Personal Jarvis, or add "
+                "the key without a passphrase.",
+                kind="bad_key",
+            ) from exc
         raise ComputerError(
             "The passphrase does not unlock this key."
             if passphrase
@@ -164,6 +200,25 @@ _ERROR_STATUS = {
     "unreachable": "offline",
     "timeout": "offline",
 }
+
+
+def _login_error(exc: SshError, target: SshTarget) -> ComputerError:
+    """A refused login as the sentence (and kind) the connect form acts on."""
+    if exc.kind == "auth" and target.use_this_pc:
+        if exc.password_offered:
+            return ComputerError(
+                "None of this PC's SSH keys opens this server. Enter its password once: "
+                "the app then sets up its own key and forgets the password.",
+                status=502,
+                kind="needs_password",
+            )
+        return ComputerError(
+            "This server only accepts keys it already knows. Add the app's key there "
+            "once (one line, shown below), then try again.",
+            status=502,
+            kind="key_only",
+        )
+    return ComputerError(exc.message, status=502, kind=exc.kind)
 
 
 class ComputerService:
@@ -295,7 +350,13 @@ class ComputerService:
         now = time.time()
         try:
             async with self.session(computer_id) as opened:
-                result = await run_command(opened, PROBE_SCRIPT, timeout_s=_PROBE_TIMEOUT_S)
+                try:
+                    host = await remote_os.remote_host(computer_id, opened)
+                    result = await _probe(opened, host)
+                except SshError as exc:
+                    # A probe that times out or loses the channel is a health
+                    # reading like a refused login, not a crash of the check.
+                    raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
                 latency = opened.latency_ms
         except ComputerError as exc:
             status = _ERROR_STATUS.get(exc.kind or "", "error")
@@ -356,22 +417,33 @@ class ComputerService:
     # -- adding -------------------------------------------------------------
 
     async def _plant_key(self, target: SshTarget) -> Session:
-        """Log in with the password, add Jarvis's key, prove the key works."""
+        """Log in (password or this PC's keys), add Jarvis's key, prove it works."""
         try:
             opened = await open_session(target)
         except SshError as exc:
-            raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
+            raise _login_error(exc, target) from exc
+        windows = False
         try:
-            result = await run_command(
-                opened, authorize_key_command(identity.public_key_line()), timeout_s=20
-            )
+            host = await remote_os.detect(opened)
+            windows = host.windows
+            if windows:
+                result = await remote_os.run_powershell(
+                    opened, authorize_key_script_windows(identity.public_key_line()), timeout_s=30
+                )
+            else:
+                result = await run_command(
+                    opened, authorize_key_command(identity.public_key_line()), timeout_s=20
+                )
         except SshError as exc:
             raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
         finally:
             close(opened)
         if result.exit_status not in (0, None):
             raise ComputerError(
-                "The login worked, but the key could not be saved on the server "
+                "The login worked, but Windows refused to save the key. Administrator "
+                "accounts need an elevated login to change the SSH key file."
+                if windows
+                else "The login worked, but the key could not be saved on the server "
                 "(is the home folder writable?).",
                 status=502,
                 kind="install_key",
@@ -401,7 +473,7 @@ class ComputerService:
         host: str,
         port: int = 22,
         username: str = "root",
-        auth: AuthMethod = "key",
+        auth: LoginMode = "key",
         password: str | None = None,
         keep_password: bool = False,
         private_key: str | None = None,
@@ -411,7 +483,14 @@ class ComputerService:
         region: str | None = None,
         plan: str | None = None,
     ) -> Computer:
-        """Register a server. With a password, plant the key first (default)."""
+        """Register a server. With a password, plant the key first (default).
+
+        ``auth="auto"`` needs nothing but the address: the app's own key or any
+        key this PC's ``ssh`` uses logs in once, the app's key is planted, and
+        the computer is stored with key login. When none opens the server the
+        error says whether a password would (``needs_password``) or only a key
+        (``key_only``).
+        """
         computer = Computer(
             id=_new_id(),
             name=_clean_name(name),
@@ -445,6 +524,12 @@ class ComputerService:
             import_private_key(private_key, passphrase)
             self._save_private_key(computer.id, private_key or "", passphrase)
             computer = computer.model_copy(update={"auth": "private_key"})
+        elif auth == "auto":
+            proof = await self._plant_key(self._this_pc_target(computer))
+            close(proof)
+            computer = computer.model_copy(
+                update={"host_key": proof.host_key, "host_fingerprint": proof.host_fingerprint}
+            )
         self._store.add(computer)
         return await self.check(computer.id)
 
@@ -457,13 +542,28 @@ class ComputerService:
         else:
             delete_secret(_passphrase_slot(computer_id))
 
+    def _this_pc_target(self, computer: Computer) -> SshTarget:
+        """The app's key plus this PC's own SSH keys, for one planting login."""
+        try:
+            key = identity.private_key()
+        except identity.IdentityError as exc:
+            raise ComputerError(str(exc), status=500) from exc
+        return SshTarget(
+            host=computer.host,
+            port=computer.port,
+            username=computer.username,
+            host_key=computer.host_key,
+            client_key=key,
+            use_this_pc=True,
+        )
+
     async def test_connection(
         self,
         *,
         host: str,
         port: int = 22,
         username: str = "root",
-        auth: AuthMethod = "key",
+        auth: LoginMode = "key",
         password: str | None = None,
         private_key: str | None = None,
         passphrase: str | None = None,
@@ -486,6 +586,10 @@ class ComputerService:
             elif auth == "private_key":
                 key = import_private_key(private_key, passphrase)
                 target = dataclasses.replace(base, client_key=key)
+            elif auth == "auto":
+                target = dataclasses.replace(
+                    base, client_key=identity.private_key(), use_this_pc=True
+                )
             else:
                 target = dataclasses.replace(base, client_key=identity.private_key())
         except ComputerError as exc:  # the answer IS the result: shown in the form
@@ -495,6 +599,9 @@ class ComputerService:
         try:
             opened = await open_session(target)
         except SshError as exc:  # a failed login is the test's answer, not an error
+            if target.use_this_pc:
+                refused = _login_error(exc, target)
+                return _test_result(False, refused.kind or exc.kind, refused.message)
             message = exc.message
             if exc.kind == "auth" and auth == "key":
                 message = (
@@ -504,7 +611,7 @@ class ComputerService:
             return _test_result(False, exc.kind, message)
         facts: dict[str, Any] | None = None
         try:
-            probe = await run_command(opened, PROBE_SCRIPT, timeout_s=_PROBE_TIMEOUT_S)
+            probe = await _probe(opened, await remote_os.detect(opened))
             facts = parse_probe(probe.stdout).facts.model_dump(mode="json")
         except SshError as exc:
             log.info("computers: test probe failed after login: %s", exc.message)
@@ -609,6 +716,7 @@ class ComputerService:
             except local_vm.LocalVmError as exc:
                 raise ComputerError(exc.message, status=502) from exc
         _forget_secrets(computer_id)
+        remote_os.forget(computer_id)
         return self._store.remove(computer_id)
 
     # -- cloud import ---------------------------------------------------------

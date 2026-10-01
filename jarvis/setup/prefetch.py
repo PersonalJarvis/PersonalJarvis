@@ -8,7 +8,7 @@ models are needed.
 
 Every step is best-effort: a failed download prints an honest note and the
 runtime's lazy download remains the safety net — a flaky mirror must never
-brick an install (CLAUDE.md section 3). Works headless: no audio device,
+brick an install (AGENTS.md section 3). Works headless: no audio device,
 GPU, or keyring is touched, only the on-disk model caches.
 """
 from __future__ import annotations

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CI gate: block NEWLY ADDED German text from reaching GitHub.
 
-Enforces the repo's Output Language Policy (CLAUDE.md, HIGHEST PRIORITY) without
+Enforces the repo's Output Language Policy (AGENTS.md, HIGHEST PRIORITY) without
 drowning in the in-flight DE->EN translation backlog: it inspects only the lines
 a push/PR ADDS (the ``+`` lines of the diff), never the pre-existing German that
 the translation effort is still working through.
@@ -243,7 +243,7 @@ def main(argv: list[str] | None = None) -> int:
     if violations:
         print("OUTPUT-LANGUAGE GATE FAILED - German text detected.\n")
         print(
-            "Every committed artifact must be English (CLAUDE.md, Output Language\n"
+            "Every committed artifact must be English (AGENTS.md, Output Language\n"
             f"Policy). The lines below ({scope}) look German:\n"
         )
         for path, lineno, text in violations:

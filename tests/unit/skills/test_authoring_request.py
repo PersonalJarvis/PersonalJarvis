@@ -5,7 +5,7 @@ service they name is the skill's CONTENT, never a command — so a brand
 mentioned inside the request must not capture the turn. Precision over
 recall: every entry in the "misses" section is a hard negative.
 
-Lightweight fakes, no ``unittest.mock`` (CLAUDE.md testing convention).
+Lightweight fakes, no ``unittest.mock`` (AGENTS.md testing convention).
 """
 from __future__ import annotations
 

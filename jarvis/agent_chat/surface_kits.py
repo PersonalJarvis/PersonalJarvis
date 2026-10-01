@@ -32,6 +32,7 @@ __all__ = [
 #: The ladder key of the Jarvis ladder (``permissions.JARVIS_LADDER``) —
 #: spelled here so the kit table does not import the permissions module.
 _JARVIS_LADDER: Final[str] = "jarvis"
+_SOCIETY_LADDER: Final[str] = "society"
 
 ToolsBuilder = Callable[[Any, Any], dict[str, Tool]]
 ExtraBuilder = Callable[[Any, Any], Awaitable[str]]
@@ -183,6 +184,15 @@ async def _society_completed(session: Any, completion: ChatCompletion) -> None:
         await runtime.turn_completed(session, completion)
 
 
+async def _jarvis_completed(session: Any, completion: ChatCompletion) -> None:
+    """Feed Jarvis' own learning loop (lazy); a no-op while it is switched off."""
+    from jarvis.memory.learning.loop import current_loop
+
+    loop = current_loop()
+    if loop is not None:
+        await loop.chat_turn_completed(session, completion)
+
+
 def _society_history_start(session: Any) -> int:
     from jarvis.agent_chat.service import resolve_runner
     from jarvis.society.runtime import current_runtime
@@ -221,6 +231,8 @@ _KITS: Final[dict[str, SurfaceKit]] = {
         ladder=_JARVIS_LADDER,
         uses_stance=True,
         session_tools=_jarvis_tools,
+        # Typed turns teach Jarvis the same way spoken ones do.
+        turn_completed=_jarvis_completed,
         # Not the home directory: this surface hands out the folder tools, and
         # the read-only four are tier ``safe`` — they run without a card. The
         # composer hides the chip here (a person talks to Jarvis, they do not
@@ -264,7 +276,7 @@ _KITS: Final[dict[str, SurfaceKit]] = {
         # with Jarvis' tools over MCP and its own hands; on an API row Jarvis'
         # brain runner drives the agent's own tool set.
         cli_seats=True,
-        ladder=_JARVIS_LADDER,
+        ladder=_SOCIETY_LADDER,
         uses_stance=True,
         tool_origin="society",
         session_tools=_society_tools,

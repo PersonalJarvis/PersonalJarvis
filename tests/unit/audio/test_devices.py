@@ -13,7 +13,7 @@ Guards for :mod:`jarvis.audio.devices`:
    first; input: MME first), tolerating the MME truncation; an unknown name
    yields None so callers can fall back to auto-headset.
 3. **Headless safety** — no sounddevice / a failing query degrades to an
-   empty list / None, never raises (python:3.11-slim contract, CLAUDE.md §3).
+   empty list / None, never raises (python:3.11-slim contract, AGENTS.md §3).
 """
 from __future__ import annotations
 

@@ -35,7 +35,7 @@ live under the scheduler and the voice router tool (M4) are not.
 REST: `jarvis/ui/web/society_routes.py` (`/api/society/…`, dynamic CLI `jarvis api society …`).
 Contract test: `tests/contract/test_society_substrate.py`. Unit tests: `tests/unit/society/`.
 
-Rules that bind everything here (see CLAUDE.md):
+Rules that bind everything here (see AGENTS.md):
 
 - Nothing initializes on the boot critical path (AP-26): the runtime is built on the first
   REST call or chat binding.
