@@ -170,9 +170,9 @@ class ProjectProfile:
         if self.top_level_dirs:
             out.append("Top-level folders: " + ", ".join(self.top_level_dirs))
         # What the agents in this repo can be ASKED for. Knowing that a repo
-        # defines a `publish-new-version` skill or a `code-reviewer` subagent is
-        # the difference between "write a release script" and "run the release
-        # skill" — the second is what the user meant and what the agent in the
+        # defines a `game-art-pipeline` skill or a `code-reviewer` subagent is
+        # the difference between "hand-build a Blender scene" and "run the art
+        # pipeline skill" — the second is what the user meant and what the agent in the
         # pane is actually equipped to do.
         for label, items in (
             ("Skills defined here", self.skills),
