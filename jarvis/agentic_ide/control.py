@@ -150,6 +150,8 @@ class CodingSessionControl:
                 await self._start(owner, term)
             if action == "respond" and not args.get("input_token"):
                 raise SessionError("Read the current input request before responding.")
+            from jarvis.core.delegation import current_delegation_origin
+
             term = await self.registry.send_prompt(
                 identity,
                 str(args["prompt"]),
@@ -158,6 +160,7 @@ class CodingSessionControl:
                 require_idle=action != "respond",
                 expected_input=str(args.get("input_token") or "") if action == "respond" else "",
                 allow_question=action == "respond" and args.get("response_mode") == "dialog",
+                followup=current_delegation_origin.get(),
             )
             return {
                 **self._state(owner, term),

@@ -23,6 +23,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, Final
 
+from jarvis.core.delegation import origin_metadata
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.society.communication import REPLY_POLICY_SCHEMA, select_reply_policy
 
@@ -133,6 +134,7 @@ class DelegateToAgentTool:
         "to the team'. Use when a background task fits the persistent team; leave `agent` "
         "empty to let the lead pick the agent whose hands fit the task. The agent works in "
         "the background; you acknowledge now and its result follows reply_policy. "
+        "Stay available for conversation while it runs; completion is delivered asynchronously. "
         "Never for inventory/status questions or tasks the user wants done right here. "
         "Turn the user's intent into an actionable brief: objective, known target, relevant "
         "context, scope, constraints and completion evidence. Do not merely paraphrase or "
@@ -225,7 +227,10 @@ class DelegateToAgentTool:
             text=brief,
             trace_id=f"voice:{ctx.trace_id.hex[:12]}",
             msg_type=MsgType.ASSIGN,
-            payload={"text": brief, "lang": lang, "refs": refs, "reply_policy": policy},
+            payload={
+                "text": brief, "refs": refs, "reply_policy": policy,
+                **origin_metadata(language=lang),
+            },
         )
         # The scheduler answered synchronously on the same trace: a CLAIM
         # means the agent took it, a VETO says why not — say so, no waiting.

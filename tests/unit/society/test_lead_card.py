@@ -12,8 +12,7 @@ society. The card is the fix, and these tests pin its contract:
 5. the rule block says what "agent" means and where the old system went;
 6. the realtime helper hands the planner the live names;
 7. the lead picks the fitting agent for a nameless delegation;
-8. a lead-assigned RESULT reaches the person: a chat notice and a spoken
-   completion.
+8. a lead-assigned RESULT reaches its chat and a requested voice conversation.
 """
 
 from __future__ import annotations
@@ -227,18 +226,18 @@ async def test_a_lead_assigned_result_reaches_the_person(rt: SocietyRuntime):
     assert payload["agent_name"] == "Gmail agent"
     assert payload["status"] == "done"
     assert payload["text"] == "Invoice answered."
+    # The active voice conversation receives evidence, with no extra composer call.
     published = rt.published  # type: ignore[attr-defined]
-    announcements = [e for e in published if type(e).__name__ == "AnnouncementRequested"]
-    assert len(announcements) == 1
-    assert announcements[0].kind == "completion"
-    assert announcements[0].language == "de"
-    spoken = "Gmail agent ist fertig: Invoice answered."  # i18n-allow: spoken completion
-    assert announcements[0].text == spoken
+    spoken = [e for e in published if type(e).__name__ == "AnnouncementRequested"]
+    assert len(spoken) == 1
+    assert "Answer the invoice mail" in spoken[0].report
+    assert "Invoice answered" in spoken[0].report
 
 
 async def test_an_agent_answer_to_the_lead_reaches_the_person(rt: SocietyRuntime):
-    """Live 2026-09-09: the ack promised a report, the ANSWER arrived, voice
-    stayed silent. The lead's incoming message is owed an answer too."""
+    """Live 2026-09-09: the ack promised a report, the ANSWER arrived, and
+    nothing reached the person. The lead's incoming message is owed a notice
+    too, with the original task context for the active voice model."""
     import asyncio
 
     chat: FakeChat = rt.chat  # type: ignore[attr-defined]
@@ -275,12 +274,15 @@ async def test_an_agent_answer_to_the_lead_reaches_the_person(rt: SocietyRuntime
     assert payload["agent_name"] == "Gmail agent"
     assert payload["msg_type"] == "answer"
     assert payload["text"] == "Invoice answered."
-    announcements = [e for e in published if type(e).__name__ == "AnnouncementRequested"]
-    assert len(announcements) == 1
-    assert announcements[0].kind == "completion"
-    assert announcements[0].language == "de"
-    spoken = "Gmail agent meldet: Invoice answered."  # i18n-allow: spoken completion
-    assert announcements[0].text == spoken
+    assert len([e for e in published if type(e).__name__ == "AnnouncementRequested"]) == 1
+
+
+def test_no_model_phrases_a_background_report_anymore() -> None:
+    """The flash composer that turned an agent's report into a spoken sentence
+    (billed on an API key) is gone with the spoken readback (2026-09-30)."""
+    import importlib.util
+
+    assert importlib.util.find_spec("jarvis.voice.report_readback") is None
 
 
 async def test_agent_to_agent_chatter_stays_silent(rt: SocietyRuntime):
