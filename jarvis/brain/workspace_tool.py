@@ -18,6 +18,15 @@ class WorkspaceOrchestrationTool:
         "Claude Code agents in the VMs workspace'), call create: it opens count new panes of "
         "the named cli in the named or visible workspace and, with prompt, hands each the "
         "task. Never reuse an existing agent and never use spawn_worker for that. "
+        "Mixed CLIs in one request ('five Claude Code and three Codex') go in agents: "
+        "[{cli, count}, ...]. open_workspace opens a NEW workspace for folder (absolute "
+        "path) or a known project, with agents and an optional prompt; restore reopens a "
+        "closed workspace; show brings one on screen. For one pane (by agent call-sign or "
+        "terminal_id): observe reads its screen, question and newest events; respond types "
+        "the answer to the question or permission prompt it shows (prompt = the answer); keys "
+        "presses keys such as enter, escape, up/down, digits, shift+tab (permission mode); "
+        "interrupt stops its current turn; close removes it. These are the user's own app "
+        "actions: run them when asked, without asking back. "
         "Inspect the current graph; "
         "resolve explicit project/workspace/agent references (names or IDs) before sending. "
         "With no named workspace resolve uses the visible workspace, and selects an idle agent "
@@ -37,7 +46,21 @@ class WorkspaceOrchestrationTool:
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["inspect", "resolve", "send", "context", "create"],
+                "enum": [
+                    "inspect",
+                    "resolve",
+                    "send",
+                    "context",
+                    "create",
+                    "open_workspace",
+                    "restore",
+                    "show",
+                    "observe",
+                    "respond",
+                    "keys",
+                    "interrupt",
+                    "close",
+                ],
             },
             **{
                 key: {"type": "string"}
@@ -73,7 +96,32 @@ class WorkspaceOrchestrationTool:
             },
             "name": {
                 "type": "string",
-                "description": "create: optional name for a single new agent.",
+                "description": (
+                    "create: optional name for a single new agent; open_workspace: the new "
+                    "workspace's tab name."
+                ),
+            },
+            "agents": {
+                "type": "array",
+                "maxItems": 8,
+                "description": "create/open_workspace: several CLIs at once, one entry per CLI.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "cli": {"type": "string"},
+                        "count": {"type": "integer", "minimum": 1, "maximum": 16},
+                    },
+                },
+            },
+            "folder": {
+                "type": "string",
+                "description": "open_workspace: absolute path of the folder to open.",
+            },
+            "keys": {
+                "type": "array",
+                "maxItems": 10,
+                "description": "keys: e.g. ['down', 'enter'] or ['shift+tab'].",
+                "items": {"type": "string"},
             },
         },
         "required": ["action"],
@@ -83,7 +131,8 @@ class WorkspaceOrchestrationTool:
         self.gateway = gateway
 
     def risk_tier_for_args(self, args: dict) -> str:
-        return "safe" if args.get("action") in {"inspect", "resolve", "context"} else "monitor"
+        reads = {"inspect", "resolve", "context", "observe"}
+        return "safe" if args.get("action") in reads else "monitor"
 
     def describe_args(self, args: dict) -> dict:
         return {

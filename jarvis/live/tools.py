@@ -20,7 +20,6 @@ log = logging.getLogger(__name__)
 # A session.started event includes its declarations. Keep room for prompts and
 # history inside the 64 KiB message limit of smaller WebRTC clients.
 _CATALOG_BYTE_BUDGET = 24_000
-_DISCOVERY_PAGE_SIZE = 8
 _BUILTIN_TOOLS = frozenset({"discover_tools", "call_tool", "confirm_action", "end_call"})
 # An approval is a short answer made only of go-ahead words: "Ja, send ihn"
 # approves (refused live 2026-10-01 by an exact-phrase list), while "yes,
@@ -41,6 +40,8 @@ _GO_AHEAD_WORDS = frozenset(
     }
 )  # fmt: skip
 _APPROVAL_LOCALES = ("de", "en", "es")
+# Declared before every other tool so the size budget never drops them.
+_PRIORITY_TOOLS = frozenset({"workspace-orchestrate", "find-app-action", "run-app-action"})
 _APPROVAL_NEXT_STEP = (
     "Ask the user to approve this action. After an explicit yes, call confirm_action "
     "directly (not through call_tool) with this approval_id. A yes is never a hang-up."
@@ -169,7 +170,11 @@ class LiveTools:
             return definitions
         # Count alone is insufficient: an imported tool may carry a large schema.
         used_bytes = _wire_size(definitions)
-        for descriptor in sorted(self.catalog(), key=lambda d: d.name):
+        # The tools that steer the app itself go first: sorted by name alone,
+        # workspace-orchestrate fell past the budget and voice could not open
+        # or brief a coding agent (live 2026-10-01).
+        ordered = sorted(self.catalog(), key=lambda d: (d.name not in _PRIORITY_TOOLS, d.name))
+        for descriptor in ordered:
             alias = "jarvis_" + hashlib.sha256(descriptor.name.encode()).hexdigest()[:20]
             definition = {
                 "type": "function",
@@ -268,35 +273,16 @@ class LiveTools:
             self.end_requested = True
             return {"success": True, "status": "closing_voice"}
         if name == "discover_tools":
-            if self._defer_catalog:
-                from jarvis.live.discovery import discover
+            # One ranked search for every provider. The native path's old rule
+            # (every query word in one tool) found nothing for "die Jarvis
+            # Agenten" and Jarvis told the user they did not exist (2026-09-20).
+            from jarvis.live.discovery import discover
 
-                return discover(
-                    self.catalog(), str(args.get("query", "")), int(args.get("offset", 0))
-                )
-            query = str(args.get("query", "")).casefold().split()
-            matches = [
-                d
-                for d in sorted(self.catalog(), key=lambda d: d.name)
-                if all(word in (d.name + " " + d.description).casefold() for word in query)
-            ]
-            offset = max(0, int(args.get("offset", 0)))
-            page: list[dict] = []
-            for descriptor in matches[offset : offset + _DISCOVERY_PAGE_SIZE]:
-                item = {
-                    "name": descriptor.name,
-                    "description": descriptor.description,
-                    "parameters": descriptor.input_schema,
-                }
-                if page and _wire_size([*page, item]) > _CATALOG_BYTE_BUDGET:
-                    break
-                page.append(item)
-            next_offset = offset + len(page)
-            return {
-                "tools": page,
-                "total": len(matches),
-                "next_offset": next_offset if next_offset < len(matches) else None,
-            }
+            try:
+                offset = max(0, int(args.get("offset") or 0))
+            except (TypeError, ValueError):
+                offset = 0
+            return discover(self.catalog(), str(args.get("query", "")), offset)
         if name == "confirm_action":
             approval_id = str(args.get("approval_id", ""))
             if approval_id not in self._pending and len(self._pending) == 1:
@@ -305,7 +291,16 @@ class LiveTools:
                 approval_id = next(iter(self._pending))
             pending = self._pending.get(approval_id)
             if pending is None or self.revision <= pending[3] or not self._user_approved():
-                return {"success": False, "error": "This action has not been explicitly approved."}
+                # Say why, or the model asks the same question again and again.
+                return {
+                    "success": False,
+                    "error": "This action has not been explicitly approved.",
+                    "reason": "no pending approval"
+                    if pending is None
+                    else "the user's latest words are not a plain yes",
+                    "approval_ids": list(self._pending),
+                    "next_step": "Ask for a plain yes or no, then call confirm_action again.",
+                }
             trace, _, _, _ = self._pending.pop(approval_id)
             from jarvis.core.model_selection import ModelSelection, use_operation_model
 
@@ -318,9 +313,17 @@ class LiveTools:
         canonical = self._names.get(name, name)
         if name == "call_tool":
             canonical = str(args.get("name", ""))
-            args = json.loads(args.get("arguments_json", "{}"))
+            try:
+                args = json.loads(args.get("arguments_json") or "{}")
+            except ValueError:
+                args = None
             if not isinstance(args, dict):
-                return {"success": False, "error": "Tool arguments must be an object."}
+                return {
+                    "success": False,
+                    "executed": False,
+                    "retryable": True,
+                    "error": "arguments_json must be a JSON object. Correct it and call again.",
+                }
         descriptor = next((d for d in self.catalog() if d.name == canonical), None)
         if descriptor is None:
             return {

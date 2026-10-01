@@ -34,6 +34,8 @@ class Sessions:
             raise SessionError("The selected coding agent is busy; nothing was sent.")
         if self.fail:
             raise RuntimeError("transport interrupted after possible write")
+        if args["action"] in {"input", "observe"}:
+            return {"input_token": "token-1", "response_mode": "dialog", "screen_excerpt": "?"}
         return {"delivery": "accepted", "submitted": True, "completed": False}
 
 
@@ -436,3 +438,123 @@ def test_create_is_a_logged_action_with_a_valid_live_schema(rig):
     jsonschema.validate(args, tool.schema)
     assert tool.risk_tier_for_args(args) == "monitor"
     assert tool.describe_args(args)["agent"] == "3 new Codex"
+
+
+async def test_mixed_clis_open_in_one_call(rig, runnable):
+    # The maintainer's benchmark: "five Claude Code and three Codex" at once.
+    orchestrator, registry, _ = rig
+    owner = registry.sessions[0]
+    before = len(owner.terminals)
+    result = await orchestrator.run(
+        {
+            "action": "create",
+            "workspace": "Personal Jarvis",
+            "agents": [{"cli": "Claude Code", "count": 5}, {"cli": "Codex", "count": 3}],
+        }
+    )
+    assert result["status"] == "created", result
+    assert [a["cli"] for a in result["agents"]] == ["claude"] * 5 + ["codex"] * 3
+    assert len(owner.terminals) == before + 8
+
+
+async def test_open_workspace_creates_a_new_workspace_with_mixed_agents(rig, runnable, tmp_path):
+    orchestrator, registry, _ = rig
+    folder = tmp_path / "Fresh"
+    folder.mkdir()
+    published = []
+
+    async def publish(event):
+        published.append(event)
+
+    orchestrator.publish = publish
+    result = await orchestrator.run(
+        {
+            "action": "open_workspace",
+            "folder": str(folder),
+            "agents": [{"cli": "claude", "count": 2}, {"cli": "codex", "count": 1}],
+        }
+    )
+    assert result["status"] == "opened", result
+    assert [a["cli"] for a in result["agents"]] == ["claude", "claude", "codex"]
+    assert registry.get(result["workspace_id"]) is not None
+    assert published
+
+
+async def test_open_workspace_without_a_folder_lists_known_projects(rig):
+    result = await rig[0].run({"action": "open_workspace"})
+    assert result["status"] == "needs_clarification" and result["kind"] == "folder"
+    assert {c["project"] for c in result["candidates"]} == {"Personal Jarvis", "Other project"}
+
+
+async def test_respond_answers_the_question_a_pane_shows(rig):
+    orchestrator, registry, sessions = rig
+    name = registry.sessions[0].terminals[0].name
+    result = await orchestrator.run(
+        {"action": "respond", "workspace": "Personal Jarvis", "agent": name, "prompt": "1"}
+    )
+    assert result["status"] == "accepted", result
+    respond = sessions.calls[-1]
+    assert respond["action"] == "respond" and respond["prompt"] == "1"
+    assert respond["input_token"] == "token-1" and respond["response_mode"] == "dialog"  # noqa: S105 - a fake input token
+
+
+async def test_keys_and_interrupt_press_only_whitelisted_keys(rig, monkeypatch):
+    orchestrator, registry, _ = rig
+    pressed = []
+    monkeypatch.setattr(
+        registry, "write", lambda key, data, workspace_id=None: pressed.append(data) or True
+    )
+    owner = registry.sessions[0]
+    args = {"workspace": "Personal Jarvis", "agent": owner.terminals[0].name}
+    assert (await orchestrator.run({"action": "keys", **args, "keys": ["down", "enter"]}))[
+        "status"
+    ] == "pressed"
+    assert (await orchestrator.run({"action": "interrupt", **args}))["status"] == "pressed"
+    assert pressed == ["\x1b[B", "\r", "\x1b"]
+    refused = await orchestrator.run({"action": "keys", **args, "keys": ["rm -rf /"]})
+    assert refused["status"] == "not_accepted"
+    assert len(pressed) == 3
+
+
+async def test_close_removes_one_named_pane(rig):
+    orchestrator, registry, _ = rig
+    owner = registry.sessions[0]
+    owner.terminals.append(Terminal("t2", "Nova", "codex", "Codex", 1, status="live"))
+    result = await orchestrator.run(
+        {"action": "close", "workspace": "Personal Jarvis", "agent": "Nova"}
+    )
+    assert result["status"] == "closed", result
+    assert [t.name for t in owner.terminals] == ["Alex"]
+
+
+async def test_show_brings_a_background_workspace_on_screen(rig):
+    orchestrator, registry, _ = rig
+    background = next(s for s in registry.sessions if s.id != registry.active_id)
+    result = await orchestrator.run({"action": "show", "workspace": background.name})
+    assert result["status"] == "shown", result
+    assert registry.active_id == background.id
+
+
+async def test_the_same_words_later_are_a_new_instruction(rig):
+    from jarvis.agentic_ide import orchestration
+
+    resolved = await target(rig)
+    args = {"action": "send", **resolved, "prompt": "continue"}
+    assert (await rig[0].run(args))["status"] == "accepted"
+    assert (await rig[0].run(args))["status"] == "accepted"
+    assert len(rig[2].calls) == 1  # an immediate repeat is a retry
+    issued = rig[0]._issued
+    for request_id, (pane, at, sent) in list(issued.items()):
+        issued[request_id] = (pane, at - orchestration._RETRY_WINDOW_S - 1, sent)
+    assert (await rig[0].run(args))["status"] == "accepted"
+    assert len(rig[2].calls) == 2
+
+
+def test_pane_reads_are_safe_and_every_new_action_validates(rig):
+    import jsonschema
+
+    tool = WorkspaceOrchestrationTool(rig[0])
+    assert tool.risk_tier_for_args({"action": "observe"}) == "safe"
+    for action in ("respond", "keys", "interrupt", "close", "open_workspace", "restore", "show"):
+        jsonschema.validate({"action": action}, tool.schema)
+        assert tool.risk_tier_for_args({"action": action}) == "monitor"

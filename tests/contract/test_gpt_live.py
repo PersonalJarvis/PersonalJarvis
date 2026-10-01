@@ -1096,3 +1096,32 @@ async def test_live_usage_keeps_the_calls_model_after_a_settings_change(ledger):
     assert ledger._db.execute("SELECT model FROM live_backend_usage").fetchone() == (
         "starting-model",
     )
+
+
+@pytest.mark.asyncio
+async def test_native_tool_search_ranks_instead_of_requiring_every_word(ledger):
+    # 2026-09-20: "die Jarvis Agenten" found nothing on the native path because
+    # every query word had to occur in one tool; Jarvis said none existed.
+    runtime = LiveTools(Gateway(), ledger, "s", language="en", backend_model="")
+    runtime.declarations()
+    result = await runtime.execute("d", "discover_tools", {"query": "please write the file"}, 0)
+    assert [tool["name"] for tool in result["tools"]] == ["write-file"]
+
+
+def test_steering_tools_are_declared_before_the_size_budget_runs_out(ledger):
+    class Crowded(Gateway):
+        def catalog(self):
+            filler = tuple(
+                SupervisorToolDescriptor(
+                    f"a-tool-{index:02d}", "x" * 900, {"type": "object"}, "safe"
+                )
+                for index in range(60)
+            )
+            steering = SupervisorToolDescriptor(
+                "workspace-orchestrate", "Route coding tasks", {"type": "object"}, "monitor"
+            )
+            return (*filler, steering)
+
+    runtime = LiveTools(Crowded(), ledger, "s", language="en", backend_model="")
+    declared = runtime.declarations()
+    assert "workspace-orchestrate" in {runtime._names.get(d["name"]) for d in declared}

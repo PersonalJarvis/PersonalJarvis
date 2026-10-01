@@ -48,6 +48,29 @@ _FILLER = frozenset(
 _RESOLVE_TTL_S = 15 * 60
 _NEAR_MISS = 3
 _TARGET_KEYS = ("project_id", "workspace_id", "terminal_id")
+# A send of the same prompt to the same pane counts as a retry only this soon;
+# a later "continue" or "/compact" is a new instruction and must be typed.
+_RETRY_WINDOW_S = 120
+_PANE_ACTIONS = frozenset({"observe", "respond", "keys", "interrupt", "close"})
+_WORKSPACE_ACTIONS = frozenset({"open_workspace", "restore", "show"})
+# The keys a person presses in a pane besides typing: menus, dialogs, the
+# permission-mode cycle (Shift+Tab) and Stop (Escape). Nothing else is sendable.
+_KEY_SEQUENCES = {
+    "enter": "\r",
+    "escape": "\x1b",
+    "tab": "\t",
+    "shift+tab": "\x1b[Z",
+    "up": "\x1b[A",
+    "down": "\x1b[B",
+    "right": "\x1b[C",
+    "left": "\x1b[D",
+    "space": " ",
+    "y": "y",
+    "n": "n",
+    **{str(digit): str(digit) for digit in range(10)},
+}
+_MAX_KEYS = 10
+_KEY_GAP_S = 0.08
 
 
 # An apostrophe inside a name joins, it does not split: the workspace "VM`s"
@@ -82,6 +105,18 @@ def _coding_cli(spoken: str) -> str | None:
         found = canonical_agent(attempt) if attempt else None
         if found and accepts_prompts(found):
             return found
+    return None
+
+
+def _default_cli() -> str | None:
+    """The first installed coding CLI, for a request that names none."""
+    from jarvis.workspace import agents as workspace_agents
+
+    from .session import agent_argv
+
+    for info in workspace_agents.coding_agents():
+        if accepts_prompts(info.name) and agent_argv(info.name) is not None:
+            return info.name
     return None
 
 
@@ -347,8 +382,23 @@ class WorkspaceOrchestrator:
             count = 1
         count = max(1, min(count, MAX_TERMINALS))
         name = str(args.get("name") or "").strip()
+        mixed = args.get("agents")
+        if isinstance(mixed, list) and mixed:
+            # "Five Claude Code and three Codex" in one call.
+            groups = self._groups(args)
+            if isinstance(groups, dict):
+                return groups
+            count = sum(n for _, n in groups)
         try:
-            if count == 1 and name:
+            if isinstance(mixed, list) and mixed:
+                created, capped = [], False
+                for group_cli, group_count in groups:
+                    made, cut = await self.registry.add_terminals(
+                        group_count, agent=group_cli, workspace_id=workspace["id"]
+                    )
+                    created.extend(made)
+                    capped = capped or cut
+            elif count == 1 and name:
                 created = [
                     await self.registry.add_terminal(
                         workspace_id=workspace["id"], agent=cli, name=name
@@ -416,6 +466,292 @@ class WorkspaceOrchestrator:
                 )
             )
         return result
+
+    async def _announce(self, event_factory: Callable[[], Any]) -> None:
+        """Tell the open UI about a change; the change stands either way (AP-18)."""
+        if self.publish is None:
+            return
+        try:
+            await self.publish(event_factory())
+        except Exception as exc:  # noqa: BLE001 - notification is not the work
+            from loguru import logger
+
+            logger.warning("Workspace change was not announced to the UI: {}", exc)
+
+    async def _pane(self, args: dict[str, Any]) -> tuple[Any, Any, dict[str, str]] | dict:
+        """The one open pane a request names, by IDs from resolve or by call-sign."""
+        if str(args.get("terminal_id") or "").strip():
+            target, _ = self._reconcile(args, "observe")
+        elif str(args.get("agent") or "").strip():
+            resolved = self.resolve(args, await asyncio.to_thread(self.graph))
+            if resolved.get("status") != "resolved":
+                return resolved
+            target = {key: resolved["target"][key] for key in _TARGET_KEYS}
+        else:
+            return {
+                "status": "needs_clarification",
+                "kind": "agent",
+                "reason": "Name the coding agent (its call-sign) or pass terminal_id.",
+            }
+        found = self.registry.find_terminal(target["terminal_id"], target["workspace_id"] or None)
+        if found is None:
+            return {
+                "status": "stale_target",
+                "target": target,
+                "reason": "That coding agent is no longer open; inspect the workspace again.",
+            }
+        owner, term = found
+        return owner, term, target
+
+    async def pane_action(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Everything a person does with one open pane besides typing a task.
+
+        observe reads the screen and the newest recorded events; respond answers
+        the question or permission prompt the agent is showing; keys presses
+        keys (menus, Shift+Tab, Escape); interrupt stops the current turn
+        (Escape, the pane's Stop button); close stops and removes the pane.
+        """
+        action = str(args.get("action"))
+        picked = await self._pane(args)
+        if isinstance(picked, dict):
+            return picked
+        owner, term, target = picked
+        pane = {"workspace_id": owner.id, "terminal_id": target["terminal_id"]}
+        try:
+            if action == "observe":
+                seen = await self.sessions.run({"action": "observe", **pane})
+                return {"status": "observed", "target": target, **seen}
+            if action == "respond":
+                answer = str(args.get("prompt") or "").strip()
+                if not answer:
+                    raise SessionError("Pass the answer to type as prompt.")
+                state = await self.sessions.run({"action": "input", **pane})
+                delivery = await self.sessions.run(
+                    {
+                        "action": "respond",
+                        **pane,
+                        "prompt": answer,
+                        "input_token": state["input_token"],
+                        "response_mode": state["response_mode"],
+                    }
+                )
+                return {
+                    "status": delivery.get("delivery", "uncertain"),
+                    "target": target,
+                    **delivery,
+                }
+            if action in {"keys", "interrupt"}:
+                keys = ["escape"] if action == "interrupt" else list(args.get("keys") or [])
+                unknown = [k for k in keys if str(k).casefold() not in _KEY_SEQUENCES]
+                if not keys or unknown or len(keys) > _MAX_KEYS:
+                    raise SessionError(
+                        f"Press 1-{_MAX_KEYS} keys from: {', '.join(sorted(_KEY_SEQUENCES))}."
+                    )
+                for index, key in enumerate(keys):
+                    if index:
+                        await asyncio.sleep(_KEY_GAP_S)
+                    if not self.registry.write(
+                        term.name, _KEY_SEQUENCES[str(key).casefold()], owner.id
+                    ):
+                        raise SessionError(f"{term.name} is not running.")
+                return {"status": "pressed", "target": target, "keys": keys, "agent": term.name}
+            if action == "close":
+                from .fleet_actions import terminals_closed_event
+
+                closed, failed = await self.registry.close_terminals(
+                    [term.name], workspace_id=owner.id
+                )
+                if closed:
+                    await self._announce(
+                        lambda: terminals_closed_event(
+                            owner, closed, source_layer="agentic_ide.orchestration"
+                        )
+                    )
+                return {
+                    "status": "closed" if closed else "not_accepted",
+                    "target": target,
+                    "closed": [t.name for t in closed],
+                    "failed": failed,
+                }
+        except SessionError as exc:
+            return {"status": "not_accepted", "target": target, "reason": str(exc)}
+        raise ValueError("Unknown pane action.")
+
+    async def workspace_action(self, args: dict[str, Any], *, trace_id: str = "") -> dict:
+        """Open a new workspace, restore a closed one, or bring one on screen."""
+        from .session import workspace_changed_event
+
+        action = str(args.get("action"))
+        graph = await asyncio.to_thread(self.graph)
+        if action == "show":
+            picked = self._workspace(args, graph, "")
+            if isinstance(picked, dict):
+                return picked
+            project, workspace = picked
+            session = await self.registry.activate(workspace["id"])
+            await self._announce(
+                lambda: workspace_changed_event(
+                    session, "activated", source_layer="agentic_ide.orchestration"
+                )
+            )
+            return {"status": "shown", "project": project["name"], "workspace": workspace["name"]}
+        if action == "restore":
+            closed = [
+                (p, w) for p in graph["projects"] for w in p["workspaces"] if w["status"] != "open"
+            ]
+            ref = str(args.get("workspace_id") or args.get("workspace") or "")
+            matched = (
+                _best(ref, closed, lambda pw: ((pw[1]["id"],), (pw[1]["name"],))) if ref else []
+            )
+            if len(matched) != 1:
+                return {
+                    "status": "needs_clarification",
+                    "kind": "workspace",
+                    "reason": "Name one closed workspace to restore.",
+                    "candidates": [
+                        {"workspace_id": w["id"], "workspace": w["name"], "project": p["name"]}
+                        for p, w in (matched or closed)
+                    ],
+                }
+            try:
+                session = await self.registry.restore_workspace(matched[0][1]["id"])
+            except SessionError as exc:
+                return {"status": "not_accepted", "reason": str(exc)}
+            await self._announce(
+                lambda: workspace_changed_event(
+                    session, "restored", source_layer="agentic_ide.orchestration"
+                )
+            )
+            return {
+                "status": "restored",
+                "workspace_id": session.id,
+                "workspace": session.name,
+                "agents": [t.name for t in session.terminals],
+            }
+        # open_workspace: a folder by path, or a known project by name.
+        folder = str(args.get("folder") or "").strip()
+        project_id: str | None = None
+        project_ref = str(args.get("project") or "").strip()
+        if not folder and project_ref:
+            owners = _best(
+                project_ref, graph["projects"], lambda p: ((p["id"], p["path"]), (p["name"],))
+            )
+            if len(owners) == 1:
+                folder, project_id = owners[0]["path"], owners[0]["id"]
+        if not folder:
+            return {
+                "status": "needs_clarification",
+                "kind": "folder",
+                "reason": (
+                    "Give the folder's absolute path or a known project. To start in a folder "
+                    "that does not exist yet, create it first (find-app-action 'create folder')."
+                ),
+                "candidates": [
+                    {"project": p["name"], "folder": p["path"]} for p in graph["projects"]
+                ],
+            }
+        groups = self._groups(args)
+        if isinstance(groups, dict):
+            return groups
+        requested = [{"agent": cli} for cli, count in groups for _ in range(count)]
+        if len(requested) > MAX_TERMINALS:
+            return {
+                "status": "not_accepted",
+                "reason": f"A workspace holds at most {MAX_TERMINALS} terminals.",
+            }
+        try:
+            session = await self.registry.start(
+                folder,
+                requested,
+                project_id=project_id,
+                name=str(args.get("name") or "").strip() or None,
+            )
+        except SessionError as exc:
+            return {"status": "not_accepted", "reason": str(exc), "folder": folder}
+        await self._announce(
+            lambda: workspace_changed_event(
+                session, "opened", source_layer="agentic_ide.orchestration"
+            )
+        )
+        result: dict[str, Any] = {
+            "status": "opened",
+            "project_id": session.project_id,
+            "workspace_id": session.id,
+            "workspace": session.name,
+            "folder": session.folder,
+            "agents": [
+                {"terminal_id": "pane:" + t.history_id, "name": t.name, "cli": t.agent}
+                for t in session.terminals
+            ],
+        }
+        prompt = str(args.get("prompt") or "").strip()
+        if prompt:
+            result["deliveries"] = await self._brief(
+                [
+                    {
+                        "project_id": session.project_id,
+                        "workspace_id": session.id,
+                        "terminal_id": "pane:" + t.history_id,
+                    }
+                    for t in session.terminals
+                ],
+                prompt,
+                trace_id,
+            )
+        return result
+
+    @staticmethod
+    def _groups(args: dict[str, Any]) -> list[tuple[str | None, int]] | dict[str, Any]:
+        """``agents: [{cli, count}]`` (or one ``cli``/``count``) as (CLI, count) pairs.
+
+        "Five Claude Code and three Codex" is one request; each group keeps the
+        CLI as spoken until ``_coding_cli`` names the pane's real CLI.
+        """
+        raw = args.get("agents")
+        entries = raw if isinstance(raw, list) and raw else [args]
+        groups: list[tuple[str | None, int]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            spoken = str(entry.get("cli") or "").strip()
+            cli = _coding_cli(spoken) if spoken else _default_cli()
+            if cli is None:
+                from jarvis.workspace import agents as workspace_agents
+
+                return {
+                    "status": "needs_clarification",
+                    "kind": "cli",
+                    "reason": f"'{spoken}' is not a coding CLI this app can open.",
+                    "candidates": [
+                        a.name for a in workspace_agents.coding_agents() if accepts_prompts(a.name)
+                    ],
+                }
+            try:
+                count = int(entry.get("count") or 1)
+            except (TypeError, ValueError):
+                count = 1
+            groups.append((cli, max(1, min(count, MAX_TERMINALS))))
+        return groups or [(_default_cli(), 1)]
+
+    async def _brief(
+        self, targets: list[dict[str, str]], prompt: str, trace_id: str
+    ) -> list[dict[str, Any]]:
+        return list(
+            await asyncio.gather(
+                *(
+                    self.run(
+                        {
+                            "action": "send",
+                            **target,
+                            "request_id": self._issue(target),
+                            "prompt": prompt,
+                        },
+                        trace_id=trace_id,
+                    )
+                    for target in targets
+                )
+            )
+        )
 
     @staticmethod
     def _choice(
@@ -490,22 +826,32 @@ class WorkspaceOrchestrator:
                 for rid, (target, at, sent) in issued.items()
                 if _distance(given["terminal_id"], target["terminal_id"]) <= _NEAR_MISS
             ]
-            retry = [(at, rid) for at, rid, sent in same_pane if sent and sent == prompt]
+            now = time.monotonic()
+            retry = [
+                (at, rid)
+                for at, rid, sent in same_pane
+                if sent and sent == prompt and now - at <= _RETRY_WINDOW_S
+            ]
             fresh = [(at, rid) for at, rid, sent in same_pane if not sent or action != "send"]
             if retry or fresh:
                 match = max(retry or fresh)[1]
         if not match:
             return given, request_id
-        target, _, sent = issued[match]
-        if action == "send" and sent and sent != prompt:
+        target, at, sent = issued[match]
+        if (
+            action == "send"
+            and sent
+            and (sent != prompt or time.monotonic() - at > _RETRY_WINDOW_S)
+        ):
             return dict(target), ""
         return dict(target), match
 
     def _mark_sent(self, request_id: str, prompt: str) -> None:
+        """Record what went out under ``request_id``; its clock now dates the send."""
         with self._issued_lock:
             if request_id in self._issued:
-                target, at, _ = self._issued[request_id]
-                self._issued[request_id] = (target, at, prompt)
+                target, _, _ = self._issued[request_id]
+                self._issued[request_id] = (target, time.monotonic(), prompt)
 
     async def run(self, args: dict[str, Any], *, trace_id: str = "") -> dict[str, Any]:
         action = args.get("action")
@@ -514,6 +860,10 @@ class WorkspaceOrchestrator:
             return graph if action == "inspect" else self.resolve(args, graph)
         if action == "create":
             return await self.create(args, trace_id=trace_id)
+        if action in _PANE_ACTIONS:
+            return await self.pane_action(args)
+        if action in _WORKSPACE_ACTIONS:
+            return await self.workspace_action(args, trace_id=trace_id)
         if action not in {"send", "context"}:
             raise ValueError("Unknown workspace orchestration action.")
         target, request_id = self._reconcile(args, action)
@@ -527,9 +877,10 @@ class WorkspaceOrchestrator:
             if not prompt:
                 raise ValueError("Sending requires a prompt.")
             if not _is_request_id(request_id):
-                # Nothing usable to key on: derive a key so a retry of this
-                # same task within ten minutes still cannot deliver twice.
-                seed = f"{terminal_id}\n{prompt}\n{int(time.time() // 600)}"
+                # Nothing usable to key on: derive a key so an immediate retry
+                # of this same task cannot deliver twice, while the same words
+                # sent again minutes later are a new instruction.
+                seed = f"{terminal_id}\n{prompt}\n{int(time.time() // _RETRY_WINDOW_S)}"
                 request_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:32]
             self._mark_sent(request_id, prompt)
             previous = await asyncio.to_thread(
