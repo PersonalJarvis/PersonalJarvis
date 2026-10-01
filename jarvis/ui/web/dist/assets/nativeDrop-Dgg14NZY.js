@@ -1,5 +1,6 @@
 <<<<<<<< HEAD:jarvis/ui/web/dist/assets/nativeDrop-Dgg14NZY.js
 <<<<<<<< HEAD:jarvis/ui/web/dist/assets/nativeDrop-Dgg14NZY.js
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/nativeDrop-Dgg14NZY.js
 import{l as w,r as p,j as u,by as A,c as g,at as P}from"./index-DK8nKeII.js";/**
 |||||||| parent of e44eec7d8 (chore(ui): rebuild frontend bundle for the IDE key menu):jarvis/ui/web/dist/assets/nativeDrop-wUeCA6ob.js
 import{l as w,r as p,j as u,by as A,c as g,at as P}from"./index-DRGNN6w7.js";/**
@@ -11,6 +12,11 @@ import{q as w,r as p,j as u,by as A,g,at as P}from"./index-BtFTJLvF.js";/**
 ========
 import{q as w,r as p,j as u,by as A,g,at as P}from"./index-CwJDK0Jq.js";/**
 >>>>>>>> ebd50ee8d (chore(ui): rebuild frontend bundle for the Ctrl+B key menu):jarvis/ui/web/dist/assets/nativeDrop-BX7yqL5G.js
+|||||||| parent of c5f0d9d8f (chore(ui): rebuild frontend bundle for the Ctrl hint):jarvis/ui/web/dist/assets/nativeDrop-BX7yqL5G.js
+import{q as w,r as p,j as u,by as A,g,at as P}from"./index-CwJDK0Jq.js";/**
+========
+import{l as w,r as p,j as u,by as A,c as g,at as P}from"./index-Dp3242XA.js";/**
+>>>>>>>> c5f0d9d8f (chore(ui): rebuild frontend bundle for the Ctrl hint):jarvis/ui/web/dist/assets/nativeDrop-Dw0_GG6O.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.
