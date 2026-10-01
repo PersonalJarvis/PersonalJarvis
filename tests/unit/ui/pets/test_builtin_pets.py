@@ -12,7 +12,7 @@ import pytest
 from PIL import Image
 
 from jarvis.ui.pets.loader import COLOR_KEY, builtin_root, list_pets, load_pet
-from jarvis.ui.pets.states import CALL_STATES, DEFAULT_PET_ID, PET_STATES
+from jarvis.ui.pets.states import DEFAULT_PET_ID, PET_STATES
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 BUILD_SCRIPT = REPO_ROOT / "scripts" / "pets" / "build_pets.py"
@@ -89,11 +89,10 @@ def test_committed_pet_matches_the_generator(generated: Path, pet_id: str) -> No
     assert (ours / "pet.json").read_text(encoding="utf-8") == (fresh / "pet.json").read_text(
         encoding="utf-8"
     )
-    for extra in ("acts.png", "phone.png"):
-        if (fresh / extra).exists():
-            assert _pixels(ours / extra) == _pixels(fresh / extra), (
-                f"{pet_id}: run `python scripts/pets/build_pets.py` and commit the result"
-            )
+    if (fresh / "acts.png").exists():
+        assert _pixels(ours / "acts.png") == _pixels(fresh / "acts.png"), (
+            f"{pet_id}: run `python scripts/pets/build_pets.py` and commit the result"
+        )
 
 
 def test_committed_template_matches_the_generator(generated: Path) -> None:
@@ -137,15 +136,3 @@ def test_every_builtin_pet_has_idle_acts(pet_id: str) -> None:
         for frame in frames:
             assert frame.getchannel("A").getbbox() is not None, f"{name} has an empty frame"
         assert any(frame.tobytes() != idle for frame in frames), f"{name} never moves"
-
-
-@pytest.mark.parametrize("pet_id", EXPECTED_PETS)
-def test_every_builtin_pet_can_hold_a_phone(pet_id: str) -> None:
-    """In a call every built-in pet holds a handset (docs/pets.md, On the phone)."""
-    pack = load_pet(builtin_root() / pet_id, builtin=True)
-    assert set(pack.phone) == set(CALL_STATES)
-    for state in CALL_STATES:
-        plain, phone = pack.frames[state], pack.phone[state]
-        assert len(phone) == len(plain) == pack.manifest.phone[state].frames
-        for before, after in zip(plain, phone, strict=True):
-            assert before.tobytes() != after.tobytes(), f"{state}: no handset drawn"

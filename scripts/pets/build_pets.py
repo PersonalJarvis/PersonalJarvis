@@ -41,7 +41,6 @@ sys.path.insert(0, str(REPO_ROOT))
 from PIL import Image  # noqa: E402
 
 from jarvis.ui.pets.states import (  # noqa: E402
-    CALL_STATES,
     MAX_FRAMES_PER_STATE,
     ONE_SHOT_STATES,
     PET_FORMAT,
@@ -357,9 +356,6 @@ class Pose:
     #: The idle act this frame belongs to (``""`` outside acts); ``state`` is
     #: then ``"idle"`` so a pet's ordinary idle drawing still applies.
     act: str = ""
-    #: The pet is on the phone (a ``phone`` row): its ``PhoneRig`` limb holds
-    #: the handset, so the pet's own drawing leaves that limb out.
-    phone: bool = False
 
 
 def base_pose(state: str, i: int) -> Pose:
@@ -700,108 +696,6 @@ def fx_held(f: Frame, i: int, left: Px, right: Px) -> None:
         f.paint(line(right[0] - 2, right[1] - 6, right[0], right[1] - 8), ARC)
 
 
-# ---------------------------------------------------------------------------
-# On the phone: a corded handset every pet holds to its head during a call.
-# ---------------------------------------------------------------------------
-
-PHONE_BODY = hexc("#f1ebdf")
-PHONE_SHADE = hexc("#c4b8a4")
-PHONE_GRILL = hexc("#6e6355")
-
-#: The handset's two cups (earpiece, mouthpiece) and the bar between them.
-#: Seen from the front, a handset held to the head is a "bone": two round
-#: ends joined by a thick bar, lying diagonally across the cheek.
-HANDSET_CUP = (3.1, 2.7)
-#: Where a paw grips the bar: this share of the way from ear to mouth.
-HANDSET_GRIP_T = 0.55
-#: The coiled cord's sideways sway per frame, so it hangs and swings a little.
-_CORD_SWAY = (0, 0, 1, 1, 0, 0, -1, -1)
-
-
-def handset_mask(ear: tuple[float, float], mouth: tuple[float, float]) -> tuple[Mask, Mask]:
-    """(cups, bar): the two round ends and the thick bar joining them."""
-    cups = ellipse(ear[0], ear[1], *HANDSET_CUP) | ellipse(mouth[0], mouth[1], *HANDSET_CUP)
-    bar = thick(shifted(thick(line(int(ear[0]), int(ear[1]), int(mouth[0]), int(mouth[1]))), -1, 0))
-    return cups, bar
-
-
-def draw_handset(f: Frame, ear: tuple[float, float], mouth: tuple[float, float]) -> None:
-    cups, bar = handset_mask(ear, mouth)
-    body = cups | bar
-    colors = shade(body, PHONE_BODY, light=FX_WHITE, dark=PHONE_SHADE, dark_depth=1)
-    f.part(body, colors)
-
-
-def handset_grip(ear: tuple[float, float], mouth: tuple[float, float]) -> Px:
-    t = HANDSET_GRIP_T
-    return (round(ear[0] + (mouth[0] - ear[0]) * t), round(ear[1] + (mouth[1] - ear[1]) * t))
-
-
-def draw_cord(f: Frame, start: Px, end: Px, i: int) -> None:
-    """A coiled cord sagging from the mouthpiece down to ``end``.
-
-    Two pixels wide with alternating light and shaded cells inside a dark
-    outline: at this size that zigzag is what reads as a coil.
-    """
-    (x0, y0), (x1, y1) = start, end
-    sway = _CORD_SWAY[i % len(_CORD_SWAY)]
-    # A quadratic sag: straight down first, then over to ``end``.
-    cx, cy = x0 + sway, y1
-    cells: dict[Px, RGBA] = {}
-    steps = max(abs(x1 - x0), abs(y1 - y0)) * 2 + 2
-    for k in range(steps + 1):
-        t = k / steps
-        x = round((1 - t) ** 2 * x0 + 2 * (1 - t) * t * cx + t * t * x1)
-        y = round((1 - t) ** 2 * y0 + 2 * (1 - t) * t * cy + t * t * y1)
-        for dx in (0, 1):
-            cells[(x + dx, y)] = PHONE_BODY if (x + dx + y) % 2 == 0 else PHONE_SHADE
-    f.paint(outer_ring(set(cells)), OUTLINE)
-    f.paint_map(cells)
-
-
-@dataclass(frozen=True)
-class PhoneRig:
-    """How one pet holds the handset during a call (``Pose.phone``).
-
-    ``ear`` and ``mouth`` are the centres of the earpiece and mouthpiece cups
-    in cell coordinates before the pose offset: the earpiece at the side of
-    the head, the mouthpiece over the cheek towards the mouth. ``hold`` draws
-    the limb that grips the bar — an arm, a paw, a pseudopod, a handle —
-    from the body to the grip it is given, on top of the handset. The coiled
-    cord sags from the mouthpiece to ``cord_end``.
-    """
-
-    ear: tuple[float, float]
-    mouth: tuple[float, float]
-    hold: Callable[[Frame, Pose, Px], None]
-    cord_end: Px = (40, 44)
-
-
-def draw_phone(f: Frame, pose: Pose, rig: PhoneRig) -> None:
-    """The cord, the handset, then the limb over its grip."""
-    with f.offset(pose.dx, pose.dy):
-        mouth = (round(rig.mouth[0]), round(rig.mouth[1] + HANDSET_CUP[1]))
-        end = (rig.cord_end[0], rig.cord_end[1] - pose.dy)
-        draw_cord(f, mouth, end, pose.i)
-        draw_handset(f, rig.ear, rig.mouth)
-        rig.hold(f, pose, handset_grip(rig.ear, rig.mouth))
-
-
-def paw_hold(
-    shoulder: Px, fill: RGBA, light: RGBA, dark: RGBA, *, paw: tuple[float, float] = (2.2, 2.0)
-) -> Callable[[Frame, Pose, Px], None]:
-    """A round paw on the grip with a stubby arm back to ``shoulder``."""
-
-    def hold(f: Frame, pose: Pose, grip: Px) -> None:
-        gx, gy = grip
-        arm = thick(line(shoulder[0], shoulder[1], gx, gy + 1))
-        ball = ellipse(gx + 0.5, gy + 0.5, *paw)
-        limb = arm | ball
-        f.part(limb, shade(limb, fill, light=light, dark=dark, dark_depth=1))
-
-    return hold
-
-
 @dataclass(frozen=True)
 class Anchors:
     """Where a pet's effects go (cell coordinates, before the pose offset)."""
@@ -895,9 +789,6 @@ class PetDesign:
     #: Idle acts: little one-shot scenes the pet plays now and then while
     #: nothing happens (``docs/pets.md``). Written to their own ``acts.png``.
     acts: tuple[IdleAct, ...] = ()
-    #: How the pet holds a phone during a call; its ``phone.png`` rows are
-    #: the ``CALL_STATES`` drawn with it. ``None`` = no phone rows.
-    phone: PhoneRig | None = None
 
     def counts(self) -> Mapping[str, int]:
         return {**FRAME_COUNTS, **(self.frame_counts or {})}
@@ -1003,10 +894,6 @@ _GIGI_TYPE = (
 
 def _gigi_arms(pose: Pose) -> tuple[Mask, Mask]:
     """The left and the right arm for this pose."""
-    if pose.phone:
-        # The right arm holds the handset (``_gigi_phone_arm``).
-        left, _right = _gigi_arms(replace(pose, phone=False))
-        return left, set()
     if pose.act:
         left, right = _GIGI_ACT_ARMS[pose.act][pose.i]
         return set(_GIGI_ARMS[left]), mirrored(_GIGI_ARMS[right])
@@ -1614,17 +1501,6 @@ def gigi_post(img: Image.Image, pose: Pose) -> Image.Image:
     return img
 
 
-def _gigi_phone_arm(f: Frame, pose: Pose, grip: Px) -> None:
-    """Gigi's thin white arm, raised from the band to a hand on the grip."""
-    gx, gy = grip
-    arm = polyline([(37, 26), (38, 26), (39, 25), (gx + 1, gy + 2)])
-    hand = ellipse(gx + 0.5, gy + 0.5, 1.6, 1.6)
-    f.paint(outer_ring(arm | hand), OUTLINE)
-    f.paint(arm | hand, GIGI_WHITE)
-
-
-GIGI_PHONE = PhoneRig(ear=(39.0, 13.0), mouth=(33.0, 25.5), hold=_gigi_phone_arm)
-
 GIGI_ANCHORS = Anchors(
     arcs_left=(9, 16),
     arcs_right=(38, 16),
@@ -1655,7 +1531,6 @@ GIGI = PetDesign(
         "held": _gigi_held_fx,
     },
     acts=GIGI_ACTS,
-    phone=GIGI_PHONE,
 )
 
 
@@ -1888,12 +1763,10 @@ def _draw_miso_sitting(f: Frame, pose: Pose) -> None:
         f.paint(ellipse(CX, 38, 5, 4), MISO_CREAM)
         paws_up = state == "success" and pose.dy <= -4
         if state == "thinking":
-            if not pose.phone:  # on the phone that paw holds the handset
-                _miso_paw(f, 28.5, 43)  # the other paw is at the chin
+            _miso_paw(f, 28.5, 43)  # the other paw is at the chin
         elif state != "working" and not paws_up:
             _miso_paw(f, 19.5, 43)
-            if not pose.phone:
-                _miso_paw(f, 28.5, 43)
+            _miso_paw(f, 28.5, 43)
         ears = ("rest", "rest")
         whiskers = 0
         if state == "listening":
@@ -2582,17 +2455,6 @@ _MISO_ACT_BODIES: dict[str, Callable[[Frame, Pose], None]] = {
 }
 
 
-def _miso_phone_paw(f: Frame, pose: Pose, grip: Px) -> None:
-    """Miso's right front leg, raised from the chest to the handset."""
-    gx, gy = grip
-    arm = thick(line(30, 35, gx, gy + 2))
-    _miso_fur(f, arm, 1)
-    _miso_paw(f, gx + 0.5, gy + 0.5)
-
-
-MISO_PHONE = PhoneRig(ear=(40.5, 18.0), mouth=(34.5, 28.5), hold=_miso_phone_paw)
-
-
 MISO_ANCHORS = Anchors(
     arcs_left=(10, 18),
     arcs_right=(37, 18),
@@ -2620,7 +2482,6 @@ MISO = PetDesign(
         "held": _miso_held_fx,
     },
     acts=MISO_ACTS,
-    phone=MISO_PHONE,
 )
 
 
@@ -3284,21 +3145,6 @@ BREW_ACTS = (
 )
 
 
-def _brew_phone_handle(f: Frame, pose: Pose, grip: Px) -> None:
-    """No arms: the bar runs through the handle, whose outer half is drawn
-    again in front of it, so the teapot cradles the handset in its loop."""
-    _ = grip
-    base, light, dark = BREW_GLAZE
-    ring = ellipse(9, 31, 6, 6) - ellipse(9, 31, 3, 3)
-    front = {p for p in ring if p[0] <= 6}
-    f.part(front, _shade(front, base, light, dark, 1))
-
-
-BREW_PHONE = PhoneRig(
-    ear=(5.0, 23.5), mouth=(13.0, 35.0), hold=_brew_phone_handle, cord_end=(5, 45)
-)
-
-
 BREW_ANCHORS = Anchors(
     arcs_left=(11, 17),
     arcs_right=(32, 17),
@@ -3330,7 +3176,6 @@ BREW = PetDesign(
         "held": brew_held,
     },
     waist=39,
-    phone=BREW_PHONE,
 )
 
 
@@ -3480,9 +3325,6 @@ def _bolt_arms(pose: Pose) -> tuple[Mask | None, Mask | None]:
     """The left and the right arm (``None``: drawn by the state's effect)."""
     if pose.act:
         return _bolt_act_arms(pose)
-    if pose.phone:
-        # The right arm holds the handset (``_bolt_phone_arm``).
-        return _bolt_arms(replace(pose, phone=False))[0], None
     rest, up, swing = _BOLT_ARM_REST, _BOLT_ARM_UP, _BOLT_ARM_SWING
     s, i = pose.state, pose.i
     if s == "success":
@@ -4226,16 +4068,6 @@ BOLT_ACTS = (
 )
 
 
-def _bolt_phone_arm(f: Frame, pose: Pose, grip: Px) -> None:
-    """Bolt's right metal arm, bent up from the case to the handset."""
-    gx, gy = grip
-    arm = thick(line(38, 26, gx, gy + 2)) | ellipse(gx + 0.5, gy + 0.5, 2.0, 2.0)
-    f.part(arm, _shade(arm, BOLT_METAL, FX_WHITE, BOLT_METAL_DARK, 1))
-
-
-BOLT_PHONE = PhoneRig(ear=(41.5, 12.5), mouth=(35.5, 22.5), hold=_bolt_phone_arm)
-
-
 BOLT_ANCHORS = Anchors(
     arcs_left=(12, 15),
     arcs_right=(35, 15),
@@ -4268,7 +4100,6 @@ BOLT = PetDesign(
         "held": bolt_held,
     },
     acts=BOLT_ACTS,
-    phone=BOLT_PHONE,
 )
 
 
@@ -4664,16 +4495,6 @@ def mochi_held(f: Frame, pose: Pose) -> None:
     if top <= 3:
         # Stretched to the limit: tiny strain marks beside the pinch.
         f.paint({(20, top + 1), (19, top), (28, top + 1), (29, top)}, ARC)
-
-
-def _mochi_phone_nub(f: Frame, pose: Pose, grip: Px) -> None:
-    """No arms either: Mochi pulls a soft nub out of its body to hold it."""
-    paw_hold((37, 38), MOCHI_BASE, MOCHI_LIGHT, MOCHI_DARK, paw=(2.4, 2.2))(f, pose, grip)
-
-
-MOCHI_PHONE = PhoneRig(
-    ear=(41.5, 25.5), mouth=(35.5, 35.5), hold=_mochi_phone_nub, cord_end=(42, 45)
-)
 
 
 MOCHI_ANCHORS = Anchors(
@@ -5128,7 +4949,6 @@ MOCHI = PetDesign(
         "held": mochi_held,
     },
     acts=MOCHI_ACTS,
-    phone=MOCHI_PHONE,
 )
 
 
@@ -5876,16 +5696,6 @@ SHELLY_ACTS: tuple[IdleAct, ...] = (
 )
 
 
-def _shelly_phone_foot(f: Frame, pose: Pose, grip: Px) -> None:
-    """A snail has only its foot: a soft fold of it curls up to the handset."""
-    paw_hold((12, 40), SHELLY_BODY, SHELLY_BODY_LIGHT, SHELLY_BODY_DARK)(f, pose, grip)
-
-
-SHELLY_PHONE = PhoneRig(
-    ear=(5.0, 26.0), mouth=(10.0, 37.0), hold=_shelly_phone_foot, cord_end=(3, 45)
-)
-
-
 SHELLY = PetDesign(
     id="shelly",
     name="Shelly",
@@ -5913,7 +5723,6 @@ SHELLY = PetDesign(
         "held": _shelly_held_fx,
     },
     acts=SHELLY_ACTS,
-    phone=SHELLY_PHONE,
 )
 
 
@@ -6286,9 +6095,6 @@ def _ember_tail_for(pose: Pose) -> tuple[int, int]:
 
 def _ember_arms(pose: Pose) -> tuple[tuple[Px, Px], ...]:
     """(shoulder, claw) of each arm of the sitting dragon."""
-    if pose.phone:
-        # The right arm holds the handset (``_ember_phone_arm``).
-        return _ember_arms(replace(pose, phone=False))[:1]
     state, i = pose.state, pose.i
     rest = (((16, 32), (14, 37)), ((31, 32), (33, 37)))
     if state == "thinking":
@@ -6347,7 +6153,7 @@ def _draw_ember_sitting(f: Frame, pose: Pose) -> None:
             cap = (0, 1, 1, 0, 1, 1, 0, 0)[i % 8]  # the cap jiggles on the hop
         with f.offset(tilt, 0):
             _ember_head(f, pose, fins, cap=cap, soot=state == "error" and i >= 3)
-        if state == "thinking" and not pose.phone:
+        if state == "thinking":
             # The tapping claw sits in front of the chin.
             tap = 1 if i % 4 in (1, 2) else 0
             _ember_hand(f, 29, 28 + tap)
@@ -7250,14 +7056,6 @@ EMBER_ACTS = (
 )
 
 
-def _ember_phone_arm(f: Frame, pose: Pose, grip: Px) -> None:
-    """Ember's right arm, raised from the shoulder to a claw on the handset."""
-    _ember_arm(f, (31, 32), grip)
-
-
-EMBER_PHONE = PhoneRig(ear=(39.0, 16.0), mouth=(33.0, 27.5), hold=_ember_phone_arm)
-
-
 EMBER = PetDesign(
     id="ember",
     name="Ember",
@@ -7286,7 +7084,6 @@ EMBER = PetDesign(
         "held": _ember_held_fx,
     },
     acts=EMBER_ACTS,
-    phone=EMBER_PHONE,
 )
 
 
@@ -7357,43 +7154,6 @@ def render_frame(pet: PetDesign, state: str, i: int) -> Image.Image:
     return image
 
 
-def render_phone_frame(pet: PetDesign, state: str, i: int) -> Image.Image:
-    """Frame ``i`` of ``state`` with the pet on the phone.
-
-    The pet's own pose and drawing (minus the limb its rig uses), the
-    handset with its cord and the holding limb on top. Listening and talking
-    drop the shared effect: the phone at the ear already says "in a call",
-    and sound arcs would run into the handset. Thinking keeps its own.
-    """
-    assert pet.phone is not None  # noqa: S101 — callers check
-    pose = replace(pet.pose(state, i), phone=True)
-    body = Frame()
-    pet.draw(body, pose)
-    draw_phone(body, pose, pet.phone)
-    image = breathe(body.image(), pose.stretch, pet.waist + pose.dy)
-    if pet.post is not None:
-        image = pet.post(image, pose)
-    if state == "thinking":
-        fx = Frame()
-        own = pet.fx.get(state)
-        if own is not None:
-            own(fx, pose)
-        else:
-            draw_effects(fx, pose, pet.anchors)
-        image.alpha_composite(fx.image())
-    return image
-
-
-def build_phone_sheet(pet: PetDesign) -> Image.Image:
-    """One row per call state (``CALL_STATES`` order), the pet on the phone."""
-    counts = pet.counts()
-    sheet = Image.new("RGBA", (CELL * MAX_FRAMES_PER_STATE, CELL * len(CALL_STATES)), (0, 0, 0, 0))
-    for row, state in enumerate(CALL_STATES):
-        for i in range(counts[state]):
-            sheet.paste(render_phone_frame(pet, state, i), (i * CELL, row * CELL))
-    return sheet
-
-
 def build_sheet(pet: PetDesign) -> Image.Image:
     sheet = Image.new("RGBA", (CELL * MAX_FRAMES_PER_STATE, CELL * len(PET_STATES)), (0, 0, 0, 0))
     counts = pet.counts()
@@ -7405,8 +7165,6 @@ def build_sheet(pet: PetDesign) -> Image.Image:
 
 #: File name of a pet's idle-act sheet.
 ACTS_SHEET = "acts.png"
-#: File name of a pet's on-the-phone sheet.
-PHONE_SHEET = "phone.png"
 
 
 def build_manifest(pet: PetDesign) -> dict:
@@ -7428,12 +7186,6 @@ def build_manifest(pet: PetDesign) -> dict:
         manifest["acts"] = {
             act.name: {"row": row, "frames": act.frames, "fps": act.fps, "loop": False}
             for row, act in enumerate(pet.acts)
-        }
-    if pet.phone is not None:
-        manifest["phone_sheet"] = PHONE_SHEET
-        manifest["phone"] = {
-            state: {**_animation(state, row, counts, fps), "row": row}
-            for row, state in enumerate(CALL_STATES)
         }
     return manifest
 
@@ -7510,9 +7262,6 @@ def build_all(out_dir: Path) -> list[Path]:
         if pet.acts:
             save_png(build_acts_sheet(pet), folder / ACTS_SHEET)
             written.append(folder / ACTS_SHEET)
-        if pet.phone is not None:
-            save_png(build_phone_sheet(pet), folder / PHONE_SHEET)
-            written.append(folder / PHONE_SHEET)
     folder = out_dir / "template"
     folder.mkdir(parents=True, exist_ok=True)
     sheet, manifest = build_template()

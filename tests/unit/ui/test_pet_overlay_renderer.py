@@ -420,7 +420,7 @@ def test_a_live_level_drives_the_talking_frame() -> None:
     renderer.on_mode("speak")
     renderer.feed_level(0.9, clock.now)
     key = renderer.frame_key()
-    assert key[3] == 3  # loud: the widest mouth
+    assert key[-1] == 3  # loud: the widest mouth
     assert renderer.next_frame_delay_ms() == pr.LEVEL_POLL_MS + 2
     # The same smoothed level gives the same key: no repaint.
     assert renderer.frame_key() == key
@@ -428,7 +428,7 @@ def test_a_live_level_drives_the_talking_frame() -> None:
     for _ in range(8):
         clock.now += 0.05
         renderer.feed_level(0.0, clock.now)
-    assert renderer.frame_key()[3] == 0
+    assert renderer.frame_key()[-1] == 0
     # The voice stopped arriving: back to the swing at the manifest rate.
     clock.now += pr.LEVEL_FRESH_S + 0.05
     assert renderer.next_frame_delay_ms() <= 105
@@ -441,7 +441,7 @@ def test_garbage_levels_are_ignored() -> None:
     renderer.feed_level(None, clock.now)
     renderer.feed_level(float("nan"), clock.now)
     renderer.feed_level("loud", clock.now)  # type: ignore[arg-type]
-    assert renderer.frame_key()[3] in range(4)
+    assert renderer.frame_key()[-1] in range(4)
 
 
 # --- idle acts ----------------------------------------------------------------
@@ -489,14 +489,14 @@ def test_an_idle_pet_plays_an_act_after_a_while_and_returns_to_idle() -> None:
     clock.now += first_delay - 0.01
     assert renderer.frame_key()[2] == "idle"
     clock.now += 0.02
-    assert renderer.frame_key()[2:4] == ("act:wave", 0)
+    assert renderer.frame_key()[2:] == ("act:wave", 0)
     clock.now += 0.11
-    assert renderer.frame_key()[2:4] == ("act:wave", 1)
+    assert renderer.frame_key()[2:] == ("act:wave", 1)
     clock.now += 0.25  # past the act's 0.3 s
     assert renderer.frame_key()[2] == "idle"
     clock.now += gap + 0.01
     # Never the same act twice in a row.
-    assert renderer.frame_key()[2:4] == ("act:hop", 0)
+    assert renderer.frame_key()[2:] == ("act:hop", 0)
 
 
 def test_any_other_state_cancels_the_act() -> None:
@@ -533,26 +533,3 @@ def test_a_pet_without_acts_just_idles() -> None:
     renderer, _ = _renderer(clock)
     clock.now += 120.0
     assert renderer.frame_key()[2] == "idle"
-
-
-# --- on the phone ------------------------------------------------------------
-
-
-def test_a_voice_call_shows_the_pets_phone_rows_and_hanging_up_puts_them_away() -> None:
-    renderer = pr.PetRenderer("gigi")
-    renderer.on_mode("speak")
-    renderer.on_mode("listen")
-    assert renderer.on_call
-    assert renderer.frame_key()[2] == "phone:listening"
-    on_call = renderer.render()
-    renderer.on_mode("idle")
-    assert not renderer.on_call
-    assert not str(renderer.frame_key()[2]).startswith("phone:")
-    assert renderer.render() is not on_call
-
-
-def test_a_pet_without_phone_rows_keeps_its_plain_rows_in_a_call() -> None:
-    renderer = pr.PetRenderer("fake", loader=_Loader({"fake": _Pack()}))
-    renderer.on_mode("listen")
-    assert renderer.on_call
-    assert renderer.frame_key()[2] == "listening"

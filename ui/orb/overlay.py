@@ -979,7 +979,7 @@ class MascotRenderer:
         # from OrbBusBridge on AudioOutFirst events).
         self._overlay_mouth(frame, t)
 
-        # --- 4. POST layer from animations (hand, thought bubble, phone, Z-Z-Z…)
+        # --- 4. POST layer from animations (hand, thought bubble, Z-Z-Z…)
         if self._animations:
             post_layer = self._make_overlay_layer(t, which="post")
             if post_layer is not None:

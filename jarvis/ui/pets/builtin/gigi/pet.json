@@ -107,26 +107,5 @@
       "fps": 7,
       "loop": false
     }
-  },
-  "phone_sheet": "phone.png",
-  "phone": {
-    "listening": {
-      "row": 0,
-      "frames": 6,
-      "fps": 8,
-      "loop": true
-    },
-    "thinking": {
-      "row": 1,
-      "frames": 8,
-      "fps": 8,
-      "loop": true
-    },
-    "talking": {
-      "row": 2,
-      "frames": 4,
-      "fps": 10,
-      "loop": true
-    }
   }
 }

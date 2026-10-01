@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from jarvis.ui.pets.states import (
-    CALL_STATES,
     FRAME_SIZES,
     MAX_FRAMES_PER_STATE,
     NO_PET_ID,
@@ -101,11 +100,6 @@ class PetManifest:
     #: ``acts_sheet``. Optional; without them the pet just idles.
     acts: Mapping[str, AnimationSpec] = field(default_factory=lambda: MappingProxyType({}))
     acts_sheet: str | None = None
-    #: The pet on the phone: rows for the ``CALL_STATES`` in ``phone_sheet``,
-    #: shown instead of the plain rows while a voice conversation runs.
-    #: Optional; without them the pet just listens and talks as usual.
-    phone: Mapping[str, AnimationSpec] = field(default_factory=lambda: MappingProxyType({}))
-    phone_sheet: str | None = None
 
     def spec_for(self, state: str) -> tuple[str, AnimationSpec]:
         """Return ``(resolved_state, spec)`` for ``state``.
@@ -144,13 +138,6 @@ class PetManifest:
         if self.acts and self.acts_sheet is not None:
             out["acts_sheet"] = self.acts_sheet
             out["acts"] = {name: spec_json(spec) for name, spec in self.acts.items()}
-        if self.phone and self.phone_sheet is not None:
-            out["phone_sheet"] = self.phone_sheet
-            out["phone"] = {
-                state: spec_json(spec)
-                for state in CALL_STATES
-                if (spec := self.phone.get(state)) is not None
-            }
         return out
 
 
@@ -279,7 +266,6 @@ def parse_manifest(data: object, *, builtin: bool) -> PetManifest:
     }
 
     acts, acts_sheet = _parse_acts(data, sheet)
-    phone, phone_sheet = _parse_phone(data, sheet, acts_sheet)
 
     return PetManifest(
         id=pet_id,
@@ -291,8 +277,6 @@ def parse_manifest(data: object, *, builtin: bool) -> PetManifest:
         builtin=builtin,
         acts=MappingProxyType(acts),
         acts_sheet=acts_sheet,
-        phone=MappingProxyType(phone),
-        phone_sheet=phone_sheet,
     )
 
 
@@ -328,34 +312,6 @@ def _parse_acts(data: Mapping, sheet: str) -> tuple[dict[str, AnimationSpec], st
     return acts, acts_sheet
 
 
-def _parse_phone(
-    data: Mapping, sheet: str, acts_sheet: str | None
-) -> tuple[dict[str, AnimationSpec], str | None]:
-    """The optional on-the-phone rows and their sheet; both keys or neither."""
-    raw_phone = data.get("phone")
-    phone_sheet = data.get("phone_sheet")
-    if raw_phone is None and phone_sheet is None:
-        return {}, None
-    if not isinstance(raw_phone, Mapping) or not raw_phone:
-        raise PetManifestError("'phone' must be an object with at least one state.")
-    if (
-        not isinstance(phone_sheet, str)
-        or not _SHEET_NAME_RE.match(phone_sheet)
-        or ".." in phone_sheet
-        or phone_sheet in (sheet, acts_sheet)
-    ):
-        raise PetManifestError("'phone_sheet' must be its own PNG file name inside the pet folder.")
-    unknown = sorted(str(key) for key in raw_phone if key not in CALL_STATES)
-    if unknown:
-        raise PetManifestError(f"'{unknown[0]}' has no phone row; use one of the call states.")
-    phone = {
-        state: _parse_animation(f"phone {state}", raw_phone[state])
-        for state in CALL_STATES
-        if state in raw_phone
-    }
-    return phone, phone_sheet
-
-
 def check_sheet_size(width: int, height: int) -> None:
     """Reject a sheet larger than ``MAX_SHEET_EDGE`` on either side."""
     if width < 1 or height < 1:
@@ -382,12 +338,3 @@ def check_act_cells(manifest: PetManifest, width: int, height: int) -> None:
     for name, spec in manifest.acts.items():
         if (spec.row + 1) * size > height or spec.frames * size > width:
             raise PetManifestError(f"Act '{name}' reaches outside the acts sheet.")
-
-
-def check_phone_cells(manifest: PetManifest, width: int, height: int) -> None:
-    """Reject phone rows that reach outside a ``width x height`` phone sheet."""
-    check_sheet_size(width, height)
-    size = manifest.frame_size
-    for state, spec in manifest.phone.items():
-        if (spec.row + 1) * size > height or spec.frames * size > width:
-            raise PetManifestError(f"Phone row '{state}' reaches outside the phone sheet.")

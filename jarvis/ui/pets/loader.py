@@ -28,7 +28,6 @@ from jarvis.ui.pets.manifest import (
     PetManifestError,
     check_act_cells,
     check_cells,
-    check_phone_cells,
     check_sheet_size,
     parse_manifest,
 )
@@ -61,10 +60,6 @@ class PetPack:
     frames: Mapping[str, tuple[Image.Image, ...]]
     #: Decoded idle acts by name (empty when the pet has none).
     acts: Mapping[str, tuple[Image.Image, ...]] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    #: Decoded on-the-phone rows by call state (empty when the pet has none).
-    phone: Mapping[str, tuple[Image.Image, ...]] = field(
         default_factory=lambda: MappingProxyType({})
     )
 
@@ -128,10 +123,6 @@ def read_manifest(pet_dir: Path, *, builtin: bool) -> PetManifest:
     check_cells(manifest, *_probe_png(pet_dir / manifest.sheet, manifest.sheet))
     if manifest.acts and manifest.acts_sheet is not None:
         check_act_cells(manifest, *_probe_png(pet_dir / manifest.acts_sheet, manifest.acts_sheet))
-    if manifest.phone and manifest.phone_sheet is not None:
-        check_phone_cells(
-            manifest, *_probe_png(pet_dir / manifest.phone_sheet, manifest.phone_sheet)
-        )
     return manifest
 
 
@@ -195,21 +186,11 @@ def load_pet(pet_dir: Path, *, builtin: bool) -> PetPack:
                 acts_sheet.crop((col * size, top, (col + 1) * size, top + size))
                 for col in range(spec.frames)
             )
-    phone: dict[str, tuple[Image.Image, ...]] = {}
-    if manifest.phone and manifest.phone_sheet is not None:
-        phone_sheet = _decode(pet_dir / manifest.phone_sheet)
-        for state, spec in manifest.phone.items():
-            top = spec.row * size
-            phone[state] = tuple(
-                phone_sheet.crop((col * size, top, (col + 1) * size, top + size))
-                for col in range(spec.frames)
-            )
     return PetPack(
         manifest=manifest,
         directory=pet_dir,
         frames=MappingProxyType(frames),
         acts=MappingProxyType(acts),
-        phone=MappingProxyType(phone),
     )
 
 

@@ -43,7 +43,7 @@ from typing import Any
 
 from PIL import Image
 
-from jarvis.ui.pets.states import CALL_STATES, NO_PET_ID
+from jarvis.ui.pets.states import NO_PET_ID
 from ui.orb import controls as orb_controls
 
 log = logging.getLogger("jarvis.orb")
@@ -89,12 +89,6 @@ ACT_GAP_S = (90.0, 240.0)
 _ACT_KEY = "act:"
 
 _ColorKey = tuple[int, int, int]
-
-#: Frame-key prefix of an on-the-phone row (``pet.json`` ``phone``).
-_PHONE_KEY = "phone:"
-#: Voice modes in which the pet is "on the phone" — the same set that turns
-#: the strip's phone button into hang-up.
-CALL_MODES: frozenset[str] = frozenset({"listen", "think", "speak"})
 
 
 def dpi_ratio_for(points_per_inch: float | None, platform: str = sys.platform) -> float:
@@ -314,8 +308,6 @@ class PetRenderer:
         self._level = 0.0
         self._level_at = -math.inf
         self._smoothed = 0.0
-        #: A voice conversation runs: the pet holds the phone to its ear.
-        self._on_call = False
         self.load(pet_id)
 
     # -- pack ------------------------------------------------------------
@@ -360,14 +352,11 @@ class PetRenderer:
             return
         edge = int(pack.manifest.frame_size)
         acts: Mapping[str, Any] = getattr(pack, "acts", None) or {}
-        # Phone rows join the crop too: the handset reaches past the head.
-        phone: Mapping[str, Any] = getattr(pack, "phone", None) or {}
         # Act frames join the crop (a flame may reach past the idle figure)
         # and are scaled with the states, under a prefixed key.
         source: Mapping[str, Any] = {
             **pack.frames,
             **{_ACT_KEY + str(name): seq for name, seq in acts.items()},
-            **{_PHONE_KEY + str(state): seq for state, seq in phone.items()},
         }
         try:
             crop, (idle_w, idle_h) = figure_crop(source, edge)
@@ -443,12 +432,6 @@ class PetRenderer:
 
     def on_mode(self, mode: str) -> None:
         self._machine.on_mode(mode)
-        self._on_call = str(mode) in CALL_MODES
-
-    @property
-    def on_call(self) -> bool:
-        """The pet is holding the phone (a voice conversation runs)."""
-        return self._on_call
 
     def on_outcome(self, kind: str) -> None:
         self._machine.on_outcome(kind)
@@ -527,22 +510,6 @@ class PetRenderer:
         elapsed = max(0.0, now - started)
         return _ACT_KEY + name, spec, frame_index(elapsed, spec.frames, spec.fps, False), elapsed
 
-    def _phone_spec(self, state: str) -> tuple[str, Any] | None:
-        """The on-the-phone row for ``state`` during a call, or ``None``.
-
-        A pet with phone rows but none for this exact state borrows its
-        ``listening`` phone row, so the handset never vanishes mid-call; a pet
-        without phone rows (an uploaded one) keeps its plain rows.
-        """
-        if not self._on_call:
-            return None
-        phone = getattr(self._pack.manifest, "phone", None) or {}
-        for name in (state, "listening"):
-            spec = phone.get(name)
-            if spec is not None and state in CALL_STATES and self._frames.get(_PHONE_KEY + name):
-                return _PHONE_KEY + name, spec
-        return None
-
     def _current(self) -> tuple[str, Any, int, float, bool]:
         """(resolved state, spec, frame index, elapsed seconds, level-driven) for now."""
         state = self.state()
@@ -550,7 +517,7 @@ class PetRenderer:
         if act is not None:
             key, spec, index, elapsed = act
             return key, spec, index, elapsed, False
-        resolved, spec = self._phone_spec(state) or self._pack.manifest.spec_for(state)
+        resolved, spec = self._pack.manifest.spec_for(state)
         resolved = str(resolved)
         sequence = self._frames.get(resolved) or self._frames.get(state) or ()
         frames = len(sequence) or max(1, int(getattr(spec, "frames", 1)))

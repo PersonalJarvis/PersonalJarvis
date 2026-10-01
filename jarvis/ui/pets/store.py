@@ -121,10 +121,10 @@ class PetStore:
         data: dict = {}
         if manifest_json is not None and manifest_json.strip():
             data = _manifest_data(manifest_json)
-            # An upload is ONE sheet: idle acts and phone rows would point
-            # at a file that never arrives, so they are dropped, not rejected.
-            for key in ("acts", "acts_sheet", "phone", "phone_sheet"):
-                data.pop(key, None)
+            # An upload is ONE sheet: idle acts would point at a file that
+            # never arrives, so they are dropped rather than rejected.
+            data.pop("acts", None)
+            data.pop("acts_sheet", None)
             if frame_size is None and "frame_size" in data:
                 frame_size = data["frame_size"]
         size = _pick_frame_size(width, height, frame_size)
