@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Compass, Monitor, Moon, Power, Sun, Zap } from "lucide-react";
-import { SETUP_REPLAY_EVENT } from "@/components/onboarding/tourEvents";
+import { Compass, Monitor, Moon, Power, Sparkles, Sun, Zap } from "lucide-react";
+import { FIRST_STEPS_START_EVENT, SETUP_REPLAY_EVENT } from "@/components/onboarding/tourEvents";
 import { Switch } from "@/components/ui/switch";
 import { useAutostart } from "@/hooks/useAutostart";
 import { useTheme, type ThemePreference } from "@/hooks/useTheme";
@@ -31,6 +31,7 @@ export function AppSettingsGroup() {
       <AppearanceRow />
       <AutostartRow />
       <TourRow />
+      <FirstStepsRow />
     </div>
   );
 }
@@ -61,6 +62,37 @@ function TourRow() {
             </button>
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground">{t("app_tour.replay_body")}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Starts the first-steps guide again: ten small, real things to do with the
+ * assistant, each explained after it happened.
+ */
+function FirstStepsRow() {
+  const t = useT();
+  const ready = useLocaleChunk("onboarding");
+  if (!ready) return null;
+  return (
+    <div className="rounded-lg border border-border bg-card p-4">
+      <div className="flex items-start gap-3">
+        <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h4 className="font-medium">{t("first_steps.replay_title")}</h4>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent(FIRST_STEPS_START_EVENT))}
+              data-testid="settings-first-steps"
+              className="inline-flex items-center rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {t("first_steps.replay")}
+            </button>
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t("first_steps.replay_body")}</p>
         </div>
       </div>
     </div>

@@ -5,6 +5,7 @@ import type { useOnboarding } from "@/hooks/useOnboarding";
 import { loadLocaleChunk } from "@/i18n";
 import { requestedApiKeysTab } from "@/lib/apiKeysTab";
 import { useEventStore } from "@/store/events";
+import { HOW_BEATS } from "./HowWalk";
 import { SetupTour } from "./SetupTour";
 
 type Onb = ReturnType<typeof useOnboarding>;
@@ -117,6 +118,10 @@ it("starts with a welcome and no consent gate, then opens the API Keys page", as
     fireEvent.click(start);
   });
   expect(onb.acceptTerms).not.toHaveBeenCalled();
+  // First the explainer of what the assistant is, then the API Keys page.
+  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("how"));
+  expect(onb.saveStep).toHaveBeenCalledWith("how", []);
+  fireEvent.click(await screen.findByTestId("how-skip"));
   await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("keys"));
   expect(onb.saveStep).toHaveBeenCalledWith("keys", []);
   await waitFor(() => expect(useEventStore.getState().activeSection).toBe("apikeys"));
@@ -220,6 +225,8 @@ it("walks a replay from the start and never writes, completes or restarts", asyn
   await act(async () => {
     fireEvent.click(screen.getByTestId("onboarding-primary"));
   });
+  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("how"));
+  fireEvent.click(await screen.findByTestId("how-skip"));
   await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("keys"));
   fireEvent.click(await screen.findByTestId("setup-keys-later"));
   await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("subscriptions"));
@@ -248,5 +255,33 @@ it("starts a replay from Settings at the API Keys page, with no way back to the 
   const onb = fakeOnb({ ...accepted, completed: true });
   render(<SetupTour onb={onb} preview startAt="keys" onFinished={vi.fn()} />);
   await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("keys"));
+  expect(screen.queryByTestId("setup-back")).toBeNull();
+});
+
+it("explains the assistant with the pet walking the real app, then goes on to the keys", async () => {
+  const onb = fakeOnb({ ...accepted, current_step: "how" });
+  render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
+  const card = await screen.findByTestId("setup-card");
+  expect(card.dataset.step).toBe("how");
+  expect(card.dataset.beat).toBe("hello");
+  // The pet says each line in a bubble; the composer beat moves the app home.
+  fireEvent.click(screen.getByTestId("how-next"));
+  expect(screen.getByTestId("setup-card").dataset.beat).toBe("talk");
+  await waitFor(() => expect(useEventStore.getState().activeSection).toBe("chats"));
+  fireEvent.click(screen.getByTestId("how-prev"));
+  expect(screen.getByTestId("setup-card").dataset.beat).toBe("hello");
+  for (let i = 0; i < HOW_BEATS.length - 1; i++) fireEvent.click(screen.getByTestId("how-next"));
+  expect(screen.getByTestId("setup-card").dataset.beat).toBe("done");
+  // Nothing was written while the pet explained.
+  expect(onb.saveStep).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByTestId("how-next"));
+  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("keys"));
+  expect(onb.saveStep).toHaveBeenCalledWith("keys", []);
+});
+
+it("starts a replay from Settings at the explainer", async () => {
+  const onb = fakeOnb({ ...accepted, completed: true });
+  render(<SetupTour onb={onb} preview startAt="how" onFinished={vi.fn()} />);
+  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("how"));
   expect(screen.queryByTestId("setup-back")).toBeNull();
 });

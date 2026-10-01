@@ -16,11 +16,20 @@ vi.mock("./tour/GuidedTour", () => ({
   ),
 }));
 
+vi.mock("./firstSteps/FirstStepsGuide", () => ({
+  FirstStepsGuide: ({ onClose }: { onClose: () => void }) => (
+    <button type="button" data-testid="first-steps" onClick={onClose}>
+      first steps
+    </button>
+  ),
+}));
+
 import { OnboardingGate } from "./OnboardingGate";
-import { SETUP_REPLAY_EVENT, TOUR_START_EVENT } from "./tourEvents";
+import { FIRST_STEPS_START_EVENT, SETUP_REPLAY_EVENT, TOUR_START_EVENT } from "./tourEvents";
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -138,7 +147,7 @@ it("replays the setup on a finished install without completing it", async () => 
   }
 });
 
-it("replays setup from the API Keys page on request from Settings", async () => {
+it("replays setup from the explainer on request from Settings", async () => {
   stub({ ...base, completed: true, tour_completed: true });
   render(<OnboardingGate activeSection="profile" />);
   await new Promise((r) => setTimeout(r, 20));
@@ -147,7 +156,7 @@ it("replays setup from the API Keys page on request from Settings", async () => 
     window.dispatchEvent(new CustomEvent(SETUP_REPLAY_EVENT));
   });
   await waitFor(() => expect(screen.getByTestId("guide").dataset.preview).toBe("true"));
-  expect(screen.getByTestId("guide").dataset.start).toBe("keys");
+  expect(screen.getByTestId("guide").dataset.start).toBe("how");
 });
 
 it("goes from setup straight into the tour and completes when the tour ends", async () => {
@@ -178,4 +187,46 @@ it("never completes onboarding after a replayed setup", async () => {
   await waitFor(() => expect(screen.queryByTestId("tour")).toBeNull());
   await new Promise((r) => setTimeout(r, 20));
   expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain("/api/onboarding/complete");
+});
+
+it("hands the first tour over to the first-steps guide, and keeps it after a reload", async () => {
+  stub({ ...base, completed: true, tour_completed: false });
+  render(<OnboardingGate activeSection="chats" />);
+  const tour = await screen.findByTestId("tour");
+  act(() => tour.click());
+  await waitFor(() => expect(screen.getByTestId("first-steps")).toBeDefined());
+  cleanup();
+  // The completion restart reloads the window: the guide comes back from storage.
+  stub({ ...base, completed: true, tour_completed: true });
+  render(<OnboardingGate activeSection="chats" />);
+  await waitFor(() => expect(screen.getByTestId("first-steps")).toBeDefined());
+});
+
+it("does not bring the first-steps guide back once it was closed", async () => {
+  stub({ ...base, completed: true, tour_completed: false });
+  render(<OnboardingGate activeSection="chats" />);
+  const tour = await screen.findByTestId("tour");
+  act(() => tour.click());
+  const guide = await screen.findByTestId("first-steps");
+  act(() => guide.click());
+  await waitFor(() => expect(screen.queryByTestId("first-steps")).toBeNull());
+  // A later tour replay must not restart a guide the user already met.
+  act(() => {
+    window.dispatchEvent(new CustomEvent(TOUR_START_EVENT));
+  });
+  const again = await screen.findByTestId("tour");
+  act(() => again.click());
+  await new Promise((r) => setTimeout(r, 20));
+  expect(screen.queryByTestId("first-steps")).toBeNull();
+});
+
+it("starts the first-steps guide on request from Settings", async () => {
+  stub({ ...base, completed: true, tour_completed: true });
+  render(<OnboardingGate activeSection="profile" />);
+  await new Promise((r) => setTimeout(r, 20));
+  expect(screen.queryByTestId("first-steps")).toBeNull();
+  act(() => {
+    window.dispatchEvent(new CustomEvent(FIRST_STEPS_START_EVENT));
+  });
+  await waitFor(() => expect(screen.getByTestId("first-steps")).toBeDefined());
 });
