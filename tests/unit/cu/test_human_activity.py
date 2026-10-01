@@ -14,6 +14,11 @@ def test_non_macos_is_advisory_noop() -> None:
 
     assert activity.available is False
     assert activity.recent is False
+    allowed, _detail = human_activity.human_input_allows_automation(
+        platform="linux",
+        seconds_since_input=lambda: pytest.fail("non-macOS must not probe Quartz"),
+    )
+    assert allowed is True
 
 
 def test_recent_hardware_input_yields() -> None:
@@ -46,25 +51,32 @@ def test_quiet_hardware_input_allows_automation() -> None:
     assert "3.000s" in detail
 
 
-def test_unavailable_quartz_fails_open_to_existing_guards() -> None:
+def test_unavailable_quartz_fails_closed_on_macos() -> None:
     allowed, detail = human_activity.human_input_allows_automation(
         platform="darwin",
         seconds_since_input=lambda: None,
     )
 
-    assert allowed is True
+    assert allowed is False
+    assert "state unknown" in detail
     assert "unavailable" in detail
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -0.1, "bad"])
-def test_invalid_quartz_age_is_advisory(value: object) -> None:
+def test_invalid_quartz_age_fails_closed_on_macos(value: object) -> None:
     activity = human_activity.macos_human_activity(
+        platform="darwin",
+        seconds_since_input=lambda: value,  # type: ignore[return-value]
+    )
+    allowed, detail = human_activity.human_input_allows_automation(
         platform="darwin",
         seconds_since_input=lambda: value,  # type: ignore[return-value]
     )
 
     assert activity.available is False
     assert activity.recent is False
+    assert allowed is False
+    assert "state unknown" in detail
 
 
 def test_negative_grace_is_rejected() -> None:
@@ -90,6 +102,27 @@ def test_actuator_wrapper_refuses_recent_hardware_input(
     )
 
     with pytest.raises(actuate.ActuationUnavailable, match="recent physical"):
+        actuate.get_actuator()
+
+
+def test_actuator_wrapper_refuses_unknown_hardware_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jarvis.cu.actuate as actuate
+
+    monkeypatch.setattr(actuate.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        human_activity,
+        "human_input_allows_automation",
+        lambda: (False, "physical-input state unknown: Quartz unavailable"),
+    )
+    monkeypatch.setattr(
+        actuate,
+        "_base_get_actuator",
+        lambda: pytest.fail("backend must not be resolved with unknown ownership"),
+    )
+
+    with pytest.raises(actuate.ActuationUnavailable, match="physical"):
         actuate.get_actuator()
 
 
