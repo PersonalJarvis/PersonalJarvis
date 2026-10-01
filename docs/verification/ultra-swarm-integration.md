@@ -41,8 +41,32 @@ at 27 % and is not counted. Remaining CI-only failures in
 files identical to main and are treated as unrelated timing failures, not as
 fixed.
 
-Still open, unchanged by this integration: native installer requalification
-on the merged revision, the native one-key live proof (no
+Native installer qualification on the merged branch, offline with zero
+provider requests:
+
+- [Run 36834583000](https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/36834583000)
+  on `3608adadd`: Linux AppImage and both macOS DMGs passed installation,
+  bundled Wasm, team/lead persistence across same-artifact replacement and
+  cleanup. Windows timed out in main's frozen-browser smoke while still in
+  the `installing` phase. The smoke now prints each setup step and elapsed time.
+- [Windows-only repeat 36838442071](https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/36838442071):
+  the browser became ready in 60 s, which matches main's 39–60 s range. The
+  earlier stall did not recur and its cause is unknown. Same-artifact
+  replacement then failed. A further repeat (36840605379) reported Inno Setup
+  exit code 5 (abort on a file it could not replace), with no process running
+  from the target directory.
+- [Windows-only repeat 36842828236](https://github.com/PersonalJarvis/PersonalJarvis/actions/runs/36842828236)
+  on `23e09dfe8` passed everything, including replacement and cleanup. The
+  verifier now keeps Inno's own logs (`installer-N.log`) beside its report,
+  so a recurrence names the locked file. The two Windows failures are retained
+  as an intermittent risk, not relabeled as passes.
+
+A full-suite Windows shard exposed a pre-existing race in main's dictation
+history: `os.replace` hit a transient Windows share lock under the store's own
+lock. History writes now use the bounded retry the statistics sidecar already
+had. The helper moved to `jarvis/dictation/_locks.py` and both stores share it.
+
+Still open, unchanged by this integration: the native one-key live proof (no
 `SWARM_INSTALL_TEST_KEY` repository secret exists), the final combined
 browser journey, and the ordinary-agent unrestricted host-shell scope decision.
 
