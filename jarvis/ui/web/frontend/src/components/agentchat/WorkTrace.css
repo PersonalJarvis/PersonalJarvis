@@ -3,7 +3,7 @@
    tool jumped to the middle until it joined the completed fold. */
 [data-testid="work-trace"][data-conversation] {
   width: 100%;
-  max-width: 36rem;
+  max-width: 44rem;
   margin-left: 0 !important;
   margin-right: auto;
   align-self: flex-start;

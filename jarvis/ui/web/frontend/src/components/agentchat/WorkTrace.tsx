@@ -690,13 +690,13 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
       : main;
     if (visibleError) items.push(errorItem(visibleError, "trace:error"));
     items.push(statusItem);
-    return <div className={cn("min-w-0", conversation && "w-full max-w-xl self-start", className)} data-testid="work-trace" data-look="rail" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
+    return <div className={cn("min-w-0", conversation && "w-full max-w-[44rem] self-start", className)} data-testid="work-trace" data-look="rail" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
       <Rail items={items} />
     </div>;
   }
 
   const classicGroups = (list: Group[]) => <>{traceGroupItems({ groups: list, ...groupProps }).map(item => <Fragment key={item.key}>{item.node}</Fragment>)}</>;
-  return <div className={cn("min-w-0 space-y-0.5", conversation && "w-full max-w-xl self-start", className)} data-testid="work-trace" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
+  return <div className={cn("min-w-0 space-y-0.5", conversation && "w-full max-w-[44rem] self-start", className)} data-testid="work-trace" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
     {fold ? <ConversationWorkFold durationMs={durationMs} blocks={fold.workAll} attention={fold.approvals.map(block =>
       <div key={block.callId} className="w-full py-1 text-xs [&_button]:text-xs">
         <TraceTool block={block} status={status} onDecide={onDecide} />

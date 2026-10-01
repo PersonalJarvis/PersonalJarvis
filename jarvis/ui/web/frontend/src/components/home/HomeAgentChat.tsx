@@ -56,7 +56,9 @@ export default function HomeAgentChat({ agentId }: { agentId: string }) {
           {fill(t("home.back_to_assistant"), { name: assistantName })}
         </button>
       </header>
-      <div className="mx-auto flex min-h-0 w-full max-w-[820px] flex-1 flex-col">
+      {/* Full width: the panel centres its own reading column, so its
+          scroll area — not a narrow box around it — meets the window edge. */}
+      <div className="flex min-h-0 w-full flex-1 flex-col">
         <AgentChatPanel key={agent.agentId} agent={agent} roster={agents} />
       </div>
     </div>

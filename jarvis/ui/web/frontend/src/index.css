@@ -467,6 +467,18 @@ label,
   height: 0;
 }
 
+/* A chat transcript scrolls like a messenger's: no bar beside the words.
+   The jump-to-latest button stands in for the bar's "you are not at the end".
+   Top-level so the class survives Tailwind's purge like the rules above. */
+.chat-scroller {
+  scrollbar-width: none;
+}
+
+.chat-scroller::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 /* The icon rail (the deck's dock and the collapsed sidebar) scrolls when the
    window is shorter than its column of icons, but shows no bar: a 10 px thumb
    inside a 64 px rail would sit on the icons themselves. Top-level for the
