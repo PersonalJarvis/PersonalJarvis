@@ -163,8 +163,6 @@ def ensure_session(svc: Any, cfg: Any, agent: AgentRecord) -> Any:
         if stance_of(chosen) < stance_of(mode) or (chosen == "always_ask" and mode == "ask"):
             mode = chosen
     updates: dict[str, str] = {}
-    if agent.approval_mode is not None and existing.permission_mode != str(agent.approval_mode):
-        updates["permission_mode"] = str(agent.approval_mode)
     if getattr(existing, "account_id", "") != agent.account_id:
         updates["account_id"] = agent.account_id
     if effort and existing.effort != effort:
