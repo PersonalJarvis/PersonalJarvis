@@ -399,20 +399,18 @@ PET_ICON_STROKE = 2.0
 #: enough to read as "moving with the voice" and bounds the cached frames.
 PET_LEVEL_STEPS = 6
 
-#: The talk control is a matte blue orb carrying three slim white strokes —
-#: the Jarvis bar's equalizer cut down to three and set inside the button,
-#: the way voice buttons in chat apps show they are live. Geometry as shares
-#: of the pill's height: the orb's diameter, the strokes' centre spacing and
-#: half-width, and the shortest (a round dot) and tallest stroke.
-PET_ORB_SHARE = 0.74
+#: The talk control is three upright strokes — the Jarvis bar's equalizer
+#: vocabulary, cut down to three. Geometry as shares of the pill's height:
+#: stroke centre spacing, stroke half-width, and the shortest / tallest stroke.
 PET_INDICATOR_BARS = 3
-PET_INDICATOR_SPACING = 0.105
-PET_INDICATOR_HALF_W = 0.029
-PET_INDICATOR_MIN_H = 2 * PET_INDICATOR_HALF_W
-PET_INDICATOR_MAX_H = 0.36
-#: At rest the strokes stand still as a small waveform mark, middle tallest.
-PET_INDICATOR_REST_H: tuple[float, ...] = (0.13, 0.21, 0.13)
-PET_INDICATOR_REST_GLOW = 1.0
+PET_INDICATOR_SPACING = 0.24
+PET_INDICATOR_HALF_W = 0.068
+PET_INDICATOR_MIN_H = 0.18
+PET_INDICATOR_MAX_H = 0.64
+#: At rest the strokes stand still and dimmed; the middle one a little taller,
+#: so the three read as one control and not as three loose dots.
+PET_INDICATOR_REST_H: tuple[float, ...] = (0.22, 0.32, 0.22)
+PET_INDICATOR_REST_GLOW = 0.78
 #: Animation steps per cycle. Voice: the strokes wobble around the level in
 #: ``PET_VOICE_PHASES`` steps of ``PET_VOICE_STEP_S``. Thinking: a highlight
 #: travels across the three in ``PET_THINK_PHASES`` steps per pass of
@@ -423,9 +421,9 @@ PET_THINK_PHASES = 12
 PET_THINK_PERIOD_S = 1.05
 #: Sweep shape: gaussian width (row fractions), the unlit and the lit level.
 PET_THINK_WIDTH = 0.2
-PET_THINK_BASE_V = 0.0
-PET_THINK_PEAK_V = 0.22
-PET_THINK_DIM = 0.45
+PET_THINK_BASE_V = 0.21
+PET_THINK_PEAK_V = 0.93
+PET_THINK_DIM = 0.5
 
 #: What the indicator is showing. ``rest``: nothing running. ``voice``: the
 #: microphone or Jarvis's voice is live and the strokes follow its level.
@@ -443,13 +441,25 @@ PET_ICON = (232, 233, 238)
 PET_ICON_MUTED = (248, 113, 113)
 #: The divider between pill slots — barely above the fill, never a hard line.
 PET_DIVIDER = (24, 28, 37)
-#: The talk orb: a matte sphere, deep blue at the top that brightens toward a
-#: soft pale glow at the bottom — no gloss, no specular dot.
-PET_ORB_TOP = (40, 88, 226)
-PET_ORB_MID = (66, 114, 236)
-PET_ORB_GLOW = (178, 204, 252)
-#: The strokes: plain white; a dimmed stroke mixes toward the orb's blue.
-PET_INDICATOR_WHITE = (255, 255, 255)
+#: The indicator strokes look like a bright sky: a light blue body with soft
+#: white clouds drifting through it. Two clear colours that meet in feathered
+#: edges — never one muddy average of both.
+PET_INDICATOR_SKY = (126, 186, 255)
+PET_INDICATOR_CLOUD = (255, 255, 255)
+#: The clouds in one stroke, as (x, y, radius) in stroke units: x from -1
+#: (left edge) to 1 (right edge), y from 0 (top) to 1 (bottom), radius in
+#: stroke half-widths. One set per stroke, so the three never look stamped.
+PET_CLOUD_PUFFS: tuple[tuple[tuple[float, float, float], ...], ...] = (
+    ((-0.4, 0.16, 1.9), (0.7, 0.52, 1.5), (-0.6, 0.90, 1.7)),
+    ((0.5, 0.10, 1.7), (-0.6, 0.46, 1.8), (0.6, 0.86, 1.5)),
+    ((-0.5, 0.30, 1.6), (0.6, 0.66, 1.9), (-0.2, 1.02, 1.4)),
+)
+#: How far a cloud's edge is feathered, as a share of its radius: a small
+#: white core, then a long soft fade into the sky.
+PET_CLOUD_SOFTNESS = 0.8
+#: A dimmed stroke sinks toward a deep night blue, never toward grey, so a
+#: resting or unlit stroke still reads as sky.
+PET_INDICATOR_NIGHT = (24, 44, 84)
 
 
 def _spx(value: float, scale: float) -> int:
@@ -745,77 +755,92 @@ def indicator_bars(state: PetStripState) -> list[tuple[float, float]]:
     return [(h, PET_INDICATOR_REST_GLOW) for h in PET_INDICATOR_REST_H]
 
 
-def _draw_orb(
-    d: ImageDraw.ImageDraw,
-    cx: float,
-    cy: float,
-    radius: float,
-) -> None:
-    """A matte sphere: a top-to-bottom gradient with a soft glow at the base.
+def _cloud_cover(u: float, v: float, w: float, h: float, puffs) -> float:
+    """How white the sky is at ``(u, v)`` inside a stroke (0 sky, 1 cloud).
 
-    Each row of the disc gets one colour — deep blue at the top, brighter
-    blue through the middle — and the lowest fifth blends toward a pale glow
-    that is strongest at the bottom centre. PIL only — no numpy on this
-    import path.
+    ``u`` runs -1..1 across the stroke and ``v`` 0..1 down it; ``w`` and ``h``
+    are the stroke's half-width and height in pixels, so the puffs stay round
+    on tall and short strokes alike.
     """
-    top, bottom = int(cy - radius), int(cy + radius) + 1
-    for y in range(top, bottom):
-        dy = (y + 0.5) - cy
-        if abs(dy) > radius:
+    cover = 0.0
+    for px, py, pr in puffs:
+        dx = (u - px) * w
+        dy = (v - py) * h
+        r = pr * w
+        dist = math.sqrt(dx * dx + dy * dy) / r
+        if dist >= 1.0:
             continue
-        half = math.sqrt(radius * radius - dy * dy)
-        t = (dy + radius) / (2.0 * radius)  # 0 at the top, 1 at the bottom
-        color = _lerp(PET_ORB_TOP, PET_ORB_MID, t / 0.6) if t < 0.6 else PET_ORB_MID
-        if t > 0.64:
-            # The glow fades in toward the base and toward the centre line,
-            # so the bottom reads as lit from below, not as a flat band.
-            rise = (t - 0.64) / 0.36
-            for x0, x1, share in _glow_segments(cx, half, rise):
-                d.line([(x0, y), (x1, y)], fill=_lerp(color, PET_ORB_GLOW, share))
-            continue
-        d.line([(cx - half, y), (cx + half, y)], fill=color)
+        core = 1.0 - PET_CLOUD_SOFTNESS
+        # Solid in the core, a smoothstep feather over the rim.
+        if dist <= core:
+            a = 1.0
+        else:
+            f = 1.0 - (dist - core) / PET_CLOUD_SOFTNESS
+            a = f * f * (3.0 - 2.0 * f)
+        # Overlapping puffs build up like real cloud, never past pure white.
+        cover = 1.0 - (1.0 - cover) * (1.0 - a)
+    return cover
 
 
-def _glow_segments(cx: float, half: float, rise: float) -> list[tuple[float, float, float]]:
-    """Split one orb row into bands whose glow share falls off from the centre."""
-    bands = 6
-    out: list[tuple[float, float, float]] = []
-    for k in range(bands, 0, -1):
-        w = half * k / bands
-        centre = 1.0 - (k - 1) / bands  # 1 for the innermost band
-        out.append((cx - w, cx + w, rise * rise * (0.25 + 0.6 * centre)))
-    return out
+@functools.lru_cache(maxsize=12)
+def _cloud_texture(index: int, width: int, height: int) -> Image.Image:
+    """The sky-and-clouds fill of stroke ``index`` at its tallest, as RGB.
+
+    Painted once per stroke and size (the per-pixel feathering is the costly
+    part); every frame then only crops it to the stroke's current height.
+    Cropping from the middle keeps the clouds the same size whatever the
+    level, so they read as a sky seen through the stroke, not as a stretched
+    pattern.
+    """
+    tex = Image.new("RGB", (max(1, width), max(1, height)), PET_INDICATOR_SKY)
+    half_w = width / 2.0
+    puffs = PET_CLOUD_PUFFS[index % len(PET_CLOUD_PUFFS)]
+    pixels = tex.load()
+    for y in range(height):
+        v = (y + 0.5) / height
+        for x in range(width):
+            u = (x + 0.5 - half_w) / half_w
+            cover = _cloud_cover(u, v, half_w, height, puffs)
+            if cover > 0.0:
+                pixels[x, y] = _lerp(PET_INDICATOR_SKY, PET_INDICATOR_CLOUD, cover)
+    return tex
+
+
+@functools.lru_cache(maxsize=64)
+def _stroke_mask(width: int, height: int) -> Image.Image:
+    """A soft-edged rounded stroke; the layer is downscaled, so it ends smooth."""
+    mask = Image.new("L", (width, height), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [0, 0, width - 1, height - 1], radius=(width - 1) / 2.0, fill=255
+    )
+    return mask
 
 
 def _draw_indicator(
-    d: ImageDraw.ImageDraw, cx: float, cy: float, pill_h: float, state: PetStripState
+    layer: Image.Image, cx: float, cy: float, pill_h: float, state: PetStripState
 ) -> None:
-    """The matte orb with three rounded white strokes centred on it.
+    """Three rounded strokes of light-blue sky with white clouds, dimmed by glow.
 
-    Drawn row by row so the round caps stay exact at every height; the frame
-    is RGB (the colour key needs it), so a dimmed stroke is a mix toward the
-    orb's blue — what an opacity would look like over it anyway.
+    Drawn on the supersampled pill layer, so the clouds keep their feathered
+    edges after the downscale. The frame is RGB (the colour key needs it), so
+    "dim" is a mix toward a night blue, which keeps a resting stroke reading
+    as sky instead of turning grey.
     """
-    _draw_orb(d, cx, cy, pill_h * PET_ORB_SHARE / 2.0)
-    half_w = pill_h * PET_INDICATOR_HALF_W
+    width = max(2, int(round(2.0 * pill_h * PET_INDICATOR_HALF_W)))
+    tallest = max(width, int(round(pill_h * PET_INDICATOR_MAX_H)))
     step = pill_h * PET_INDICATOR_SPACING
     first = cx - step * (PET_INDICATOR_BARS - 1) / 2.0
     for i, (share, glow) in enumerate(indicator_bars(state)):
-        x = first + i * step
-        h = max(2.0 * half_w, pill_h * share)
-        top, bottom = cy - h / 2.0, cy + h / 2.0
-        color = _lerp(PET_ORB_MID, PET_INDICATOR_WHITE, glow)
-        for y in range(int(top), int(bottom) + 1):
-            yc = y + 0.5
-            if yc < top or yc > bottom:
-                continue
-            edge = min(yc - top, bottom - yc)
-            if edge < half_w:
-                dy = half_w - edge
-                span = math.sqrt(max(0.0, half_w * half_w - dy * dy))
-            else:
-                span = half_w
-            d.line([(x - span, y), (x + span, y)], fill=color)
+        h = min(tallest, max(width, int(round(pill_h * share))))
+        tex = _cloud_texture(i, width, tallest)
+        top = (tallest - h) // 2
+        stroke = tex.crop((0, top, width, top + h))
+        if glow < 1.0:
+            night = Image.new("RGB", stroke.size, PET_INDICATOR_NIGHT)
+            stroke = Image.blend(night, stroke, max(0.0, glow))
+        x0 = int(round(first + i * step - width / 2.0))
+        y0 = int(round(cy - h / 2.0))
+        layer.paste(stroke, (x0, y0), _stroke_mask(width, h))
 
 
 def _render_pen_disc(state: PetStripState, diameter: int, scale: float) -> Image.Image:
@@ -852,7 +877,7 @@ def _render_pill(state: PetStripState, layout: PetStripLayout, scale: float) -> 
     for action, sx0, sx1 in layout.slots:
         cx = ((sx0 + sx1) / 2.0 - x0) * _SS
         if action == "orb":
-            _draw_indicator(d, cx, cy, h_ss, state)
+            _draw_indicator(layer, cx, cy, h_ss, state)
         else:
             _draw_glyph(action, d, cx, cy, box, stroke, state)
     return layer.resize((width, height), Image.Resampling.LANCZOS)

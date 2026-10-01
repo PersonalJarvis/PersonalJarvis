@@ -18,19 +18,15 @@ one click.
 - **The figure.** It reacts to Jarvis in real time (see *States*). It can be
   dragged anywhere, and its position is remembered per monitor
   (`[overlay.mascot] position_*`, shared with the mascot).
-- **The control strip** under the figure. At rest only the figure shows; the
-  strip appears while Jarvis is listening, thinking, talking or dictating and
-  while the pointer is on the figure or the strip (it leaves 0.6 s after the
-  pointer does). With the pet "None" it always shows. From left to right:
+- **The control strip** under the figure, from left to right:
   - pen: raise the main window and open a new chat (`ComposeRequested`);
   - microphone: mute Jarvis's microphone (`VoiceMuteToggleRequested`, mirrored
     from `VoiceMuteChanged`);
-  - talk button (a matte blue orb carrying three slim white strokes, the
-    Jarvis bar's equalizer cut down to three): start a conversation, or hang
-    up the running one. The strokes stand still as a small waveform mark at
-    rest, follow the live audio level while
+  - talk indicator (three strokes, the Jarvis bar's equalizer cut down to
+    three, each a light-blue sky with soft white clouds in it): start a conversation, or hang up the running one. The
+    strokes stand still and dimmed at rest, follow the live audio level while
     listening, dictating or talking, and carry a travelling highlight while
-    thinking or transcribing (three dots, one lit at a time);
+    thinking or transcribing;
   - speaker: silence the assistant's voice for this session (TTS volume 0,
     mirrored from `VoiceSpeakerMuteChanged`).
 - **The thinking card** under the strip: a rounded pill with a bold title
@@ -42,7 +38,7 @@ one click.
 - **The pet "None"** (`pet_id = "none"`) shows the control strip and the
   card without a figure.
 
-The pet stays on screen while Jarvis is idle (its strip does not). The global shortcut
+The pet stays on screen while Jarvis is idle. The global shortcut
 (`[trigger] hotkey_pet_toggle`, default `alt+win+p`) hides it or brings it
 back and to the front; hiding lasts until the next app start. The shortcut is
 changed on the My Pets page (Customize); an empty value switches it off. On

@@ -141,10 +141,10 @@ def test_the_indicator_rests_still_and_grows_with_the_voice() -> None:
     box = _slot_box("orb")
 
     def _lit(frame: Image.Image) -> int:
-        return sum(1 for px in frame.crop(box).getdata() if min(px) > 200)
+        return sum(1 for (r, g, b) in frame.crop(box).getdata() if b > 150 and b > r)
 
     rest = _lit(_frame(controls.PetStripState(level=6, phase=3)))  # ignored at rest
-    assert rest > 10
+    assert rest > 20
     assert rest == _lit(_frame(controls.PetStripState()))
     quiet = _lit(_frame(controls.PetStripState(active=True, motion="voice", level=0)))
     loud = _lit(_frame(controls.PetStripState(active=True, motion="voice", level=6)))
@@ -306,11 +306,8 @@ def test_the_talk_control_is_three_strokes() -> None:
     assert action == "orb"
     _x0, y0, _x1, y1 = layout.pill
     row = [frame.getpixel((x, (y0 + y1) // 2)) for x in range(sx0, sx1)]
-    # The orb is blue across the middle row; the strokes are white on it.
-    blue = [px for px in row if px[2] > 180 and px[0] < 120]
-    assert len(blue) > (sx1 - sx0) * 0.3
-    white = [min(px) > 200 for px in row]
-    runs = sum(1 for i, on in enumerate(white) if on and (i == 0 or not white[i - 1]))
+    lit = [sum(px) > 3 * 60 for px in row]
+    runs = sum(1 for i, on in enumerate(lit) if on and (i == 0 or not lit[i - 1]))
     assert runs == controls.PET_INDICATOR_BARS == 3
 
 
