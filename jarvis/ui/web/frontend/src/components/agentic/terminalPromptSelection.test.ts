@@ -77,6 +77,13 @@ describe("terminal prompt selection", () => {
     expect(pane.sent).toHaveLength(1);
   });
 
+  it("recognises Claude Code's marker, which is followed by a no-break space", async () => {
+    const pane = await setup("❯ csdadsfasdf");
+    pane.select(2, 15); // a drag past the end of the draft
+    pane.press("Delete");
+    expect(pane.sent).toEqual(["\x7f".repeat(11)]);
+  });
+
   it("deletes a middle selection while leaving the suffix in place", async () => {
     const pane = await setup();
     pane.select(2, 7);

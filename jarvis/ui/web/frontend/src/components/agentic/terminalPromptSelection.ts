@@ -48,7 +48,9 @@ const MAX_PROMPT_ROWS = 200;
 function readPrompt(term: PromptSelectionTerminal): PromptLine | null {
   const buffer = term.buffer.active;
   if (!segmenter) return null;
-  const rowText = (row: number) => buffer.getLine(row)?.translateToString(false, 0, term.cols);
+  // Claude Code draws its marker as "❯" + NO-BREAK SPACE; read it as a space.
+  const rowText = (row: number) =>
+    buffer.getLine(row)?.translateToString(false, 0, term.cols).replace(/ /g, " ");
   const cursorRow = buffer.baseY + buffer.cursorY;
   let first = cursorRow;
   let prefix: string | undefined;
