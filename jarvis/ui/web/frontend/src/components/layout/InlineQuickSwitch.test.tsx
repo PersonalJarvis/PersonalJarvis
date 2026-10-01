@@ -39,8 +39,10 @@ describe("InlineQuickSwitch", () => {
   beforeEach(() => useEventStore.getState().setActiveSection("chats"));
   afterEach(cleanup);
 
-  it("stays closed until focused", () => {
-    renderField();
+  it("stays closed until something is typed", () => {
+    const input = renderField();
+    expect(screen.queryByTestId("sidebar-search-results")).toBeNull();
+    fireEvent.focus(input);
     expect(screen.queryByTestId("sidebar-search-results")).toBeNull();
   });
 
@@ -60,9 +62,11 @@ describe("InlineQuickSwitch", () => {
     const input = renderField();
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: "set" } });
-    fireEvent.keyDown(input, { key: "Escape" });
-    expect(input.value).toBe("");
     expect(screen.getByTestId("sidebar-search-results")).toBeTruthy();
+    fireEvent.keyDown(input, { key: "Escape" });
+    // Cleared: an empty field shows no list, but keeps the focus.
+    expect(input.value).toBe("");
+    expect(screen.queryByTestId("sidebar-search-results")).toBeNull();
     fireEvent.keyDown(input, { key: "Escape" });
     expect(screen.queryByTestId("sidebar-search-results")).toBeNull();
   });

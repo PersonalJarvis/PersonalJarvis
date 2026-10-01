@@ -35,6 +35,10 @@ import {
 } from "@/lib/agenticIdeApi";
 import {
   ambiguousEntryKeys,
+  compareMatches,
+  labelStartsWith,
+  normalizeQuery,
+  SHORT_QUERY,
   rankQuickSwitch,
   strongSettingsMatches,
   type QuickSwitchEntry,
@@ -75,7 +79,7 @@ const GROUP = cn(
 );
 
 /** How many live results each group may show, so the sections stay in view. */
-const LIMIT = { chats: 6, terminals: 6, workspaces: 4, recentChats: 4 } as const;
+const LIMIT = { chats: 6, terminals: 6, workspaces: 4 } as const;
 
 /** Row sizes: the Spotlight window is roomier than the sidebar dropdown. */
 const SIZE = {
@@ -188,32 +192,45 @@ export function QuickSwitchList({
 
   // About forty destinations — ranked inline on every keystroke, no memo needed.
   const labelFor = (item: QuickSwitchEntry) => label(item.labelKey, item.fallbackLabel);
-  const ranked = rankQuickSwitch(query, labelFor);
   const ambiguous = ambiguousEntryKeys(labelFor);
+  // A label two rows share names its area up front, e.g. "Voice › API Keys"
+  // beside the API Keys page itself — and the alphabet follows what is SHOWN,
+  // so that row sorts under "V…", where the eye looks for it.
+  const ranked = rankQuickSwitch(query, labelFor)
+    .map((row) => {
+      const area = row.entry.parentLabelKey ? label(row.entry.parentLabelKey, "") : "";
+      const shown = area && ambiguous.has(row.entry.key) ? `${area} › ${row.label}` : row.label;
+      return { ...row, area, shown, prefix: labelStartsWith(shown, normalizeQuery(query)) };
+    })
+    // One or two letters list only what visibly starts with them: "a" must not
+    // show "Voice › API Keys" just because the tab underneath is "API Keys".
+    .filter((row) => row.prefix || normalizeQuery(query).length > SHORT_QUERY)
+    .sort((a, b) => compareMatches({ ...a, label: a.shown }, { ...b, label: b.shown }));
   const settingsMatches = useMemo(
     () => strongSettingsMatches(query, searchSettingsOptions(language, query, t)),
     [query, language, t],
   );
-  // Nothing typed yet: the most recent chats, like Spotlight's recents.
-  const chatHits = typed
-    ? rankItems(query, chatRows, (row) => [row.title, row.preview], LIMIT.chats)
-    : chatRows.slice(0, LIMIT.recentChats);
-  const paneHits = typed
-    ? rankItems(
-        query,
-        panes,
-        (pane) => [pane.recap, pane.last_prompt, pane.display_name, pane.key, pane.workspace_name],
-        LIMIT.terminals,
-      )
-    : [];
-  const workspaceHits = typed
-    ? rankItems(
-        query,
-        workspaces,
-        (workspace) => [workspace.name, folderName(workspace.folder), workspace.branch],
-        LIMIT.workspaces,
-      )
-    : [];
+  const chatHits = rankItems(
+    query,
+    chatRows,
+    (row) => [row.title, row.preview],
+    LIMIT.chats,
+    (row) => row.title || row.preview,
+  );
+  const paneHits = rankItems(
+    query,
+    panes,
+    (pane) => [pane.recap, pane.last_prompt, pane.display_name, pane.key, pane.workspace_name],
+    LIMIT.terminals,
+    paneTitle,
+  );
+  const workspaceHits = rankItems(
+    query,
+    workspaces,
+    (workspace) => [workspace.name, folderName(workspace.folder), workspace.branch],
+    LIMIT.workspaces,
+    (workspace) => workspace.name,
+  );
 
   const rowValues = [
     ...ranked.map(({ entry }) => `section:${entry.key}`),
@@ -228,6 +245,9 @@ export function QuickSwitchList({
     // Only when the rows themselves change, never on a mere re-render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature]);
+
+  // Nothing typed: no list at all — the field stands alone, like Spotlight.
+  if (!typed) return null;
 
   const go = (item: QuickSwitchEntry) => {
     if (item.surface) setSurface(item.surface);
@@ -267,12 +287,8 @@ export function QuickSwitchList({
       </Command.Empty>
       {ranked.length > 0 && (
         <Command.Group heading={t("quick_switch.group_sections")} className={GROUP}>
-          {ranked.map(({ entry: item, label: text }) => {
+          {ranked.map(({ entry: item, label: text, area, shown }) => {
             const here = item.section === activeSection && !item.surface;
-            const area = item.parentLabelKey ? label(item.parentLabelKey, "") : "";
-            // A label two rows share names its area up front, e.g.
-            // "Voice › API Keys" beside the API Keys page itself.
-            const shown = area && ambiguous.has(item.key) ? `${area} › ${text}` : text;
             return (
               <ResultRow
                 key={item.key}
@@ -289,10 +305,7 @@ export function QuickSwitchList({
         </Command.Group>
       )}
       {chatHits.length > 0 && (
-        <Command.Group
-          heading={t(typed ? "quick_switch.group_chats" : "quick_switch.group_recent_chats")}
-          className={GROUP}
-        >
+        <Command.Group heading={t("quick_switch.group_chats")} className={GROUP}>
           {chatHits.map((row) => (
             <ResultRow
               key={`${row.kind}:${row.id}`}

@@ -144,6 +144,7 @@ export function InlineQuickSwitch({
       </div>
       {open &&
         rect &&
+        query.trim() !== "" &&
         createPortal(
           <div
             data-testid="sidebar-search-results"

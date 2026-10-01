@@ -88,7 +88,7 @@ export function QuickSwitcher({
               onFirstChange={setSelected}
               className="max-h-[min(30rem,62dvh)] border-t border-border"
             />
-            <div className="flex items-center justify-end gap-4 border-t border-border px-4 py-2 text-xs text-muted-foreground">
+            {query.trim() && <div className="flex items-center justify-end gap-4 border-t border-border px-4 py-2 text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-1.5">
                 <kbd className="inline-flex h-5 items-center rounded border border-border px-1 font-sans">
                   <CornerDownLeft className="h-3 w-3" aria-hidden />
@@ -99,7 +99,7 @@ export function QuickSwitcher({
                 <kbd className="inline-flex h-5 items-center rounded border border-border px-1 font-sans">esc</kbd>
                 {t("quick_switch.hint_close")}
               </span>
-            </div>
+            </div>}
           </Command>
         </Dialog.Content>
       </Dialog.Portal>

@@ -257,19 +257,50 @@ export function scoreTerm(term: string, needle: string): number {
   return 0;
 }
 
-/** How far a tab ranks below a top-level page with the same match quality. */
-const TAB_PENALTY = 25;
+/**
+ * Up to this many letters a query only matches what a row is CALLED, from its
+ * first letter: "a" lists exactly the rows whose name starts with A. Longer
+ * queries also reach a row through its other-language names and synonyms
+ * ("einst" finds Settings, "ollama" Local models).
+ */
+export const SHORT_QUERY = 2;
+
+/** Alphabetical, case- and accent-blind, numbers in natural order. */
+export function compareLabels(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
+}
+
+/**
+ * The order every result group shares: rows whose name STARTS with the query
+ * first, then the rest; alphabetical within each. So "a" reads like an index
+ * (Aa… first, Az… last) and an exact name is still on top — "Voice" before
+ * "Voice Shortcuts" — because the shortest matching name sorts first.
+ */
+export function compareMatches(
+  a: { label: string; prefix: boolean },
+  b: { label: string; prefix: boolean },
+): number {
+  if (a.prefix !== b.prefix) return a.prefix ? -1 : 1;
+  return compareLabels(a.label, b.label);
+}
+
+/** Does this name start with the query (accents and case folded)? */
+export function labelStartsWith(label: string, needle: string): boolean {
+  return normalizeQuery(label).startsWith(needle);
+}
 
 export interface RankedEntry {
   entry: QuickSwitchEntry;
   label: string;
-  score: number;
+  /** The name starts with the query — these rows lead the group. */
+  prefix: boolean;
 }
 
 /**
- * The entries that match, best first. An empty query lists everything in
- * sidebar order, so the switcher doubles as a browsable map of the app.
- * Ties keep sidebar order — `Array.prototype.sort` is stable.
+ * The entries that match, in `compareMatches` order. An empty query matches
+ * nothing: the switcher shows its field alone until something is typed.
+ * Two rows with the same name (the API Keys page and the voice tab of that
+ * name) keep the page first.
  */
 export function rankQuickSwitch(
   query: string,
@@ -277,19 +308,21 @@ export function rankQuickSwitch(
   entries: readonly QuickSwitchEntry[] = QUICK_SWITCH_ENTRIES,
 ): RankedEntry[] {
   const needle = normalizeQuery(query);
-  const all = entries.map((item) => {
+  if (!needle) return [];
+  const rows: RankedEntry[] = [];
+  for (const item of entries) {
     const label = labelFor(item);
-    let score = needle
-      ? Math.max(0, ...entryTerms(item, label).map((term) => scoreTerm(term, needle)))
-      : 1;
-    // A tab inside another area yields to a page of its own on the same word:
-    // "API Keys" means the API Keys page, not the voice section's key tab, and
-    // a word for "language" the app languages, not the dictation language. Large enough to
-    // drop an exact tab hit (100) below a page's prefix hit (80).
-    if (needle && score > 0 && item.parentLabelKey) score = Math.max(1, score - TAB_PENALTY);
-    return { entry: item, label, score };
-  });
-  return all.filter((row) => row.score > 0).sort((a, b) => b.score - a.score);
+    const prefix = labelStartsWith(label, needle);
+    const matches =
+      prefix ||
+      (needle.length > SHORT_QUERY &&
+        entryTerms(item, label).some((term) => scoreTerm(term, needle) > 0));
+    if (matches) rows.push({ entry: item, label, prefix });
+  }
+  return rows.sort(
+    (a, b) =>
+      compareMatches(a, b) || Number(Boolean(a.entry.parentLabelKey)) - Number(Boolean(b.entry.parentLabelKey)),
+  );
 }
 
 /**
@@ -308,9 +341,14 @@ export function strongSettingsMatches<T extends { label: string; detail?: string
   if (!needle) return [];
   return matches
     .filter((match) =>
-      [match.label, match.detail ?? ""].some((text) => scoreTerm(normalizeQuery(text), needle) >= 60),
+      needle.length <= SHORT_QUERY
+        ? labelStartsWith(match.label, needle)
+        : [match.label, match.detail ?? ""].some((text) => scoreTerm(normalizeQuery(text), needle) >= 60),
     )
-    .slice(0, limit);
+    .map((match) => ({ match, label: match.label, prefix: labelStartsWith(match.label, needle) }))
+    .sort(compareMatches)
+    .slice(0, limit)
+    .map((row) => row.match);
 }
 
 /**

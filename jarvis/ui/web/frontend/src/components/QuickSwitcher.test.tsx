@@ -42,10 +42,25 @@ describe("QuickSwitcher", () => {
   });
   afterEach(cleanup);
 
-  it("lists every destination before anything is typed", () => {
+  it("shows the field alone until something is typed", () => {
     renderOpen();
-    expect(screen.getByTestId("quick-switch-agentic-ide")).toBeTruthy();
-    expect(screen.getByTestId("quick-switch-settings")).toBeTruthy();
+    expect(screen.queryByTestId("quick-switch-agentic-ide")).toBeNull();
+    expect(document.querySelectorAll("[cmdk-item]")).toHaveLength(0);
+  });
+
+  it("lists the A-names A to Z after one letter", () => {
+    renderOpen();
+    fireEvent.change(screen.getByTestId("quick-switcher-input"), { target: { value: "a" } });
+    // Each group is alphabetical on its own; the sections group comes first.
+    const sections = document.querySelector("[cmdk-group]");
+    const labels = [...(sections?.querySelectorAll("[cmdk-item]") ?? [])].map(
+      (row) => row.querySelector("span.min-w-0")?.textContent ?? "",
+    );
+    expect(labels.length).toBeGreaterThan(3);
+    // Every SHOWN name starts with A — "Voice › API Keys" does not, so it is out.
+    for (const label of labels) expect(label.toLowerCase().startsWith("a")).toBe(true);
+    const sorted = [...labels].sort((x, y) => x.localeCompare(y, undefined, { sensitivity: "base" }));
+    expect(labels).toEqual(sorted);
   });
 
   it("goes to the top match on Enter and closes", () => {
@@ -60,6 +75,7 @@ describe("QuickSwitcher", () => {
   it("flips the front page to the face that was picked", () => {
     useHomeStore.getState().setSurface("voice");
     renderOpen();
+    fireEvent.change(screen.getByTestId("quick-switcher-input"), { target: { value: "chat" } });
     fireEvent.click(screen.getByTestId("quick-switch-chat"));
     expect(useEventStore.getState().activeSection).toBe("chats");
     expect(useHomeStore.getState().surface).toBe("chat");
@@ -134,8 +150,10 @@ describe("QuickSwitcher", () => {
     });
     afterEach(() => vi.unstubAllGlobals());
 
-    it("lists recent chats before anything is typed", () => {
+    it("finds a chat by the first letter of its title", () => {
       renderOpen();
+      expect(screen.queryByTestId("quick-switch-chat-c1")).toBeNull();
+      fireEvent.change(screen.getByTestId("quick-switcher-input"), { target: { value: "b" } });
       expect(screen.getByTestId("quick-switch-chat-c1")).toBeTruthy();
     });
 

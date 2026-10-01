@@ -9,7 +9,13 @@
  * initials > mid-word from four letters), so "ide" still does not find
  * "provide" here either.
  */
-import { normalizeQuery, scoreTerm } from "@/lib/quickSwitch";
+import {
+  SHORT_QUERY,
+  compareMatches,
+  labelStartsWith,
+  normalizeQuery,
+  scoreTerm,
+} from "@/lib/quickSwitch";
 
 /** 0 when some word of the query is found nowhere in `fields`. */
 export function matchScore(query: string, fields: readonly (string | null | undefined)[]): number {
@@ -26,19 +32,30 @@ export function matchScore(query: string, fields: readonly (string | null | unde
 }
 
 /**
- * The items that match, best first, at most `limit`. Ties keep the input
- * order, which the callers make "most recent first".
+ * The items that match, at most `limit`, in the order the sections use: names
+ * starting with the query first, alphabetical within each part. A query of up
+ * to `SHORT_QUERY` letters matches the NAME from its first letter only ("a"
+ * lists the chats whose title starts with A); a longer one matches when every
+ * word is found anywhere in `fields`.
  */
 export function rankItems<T>(
   query: string,
   items: readonly T[],
   fields: (item: T) => readonly (string | null | undefined)[],
   limit: number,
+  labelOf: (item: T) => string = (item) => fields(item)[0] ?? "",
 ): T[] {
+  const needle = normalizeQuery(query);
+  if (!needle) return [];
   return items
-    .map((item, index) => ({ item, index, score: matchScore(query, fields(item)) }))
-    .filter((row) => row.score > 0)
-    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((item) => {
+      const label = labelOf(item);
+      const prefix = labelStartsWith(label, needle);
+      const hit = needle.length <= SHORT_QUERY ? prefix : prefix || matchScore(query, fields(item)) > 0;
+      return { item, label, prefix, hit };
+    })
+    .filter((row) => row.hit)
+    .sort(compareMatches)
     .slice(0, limit)
     .map((row) => row.item);
 }
