@@ -69,6 +69,7 @@ async def probe_macos_readiness(
     permission_port: Any | None = None,
     tree_source: Any | None = None,
     actuator_factory: Callable[[], Any] | None = None,
+    human_activity_probe: Callable[[], Any] | None = None,
     platform: str | None = None,
 ) -> MacOSReadinessReport:
     """Return a diagnostic report without performing any input action.
@@ -77,7 +78,9 @@ async def probe_macos_readiness(
     Screen Recording, Accessibility and event posting. When Accessibility is
     ready, one read-only accessibility observation proves that semantic UI
     discovery works. When event posting is ready, constructing the configured
-    actuator proves an input backend is available; no input is sent.
+    actuator proves an input backend is available; no input is sent. A final
+    Quartz HID probe verifies that Jarvis can distinguish recent physical user
+    input from its own synthetic events for human takeover.
     """
     platform_name = platform or sys.platform
     if platform_name != "darwin":
@@ -147,7 +150,10 @@ async def probe_macos_readiness(
     if event_posting_ready:
         try:
             if actuator_factory is None:
-                from jarvis.cu.actuate import get_actuator  # noqa: PLC0415
+                # Readiness must test construction, not the runtime human-handoff
+                # wrapper in jarvis.cu.actuate.get_actuator: recent physical
+                # input means "yield now", not "backend missing".
+                from jarvis.cu.actuate.base import get_actuator  # noqa: PLC0415
 
                 actuator_factory = get_actuator
             actuator = actuator_factory()
@@ -172,6 +178,36 @@ async def probe_macos_readiness(
                 "actuation:backend",
                 False,
                 "input backend was not probed because Input Control is not ready",
+            )
+        )
+
+    try:
+        if human_activity_probe is None:
+            from jarvis.cu.human_activity import macos_human_activity  # noqa: PLC0415
+
+            human_activity_probe = macos_human_activity
+        activity = human_activity_probe()
+        available = bool(getattr(activity, "available", False))
+        recent = bool(getattr(activity, "recent", False))
+        detail = str(getattr(activity, "detail", "") or "")
+        checks.append(
+            ReadinessCheck(
+                "handoff:hardware-input",
+                available,
+                (
+                    f"hardware-input handoff is available ({detail})"
+                    + ("; user is active now" if available and recent else "")
+                    if available
+                    else f"hardware-input handoff is unavailable ({detail or 'no Quartz HID signal'})"
+                ),
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        checks.append(
+            ReadinessCheck(
+                "handoff:hardware-input",
+                False,
+                f"hardware-input handoff probe failed: {exc}",
             )
         )
 
